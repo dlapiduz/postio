@@ -327,6 +327,10 @@ pub struct Row {
 }
 
 /// Today's inbox, top to bottom, in the references' shape.
+/// The sender the new-sender popover is for: a first email, signed, copied
+/// to someone the user saved (handoff screen 05).
+pub const NEW_SENDER: &str = "caspian@example.com";
+
 pub const TODAY: &[Row] = &[
     Row {
         name: "Hollis Varga",
@@ -601,6 +605,21 @@ pub fn demo_vault() -> std::io::Result<tempfile::TempDir> {
     Ok(vault)
 }
 
+/// Records `message`'s correspondents as a sync pass would, handing down the
+/// addresses the store's accounts send as so they are not counted as people
+/// (specs/005-contacts R3).
+pub(crate) async fn record_correspondents(
+    connection: &postio_storage::Connection,
+    message: &postio_model::Message,
+) -> postio_storage::Result<usize> {
+    let own = postio_storage::repository::IdentityRepository::new(connection)
+        .own_addresses()
+        .await?;
+    ContactRepository::new(connection)
+        .record_message(message, &own)
+        .await
+}
+
 /// What screens 05 and 06 add to the demo store: the people the To field
 /// completes to, and the Harbor thread's recipients and body, so a reply
 /// to all has someone to copy and something to quote.
@@ -613,11 +632,7 @@ pub async fn compose_demo(database: &Store, account: AccountId) {
         ("Ada Moreno", "ada@example.com"),
     ] {
         contacts
-            .create(
-                Some(account),
-                &EmailAddress::new(Some(name), address),
-                Some(name),
-            )
+            .create(Some(name), &[EmailAddress::new(Some(name), address)])
             .await
             .expect("a contact");
     }
@@ -820,8 +835,7 @@ pub async fn deliver_new_mail(
         .create(&mut message)
         .await
         .map_err(text_of)?;
-    ContactRepository::new(&connection)
-        .record_message(&message)
+    record_correspondents(&connection, &message)
         .await
         .map_err(text_of)?;
     ThreadingRepository::new(&connection, account)
@@ -1016,6 +1030,11 @@ pub async fn demo() -> (Store, AccountId) {
                     "harbor-api@example.org",
                 )];
             }
+            // A first email from someone new, copied to someone the user
+            // knows: what the new-sender popover is introduced by.
+            if newest && row.address == NEW_SENDER {
+                message.cc = vec![EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net")];
+            }
             let id = RfcMessageId::new(format!("<demo.{index}.{step}@example.test>"));
             message.rfc_message_id = Some(id.clone());
             if let Some(parent) = previous.replace(id) {
@@ -1028,8 +1047,7 @@ pub async fn demo() -> (Store, AccountId) {
                 .expect("a message");
             // Sync records every address it sees; the bar reads names from
             // them (screen 07).
-            ContactRepository::new(&connection)
-                .record_message(&message)
+            record_correspondents(&connection, &message)
                 .await
                 .expect("its correspondents");
             ThreadingRepository::new(&connection, report.account.id)
@@ -1040,6 +1058,11 @@ pub async fn demo() -> (Store, AccountId) {
         }
         let body = if index == OPENED {
             OPENED_BODY.to_owned()
+        } else if row.address == NEW_SENDER {
+            format!(
+                "{}\n\nBest,\nCaspian Holt\nPartnerships \u{b7} Harbor Data Co.\n+1 555 0142\nharbordata.example\n",
+                row.preview
+            )
         } else {
             format!("{}\n", row.preview)
         };
@@ -1127,6 +1150,18 @@ pub async fn demo() -> (Store, AccountId) {
         )
         .await;
     }
+    // Something you are waiting on Marisol for: a message you sent her, with
+    // a reminder no reply has settled, which her popover lists as "Waiting
+    // on Marisol" beside what waits on you.
+    waiting_on(
+        &connection,
+        &report.account,
+        archive,
+        ("Marisol Quint", "marisol@example.com"),
+        "Q4 headcount numbers",
+        today - chrono::Duration::days(2),
+    )
+    .await;
     for (subject, days) in [
         ("Your coffee order", 2),
         ("Bookshop receipt", 9),
@@ -1162,8 +1197,31 @@ pub async fn demo() -> (Store, AccountId) {
             .create(&mut message)
             .await
             .expect("a newsletter");
+        record_correspondents(&connection, &message)
+            .await
+            .expect("its correspondents");
         digests.hold(id, "Newsletters", at).await.expect("held");
         newsletter_ids.push(id);
+    }
+    // Earlier issues, a week apart, kept in the Archive: what makes a
+    // newsletter's card say how often it comes (specs/011-focus-contacts S7).
+    let mut sent = std::collections::HashSet::new();
+    for ((name, address), _, _) in NEWSLETTERS {
+        if !sent.insert(*address) {
+            continue;
+        }
+        for week in 1..=3 {
+            filed(
+                &connection,
+                report.account.id,
+                archive,
+                (name, address),
+                &format!("Issue {}", 50 - week),
+                "An earlier issue.",
+                today - chrono::Duration::days(7 * week),
+            )
+            .await;
+        }
     }
     let due = today - chrono::Duration::minutes(9);
     let delivery = digests
@@ -1276,8 +1334,304 @@ pub async fn demo() -> (Store, AccountId) {
     postio_index::index::ensure_schema(&connection)
         .await
         .expect("the search index");
+    people(&connection).await;
     drop(connection);
     (database, report.account.id)
+}
+
+/// Everyone the mail names becomes a person, and the senders that are not
+/// people say what they are -- the newsletters of the digest, a list, a
+/// builder -- as the kind detector would have decided, so Contacts has its
+/// tabs to show (specs/011-focus-contacts S7).
+/// The file File \u{25b8} Import Contacts reads in a demo, in place of the open
+/// panel: three invented cards, one for a person the demo has (matched by
+/// address), one for a name the demo has under another address (offered in
+/// the review, never merged), and one nobody has.
+pub const IMPORT_VCF: &str = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-grace\r\nFN:Grace Oyelaran\r\nEMAIL:grace@example.org\r\nORG:Example Labs\r\nEND:VCARD\r\n\
+BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-ben\r\nFN:Ben Adeyemi\r\nEMAIL:ben@adeyemi.example\r\nTEL:+1 555 0188\r\nEND:VCARD\r\n\
+BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-tove\r\nFN:Tove Larsson\r\nEMAIL:tove.larsson@example.net\r\nORG:Larsson Studio\r\nEND:VCARD\r\n";
+
+/// The corpus's hostile-markup fixtures all send from here: Beacon Works,
+/// Big Pictures, Account Desk and the rest. Mail from it is in the demo; none
+/// of it is a person a screenshot should show.
+const ABUSE_DOMAIN: &str = "abuse.example.com";
+
+/// Senders whose names or addresses exist to attack the header parsers
+/// (`encoded-word-*` in the corpus). Their mail is in the demo; they are not
+/// among its people.
+const HOSTILE_SENDERS: &[&str] = &[
+    "mallory@sender.invalid",
+    "billing@sender.invalid",
+    "broken.from@example.com",
+];
+
+/// What the app's own catch-up does after it makes people: decide each one's
+/// kind from the counts over their mail.
+async fn sort_by_kind(connection: &postio_storage::Connection) {
+    let contacts = ContactRepository::new(connection);
+    let rules = postio_classify::kind::KindRules::shipped();
+    let version = postio_classify::kind::KIND_VERSION;
+    loop {
+        let people = contacts
+            .pending_kinds(version, 500)
+            .await
+            .expect("people to sort");
+        for person in &people {
+            let kind = match contacts.kind_signals(*person).await.expect("signals") {
+                Some(signals) => postio_classify::kind::detect(&signals, rules).kind,
+                None => postio_model::ContactKind::Person,
+            };
+            contacts
+                .set_detected_kind(*person, kind, version)
+                .await
+                .expect("a detected kind");
+        }
+        if people.len() < 500 {
+            break;
+        }
+    }
+}
+
+async fn people(connection: &postio_storage::Connection) {
+    ContactRepository::new(connection)
+        .catch_up_batch(None, 100_000)
+        .await
+        .expect("a person for every address");
+    // The corpus's attack senders stay in the corpus: a screenshot shows
+    // what a person would see, and nobody has a contact named by a header
+    // injection.
+    for hostile in HOSTILE_SENDERS {
+        postio_storage::sql::execute(
+            connection,
+            // Deleted, as a person would: the address keeps its owner, so
+            // nothing is left "waiting" for the catch-up, and no list shows
+            // them.
+            "UPDATE contacts SET state = 'deleted'
+              WHERE id IN (SELECT contact_id FROM addresses
+                            WHERE address_normalized = ?1 OR address_normalized LIKE ?2)",
+            postio_storage::sql::bind![*hostile, format!("%@{ABUSE_DOMAIN}")],
+        )
+        .await
+        .expect("a hostile sender put away");
+    }
+    sort_by_kind(connection).await;
+    let mut kinds: Vec<(&str, String)> = NEWSLETTERS
+        .iter()
+        .map(|((_, address), _, _)| ("newsletter", (*address).to_owned()))
+        .collect();
+    for (kind, address) in [
+        ("list", "announce@lists.example.org"),
+        ("list", "all-staff@example.com"),
+        ("list", "finance@example.org"),
+        ("automated", "reports@builds.example.com"),
+        ("automated", "receipts@shop.example"),
+        ("automated", "no-reply@city.example"),
+        // Detection calls a role mailbox a company only where the user knows
+        // two of its people, which this small mailbox does not; the demo
+        // says what a fuller one would.
+        ("company", "office@northfield.example"),
+    ] {
+        kinds.push((kind, address.to_owned()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    kinds.retain(|(_, address)| seen.insert(address.clone()));
+    for (kind, address) in &kinds {
+        postio_storage::sql::execute(
+            connection,
+            "UPDATE contacts SET kind = ?2, kind_source = 'user'
+              WHERE id = (SELECT contact_id FROM addresses WHERE address_normalized = ?1)",
+            postio_storage::sql::bind![address.as_str(), *kind],
+        )
+        .await
+        .expect("a kind");
+        if *kind == "newsletter" {
+            // Held for the weekly digest, as the demo's rule holds them.
+            postio_storage::sql::execute(
+                connection,
+                "INSERT INTO contact_settings
+                   (contact_id, arrival, digest_name, digest_cadence, digest_day, digest_at)
+                 SELECT contact_id, 'digest', 'Newsletters', 'weekly', 'Saturday', '16:00'
+                   FROM addresses WHERE address_normalized = ?1",
+                postio_storage::sql::bind![address.as_str()],
+            )
+            .await
+            .expect("a digest setting");
+        }
+    }
+    // Three records of one person, as the merge sheet shows them (handoff
+    // screen 07): the saved one, and two that only the mail knows.
+    {
+        let contacts = ContactRepository::new(connection);
+        for (name, address, seen, saved) in [
+            ("Ada Moreno", "ada.moreno@northwind.example", 412, true),
+            ("A. Moreno", "a.moreno@example.net", 14, false),
+            ("Ada M.", "ada.m@example.org", 6, false),
+        ] {
+            let person = contacts
+                .create(
+                    Some(name),
+                    &[postio_model::EmailAddress::new(None::<String>, address)],
+                )
+                .await
+                .expect("a record");
+            // What the card's tiles read: the address's sightings. The row's
+            // count is their sum, so the two say one number.
+            postio_storage::sql::execute(
+                connection,
+                "INSERT OR REPLACE INTO contact_sightings
+                     (address_id, account_id, times_seen, last_seen_at, last_name)
+                 SELECT a.id, (SELECT id FROM accounts LIMIT 1), ?2, ?3, ?4
+                   FROM addresses a WHERE a.contact_id = ?1",
+                postio_storage::sql::bind![person.get(), seen, 1_790_000_000_000_i64, name],
+            )
+            .await
+            .expect("their sightings");
+            // The strip under the tiles reads the months: the same count,
+            // spread over the six months up to the last sighting, so the
+            // strip and the tiles say one thing.
+            for back in 0..6_i64 {
+                let share = seen / 6 + if back == 0 { seen % 6 } else { 0 };
+                postio_storage::sql::execute(
+                    connection,
+                    "INSERT OR REPLACE INTO address_months (address_id, month, n)
+                     SELECT a.id, ?2 - ?3, ?4 FROM addresses a WHERE a.contact_id = ?1",
+                    postio_storage::sql::bind![
+                        person.get(),
+                        postio_model::month_key(
+                            chrono::DateTime::from_timestamp_millis(1_790_000_000_000)
+                                .expect("a date")
+                        ),
+                        back,
+                        share
+                    ],
+                )
+                .await
+                .expect("their months");
+            }
+            postio_storage::sql::execute(
+                connection,
+                "UPDATE contacts SET times_seen = ?2, last_seen_at = ?3, source = ?4,
+                        saved_at = ?5, title = ?6, organization = ?7
+                  WHERE id = ?1",
+                postio_storage::sql::bind![
+                    person.get(),
+                    seen,
+                    1_790_000_000_000_i64,
+                    if saved { "user" } else { "mail" },
+                    if saved { Some(1_i64) } else { None },
+                    if saved { Some("Finance lead") } else { None },
+                    if saved {
+                        Some("Northwind Partners")
+                    } else {
+                        None
+                    }
+                ],
+            )
+            .await
+            .expect("their counts");
+        }
+        // What the review finds them by, as the body stage would have noted
+        // it: the same signature on all three, one address that stopped as
+        // another began in the same threads, and a Resent-From.
+        let signature = "ada moreno|finance lead|northwind partners";
+        for address in [
+            "ada.moreno@northwind.example",
+            "a.moreno@example.net",
+            "ada.m@example.org",
+        ] {
+            postio_storage::sql::execute(
+                connection,
+                "INSERT INTO contact_evidence (contact_id, kind, value)
+                 SELECT contact_id, 'signature', ?2 FROM addresses WHERE address_normalized = ?1",
+                postio_storage::sql::bind![address, signature],
+            )
+            .await
+            .expect("a signature noted");
+        }
+        postio_storage::sql::execute(
+            connection,
+            "INSERT INTO contact_evidence (contact_id, kind, value)
+             SELECT contact_id, 'resent', 'ada.moreno@northwind.example'
+               FROM addresses WHERE address_normalized = 'ada.m@example.org'",
+            (),
+        )
+        .await
+        .expect("a Resent-From noted");
+        // Two threads in the archive where a.moreno@example.net stops and
+        // ada.moreno@northwind.example begins.
+        for n in 0..2_i64 {
+            postio_storage::sql::execute(
+                connection,
+                "INSERT INTO threads (account_id, subject) SELECT id, ?1 FROM accounts LIMIT 1",
+                postio_storage::sql::bind![format!("Atlas actuals {n}")],
+            )
+            .await
+            .expect("a thread");
+            let thread = connection.last_insert_rowid();
+            for (name, address, days) in [
+                ("A. Moreno", "a.moreno@example.net", 40_i64),
+                ("Ada Moreno", "ada.moreno@northwind.example", 20_i64),
+            ] {
+                let account: i64 =
+                    postio_storage::sql::scalar(connection, "SELECT id FROM accounts LIMIT 1", ())
+                        .await
+                        .expect("the account");
+                let archive: i64 = postio_storage::sql::scalar(
+                    connection,
+                    "SELECT id FROM mailboxes WHERE role = 'archive' LIMIT 1",
+                    (),
+                )
+                .await
+                .expect("the archive");
+                let mut message = Message::new(
+                    AccountId::new(account),
+                    MailboxId::new(archive),
+                    today() - chrono::Duration::days(days) - chrono::Duration::minutes(n),
+                );
+                message.from = vec![EmailAddress::new(Some(name), address)];
+                message.to = vec![EmailAddress::new(Some("You"), "you@example.com")];
+                message.subject = Some(format!("Atlas actuals {n}"));
+                message.flags.insert(Flag::Seen);
+                MessageRepository::new(connection)
+                    .create(&mut message)
+                    .await
+                    .expect("a message in the archive");
+                postio_storage::sql::execute(
+                    connection,
+                    "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
+                    postio_storage::sql::bind![message.id.get(), thread],
+                )
+                .await
+                .expect("threaded");
+            }
+        }
+    }
+    // Ben is someone the user saved, so he is who is "on copy" with the new
+    // sender (handoff screen 05); and Hollis, whom the first row is from, is
+    // a colleague, so `i` on that row is the known-sender popover (screen 04).
+    for address in ["ben@example.net", "hollis@example.com"] {
+        postio_storage::sql::execute(
+            connection,
+            "UPDATE contacts SET saved_at = 1, source = 'user', listed = 1
+              WHERE id = (SELECT contact_id FROM addresses WHERE address_normalized = ?1)",
+            postio_storage::sql::bind![address],
+        )
+        .await
+        .expect("a saved person");
+    }
+    // Marisol is saved, notifies, is reminded about, and has a note.
+    for statement in [
+        "UPDATE contacts SET saved_at = 1, source = 'user',
+                note = 'Prefers numbers in a sheet rather than in the email body.',
+                organization = 'Northwind Partners', title = 'Finance lead'
+          WHERE id = (SELECT contact_id FROM addresses WHERE address_normalized = 'marisol@example.com')",
+        "INSERT INTO contact_settings (contact_id, notify, remind_days)
+         SELECT contact_id, 1, 3 FROM addresses WHERE address_normalized = 'marisol@example.com'",
+    ] {
+        postio_storage::sql::execute(connection, statement, ())
+            .await
+            .expect("a person's details");
+    }
 }
 
 /// File one message from `from` about `subject` into `mailbox` at `at`.
@@ -1304,14 +1658,59 @@ pub async fn filed(
         .create(&mut message)
         .await
         .expect("a filed message");
-    ContactRepository::new(connection)
-        .record_message(&message)
+    record_correspondents(connection, &message)
         .await
         .expect("its correspondents");
     ThreadingRepository::new(connection, account)
         .thread(&message)
         .await
         .expect("threaded");
+}
+
+/// A message the user sent to `to`, with a reminder that no reply has
+/// settled: what is open "Waiting on them".
+async fn waiting_on(
+    connection: &postio_storage::Connection,
+    account: &postio_model::Account,
+    mailbox: MailboxId,
+    to: (&str, &str),
+    subject: &str,
+    at: DateTime<Utc>,
+) {
+    let mut message = Message::new(account.id, mailbox, at);
+    message.date = Some(at);
+    message.from = vec![account.address.clone()];
+    message.to = vec![EmailAddress::new(Some(to.0), to.1)];
+    message.subject = Some(subject.to_owned());
+    message.flags = [Flag::Seen].into_iter().collect();
+    message.rfc_message_id = Some(RfcMessageId::new(format!(
+        "<sent.{}@example.test>",
+        subject.to_lowercase().replace(' ', ".")
+    )));
+    let id = MessageRepository::new(connection)
+        .create(&mut message)
+        .await
+        .expect("a sent message");
+    record_correspondents(connection, &message)
+        .await
+        .expect("its correspondents");
+    let thread = ThreadingRepository::new(connection, account.id)
+        .thread(&message)
+        .await
+        .expect("threaded");
+    postio_storage::sql::execute(
+        connection,
+        "INSERT INTO reminders (thread_id, anchor_message_id, set_at, due_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        postio_storage::sql::bind![
+            thread.thread_id.get(),
+            id.get(),
+            at.timestamp(),
+            (at + chrono::Duration::days(7)).timestamp()
+        ],
+    )
+    .await
+    .expect("a reminder");
 }
 
 pub fn message(
@@ -1407,6 +1806,90 @@ mod tests {
         assert!(config.contains(&format!("day = \"{day}\"")), "{config}");
     }
 
+    /// A contact the demo shows is sorted by what its mail says, as it is in
+    /// the app, not left a person by default; and the senders that exist to
+    /// attack the parsers are in the corpus, not in the demo's people.
+    #[tokio::test]
+    async fn the_demo_sorts_its_people_and_keeps_the_hostile_senders_out() {
+        use postio_storage::sql::scalar;
+
+        let (database, _) = super::demo().await;
+        let connection = database.connect().await.expect("a connection");
+        let of = |address: &'static str| {
+            let connection = &connection;
+            async move {
+                scalar(
+                    connection,
+                    "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+                      WHERE a.address_normalized = ?1 AND c.state = 'live'",
+                    postio_storage::sql::bind![address],
+                )
+                .await
+                .expect("a count")
+            }
+        };
+        let automated = scalar(
+            &connection,
+            "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+              WHERE a.address_normalized = 'mailer-daemon@mx4.example.net'
+                AND c.kind = 'automated'",
+            (),
+        )
+        .await
+        .expect("a count");
+        assert_eq!(automated, 1, "the bounce sender is automated");
+        let companies = scalar(
+            &connection,
+            "SELECT count(*) FROM contacts WHERE kind = 'company' AND state = 'live'",
+            (),
+        )
+        .await
+        .expect("a count");
+        assert!(
+            companies >= 1,
+            "the Companies tab is not empty: {companies}"
+        );
+        assert_eq!(
+            scalar(
+                &connection,
+                "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+                  WHERE a.address_normalized = 'office@northfield.example' AND c.kind = 'company'",
+                (),
+            )
+            .await
+            .expect("a count"),
+            1,
+            "the school's office is a company"
+        );
+        let waiting = ContactRepository::new(&connection)
+            .unowned_count()
+            .await
+            .expect("a count");
+        assert_eq!(
+            waiting, 0,
+            "every address with mail has a person, so the footer never says Building contacts"
+        );
+        let abuse = scalar(
+            &connection,
+            "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+              WHERE a.address_normalized LIKE '%@abuse.example.com' AND c.state = 'live'",
+            (),
+        )
+        .await
+        .expect("a count");
+        assert_eq!(
+            abuse, 0,
+            "the corpus's abuse.example.com senders are not demo contacts"
+        );
+        for hostile in [
+            "mallory@sender.invalid",
+            "billing@sender.invalid",
+            "broken.from@example.com",
+        ] {
+            assert_eq!(of(hostile).await, 0, "{hostile} is not a demo contact");
+        }
+    }
+
     /// Spec 010 T001: the search seed is a two-year mailbox in the shape of
     /// the search design's screens, with the files the Files tab and the
     /// attachment indexer need.
@@ -1479,7 +1962,7 @@ mod tests {
         // Every address is on a reserved domain.
         let outside = scalar(
             &connection,
-            "SELECT count(*) FROM contacts WHERE address NOT LIKE '%@example.com'",
+            "SELECT count(*) FROM addresses WHERE contact_id IS NOT NULL AND address NOT LIKE '%@example.com'",
             (),
         )
         .await

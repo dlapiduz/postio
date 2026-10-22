@@ -36,7 +36,7 @@ pub fn candidate_label(candidate: &RecipientCandidate) -> String {
 ///
 /// A contact inserts one address; a group inserts every member as its own
 /// address, comma by comma, exactly as if they had been typed individually --
-/// there is no group reference to insert instead (ADR 0007 Q3).
+/// there is no group reference to insert instead (specs/005-contacts).
 pub fn accepted(text: &str, candidate: &RecipientCandidate) -> String {
     let inserted: String = match candidate {
         RecipientCandidate::Contact(address) => format!("{address}, "),
@@ -58,14 +58,15 @@ pub fn prefix(text: &str) -> Option<&str> {
 }
 
 /// One row of the recipient directory (spec 007 T076, research R15): a
-/// contact, and how many times the user has written to its address -- the
-/// "wrote 42 times" a suggestion shows (FR-052).
+/// person, and how many times the user has written to any of their
+/// addresses -- the "wrote 42 times" a suggestion shows (FR-052).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Correspondent {
-    /// The contact, as the store keeps it.
+    /// The person, as the store keeps them.
     pub contact: Contact,
-    /// Messages the user sent to this address. `correspondents.sent_count`
-    /// (T075); zero until that table is read.
+    /// Messages the user sent to any of this person's addresses, summed
+    /// from `correspondents.sent_count` (T075); zero until that table is
+    /// read.
     pub sent_count: u32,
 }
 
@@ -87,15 +88,31 @@ impl From<Contact> for Correspondent {
 ///   given: a group is a deliberate choice the user is likelier typing
 ///   towards. A group with no members expands to nothing, so it is never
 ///   offered.
-/// * **Then contacts** whose address begins with the prefix, or any word of
-///   the name the user gave or last saw on it. A suppressed contact never
-///   (ADR 0007 Q2). They are ranked by the letters written to each, then
-///   ADR 0007 Q6's band, then how lately and how often each was seen.
+/// * **Then people** one of whose addresses begins with the prefix, or any
+///   word of the name the user gave or the mail last gave them. A person
+///   is offered once per address they own, preferred address first, each
+///   under the person's one name (specs/005-contacts FR-030). The directory
+///   holds live people only: a deleted one is never offered. They are
+///   ranked by the letters written to each, then the address-book band,
+///   then how lately and how often each was seen.
 pub fn suggest(
     groups: &[(String, Vec<EmailAddress>)],
     correspondents: &[Correspondent],
     prefix: &str,
     limit: usize,
+) -> Vec<RecipientCandidate> {
+    suggest_ranked(groups, correspondents, prefix, limit, false)
+}
+
+/// [`suggest`], and with `by_kind` a robot, a list or a newsletter ranks
+/// below every person and company unless the user has written to it: what a
+/// platform that has adopted people asks for (specs/011-focus-contacts S4).
+pub fn suggest_ranked(
+    groups: &[(String, Vec<EmailAddress>)],
+    correspondents: &[Correspondent],
+    prefix: &str,
+    limit: usize,
+    by_kind: bool,
 ) -> Vec<RecipientCandidate> {
     let prefix = prefix.trim().to_lowercase();
     let mut candidates: Vec<RecipientCandidate> = groups
@@ -109,51 +126,63 @@ pub fn suggest(
         .collect();
     let mut matching: Vec<&Correspondent> = correspondents
         .iter()
-        .filter(|row| !row.contact.suppressed && completes(&row.contact, &prefix))
+        .filter(|row| completes(&row.contact, &prefix))
         .collect();
     // Stable: rows the rule cannot tell apart keep the directory's order.
-    matching.sort_by(|a, b| rank(a, b));
-    let room = limit.saturating_sub(candidates.len());
+    matching.sort_by(|a, b| rank(a, b, by_kind));
     candidates.extend(
         matching
             .into_iter()
-            .take(room)
-            .map(|row| RecipientCandidate::Contact(completed_address(&row.contact))),
+            .flat_map(|row| offered_addresses(&row.contact))
+            .map(RecipientCandidate::Contact),
     );
+    candidates.truncate(limit);
     candidates
 }
 
-/// Which of two contacts completion offers first (research R15, over ADR
-/// 0007 Q6's bands):
+/// Which of two people completion offers first (research R15, over the
+/// address-book band of specs/005-contacts):
 ///
 /// 1. the more letters the user wrote to it: a letter is the user's own
 ///    act, the one evidence that they want to write there again;
 /// 2. then a contact the user made or imported before one only seen in
 ///    mail, because how often a list robot is seen says nothing about
-///    wanting to write to it (ADR 0007 Q6);
+///    wanting to write to it (specs/005-contacts);
 /// 3. then the more lately seen, and one never seen last;
 /// 4. then the more often seen.
 ///
 /// Until letters are counted (T075) every count is zero, and this is the
 /// store's order, `ContactRepository::search`'s.
-fn rank(a: &Correspondent, b: &Correspondent) -> Ordering {
+fn rank(a: &Correspondent, b: &Correspondent, by_kind: bool) -> Ordering {
     let band = |row: &Correspondent| row.contact.source == ContactSource::Mail;
-    b.sent_count
-        .cmp(&a.sent_count)
+    // Not someone you write to: nobody you have written to is demoted.
+    let demoted = |row: &Correspondent| {
+        by_kind
+            && row.sent_count == 0
+            && !matches!(
+                row.contact.kind,
+                postio_model::ContactKind::Person | postio_model::ContactKind::Company
+            )
+    };
+    demoted(a)
+        .cmp(&demoted(b))
+        .then_with(|| b.sent_count.cmp(&a.sent_count))
         .then_with(|| band(a).cmp(&band(b)))
         .then_with(|| b.contact.last_seen_at.cmp(&a.contact.last_seen_at))
         .then_with(|| b.contact.times_seen.cmp(&a.contact.times_seen))
 }
 
-/// Whether `contact` completes `prefix`, which is already lowercase.
-fn completes(contact: &Contact, prefix: &str) -> bool {
-    if prefix.is_empty() || contact.address.address.to_lowercase().starts_with(prefix) {
-        return true;
-    }
-    [contact.name.as_deref(), contact.address.name.as_deref()]
-        .into_iter()
-        .flatten()
-        .any(|name| begins_a_word(&name.to_lowercase(), prefix))
+/// Whether `person` completes `prefix`, which is already lowercase.
+fn completes(person: &Contact, prefix: &str) -> bool {
+    prefix.is_empty()
+        || person
+            .addresses
+            .iter()
+            .any(|owned| owned.address.address.to_lowercase().starts_with(prefix))
+        || [person.name.as_deref(), person.seen_name.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|name| begins_a_word(&name.to_lowercase(), prefix))
 }
 
 /// Whether `prefix` begins `text` or any space-separated word in it.
@@ -164,14 +193,34 @@ fn begins_a_word(text: &str, prefix: &str) -> bool {
             .any(|(at, _)| text[at + 1..].starts_with(prefix))
 }
 
-/// The address a contact completes to: the name the user gave it, or the
-/// one last seen on the address.
-fn completed_address(contact: &Contact) -> EmailAddress {
-    let name = contact
-        .name
-        .clone()
-        .or_else(|| contact.address.name.clone());
-    EmailAddress::new(name, contact.address.address.clone())
+/// Every address a person offers, preferred first (the store's order), each
+/// under the person's one name.
+fn offered_addresses(person: &Contact) -> Vec<EmailAddress> {
+    let name = person_name(person);
+    person
+        .addresses
+        .iter()
+        .map(|owned| EmailAddress::new(name.clone(), owned.address.address.clone()))
+        .collect()
+}
+
+/// The address a group member expands to: their preferred one
+/// (specs/005-contacts FR-041).
+pub fn preferred_address(person: &Contact) -> Option<EmailAddress> {
+    person
+        .preferred_address()
+        .map(|owned| EmailAddress::new(person_name(person), owned.address.address.clone()))
+}
+
+/// A person's name for a recipient header -- the one the user set, else the
+/// one the mail gave them -- when they have one beyond their address.
+fn person_name(person: &Contact) -> Option<String> {
+    [person.name.as_deref(), person.seen_name.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|name| !name.is_empty())
+        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -179,6 +228,21 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::*;
+    use postio_model::{AddressId, ContactAddress};
+
+    fn owned(id: i64, name: Option<&str>, address: &str) -> ContactAddress {
+        ContactAddress::new(AddressId::new(id), EmailAddress::new(name, address))
+    }
+
+    /// A person called `name` owning `addresses`, preferred first.
+    fn person(name: &str, addresses: &[&str]) -> Contact {
+        let base = addresses[0].len() as i64 * 100;
+        let mut person = Contact::new(owned(base, Some(name), addresses[0]));
+        for (i, address) in addresses.iter().enumerate().skip(1) {
+            person.addresses.push(owned(base + i as i64, None, address));
+        }
+        person
+    }
 
     /// A correspondent seen on `seen` messages, last `days_ago`, and
     /// written to `sent` times.
@@ -189,7 +253,7 @@ mod tests {
         days_ago: i64,
         sent: u32,
     ) -> Correspondent {
-        let mut contact = Contact::new(EmailAddress::new(Some(name), address));
+        let mut contact = person(name, &[address]);
         contact.times_seen = seen;
         contact.last_seen_at = Some(
             Utc.with_ymd_and_hms(2026, 9, 26, 16, 0, 0).unwrap() - chrono::Duration::days(days_ago),
@@ -247,7 +311,7 @@ mod tests {
         );
     }
 
-    /// ADR 0007 Q6 still holds for what the user did not write: a contact
+    /// The address-book band still holds for what the user did not write: a contact
     /// they made outranks every mail sighting, however frequent or recent,
     /// because four hundred sightings of a list robot are not evidence they
     /// want to write to it. A letter they wrote is that evidence, so it
@@ -272,18 +336,16 @@ mod tests {
         );
     }
 
-    /// What matched before still matches, and nothing else: a prefix of the
-    /// address or of any word in a name, never a suppressed contact, and
-    /// groups, which the user made on purpose, first.
+    /// What matched before still matches, and nothing else: a prefix of
+    /// an address or of any word in a name, and groups, which the user made
+    /// on purpose, first. (A deleted person is not in the directory at all:
+    /// the store hands completion live people only.)
     #[test]
-    fn groups_come_first_and_a_suppressed_contact_never() {
-        let mut gone = correspondent("Grace Gone", "grace.gone@example.org", 40, 0, 40);
-        gone.contact.suppressed = true;
+    fn groups_come_first() {
         let rows = [
             correspondent("Grace Abara", "grace@example.net", 5, 3, 1),
             correspondent("Lin Graham", "lin@example.com", 1, 9, 0),
             correspondent("Ada Lovelace", "ada@example.com", 90, 0, 90),
-            gone,
         ];
         let groups = [
             (
@@ -297,6 +359,26 @@ mod tests {
             ["group:Gravel run", "grace@example.net", "lin@example.com"]
         );
         assert_eq!(addresses(&suggest(&groups, &rows, "gra", 2)).len(), 2);
+    }
+
+    /// Specs/005-contacts FR-030: a person is offered once per address they
+    /// own, preferred first, every one under the person's one name.
+    #[test]
+    fn a_person_is_offered_once_per_address_under_one_name() {
+        let mut ada = person("Ada Lovelace", &["ada@work.example", "ada@home.example"]);
+        ada.name = Some("Ada Lovelace".to_owned());
+        ada.seen_name = Some("A. King".to_owned());
+        let rows = [Correspondent::from(ada)];
+        let offered = suggest(&[], &rows, "ada@home", 8);
+        assert_eq!(
+            addresses(&offered),
+            ["ada@work.example", "ada@home.example"],
+            "a match on any address offers the person, preferred address first"
+        );
+        assert!(offered.iter().all(|candidate| matches!(
+            candidate,
+            RecipientCandidate::Contact(address) if address.name.as_deref() == Some("Ada Lovelace")
+        )));
     }
 
     #[test]
@@ -327,5 +409,51 @@ mod tests {
     fn three_letters_are_not_enough_to_look_up() {
         assert_eq!(prefix("x@example.com, ada"), None);
         assert_eq!(prefix("x@example.com, ada@"), Some("ada@"));
+    }
+
+    #[test]
+    fn ranked_by_kind_a_robot_or_a_list_never_outranks_a_person_unless_you_write_to_it() {
+        let mut noisy = correspondent("Alpha Alerts", "alerts@alpha.example", 900, 0, 0);
+        noisy.contact.kind = postio_model::ContactKind::Automated;
+        let mut list = correspondent("Alpha List", "list@alpha.example", 800, 0, 0);
+        list.contact.kind = postio_model::ContactKind::List;
+        let mut posted_to = correspondent("Alpha Dev List", "dev@alpha.example", 5, 90, 3);
+        posted_to.contact.kind = postio_model::ContactKind::List;
+        let mut quiet = correspondent("Alpha Person", "person@alpha.example", 2, 300, 0);
+        quiet.contact.kind = postio_model::ContactKind::Person;
+        let directory = [noisy, list, posted_to, quiet];
+        let order = |by_kind: bool| -> Vec<String> {
+            suggest_ranked(&[], &directory, "alpha", 10, by_kind)
+                .into_iter()
+                .filter_map(|c| match c {
+                    RecipientCandidate::Contact(c) => Some(c.address),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            order(false),
+            [
+                "dev@alpha.example",
+                "alerts@alpha.example",
+                "list@alpha.example",
+                "person@alpha.example"
+            ],
+            "unranked: written-to first, then recency"
+        );
+        assert_eq!(
+            order(true),
+            [
+                "dev@alpha.example",
+                "person@alpha.example",
+                "alerts@alpha.example",
+                "list@alpha.example"
+            ],
+            "ranked: the person before the robot and the list nobody writes to"
+        );
+        assert_eq!(
+            suggest(&[], &directory, "alpha", 10),
+            suggest_ranked(&[], &directory, "alpha", 10, false)
+        );
     }
 }

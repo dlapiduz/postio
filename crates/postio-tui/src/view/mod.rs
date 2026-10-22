@@ -728,7 +728,10 @@ mod tests {
                 group.label()
             );
         }
-        for section in postio_ui::settings::Section::ALL {
+        for section in postio_ui::settings::Section::ALL
+            .into_iter()
+            .filter(|section| section.shown_in(postio_core::Frontend::Terminal))
+        {
             assert!(
                 screen.contains(section.label()),
                 "{} missing:\n{screen}",

@@ -271,7 +271,7 @@ fn action_cap(reader: &Reader, notice: &str) -> Option<String> {
 }
 
 /// A notice's action is a button like every other, so it carries its key
-/// inside it (T219): `U` on Unsubscribe and `i i` on Show images, from the
+/// inside it (T219): `U` on Unsubscribe and `alt+i` on Show images, from the
 /// keymap, so a rebind reaches the cap the moment it reaches the keyboard.
 /// Both frontends' readers are this one, so the open message and the pane
 /// draw the same cap.
@@ -300,7 +300,7 @@ pub fn every_notice_action_carries_its_key() {
         caps(),
         [
             ("Unsubscribe", Some("M".to_owned())),
-            ("Show images", Some("i i".to_owned())),
+            ("Show images", Some("alt+i".to_owned())),
         ],
         "a notice's button without its key"
     );

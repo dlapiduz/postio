@@ -333,6 +333,96 @@ public final class PostioSession {
     /// Create (or Save): write the rule.
     public func focusRuleCreate() { inner.focusRuleCreate() }
 
+    /// The Contacts list's row at `index`, or `nil` while its page is on its
+    /// way (`FocusContactsRows` follows).
+    public func focusContactsRow(_ index: UInt32) -> ContactRowViewFfi? {
+        inner.focusContactsRow(index: index)
+    }
+
+    /// How many rows the Contacts list has.
+    public func focusContactsTotal() -> UInt32 { inner.focusContactsTotal() }
+
+    /// Where the Contacts cursor is.
+    public func focusContactsCursor() -> UInt32? { inner.focusContactsCursor() }
+
+    /// The card beside the Contacts list, once read.
+    public func focusContactsCard() -> ContactCardViewFfi? { inner.focusContactsCard() }
+
+    /// A click on a kind tab.
+    public func focusContactsTab(_ tab: ContactTabFfi) { inner.focusContactsTab(tab: tab) }
+
+    /// The Contacts filter holds `text` now.
+    public func focusContactsFilter(_ text: String) { inner.focusContactsFilter(text: text) }
+
+    /// A click on the Contacts row at `index`.
+    public func focusContactsPoint(_ index: UInt32) { inner.focusContactsPoint(index: index) }
+
+    /// A click on the merge sheet's card at `index`: its name is kept.
+    public func focusContactMergeKeep(_ index: UInt32) { inner.focusContactMergeKeep(index: index) }
+
+    /// "Split" on the card's address.
+    public func focusContactSplit(_ address: String) { inner.focusContactSplit(address: address) }
+
+    /// What the open and save panels for a vCard say.
+    public func contactsPanelWords() -> ContactsPanelWordsFfi { inner.contactsPanelWords() }
+
+    /// Reads and applies the cards in a file the user chose.
+    public func contactsImport(_ bytes: Data) -> ContactsImportResultFfi {
+        inner.contactsImport(bytes: bytes)
+    }
+
+    /// One `.vcf` of the people the Contacts list holds.
+    public func contactsExport() -> ContactsExportResultFfi { inner.contactsExport() }
+
+    /// The file a demo imports from in place of the open panel.
+    public func demoContactsFile() -> Data { inner.demoContactsFile() }
+
+    /// Settings > Contacts' words and sync section, for the state sync is in.
+    public func contactsPane(
+        _ scope: SyncScopeFfi, _ mode: SyncModeFfi, _ status: SyncStatusFfi, _ plan: SyncPlanFfi?
+    ) -> ContactsPaneFfi {
+        inner.contactsPane(scope: scope, mode: mode, status: status, plan: plan)
+    }
+
+    /// What a sync would do, from a snapshot of the Mac's side. A dry run.
+    public func contactsSyncPlan(
+        _ records: [ExternalRecordFfi], _ scope: SyncScopeFfi, _ mode: SyncModeFfi
+    ) -> SyncResultFfi {
+        inner.contactsSyncPlan(records: records, scope: scope, mode: mode)
+    }
+
+    /// Settings > Contacts appeared: read the Suggestions switches.
+    public func focusContactsSettingsOpened() { inner.focusContactsSettingsOpened() }
+
+    /// A click on the Suggestions switch at `index`.
+    public func focusContactsSuggestion(_ index: UInt32) { inner.focusContactsSuggestion(index: index) }
+
+    /// The Suggestions section, once read.
+    public func focusContactsSettings() -> SuggestionsViewFfi? { inner.focusContactsSettings() }
+
+    /// The Edit contact form, while one is open.
+    public func focusContactEdit() -> ContactEditViewFfi? { inner.focusContactEdit() }
+
+    /// A change a person made to the open Edit contact form.
+    public func focusContactEditChange(_ change: EditChangeFfi) {
+        inner.focusContactEditChange(change: change)
+    }
+
+    /// A click on the card's switch at `index`.
+    public func focusContactCardSwitch(_ index: UInt32) {
+        inner.focusContactCardSwitch(index: index)
+    }
+
+    /// A click on a sender's name: the known-sender popover for `address`.
+    public func focusContactPopoverAt(_ address: String) {
+        inner.focusContactPopoverAt(address: address)
+    }
+
+    /// A click on a segment of the popover's arrival control.
+    public func focusContactArrival(_ arrival: ContactArrivalFfi) {
+        inner.focusContactArrival(arrival: arrival)
+    }
+
     /// Capture's text field holds `text` now.
     public func focusCaptureTyped(_ text: String) { inner.focusCaptureTyped(text: text) }
 

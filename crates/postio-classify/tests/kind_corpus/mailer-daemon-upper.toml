@@ -1,0 +1,4 @@
+label = "automated"
+address = "MAILER-DAEMON@mx4.example.net"
+name = "Mail Delivery Subsystem"
+messages = 1

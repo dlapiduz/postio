@@ -123,8 +123,8 @@ command from inside a text field.
 | `ctrl+shift+n` or `alt+n` | Add account | Everywhere |  | `add_account` |
 | `ctrl+e` | Edit configuration | List, conversation, reader |  | `edit_config` |
 | `ctrl+q` or `ctrl+w` | Quit Postio | Everywhere |  | `quit` |
-| `i i` | Show remote images | List, conversation, reader |  | `show_images` |
-| `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
+| `alt+i` | Show remote images | List, conversation, reader |  | `show_images` |
+| `alt+I` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
 | `M` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |
 | `C` | Clear what the list sent | List, conversation, reader, digest | Undoable | `clear_list_mail` |
 | `g l` | Go to folders | List, conversation, reader, search |  | `go_to_folders` |
@@ -150,7 +150,7 @@ command from inside a text field.
 | `r` | Rebuild search index | Account list |  | `rebuild_account_index` |
 | `m` | Set as default account | Account list |  | `set_default_account` |
 | `M` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
-| `g c` | Next scope | List, folder list |  | `next_scope` |
+| `g n` | Next scope | List, folder list |  | `next_scope` |
 | `F5` | Refresh | List, conversation, reader |  | `refresh` |
 | `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
@@ -179,6 +179,38 @@ command from inside a text field.
 | `alt+s` | Use the subject instead | Capture sheet |  | `capture_use_subject` |
 | `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet |  | `capture_write` |
 | `L` | Digest mail like this | List |  | `digest_like_this` |
+| `g c` | Contacts | List, conversation, reader, search, folder list (not the terminal) |  | `open_contacts` |
+| `i` | Contact popover | List, conversation, reader (not the terminal) |  | `contact_popover` |
+| `ctrl+i` | Open card |  (not the terminal) |  | `contact_open_card` |
+| `ctrl+Return` | Add contact |  (not the terminal) | Undoable | `contact_add` |
+| `ctrl+BackSpace` | Ignore sender |  (not the terminal) | Undoable | `contact_ignore` |
+| `Left` | Arrival: previous |  (not the terminal) |  | `contact_arrival_prev` |
+| `Right` | Arrival: next |  (not the terminal) |  | `contact_arrival_next` |
+| `0` | Choose where this sender's mail arrives |  (not the terminal) | Undoable | `contact_set_arrival` |
+| `Return` or `o` | Show mail |  (not the terminal) |  | `contact_show_mail` |
+| `c` | Write to |  (not the terminal) |  | `contact_compose` |
+| `/` | Filter contacts |  (not the terminal) |  | `contacts_filter` |
+| `[` | Previous kind tab |  (not the terminal) |  | `contacts_tab_previous` |
+| `]` | Next kind tab |  (not the terminal) |  | `contacts_tab_next` |
+| `v e` | Everyone from mail |  (not the terminal) |  | `contacts_toggle_everyone` |
+| `m` | Merge |  (not the terminal) | Undoable | `contact_join` |
+| `plus` | Add address |  (not the terminal) | Undoable | `contact_add_address` |
+| `-` | Detach address |  (not the terminal) | Undoable | `contact_detach_address` |
+| `P` | Use this address first |  (not the terminal) | Undoable | `contact_set_preferred` |
+| `ctrl+shift+n` | New contact |  (not the terminal) | Undoable | `contact_new` |
+| `ctrl+e` | Edit contact |  (not the terminal) | Undoable | `contact_edit` |
+| `ctrl+s` | Save contact |  (not the terminal) | Undoable | `contact_save` |
+| `d` or `Delete` | Delete |  (not the terminal) | Undoable | `contact_delete` |
+| `r` | Restore contact |  (not the terminal) | Undoable | `contact_restore` |
+| `v d` | Deleted contacts |  (not the terminal) |  | `contacts_toggle_deleted` |
+| `g w` | Review contacts | List, conversation, reader, search, folder list (not the terminal) |  | `contacts_suggestions` |
+| `n` | Not the same person |  (not the terminal) |  | `suggestion_dismiss` |
+| `g n` | New group |  (not the terminal) | Undoable | `contact_group_new` |
+| `R` | Rename group |  (not the terminal) | Undoable | `contact_group_rename` |
+| `l` | Add to group |  (not the terminal) | Undoable | `contact_group_add` |
+| `L` | Remove from group |  (not the terminal) | Undoable | `contact_group_remove` |
+| `v i` | Import contacts |  (not the terminal) |  | `contacts_import` |
+| `v x` | Export contacts |  (not the terminal) |  | `contacts_export` |
 
 ## The one box
 

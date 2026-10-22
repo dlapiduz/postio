@@ -563,6 +563,10 @@ pub enum KeyContext {
     /// The Mac's search results, the main window's other mode (spec 010
     /// D17).
     Results,
+    /// The Contacts surface's list and card (specs/005-contacts).
+    Contacts,
+    /// The contact popover (specs/011-focus-contacts S6).
+    ContactPopover,
 }
 
 impl KeyContext {
@@ -615,6 +619,12 @@ impl KeyContext {
             // and a list key that fell through would act on the inbox
             // hidden behind them. The list's verbs name `Results` too.
             Self::Results => &[Self::Results, Self::Global],
+            // Not layered over `List`: Contacts covers the reading pane, and
+            // `c` here writes to the focused *person* -- a fall-through to a
+            // mail binding would act on the message list behind it, which the
+            // user cannot see.
+            Self::Contacts => &[Self::Contacts, Self::Global],
+            Self::ContactPopover => &[Self::ContactPopover, Self::Global],
         }
     }
 }
@@ -643,6 +653,8 @@ impl From<Context> for KeyContext {
             Context::Filtered => Self::Filtered,
             Context::Capture => Self::Capture,
             Context::Results => Self::Results,
+            Context::Contacts => Self::Contacts,
+            Context::ContactPopover => Self::ContactPopover,
         }
     }
 }

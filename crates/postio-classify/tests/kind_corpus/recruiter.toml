@@ -1,0 +1,5 @@
+label = "person"
+address = "robin@talent.example"
+name = "Robin Chu"
+messages = 3
+with_unsubscribe = 1

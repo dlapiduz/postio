@@ -22,6 +22,11 @@ impl App {
         self.surfaces.rules.as_ref()
     }
 
+    /// The person whose digest the rule called `name` is, when it is one's.
+    pub fn rule_owner(&self, name: &str) -> Option<&str> {
+        self.features.rule_owner(name)
+    }
+
     /// The rule dialog, while it is open.
     pub fn rule_form(&self) -> Option<&Form> {
         self.surfaces.rule.as_ref().map(|(form, _)| form)

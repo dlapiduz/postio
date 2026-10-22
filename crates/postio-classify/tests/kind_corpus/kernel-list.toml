@@ -1,0 +1,6 @@
+label = "list"
+address = "dev@lists.projectx.example"
+name = "ProjectX Developers"
+messages = 200
+with_list_id = 200
+with_list_precedence = 200

@@ -137,7 +137,15 @@ pub fn body(
         let line = Rect::new(rows.x, y, rows.width, 1);
         let holds = list.holds().get(offset).copied().unwrap_or(0);
         frame.render_widget(
-            row_line(rule, holds, offset == list.cursor(), width, theme, now),
+            row_line(
+                rule,
+                app.rule_owner(&rule.name),
+                holds,
+                offset == list.cursor(),
+                width,
+                theme,
+                now,
+            ),
             line,
         );
         hits.add(line, Target::Surface(Part::RuleRow, offset));
@@ -147,6 +155,7 @@ pub fn body(
 /// A rule's row.
 fn row_line(
     rule: &postio_config::DigestRule,
+    owner: Option<&str>,
     holds: u32,
     cursor: bool,
     width: usize,
@@ -154,7 +163,8 @@ fn row_line(
     now: DateTime<Local>,
 ) -> Line<'static> {
     let name = SafeText::new(&rule.name);
-    let matches = SafeText::new(&rule.queries.join(", "));
+    // A person's digest says whose it is, not the address queries it reads as.
+    let matches = SafeText::new(&owner.map_or_else(|| rule.queries.join(", "), str::to_owned));
     let when = digest::rule_when(rule).unwrap_or_default();
     let next = rule
         .due()

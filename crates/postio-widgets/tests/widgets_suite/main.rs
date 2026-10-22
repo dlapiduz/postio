@@ -227,6 +227,11 @@ const CASES: &[(&str, fn())] = &[
         reader_treatment::a_reader_reports_its_treatment_and_tells_when_it_changes as fn(),
     ),
     (
+        "reader_treatment::a_reader_opens_a_message_in_the_treatment_the_store_remembers_for_its_sender",
+        reader_treatment::a_reader_opens_a_message_in_the_treatment_the_store_remembers_for_its_sender
+            as fn(),
+    ),
+    (
         "reader_treatment::a_reader_that_draws_no_treatments_answers_app_colours",
         reader_treatment::a_reader_that_draws_no_treatments_answers_app_colours as fn(),
     ),

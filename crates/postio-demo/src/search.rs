@@ -15,13 +15,12 @@ use postio_model::{
     MessageId, RfcMessageId,
 };
 use postio_storage::repository::{
-    ContactRepository, LabelRepository, MarkerRepository, MessageRepository, StoredBody,
-    ThreadingRepository,
+    LabelRepository, MarkerRepository, MessageRepository, StoredBody, ThreadingRepository,
 };
 use postio_storage::{BlobStore, Connection, Store};
 
 use crate::files::{SearchFile, search_files};
-use crate::{Ask, marker, synced, today};
+use crate::{Ask, marker, record_correspondents, synced, today};
 
 /// The people of the seed, by index.
 const PEOPLE: [(&str, &str); 13] = [
@@ -885,8 +884,7 @@ async fn file_thread(
             .create(&mut message)
             .await
             .expect("a message");
-        ContactRepository::new(connection)
-            .record_message(&message)
+        record_correspondents(connection, &message)
             .await
             .expect("its correspondents");
         ThreadingRepository::new(connection, account)

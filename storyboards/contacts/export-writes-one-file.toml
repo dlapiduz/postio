@@ -1,0 +1,21 @@
+# File > Export Contacts (specs/011-focus-contacts S11): one .vcf of the
+# people the Contacts list holds, written where the user chose in a save
+# panel (a demo writes under its own temporary folder). The sheet after says
+# how many, and that nothing else leaves the Mac.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S11" }
+seed   = "small"
+design = "none: the handoff has no export screen"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "export"
+command = "contacts_export"
+expect  = "A sheet over the window titled “Exported N contacts” (N the people the Contacts list holds), saying it is written to the file named with their groups, and that nothing else leaves this Mac, with Done Esc."
+
+[[step]]
+id      = "done"
+command = "back"
+expect  = "Done: the sheet is gone and the keyboard is on the list where it was."

@@ -1,0 +1,36 @@
+# The popover's two ways on (specs/011-focus-contacts S6, handoff screen
+# 04): Return is all the mail with this person, typed into the search the
+# way a person would type it (`with:` and every address they own); c writes
+# to them in a composer of its own. Either way the popover goes.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S6" }
+seed   = "small"
+design = "04-popover-known-sender"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "contact_popover"
+expect  = "The popover is up."
+
+[[step]]
+id      = "all-mail"
+command = "contact_show_mail"
+check   = { keyboard.region = "results" }
+expect  = "The popover is gone and the results show every message to or from this person, the query written out as with:<address>."
+
+[[step]]
+command = "back"
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "contact_popover"
+expect  = "The popover is up again, on the same row."
+
+[[step]]
+id      = "write"
+command = "contact_compose"
+check   = { keyboard.region = "composer" }
+expect  = "The popover is gone and a composer is open with the person in To:, as a mailto: link would open one."

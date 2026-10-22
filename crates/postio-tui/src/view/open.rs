@@ -482,7 +482,7 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
         ));
     } else if member.held_back.remote_images + member.held_back.trackers > 0 {
         rows.plain(notice(format!(
-            "{} · i i to show",
+            "{} · alt+i to show",
             member.held_back.summary()
         )));
     }

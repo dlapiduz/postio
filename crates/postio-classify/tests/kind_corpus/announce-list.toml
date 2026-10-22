@@ -1,0 +1,6 @@
+label = "list"
+address = "announce@lists.example.net"
+name = "Announcements"
+messages = 40
+with_list_id = 40
+with_list_precedence = 40

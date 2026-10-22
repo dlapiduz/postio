@@ -119,17 +119,20 @@ pub fn labels(labels: &[postio_model::Label], query: &str) -> Vec<LabelHit> {
     found
 }
 
-/// One correspondent the box matched.
+/// One person the box matched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContactHit {
-    /// What to call them: the name the user set, then the last name seen on
-    /// the address, then the address itself.
+    /// What to call them: the name the user set, then the last name the mail
+    /// gave them, then their preferred address.
     pub name: String,
-    /// The addr-spec, which is what `from:` will be given.
+    /// Their preferred addr-spec, which the row shows beneath the name.
     pub address: String,
-    /// How many messages this address has been seen on, for the cap beside
-    /// the row — a correspondent you write to daily reads differently from
-    /// one who mailed you once.
+    /// Every address they own, preferred first — what picking them searches
+    /// (specs/005-contacts FR-031).
+    pub addresses: Vec<String>,
+    /// How many messages any of their addresses has been seen on, for the
+    /// cap beside the row — a correspondent you write to daily reads
+    /// differently from one who mailed you once.
     pub times_seen: u32,
     /// Byte indices in `name` the query matched, for highlighting.
     pub positions: Vec<usize>,
@@ -161,22 +164,30 @@ pub fn contacts(contacts: &[postio_model::Contact], query: &str) -> Vec<ContactH
         .iter()
         .filter_map(|contact| {
             let name = contact_name(contact);
-            let address = contact.address.address.clone();
+            let addresses: Vec<String> = contact
+                .addresses
+                .iter()
+                .map(|owned| owned.address.address.clone())
+                .collect();
             // The name first, so the highlight lands on what the row shows.
-            // Falling back to the address means `@example.org` still finds
-            // people, and costs nothing when the name already matched.
+            // Falling back to the addresses means `@example.org` still finds
+            // people, and costs nothing when the name already matched. The
+            // best-scoring address stands for the person: one row each.
             let matched = match crate::palette::score(query, &name) {
                 Some(matched) => matched,
-                None => {
-                    crate::palette::score(query, &address).map(|matched| crate::palette::Match {
+                None => addresses
+                    .iter()
+                    .filter_map(|address| crate::palette::score(query, address))
+                    .max_by_key(|matched| matched.score)
+                    .map(|matched| crate::palette::Match {
                         score: matched.score,
                         positions: Vec::new(),
-                    })?
-                }
+                    })?,
             };
             Some(ContactHit {
                 name,
-                address,
+                address: addresses.first().cloned().unwrap_or_default(),
+                addresses,
                 times_seen: contact.times_seen,
                 positions: matched.positions,
                 score: matched.score,
@@ -193,28 +204,26 @@ pub fn contacts(contacts: &[postio_model::Contact], query: &str) -> Vec<ContactH
     found
 }
 
-/// What to call a correspondent: the name the user set, then the last display
-/// name seen on the address, then the address itself. Never empty, so a row
-/// always has something to say.
+/// What to call a person: [`postio_model::Contact::display_name`] — the name
+/// the user set, then the last one the mail gave them, then their preferred
+/// address. Never empty for a person with an address, so a row always has
+/// something to say.
 fn contact_name(contact: &postio_model::Contact) -> String {
-    contact
-        .name
-        .clone()
-        .or_else(|| contact.address.name.clone())
-        .unwrap_or_else(|| contact.address.address.clone())
+    contact.display_name().to_owned()
 }
 
 /// The query picking `hit` puts in the box.
 ///
-/// A `from:` chip, quoted if the address could not survive being typed back
-/// in. Deliberately *the query*, not a search that has already run: the point
-/// of landing back in search is that the user can go on building on it.
+/// A `with:` clause over every address the person owns, so their mail is
+/// found whichever address it came through and whichever way it went
+/// (specs/005-contacts FR-031; research R6 names the old `from:` as the
+/// defect). The one spelling is [`crate::contacts::show_mail_query`], which
+/// "show mail" in Contacts writes too, so the two can never spell it
+/// differently. Deliberately *the query*, not a search that has already run:
+/// the point of landing back in search is that the user can go on building
+/// on it.
 pub fn contact_query(hit: &ContactHit) -> String {
-    if hit.address.chars().any(char::is_whitespace) {
-        format!("from:\"{}\"", hit.address.replace('"', ""))
-    } else {
-        format!("from:{}", hit.address)
-    }
+    crate::contacts::show_mail_query(&hit.addresses)
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +445,45 @@ impl Held {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn person(name: &str, addresses: &[&str]) -> postio_model::Contact {
+        let owned = |id: i64, name: Option<&str>, address: &str| {
+            postio_model::ContactAddress::new(
+                postio_model::AddressId::new(id),
+                postio_model::EmailAddress::new(name, address),
+            )
+        };
+        let mut person = postio_model::Contact::new(owned(1, Some(name), addresses[0]));
+        for (at, address) in addresses.iter().enumerate().skip(1) {
+            person.addresses.push(owned(at as i64 + 1, None, address));
+        }
+        person
+    }
+
+    /// Specs/005-contacts FR-031: the finder finds a person, not a row per
+    /// address, and picking them is about all of their mail.
+    #[test]
+    fn a_person_with_two_addresses_is_found_by_either_and_offered_once() {
+        let ada = person(
+            "Ada Lovelace",
+            &["ada@work.example", "lovelace@home.example"],
+        );
+        for query in ["ada", "work.example", "home.example"] {
+            let hits = contacts(std::slice::from_ref(&ada), query);
+            assert_eq!(hits.len(), 1, "{query} finds ada once");
+            assert_eq!(hits[0].name, "Ada Lovelace");
+            assert_eq!(
+                hits[0].addresses,
+                ["ada@work.example", "lovelace@home.example"],
+                "the hit carries every address, preferred first"
+            );
+            assert_eq!(
+                contact_query(&hits[0]),
+                "with:ada@work.example,lovelace@home.example",
+                "picking them searches every address, not the first"
+            );
+        }
+    }
 
     #[test]
     fn every_mode_has_a_marker_and_a_purpose() {

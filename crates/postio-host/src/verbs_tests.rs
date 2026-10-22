@@ -927,6 +927,18 @@ fn focus_in(path: &std::path::Path) -> postio_config::FocusConfig {
         .focus
 }
 
+/// `[focus]` as the engine reads it now: the file, and what correspondents
+/// decided beside it (ADR 0048).
+fn engine(world: &World) -> postio_config::FocusConfig {
+    world
+        .host()
+        .inner
+        .wiring
+        .focus
+        .config()
+        .expect("Focus mode is on")
+}
+
 /// A dismissal, or its undoing, of `message`'s marker, as the frontend
 /// sends it.
 fn dismiss(message: MessageId, dismissed: bool) -> Command {
@@ -992,7 +1004,7 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         let marker = crate::tests::marker_on(&world, *question).expect("the marker is kept");
         assert!(marker.dismissed_at.is_some(), "dismissed");
         assert_eq!(
-            focus_in(&path).filter.stop_markers.is_empty(),
+            engine(&world).filter.stop_markers.is_empty(),
             n < 2,
             "the correction is written at the third dismissal, and not before"
         );
@@ -1003,7 +1015,7 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         "{written}"
     );
     assert_eq!(
-        focus_in(&path).filter.stop_markers,
+        engine(&world).filter.stop_markers,
         vec![postio_config::StopMarker {
             sender: "tove@example.org".to_owned(),
             kind: "question".to_owned(),
@@ -1065,7 +1077,7 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         );
     }
     assert!(
-        focus_in(&path).filter.stop_markers.is_empty(),
+        engine(&world).filter.stop_markers.is_empty(),
         "and the correction is gone"
     );
 }
@@ -1156,7 +1168,7 @@ fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both(
         "back in the inbox, and no longer filtered"
     );
     assert_eq!(
-        focus_in(&path).filter.never,
+        engine(&world).filter.never,
         vec!["notifications@forge.example"],
         "its sender pinned"
     );
@@ -1181,7 +1193,7 @@ fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both(
         Some((postio_model::MailboxRole::Archive, Some(reason))),
         "back in Filtered, with its reason"
     );
-    assert!(focus_in(&path).filter.never.is_empty(), "and unpinned");
+    assert!(engine(&world).filter.never.is_empty(), "and unpinned");
     let again = crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build fixed");
     file_now(&world, again);
     assert_eq!(
@@ -1675,7 +1687,7 @@ fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back(
         }
     );
     assert_eq!(
-        focus_in(&path).digests[0].queries,
+        engine(&world).digests[0].queries,
         ["from:editor@ledger.example"],
         "the rule no longer holds the sender"
     );
@@ -1696,7 +1708,7 @@ fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back(
         matches!(event, Event::UndoPerformed { .. })
     });
     assert_eq!(
-        focus_in(&path).digests[0].queries,
+        engine(&world).digests[0].queries,
         ["from:news@ledger.example", "from:editor@ledger.example"],
         "the rule is as it was"
     );
@@ -1726,7 +1738,7 @@ fn stopping_a_rule_s_only_sender_removes_the_rule_and_undo_puts_it_back_whole() 
             .with_config_path(path.clone()),
     );
     let (client, events) = world.frontend(ClientKind::Focus);
-    let before = focus_in(&path).digests;
+    let before = engine(&world).digests;
 
     world.send(
         &client,
@@ -1739,14 +1751,14 @@ fn stopping_a_rule_s_only_sender_removes_the_rule_and_undo_puts_it_back_whole() 
     world.hear(&events, |event| {
         matches!(event, Event::ActionCompleted { .. })
     });
-    assert!(focus_in(&path).digests.is_empty(), "the rule went");
+    assert!(engine(&world).digests.is_empty(), "the rule went");
     assert!(holds(&world).is_empty(), "and holds nothing");
 
     world.send(&client, Command::Undo);
     world.hear(&events, |event| {
         matches!(event, Event::UndoPerformed { .. })
     });
-    assert_eq!(focus_in(&path).digests, before, "back exactly");
+    assert_eq!(engine(&world).digests, before, "back exactly");
     assert_eq!(holds(&world).len(), 1, "holding its mail again");
 }
 
@@ -1908,7 +1920,7 @@ fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_
         .rt
         .block_on(client.save_digest_rule(None, weekly("Ledger")))
         .expect("written");
-    let written = focus_in(&path).digests;
+    let written = engine(&world).digests;
     assert_eq!(written.len(), 1);
     assert_eq!(written[0].name, "Ledger");
     assert_eq!(written[0].queries, ["from:news@ledger.example"]);
@@ -1925,7 +1937,7 @@ fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_
         .rt
         .block_on(client.save_digest_rule(Some("Ledger".to_owned()), weekly("The Ledger")))
         .expect("edited");
-    let names: Vec<String> = focus_in(&path)
+    let names: Vec<String> = engine(&world)
         .digests
         .into_iter()
         .map(|rule| rule.name)
@@ -1945,7 +1957,7 @@ fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_
         .block_on(client.delete_digest_rule("The Ledger".to_owned()))
         .expect("removed");
     assert_eq!(released, 1);
-    assert!(focus_in(&path).digests.is_empty(), "gone from the file");
+    assert!(engine(&world).digests.is_empty(), "gone from the file");
     assert!(holds(&world).is_empty(), "and its mail rejoined the inbox");
 }
 
@@ -2110,14 +2122,269 @@ fn a_rule_the_filing_pass_could_never_answer_is_refused_with_a_sentence() {
             .expect_err(query);
         assert!(refused.to_string().contains("list:"), "{refused}");
     }
-    assert!(focus_in(&path).digests.is_empty(), "nothing written");
+    assert!(engine(&world).digests.is_empty(), "nothing written");
 
     world
         .rt
         .block_on(client.save_digest_rule(None, rule("list:billing.lists.example.org")))
         .expect("a list rule is written");
     assert_eq!(
-        focus_in(&path).digests[0].queries,
+        engine(&world).digests[0].queries,
         ["list:billing.lists.example.org"]
+    );
+}
+
+// ── SC-005: moving senders' settings onto the senders changes nothing ───────
+
+/// A `config.toml` holding one of each entry the move gives to a
+/// correspondent, beside the ones it leaves in the file.
+fn before_the_move() -> String {
+    "[focus.filter]
+never = [\"notifications@forge.example\", \"@pinned.example\"]
+
+[[focus.digests]]
+name = \"Ledger digest\"
+match = [\"from:news@ledger.example\"]
+cadence = \"weekly\"
+day = \"saturday\"
+at = \"16:00\"
+
+[[focus.digests]]
+name = \"Promotions\"
+match = [\"from:@promo.example\"]
+cadence = \"daily\"
+at = \"08:00\"
+"
+    .to_owned()
+}
+
+/// A subject, the role of the folder it landed in, why Focus filed it away
+/// if it did, and the digest that holds it if one does.
+type Landed = (
+    String,
+    postio_model::MailboxRole,
+    Option<String>,
+    Option<String>,
+);
+
+/// Where each of a fixed corpus lands under `text`: the folder's role, the
+/// reason Focus gave for filing it away, and the digest that holds it.
+fn where_the_corpus_lands(
+    text: &str,
+    migrating: bool,
+) -> (Vec<Landed>, String, std::path::PathBuf) {
+    let world = World::new();
+    let (directory, path) = config_file(text);
+    if !migrating {
+        world
+            .host()
+            .inner
+            .contacts_moved
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    crate::tests::focus_ran_before(&world);
+    world.host().enable_focus(
+        crate::FocusSetup::default()
+            .with_config(focus_in(&path))
+            .with_config_path(path.clone()),
+    );
+    let corpus = [
+        ("notifications@forge.example", "Build passed"),
+        ("alerts@monitor.example", "Disk almost full"),
+        ("noreply@pinned.example", "Your receipt"),
+        ("noreply@elsewhere.example", "Your other receipt"),
+        ("news@ledger.example", "Issue 41"),
+        ("News@Ledger.example", "Issue 42"),
+        ("editor@ledger.example", "A note from the editor"),
+        ("offers@promo.example", "Half price"),
+        ("tove@example.org", "Lunch?"),
+    ];
+    for (from, subject) in corpus {
+        let message = newsletter_unheld(&world, from, subject);
+        file_now(&world, message);
+    }
+    let held = holds(&world);
+    let landed = corpus
+        .iter()
+        .map(|(_, subject)| {
+            let (role, reason) = crate::tests::filed_where(&world, subject).expect("filed");
+            let id: i64 = world.rt.block_on(async {
+                let connection = world.database().connect().await.expect("a connection");
+                postio_storage::sql::first(
+                    &connection,
+                    "SELECT id FROM messages WHERE subject = ?1",
+                    [*subject],
+                    |row| postio_storage::sql::RowExt::col(row, 0),
+                )
+                .await
+                .expect("a read")
+                .expect("the message")
+            });
+            let hold = held
+                .iter()
+                .find(|(message, _, _)| message.get() == id)
+                .map(|(_, rule, _)| rule.clone());
+            (
+                (*subject).to_owned(),
+                role,
+                reason.map(|reason| format!("{reason:?}")),
+                hold,
+            )
+        })
+        .collect();
+    let file = std::fs::read_to_string(&path).expect("the file");
+    std::mem::forget(directory);
+    (landed, file, path)
+}
+
+#[test]
+fn moving_senders_settings_onto_the_senders_lands_every_message_where_it_landed() {
+    let (before, file_before, _) = where_the_corpus_lands(&before_the_move(), false);
+    let (after, file_after, path_after) = where_the_corpus_lands(&before_the_move(), true);
+
+    // The fixture means something: some mail stays, some is filed away, some
+    // is held for a digest.
+    let roles: std::collections::BTreeSet<_> = before.iter().map(|row| row.1).collect();
+    assert!(roles.len() >= 2, "{before:?}");
+    assert!(
+        before
+            .iter()
+            .any(|row| row.3.as_deref() == Some("Ledger digest")),
+        "{before:?}"
+    );
+    assert!(
+        before
+            .iter()
+            .any(|row| row.3.as_deref() == Some("Promotions")),
+        "{before:?}"
+    );
+    assert!(
+        before.iter().any(|row| row.2.is_some()),
+        "something is filed away with a reason: {before:?}"
+    );
+
+    assert_eq!(
+        before, after,
+        "every message lands in the same folder, for the same reason, in the same digest"
+    );
+
+    // And the move happened: the file lost what a person can hold, kept the
+    // rest, and the old file is beside it.
+    assert!(file_before.contains("notifications@forge.example"));
+    assert!(
+        !file_after.contains("notifications@forge.example"),
+        "{file_after}"
+    );
+    assert!(!file_after.contains("Ledger digest"), "{file_after}");
+    assert!(file_after.contains("@pinned.example") && file_after.contains("Promotions"));
+    assert_eq!(
+        std::fs::read_to_string(crate::focus::contacts_move::pre_contacts_path(&path_after))
+            .unwrap(),
+        before_the_move()
+    );
+}
+
+#[test]
+fn a_filter_entry_is_taken_back_through_the_host_from_whichever_home_holds_it() {
+    let world = World::new();
+    let (_directory, path) = config_file("[focus.filter]\nnever = [\"@example.net\"]\n");
+    world.host().enable_focus(
+        crate::FocusSetup::default()
+            .with_config(focus_in(&path))
+            .with_config_path(path.clone()),
+    );
+    let (client, _events) = world.frontend(ClientKind::Focus);
+    let at = |address: &str| postio_model::EmailAddress::new(None::<String>, address);
+    world.rt.block_on(async {
+        let focus = &world.host().inner.wiring.focus;
+        focus
+            .pin(world.database(), "ada@example.org", true)
+            .await
+            .unwrap();
+        focus
+            .stop_marker(world.database(), "ada@example.org", "todo", true)
+            .await
+            .unwrap();
+    });
+    assert!(engine(&world).filter.never_filters(&at("ada@example.org")));
+    assert!(engine(&world).filter.stops(&at("ada@example.org"), "todo"));
+
+    world
+        .rt
+        .block_on(client.take_back_filter("ada@example.org", None))
+        .expect("the pin comes back");
+    world
+        .rt
+        .block_on(client.take_back_filter("ada@example.org", Some("todo")))
+        .expect("the marker comes back");
+    world
+        .rt
+        .block_on(client.take_back_filter("@example.net", None))
+        .expect("the file's own entry too");
+
+    let config = engine(&world);
+    assert!(!config.filter.never_filters(&at("ada@example.org")));
+    assert!(!config.filter.stops(&at("ada@example.org"), "todo"));
+    assert!(!config.filter.never_filters(&at("x@example.net")));
+}
+
+#[test]
+fn a_merge_puts_the_absorbed_address_under_the_kept_pin_and_undo_takes_it_away() {
+    use postio_core::ContactJoinAction;
+    let world = World::new();
+    world.host().enable_focus(crate::FocusSetup::default());
+    let (client, events) = world.frontend(ClientKind::Focus);
+    let at = |address: &str| postio_model::EmailAddress::new(None::<String>, address);
+    let (kept, absorbed) = world.rt.block_on(async {
+        let connection = world.database().connect().await.unwrap();
+        let people = postio_storage::repository::ContactRepository::new(&connection);
+        let kept = people
+            .person_for_email(&at("ada@work.example"))
+            .await
+            .unwrap();
+        let absorbed = people
+            .person_for_email(&at("ada@home.example"))
+            .await
+            .unwrap();
+        world
+            .host()
+            .inner
+            .wiring
+            .focus
+            .pin(world.database(), "ada@work.example", true)
+            .await
+            .unwrap();
+        (kept, absorbed)
+    });
+    assert!(engine(&world).filter.never_filters(&at("ada@work.example")));
+    assert!(!engine(&world).filter.never_filters(&at("ada@home.example")));
+
+    world.send(
+        &client,
+        Command::ContactJoin {
+            action: ContactJoinAction::Join {
+                into: kept,
+                others: vec![absorbed],
+                name: "Ada Lovelace".to_owned(),
+                organization: None,
+            },
+        },
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    assert!(
+        engine(&world).filter.never_filters(&at("ada@home.example")),
+        "the person is pinned, and the person now owns both"
+    );
+
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert!(engine(&world).filter.never_filters(&at("ada@work.example")));
+    assert!(
+        !engine(&world).filter.never_filters(&at("ada@home.example")),
+        "undone: the other address is its own person again"
     );
 }

@@ -135,6 +135,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // `alt+1` looks for them where the other places are.
         C::SavedSearch1 | C::SavedSearch2 | C::SavedSearch3 | C::SavedSearch4 => Some(M::Go),
         C::NextScope => Some(M::Go),
+        // Contacts is a destination like the inbox. Its own commands act on a
+        // focused row, and a global menu cannot say which person.
+        C::OpenContacts => Some(M::Go),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
         C::Back | C::PrevView => Some(M::Go),
 
@@ -147,6 +150,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
             Some(M::File)
         }
         C::Refresh => Some(M::File),
+        // The Mac presents the panels; the file is the user's.
+        C::ContactsImport | C::ContactsExport | C::ContactsSync => Some(M::File),
 
         // ── Edit ─────────────────────────────────────────────────────────
         C::Undo | C::SelectAll | C::ToggleSelection => Some(M::Edit),
@@ -243,6 +248,35 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::PickRelaxation3
         | C::PickRelaxation4
         | C::SaveFile
+        | C::ContactPopover
+        | C::ContactOpenCard
+        | C::ContactAdd
+        | C::ContactIgnore
+        | C::ContactArrivalPrev
+        | C::ContactArrivalNext
+        | C::ContactSetArrival
+        | C::ContactShowMail
+        | C::ContactCompose
+        | C::ContactsFilter
+        | C::ContactsTabPrevious
+        | C::ContactsTabNext
+        | C::ContactsToggleEveryone
+        | C::ContactJoin
+        | C::ContactAddAddress
+        | C::ContactDetachAddress
+        | C::ContactSetPreferred
+        | C::ContactNew
+        | C::ContactEdit
+        | C::ContactSave
+        | C::ContactDelete
+        | C::ContactRestore
+        | C::ContactsToggleDeleted
+        | C::ContactsSuggestions
+        | C::SuggestionDismiss
+        | C::ContactGroupNew
+        | C::ContactGroupRename
+        | C::ContactGroupAdd
+        | C::ContactGroupRemove
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction
@@ -332,8 +366,14 @@ mod tests {
         // this guards is the opposite failure -- a table that fell out of
         // date and started answering `None` broadly, leaving a menu bar that
         // is technically generated and practically empty.
-        let total = crate::registry::all().count();
-        let placed = crate::registry::all()
+        // Less Contacts' own commands: they act on a focused row, which a
+        // global menu cannot say (the arm above), and there are more of them
+        // than any other surface has.
+        let counted = || {
+            crate::registry::all().filter(|spec| spec.contexts != crate::Context::Contacts.as_set())
+        };
+        let total = counted().count();
+        let placed = counted()
             .filter(|spec| section_for(spec.id).is_some())
             .count();
         assert!(

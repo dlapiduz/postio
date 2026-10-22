@@ -1,0 +1,6 @@
+label = "newsletter"
+address = "offers@shop.example.com"
+name = "Example Shop Offers"
+messages = 25
+with_unsubscribe = 25
+with_bulk = 25

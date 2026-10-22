@@ -730,11 +730,6 @@ raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
 html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested,
 unsubscribe_offered, automation, content_namespace, content_key";
 
-/// The columns a list row needs, and not one more.
-///
-/// The sender comes from a correlated lookup rather than a join so the plan
-/// stays "walk the list index, then one index seek per row shown" — bounded by
-/// the window, never by the mailbox.
 /// How many ids one `IN (...)` carries.
 ///
 /// Well under `SQLITE_MAX_VARIABLE_NUMBER`, which is 32766 on anything
@@ -743,11 +738,24 @@ unsubscribe_offered, automation, content_namespace, content_key";
 /// is here for the day one of those numbers moves, not for today.
 const ID_CHUNK: usize = 500;
 
-pub(crate) const LIST_COLUMNS: &str = "\
+/// The columns a list row needs, and not one more.
+///
+/// The sender comes from a correlated lookup rather than a join so the plan
+/// stays "walk the list index, then one index seek per row shown" — bounded by
+/// the window, never by the mailbox. Its name is the one the user gave the
+/// address's live owner when they gave one, and the header's otherwise
+/// (specs/005-contacts FR-032): two more primary-key seeks per row, no more
+/// statements.
+pub(crate) const LIST_COLUMNS: &str = concat!(
+    "\
 messages.id, messages.thread_id, messages.subject, messages.preview, messages.received_at,
 messages.seen, messages.flagged, messages.answered, messages.draft, messages.has_attachments,
 messages.size, messages.send_state, messages.send_at,
-(SELECT name FROM recipients
+(SELECT coalesce(",
+    crate::shown_name!("named"),
+    ", recipients.name) FROM recipients
+    JOIN addresses ON addresses.id = recipients.address_id
+    LEFT JOIN contacts named ON named.id = addresses.contact_id AND named.state = 'live'
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1),
 (SELECT addresses.address FROM recipients
@@ -755,7 +763,8 @@ messages.size, messages.send_state, messages.send_at,
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1),
 (SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id),
-messages.sort_at";
+messages.sort_at"
+);
 
 /// [`LIST_COLUMNS`], read off the message `alias` names rather than off
 /// `messages`: for a statement whose list row is one of several things it

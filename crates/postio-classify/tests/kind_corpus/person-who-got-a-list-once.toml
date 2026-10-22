@@ -1,0 +1,6 @@
+label = "person"
+address = "kim@example.org"
+name = "Kim Lee"
+messages = 14
+with_list_id = 1
+written_to = 5

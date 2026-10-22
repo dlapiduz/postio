@@ -1,9 +1,11 @@
-//! Contact groups: a named set of contacts, CRUD over `contact_groups` and
-//! `contact_group_members` (ADR 0007 Q3).
+//! Contact groups: a named set of people, CRUD over `contact_groups` and
+//! `contact_group_members` (specs/005-contacts FR-040). Groups are shared
+//! across accounts, as people are.
 
 use chrono::{TimeZone, Utc};
 
-use postio_model::{ContactGroup, EmailAddress};
+use postio_model::{ContactGroup, ContactId, EmailAddress};
+use postio_storage::Connection;
 use postio_storage::repository::{ContactGroupRepository, ContactRepository};
 use postio_storage::test_support;
 
@@ -11,37 +13,29 @@ fn at(days: i64) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, 12, 0, 0).unwrap() + chrono::Duration::days(days)
 }
 
+async fn person(connection: &Connection, name: &str, email: &str) -> ContactId {
+    ContactRepository::new(connection)
+        .create(Some(name), &[EmailAddress::new(None::<String>, email)])
+        .await
+        .unwrap_or_else(|e| panic!("create {name}: {e}"))
+}
+
 #[tokio::test]
 async fn a_group_can_be_created_looked_up_and_renamed() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = test_support::account(&connection).await;
     let groups = ContactGroupRepository::new(&connection);
 
-    let mut group = ContactGroup::new(Some(account.id), "Book club", at(0));
+    let mut group = ContactGroup::new("Book club", at(0));
     let id = groups.create(&mut group).await.expect("create");
     assert_eq!(group.id, id, "the id is written back into the value");
 
     let stored = groups.get(id).await.expect("get").expect("the group");
     assert_eq!(stored.name, "Book club");
-    assert_eq!(stored.account_id, Some(account.id));
 
     groups.set_name(id, "Reading group").await.expect("rename");
     let renamed = groups.get(id).await.expect("get").expect("the group");
     assert_eq!(renamed.name, "Reading group");
-}
-
-#[tokio::test]
-async fn a_shared_group_belongs_to_no_account() {
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("checkout");
-    let groups = ContactGroupRepository::new(&connection);
-
-    let mut group = ContactGroup::new(None, "Family", at(0));
-    groups.create(&mut group).await.expect("create");
-
-    let stored = groups.get(group.id).await.expect("get").expect("the group");
-    assert_eq!(stored.account_id, None);
 }
 
 #[tokio::test]
@@ -63,35 +57,21 @@ async fn getting_a_missing_group_is_none_not_an_error() {
 async fn members_can_be_added_and_removed() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = test_support::account(&connection).await;
-    let contacts = ContactRepository::new(&connection);
     let groups = ContactGroupRepository::new(&connection);
+    let ada = person(&connection, "Ada", "ada@example.com").await;
+    let grace = person(&connection, "Grace", "grace@example.com").await;
 
-    let ada = contacts
-        .create(
-            Some(account.id),
-            &EmailAddress::new(Some("Ada"), "ada@example.com"),
-            None,
-        )
-        .await
-        .expect("create ada");
-    let grace = contacts
-        .create(
-            Some(account.id),
-            &EmailAddress::new(Some("Grace"), "grace@example.com"),
-            None,
-        )
-        .await
-        .expect("create grace");
-
-    let mut group = ContactGroup::new(Some(account.id), "Book club", at(0));
+    let mut group = ContactGroup::new("Book club", at(0));
     let group_id = groups.create(&mut group).await.expect("create group");
 
     groups.add_member(group_id, ada).await.expect("add ada");
     groups.add_member(group_id, grace).await.expect("add grace");
 
     let members = groups.members(group_id).await.expect("members");
-    let mut addresses: Vec<&str> = members.iter().map(|c| c.address.address.as_str()).collect();
+    let mut addresses: Vec<&str> = members
+        .iter()
+        .map(|c| c.addresses[0].address.address.as_str())
+        .collect();
     addresses.sort_unstable();
     assert_eq!(addresses, ["ada@example.com", "grace@example.com"]);
 
@@ -108,19 +88,9 @@ async fn members_can_be_added_and_removed() {
 async fn adding_the_same_member_twice_is_not_an_error_and_not_a_duplicate() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = test_support::account(&connection).await;
-    let contacts = ContactRepository::new(&connection);
     let groups = ContactGroupRepository::new(&connection);
-
-    let ada = contacts
-        .create(
-            Some(account.id),
-            &EmailAddress::new(Some("Ada"), "ada@example.com"),
-            None,
-        )
-        .await
-        .expect("create ada");
-    let mut group = ContactGroup::new(Some(account.id), "Book club", at(0));
+    let ada = person(&connection, "Ada", "ada@example.com").await;
+    let mut group = ContactGroup::new("Book club", at(0));
     let group_id = groups.create(&mut group).await.expect("create group");
 
     groups.add_member(group_id, ada).await.expect("add once");
@@ -133,19 +103,9 @@ async fn adding_the_same_member_twice_is_not_an_error_and_not_a_duplicate() {
 async fn deleting_a_group_leaves_its_members_intact() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = test_support::account(&connection).await;
-    let contacts = ContactRepository::new(&connection);
     let groups = ContactGroupRepository::new(&connection);
-
-    let ada = contacts
-        .create(
-            Some(account.id),
-            &EmailAddress::new(Some("Ada"), "ada@example.com"),
-            None,
-        )
-        .await
-        .expect("create ada");
-    let mut group = ContactGroup::new(Some(account.id), "Book club", at(0));
+    let ada = person(&connection, "Ada", "ada@example.com").await;
+    let mut group = ContactGroup::new("Book club", at(0));
     let group_id = groups.create(&mut group).await.expect("create group");
     groups.add_member(group_id, ada).await.expect("add ada");
 
@@ -153,35 +113,177 @@ async fn deleting_a_group_leaves_its_members_intact() {
     assert!(groups.get(group_id).await.expect("get").is_none());
     assert!(!groups.delete(group_id).await.expect("delete again"));
 
-    // The contact itself is untouched -- deleting a group is not deleting
-    // the people in it.
-    assert!(contacts.get(ada).await.expect("get").is_some());
+    // Deleting a group is not deleting the people in it.
+    assert!(
+        ContactRepository::new(&connection)
+            .get(ada)
+            .await
+            .expect("get")
+            .is_some()
+    );
 }
 
 #[tokio::test]
-async fn listing_groups_matches_by_account_exactly_like_contacts_does() {
+async fn every_group_is_listed_by_name_whatever_the_account() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = test_support::account(&connection).await;
     let groups = ContactGroupRepository::new(&connection);
 
-    let mut mine = ContactGroup::new(Some(account.id), "Mine", at(0));
-    groups.create(&mut mine).await.expect("create");
-    let mut shared = ContactGroup::new(None, "Shared", at(0));
-    groups.create(&mut shared).await.expect("create");
+    for name in ["zeta", "Alpha", "mid"] {
+        groups
+            .create(&mut ContactGroup::new(name, at(0)))
+            .await
+            .expect("create");
+    }
 
-    let listed = groups.list(Some(account.id)).await.expect("list");
+    let listed = groups.list().await.expect("list");
     assert_eq!(
         listed.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(),
-        ["Mine"]
+        ["Alpha", "mid", "zeta"],
+        "by name, ignoring case"
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_member_is_not_expanded_but_keeps_its_membership() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let groups = ContactGroupRepository::new(&connection);
+    let ada = person(&connection, "Ada", "ada@example.com").await;
+    let grace = person(&connection, "Grace", "grace@example.com").await;
+    let group_id = groups
+        .create(&mut ContactGroup::new("Book club", at(0)))
+        .await
+        .expect("create group");
+    groups.add_member(group_id, ada).await.expect("add ada");
+    groups.add_member(group_id, grace).await.expect("add grace");
+
+    postio_storage::sql::execute(
+        &connection,
+        "UPDATE contacts SET state = 'deleted' WHERE id = ?1",
+        [ada.get()],
+    )
+    .await
+    .expect("delete ada");
+
+    let expanded = groups.members(group_id).await.expect("members");
+    assert_eq!(expanded.iter().map(|c| c.id).collect::<Vec<_>>(), [grace]);
+    let kept = postio_storage::sql::scalar(
+        &connection,
+        "SELECT count(*) FROM contact_group_members WHERE group_id = ?1",
+        [group_id.get()],
+    )
+    .await
+    .expect("count members");
+    assert_eq!(
+        kept, 2,
+        "restoring ada will return her to the group (FR-023a)"
+    );
+}
+
+#[tokio::test]
+async fn a_name_already_taken_in_any_case_is_refused_with_the_reason() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let groups = ContactGroupRepository::new(&connection);
+    groups
+        .create(&mut ContactGroup::new("Family", at(0)))
+        .await
+        .expect("create");
+    let again = groups.create(&mut ContactGroup::new("family", at(0))).await;
+    assert!(
+        matches!(&again, Err(postio_storage::Error::ForbiddenTransition { reason, .. }) if reason.contains("Family")),
+        "refused, naming the group it clashes with: {again:?}"
+    );
+    let other = groups
+        .create(&mut ContactGroup::new("Friends", at(0)))
+        .await
+        .expect("create");
+    assert!(
+        groups.set_name(other, "FAMILY").await.is_err(),
+        "renaming into it too"
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_group_comes_back_whole() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let groups = ContactGroupRepository::new(&connection);
+    let ada = person(&connection, "Ada", "ada@example.com").await;
+    let grace = person(&connection, "Grace", "grace@example.com").await;
+    let id = groups
+        .create(&mut ContactGroup::new("Family", at(0)))
+        .await
+        .expect("create");
+    assert_eq!(
+        groups
+            .add_members(id, &[ada, grace, ada])
+            .await
+            .expect("add"),
+        [ada, grace]
+    );
+    assert_eq!(
+        groups.add_members(id, &[ada]).await.expect("again"),
+        [],
+        "only the new ones are reported, which is what undo takes back"
     );
 
-    let listed_shared = groups.list(None).await.expect("list");
+    let (group, members) = groups.remove(id).await.expect("delete").expect("there");
+    assert!(groups.get(id).await.expect("get").is_none());
+    groups.restore(&group, &members).await.expect("restore");
+    let back = groups.get(id).await.expect("get").expect("same id");
+    assert_eq!(back.name, "Family");
     assert_eq!(
-        listed_shared
+        groups
+            .members(id)
+            .await
+            .expect("members")
             .iter()
-            .map(|g| g.name.as_str())
+            .map(|c| c.id)
             .collect::<Vec<_>>(),
-        ["Shared"]
+        [ada, grace]
+    );
+
+    assert_eq!(
+        groups.remove_members(id, &[grace]).await.expect("remove"),
+        [grace]
+    );
+    assert_eq!(
+        groups.expand(id).await.expect("expand"),
+        [EmailAddress::new(Some("Ada"), "ada@example.com")],
+        "a member's preferred address, under their name"
+    );
+}
+
+#[tokio::test]
+async fn a_groups_live_members_list_as_rows_by_name() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let groups = ContactGroupRepository::new(&connection);
+    let grace = person(&connection, "Grace", "grace@example.com").await;
+    let ada = person(&connection, "Ada", "ada@example.com").await;
+    let gone = person(&connection, "Gone", "gone@example.com").await;
+    let id = groups
+        .create(&mut ContactGroup::new("Family", at(0)))
+        .await
+        .expect("create");
+    groups
+        .add_members(id, &[grace, ada, gone])
+        .await
+        .expect("add");
+    ContactRepository::new(&connection)
+        .delete(gone)
+        .await
+        .expect("delete");
+
+    let rows = ContactRepository::new(&connection)
+        .group_rows(id, 100)
+        .await
+        .expect("rows");
+    assert_eq!(
+        rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["Ada", "Grace"],
+        "by name, live members only"
     );
 }

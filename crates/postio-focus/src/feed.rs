@@ -262,7 +262,7 @@ impl Feed {
                 effects.push(Step::Ask(Request::Surfaced));
             }
             Plan::Ignore => {}
-            Plan::InsertAtTop(_) | Plan::Refetch(_) | Plan::Reload => {
+            Plan::InsertAtTop(_) | Plan::Refetch(_) | Plan::Reload | Plan::Repaint => {
                 effects.push(Step::Show(Intent::RefreshList));
             }
         }

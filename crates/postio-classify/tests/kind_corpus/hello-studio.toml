@@ -1,0 +1,5 @@
+label = "company"
+address = "hello@studio.example"
+name = "Studio"
+messages = 3
+people_at_domain = 2

@@ -134,6 +134,17 @@ final class Engine {
             digest = DigestModel(engine: session, source: session)
             ruleSheet = RuleSheetModel(engine: session)
             capture = CaptureModel(engine: session)
+            makeContactPopover(session)
+            contactsView = ContactsModel(engine: session)
+            contactsSettings = ContactsSettingsModel(
+                engine: session,
+                makeBook: {
+                    // The real store is constructed here, when the person
+                    // presses Turn on and preview, and never in a demo.
+                    DemoMode.seed != nil ? Self.demoBook() : AppleAddressBook()
+                })
+            contactsIo = ContactsIoModel(
+                engine: session, panels: ContactsPanels(), demo: DemoMode.seed != nil)
             composer = ComposerWindow(engine: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
@@ -388,6 +399,8 @@ final class Engine {
     var mainContext: UiContext {
         if commandBar?.isOpen == true { return .search }
         if results?.isOpen == true { return .results }
+        if contactPopover?.isOpen == true { return .contactPopover }
+        if contactsView?.isOpen == true { return .contacts }
         if capture?.isOpen == true { return .capture }
         if digest?.isOpen == true { return .digest }
         if filtered?.isOpen == true { return .filtered }
@@ -430,6 +443,11 @@ final class Engine {
         table.onPoint = { [weak session] row in session?.focusPoint(row) }
         table.onActivate = { [weak session] row in session?.focusActivate(row) }
         table.onPick = { [weak session] row, range in session?.focusPick(row, range: range) }
+        // A click on a sender's name hangs the known-sender popover from it.
+        table.onContactName = { [weak self, weak session] row, address in
+            self?.contactRow = row
+            session?.focusContactPopoverAt(address)
+        }
         table.onAtTop = { [weak session] atTop in session?.focusAtTop(atTop) }
         table.onAction = { [weak self, weak table] command, row in
             // An answer on a row is about that row: the controller's cursor
@@ -797,6 +815,93 @@ final class Engine {
         }
     }
 
+    // MARK: contacts import and export (specs/011-focus-contacts S11)
+
+    /// Settings ▸ Contacts: the pane, its Suggestions switches and the sync
+    /// dry run (specs/011-focus-contacts D7).
+    @ObservationIgnored private(set) var contactsSettings: ContactsSettingsModel?
+
+    /// A section the settings window was asked to open on: `v y` opens it on
+    /// Contacts. Taken by the window when it appears.
+    let settingsSection = SettingsSectionRequest()
+
+    /// The demo's address book: in memory, invented, authorized. The real
+    /// store is never constructed in a demo.
+    @MainActor static func demoBook() -> SyncAddressBook {
+        func record(_ id: String, _ given: String, _ family: String, _ email: String, _ title: String)
+            -> ExternalRecordFfi
+        {
+            ExternalRecordFfi(
+                id: id, given: given, family: family, emails: [email], phones: [],
+                organization: "", title: title)
+        }
+        return FakeSyncAddressBook(
+            access: .authorized,
+            records: [
+                record("demo-1", "Marisol", "Quint", "marisol@example.com", "Head of finance"),
+                record("demo-2", "Ben", "Adeyemi", "ben@example.net", ""),
+                record("demo-3", "Zed", "Zimmer", "zed@example.org", "Surveyor"),
+            ])
+    }
+
+    /// File ▸ Import Contacts and Export Contacts, and the sheet after them.
+    @ObservationIgnored private(set) var contactsIo: ContactsIoModel?
+
+    // MARK: the Contacts view (specs/011-focus-contacts S7)
+
+    /// The Contacts view: a mode of the main window, in the list's place.
+    @ObservationIgnored private(set) var contactsView: ContactsModel?
+
+    // MARK: the known-sender popover (specs/011-focus-contacts S6)
+
+    /// What the popover draws, and what hangs it from the sender's name.
+    @ObservationIgnored private(set) var contactPopover: ContactPopoverModel?
+    @ObservationIgnored private(set) var contactPresenter: ContactPopover?
+    /// The row whose name was clicked; `nil` when `i` opened it, which hangs
+    /// it from the cursor's row.
+    @ObservationIgnored private var contactRow: Int?
+
+    private func makeContactPopover(_ session: PostioSession) {
+        let model = ContactPopoverModel(engine: session)
+        let presenter = ContactPopover(model: model)
+        presenter.anchor = { [weak self] in
+            guard let self else { return nil }
+            // Over Contacts, the list's rows are SwiftUI's and have no frame
+            // to read: it hangs from the list's upper part, where the cursor
+            // row mostly is, level with the window's content.
+            if self.contactsView?.isOpen == true, let content = self.mainWindow?.contentView {
+                let height = content.bounds.height
+                let y = content.isFlipped ? 200 : height - 200
+                return (content, NSRect(x: 16 + ContactPopoverView.width / 2, y: y, width: 1, height: 20))
+            }
+            // Over the results, the name is in the results table's row.
+            if self.results?.isOpen == true, let table = self.resultsTable,
+                let row = self.contactRow ?? table.cursorTableRow,
+                let rect = table.nameAnchor(row: row)
+            {
+                let centre = max(rect.midX, 16 + ContactPopoverView.width / 2)
+                return (table.tableView, NSRect(x: centre, y: rect.minY, width: 1, height: rect.height))
+            }
+            guard let table = self.focusTable,
+                let row = self.contactRow ?? self.focus.cursor,
+                let rect = table.nameAnchor(row: row)
+            else { return nil }
+            // Centred on the name it would hang past the window's left edge
+            // (the name starts 56 in and the popover is 400 wide), so it
+            // hangs from a point level with the name, further in: its left
+            // edge 16 from the window's, as screen 04 draws it.
+            let centre = max(rect.midX, 16 + ContactPopoverView.width / 2)
+            return (table.tableView, NSRect(x: centre, y: rect.minY, width: 1, height: rect.height))
+        }
+        // A click away took it down: the controller forgets it.
+        presenter.onToolkitClose = { [weak self, weak session] in
+            self?.contactRow = nil
+            session?.focusSurfaceClosed(.contactPopover)
+        }
+        contactPopover = model
+        contactPresenter = presenter
+    }
+
     // MARK: capture (T116)
 
     /// Capture, as the controller's intents leave it.
@@ -1047,7 +1152,12 @@ final class Engine {
         searchQuery = SearchQueryModel(engine: session)
         let results = ResultsModel(engine: session)
         self.results = results
-        resultsTable = ResultsTable(model: results)
+        let resultsTable = ResultsTable(model: results)
+        self.resultsTable = resultsTable
+        resultsTable.onContactName = { [weak self, weak session] row, address in
+            self?.contactRow = row
+            session?.focusContactPopoverAt(address)
+        }
         let grid = FilesGrid(model: results)
         let preview = FilePreview(done: { [weak session] in session?.focusSearchFileDone() })
         grid.preview = preview
@@ -1346,6 +1456,25 @@ final class Engine {
         // `FocusRule`, and `FocusCloseSurface(.dialog)`.
         if let change = ruleSheet?.apply(event) {
             apply(change)
+            return
+        }
+        // The known-sender popover (S6): drawn whole, redrawn on a change of
+        // arrival, closed when the controller says. `FocusWriteTo` is the
+        // `mailto:` path: a composer on that address.
+        if let change = contactPopover?.apply(event) {
+            if change == .close { contactRow = nil }
+            contactPresenter?.apply(change)
+            return
+        }
+        // The Contacts view (S7): the frame, its rows, the cursor and the card.
+        if contactsSettings?.apply(event) == true { return }
+        if contactsView?.apply(event) != nil { return }
+        if case let .focusWriteTo(address) = event {
+            if let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+                let url = URL(string: "mailto:\(encoded)"), let mailto = Mailto(url)
+            {
+                _ = write(mailto: mailto)
+            }
             return
         }
         // Capture (T116): `FocusOpenCapture`, every `FocusCapture`, and
@@ -1754,6 +1883,16 @@ final class Engine {
         // its field and its buttons -- Return saves, Escape cancels --
         // rather than the list behind it.
         if bannerRepair.asking != nil { return false }
+        // The sheet after an import or an export holds the keyboard: Escape
+        // is Done, `g w` is Review, and nothing else reaches the list.
+        if let io = contactsIo, io.isOpen {
+            switch id {
+            case Intercepted.back: io.done()
+            case "contacts_suggestions": io.review()
+            default: return true
+            }
+            return true
+        }
         // A question's alert is up: Return and Escape are its buttons'.
         if asking != nil { return false }
         // The Save popover has the keyboard: Return saves, Escape cancels,
@@ -1816,6 +1955,14 @@ final class Engine {
             // The folders popover is not a surface the controller keeps:
             // Escape closes it here, and the keyboard goes home.
             placesPopover?.close()
+        case Intercepted.contactsSync:
+            // `v y`: the Contacts pane of the settings window.
+            settingsSection.ask("contacts")
+            settingsWindow.raise()
+        case Intercepted.contactsImport:
+            contactsIo?.runImport()
+        case Intercepted.contactsExport:
+            contactsIo?.runExport()
         case Intercepted.settings:
             // A request the main window turns into `openWindow(id:)`,
             // because only a view can open a window (#1261).

@@ -123,6 +123,7 @@ fn the_nav_is_focus_s_filtering_in_and_appearance_out() {
         labels,
         [
             "Accounts",
+            "Contacts",
             "Filtering",
             "Saved searches",
             "Composing",
@@ -144,7 +145,13 @@ fn the_nav_is_focus_s_filtering_in_and_appearance_out() {
         .collect();
     assert_eq!(
         mail,
-        ["Accounts", "Filtering", "Saved searches", "Composing"]
+        [
+            "Accounts",
+            "Contacts",
+            "Filtering",
+            "Saved searches",
+            "Composing"
+        ]
     );
     assert_eq!(settings_group_label(GroupFfi::Application), "APPLICATION");
 }
@@ -747,4 +754,108 @@ fn two_filters_cannot_share_a_key() {
     .expect_err("a duplicate key");
 
     assert!(format!("{refusal}").contains("already"), "{refusal}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_filtering_pane_lists_a_person_s_pin_by_name_and_taking_it_back_clears_the_person() {
+    use postio_model::{ContactArrival, ContactSettings, EmailAddress, StoppedMarker};
+    use postio_storage::repository::{ContactRepository, ContactSettingsRepository};
+
+    let database = postio_storage::test_support::memory().await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        let ada = ContactRepository::new(&connection)
+            .create(
+                Some("Ada Lovelace"),
+                &[
+                    EmailAddress::new(None::<String>, "ada@work.example"),
+                    EmailAddress::new(None::<String>, "ada@home.example"),
+                ],
+            )
+            .await
+            .expect("a person");
+        let mut settings = ContactSettings {
+            arrival: Some(ContactArrival::Inbox),
+            ..ContactSettings::default()
+        };
+        settings.set_stop(StoppedMarker::Todo, true);
+        ContactSettingsRepository::new(&connection)
+            .put(ada, &settings)
+            .await
+            .expect("what she decided");
+    }
+    let session = postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory_with(database))
+        .expect("a session");
+
+    let (listed, after, stopped_after) = tokio::task::spawn_blocking(move || {
+        let page = postio_ffi::settings_filtering("[focus]\n".to_owned(), None).expect("it parses");
+        let text = postio_ffi::settings_take_back_filter(
+            "[focus]\n".to_owned(),
+            page.never[0].undo.clone(),
+        )
+        .expect("taken back");
+        let again = postio_ffi::settings_filtering(text, None).expect("it parses");
+        let stopped_after = again.stopped.len();
+        (page, again.never.len(), stopped_after)
+    })
+    .await
+    .expect("the blocking calls");
+
+    assert_eq!(
+        listed.never[0].says,
+        "Ada Lovelace \u{b7} ada@work.example, ada@home.example"
+    );
+    assert_eq!(listed.stopped[0].says, "To-dos in mail from Ada Lovelace");
+    assert_eq!(
+        after, 0,
+        "her pin is gone, whichever address was handed back"
+    );
+    assert_eq!(stopped_after, 1, "and only that: her marker is still off");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_s_digest_counts_as_a_digest_rule_in_the_strip() {
+    use postio_model::{ContactArrival, ContactSettings, DigestSetting, EmailAddress};
+    use postio_storage::repository::{ContactRepository, ContactSettingsRepository};
+
+    let database = postio_storage::test_support::memory().await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        let ledger = ContactRepository::new(&connection)
+            .person_for_email(&EmailAddress::new(None::<String>, "news@ledger.example"))
+            .await
+            .expect("a person");
+        ContactSettingsRepository::new(&connection)
+            .put(
+                ledger,
+                &ContactSettings {
+                    arrival: Some(ContactArrival::Digest),
+                    digest: Some(DigestSetting {
+                        name: "Ledger".into(),
+                        cadence: "weekly".into(),
+                        day: Some("saturday".into()),
+                        at: "16:00".into(),
+                    }),
+                    ..ContactSettings::default()
+                },
+            )
+            .await
+            .expect("their digest");
+    }
+    let session = postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory_with(database))
+        .expect("a session");
+    let strip = tokio::task::spawn_blocking({
+        let session = session.clone();
+        move || session.focus_strip()
+    })
+    .await
+    .expect("the blocking call")
+    .expect("the strip");
+    assert_eq!(
+        strip.digest_rules,
+        Some(postio_ui::focus_row::digest_rules(1)),
+        "one rule, though the file has none"
+    );
+    session.shutdown();
 }

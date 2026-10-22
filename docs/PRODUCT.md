@@ -235,7 +235,7 @@ the text so a test can hold it against every object the old migrations ever
 built: an object leaves the schema only by being named as deliberately
 absent, which makes this a checked requirement rather than a description.
 `contacts` and its groups are there because recipient autocomplete has to
-rank from somewhere ([ADR 0007](decisions/0007-address-book.md)).
+rank from somewhere ([`specs/005-contacts`](../specs/005-contacts/spec.md)).
 
 **Secrets are not among them.** No password and no token is ever written to the
 database or to `config.toml`.
@@ -292,13 +292,20 @@ subject:invoice -in:archive
 
 `from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
 `is:read` `is:flagged` `is:bulk` `is:automated` `before:` `after:` `larger:`
-`smaller:` `account:` `group:` `header:`
+`smaller:` `account:` `with:` `group:` `header:`
 
 An operator that names something takes either of several values in braces:
 `from:{ada tomas}` is mail from Ada or from Tomás, `label:{"Q3 close" atlas}`
 either label, and `-from:{ada tomas}` mail from neither. Two clauses still
 mean both, as typed. It is what checking a second person in a filter popover
 writes ([spec 010](../specs/010-focus-search/spec.md), D26).
+
+`with:ada@work.example,ada@home.example` is mail from, to or copied to any of
+those addresses, matched exactly rather than as text — what picking a person
+in `@` or "show mail" in Contacts writes, since `{}` takes values of one
+operator and a person's mail is in three. It names addresses, not a person, so
+a search pinned from it keeps meaning the addresses it named
+(`specs/005-contacts`).
 
 `header:` reaches any RFC 5322 field the envelope does not carry:
 `header:x-mailer` asks whether a message has that field at all,
@@ -481,8 +488,9 @@ thing an in-place composer genuinely cannot do. It is the same composition
 either way — the same widget, moved — so there is never a second composer to
 keep in step.
 
-Recipients autocomplete from explicit contacts and from correspondents seen in
-the mailbox ([ADR 0007](decisions/0007-address-book.md)); Cc and Bcc appear on
+Recipients autocomplete from the people in the address book -- one name for
+each person, their preferred address first -- whether the user made them or
+the mail did ([`specs/005-contacts`](../specs/005-contacts/spec.md)); Cc and Bcc appear on
 demand; identities are pickable; drafts autosave; attachments drag and drop.
 
 **The document is Postio's own, not the toolkit's.** The composer edits a
@@ -798,9 +806,11 @@ folders, threads, labels; read/unread, archive, delete, flag, move, snooze;
 HTML and plaintext reading with attachments, quoted-message folding, remote
 images blocked per sender, and one-click unsubscribe on request; rich-text
 compose, reply, reply-all, forward, attachments, drafts, signatures and
-identities, scheduled send, an outbox that sends at most once; contacts and
-contact groups, filled from the mail and completing recipients; local
-full-text search with operators, one command bar, and pinned saved searches;
+identities, scheduled send, an outbox that sends at most once; people who
+own several addresses, and groups, filled from the mail and completing
+recipients, with vCard import and export that keeps what it does not model
+(`specs/005-contacts`; Focus's Contacts surface is designed in
+`specs/011-focus-contacts`); local full-text search with operators, one command bar, and pinned saved searches;
 vim-style navigation and configurable shortcuts; an encrypted local store,
 background sync, offline reading, undo, desktop notifications. Flagging is
 `*`, from the key, the row menu or the command bar, and `g *` lists flagged
@@ -811,8 +821,9 @@ digest summaries (§2, §9). All of it in a terminal too, on the same store.
 
 **Out, deliberately:** Rules — the language is shared and the design is
 [ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. A
-contacts management surface, and vCard import and export — the tables are
-there, the screen is not. Microsoft Graph. PGP and S/MIME, phishing and link
+Contacts surface in the apps that have not adopted it yet (the engine, the
+commands and vCard import and export are built; the Mac's screen is next),
+and CardDAV and provider contact sync. Microsoft Graph. PGP and S/MIME, phishing and link
 warnings. Windows. Images drawn inside the terminal (placeholders there
 for now). **And AI**, beyond Focus's optional model — a founding principle,
 deferred so that core mail, search and the keyboard land excellently first. Shipping AI over a

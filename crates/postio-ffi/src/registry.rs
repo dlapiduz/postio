@@ -66,6 +66,10 @@ pub enum UiContext {
     /// The Mac's search results, the main window's other mode (spec 010
     /// D17).
     Results,
+    /// The Contacts surface's list and card.
+    Contacts,
+    /// The contact popover (specs/011-focus-contacts S6).
+    ContactPopover,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -87,6 +91,8 @@ impl From<postio_core::Context> for UiContext {
             Context::Filtered => UiContext::Filtered,
             Context::Capture => UiContext::Capture,
             Context::Results => UiContext::Results,
+            Context::Contacts => UiContext::Contacts,
+            Context::ContactPopover => UiContext::ContactPopover,
         }
     }
 }
@@ -117,6 +123,8 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Filtered => Context::Filtered,
             UiContext::Capture => Context::Capture,
             UiContext::Results => Context::Results,
+            UiContext::Contacts => Context::Contacts,
+            UiContext::ContactPopover => Context::ContactPopover,
         }
     }
 }
@@ -354,6 +362,11 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // window holds until it is saved (specs/009-focus-macos T079). On
         // the list and the open message `h` is the controller's picker.
         C::RemindIfNoReply,
+        // The panels for a vCard: a file is read or written only through a
+        // panel the user used, which this frontend presents (spec 011 S11).
+        C::ContactsImport,
+        C::ContactsExport,
+        C::ContactsSync,
         C::ExpandAll,
         C::ToggleFold,
         C::NextInConversation,

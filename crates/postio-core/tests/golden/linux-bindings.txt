@@ -94,8 +94,8 @@ settings	ctrl+comma | alt+comma
 add_account	ctrl+shift+n | alt+n
 edit_config	ctrl+e
 quit	ctrl+q | ctrl+w
-show_images	i i
-always_show_images	i a
+show_images	alt+i
+always_show_images	alt+I
 unsubscribe	M
 clear_list_mail	C
 go_to_folders	g l
@@ -121,7 +121,7 @@ update_credential	c
 rebuild_account_index	r
 set_default_account	m
 map_mailbox_role	M
-next_scope	g c
+next_scope	g n
 refresh	F5
 scroll_reader_down	Page_Down | space
 scroll_reader_up	Page_Up | shift+space
@@ -150,3 +150,36 @@ capture_change_project	ctrl+p
 capture_use_subject	alt+s
 capture_write	ctrl+Return | alt+Return
 digest_like_this	L
+open_contacts	g c
+contact_popover	i
+contact_open_card	ctrl+i
+contact_add	ctrl+Return
+contact_ignore	ctrl+BackSpace
+contact_arrival_prev	Left
+contact_arrival_next	Right
+contact_set_arrival	0
+contact_show_mail	Return | o
+contact_compose	c
+contacts_filter	/
+contacts_tab_previous	[
+contacts_tab_next	]
+contacts_toggle_everyone	v e
+contact_join	m
+contact_add_address	plus
+contact_detach_address	-
+contact_set_preferred	P
+contact_new	ctrl+shift+n
+contact_edit	ctrl+e
+contact_save	ctrl+s
+contact_delete	d | Delete
+contact_restore	r
+contacts_toggle_deleted	v d
+contacts_suggestions	g w
+suggestion_dismiss	n
+contact_group_new	g n
+contact_group_rename	R
+contact_group_add	l
+contact_group_remove	L
+contacts_import	v i
+contacts_export	v x
+contacts_sync	

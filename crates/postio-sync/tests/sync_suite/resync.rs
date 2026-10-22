@@ -14,14 +14,12 @@ use postio_storage::repository::{ContactRepository, MessageRepository, SyncState
 use postio_storage::test_support;
 use postio_sync::{Outcome, resync_mailbox, sync_mailbox, sync_mailbox_with_batch_size};
 
-async fn times_ada_was_seen(connection: &Connection, account_id: AccountId) -> u32 {
+async fn times_ada_was_seen(connection: &Connection, _account_id: AccountId) -> u32 {
     ContactRepository::new(connection)
-        .list(Some(account_id))
+        .by_address("ada@example.com")
         .await
-        .expect("list contacts")
-        .into_iter()
-        .find(|contact| contact.address.normalized() == "ada@example.com")
-        .map(|contact| contact.times_seen)
+        .expect("look ada up")
+        .map(|person| person.times_seen)
         .unwrap_or(0)
 }
 

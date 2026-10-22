@@ -1,0 +1,4 @@
+label = "person"
+address = "ada@example.com"
+name = "Ada Lovelace"
+messages = 12

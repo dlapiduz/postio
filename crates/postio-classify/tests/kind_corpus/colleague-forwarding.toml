@@ -1,0 +1,5 @@
+label = "person"
+address = "dana@work.example"
+name = "Dana Wu"
+messages = 40
+written_to = 22

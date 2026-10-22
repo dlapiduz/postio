@@ -30,37 +30,35 @@ use crate::drain::Result;
 ///
 /// A correspondent list where the account's own address is the top hit is
 /// noise: it turns up whenever the account is cc'd on its own thread, and as
-/// the sender of everything filed in Sent. `record_message` has no way to
-/// know which address is "ours" — it only sees one message at a time — so
-/// the exclusion happens here, against every address `account` can send as.
+/// the sender of everything filed in Sent. The same addresses are what make a
+/// message the user's own, and so what marks its recipients as written to
+/// (specs/005-contacts R3) — which is why they are handed down rather than
+/// stripped here: stripping the sender first would leave nothing to tell a
+/// sent message from a received one.
 pub(crate) async fn record(
     connection: &Connection,
     account: &Account,
     message: &Message,
 ) -> Result<()> {
-    let is_own = |address: &EmailAddress| {
-        let normalized = address.normalized();
-        account.address.normalized() == normalized
-            || account
+    let own = own_addresses(account);
+    let contacts = ContactRepository::new(connection);
+    contacts.record_message(message, &own).await?;
+    // An answer to the user's mail from an address other than the one they
+    // wrote to is evidence the two are one person (specs/005-contacts R11).
+    contacts.record_reply(message, &own).await?;
+    Ok(())
+}
+
+/// Every address `account` sends as: its own and each identity's.
+fn own_addresses(account: &Account) -> Vec<EmailAddress> {
+    std::iter::once(account.address.clone())
+        .chain(
+            account
                 .identities
                 .iter()
-                .any(|identity| identity.address.normalized() == normalized)
-    };
-
-    let mut trimmed = message.clone();
-    trimmed.from.retain(|address| !is_own(address));
-    if trimmed.sender.as_ref().is_some_and(is_own) {
-        trimmed.sender = None;
-    }
-    trimmed.reply_to.retain(|address| !is_own(address));
-    trimmed.to.retain(|address| !is_own(address));
-    trimmed.cc.retain(|address| !is_own(address));
-    trimmed.bcc.retain(|address| !is_own(address));
-
-    ContactRepository::new(connection)
-        .record_message(&trimmed)
-        .await?;
-    Ok(())
+                .map(|identity| identity.address.clone()),
+        )
+        .collect()
 }
 
 #[cfg(test)]
@@ -89,6 +87,18 @@ mod tests {
         message
     }
 
+    /// Every address the store now attributes to a person, normalised.
+    async fn known(connection: &Connection) -> Vec<String> {
+        ContactRepository::new(connection)
+            .people(1_000)
+            .await
+            .expect("people")
+            .iter()
+            .flat_map(|person| &person.addresses)
+            .map(|owned| owned.address.normalized())
+            .collect()
+    }
+
     #[tokio::test]
     async fn every_real_correspondent_is_recorded() {
         let database = test_support::memory().await;
@@ -100,23 +110,10 @@ mod tests {
             .await
             .expect("record");
 
-        let contacts = ContactRepository::new(&connection)
-            .list(Some(account.id))
-            .await
-            .expect("list");
-        let addresses: Vec<String> = contacts.iter().map(|c| c.address.normalized()).collect();
-        assert!(
-            addresses.contains(&"ada@example.com".to_string()),
-            "{addresses:?}"
-        );
-        assert!(
-            addresses.contains(&"bob@example.com".to_string()),
-            "{addresses:?}"
-        );
-        assert!(
-            addresses.contains(&"carol@example.com".to_string()),
-            "{addresses:?}"
-        );
+        let addresses = known(&connection).await;
+        for expected in ["ada@example.com", "bob@example.com", "carol@example.com"] {
+            assert!(addresses.contains(&expected.to_string()), "{addresses:?}");
+        }
     }
 
     #[tokio::test]
@@ -130,15 +127,11 @@ mod tests {
             .await
             .expect("record");
 
-        let contacts = ContactRepository::new(&connection)
-            .list(Some(account.id))
-            .await
-            .expect("list");
         assert!(
-            contacts
-                .iter()
-                .all(|contact| contact.address.normalized() != account.address.normalized()),
-            "the account's own address must not show up in its own correspondent list: {contacts:?}"
+            !known(&connection)
+                .await
+                .contains(&account.address.normalized()),
+            "the account's own address must not show up among its correspondents"
         );
     }
 
@@ -167,15 +160,114 @@ mod tests {
             .await
             .expect("record");
 
-        let contacts = ContactRepository::new(&connection)
-            .list(Some(account.id))
-            .await
-            .expect("list");
         assert_eq!(
-            contacts.len(),
-            1,
-            "only bob, not the identity address: {contacts:?}"
+            known(&connection).await,
+            ["bob@example.com"],
+            "only bob, not the identity address"
         );
-        assert_eq!(contacts[0].address.normalized(), "bob@example.com");
+    }
+
+    #[tokio::test]
+    async fn mail_sent_from_an_identity_marks_its_recipients_written_to() {
+        // specs/005-contacts R3: "written to" is decided by the From header,
+        // whichever of the account's addresses sent it -- a message the user
+        // sent as an identity is as much theirs as one sent as the account.
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (mut account, mailbox) = test_support::account_with_inbox(&connection).await;
+        account.identities.push(Identity::new(
+            account.id,
+            EmailAddress::new(Some("Ada at Work"), "ada.work@example.com"),
+        ));
+
+        let mut sent = Message::new(account.id, mailbox, chrono::Utc::now());
+        sent.from = vec![EmailAddress::new(
+            Some("Ada at Work"),
+            "Ada.Work@example.com",
+        )];
+        sent.to = vec![EmailAddress::new(Some("Bob"), "bob@example.com")];
+        MessageRepository::new(&connection)
+            .create(&mut sent)
+            .await
+            .expect("create message");
+
+        record(&connection, &account, &sent).await.expect("record");
+
+        let bob = ContactRepository::new(&connection)
+            .by_address("bob@example.com")
+            .await
+            .expect("lookup")
+            .expect("bob");
+        assert_eq!(bob.written, 1, "the user wrote to bob");
+    }
+
+    /// The user writes to `to` alone, and `reply_from` answers it.
+    async fn exchange(
+        to: &str,
+        reply_from: &str,
+        parent_from_user: bool,
+    ) -> Vec<postio_model::JoinSuggestion> {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+        let mut sent = Message::new(account.id, mailbox, chrono::Utc::now());
+        sent.rfc_message_id = Some(postio_model::ids::RfcMessageId::new(
+            "question@example.test",
+        ));
+        sent.from = vec![if parent_from_user {
+            account.address.clone()
+        } else {
+            EmailAddress::new(Some("Grace"), "grace@example.org")
+        }];
+        sent.to = vec![EmailAddress::new(Some("Ada"), to)];
+        MessageRepository::new(&connection)
+            .create(&mut sent)
+            .await
+            .expect("sent");
+        record(&connection, &account, &sent).await.expect("record");
+        let mut reply = Message::new(account.id, mailbox, chrono::Utc::now());
+        reply.rfc_message_id = Some(postio_model::ids::RfcMessageId::new("answer@example.test"));
+        reply.in_reply_to = Some(postio_model::ids::RfcMessageId::new(
+            "question@example.test",
+        ));
+        reply.from = vec![EmailAddress::new(Some("A. L."), reply_from)];
+        reply.to = vec![account.address.clone()];
+        MessageRepository::new(&connection)
+            .create(&mut reply)
+            .await
+            .expect("reply");
+        record(&connection, &account, &reply).await.expect("record");
+        ContactRepository::new(&connection)
+            .suggestions(10)
+            .await
+            .expect("suggestions")
+    }
+
+    #[tokio::test]
+    async fn an_answer_from_another_address_is_evidence() {
+        let found = exchange("ada@work.example", "ada@home.example", true).await;
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(
+            found[0].reason,
+            postio_model::SuggestionReason::Replied { replies: 1 }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answer_from_the_same_address_is_not() {
+        assert!(
+            exchange("ada@work.example", "ada@work.example", true)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answer_to_someone_elses_message_is_not() {
+        assert!(
+            exchange("ada@work.example", "ada@home.example", false)
+                .await
+                .is_empty()
+        );
     }
 }

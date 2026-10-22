@@ -31,8 +31,11 @@ The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
   * ``postio-model`` must not depend on ``ammonia``/``html5ever``,
     ``rusqlite``/``turso``/``gtk4``, or ``tokio``. ADR 0004 Q1 rejected putting the
     composer's document here for exactly this reason -- dependency weight on
-    the crate the whole workspace waits on -- and ADR 0007 admitted the vCard
-    parser only because it brings zero dependencies of its own.
+    the crate the whole workspace waits on -- and the vCard parser went to a
+    crate of its own for the same one (specs/005-contacts R9).
+  * ``postio-vcard`` must not depend on ``rusqlite``/``turso``/``gtk4`` or
+    ``tokio``. It translates vCard files to contacts and back over a parser
+    of untrusted input; the app does the reading and the storing.
   * ``postio-config`` must not depend on ``rusqlite``/``turso``/``gtk4``. It parses and
     validates TOML and watches the file for changes; it does no SQL and links
     no toolkit.
@@ -755,6 +758,49 @@ RULES: dict[str, dict[str, object]] = {
             "links what only one of them needs."
         ),
     },
+    "postio-vcard": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            # The engine, whatever it is currently called -- the same pair
+            # postio-search and postio-body ban, for the same reason.
+            "turso",
+            "turso_core",
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "tokio",
+        ],
+        "why": (
+            "postio-vcard maps vCard files to contacts and back -- a pure "
+            "translation over a parser of untrusted input. The app reads the "
+            "file and writes the store; this crate does neither, so a database "
+            "engine, a toolkit or an async runtime arriving here would mean the "
+            "parser of a stranger's file has grown reach it was chosen not to "
+            "have (specs/005-contacts research R9)."
+        ),
+    },
+    "postio-contact-sync": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "tokio",
+            "postio-storage",
+        ],
+        "why": (
+            "postio-contact-sync decides what a sync would do, over snapshots "
+            "it is handed, and holds the gate that keeps writes shut. It has no "
+            "store, no toolkit and no runtime: the address book is a trait, "
+            "every test uses a fake, and a dependency that could open the real "
+            "one, or Postio's own database, arriving here would mean the plan "
+            "can reach what it only describes (specs/011-focus-contacts S12)."
+        ),
+    },
     "postio-model": {
         "banned": [
             "ammonia",
@@ -778,10 +824,10 @@ RULES: dict[str, dict[str, object]] = {
             "postio-model is what the whole workspace waits on to compile, "
             "which is the reason ADR 0004 Q1 rejected putting the composer's "
             "document here -- an HTML parser's dependency weight lands on "
-            "every crate in the tree -- and the reason ADR 0007 admitted the "
-            "vCard parser only because it brings zero dependencies of its "
-            "own. Each of these is the class of dependency one of those ADRs "
-            "argued out; letting any of them back in reopens that argument "
+            "every crate in the tree -- and the reason vCard parsing is a "
+            "crate of its own, postio-vcard, rather than living here "
+            "(specs/005-contacts R9). Each of these is the class of dependency "
+            "that argument keeps out; letting any of them back in reopens it "
             "by accident instead of on purpose."
         ),
     },

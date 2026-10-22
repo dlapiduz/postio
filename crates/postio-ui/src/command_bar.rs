@@ -303,7 +303,7 @@ pub fn empty_lines() -> Vec<Line> {
 }
 
 /// The lines `@` draws: the correspondents it matched, each under one
-/// heading, running as the `from:` search for them.
+/// heading, running as the `with:` search for them.
 pub fn correspondent_lines(hits: &[finder::ContactHit]) -> Vec<Line> {
     if hits.is_empty() {
         return Vec::new();
@@ -502,10 +502,12 @@ mod tests {
     fn at_offers_correspondents_and_a_pick_searches_their_mail() {
         assert_eq!(route("@"), Route::Correspondent(""));
         assert_eq!(route("@ada"), Route::Correspondent("ada"));
-        let contacts = [postio_model::Contact::new(postio_model::EmailAddress::new(
-            Some("Ada Moreno"),
-            "ada@example.com",
-        ))];
+        let contacts = [postio_model::Contact::new(
+            postio_model::ContactAddress::new(
+                postio_model::AddressId::new(1),
+                postio_model::EmailAddress::new(Some("Ada Moreno"), "ada@example.com"),
+            ),
+        )];
         let lines = correspondent_lines(&finder::contacts(&contacts, ""));
         let Some(Line::Row {
             row, title, detail, ..
@@ -517,7 +519,7 @@ mod tests {
         assert_eq!(detail.as_deref(), Some("ada@example.com"));
         assert_eq!(
             row.clone().run(),
-            Run::SearchFor("from:ada@example.com".to_owned())
+            Run::SearchFor("with:ada@example.com".to_owned())
         );
         assert!(correspondent_lines(&[]).is_empty());
     }

@@ -1,0 +1,5 @@
+label = "list"
+address = "club@groups.example.com"
+name = "Chess Club"
+messages = 60
+with_list_id = 60

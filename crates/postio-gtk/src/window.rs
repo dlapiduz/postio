@@ -81,6 +81,13 @@ const REMOVE_RULE_DIALOG: &str = "focus-remove-rule";
 
 /// The Filtered view's page (screen 21).
 const FILTERED: &str = "filtered";
+/// The sheet after importing or exporting contacts.
+const CONTACTS_IO_DIALOG: &str = "focus-contacts-io";
+
+/// The Contacts view, in the inbox's body (specs/011-focus-contacts,
+/// screens 01 to 03), and the mail it stands in for.
+const CONTACTS: &str = "contacts";
+const MAIL: &str = "mail";
 /// The inbox's list, and the empty inbox in its place.
 const LIST: &str = "list";
 /// The key map dialog's name, so it can be told from another dialog.
@@ -102,6 +109,11 @@ mod imp {
         /// bar takes over once there is mail.
         pub bar_before_mail: gtk::WindowHandle,
         pub inbox: gtk::Box,
+        /// Under the top bar: the mail (the strip, the list and the reading
+        /// pane) or the Contacts view in its place.
+        pub body: gtk::Stack,
+        /// The mail's half of [`Self::body`].
+        pub mail: gtk::Box,
         /// The undo toast, and the overlay it appears over: the shared one
         /// both desktop apps say "Archived 3 messages" with.
         pub toast: postio_widgets::widgets::toast::Toast,
@@ -226,6 +238,13 @@ mod imp {
         pub digest_window: RefCell<Option<Rc<crate::digest::DigestWindow>>>,
         /// The Filtered view, built the first time `g f` opens it.
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
+        /// The Contacts view, built the first time `g c` opens it.
+        pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
+        /// What the import or export sheet says, while it is up.
+        pub contacts_io: RefCell<Option<postio_ui::contacts_io::IoSheetView>>,
+        /// The contact popover, while one is up, and what it says.
+        pub contact_popover:
+            RefCell<Option<(gtk::Widget, postio_ui::contact_popover::PopoverView)>>,
         /// A `postio://` link that arrived before the store was open.
         pub pending_link: RefCell<Option<String>>,
         /// A `mailto:` link that arrived before the composer was mounted.
@@ -279,6 +298,8 @@ mod imp {
                 retry: gtk::Button::with_label("Try again"),
                 bar_before_mail: gtk::WindowHandle::new(),
                 inbox: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                body: gtk::Stack::new(),
+                mail: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 toast: postio_widgets::widgets::toast::Toast::new(),
                 on_screen: RefCell::default(),
                 pane: RefCell::default(),
@@ -330,6 +351,9 @@ mod imp {
                 compose: RefCell::default(),
                 warm: Cell::default(),
                 filtered: RefCell::default(),
+                contacts: RefCell::default(),
+                contacts_io: RefCell::default(),
+                contact_popover: RefCell::default(),
                 digest_window: RefCell::default(),
                 rule_dialog: RefCell::default(),
                 rules_view: RefCell::default(),
@@ -879,6 +903,12 @@ impl FocusWindow {
         if top == Some(SurfaceKind::Message) && self.scroll_reading(key, state) {
             return glib::Propagation::Stop;
         }
+        // Reading and writing a file are the window's, whatever surface is on
+        // top: the controller has no file to give (specs/011 S11).
+        if let Some(command @ (CommandId::ContactsImport | CommandId::ContactsExport)) = command {
+            self.act(command);
+            return glib::Propagation::Stop;
+        }
         if let Some(command) = command {
             match self.route(command) {
                 Route::Controller => {
@@ -1071,6 +1101,8 @@ impl FocusWindow {
                 }
             }
             SurfaceKind::Filtered => self.leave_filtered(),
+            SurfaceKind::Contacts => self.leave_contacts(),
+            SurfaceKind::ContactPopover => self.close_contact_popover(),
             _ => {}
         }
     }
@@ -1755,6 +1787,44 @@ impl FocusWindow {
             CommandId::NextScope => self.next_scope(),
             CommandId::ViewSource => self.view_source(),
             CommandId::GoToFiltered => self.show_filtered(),
+            // Contacts: the controller opens it and says what to draw.
+            CommandId::OpenContacts
+            | CommandId::ContactsSuggestions
+            | CommandId::ContactPopover => {
+                self.run_in_controller(id);
+            }
+            // The Contacts view's, and the popover's and the form's over it:
+            // the controller owns what each does where it applies, and
+            // nothing where it does not.
+            CommandId::ContactOpenCard
+            | CommandId::ContactAdd
+            | CommandId::ContactIgnore
+            | CommandId::ContactArrivalPrev
+            | CommandId::ContactArrivalNext
+            | CommandId::ContactSetArrival
+            | CommandId::ContactShowMail
+            | CommandId::ContactCompose
+            | CommandId::ContactsFilter
+            | CommandId::ContactsTabPrevious
+            | CommandId::ContactsTabNext
+            | CommandId::ContactsToggleEveryone
+            | CommandId::ContactJoin
+            | CommandId::ContactAddAddress
+            | CommandId::ContactDetachAddress
+            | CommandId::ContactSetPreferred
+            | CommandId::ContactNew
+            | CommandId::ContactEdit
+            | CommandId::ContactSave
+            | CommandId::ContactDelete
+            | CommandId::ContactRestore
+            | CommandId::ContactsToggleDeleted
+            | CommandId::SuggestionDismiss
+            | CommandId::ContactGroupNew
+            | CommandId::ContactGroupRename
+            | CommandId::ContactGroupAdd
+            | CommandId::ContactGroupRemove => self.run_in_controller(id),
+            CommandId::ContactsImport => self.contacts_import(),
+            CommandId::ContactsExport => self.contacts_export(),
             CommandId::SweepInbox => self.ask_sweep(),
             CommandId::ClearListMail => {
                 if !self.imp().toast.take_offer() {
@@ -2075,6 +2145,63 @@ impl FocusWindow {
                 message: Some(message),
             } => self.open_draft(*message),
             Intent::CloseSurface(kind) => self.close_surface(*kind),
+            // The Contacts view and what lies over it: the controller keeps
+            // the state, this draws it (specs/011-focus-contacts S13).
+            Intent::Contacts(view) => self.show_contacts(view),
+            Intent::ContactsRows { .. } => {
+                if let Some(view) = self.contacts() {
+                    view.show_rows();
+                }
+            }
+            Intent::ContactsCursor(index) => {
+                if let Some(view) = self.contacts() {
+                    view.show_cursor(*index);
+                }
+            }
+            Intent::ContactsCard(card) => {
+                if let Some(view) = self.contacts() {
+                    view.show_card(card.as_deref().cloned());
+                }
+            }
+            // "All mail with them" from Contacts: the controller has closed the
+            // view and says what to search; the box is GTK's.
+            Intent::OpenBar {
+                mode: postio_focus::BarMode::Search,
+                text,
+                ..
+            } => {
+                if let Some(bar) = self.bar() {
+                    bar.open();
+                    bar.set_text(text);
+                }
+            }
+            Intent::ContactPopover(view) => self.show_contact_popover(view),
+            Intent::ContactsSettings(view) => {
+                if let Some(settings) = self.settings() {
+                    settings.panel().show_suggestions(view);
+                }
+            }
+            Intent::ContactEdit(edit) => {
+                if let Some(view) = self.contacts() {
+                    view.show_edit(edit.as_deref().cloned());
+                }
+            }
+            Intent::ContactMerge(sheet) => {
+                if let Some(view) = self.contacts() {
+                    view.show_merge(sheet.as_deref().cloned());
+                }
+            }
+            Intent::ContactsFocusFilter => {
+                if let Some(view) = self.contacts() {
+                    view.focus_filter();
+                }
+            }
+            Intent::WriteTo(address) => {
+                self.open_mailto(postio_model::mailto::Mailto {
+                    to: vec![postio_model::EmailAddress::new(None::<String>, address)],
+                    ..Default::default()
+                });
+            }
             _ => {}
         }
     }
@@ -2374,7 +2501,14 @@ impl FocusWindow {
         titlebar.set_child(Some(chrome.top_bar()));
         self.follow_maximized(chrome.maximize());
         imp.inbox.append(&titlebar);
-        imp.inbox.append(chrome.strip());
+        // Under the top bar, the mail or the Contacts view in its place: the
+        // bar (Compose, the box, the window's buttons) stays through both.
+        imp.mail.set_vexpand(true);
+        imp.body.set_vexpand(true);
+        imp.body.set_transition_type(gtk::StackTransitionType::None);
+        imp.body.add_named(&imp.mail, Some(MAIL));
+        imp.inbox.append(&imp.body);
+        imp.mail.append(chrome.strip());
         imp.chrome.replace(Some(Rc::clone(&chrome)));
         let state_banner = crate::banner::StateBanner::new();
         state_banner.connect_action(glib::clone!(
@@ -2382,7 +2516,7 @@ impl FocusWindow {
             self,
             move |action| window.act(banner_command(action))
         ));
-        imp.inbox.append(state_banner.widget());
+        imp.mail.append(state_banner.widget());
         imp.state_banner.replace(Some(state_banner));
         self.show_state();
         self.set_keymap(keymap);
@@ -2508,7 +2642,7 @@ impl FocusWindow {
         reading_pane.widget().set_visible(false);
         let split = self.split(&list_column, &reading_pane.widget());
         split.set_vexpand(true);
-        imp.inbox.append(&split);
+        imp.mail.append(&split);
         imp.split.replace(Some(split));
         imp.reading_pane.replace(Some(reading_pane));
         imp.bar.replace(Some(bar));
@@ -2522,7 +2656,7 @@ impl FocusWindow {
         ));
         // At the window's foot, under the list and the pane alike: its verbs
         // want the window's width, not the list's.
-        imp.inbox.append(bulk.widget());
+        imp.mail.append(bulk.widget());
         imp.bulk.replace(Some(Rc::clone(&bulk)));
         // The accounts a whole-view selection spans.
         self.refresh_accounts(client.clone());
@@ -2835,6 +2969,11 @@ impl FocusWindow {
         let capture = focus.vault.is_some();
         let beside = focus.reading == postio_config::Reading::Pane;
         let for_controller = focus.clone();
+        if let Some(settings) = self.imp().settings.borrow().as_ref() {
+            settings
+                .panel()
+                .set_contact_rules(focus.contacts().to_vec());
+        }
         self.imp().focus_config.replace(focus);
         if let Some(menu) =
             self.lookup_action(crate::chrome::READING_PANE_ACTION.trim_start_matches("win."))
@@ -3657,6 +3796,292 @@ impl FocusWindow {
         view.focus_list();
     }
 
+    /// The Contacts view, while it is the page on screen.
+    pub fn contacts(&self) -> Option<Rc<crate::contacts::ContactsView>> {
+        let imp = self.imp();
+        if imp.body.visible_child_name().as_deref() != Some(CONTACTS) {
+            return None;
+        }
+        imp.contacts.borrow().clone()
+    }
+
+    /// `g c`: the Contacts view in place of the inbox. The controller opened
+    /// it and says what to draw; the first frame builds the page.
+    fn show_contacts(&self, frame: &postio_focus::ContactsView) {
+        let imp = self.imp();
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let view = imp.contacts.borrow().clone();
+        let view = view.unwrap_or_else(|| {
+            let view = crate::contacts::ContactsView::new(
+                pane.feed().clone(),
+                glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |command| window.press_command(command)
+                ),
+            );
+            imp.body.add_named(view.widget(), Some(CONTACTS));
+            imp.contacts.replace(Some(Rc::clone(&view)));
+            view
+        });
+        view.show_frame(frame);
+        if imp.body.visible_child_name().as_deref() != Some(CONTACTS) {
+            imp.body.set_visible_child_name(CONTACTS);
+            view.focus_list();
+        }
+    }
+
+    /// File > Import Contacts (`v i`): the person picks a `.vcf`, Rust reads
+    /// and applies it, and a sheet says what happened. Nothing is merged: the
+    /// look-alikes wait in the review.
+    fn contacts_import(&self) {
+        let weak = self.downgrade();
+        // POSTIO-CONSENT: a file is read only because somebody chose it in
+        // the file chooser; it is parsed on this computer and nothing is
+        // uploaded.
+        self.pick_place(crate::chooser::SavePick::Cards, move |path| {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            let Some(client) = window.imp().client.borrow().clone() else {
+                return;
+            };
+            let Ok(bytes) = std::fs::read(&path) else {
+                window.show_toast(
+                    "Postio could not read that file.",
+                    &postio_focus::ToastKind::Notice,
+                );
+                return;
+            };
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: one client call, a oneshot receive.
+                match client.import_contacts(bytes).await {
+                    Ok(summary) => {
+                        if let Some(pane) = window.pane() {
+                            // The cursor goes to the first new person and the
+                            // review looks at what the import found first.
+                            pane.feed().input(postio_focus::Input::ContactsImported {
+                                made: summary.made.clone(),
+                                touched: summary.touched.clone(),
+                            });
+                        }
+                        let sheet =
+                            postio_ui::contacts_io::import_sheet(&summary, &window.keymap());
+                        window.show_contacts_io(sheet);
+                    }
+                    Err(error) => {
+                        window.show_toast(&error.to_string(), &postio_focus::ToastKind::Notice)
+                    }
+                }
+            });
+        });
+    }
+
+    /// File > Export Contacts (`v x`): the people the list holds, as one
+    /// `.vcf` at a place the person names.
+    fn contacts_export(&self) {
+        let words = postio_ui::contacts_io::panel_words();
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let weak = self.downgrade();
+        glib::spawn_future_local(async move {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            // POSTIO-GLIB-SAFE: one client call, a oneshot receive.
+            let (text, count) = match client.export_contacts().await {
+                Ok(done) => done,
+                Err(error) => {
+                    window.show_toast(&error.to_string(), &postio_focus::ToastKind::Notice);
+                    return;
+                }
+            };
+            let keymap = window.keymap();
+            let again = weak.clone();
+            // POSTIO-CONSENT: a file is written only to the name and place
+            // somebody chose in the file chooser.
+            window.pick_place(
+                crate::chooser::SavePick::CardsFile {
+                    suggested: words.export_name.clone(),
+                },
+                move |path| {
+                    let Some(window) = again.upgrade() else {
+                        return;
+                    };
+                    match std::fs::write(&path, text.as_bytes()) {
+                        Ok(()) => window
+                            .show_contacts_io(postio_ui::contacts_io::export_sheet(count, &keymap)),
+                        Err(_) => window.show_toast(
+                            "Postio could not write that file.",
+                            &postio_focus::ToastKind::Notice,
+                        ),
+                    }
+                },
+            );
+        });
+    }
+
+    /// The sheet after an import or an export: what happened, and Review
+    /// when the import left people to look at.
+    fn show_contacts_io(&self, sheet: postio_ui::contacts_io::IoSheetView) {
+        let dialog = adw::AlertDialog::new(Some(&sheet.title), Some(&sheet.lines.join("\n\n")));
+        dialog.set_widget_name(CONTACTS_IO_DIALOG);
+        dialog.add_response("done", &sheet.done.label);
+        dialog.set_close_response("done");
+        dialog.set_default_response(Some("done"));
+        if let Some(review) = &sheet.review {
+            dialog.add_response("review", &review.label);
+            dialog.set_response_appearance("review", adw::ResponseAppearance::Suggested);
+            dialog.set_default_response(Some("review"));
+        }
+        self.imp().contacts_io.replace(Some(sheet));
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_, response| {
+                    window.imp().contacts_io.take();
+                    if response == "review" {
+                        window.press_command(CommandId::ContactsSuggestions);
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+
+    /// Close whatever dialog is up, as Escape does: a case that has read a
+    /// sheet goes on to the next thing.
+    pub fn close_dialogs_for_test(&self) {
+        if let Some(dialog) = self.visible_dialog() {
+            dialog.close();
+        }
+        self.imp().contacts_io.take();
+    }
+
+    /// What the import or export sheet says, while it is up.
+    pub fn contacts_io_sheet(&self) -> Option<postio_ui::contacts_io::IoSheetView> {
+        self.imp().contacts_io.borrow().clone()
+    }
+
+    /// What the contact popover says, while one is up: what a test reads.
+    pub fn contact_popover(&self) -> Option<postio_ui::contact_popover::PopoverView> {
+        self.imp()
+            .contact_popover
+            .borrow()
+            .as_ref()
+            .map(|(_, view)| view.clone())
+    }
+
+    /// Every text the contact popover shows, while one is up.
+    pub fn contact_popover_texts(&self) -> Vec<String> {
+        self.imp()
+            .contact_popover
+            .borrow()
+            .as_ref()
+            .map(|(widget, _)| crate::contacts::texts_of(widget))
+            .unwrap_or_default()
+    }
+
+    /// The contact popover, at the sender's name on the cursor's row (or
+    /// where it already was, when it is only redrawn).
+    fn show_contact_popover(&self, view: &postio_ui::contact_popover::PopoverView) {
+        use crate::contacts::popover;
+        let imp = self.imp();
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let (start, top) = match imp.contact_popover.take() {
+            Some((old, _)) => {
+                let at = (old.margin_start(), old.margin_top());
+                imp.stage.remove_overlay(&old);
+                at
+            }
+            None => self.popover_anchor(&pane),
+        };
+        let weak = self.downgrade();
+        let hooks = popover::PopoverHooks {
+            command: Rc::new({
+                let weak = weak.clone();
+                move |command| {
+                    if let Some(window) = weak.upgrade() {
+                        window.press_command(command);
+                    }
+                }
+            }),
+            arrival: Rc::new(move |arrival| {
+                if let Some(window) = weak.upgrade()
+                    && let Some(pane) = window.pane()
+                {
+                    pane.feed()
+                        .input(postio_focus::Input::ContactArrival(arrival));
+                }
+            }),
+        };
+        let card = popover::build(view, &hooks);
+        card.set_margin_start(start);
+        card.set_margin_top(top);
+        imp.stage.add_overlay(&card);
+        imp.contact_popover
+            .replace(Some((card.upcast(), view.clone())));
+    }
+
+    /// Where the popover goes: under the cursor's row, a little in from the
+    /// left where the sender's name is; over the middle when the cursor is
+    /// not on a row that can be seen.
+    fn popover_anchor(&self, pane: &ListPane) -> (i32, i32) {
+        let stage = &self.imp().stage;
+        let (width, height) = (stage.width(), stage.height());
+        let centre = ((width - 400) / 2, 90);
+        let Some(cursor) = self.cursor_row() else {
+            return centre;
+        };
+        let Some(row) = pane
+            .rows_on_screen()
+            .into_iter()
+            .find(|row| row.item().is_some_and(|item| item.id() == cursor.id()))
+        else {
+            return centre;
+        };
+        let Some(at) = row.compute_point(stage, &gtk::graphene::Point::new(0.0, 0.0)) else {
+            return centre;
+        };
+        let below = at.y() as i32 + row.height();
+        let tall = 300;
+        let top = if below + tall > height {
+            (at.y() as i32 - tall).max(8)
+        } else {
+            below
+        };
+        (((at.x() as i32) + 56).clamp(8, (width - 408).max(8)), top)
+    }
+
+    fn close_contact_popover(&self) {
+        let imp = self.imp();
+        if let Some((card, _)) = imp.contact_popover.take() {
+            imp.stage.remove_overlay(&card);
+        }
+    }
+
+    /// A control drawn for a command does what its key does: the
+    /// controller's when it owns the command over what is on screen.
+    pub fn press_command(&self, command: CommandId) {
+        match self.route(command) {
+            Route::Controller => self.run_in_controller(command),
+            _ => self.act(command),
+        }
+    }
+
+    /// Back from Contacts to the inbox, as it was.
+    fn leave_contacts(&self) {
+        self.imp().body.set_visible_child_name(MAIL);
+        self.focus_list();
+    }
+
     /// Back from Filtered to the inbox, as it was.
     fn leave_filtered(&self) {
         self.imp().pages.set_visible_child_name(INBOX);
@@ -4303,6 +4728,15 @@ impl FocusWindow {
                 dialog.set_title("Save attachments to");
                 dialog.select_folder(Some(self), None::<&gio::Cancellable>, done);
             }
+            crate::chooser::SavePick::Cards => {
+                dialog.set_title(&postio_ui::contacts_io::panel_words().import_title);
+                dialog.open(Some(self), None::<&gio::Cancellable>, done);
+            }
+            crate::chooser::SavePick::CardsFile { suggested } => {
+                dialog.set_title(&postio_ui::contacts_io::panel_words().export_title);
+                dialog.set_initial_name(Some(&suggested));
+                dialog.save(Some(self), None::<&gio::Cancellable>, done);
+            }
         }
     }
 
@@ -4808,6 +5242,7 @@ impl FocusWindow {
         commands.extend(crate::row_menu::RowMenu::commands());
         commands.extend(crate::bar::Bar::controls());
         commands.extend(crate::filtered::FilteredView::controls());
+        commands.extend(crate::contacts::ContactsView::controls());
         commands.extend(crate::digest::DigestWindow::controls());
         // The strip's counts are ways there: "186 filtered today g f" and
         // "4 digest rules g d".
@@ -5260,6 +5695,9 @@ impl FocusWindow {
         // A message open beside the list, the keyboard on it (T232): the
         // window's own context says so, as it does for every key.
         let reading_here = self.visible_dialog().is_none() && self.reading_beside();
+        // The merge sheet over the Contacts view takes every key until it is
+        // answered: the keyboard is the sheet's, not the dimmed list's.
+        let merging = self.contacts().is_some_and(|view| view.merge_open());
 
         let region = if menu.is_some() {
             Region::Menu
@@ -5272,6 +5710,7 @@ impl FocusWindow {
             || small_dialog.is_some()
             || dialog_named(crate::capture::DIALOG_NAME)
             || sign_in
+            || merging
         {
             Region::Dialog
         } else if compose_open || composition_detached {
@@ -5375,6 +5814,11 @@ impl FocusWindow {
             OverlayState {
                 kind: Overlay::Dialog,
                 mode: Some("settings".to_owned()),
+            }
+        } else if merging {
+            OverlayState {
+                kind: Overlay::Dialog,
+                mode: Some("merge".to_owned()),
             }
         } else if let Some(name) = small_dialog {
             OverlayState {

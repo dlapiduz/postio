@@ -65,6 +65,14 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     // not these two ways in.
     (CommandId::GoToDigestRules, "specs/009-focus-macos T114"),
     (CommandId::DigestLikeThis, "specs/009-focus-macos T115"),
+    // Contacts (specs/005-contacts): the commands are in the registry and
+    // answered in `postio_session::actions` as they land, and the surface that
+    // sends them is Focus's, designed in specs/011-focus-contacts.
+    (
+        CommandId::ContactsToggleEveryone,
+        "specs/011-focus-contacts",
+    ),
+    (CommandId::ContactsToggleDeleted, "specs/011-focus-contacts"),
 ];
 
 /// Whether Focus's controller answers `id` on the Mac: on the list with
@@ -102,6 +110,8 @@ fn the_controller_answers(id: CommandId) -> bool {
             SurfaceKind::Filtered,
             SurfaceKind::Digest,
             SurfaceKind::Capture,
+            SurfaceKind::ContactPopover,
+            SurfaceKind::Contacts,
         ]
         .into_iter()
         .any(|kind| {

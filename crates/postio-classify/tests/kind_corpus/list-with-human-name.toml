@@ -1,0 +1,6 @@
+label = "list"
+address = "jo-via-list@lists.projectz.example"
+name = "Jo via Project Z"
+messages = 33
+with_list_id = 33
+with_list_precedence = 33

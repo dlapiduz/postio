@@ -124,6 +124,9 @@ pub struct Reader {
     unsubscribe_list: Rc<RefCell<Option<String>>>,
     on_unsubscribe: Rc<RefCell<Vec<UnsubscribeHandler>>>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
+    /// Where a sender's remembered treatment is looked up and kept: the
+    /// person's, in the store, when the app gave the readers that.
+    treatments: Rc<dyn super::SenderTreatments>,
     open: Rc<RefCell<Option<Open>>>,
     /// Which [`Absent`] the pane is explaining, when it has no body to draw.
     /// `None` whenever a body is on screen — the two are exclusive, and
@@ -151,9 +154,6 @@ pub struct Reader {
     /// Where the reader is in the document, so a redraw of the same
     /// content can put them back there. See [`Place`].
     place: Rc<Place>,
-    /// Where a change to the allow list -- an "Always allow", an "Always
-    /// for this sender" -- is saved.
-    allowlist_path: Rc<std::path::PathBuf>,
 }
 
 impl Drop for Reader {
@@ -362,6 +362,7 @@ impl Reader {
             notices,
             unsubscribe_list: Rc::new(RefCell::new(None)),
             on_unsubscribe: Rc::new(RefCell::new(Vec::new())),
+            treatments: super::treatments_for(&allowlist, &allowlist_path),
             allowlist,
             open: Rc::new(RefCell::new(None)),
             absent: Rc::new(std::cell::Cell::new(None)),
@@ -372,7 +373,6 @@ impl Reader {
             loads: Rc::new(std::cell::Cell::new(0)),
             document: Rc::new(RefCell::new(String::new())),
             place,
-            allowlist_path: Rc::new(allowlist_path.clone()),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -810,7 +810,7 @@ impl Reader {
         let rendering = postio_ui::reader::document::opening_rendering();
         // What the person always wants for this sender is the choice the
         // message opens with; `O` overrules it for this message alone.
-        let remembered = sender.and_then(|sender| self.allowlist.borrow().treatment_for(sender));
+        let remembered = sender.and_then(|sender| self.treatments.treatment_for(sender));
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
             sender: sender.map(str::to_owned),
@@ -1030,7 +1030,7 @@ impl Reader {
             highlight: Rc::clone(&self.highlight),
             rendered: Rc::clone(&self.rendered),
             allowlist: Rc::clone(&self.allowlist),
-            allowlist_path: Rc::clone(&self.allowlist_path),
+            treatments: Rc::clone(&self.treatments),
         }
     }
 
@@ -1500,7 +1500,7 @@ struct Switcher {
     highlight: Rc<RefCell<Vec<String>>>,
     rendered: Rc<RefCell<Vec<RenderedHandler>>>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
-    allowlist_path: Rc<std::path::PathBuf>,
+    treatments: Rc<dyn super::SenderTreatments>,
 }
 
 impl Switcher {
@@ -1563,13 +1563,7 @@ impl Switcher {
             current.remembered = Some(shown);
             current.sender.clone()?
         };
-        {
-            let mut list = self.allowlist.borrow_mut();
-            list.set_treatment(&sender, Some(shown));
-            if let Err(error) = list.save_to(&self.allowlist_path) {
-                tracing::warn!(%error, "could not save a sender's treatment");
-            }
-        }
+        self.treatments.set_treatment(&sender, Some(shown));
         show_treatment(&place, Some(shown));
         tracing::info!(
             treatment = shown.attribute_value(),

@@ -1,0 +1,5 @@
+label = "person"
+address = "jo.park@acme.example"
+name = "Jo Park"
+messages = 4
+people_at_domain = 6

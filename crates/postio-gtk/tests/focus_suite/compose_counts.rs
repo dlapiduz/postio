@@ -161,9 +161,11 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
             let connection = fixture.database.connect().await.expect("a connection");
             postio_storage::repository::ContactRepository::new(&connection)
                 .create(
-                    Some(fixture.account.id),
-                    &postio_model::EmailAddress::new(None::<String>, "wilhelmina@example.com"),
                     Some("Wilhelmina Quartz"),
+                    &[postio_model::EmailAddress::new(
+                        None::<String>,
+                        "wilhelmina@example.com",
+                    )],
                 )
                 .await
                 .expect("create the contact");
@@ -242,9 +244,11 @@ pub fn typing_back_and_forth_across_the_threshold_stays_connected() {
             let connection = fixture.database.connect().await.expect("a connection");
             postio_storage::repository::ContactRepository::new(&connection)
                 .create(
-                    Some(fixture.account.id),
-                    &postio_model::EmailAddress::new(None::<String>, "wilhelmina@example.com"),
                     Some("Wilhelmina Quartz"),
+                    &[postio_model::EmailAddress::new(
+                        None::<String>,
+                        "wilhelmina@example.com",
+                    )],
                 )
                 .await
                 .expect("create the contact");

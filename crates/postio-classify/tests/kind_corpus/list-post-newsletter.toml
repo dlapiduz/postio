@@ -1,0 +1,6 @@
+label = "newsletter"
+address = "editor@press.example.org"
+name = "The Press Room"
+messages = 20
+with_list_id = 20
+with_unsubscribe = 20

@@ -1,0 +1,6 @@
+label = "person"
+address = "pat.support@example.net"
+name = "Pat Support"
+messages = 8
+written_to = 4
+people_at_domain = 1

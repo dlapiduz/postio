@@ -50,6 +50,7 @@
 
 pub mod change;
 pub mod compose;
+mod contact_rules;
 pub mod error;
 pub mod filters;
 pub mod focus;
@@ -81,6 +82,7 @@ use toml::{Table, Value};
 
 pub use change::ConfigChanged;
 pub use compose::{ComposeConfig, SignaturePlacement, patch_compose};
+pub use contact_rules::{ContactRule, Movable, digest_address, movable, rule_of, setting_of};
 pub use error::{ConfigError, Result};
 pub use filters::{FilterConfig, patch_filters};
 pub use focus::{

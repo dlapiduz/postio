@@ -419,6 +419,10 @@ const GO_SURFACES: &[Context] = &[
     Context::Sidebar,
 ];
 
+/// Contacts, alone. Its commands act on a person, a group or a suggestion,
+/// none of which any other surface has.
+const CONTACTS: &[Context] = &[Context::Contacts];
+
 /// The registry itself. Ordered like [`CommandId::ALL`]; the cheat sheet reads
 /// it top to bottom.
 static SPECS: &[CommandSpec] = &[
@@ -429,11 +433,13 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "j",
         alternate_bindings: &["Down"],
         // And Focus's Filtered view and digest window, whose rows are
-        // walked as the list's are (screen 21's footer).
+        // walked as the list's are (screen 21's footer), and the Contacts
+        // list.
         contexts: ctx(LIST_SURFACES)
             .with(Context::Filtered)
             .with(Context::Digest)
-            .with(Context::Results),
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -444,11 +450,13 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "k",
         alternate_bindings: &["Up"],
         // And Focus's Filtered view and digest window, whose rows are
-        // walked as the list's are (screen 21's footer).
+        // walked as the list's are (screen 21's footer), and the Contacts
+        // list.
         contexts: ctx(LIST_SURFACES)
             .with(Context::Filtered)
             .with(Context::Digest)
-            .with(Context::Results),
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -501,7 +509,9 @@ static SPECS: &[CommandSpec] = &[
         // here than a mnemonic nobody has.
         default_binding: "x",
         alternate_bindings: &[],
-        contexts: ctx(LIST_SURFACES).with(Context::Results),
+        contexts: ctx(LIST_SURFACES)
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         // Changing what an action *would* hit changes no durable state, so
         // there is nothing to undo and nothing to confirm.
@@ -516,8 +526,9 @@ static SPECS: &[CommandSpec] = &[
         // `LIST_SURFACES` minus the conversation: there is no row selection
         // to extend while the keyboard is inside the pane, which walks one
         // thread's messages on `n` and `p` (#1007). `shift+Down` still
-        // reaches this everywhere it ever did.
-        contexts: ctx(SELECTION_SURFACES),
+        // reaches this everywhere it ever did. Contacts too: a run of people
+        // is selected the way a run of messages is (specs/005-contacts).
+        contexts: ctx(SELECTION_SURFACES).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -528,7 +539,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "K",
         alternate_bindings: &["shift+Up"],
         // See `ExtendSelectionDown`.
-        contexts: ctx(SELECTION_SURFACES),
+        contexts: ctx(SELECTION_SURFACES).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -541,7 +552,9 @@ static SPECS: &[CommandSpec] = &[
         // `x`, the key that selects one row.
         default_binding: "* a",
         alternate_bindings: &["mod+a", "X"],
-        contexts: ctx(LIST_SURFACES).with(Context::Results),
+        contexts: ctx(LIST_SURFACES)
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1638,10 +1651,19 @@ static SPECS: &[CommandSpec] = &[
         // global stack is untouched (ADR 0005 Q6c). And Focus's digest and
         // Filtered: archiving a whole digest and a restore from Filtered are
         // each one undoable action (FR-125, contracts/keymap.md).
+        //
+        // Plus Contacts: every edit there -- a merge, a detach, a delete -- is
+        // `Recovery::Undo` on the global stack, and a `z` that did nothing on
+        // the surface that made the edit would be the declaration nothing
+        // backs (specs/005-contacts FR-025).
         contexts: ctx(MESSAGE_SURFACES)
             .with(Context::Accounts)
             .with(Context::Digest)
-            .with(Context::Filtered),
+            .with(Context::Filtered)
+            .with(Context::Contacts)
+            // And the popover over a sender: choosing where their mail
+            // arrives is undoable at once, with its toast (S6).
+            .with(Context::ContactPopover),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1692,7 +1714,9 @@ static SPECS: &[CommandSpec] = &[
         // The same reach `Settings` has, for the reason ADR 0012 Q1 gives:
         // adding an account is a setting, and the folder list is where the
         // account will eventually appear.
-        contexts: ContextSet::ANY,
+        // Less Contacts, where `mod+shift+n` is New contact: the same gesture
+        // aimed at the surface in front of the person (plan 011 section 9).
+        contexts: ContextSet::ANY.without(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1724,8 +1748,10 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ShowImages,
         title: "Show remote images",
-        // A sequence under `i` for images: once, or always from this sender.
-        default_binding: "i i",
+        // `alt+i`, once; `alt+I`, always from this sender. The bare `i` is the
+        // contact popover's (specs/011-focus-contacts, Q2), so images moved
+        // to the modified pair on both platforms.
+        default_binding: "alt+i",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -1735,7 +1761,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::AlwaysShowImages,
         title: "Always show images from this sender",
-        default_binding: "i a",
+        default_binding: "alt+I",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -1751,7 +1777,9 @@ static SPECS: &[CommandSpec] = &[
         // unread (docs/PRODUCT.md §8). In a digest too.
         default_binding: "M",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Digest)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -2113,8 +2141,10 @@ static SPECS: &[CommandSpec] = &[
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is
         // the same gesture aimed at an account rather than a row or a folder.
-        // `c` to cycle: Gmail's `g a` is all mail, the archive here.
-        default_binding: "g c",
+        // `n` for next: `g c` was this until Contacts took it
+        // (specs/011-focus-contacts S13); Gmail's `g a` is all mail, the
+        // archive here.
+        default_binding: "g n",
         alternate_bindings: &[],
         // Reachable from the surfaces a scope actually changes -- the folder
         // list it re-roots and the message list it re-fills. Not from the
@@ -2460,6 +2490,391 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
+    },
+    // -- Contacts (specs/005-contacts, contracts/commands.md) -------------
+    // Focus's, drawn (`FOCUS_GRAPHICAL_MAIL`): the terminal, which is Focus in
+    // character cells, has no Contacts surface, and plan 011 does not give it
+    // one.
+    CommandSpec {
+        id: CommandId::OpenContacts,
+        title: "Contacts",
+        // Beside `g i`, `g d`, `g s`: a destination. Linux's `next_scope` was
+        // `g c` and moved to `g n` when Linux adopted Contacts (plan 011
+        // section 9, S13); the Mac has no `next_scope`. On the
+        // destinations' surfaces and not `ContextSet::ANY`, for the reason
+        // `GO_SURFACES` gives -- `g` is a letter in the composer.
+        default_binding: "g c",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactPopover,
+        title: "Contact popover",
+        // The handoff's `i` (specs/011-focus-contacts Q2): images took
+        // `alt+i`, so the bare key is free everywhere a sender is on screen.
+        default_binding: "i",
+        alternate_bindings: &[],
+        // Not the search bar: `i` there is a letter being typed.
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Results)
+            .with(Context::Contacts),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactOpenCard,
+        title: "Open card",
+        default_binding: "mod+i",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactAdd,
+        title: "Add contact",
+        default_binding: "mod+Return",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactIgnore,
+        title: "Ignore sender",
+        default_binding: "mod+BackSpace",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactArrivalPrev,
+        title: "Arrival: previous",
+        default_binding: "Left",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactArrivalNext,
+        title: "Arrival: next",
+        default_binding: "Right",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactSetArrival,
+        title: "Choose where this sender's mail arrives",
+        // The controller sends it for a click or an arrow; the key is the
+        // keyboard's way to the default rules, which no arrow lands on.
+        default_binding: "0",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactShowMail,
+        title: "Show mail",
+        // All the mail with this person (maintainer, 2026-10-19).
+        default_binding: "Return",
+        alternate_bindings: &["o"],
+        contexts: ctx(CONTACTS).with(Context::ContactPopover),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactCompose,
+        title: "Write to",
+        // `c` is compose everywhere else; here it composes to the person.
+        default_binding: "c",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS).with(Context::ContactPopover),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsFilter,
+        title: "Filter contacts",
+        default_binding: "/",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsTabPrevious,
+        title: "Previous kind tab",
+        default_binding: "[",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsTabNext,
+        title: "Next kind tab",
+        default_binding: "]",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsToggleEveryone,
+        title: "Everyone from mail",
+        // `v` for view: the list's views are a family (`v d` shows the
+        // deleted), and a prefix keeps them together in the sheet.
+        // Provisional: the Contacts design's planning pass settles views.
+        default_binding: "v e",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        // Which people are shown is view state, not data.
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactJoin,
+        title: "Merge",
+        // `m` for merge: `J` extends the selection being merged, and `x`
+        // marks it -- the merge acts on what they built. The id keeps 005's
+        // word, "join"; the word on screen is Merge.
+        default_binding: "m",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactAddAddress,
+        title: "Add address",
+        default_binding: "plus",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactDetachAddress,
+        title: "Detach address",
+        // The bare `-` rather than `minus`: the Mac draws both as the same
+        // accelerator, and its menu test rejects two spellings of one key.
+        default_binding: "-",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactSetPreferred,
+        title: "Use this address first",
+        // 005 bound `*`, which is the first key of Select all's `* a` in
+        // this keymap and would have waited for a second key; `P` is free
+        // in Contacts (it is `P` in plan 011's table too).
+        default_binding: "P",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactNew,
+        title: "New contact",
+        // The handoff's ⌘⇧N (maintainer, 2026-10-19), not 005's `n`. Contacts
+        // is excluded from `add_account`, which holds `mod+shift+n` in every
+        // other context (plan 011 section 9).
+        default_binding: "mod+shift+n",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactEdit,
+        title: "Edit contact",
+        // The handoff's ⌘E (maintainer, 2026-10-19), not 005's `e`;
+        // `edit_config` has it in no context Contacts shares.
+        default_binding: "mod+e",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactSave,
+        title: "Save contact",
+        // The form's own save, as every Mac form has it. The composer's
+        // `mod+s` is in a context Contacts does not share.
+        default_binding: "mod+s",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactDelete,
+        title: "Delete",
+        // The message list's own delete key: the same gesture means the
+        // same thing on a person, and `z` takes it back.
+        default_binding: "d",
+        alternate_bindings: &["Delete"],
+        contexts: ctx(CONTACTS),
+        destructive: true,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactRestore,
+        title: "Restore contact",
+        default_binding: "r",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsToggleDeleted,
+        title: "Deleted contacts",
+        default_binding: "v d",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsSuggestions,
+        title: "Review contacts",
+        // "Worth a look": the review queue, `g w` as the plan has it (`g a`
+        // is Go to archive). A destination, so it is reached from where
+        // `g c` is, and from Contacts itself.
+        default_binding: "g w",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES).with(Context::Contacts),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::SuggestionDismiss,
+        title: "Not the same person",
+        // 005 bound `X`, which is also Select all's alternate and so a second
+        // meaning in Contacts; `n` for "not", as the handoff's sheet says
+        // (screen 07): the reader's `n` is another context's.
+        default_binding: "n",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        // It hides a suggestion and nothing else: the two people, their
+        // addresses and their mail are untouched, so there is nothing to
+        // lose and nothing for undo to give back (contracts/commands.md).
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupNew,
+        title: "New group",
+        default_binding: "g n",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupRename,
+        title: "Rename group",
+        default_binding: "R",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupAdd,
+        title: "Add to group",
+        // `l` for label: a group is the address book's way of labelling
+        // people, and `L` takes it off again.
+        default_binding: "l",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupRemove,
+        title: "Remove from group",
+        default_binding: "L",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsImport,
+        title: "Import contacts",
+        // Provisional, as 005 had it: `v` is the list's family of views and
+        // the Contacts design's planning pass settles the rest.
+        default_binding: "v i",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        // Import only adds, and its summary says what it merged; there is no
+        // unit to take back (maintainer, 2026-10-19: not undoable for now).
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsExport,
+        title: "Export contacts",
+        default_binding: "v x",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsSync,
+        title: "Sync contacts",
+        default_binding: "v y",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        // A dry run writes nothing; there is nothing to take back.
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
 ];
 
@@ -2858,6 +3273,9 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::PickRelaxation3), Platform::Freedesktop)
             | (ActionId::Builtin(C::PickRelaxation4), Platform::Freedesktop)
             | (ActionId::Builtin(C::SaveFile), Platform::Freedesktop)
+            // Syncing with an address book is the Mac's: Linux has Contacts
+            // (specs/011-focus-contacts S13) and leaves sync out.
+            | (ActionId::Builtin(C::ContactsSync), Platform::Freedesktop)
     )
 }
 
@@ -2932,9 +3350,10 @@ mod tests {
         CommandId::NextScope,
     ];
 
-    /// What only the Mac's search dropdown and results view draw, until
-    /// Linux adopts them (spec 010 D23, D25).
-    const NOT_ON_LINUX_YET: [CommandId; 18] = [
+    /// What only the Mac draws, until Linux adopts it: the search dropdown
+    /// and results view (spec 010 D23, D25), and syncing with an address
+    /// book (specs/011-focus-contacts S12).
+    const NOT_ON_LINUX_YET: [CommandId; 19] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -2953,6 +3372,7 @@ mod tests {
         CommandId::PickRelaxation3,
         CommandId::PickRelaxation4,
         CommandId::SaveFile,
+        CommandId::ContactsSync,
     ];
 
     #[test]

@@ -55,6 +55,7 @@ def build_fixture(
     body_deps: str = "",
     model_deps: str = "",
     config_deps: str = "",
+    vcard_deps: str = "",
     helper_deps: str = "",
     tui_deps: str = "",
     client_deps: str = "",
@@ -69,6 +70,7 @@ def build_fixture(
     storyboard_deps: str = "",
     controller_deps: str = "",
     extract_deps: str = "",
+    contact_sync_deps: str = "",
     include_focus: bool = True,
     hack_deps: str | None = None,
 ) -> Path:
@@ -81,6 +83,7 @@ def build_fixture(
     write_crate(root, "crates", "postio-body", body_deps)
     write_crate(root, "crates", "postio-model", model_deps)
     write_crate(root, "crates", "postio-config", config_deps)
+    write_crate(root, "crates", "postio-vcard", vcard_deps)
     write_crate(root, "crates", "helper", helper_deps)
     # The terminal frontend and what it stands on (docs/archive/specs/005-tui-frontend).
     write_crate(root, "crates", "postio-tui", tui_deps)
@@ -102,6 +105,8 @@ def build_fixture(
     write_crate(root, "crates", "postio-focus", controller_deps)
     # Attachment text, a pure leaf (specs/010-focus-search FR-052).
     write_crate(root, "crates", "postio-extract", extract_deps)
+    # The Contacts sync plan, a pure leaf (specs/011-focus-contacts S12).
+    write_crate(root, "crates", "postio-contact-sync", contact_sync_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
     # member, or `find_violations` raises before any rule gets checked
     # (#560) -- so a rule added for a real crate the fixture never grew a
@@ -330,6 +335,42 @@ def main() -> int:
             expected_status=1,
             must_mention=("postio-body", "gtk4"),
         )
+
+        # 11b. postio-vcard parses files a stranger handed the user and is
+        #      linked only by the app's import command -- a leaf, kept off
+        #      postio-model's compile path, with no engine and no runtime of
+        #      its own (specs/005-contacts R9).
+        check_case(
+            "postio-vcard gains a direct tokio dependency",
+            build_fixture(
+                tmp_path / "vcard-tokio",
+                vcard_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vcard", "tokio"),
+        )
+        check_case(
+            "postio-vcard gains a direct turso dependency",
+            build_fixture(
+                tmp_path / "vcard-turso",
+                vcard_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vcard", "turso"),
+        )
+
+        # 11c. postio-contact-sync plans a sync and writes nothing: no
+        #      store, no runtime, no toolkit (specs/011-focus-contacts S12).
+        for banned in ("tokio", "turso"):
+            check_case(
+                f"postio-contact-sync gains a direct {banned} dependency",
+                build_fixture(
+                    tmp_path / f"contact-sync-{banned}",
+                    contact_sync_deps=f'{banned} = {{ path = "../../vendor/{banned}" }}\n',
+                ),
+                expected_status=1,
+                must_mention=("postio-contact-sync", banned),
+            )
 
         # 12. postio-model is what the whole workspace waits on to compile;
         #     ADR 0004 Q1 rejected the composer's document here for exactly

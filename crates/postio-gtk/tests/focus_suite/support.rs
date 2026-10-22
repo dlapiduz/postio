@@ -426,11 +426,7 @@ impl Fixture {
     pub async fn correspondent(&self, name: &str, address: &str) {
         let connection = self.database.connect().await.expect("a connection");
         postio_storage::repository::ContactRepository::new(&connection)
-            .record(
-                Some(self.account.id),
-                &EmailAddress::new(Some(name), address),
-                now(),
-            )
+            .create(Some(name), &[EmailAddress::new(Some(name), address)])
             .await
             .expect("a correspondent");
     }

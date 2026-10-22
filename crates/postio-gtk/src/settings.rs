@@ -436,7 +436,29 @@ impl crate::window::FocusWindow {
                 seams: self.imp().settings_seams.borrow().clone(),
                 client: client.clone(),
             });
+            let for_take_back = client.clone();
+            let runtime = self.imp().runtime.borrow().clone();
             let settings = Settings::new(client, outside);
+            // A person's pin or marker is theirs, not the buffer's: the host
+            // takes it back, and the window hears of it as of any change.
+            settings.panel().connect_contact_take_back(move |undo| {
+                let client = for_take_back.clone();
+                let (entry, kind) = match undo {
+                    postio_ui::filtering::Undo::Never(entry) => (entry.clone(), None),
+                    postio_ui::filtering::Undo::Marker { sender, kind } => {
+                        (sender.clone(), Some(kind.clone()))
+                    }
+                };
+                // On the host's runtime, which the client's future needs.
+                let Some(runtime) = runtime.clone() else {
+                    return;
+                };
+                runtime.spawn(async move {
+                    if let Err(error) = client.take_back_filter(&entry, kind.as_deref()).await {
+                        tracing::warn!(%error, "could not take a filter entry back");
+                    }
+                });
+            });
             settings.panel().connect_command({
                 let window = self.downgrade();
                 move |id| {
@@ -453,6 +475,33 @@ impl crate::window::FocusWindow {
                     window.act(id);
                 }
             });
+            // Contacts' Suggestions are the controller's: the pane asks
+            // which are on when it is looked at, a flip is the click it
+            // is, and the answer redraws it (`Intent::ContactsSettings`).
+            settings.panel().connect_contacts(
+                {
+                    let window = self.downgrade();
+                    move || {
+                        if let Some(window) = window.upgrade()
+                            && let Some(pane) = window.pane()
+                        {
+                            pane.feed()
+                                .input(postio_focus::Input::ContactsSettingsOpened);
+                        }
+                    }
+                },
+                {
+                    let window = self.downgrade();
+                    move |index| {
+                        if let Some(window) = window.upgrade()
+                            && let Some(pane) = window.pane()
+                        {
+                            pane.feed()
+                                .input(postio_focus::Input::ContactsSuggestion(index));
+                        }
+                    }
+                },
+            );
             if let Some(path) = self.config_path() {
                 settings.panel().load(&path);
             }
@@ -463,6 +512,9 @@ impl crate::window::FocusWindow {
             settings
         });
         settings.panel().set_filtered_today(self.filtered_today());
+        settings
+            .panel()
+            .set_contact_rules(self.imp().focus_config.borrow().contacts().to_vec());
         settings.present(self.upcast_ref());
     }
 

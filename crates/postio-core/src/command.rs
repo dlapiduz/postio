@@ -27,7 +27,9 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use postio_model::{
-    AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
+    AccountId, AddressId, ContactGroup, ContactGroupId, ContactId, ContactState, DraftId,
+    EmailAddress, JoinReceipt, LabelId, MailboxId, MailboxRole, MessageId, OperationRange,
+    PersonEdit, PersonFields, ThreadId,
 };
 
 /// How long an answer to an invitation waits in the outbox before it may
@@ -751,6 +753,145 @@ commands! {
         /// the way [`Command::OpenMessage`]'s is.
         message: Option<MessageId> = None,
     } => "digest_like_this",
+
+    // -- Contacts (specs/005-contacts) -----------------------------------
+    /// Open Contacts.
+    OpenContacts => "open_contacts",
+    /// Open the contact popover on the sender under the cursor, or on
+    /// `address` when a name was clicked (specs/011-focus-contacts S6).
+    ContactPopover {
+        /// Whose; `None` means the sender of the row or message the keyboard
+        /// is on.
+        address: Option<String> = None,
+    } => "contact_popover",
+    /// Open the contact's card from the popover. Held until the card exists.
+    ContactOpenCard => "contact_open_card",
+    /// Save the person the new-sender popover is about, keeping what their
+    /// signature said.
+    ContactAdd => "contact_add",
+    /// Never offer the new-sender popover for this sender again.
+    ContactIgnore => "contact_ignore",
+    /// Step the popover's arrival control to the segment before.
+    ContactArrivalPrev => "contact_arrival_prev",
+    /// Step the popover's arrival control to the segment after.
+    ContactArrivalNext => "contact_arrival_next",
+    /// Choose where one sender's mail arrives, or put the choice back
+    /// (specs/011-focus-contacts S6). Applies at once and can be undone.
+    ContactSetArrival {
+        /// Whose: any of the person's addresses.
+        address: String = String::new(),
+        /// Where: `None` is by the default rules.
+        arrival: Option<postio_model::ContactArrival> = None,
+    } => "contact_set_arrival",
+    /// Show the focused person's mail: a `with:` search over every address
+    /// they own.
+    ContactShowMail => "contact_show_mail",
+    /// Open a draft to the focused person's preferred address.
+    ContactCompose => "contact_compose",
+    /// Move the keyboard to the Contacts filter.
+    ContactsFilter => "contacts_filter",
+    /// The kind tab before this one.
+    ContactsTabPrevious => "contacts_tab_previous",
+    /// The kind tab after this one.
+    ContactsTabNext => "contacts_tab_next",
+    /// Show everyone from mail, or only the people the user made or wrote to.
+    ContactsToggleEveryone => "contacts_toggle_everyone",
+    /// Merge the marked people, or a suggested pair, into one person
+    /// (specs/005-contacts FR-012; the word on screen is Merge, the id keeps
+    /// the name the contracts gave it), or take a merge back.
+    ContactJoin {
+        /// What is asked: a keystroke asks which name the merged person keeps.
+        action: ContactJoinAction = ContactJoinAction::Ask,
+    } => "contact_join",
+    /// Give a person an address, or put an address back where it was.
+    ContactAddAddress {
+        /// What is asked: a keystroke asks for the address.
+        action: ContactAddressAction = ContactAddressAction::Ask,
+    } => "contact_add_address",
+    /// Make an address a person of its own (FR-014).
+    ContactDetachAddress {
+        /// The address; `None` means the one the keyboard is on.
+        address: Option<AddressId> = None,
+    } => "contact_detach_address",
+    /// Offer an address first (FR-016).
+    ContactSetPreferred {
+        /// Whose; `None` means the focused person.
+        person: Option<ContactId> = None,
+        /// Which; `None` means the focused address.
+        address: Option<AddressId> = None,
+    } => "contact_set_preferred",
+    /// Make a person (FR-020), or ask for one.
+    ContactNew {
+        /// What is asked: a keystroke asks for the name and addresses.
+        action: ContactNewAction = ContactNewAction::Ask,
+    } => "contact_new",
+    /// Edit a person (FR-021), or put an edit back.
+    ContactEdit {
+        /// What is asked: a keystroke opens the editor on the focused person.
+        action: ContactEditAction = ContactEditAction::Ask,
+    } => "contact_edit",
+    /// Save the Edit form in front of the person (specs/011-focus-contacts
+    /// S8). The form is the controller's, so the command carries nothing.
+    ContactSave => "contact_save",
+    /// Delete a person (FR-023), or a group (FR-040). Both `None` means
+    /// whichever row is focused.
+    ContactDelete {
+        /// Who.
+        person: Option<ContactId> = None,
+        /// Or which group.
+        group: Option<ContactGroupId> = None,
+    } => "contact_delete",
+    /// Bring a deleted person back (FR-023a).
+    ContactRestore {
+        /// Who; `None` means the focused one.
+        person: Option<ContactId> = None,
+        /// The state they come back in; live when not given. Undo knows what
+        /// they were and a key does not.
+        state: Option<ContactState> = None,
+    } => "contact_restore",
+    /// Show the deleted people, or the default view again.
+    ContactsToggleDeleted => "contacts_toggle_deleted",
+    /// Show who might be the same person, or the people again.
+    ContactsSuggestions => "contacts_suggestions",
+    /// Say the focused suggestion is two people, for good.
+    SuggestionDismiss {
+        /// The two people; `None` means the focused suggestion.
+        pair: Option<(ContactId, ContactId)> = None,
+    } => "suggestion_dismiss",
+    /// Make a group (FR-040), ask for its name, or put a deleted one back.
+    ContactGroupNew {
+        /// What is asked: a keystroke asks for the name.
+        action: ContactGroupNewAction = ContactGroupNewAction::Ask,
+    } => "contact_group_new",
+    /// Rename a group.
+    ContactGroupRename {
+        /// Which; `None` means the focused group.
+        group: Option<ContactGroupId> = None,
+        /// Its new name; `None` asks.
+        name: Option<String> = None,
+    } => "contact_group_rename",
+    /// Add people to a group.
+    ContactGroupAdd {
+        /// Which group; `None` asks which.
+        group: Option<ContactGroupId> = None,
+        /// Who; empty means the marked people, or the one under the cursor.
+        people: Vec<ContactId> = Vec::new(),
+    } => "contact_group_add",
+    /// Take people out of a group.
+    ContactGroupRemove {
+        /// Which group; `None` means the group on screen.
+        group: Option<ContactGroupId> = None,
+        /// Who; empty means the marked people, or the one under the cursor.
+        people: Vec<ContactId> = Vec::new(),
+    } => "contact_group_remove",
+    /// Import people from a vCard file (FR-050); the surface asks which.
+    ContactsImport => "contacts_import",
+    /// Export people to a vCard file (FR-050): the marked people, or what the
+    /// list shows; the surface asks where.
+    ContactsExport => "contacts_export",
+    /// Sync with the Mac's Contacts, as a dry run: turn it on, and see what
+    /// would happen before anything does (specs/011-focus-contacts S12).
+    ContactsSync => "contacts_sync",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.
@@ -913,6 +1054,168 @@ pub enum MessageTarget {
         /// a bulk flag over a smart folder leaves every message where it was,
         /// across as many folders as it spanned (#52).
         from: Option<MailboxId>,
+    },
+}
+
+/// What a [`Command::ContactJoin`] asks for.
+///
+/// A keystroke is [`Ask`](Self::Ask): Contacts asks which name the merged
+/// person keeps, then invokes [`Join`](Self::Join). Undo invokes
+/// [`Unjoin`](Self::Unjoin) with what the merge handed back -- one verb, three
+/// shapes, the way `Move` with no destination asks and with one moves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactJoinAction {
+    /// Ask the user which name, and which organisation if theirs disagree.
+    Ask,
+    /// Merge `others` into `into`, under `name`.
+    Join {
+        /// The survivor.
+        into: ContactId,
+        /// The people merged into it.
+        others: Vec<ContactId>,
+        /// The merged person's name, which every merge ends with.
+        name: String,
+        /// The organisation chosen when theirs disagreed.
+        organization: Option<String>,
+    },
+    /// Take a merge back.
+    Unjoin(JoinReceipt),
+}
+
+/// What a [`Command::ContactNew`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactNewAction {
+    /// Ask the user: the editor, empty.
+    Ask,
+    /// Make this person.
+    Create {
+        /// Their name, if the user gave one.
+        name: Option<String>,
+        /// Their addresses; at least one.
+        addresses: Vec<EmailAddress>,
+    },
+}
+
+/// What a [`Command::ContactEdit`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactEditAction {
+    /// Ask the user: the editor, on the focused person.
+    Ask,
+    /// Set these fields.
+    Edit {
+        /// Whose.
+        person: ContactId,
+        /// What they become.
+        edit: PersonEdit,
+    },
+    /// Put fields back exactly -- undo's half.
+    Put {
+        /// Whose.
+        person: ContactId,
+        /// What they were.
+        fields: PersonFields,
+    },
+    /// Turn one of a card's switches on or off for the person at `address`;
+    /// undo puts the switch back.
+    Switch {
+        /// Any of the person's addresses.
+        address: String,
+        /// Which switch.
+        switch: postio_model::CardSwitch,
+        /// What it becomes.
+        on: bool,
+    },
+    /// "Add contact" in the new-sender popover: save the person who owns
+    /// `address`, keeping what their signature said (specs/011-focus-contacts
+    /// S9).
+    AddSender {
+        /// Any of the person's addresses.
+        address: String,
+        /// What the signature said.
+        details: postio_model::SignatureDetails,
+    },
+    /// Put a person back as they were before [`ContactEditAction::AddSender`]
+    /// -- undo's half.
+    RestoreSender {
+        /// Whose.
+        person: ContactId,
+        /// What they were.
+        prior: postio_model::SenderPrior,
+    },
+    /// Keep (`Some(true)`), refuse (`Some(false)`) or forget (`None`) a phone
+    /// or website of the person at `address`; undo puts it back.
+    Detail {
+        /// Any of the person's addresses.
+        address: String,
+        /// Phone or website.
+        kind: postio_model::DetailKind,
+        /// As written.
+        value: String,
+        /// What it becomes.
+        keep: Option<bool>,
+    },
+    /// "Ignore sender": never offer the new-sender popover for them again,
+    /// or put the choice back.
+    Ignore {
+        /// Any of the person's addresses.
+        address: String,
+        /// What it becomes.
+        ignored: bool,
+    },
+    /// Save the Edit form (specs/011-focus-contacts S8): make a person, or
+    /// make `person` what the form says, names, kind, addresses, groups and
+    /// all, as one undoable step.
+    Save {
+        /// Whose; `None` makes a new person.
+        person: Option<ContactId>,
+        /// What the form holds.
+        form: Box<postio_model::ContactForm>,
+    },
+}
+
+/// What a [`Command::ContactGroupNew`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactGroupNewAction {
+    /// Ask for the name.
+    Ask,
+    /// Make this group of these people.
+    Create {
+        /// Its name.
+        name: String,
+        /// Its first members.
+        members: Vec<ContactId>,
+    },
+    /// Put a deleted group back -- undo's half.
+    Restore {
+        /// The group as it was.
+        group: ContactGroup,
+        /// Every member it had.
+        members: Vec<ContactId>,
+    },
+}
+
+/// What a [`Command::ContactAddAddress`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactAddressAction {
+    /// Ask the user for the address.
+    Ask,
+    /// Give `person` the typed `address`; refused while a live person owns it.
+    Add {
+        /// Whose.
+        person: ContactId,
+        /// The address as typed.
+        address: EmailAddress,
+    },
+    /// Give `address` to `to`, whoever has it -- the "move it" answer, and
+    /// the way undo puts an address back. `to: None` lets go of it.
+    Put {
+        /// The address.
+        address: AddressId,
+        /// Who gets it, or nobody.
+        to: Option<ContactId>,
+        /// Undo's half: the state `to` was in before an earlier move left
+        /// them with no address, to bring them back in.
+        revive: Option<ContactState>,
     },
 }
 

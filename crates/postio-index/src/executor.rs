@@ -1478,8 +1478,9 @@ impl Plan {
             params.append(&mut values);
         }
 
+        let people = request.query.is_contact_aware();
         for clause in request.query.filters() {
-            if as_sets && let Some((sql, params)) = id_set(&clause.filter) {
+            if as_sets && let Some((sql, params)) = id_set(&clause.filter, people) {
                 sets.push(IdSet {
                     sql,
                     params,
@@ -1487,7 +1488,7 @@ impl Plan {
                 });
                 continue;
             }
-            let (sql, mut values) = filter_condition(&clause.filter);
+            let (sql, mut values) = filter_condition(&clause.filter, people);
             let sql = if clause.negated {
                 format!("NOT ({sql})")
             } else {
@@ -1934,15 +1935,19 @@ impl Plan {
     /// The statement `hydrate` runs, with `placeholders` standing in for the
     /// `IN` list. Its own function so a test can hold its query plan still.
     fn hydrate_sql(&self, placeholders: &str) -> String {
-        // Sender affinity is per account, or shared when `account_id IS
-        // NULL`. Scoped to one account, only that account's sightings count;
-        // unified, every account's do — which is the right answer rather than
-        // a shortcut, since the question "how often do I hear from this
-        // person" is about the person and not about which inbox they landed
-        // in.
+        // Sender affinity. Scoped to one account, it is that account's
+        // evidence about the sender's address -- one `contact_sightings` row,
+        // by its whole key. Unified, it is the person's: every account's
+        // sightings of every address they own, which the person row keeps
+        // summed (specs/005-contacts R2) -- the question "how often do I hear
+        // from this person" is about the person and not about which inbox or
+        // which of their addresses the mail came through.
         let affinity = match self.account.account() {
-            Some(_) => "AND (c.account_id = ? OR c.account_id IS NULL)",
-            None => "",
+            Some(_) => {
+                "(SELECT s.times_seen FROM contact_sightings s
+                    WHERE s.address_id = a.id AND s.account_id = ?)"
+            }
+            None => "(SELECT c.times_seen FROM contacts c WHERE c.id = a.contact_id)",
         };
         // The contacts probe compares against `sub.from_normalized` — a
         // plain column of the row source — and never against a nested
@@ -1963,19 +1968,18 @@ impl Plan {
         // and two thirds of it was asking the same question again.
         //
         // So the subquery finds the sender's `recipients` row once, and the
-        // outer query joins it and `addresses` by primary key. The contacts
-        // probe still compares against a plain column -- now the joined
-        // `a.address_normalized` rather than a nested subquery -- which is
-        // what keeps it on `idx_contacts_account_address` rather than walking
-        // every contact per candidate (#746, and
-        // `hydrate_probes_contacts_by_address_key` pins it).
+        // outer query joins it and `addresses` by primary key. The affinity
+        // probe compares against a plain column -- the joined `a.id` or
+        // `a.contact_id` rather than a nested subquery -- which is what keeps
+        // it a key lookup rather than a walk per candidate (#746, and
+        // `hydrate_probes_contacts_by_address_key` pins it). The name is the
+        // one the user gave the owner, when they did (specs/005-contacts
+        // FR-032) -- one more key seek, through the same joined address.
         format!(
             "SELECT
                  sub.id, sub.thread_id, sub.mailbox_id, sub.subject, sub.received_at,
-                 sender.name AS from_name, a.address AS from_address,
-                 (SELECT max(c.times_seen) FROM contacts c
-                    WHERE c.address_normalized = a.address_normalized
-                      {affinity}) AS sender_times_seen,
+                 coalesce(named.name, sender.name) AS from_name, a.address AS from_address,
+                 {affinity} AS sender_times_seen,
                  sub.preview, sub.aged_from
              FROM (SELECT
                      m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at, m.preview,
@@ -1985,7 +1989,9 @@ impl Plan {
                         ORDER BY r.position LIMIT 1) AS from_recipient
                    FROM messages m WHERE m.id IN ({placeholders})) sub
              LEFT JOIN recipients sender ON sender.id = sub.from_recipient
-             LEFT JOIN addresses a ON a.id = sender.address_id",
+             LEFT JOIN addresses a ON a.id = sender.address_id
+             LEFT JOIN contacts named
+               ON named.id = a.contact_id AND named.state = 'live'",
         )
     }
 
@@ -2124,10 +2130,20 @@ fn names_a_folder(query: &ParsedQuery) -> bool {
 
 /// Translates one structured filter into a SQL condition (unnegated) plus its
 /// bound parameters, in the order the `?` placeholders appear.
-fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
+fn filter_condition(filter: &Filter, people: bool) -> (String, Vec<turso::Value>) {
     match filter {
-        Filter::From(value) => fts_column_condition("sender", value),
-        Filter::To(value) => fts_column_condition("recipients", value),
+        Filter::From(value) => with_people(
+            fts_column_condition("sender", value),
+            value,
+            FROM_KINDS,
+            people,
+        ),
+        Filter::To(value) => with_people(
+            fts_column_condition("recipients", value),
+            value,
+            TO_KINDS,
+            people,
+        ),
         Filter::Subject(value) => fts_column_condition("subject", value),
         // Resolved in SQL rather than in Rust, exactly as `in:` is below: the
         // name the user typed is matched against the account's display name
@@ -2153,12 +2169,37 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
                 turso::Value::Text(value.clone()),
             ],
         ),
-        // ADR 0007 Q3: "from or to any member", resolved against `recipients`
+        // specs/005-contacts FR-042: "from or to any member", resolved against `recipients`
         // by exact address rather than full text -- a group names people by
         // address, not by whatever words happen to appear near their name.
         // An unresolvable group name is an empty member set and therefore
         // matches nothing, the same "never everything" rule `Account` and
         // `In` follow just above.
+        // specs/005-contacts R6: any of the listed addresses, in any address
+        // header but `sender`/`reply_to` -- the same headers `group:` means --
+        // matched by exact normalised address through `recipients`, never as
+        // full text. An address the store has never seen is an empty set and
+        // matches nothing, the rule the arms around this one follow.
+        Filter::With(addresses) => {
+            let placeholders = vec!["?"; addresses.len()].join(", ");
+            (
+                format!(
+                    "m.id IN (SELECT r.message_id FROM recipients r \
+                     JOIN addresses a ON a.id = r.address_id \
+                     WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
+                       AND a.address_normalized IN ({placeholders}))"
+                ),
+                addresses
+                    .iter()
+                    .map(|address| turso::Value::Text(address.to_lowercase()))
+                    .collect(),
+            )
+        }
+        //
+        // A member is a person, so the set is every address any live member
+        // owns, reached through `addresses.contact_id` and matched against
+        // `recipients.address_id` by key rather than by comparing strings
+        // (specs/005-contacts FR-042). A deleted member widens nothing.
         Filter::Group(value) => (
             format!("m.id IN ({GROUP_SET})"),
             vec![turso::Value::Text(value.clone())],
@@ -2274,7 +2315,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
             let mut sql = Vec::with_capacity(set.members().len());
             let mut params = Vec::new();
             for member in set.members() {
-                let (condition, mut values) = filter_condition(member);
+                let (condition, mut values) = filter_condition(member, people);
                 sql.push(format!("({condition})"));
                 params.append(&mut values);
             }
@@ -2344,14 +2385,19 @@ fn fts_column_contents(column: &str, value: &str) -> (String, Vec<turso::Value>)
 }
 
 /// The messages from or to any member of a group, by name: `group:`'s
-/// subquery (ADR 0007 Q3).
+/// subquery.
+///
+/// A member is a person, so the set is every address any live member owns,
+/// reached through `addresses.contact_id` and matched against
+/// `recipients.address_id` by key rather than by comparing strings
+/// (specs/005-contacts FR-042). A deleted member widens nothing.
 const GROUP_SET: &str = "SELECT r.message_id FROM recipients r \
-     JOIN addresses a ON a.id = r.address_id \
      WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
-       AND a.address_normalized IN ( \
-         SELECT c.address_normalized FROM contact_group_members gm \
-         JOIN contacts c ON c.id = gm.contact_id \
-         JOIN contact_groups g ON g.id = gm.group_id \
+       AND r.address_id IN ( \
+         SELECT a.id FROM contact_groups g \
+         JOIN contact_group_members gm ON gm.group_id = g.id \
+         JOIN contacts c ON c.id = gm.contact_id AND c.state = 'live' \
+         JOIN addresses a ON a.contact_id = c.id \
          WHERE lower(g.name) = lower(?))";
 
 /// A filter as the set of messages it keeps, for [`Plan::build_sets`]: the
@@ -2362,7 +2408,7 @@ const GROUP_SET: &str = "SELECT r.message_id FROM recipients r \
 /// cheap per row; as sets they are one walk of `message_labels` or
 /// `markers`, which lets a conversation search walk only the messages they
 /// keep when nothing else narrows it.
-fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
+fn id_set(filter: &Filter, people: bool) -> Option<(String, Vec<turso::Value>)> {
     Some(match filter {
         // A set (D26) is the union of its members' sets, when each is one;
         // `UNION` rather than `UNION ALL`, because a set may also drive the
@@ -2371,14 +2417,18 @@ fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
             let mut arms = Vec::with_capacity(set.members().len());
             let mut params = Vec::new();
             for member in set.members() {
-                let (sql, mut values) = id_set(member)?;
+                let (sql, mut values) = id_set(member, people)?;
                 arms.push(format!("SELECT message_id FROM ({sql})"));
                 params.append(&mut values);
             }
             (arms.join(" UNION "), params)
         }
-        Filter::From(value) => fts_column_set("sender", value),
-        Filter::To(value) => fts_column_set("recipients", value),
+        Filter::From(value) => {
+            set_with_people(fts_column_set("sender", value), value, FROM_KINDS, people)
+        }
+        Filter::To(value) => {
+            set_with_people(fts_column_set("recipients", value), value, TO_KINDS, people)
+        }
         Filter::Subject(value) => fts_column_set("subject", value),
         Filter::Filename(value) => fts_column_set("filenames", value),
         Filter::List(value) => fts_column_set("list_id", value),
@@ -2399,6 +2449,100 @@ fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
         ),
         _ => return None,
     })
+}
+
+/// The address kinds `from:` reads, and the ones `to:` reads.
+const FROM_KINDS: &str = "'from'";
+const TO_KINDS: &str = "'to', 'cc', 'bcc'";
+
+/// The ids of the addresses a contact-aware `from:`/`to:` value names, as a
+/// subselect with its parameters: every address of each live contact one of
+/// whose words is the value, or of every live member of the group a leading
+/// `@` names. `None` for a value that names neither (a phrase of several
+/// words is left to the header).
+fn people_addresses(value: &str) -> Option<(String, Vec<turso::Value>)> {
+    let value = value.trim();
+    if let Some(group) = value.strip_prefix('@') {
+        return Some((
+            "SELECT a.id FROM contact_groups g \
+               JOIN contact_group_members gm ON gm.group_id = g.id \
+               JOIN contacts c ON c.id = gm.contact_id AND c.state = 'live' \
+               JOIN addresses a ON a.contact_id = c.id \
+              WHERE lower(g.name) = lower(?)"
+                .to_string(),
+            vec![turso::Value::Text(group.to_string())],
+        ));
+    }
+    if value.is_empty() || value.contains(char::is_whitespace) {
+        return None;
+    }
+    Some((
+        "SELECT a.id FROM contact_terms t \
+           JOIN contacts c ON c.id = t.contact_id AND c.state = 'live' \
+           JOIN addresses a ON a.contact_id = c.id \
+          WHERE t.term = ?"
+            .to_string(),
+        vec![turso::Value::Text(value.to_lowercase())],
+    ))
+}
+
+/// Whether `value` is `@Group`: explicit syntax, never a word a header holds,
+/// so it means the group whether or not the search knows people.
+fn names_a_group(value: &str) -> bool {
+    value.trim_start().starts_with('@')
+}
+
+/// `header` or, when the search knows people, the mail whose `kinds` header
+/// names an address `value` means.
+fn with_people(
+    (header, mut values): (String, Vec<turso::Value>),
+    value: &str,
+    kinds: &str,
+    people: bool,
+) -> (String, Vec<turso::Value>) {
+    let Some((addresses, mut more)) = (people || names_a_group(value))
+        .then(|| people_addresses(value))
+        .flatten()
+    else {
+        return (header, values);
+    };
+    let by_person = format!(
+        "m.id IN (SELECT r.message_id FROM recipients r \
+                   WHERE r.kind IN ({kinds}) AND r.address_id IN ({addresses}))"
+    );
+    // A group is a name for people, not words in a header.
+    if value.trim_start().starts_with('@') {
+        return (by_person, more);
+    }
+    values.append(&mut more);
+    (format!("(({header}) OR {by_person})"), values)
+}
+
+/// [`with_people`] for the set form.
+fn set_with_people(
+    (header, mut values): (String, Vec<turso::Value>),
+    value: &str,
+    kinds: &str,
+    people: bool,
+) -> (String, Vec<turso::Value>) {
+    let Some((addresses, mut more)) = (people || names_a_group(value))
+        .then(|| people_addresses(value))
+        .flatten()
+    else {
+        return (header, values);
+    };
+    let by_person = format!(
+        "SELECT r.message_id FROM recipients r \
+          WHERE r.kind IN ({kinds}) AND r.address_id IN ({addresses})"
+    );
+    if value.trim_start().starts_with('@') {
+        return (by_person, more);
+    }
+    values.append(&mut more);
+    (
+        format!("SELECT message_id FROM ({header}) UNION {by_person}"),
+        values,
+    )
 }
 
 /// A literal for the middle of a `LIKE '%' || ? || '%' ESCAPE '\\'` pattern.
@@ -2656,21 +2800,21 @@ mod tests {
         .await
         .expect("explain");
 
-        // Either the scoped index or the shared one, and either the
-        // constraint's own index or its read companion: the claim is that the
-        // probe is *keyed on the address*, not which of the four keys it.
-        // The companions exist because this engine's planner will not read
-        // through a partial index -- see
-        // `turso_capabilities.rs::the_planner_does_not_use_a_partial_index`.
+        // Scoped to one account, affinity is that account's evidence about
+        // the sender's address: one `contact_sightings` row, reached by its
+        // whole primary key (specs/005-contacts R2). The claim is that the
+        // probe is *keyed on the address*, per candidate, never a walk.
         assert!(
-            steps
-                .iter()
-                .any(|step| step.contains("idx_contacts_") && step.contains("address_normalized=?")),
-            "the contacts probe is not keyed on the address; plan:\n{steps:#?}"
+            steps.iter().any(|step| step.contains("contact_sightings")
+                && step.contains("address_id=?")
+                && step.contains("account_id=?")),
+            "the affinity probe is not keyed on the address and account; plan:\n{steps:#?}"
         );
         assert!(
-            !steps.iter().any(|step| step.starts_with("SCAN c")),
-            "the contacts table is being scanned per candidate; plan:\n{steps:#?}"
+            !steps
+                .iter()
+                .any(|step| step.starts_with("SCAN") && step.contains("contact")),
+            "a contacts table is being scanned per candidate; plan:\n{steps:#?}"
         );
     }
 

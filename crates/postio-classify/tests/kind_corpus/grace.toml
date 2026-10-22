@@ -1,0 +1,5 @@
+label = "person"
+address = "grace.hopper@example.org"
+name = "Grace Hopper"
+messages = 5
+written_to = 2

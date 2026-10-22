@@ -1,0 +1,54 @@
+# New contact (specs/011-focus-contacts S8, handoff screen 06): Cmd-Shift-N
+# opens an empty form with one empty address row; Save with no address says
+# why and stays; a name and an address save the person, whose card then
+# opens in the list.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S8" }
+seed   = "small"
+design = "06-edit-contact"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_contacts"
+
+[[step]]
+id      = "new"
+command = "contact_new"
+expect  = "An empty form titled “New contact”, the first name in the caret and one empty address row."
+
+[[step]]
+type    = "Grace"
+
+[[step]]
+id      = "refused"
+command = "contact_save"
+expect  = "Save with no address does not save: the form stays and says “Add at least one address.”"
+
+[[step]]
+key     = "Tab"
+
+[[step]]
+key     = "Tab"
+
+[[step]]
+key     = "Tab"
+
+[[step]]
+key     = "Tab"
+
+[[step]]
+key     = "Tab"
+
+[[step]]
+key     = "Tab"
+
+[[step]]
+type    = "grace@example.org"
+expect  = "The address is in its row, in the monospaced face."
+
+[[step]]
+id      = "saved"
+command = "contact_save"
+expect  = "The form closes and the list has the new person, with the card beside it."

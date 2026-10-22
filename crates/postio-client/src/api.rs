@@ -114,6 +114,22 @@ impl Req {
             Req::DiscardDraft { .. } => "DiscardDraft",
             Req::Recipients { .. } => "Recipients",
             Req::Correspondents(_) => "Correspondents",
+            Req::ContactForAddress(_) => "ContactForAddress",
+            Req::ContactGlance(_) => "ContactGlance",
+            Req::ContactsPage { .. } => "ContactsPage",
+            Req::ContactsFiltered { .. } => "ContactsFiltered",
+            Req::ContactsOverview => "ContactsOverview",
+            Req::ContactCard(_) => "ContactCard",
+            Req::ContactGroups => "ContactGroups",
+            Req::ContactsImport(_) => "ContactsImport",
+            Req::ContactsSyncPlan { .. } => "ContactsSyncPlan",
+            Req::ContactsExport => "ContactsExport",
+            Req::ContactSeen(_) => "ContactSeen",
+            Req::ContactSuggestions => "ContactSuggestions",
+            Req::ContactSuggestionSet(..) => "ContactSuggestionSet",
+            Req::ContactReview(_) => "ContactReview",
+            Req::ContactPosition(..) => "ContactPosition",
+            Req::ContactMergeOf(_) => "ContactMergeOf",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::LabelCounts(_) => "LabelCounts",
@@ -184,6 +200,9 @@ impl Req {
             Req::DigestLikeThis(_) => "DigestLikeThis",
             Req::SaveDigestRule { .. } => "SaveDigestRule",
             Req::DeleteDigestRule(_) => "DeleteDigestRule",
+            Req::TakeBackFilter { .. } => "TakeBackFilter",
+            Req::Treatments => "Treatments",
+            Req::SetTreatment { .. } => "SetTreatment",
             Req::Vault { .. } => "Vault",
             Req::CaptureTask { .. } => "CaptureTask",
             Req::CaptureNote { .. } => "CaptureNote",
@@ -535,6 +554,328 @@ impl Client {
             Resp::Recipients(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// Take a filtering entry back: `entry` is filtered again, or with `kind`
+    /// that marker comes back.
+    pub async fn take_back_filter(
+        &self,
+        entry: &str,
+        kind: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.read(
+            Req::TakeBackFilter {
+                entry: entry.to_owned(),
+                kind: kind.map(str::to_owned),
+            },
+            "taking back a filter entry",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Every sender's remembered treatment, `(address, "app" | "paper")`.
+    pub async fn treatments(&self) -> Result<Vec<(String, String)>, StoreError> {
+        self.read(
+            Req::Treatments,
+            "the senders' treatments",
+            |answer| match answer {
+                Resp::Treatments(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Always draw `address`'s mail in `treatment`, or forget the choice
+    /// with `None`.
+    pub async fn set_treatment(
+        &self,
+        address: &str,
+        treatment: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.read(
+            Req::SetTreatment {
+                address: address.to_owned(),
+                treatment: treatment.map(str::to_owned),
+            },
+            "a sender's treatment",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The person at `address`, made from the stored mail if the catch-up has
+    /// not reached them; `None` for an address the store never saw.
+    pub async fn contact_for_address(
+        &self,
+        address: &str,
+    ) -> Result<Option<postio_model::Contact>, StoreError> {
+        self.read(
+            Req::ContactForAddress(address.to_owned()),
+            "the person at an address",
+            |answer| match answer {
+                Resp::ContactFor(found) => Some(found.map(|person| *person)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// What the known-sender popover shows for `address`; `None` for an
+    /// address the store never saw.
+    pub async fn contact_glance(
+        &self,
+        address: &str,
+    ) -> Result<Option<postio_model::ContactGlance>, StoreError> {
+        self.read(
+            Req::ContactGlance(address.to_owned()),
+            "the person at an address, at a glance",
+            |answer| match answer {
+                Resp::ContactGlance(found) => Some(found.map(|glance| *glance)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// A page of the Contacts list for `tab`.
+    pub async fn contacts_page(
+        &self,
+        tab: postio_model::ContactTab,
+        after: Option<(String, postio_model::ContactId)>,
+        skip: u32,
+        limit: u32,
+    ) -> Result<postio_model::ContactsPageRead, StoreError> {
+        self.read(
+            Req::ContactsPage {
+                tab,
+                after,
+                skip,
+                limit,
+            },
+            "a page of contacts",
+            |answer| match answer {
+                Resp::ContactsPage(page) => Some(page),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The people in `tab` matching `text`, at most `cap`.
+    pub async fn contacts_filtered(
+        &self,
+        tab: postio_model::ContactTab,
+        text: &str,
+        cap: u32,
+    ) -> Result<Vec<postio_model::ContactListRow>, StoreError> {
+        self.read(
+            Req::ContactsFiltered {
+                tab,
+                text: text.to_owned(),
+                cap,
+            },
+            "the contacts matching a filter",
+            |answer| match answer {
+                Resp::ContactsFiltered(rows) => Some(rows),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The Contacts view's counts, review queue and catch-up progress.
+    pub async fn contacts_overview(&self) -> Result<postio_model::ContactsOverview, StoreError> {
+        self.read(
+            Req::ContactsOverview,
+            "the contacts overview",
+            |answer| match answer {
+                Resp::ContactsOverview(overview) => Some(overview),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Everything `person`'s card shows; `None` for someone who is gone.
+    pub async fn contact_card(
+        &self,
+        person: postio_model::ContactId,
+    ) -> Result<Option<postio_model::ContactCardRead>, StoreError> {
+        self.read(
+            Req::ContactCard(person),
+            "a contact's card",
+            |answer| match answer {
+                Resp::ContactCard(card) => Some(card.map(|card| *card)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// What a sync with the Mac's Contacts would do, from a snapshot of their
+    /// side. A dry run: nothing is written to either side.
+    pub async fn contacts_sync_plan(
+        &self,
+        records: Vec<postio_contact_sync::ExternalRecord>,
+        scope: postio_contact_sync::Scope,
+        mode: postio_contact_sync::Mode,
+    ) -> Result<postio_contact_sync::Plan, StoreError> {
+        self.read(
+            Req::ContactsSyncPlan {
+                records,
+                scope,
+                mode,
+            },
+            "the sync plan",
+            |answer| match answer {
+                Resp::ContactsSyncPlan(plan) => Some(*plan),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Reads the cards in `bytes`, a `.vcf` the user chose, and applies them.
+    pub async fn import_contacts(
+        &self,
+        bytes: Vec<u8>,
+    ) -> Result<postio_model::card::ImportSummary, StoreError> {
+        self.read(
+            Req::ContactsImport(bytes),
+            "an import",
+            |answer| match answer {
+                Resp::ContactsImported(summary) => Some(*summary),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// One `.vcf` of the people the Contacts list holds, and how many.
+    pub async fn export_contacts(&self) -> Result<(String, usize), StoreError> {
+        self.read(Req::ContactsExport, "an export", |answer| match answer {
+            Resp::ContactsExported(text, count) => Some((text, count)),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The groups of records that look like one person.
+    pub async fn contact_review(
+        &self,
+        first: Vec<postio_model::ContactId>,
+    ) -> Result<Vec<postio_model::MergeGroup>, StoreError> {
+        self.read(
+            Req::ContactReview(first),
+            "the review",
+            |answer| match answer {
+                Resp::ContactReview(groups) => Some(groups),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Where `person` is in `tab`'s list, or `None` when they are not in it.
+    pub async fn contact_position(
+        &self,
+        person: postio_model::ContactId,
+        tab: postio_model::ContactTab,
+    ) -> Result<Option<u32>, StoreError> {
+        self.read(
+            Req::ContactPosition(person, tab),
+            "a person's place in the list",
+            |answer| match answer {
+                Resp::ContactPosition(at) => Some(at),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The group `ids` make, with whatever evidence there is.
+    pub async fn contact_merge_of(
+        &self,
+        ids: Vec<postio_model::ContactId>,
+    ) -> Result<Option<postio_model::MergeGroup>, StoreError> {
+        self.read(
+            Req::ContactMergeOf(ids),
+            "the records to merge",
+            |answer| match answer {
+                Resp::ContactMergeOf(group) => Some(group.map(|group| *group)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Which Suggestions switches are on.
+    pub async fn contact_suggestions(
+        &self,
+    ) -> Result<postio_model::ContactSuggestions, StoreError> {
+        self.read(
+            Req::ContactSuggestions,
+            "the Suggestions switches",
+            |answer| match answer {
+                Resp::ContactSuggestions(switches) => Some(switches),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Turns one Suggestions switch on or off, and says where all four are.
+    pub async fn set_contact_suggestion(
+        &self,
+        which: postio_model::Suggestion,
+        on: bool,
+    ) -> Result<postio_model::ContactSuggestions, StoreError> {
+        self.read(
+            Req::ContactSuggestionSet(which, on),
+            "a Suggestions switch",
+            |answer| match answer {
+                Resp::ContactSuggestions(switches) => Some(switches),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// What the mail says about `person` that the Edit form can keep.
+    pub async fn contact_seen(
+        &self,
+        person: postio_model::ContactId,
+    ) -> Result<Vec<postio_model::SeenItem>, StoreError> {
+        self.read(
+            Req::ContactSeen(person),
+            "what the mail says",
+            |answer| match answer {
+                Resp::ContactSeen(items) => Some(items),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The name of every contact group.
+    pub async fn contact_groups(&self) -> Result<Vec<String>, StoreError> {
+        self.read(
+            Req::ContactGroups,
+            "the contact groups",
+            |answer| match answer {
+                Resp::ContactGroups(names) => Some(names),
+                _ => None,
+            },
+        )
         .await
     }
 

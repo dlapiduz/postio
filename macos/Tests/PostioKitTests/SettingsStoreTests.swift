@@ -86,19 +86,19 @@ import Testing
         #expect(store.composing == nil)
     }
 
-    @Test func theNavIsFocusSNineSectionsUnderTheSameTwoHeadings() {
+    @Test func theNavIsFocusSTenSectionsUnderTheSameTwoHeadings() {
         // The nav is the shared model's, not a list this frontend keeps
         // beside it -- GTK's Focus window shows these in this order (Agents is the Mac's alone until Linux adopts it, #1832),
         // and two navs that drift are two different applications. Focus has
         // Filtering and no Appearance (specs/009-focus-macos T131).
         let store = SettingsStore(path: tempPath("nav"))
         #expect(store.sections.map(\.label) == [
-            "Accounts", "Filtering", "Saved searches", "Composing",
+            "Accounts", "Contacts", "Filtering", "Saved searches", "Composing",
             "Keyboard", "Sync & storage", "Privacy", "Agents", "Config file",
         ])
         #expect(
             store.sections(in: .mail).map(\.label)
-                == ["Accounts", "Filtering", "Saved searches", "Composing"])
+                == ["Accounts", "Contacts", "Filtering", "Saved searches", "Composing"])
         #expect(store.selected == "accounts", "the window opens on the nav's first pane")
     }
 
@@ -224,7 +224,7 @@ import Testing
         // The keys `SettingsPaneView` switches on, kept beside the switch
         // rather than inferred: the point is to fail when the core grows a
         // section and this frontend has not caught up.
-        let drawn: Set<String> = ["accounts", "focus", "saved_searches", "compose", "keys", "sync", "privacy", "mcp", ""]
+        let drawn: Set<String> = ["accounts", "focus", "saved_searches", "compose", "keys", "sync", "privacy", "mcp", "contacts", ""]
 
         let sections = Set(settingsSections().map(\.key))
 

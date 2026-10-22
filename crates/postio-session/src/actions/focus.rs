@@ -105,6 +105,7 @@ impl Actions {
 
         let anchors: Vec<MessageId> = conversations.into_values().collect();
         Ok(Applied {
+            contacts_changed: None,
             rows: None,
             lasts: None,
             surfaced,
@@ -264,6 +265,7 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            contacts_changed: None,
             rows: None,
             lasts: Some(RSVP_WINDOW),
             surfaced: false,
@@ -403,13 +405,7 @@ impl Actions {
                 if !dismissed || present {
                     let written = self
                         .focus
-                        .write(move |text| {
-                            postio_config::focus_edit::set_stop_marker(text, &sender, kind, present)
-                                .map_err(|_| {
-                                    "Postio could not write that correction to config.toml"
-                                        .to_owned()
-                                })
-                        })
+                        .stop_marker(&self.database, &sender, kind, present)
                         .await;
                     if let Err(reason) = written {
                         tracing::warn!(
@@ -422,6 +418,7 @@ impl Actions {
         }
 
         Ok(Applied {
+            contacts_changed: None,
             rows: None,
             lasts: None,
             surfaced: false,
@@ -534,6 +531,7 @@ impl Actions {
                 continue;
             }
             applied.push(Applied {
+                contacts_changed: None,
                 rows: None,
                 lasts: None,
                 surfaced: false,
@@ -575,14 +573,7 @@ impl Actions {
                 {
                     continue;
                 }
-                let written = self
-                    .focus
-                    .write(move |text| {
-                        postio_config::focus_edit::set_never(text, &sender, restored).map_err(
-                            |_| "Postio could not write that sender to config.toml".to_owned(),
-                        )
-                    })
-                    .await;
+                let written = self.focus.pin(&self.database, &sender, restored).await;
                 if let Err(reason) = written {
                     tracing::warn!(%reason, "Focus could not write a restored sender: {reason}");
                 }
@@ -648,6 +639,7 @@ impl Actions {
                 continue;
             };
             applied.push(Applied {
+                contacts_changed: None,
                 rows: None,
                 lasts: None,
                 surfaced: false,
@@ -720,6 +712,7 @@ impl Actions {
             transaction.commit().await.map_err(store_failure)?;
             let ids: Vec<MessageId> = rows.iter().map(|row| row.id).collect();
             applied.push(Applied {
+                contacts_changed: None,
                 rows: None,
                 lasts: None,
                 surfaced: false,
@@ -851,16 +844,15 @@ impl Actions {
                 .map_err(|_| CommandError::failed("Postio could not read the rule it kept"))?;
             let name = rule.name.clone();
             let position = kept.position as usize;
-            self.write_rule(move |text| {
-                postio_config::focus_edit::put_digest_rule(
-                    text,
+            self.focus
+                .put_digest(
+                    &self.database,
                     Some(rule.name.as_str()),
                     &rule,
                     Some(position),
                 )
-                .map(Some)
-            })
-            .await?;
+                .await
+                .map_err(CommandError::rejected)?;
             let now = Utc::now();
             let digests = DigestRepository::new(&connection);
             for row in &rows {
@@ -870,6 +862,7 @@ impl Actions {
                     .map_err(store_failure)?;
             }
             return Ok(Applied {
+                contacts_changed: None,
                 rows: None,
                 lasts: None,
                 surfaced: false,
@@ -914,23 +907,25 @@ impl Actions {
         narrowed
             .queries
             .retain(|query| !names_sender(query, &sender));
-        self.write_rule(move |text| {
-            if narrowed.queries.is_empty() {
-                Ok(
-                    postio_config::focus_edit::remove_digest_rule(text, &narrowed.name)?
-                        .map(|(text, _, _)| text),
-                )
-            } else {
-                postio_config::focus_edit::put_digest_rule(
-                    text,
+        // A correspondent's digest is theirs as a whole, whichever of their
+        // addresses wrote: stopping it takes the digest off them.
+        let theirs = config.contact_digest(&narrowed.name).is_some();
+        if narrowed.queries.is_empty() || theirs {
+            self.focus
+                .remove_digest(&self.database, &narrowed.name)
+                .await
+                .map_err(CommandError::rejected)?;
+        } else {
+            self.focus
+                .put_digest(
+                    &self.database,
                     Some(narrowed.name.as_str()),
                     &narrowed,
                     None,
                 )
-                .map(Some)
-            }
-        })
-        .await?;
+                .await
+                .map_err(CommandError::rejected)?;
+        }
         let released = DigestRepository::new(&connection)
             .release_sender(&name, &sender)
             .await
@@ -941,6 +936,7 @@ impl Actions {
             released
         };
         Ok(Applied {
+            contacts_changed: None,
             rows: None,
             lasts: None,
             surfaced: false,
@@ -960,20 +956,6 @@ impl Actions {
                 kept: Some(kept),
             }],
         })
-    }
-
-    /// Write `[[focus.digests]]` through `edit`, as an editor saves the file.
-    async fn write_rule(
-        &self,
-        edit: impl FnOnce(&str) -> postio_config::Result<Option<String>> + Send + 'static,
-    ) -> Result<(), CommandError> {
-        self.focus
-            .write(move |text| {
-                edit(text).map_err(|_| "Postio could not write that rule to config.toml".to_owned())
-            })
-            .await
-            .map(|_| ())
-            .map_err(CommandError::rejected)
     }
 }
 

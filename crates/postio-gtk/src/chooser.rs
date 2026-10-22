@@ -68,6 +68,13 @@ pub enum SavePick {
     },
     /// A folder to write every part into.
     Folder,
+    /// A `.vcf` to read contacts from (specs/011-focus-contacts S11).
+    Cards,
+    /// A `.vcf` to write contacts to, offered under `suggested`.
+    CardsFile {
+        /// The file's name.
+        suggested: String,
+    },
 }
 
 /// A dialog offering `choices`, with `at` the row it opens on; `chosen` is

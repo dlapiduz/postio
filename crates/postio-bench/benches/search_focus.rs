@@ -274,21 +274,26 @@ async fn build() -> Corpus {
     }
     // The address book: every sender, counted as the collector counts them,
     // and two thousand more people, a quarter of whom were written to.
-    connection
-        .execute(
-            "INSERT INTO contacts (account_id, name, address, address_normalized,
-                                   times_seen, last_seen_at)
-             SELECT NULL, max(r.name), a.address, a.address_normalized, count(*),
-                    max(m.received_at)
-               FROM recipients r
-               JOIN addresses a ON a.id = r.address_id
-               JOIN messages m ON m.id = r.message_id
-              WHERE r.kind = 'from'
-              GROUP BY a.id",
-            (),
-        )
-        .await
-        .expect("the senders as contacts");
+    // A person for each sender, owning the address, with the mail's count.
+    for statement in [
+        // `note` carries the address across the next statement and is cleared.
+        "INSERT INTO contacts (note, seen_name, times_seen, last_seen_at, created_at, updated_at)
+         SELECT a.address_normalized, max(r.name), count(*), max(m.received_at), 0, 0
+           FROM recipients r
+           JOIN addresses a ON a.id = r.address_id
+           JOIN messages m ON m.id = r.message_id
+          WHERE r.kind = 'from'
+          GROUP BY a.id",
+        "UPDATE addresses
+            SET contact_id = (SELECT c.id FROM contacts c WHERE c.note = addresses.address_normalized)
+          WHERE address_normalized IN (SELECT note FROM contacts WHERE note IS NOT NULL)",
+        "UPDATE contacts SET note = NULL",
+    ] {
+        connection
+            .execute(statement, ())
+            .await
+            .expect("the senders as contacts");
+    }
     let given = [
         "Ada", "Adam", "Adele", "Aiden", "Alex", "Amara", "Ben", "Bea", "Carmen", "Dmitri",
         "Elena", "Farid", "Grace", "Hana", "Ivo", "Juno", "Kai", "Lena", "Mateo", "Nia",
@@ -303,17 +308,32 @@ async fn build() -> Corpus {
         let last = (first + chrono::Duration::days(rng.below(700) as i64)).timestamp_millis();
         connection
             .execute(
-                "INSERT INTO contacts (account_id, name, address, address_normalized,
-                                       times_seen, last_seen_at)
-                 VALUES (NULL, ?1, ?2, ?2, ?3, ?4)",
-                (name.as_str(), address.as_str(), seen, last),
+                "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?1)",
+                [address.as_str()],
+            )
+            .await
+            .expect("an address");
+        connection
+            .execute(
+                "INSERT INTO contacts (name, times_seen, last_seen_at, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 0, 0)",
+                (name.as_str(), seen, last),
             )
             .await
             .expect("a contact");
+        connection
+            .execute(
+                "UPDATE addresses SET contact_id = (SELECT max(id) FROM contacts)
+                  WHERE address_normalized = ?1",
+                [address.as_str()],
+            )
+            .await
+            .expect("its owner");
         if rng.chance(250) {
             connection
                 .execute(
-                    "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?1)",
+                    "INSERT OR IGNORE INTO addresses (address, address_normalized)
+                     VALUES (?1, ?1)",
                     [address.as_str()],
                 )
                 .await

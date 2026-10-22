@@ -243,6 +243,8 @@ pub(crate) struct Bar {
     filtering: bool,
     /// The search half is the dropdown (spec 010 step 2), not the blend.
     results_view: bool,
+    /// `from:` and `to:` know people ([`crate::Capabilities::people_search`]).
+    people_search: bool,
     /// The clock, when stopped: what the dropdown's dates count from.
     clock: Option<chrono::DateTime<chrono::Local>>,
     /// The dropdown, while it is what the bar shows.
@@ -320,7 +322,11 @@ impl Drop {
 }
 
 impl Bar {
-    pub(crate) fn new(platform: postio_config::paths::Platform, results_view: bool) -> Self {
+    pub(crate) fn new(
+        platform: postio_config::paths::Platform,
+        results_view: bool,
+        people_search: bool,
+    ) -> Self {
         Bar {
             mode: None,
             typed: String::new(),
@@ -355,6 +361,7 @@ impl Bar {
             places_read: 0,
             filtering: false,
             results_view,
+            people_search,
             clock: None,
             drop: None,
             recents: Vec::new(),
@@ -395,17 +402,25 @@ impl Bar {
         &self.places.folders
     }
 
-    /// The name a correspondent is known by, for an address.
+    /// The name a person is known by, for any address they own.
     pub(crate) fn name_for(&self, address: &str) -> Option<String> {
         self.places
             .contacts
             .iter()
-            .find(|contact| contact.address.address.eq_ignore_ascii_case(address))
-            .and_then(|contact| {
+            .find(|contact| {
                 contact
-                    .name
-                    .clone()
-                    .or_else(|| contact.address.name.clone())
+                    .addresses
+                    .iter()
+                    .any(|owned| owned.address.address.eq_ignore_ascii_case(address))
+            })
+            .and_then(|contact| {
+                // A person known only by their address has no name to give.
+                let shown = contact.display_name();
+                (!contact
+                    .addresses
+                    .iter()
+                    .any(|owned| owned.address.address == shown))
+                .then(|| shown.to_owned())
             })
     }
 
@@ -634,10 +649,22 @@ impl Bar {
     /// find the ticket. A saved search keeps the words, not this, so the
     /// rules made from them stay exact (ADR 0037, as amended).
     pub(crate) fn lower(&self, typed: &str) -> postio_search::ParsedQuery {
-        postio_search::natural::lower(typed, self.now().date_naive(), &|name| {
-            self.names.lookup(name)
-        })
-        .forgiving()
+        self.asked(
+            postio_search::natural::lower(typed, self.now().date_naive(), &|name| {
+                self.names.lookup(name)
+            })
+            .forgiving(),
+        )
+    }
+
+    /// `query`, asked so that `from:` and `to:` know people where the
+    /// platform has adopted them ([`crate::Capabilities::people_search`]).
+    fn asked(&self, query: postio_search::ParsedQuery) -> postio_search::ParsedQuery {
+        if self.people_search {
+            query.contact_aware()
+        } else {
+            query
+        }
     }
 
     fn token(&mut self) -> u64 {
@@ -1253,7 +1280,7 @@ impl FocusController {
     }
 
     /// Open the bar `mode`'s way on `text`, over the cursor's row.
-    fn open_bar(&mut self, mode: BarMode, text: &str, rows: &dyn Rows) -> Vec<Step> {
+    pub(crate) fn open_bar(&mut self, mode: BarMode, text: &str, rows: &dyn Rows) -> Vec<Step> {
         let aim = self.cursor.row(rows).map(|row| row.id);
         let mut steps = self
             .surfaces
@@ -1713,7 +1740,7 @@ impl Bar {
     /// far (screen 02).
     fn answer_prefix(&mut self, typed: &str, piece: usize) -> Vec<Step> {
         // Half a word, not English: "at" is no stop word here.
-        let parsed = postio_search::parse(typed, self.now().date_naive()).forgiving();
+        let parsed = self.asked(postio_search::parse(typed, self.now().date_naive()).forgiving());
         self.chips.clear();
         let kept = self.kept(DropdownState::Prefix);
         let (landed, offers, ghost) = match kept {
@@ -1792,7 +1819,7 @@ impl Bar {
     /// A sentence the Mac lowered: what it understood, then its results
     /// newest first (screen 05).
     fn answer_plain(&mut self, lowered: postio_search::natural::Lowered) -> Vec<Step> {
-        let query = lowered.query.clone().forgiving();
+        let query = self.asked(lowered.query.clone().forgiving());
         self.chips = rules::chips(&query).unwrap_or_default();
         let tiles = lowered
             .origins

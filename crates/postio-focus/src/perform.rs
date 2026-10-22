@@ -511,6 +511,91 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .map(|_| ())
                 .map_err(|error| error.to_string()),
         },
+        Request::ContactsOverview => Reply::ContactsOverview(
+            client
+                .contacts_overview()
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::ContactsPage {
+            tab,
+            after,
+            skip,
+            limit,
+            stamp,
+            page,
+        } => Reply::ContactsPage {
+            stamp,
+            page,
+            answer: client
+                .contacts_page(tab, after, skip, limit)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::ContactsFiltered {
+            tab,
+            text,
+            cap,
+            stamp,
+        } => Reply::ContactsFiltered {
+            stamp,
+            answer: client
+                .contacts_filtered(tab, &text, cap)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::ContactPosition { person, tab } => Reply::ContactPosition {
+            person,
+            at: client.contact_position(person, tab).await.ok().flatten(),
+        },
+        Request::ContactReview { first } => {
+            Reply::ContactReview(client.contact_review(first).await.unwrap_or_default())
+        }
+        Request::ContactMergeOf(ids) => Reply::ContactMergeOf(
+            client
+                .contact_merge_of(ids)
+                .await
+                .ok()
+                .flatten()
+                .map(Box::new),
+        ),
+        Request::ContactSuggestions => Reply::ContactSuggestions(
+            client
+                .contact_suggestions()
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::ContactSuggestionSet { which, on } => Reply::ContactSuggestions(
+            client
+                .set_contact_suggestion(which, on)
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::ContactSeen(person) => {
+            Reply::ContactSeen(client.contact_seen(person).await.unwrap_or_default())
+        }
+        Request::ContactGroups => Reply::ContactGroups(
+            client
+                .contact_groups()
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::ContactCard { person, stamp } => Reply::ContactCard {
+            stamp,
+            answer: client
+                .contact_card(person)
+                .await
+                .map(|card| card.map(Box::new))
+                .map_err(|error| error.to_string()),
+        },
+        Request::ContactGlance { address, stamp } => Reply::ContactGlance {
+            stamp,
+            glance: client
+                .contact_glance(&address)
+                .await
+                .map(|glance| glance.map(Box::new))
+                .map_err(|error| error.to_string()),
+        },
         Request::FindMessage(message) => Reply::FoundMessage {
             message,
             row: client

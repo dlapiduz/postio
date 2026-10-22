@@ -1,0 +1,41 @@
+# The review queue and the merge sheet (specs/011-focus-contacts S10, handoff
+# screen 07): g w opens Contacts and the sheet on the strongest group of
+# records that look like one person. The arrows choose whose name and photo
+# are kept; n says they are two people and moves on; Escape is Later; Return
+# merges, and the next group follows. Every line under "Why we think so" is
+# one the scorer (`postio-classify` duplicates::score) said.
+apps   = ["focus", "macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S10" }
+seed   = "small"
+design = "07-merge-duplicates"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "sheet"
+command = "contacts_suggestions"
+expect  = "A sheet 780 wide hangs from the strip over a dimmed Contacts view: “These N look like the same person”, what merging keeps, a card per record (avatar, name, saved or not saved, address, messages and last, and “Keep this name and photo” on the one with the accent ring, “Address kept” on the rest), “Why we think so” with a tick on each line, what the merge would make (name, role, starred address first, Result with the messages added up and what is folded in), and along the foot “Undo with ⌘Z. Merged records can be split again from the card.”, Not the same n, Later Esc and Merge ↩ filled."
+
+[[step]]
+id      = "choose"
+command = "next_message"
+expect  = "The ring moves to the next card and the result preview takes that record's name and photo."
+
+[[step]]
+id      = "later"
+command = "back"
+expect  = "Later: the sheet is gone and Contacts is as it was; nothing was merged."
+
+[[step]]
+command = "contacts_suggestions"
+
+[[step]]
+id      = "not-the-same"
+command = "suggestion_dismiss"
+expect  = "Not the same: this group is gone and the next, if any, is drawn; the Worth a look count is one lower."
+
+[[step]]
+id      = "merge"
+command = "contact_show_mail"
+expect  = "Return merges into the kept record; with nothing left the sheet closes and the list shows one person where there were several."

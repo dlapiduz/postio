@@ -1230,6 +1230,63 @@ fn a_draft_sent_from_a_frontend_is_queued_and_a_discard_after_it_keeps_it() {
 }
 
 #[test]
+fn a_group_in_the_to_field_is_sent_to_its_members_preferred_addresses() {
+    // Specs/011-focus-contacts S8: `Quarry crew` in To (or `to:Quarry crew`)
+    // is a name for people. It expands when the draft is queued, on every
+    // frontend, to each live member's primary address, and what is already
+    // addressed to is not addressed twice.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    world.rt.block_on(async {
+        use postio_model::{ContactForm, FormAddress};
+        use postio_storage::repository::ContactRepository;
+        let connection = world.database.connect().await.expect("a connection");
+        let contacts = ContactRepository::new(&connection);
+        for (given, address) in [
+            ("Ines", "ines@example.net"),
+            ("Tobias", "tobias@example.net"),
+        ] {
+            let mut form = ContactForm::blank();
+            form.given = given.into();
+            form.addresses = vec![FormAddress {
+                address: address.into(),
+                ..FormAddress::blank()
+            }];
+            form.groups = vec!["Quarry crew".into()];
+            contacts.save_form(None, &form).await.expect("a member");
+        }
+    });
+    let mut draft = a_draft(account, "Ready.");
+    draft.to = vec![
+        postio_model::EmailAddress::new(None::<String>, "to:quarry crew"),
+        postio_model::EmailAddress::new(None::<String>, "ines@example.net"),
+    ];
+    draft.cc = vec![postio_model::EmailAddress::new(
+        None::<String>,
+        "Quarry crew",
+    )];
+    world.rt.block_on(async {
+        client.queue_send(7, draft, None).await.expect("queued");
+    });
+    let sent = &drafts_in(&world, account)[0];
+    let addresses = |list: &[postio_model::EmailAddress]| {
+        let mut found: Vec<String> = list.iter().map(|a| a.address.clone()).collect();
+        found.sort();
+        found
+    };
+    assert_eq!(
+        addresses(&sent.to),
+        ["ines@example.net", "tobias@example.net"],
+        "each member once, and the one already there not again"
+    );
+    assert!(
+        addresses(&sent.cc).is_empty(),
+        "Cc names the group too, but its members are already addressed in To"
+    );
+}
+
+#[test]
 fn a_queued_send_names_the_draft_so_it_can_be_taken_back() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
@@ -1829,6 +1886,23 @@ fn a_frontend_disables_removes_and_restores_an_account_through_the_host() {
         .expect("made the default");
 }
 
+/// One message from `address` arrived in `account` at `at`: a sighting, as
+/// sync records it.
+async fn saw(
+    connection: &postio_storage::Connection,
+    account: postio_model::AccountId,
+    address: &str,
+    at: chrono::DateTime<Utc>,
+) {
+    let mut message = postio_model::Message::new(account, postio_model::MailboxId::new(1), at);
+    message.date = Some(at);
+    message.from = vec![postio_model::EmailAddress::new(None::<String>, address)];
+    postio_storage::repository::ContactRepository::new(connection)
+        .record_message(&message, &[])
+        .await
+        .expect("a sighting");
+}
+
 #[test]
 fn the_finder_is_told_the_accounts_correspondents_and_labels() {
     // T066: `@` and `+` offer what the store knows, read through the host.
@@ -1837,14 +1911,7 @@ fn the_finder_is_told_the_accounts_correspondents_and_labels() {
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
-        postio_storage::repository::ContactRepository::new(&connection)
-            .record(
-                Some(account),
-                &postio_model::EmailAddress::new(None::<String>, "grace@example.test"),
-                Utc::now(),
-            )
-            .await
-            .expect("a correspondent");
+        saw(&connection, account, "grace@example.test", Utc::now()).await;
         postio_storage::repository::LabelRepository::new(&connection)
             .create(&mut postio_model::Label::new(account, "Receipts"))
             .await
@@ -1858,7 +1925,7 @@ fn the_finder_is_told_the_accounts_correspondents_and_labels() {
     assert_eq!(
         correspondents
             .iter()
-            .map(|contact| contact.address.address.as_str())
+            .map(|contact| contact.addresses[0].address.address.as_str())
             .collect::<Vec<_>>(),
         ["grace@example.test"]
     );
@@ -3812,6 +3879,95 @@ pub(crate) fn ahead() -> chrono::DateTime<Utc> {
 }
 
 #[test]
+fn a_delivery_failure_in_the_inbox_marks_the_address_it_names() {
+    // Specs/011-focus-contacts S10: a permanent failure in a delivery report
+    // that has landed marks the address it names, so the review can say
+    // which addresses bounced recently. A delay marks nothing.
+    let world = World::new();
+    let status = "Reporting-MTA: dns; mx4.example.net\r\n\r\nFinal-Recipient: rfc822; a.moreno@example.net\r\nAction: failed\r\nStatus: 5.1.1\r\n";
+    let inbox = folder(&world, postio_model::MailboxRole::Inbox);
+    let blob = world
+        .host()
+        .wiring()
+        .blobs
+        .put(status.as_bytes())
+        .expect("the part stored");
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        // The mail the failure is about, so the address is known.
+        let mut sent = Message::new(
+            world.account,
+            inbox,
+            Utc::now() - chrono::TimeDelta::days(3),
+        );
+        sent.from = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "a.moreno@example.net",
+        )];
+        sent.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "test@example.com",
+        )];
+        let repository = MessageRepository::new(&connection);
+        repository.create(&mut sent).await.expect("known address");
+        let mut report = Message::new(
+            world.account,
+            inbox,
+            Utc::now() - chrono::TimeDelta::hours(1),
+        );
+        report.subject = Some("Undelivered Mail Returned to Sender".to_owned());
+        report.from = vec![postio_model::EmailAddress::new(
+            Some("Mail Delivery Subsystem"),
+            "MAILER-DAEMON@mx4.example.net",
+        )];
+        report.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "test@example.com",
+        )];
+        let mut part = postio_model::Attachment::new(
+            MessageId::UNASSIGNED,
+            "message/delivery-status",
+            status.len() as u64,
+        );
+        part.part_id = Some("2".to_owned());
+        report.attachments = vec![part];
+        let id = repository.create(&mut report).await.expect("the report");
+        repository
+            .set_attachment_blob(id, "2", &blob)
+            .await
+            .expect("linked");
+        repository
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    text: Some("Delivery failed.".to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("its body");
+    });
+
+    focus_caught_up(&world);
+
+    let marked = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::sql::scalar(
+            &connection,
+            "SELECT count(*) FROM addresses WHERE address_normalized = 'a.moreno@example.net' AND bounced_at IS NOT NULL",
+            (),
+        )
+        .await
+        .expect("a count")
+    });
+    assert_eq!(marked, 1, "the address the report names is marked bounced");
+}
+
+#[test]
 fn an_invitation_is_marked_with_its_event_and_can_be_answered() {
     // US8 scenario 1: a calendar request's row shows Invite with the
     // event's times, computed when the part arrived, not when the row is
@@ -4408,25 +4564,17 @@ fn an_address_written_to_is_offered_before_one_only_seen() {
     let world = World::new();
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
-        let contacts = postio_storage::repository::ContactRepository::new(&connection);
         for (address, seen, days_ago) in [
             ("quill.often@example.com", 100, 0),
             ("quill.wrote@example.net", 50, 30),
         ] {
             let at = Utc::now() - chrono::Duration::days(days_ago);
             for _ in 0..seen {
-                contacts
-                    .record(
-                        Some(world.account),
-                        &postio_model::EmailAddress::new(None::<String>, address),
-                        at,
-                    )
-                    .await
-                    .expect("a sighting");
+                saw(&connection, world.account, address, at).await;
             }
         }
         for statement in [
-            "INSERT INTO addresses (address, address_normalized)
+            "INSERT OR IGNORE INTO addresses (address, address_normalized)
              VALUES ('quill.wrote@example.net', 'quill.wrote@example.net')",
             "INSERT INTO correspondents (address_id, sent_count, last_sent_at)
              SELECT id, 42, NULL FROM addresses
@@ -4461,7 +4609,7 @@ fn an_address_written_to_is_offered_before_one_only_seen() {
     let wrote = directory
         .contacts
         .iter()
-        .find(|row| row.contact.address.address == "quill.wrote@example.net")
+        .find(|row| row.contact.addresses[0].address.address == "quill.wrote@example.net")
         .expect("in the directory");
     assert_eq!(wrote.sent_count, 42, "the directory carries the letters");
 }
@@ -5301,4 +5449,94 @@ fn an_agent_with_no_window_to_stand_beside_keeps_its_own_undo() {
         matches!(event, Event::ActionCompleted { .. })
     });
     assert_eq!(world.inbox_rows(&agent), 0);
+}
+
+/// What the body stage noted about a sender once their mail landed, with
+/// the given Suggestions switches turned off first.
+fn noted_with_switches_off(off: &[postio_model::Suggestion]) -> Vec<String> {
+    // Specs/011-focus-contacts S10: the body stage notes the signature, a
+    // phone and a Resent-From against the sender, so the review can find a
+    // second record of the same person without reading mail.
+    let world = World::new();
+    let inbox = folder(&world, postio_model::MailboxRole::Inbox);
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        for which in off {
+            postio_storage::repository::ContactSuggestionRepository::new(&connection)
+                .set(*which, false)
+                .await
+                .expect("a switch");
+        }
+        let repository = MessageRepository::new(&connection);
+        let mut message = Message::new(world.account, inbox, Utc::now() - chrono::TimeDelta::hours(2));
+        message.from = vec![postio_model::EmailAddress::new(None::<String>, "ada@example.org")];
+        message.to = vec![postio_model::EmailAddress::new(None::<String>, "test@example.com")];
+        let id = repository.create(&mut message).await.expect("a message");
+        repository
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    text: Some(
+                        "See you then.\n\nThanks,\nAda Moreno\nFinance lead, Northwind Partners\n+1 555 0119\n"
+                            .to_owned(),
+                    ),
+                    html: None,
+                    headers: Some("Resent-From: a.moreno@example.net\r\n".to_owned()),
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("a body");
+        // The sender's person exists, as the catch-up makes them.
+        postio_storage::repository::ContactRepository::new(&connection)
+            .catch_up_batch(None, 100)
+            .await
+            .expect("people");
+    });
+
+    focus_caught_up(&world);
+
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::sql::all(
+            &connection,
+            "SELECT kind FROM contact_evidence ORDER BY kind",
+            (),
+            |row| postio_storage::sql::RowExt::text(row, 0),
+        )
+        .await
+        .expect("kinds")
+    })
+}
+
+#[test]
+fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
+    // Specs/011-focus-contacts S10: the body stage notes the signature, a
+    // phone and a Resent-From against the sender, so the review can find a
+    // second record of the same person without reading mail.
+    assert_eq!(
+        noted_with_switches_off(&[]),
+        ["phone", "resent", "signature"]
+    );
+}
+
+#[test]
+fn with_read_signatures_off_the_body_stage_never_parses_a_signature() {
+    // D7: the switch stops the work, not the result's display. What a
+    // signature would have said (a title, a company, a phone) is not noted;
+    // a forwarding header is not a signature and still is.
+    assert_eq!(
+        noted_with_switches_off(&[postio_model::Suggestion::ReadSignatures]),
+        ["resent"]
+    );
+}
+
+#[test]
+fn with_suggest_merging_off_the_body_stage_notes_nothing_for_the_review() {
+    assert_eq!(
+        noted_with_switches_off(&[postio_model::Suggestion::SuggestMerges]),
+        Vec::<String>::new()
+    );
 }

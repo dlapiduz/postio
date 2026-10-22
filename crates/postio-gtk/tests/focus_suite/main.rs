@@ -38,6 +38,7 @@ mod compose;
 mod compose_counts;
 mod compose_detach;
 mod compose_layout;
+mod contacts;
 mod corrections;
 mod cursor;
 mod desktop;
@@ -143,6 +144,52 @@ const IGNORED: &[&str] = &[
 ];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home",
+        contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home
+            as fn(),
+    ),
+    (
+        "contacts::the_strip_says_its_tabs_and_a_click_on_one_is_the_key",
+        contacts::the_strip_says_its_tabs_and_a_click_on_one_is_the_key as fn(),
+    ),
+    (
+        "contacts::ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves",
+        contacts::ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves as fn(),
+    ),
+    (
+        "contacts::g_w_offers_the_look_alikes_return_merges_and_escape_is_later",
+        contacts::g_w_offers_the_look_alikes_return_merges_and_escape_is_later as fn(),
+    ),
+    (
+        "contacts::x_marks_a_row_without_moving_the_list",
+        contacts::x_marks_a_row_without_moving_the_list as fn(),
+    ),
+    (
+        "contacts::i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_closes",
+        contacts::i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_closes
+            as fn(),
+    ),
+    (
+        "contacts::a_sender_not_yet_saved_is_introduced_and_offered_add_contact",
+        contacts::a_sender_not_yet_saved_is_introduced_and_offered_add_contact as fn(),
+    ),
+    (
+        "contacts::v_i_imports_a_chosen_file_and_v_x_exports_one",
+        contacts::v_i_imports_a_chosen_file_and_v_x_exports_one as fn(),
+    ),
+    (
+        "contacts::settings_contacts_flips_the_suggestions_and_says_nothing_of_sync",
+        contacts::settings_contacts_flips_the_suggestions_and_says_nothing_of_sync as fn(),
+    ),
+    (
+        "contacts::return_searches_the_mail_of_the_person_under_the_cursor",
+        contacts::return_searches_the_mail_of_the_person_under_the_cursor as fn(),
+    ),
+    (
+        "contacts::slash_filters_the_list_and_escape_clears_before_it_closes",
+        contacts::slash_filters_the_list_and_escape_clears_before_it_closes as fn(),
+    ),
     (
         "compose_counts::autosave_writes_off_the_main_thread_and_keeps_one_row",
         compose_counts::autosave_writes_off_the_main_thread_and_keeps_one_row as fn(),
@@ -768,6 +815,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "treatments::a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours",
         treatments::a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours as fn(),
+    ),
+    (
+        "treatments::a_treatment_chosen_for_one_address_reaches_the_persons_other_address",
+        treatments::a_treatment_chosen_for_one_address_reaches_the_persons_other_address as fn(),
     ),
     (
         "treatments::opening_and_stepping_prepare_no_body_on_the_interface_thread",
@@ -1663,6 +1714,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings",
         settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings as fn(),
+    ),
+    (
+        "settings::a_persons_pin_is_listed_by_name_and_taken_back_in_settings",
+        settings::a_persons_pin_is_listed_by_name_and_taken_back_in_settings as fn(),
     ),
     (
         "settings::a_click_into_settings_as_it_opens_waits_for_it_to_open",

@@ -1,0 +1,4 @@
+label = "person"
+address = "alan@mail.example.net"
+name = "Alan Turing"
+messages = 1

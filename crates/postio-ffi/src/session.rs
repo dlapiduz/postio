@@ -443,12 +443,39 @@ fn engage_focus(
     host: &Host,
     focus: &postio_config::FocusConfig,
     source: &ConfigSource,
+    remote_images: &std::path::Path,
 ) -> postio_host::FocusHandle {
     let path = source.path();
-    host.enable_focus(postio_host::FocusSetup::from_config(
-        focus.clone(),
-        path.as_deref(),
-    ))
+    // The Filtering pane reads a file and a person's pin is not in it: it
+    // reads, and takes back, what people decided from here.
+    let (focus_settings, database) = (host.wiring().focus.clone(), host.wiring().database.clone());
+    let (reader, writer) = (focus_settings.clone(), (focus_settings, database));
+    crate::settings::follow_contacts(crate::settings::ContactFilters {
+        rules: Box::new(move || {
+            reader
+                .config()
+                .map(|config| config.contacts().to_vec())
+                .unwrap_or_default()
+        }),
+        take_back: Box::new(move |undo| {
+            let (focus, database) = &writer;
+            blocking(async {
+                match undo {
+                    postio_ui::filtering::Undo::Never(entry) => {
+                        focus.pin(database, entry, false).await
+                    }
+                    postio_ui::filtering::Undo::Marker { sender, kind } => {
+                        focus.stop_marker(database, sender, kind, false).await
+                    }
+                }
+            })
+            .is_ok()
+        }),
+    });
+    host.enable_focus(
+        postio_host::FocusSetup::from_config(focus.clone(), path.as_deref())
+            .with_remote_images_path(remote_images.to_path_buf()),
+    )
 }
 
 /// Start the store's owner over an open store, as ADR 0041 allows here:
@@ -2003,6 +2030,17 @@ impl Session {
                 wiring.events.subscribe("attachment-indexer"),
                 &wiring.runtime,
             );
+            // A file of its own per session: an in-memory store has no
+            // directory to sit beside, and one shared path made a grant
+            // from one test true for the next.
+            let allow_list_at = std::env::temp_dir().join(format!(
+                "postio-allowed-{}-{}.toml",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|since| since.as_nanos())
+                    .unwrap_or_default()
+            ));
             let session = Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 keymap: Mutex::new(None),
@@ -2022,14 +2060,7 @@ impl Session {
                 // A file of its own per session: an in-memory store has no
                 // directory to sit beside, and one shared path made a grant
                 // from one test true for the next.
-                allow_list_at: std::env::temp_dir().join(format!(
-                    "postio-allowed-{}-{}.toml",
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|since| since.as_nanos())
-                        .unwrap_or_default()
-                )),
+                allow_list_at: allow_list_at.clone(),
                 serial: next_serial(),
                 allow_list_kept: Mutex::new(None),
                 thread_renders: Mutex::new(postio_ui::reader::document::RenderCache::default()),
@@ -2041,7 +2072,7 @@ impl Session {
                 events,
                 link: Mutex::new(Some(link)),
                 wired: host.wired(),
-                _focus: engage_focus(&host, &config.focus, &source),
+                _focus: engage_focus(&host, &config.focus, &source, &allow_list_at),
                 focus_config: Mutex::new(config.focus.clone()),
                 notices: Mutex::new(crate::NoticesFfi::from(&sync_config)),
                 _host: host,
@@ -2054,6 +2085,7 @@ impl Session {
                 _scratch: Some(scratch),
             });
             session.follow_config(&source);
+            session.follow_contacts();
             session.prime_focus(saved, &source);
             return Ok(session);
         }
@@ -2115,6 +2147,11 @@ impl Session {
             wiring.events.subscribe("attachment-indexer"),
             &wiring.runtime,
         );
+        let allow_list_at = store_at
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(&store_at)
+            .join("allowed-senders.toml");
         let session = Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             keymap: Mutex::new(None),
@@ -2127,11 +2164,7 @@ impl Session {
             conversation: Arc::default(),
             sign_in: Mutex::new(None),
             sign_in_port: Arc::default(),
-            allow_list_at: store_at
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-                .unwrap_or(&store_at)
-                .join("allowed-senders.toml"),
+            allow_list_at: allow_list_at.clone(),
             agents: answer_agents(postio_mcp::socket::path_for(&store_at), &host, &source),
             store_at,
             serial: next_serial(),
@@ -2144,7 +2177,7 @@ impl Session {
             events,
             link: Mutex::new(Some(link)),
             wired: host.wired(),
-            _focus: engage_focus(&host, &focus_config, &source),
+            _focus: engage_focus(&host, &focus_config, &source, &allow_list_at),
             focus_config: Mutex::new(focus_config.clone()),
             notices: Mutex::new(crate::NoticesFfi::from(&sync_config)),
             _host: host,
@@ -2158,6 +2191,7 @@ impl Session {
             ),
         });
         session.follow_config(&source);
+        session.follow_contacts();
         session.prime_focus(saved, &source);
         Ok(session)
     }
@@ -4277,7 +4311,7 @@ impl Session {
                     service.config().focus.clone();
                 session
                     .focus_list
-                    .input(postio_focus::Input::Config(service.config().focus.clone()));
+                    .input(postio_focus::Input::Config(session.focus_config()));
                 session
                     ._host
                     .enable_focus(postio_host::FocusSetup::from_config(
@@ -4313,8 +4347,29 @@ impl Session {
     }
 
     /// `[focus]` as it stands.
+    ///
+    /// The file's `[focus]` with what people decided added (ADR 0048): the
+    /// strip's digest count, the controller's rules and the rule dialog all
+    /// read it.
     pub(crate) fn focus_config(&self) -> postio_config::FocusConfig {
-        self.focus_config.lock().expect("focus config lock").clone()
+        let raw = self.focus_config.lock().expect("focus config lock").clone();
+        self._host.wiring().focus.overlaid(&raw)
+    }
+
+    /// Hand Focus's controller `[focus]` again whenever a verb changes what
+    /// people decided, which no change to the file announces.
+    fn follow_contacts(self: &Arc<Self>) {
+        let session = Arc::downgrade(self);
+        self._host
+            .wiring()
+            .focus
+            .watch(Arc::new(move |config: &postio_config::FocusConfig| {
+                if let Some(session) = session.upgrade() {
+                    session
+                        .focus_list
+                        .input(postio_focus::Input::Config(config.clone()));
+                }
+            }));
     }
 
     /// Focus's list.
@@ -4414,7 +4469,7 @@ impl Session {
     /// of the main thread per move (sampled in the running app). `[keys]`
     /// does not change while a session is open; the registry can, when an
     /// extension registers, and the cache is keyed by its size for that.
-    fn keymap(&self) -> postio_core::Keymap {
+    pub(crate) fn keymap(&self) -> postio_core::Keymap {
         let commands = postio_core::registry::every_action().count();
         let mut cached = self.keymap.lock().expect("keymap lock");
         match &*cached {

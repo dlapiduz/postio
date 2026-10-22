@@ -37,7 +37,7 @@ import Testing
             id: id,
             thread: kind == .digest ? nil : id,
             threads: kind == .digest ? [] : [id],
-            sender: "Ada Moreno",
+            sender: "Ada Moreno", fromAddress: "ada@example.org",
             subject: "Re: Atlas Q3 budget, final numbers",
             preview: "Hi, the final Q3 numbers are in the attached sheet.",
             time: "15:51",

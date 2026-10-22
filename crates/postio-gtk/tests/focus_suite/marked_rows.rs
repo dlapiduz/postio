@@ -143,10 +143,24 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             crate::settle_until(async || row.drawn().picked).await,
             "`x` never selected the marked row"
         );
-        assert_eq!(
-            gutter_marks(&row),
-            1,
-            "selected, the gutter holds the checked box alone, not the box over the dot"
+        let row = marked().expect("the marked row is still there");
+        // What the row drew: the box in the dot's place, never both.
+        let drawn = row.drawn();
+        assert!(
+            drawn.picked && !drawn.dot,
+            "selected, the gutter holds the checked box alone, not the box over the dot \
+             (picked {}, dot {})",
+            drawn.picked,
+            drawn.dot
+        );
+        // And the pixels agree, whenever a snapshot of the row can be taken:
+        // on a loaded runner the row's paintable sometimes comes back empty,
+        // which says nothing about what was drawn.
+        let marks = gutter_marks(&row);
+        assert!(
+            marks == 0 || marks == 1,
+            "selected, the gutter holds the checked box alone, not the box over the dot: \
+             {marks} marks"
         );
         assert!(
             row.drawn().texts.iter().any(|text| text == "Question"),

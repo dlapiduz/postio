@@ -36,6 +36,8 @@ members = [
     "crates/postio-focus",
     "crates/postio-demo",
     "crates/postio-workspace-hack",
+    "crates/postio-vcard",
+    "crates/postio-contact-sync",
 ]
 # Upstream crates carried with Postio's patches applied: sources, not
 # members, so the workspace's lints and gates do not reach them.
@@ -92,6 +94,8 @@ default-members = [
     "crates/postio-focus",
     "crates/postio-demo",
     "crates/postio-workspace-hack",
+    "crates/postio-vcard",
+    "crates/postio-contact-sync",
 ]
 
 [workspace.package]
@@ -191,6 +195,8 @@ postio-mcp = { path = "crates/postio-mcp" }
 # Every member depends on it, so `-p` builds resolve third-party features
 # the way the workspace build does (ADR 0047). Managed by `cargo hakari`.
 postio-workspace-hack = { path = "crates/postio-workspace-hack" }
+postio-vcard   = { path = "crates/postio-vcard" }
+postio-contact-sync = { path = "crates/postio-contact-sync" }
 
 # Third-party crates two or more members share, so a version, a feature
 # list and a default-features decision are made once (#1498). A member

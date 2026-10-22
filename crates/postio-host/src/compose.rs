@@ -68,6 +68,7 @@ pub async fn queue_send(
     at: Option<DateTime<Utc>>,
 ) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
+    expand_groups(&connection, draft).await?;
     let drafts = DraftRepository::new(&connection);
     match at {
         Some(at) => {
@@ -76,6 +77,67 @@ pub async fn queue_send(
         None => {
             drafts.queue_send(draft, now()).await?;
         }
+    }
+    Ok(())
+}
+
+/// A group named in To, Cc or Bcc becomes its members (specs/011-focus-contacts
+/// S8). `Quarry crew`, or `to:Quarry crew`, stands for each live member's
+/// primary address, so the same words send the same way from every frontend.
+///
+/// An entry that is already an address is left alone, a group nobody made is
+/// left for the send to refuse as it always has, and an address the draft
+/// already names is not added twice.
+async fn expand_groups(
+    connection: &postio_storage::Connection,
+    draft: &mut Draft,
+) -> postio_storage::Result<()> {
+    use postio_storage::repository::ContactGroupRepository;
+    let names_a_group = |entry: &postio_model::EmailAddress| {
+        !entry.address.contains('@') && !entry.address.trim().is_empty()
+    };
+    if ![&draft.to, &draft.cc, &draft.bcc]
+        .iter()
+        .any(|list| list.iter().any(names_a_group))
+    {
+        return Ok(());
+    }
+    let groups = ContactGroupRepository::new(connection);
+    let known = groups.list().await?;
+    let mut already: std::collections::HashSet<String> = [&draft.to, &draft.cc, &draft.bcc]
+        .iter()
+        .flat_map(|list| list.iter())
+        .filter(|entry| !names_a_group(entry))
+        .map(postio_model::EmailAddress::normalized)
+        .collect();
+    for list in [&mut draft.to, &mut draft.cc, &mut draft.bcc] {
+        let mut expanded = Vec::with_capacity(list.len());
+        for entry in std::mem::take(list) {
+            if !names_a_group(&entry) {
+                expanded.push(entry);
+                continue;
+            }
+            let typed = entry.address.trim();
+            let name = typed
+                .strip_prefix("to:")
+                .or_else(|| typed.strip_prefix("TO:"))
+                .unwrap_or(typed)
+                .trim();
+            match known
+                .iter()
+                .find(|group| group.name.eq_ignore_ascii_case(name))
+            {
+                Some(group) => {
+                    for member in groups.expand(group.id).await? {
+                        if already.insert(member.normalized()) {
+                            expanded.push(member);
+                        }
+                    }
+                }
+                None => expanded.push(entry),
+            }
+        }
+        *list = expanded;
     }
     Ok(())
 }
@@ -472,13 +534,15 @@ pub async fn default_signature(
 /// there to stop a pathological store rather than to page a normal one.
 const CORRESPONDENT_LIMIT: u32 = 50_000;
 
-/// The account's correspondents, as the desktop's `@` reads them. Empty,
-/// and logged, when the store cannot be read.
-pub async fn correspondents(database: &Store, account: AccountId) -> Vec<postio_model::Contact> {
+/// The people the user corresponds with, as the desktop's `@` reads them.
+/// People are shared across accounts (specs/005-contacts), so this is not
+/// one account's list: `_account` stays only so the wire protocol, which the
+/// widgets and the terminal also speak, keeps its shape. Empty, and logged, when the store cannot be read.
+pub async fn correspondents(database: &Store, _account: AccountId) -> Vec<postio_model::Contact> {
     let found = async {
         let connection = database.read().await?;
         ContactRepository::new(&connection)
-            .search(Some(account), "", CORRESPONDENT_LIMIT)
+            .people(CORRESPONDENT_LIMIT)
             .await
     };
     found.await.unwrap_or_else(|error| {
@@ -487,25 +551,29 @@ pub async fn correspondents(database: &Store, account: AccountId) -> Vec<postio_
     })
 }
 
-/// Everything recipient completion can offer `account`, on one warm reader:
+/// Everything recipient completion can offer, on one warm reader:
 /// what the desktop's composer holds in memory so each keystroke is a lookup
 /// rather than a query. Empty, and logged, when the store cannot be read.
 pub async fn recipient_directory(
     database: &Store,
-    account: AccountId,
+    _account: AccountId,
 ) -> postio_client::protocol::RecipientDirectory {
     let found = async {
         let connection = database.read().await?;
         let groups = ContactGroupRepository::new(&connection);
         let mut named = Vec::new();
-        for group in groups.list(Some(account)).await? {
+        for group in groups.list().await? {
             let members = groups.members(group.id).await?;
-            if !members.is_empty() {
-                named.push((group.name, members.iter().map(resolved_address).collect()));
+            let addresses: Vec<EmailAddress> = members
+                .iter()
+                .filter_map(postio_ui::recipients::preferred_address)
+                .collect();
+            if !addresses.is_empty() {
+                named.push((group.name, addresses));
             }
         }
         let contacts = ContactRepository::new(&connection)
-            .search(Some(account), "", CORRESPONDENT_LIMIT)
+            .people(CORRESPONDENT_LIMIT)
             .await?;
         let written = CorrespondentRepository::new(&connection)
             .sent_counts()
@@ -651,24 +719,28 @@ pub async fn focus_counts(
 /// rule the desktop composer applies to its directory in memory.
 pub async fn recipients(
     database: &Store,
-    account: AccountId,
+    _account: AccountId,
     prefix: &str,
 ) -> Vec<RecipientCandidate> {
     let found = async {
         let connection = database.read().await?;
         let groups = ContactGroupRepository::new(&connection);
         let mut named = Vec::new();
-        for group in groups.list(Some(account)).await? {
+        for group in groups.list().await? {
             let members = groups.members(group.id).await?;
-            if !members.is_empty() {
-                named.push((group.name, members.iter().map(resolved_address).collect()));
+            let addresses: Vec<EmailAddress> = members
+                .iter()
+                .filter_map(postio_ui::recipients::preferred_address)
+                .collect();
+            if !addresses.is_empty() {
+                named.push((group.name, addresses));
             }
         }
         // The store's prefix match, wide enough that its own order -- by
         // how lately and how often each was seen -- cannot push an address
         // the user writes to out before the rule has ranked it.
         let contacts = ContactRepository::new(&connection)
-            .search(Some(account), prefix, PREFIX_POOL)
+            .complete(prefix, PREFIX_POOL)
             .await?;
         let written = CorrespondentRepository::new(&connection)
             .sent_counts()
@@ -690,7 +762,7 @@ pub async fn recipients(
 /// the rule orders it.
 const PREFIX_POOL: u32 = 500;
 
-/// `contacts`, each with the letters the user wrote to its address.
+/// `contacts`, each with the letters the user wrote to any of its addresses.
 fn with_letters(
     contacts: Vec<postio_model::Contact>,
     written: &std::collections::HashMap<String, u32>,
@@ -698,23 +770,19 @@ fn with_letters(
     contacts
         .into_iter()
         .map(|contact| postio_ui::recipients::Correspondent {
-            sent_count: written
-                .get(&contact.address.normalized())
-                .copied()
-                .unwrap_or_default(),
+            sent_count: contact
+                .addresses
+                .iter()
+                .map(|owned| {
+                    written
+                        .get(&owned.address.normalized())
+                        .copied()
+                        .unwrap_or_default()
+                })
+                .sum(),
             contact,
         })
         .collect()
-}
-
-/// The address a contact offers: the name the user set, or the last one seen
-/// on the address, over the addr-spec `record` accumulated sightings under.
-fn resolved_address(contact: &postio_model::Contact) -> EmailAddress {
-    let name = contact
-        .name
-        .clone()
-        .or_else(|| contact.address.name.clone());
-    EmailAddress::new(name, contact.address.address.clone())
 }
 
 /// The message `id` with its body, and the account it belongs to: what a

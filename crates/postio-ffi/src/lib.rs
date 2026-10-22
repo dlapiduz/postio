@@ -48,6 +48,12 @@ mod finder;
 mod focus;
 mod focus_bar;
 mod focus_compose;
+mod focus_contact_edit;
+mod focus_contact_merge;
+mod focus_contacts;
+mod focus_contacts_io;
+mod focus_contacts_settings;
+mod focus_contacts_sync;
 mod focus_keymap;
 mod focus_list;
 mod focus_message;
@@ -84,7 +90,7 @@ pub use compose::{
     QuoteFoldFfi, composer_title, draft_saved_words, draft_summary, fold_quote, outgoing_shape,
     recipient_summary, remind_meaning, remind_presets,
 };
-pub use contacts::{ExternalContactFfi, RecipientSuggestionFfi};
+pub use contacts::{ContactFfi, ContactKindFfi, ExternalContactFfi, RecipientSuggestionFfi};
 pub use conversation::{
     ConversationFfi, ThreadAnchorFfi, ThreadDocumentFfi, ThreadVerbFfi, ThreadVerbKindFfi,
     message_when, thread_expand_all_script, thread_observer_script, thread_scroll_script,
@@ -102,6 +108,28 @@ pub use focus_bar::{
     BarLineFfi, BarLineKindFfi, BarModeFfi, BarSelectFfi, BarViewFfi, PlaceEntryFfi, PlaceMarkFfi,
 };
 pub use focus_compose::ComposerKindFfi;
+pub use focus_contact_edit::{
+    AddressLabelFfi, ContactEditViewFfi, EditAddressFfi, EditButtonFfi, EditChangeFfi, EditHintFfi,
+    EditSeenFfi, EditSegmentFfi, FormFieldFfi, GroupOptionFfi, GroupPickerFfi, ShowAsFfi,
+};
+pub use focus_contact_merge::{MergeCardFfi, MergeResultFfi, MergeSheetViewFfi};
+pub use focus_contacts::{
+    ArrivalOptionFfi, AvatarFfi, CardAddressFfi, CardButtonFfi, CardFileFfi, CardLineFfi,
+    CardMonthsFfi, CardSwitchFfi, ContactArrivalFfi, ContactCardViewFfi, ContactPopoverViewFfi,
+    ContactReviewLineFfi, ContactRowViewFfi, ContactTabFfi, ContactTabViewFfi, ContactsFooterFfi,
+    ContactsStripFfi, ContactsViewFfi, OpenLineFfi, PopoverActionFfi, PopoverTileFfi,
+};
+pub use focus_contacts_io::{
+    ContactsExportResultFfi, ContactsImportResultFfi, ContactsIoSheetFfi, ContactsPanelWordsFfi,
+};
+pub use focus_contacts_settings::{
+    ContactsPaneFfi, SuggestionRowFfi, SuggestionsViewFfi, SyncModeFfi, SyncModeOptionFfi,
+    SyncSectionFfi, SyncStatusFfi,
+};
+pub use focus_contacts_sync::{
+    ExternalRecordFfi, SyncAccountFfi, SyncPlanFfi, SyncResultFfi, SyncScopeFfi,
+    SyncScopeOptionFfi, SyncSheetFfi,
+};
 pub use focus_keymap::{KeyMapGroupFfi, KeyMapRowFfi, KeyMapSheetFfi};
 pub use focus_list::{
     FocusRowActionFfi, FocusRowFfi, FocusRowKindFfi, FocusScopeFfi, LabelPillFfi, MarkerLineFfi,

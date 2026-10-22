@@ -69,6 +69,20 @@ pub enum Error {
         reason: String,
     },
 
+    /// An address was given to a person while it belongs to someone else.
+    ///
+    /// An address has at most one owner (specs/005-contacts FR-010), and
+    /// taking it from a person the user can see is a decision the user makes
+    /// — the caller names the owner and offers to move it (FR-015). An address
+    /// whose owner is deleted is not refused; it moves (FR-024).
+    #[error("address {address} already belongs to contact {owner}")]
+    AddressOwned {
+        /// The address that was asked for.
+        address: i64,
+        /// Who it belongs to.
+        owner: i64,
+    },
+
     /// A write named a row that is not there.
     #[error("no {entity} with id {id}")]
     NotFound {

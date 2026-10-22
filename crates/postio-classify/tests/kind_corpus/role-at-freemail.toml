@@ -1,0 +1,5 @@
+label = "person"
+address = "contact@freemail.example"
+name = "Contact Person"
+messages = 2
+people_at_domain = 4

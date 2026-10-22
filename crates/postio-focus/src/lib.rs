@@ -25,6 +25,11 @@ mod bar;
 mod capture;
 mod compose;
 mod confirm;
+mod contact_edit;
+mod contact_merge;
+mod contact_popover;
+mod contacts;
+mod contacts_settings;
 mod cursor;
 mod digest;
 mod dropdown;
@@ -43,6 +48,8 @@ pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRea
 pub use capture::{CaptureProject, CaptureView};
 pub use compose::{AUTOSAVE, ComposerKind};
 pub use confirm::Confirm;
+pub use contact_edit::EditChange;
+pub use contacts::{ContactsView, FILTER_CAP};
 pub use cursor::{NoRows, RowFacts, Rows};
 pub use digest::{
     DigestCard, DigestEmail, DigestLine, DigestStatement, DigestTopic, DigestView, RulePreviewLine,
@@ -94,6 +101,14 @@ pub struct Capabilities {
     /// opens (spec 010 D17). The Mac has them; GTK's bar keeps spec 009's
     /// blend until Linux adopts them (S2).
     pub results_view: bool,
+    /// `from:` and `to:` know people: a word that names a contact finds
+    /// mail from every address they own, `from:@Group` every member
+    /// (specs/011-focus-contacts S4). The Mac has it; Linux keeps the words
+    /// in the header until its search adopts the bar (S2).
+    pub people_search: bool,
+    /// The Contacts view, a mode of the main window (specs/011-focus-contacts
+    /// S7). Both platforms have it (Linux's came at S13).
+    pub contacts_view: bool,
 }
 
 impl Policy {
@@ -106,6 +121,8 @@ impl Policy {
                 reading_pane: linux,
                 stacking: linux,
                 results_view: !linux,
+                people_search: !linux,
+                contacts_view: true,
             },
         }
     }
@@ -313,6 +330,37 @@ pub enum Input {
     CaptureProject(u64),
     /// Open the message a `postio://` link names, or say why not.
     OpenLink(String),
+    /// A click on a sender's name: the known-sender popover for this address
+    /// (specs/011-focus-contacts S6). The same as `i` on the name's row.
+    ContactPopoverAt(String),
+    /// A click on a segment of the popover's arrival control: the same as
+    /// the arrow that lands there.
+    ContactArrival(postio_model::ContactArrival),
+    /// A kind tab was clicked in the Contacts view.
+    ContactsTab(postio_model::ContactTab),
+    /// The Contacts filter holds this now.
+    ContactsFilterTyped(String),
+    /// A click on the Contacts row at this index.
+    ContactsPoint(u32),
+    /// "Split" on the card's address: it becomes a person of its own.
+    ContactSplit(String),
+    /// The merge sheet's record at this index chosen to keep its name.
+    ContactMergeKeep(u32),
+    /// A change to the open Edit contact form.
+    ContactEditChange(contact_edit::EditChange),
+    /// A click on the card's switch at this index.
+    ContactCardSwitch(u32),
+    /// Settings > Contacts appeared: which Suggestions switches are on?
+    ContactsSettingsOpened,
+    /// A click on the Suggestions switch at this index.
+    ContactsSuggestion(u32),
+    /// An import ran: the people it made, and everyone it touched.
+    ContactsImported {
+        /// New people, in file order.
+        made: Vec<postio_model::ContactId>,
+        /// Everyone made or matched, for the review.
+        touched: Vec<postio_model::ContactId>,
+    },
     /// Something was written in the open composer: a recipient, the
     /// subject, a word of the body. What its autosave waits out.
     ComposerEdited,
@@ -608,6 +656,35 @@ pub enum Intent {
     OpenCapture(Box<CaptureView>),
     /// Redraw the capture window, whole.
     Capture(Box<CaptureView>),
+    /// Show the known-sender popover, or redraw it, whole. The controller has
+    /// put it on the stack as a [`SurfaceKind::ContactPopover`]; the frontend
+    /// anchors it to the sender's name.
+    ContactPopover(Box<postio_ui::contact_popover::PopoverView>),
+    /// Open a composer to this address, as a `mailto:` link would.
+    WriteTo(String),
+    /// Draw the Contacts view's frame, whole. The controller has put it on
+    /// the stack as a [`SurfaceKind::Contacts`].
+    Contacts(Box<contacts::ContactsView>),
+    /// Rows of the Contacts list landed or the list started over: draw
+    /// `count` rows from `first`, or all of them with a count of 0.
+    ContactsRows {
+        /// The first row.
+        first: u32,
+        /// How many; 0 for the whole list.
+        count: u32,
+    },
+    /// The Contacts cursor is on this row now.
+    ContactsCursor(Option<u32>),
+    /// The card beside the list, whole; `None` while it is being read.
+    ContactsCard(Option<Box<postio_ui::contacts_view::CardView>>),
+    /// Draw the merge sheet over the Contacts view, or put it away.
+    ContactMerge(Option<Box<postio_ui::contact_merge::MergeSheetView>>),
+    /// Draw the Edit contact form over the card, or put it away.
+    ContactEdit(Option<Box<postio_ui::contact_edit::EditView>>),
+    /// Draw Settings > Contacts' Suggestions section.
+    ContactsSettings(Box<postio_ui::contacts_settings::SuggestionsView>),
+    /// Put the keyboard in the Contacts filter.
+    ContactsFocusFilter,
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -933,6 +1010,76 @@ pub enum Request {
         /// The capture's stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The strip's counts and the review queue.
+    ContactsOverview,
+    /// A page of the Contacts list for a tab.
+    ContactsPage {
+        /// The tab.
+        tab: postio_model::ContactTab,
+        /// Past this row.
+        after: Option<(String, postio_model::ContactId)>,
+        /// Then this many rows.
+        skip: u32,
+        /// At most this many.
+        limit: u32,
+        /// The list's generation, echoed in the answer.
+        stamp: u64,
+        /// The page number, echoed in the answer.
+        page: u32,
+    },
+    /// The people in a tab matching what was typed.
+    ContactsFiltered {
+        /// The tab.
+        tab: postio_model::ContactTab,
+        /// What was typed.
+        text: String,
+        /// At most this many.
+        cap: u32,
+        /// The filter's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The groups of records that look like one person; those holding any
+    /// of `first` lead.
+    ContactReview {
+        /// Who an import just found.
+        first: Vec<postio_model::ContactId>,
+    },
+    /// Where a person is in a tab's list.
+    ContactPosition {
+        /// Who.
+        person: postio_model::ContactId,
+        /// Which tab's list.
+        tab: postio_model::ContactTab,
+    },
+    /// The group these records make, whatever evidence there is.
+    ContactMergeOf(Vec<postio_model::ContactId>),
+    /// The name of every contact group.
+    ContactGroups,
+    /// What the mail says about a person that the Edit form can keep.
+    ContactSeen(postio_model::ContactId),
+    /// Which Suggestions switches are on.
+    ContactSuggestions,
+    /// Turn a Suggestions switch on or off.
+    ContactSuggestionSet {
+        /// Which.
+        which: postio_model::Suggestion,
+        /// To what.
+        on: bool,
+    },
+    /// A person's card.
+    ContactCard {
+        /// Whose.
+        person: postio_model::ContactId,
+        /// The card's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The person at `address`, at a glance, for the popover.
+    ContactGlance {
+        /// The address clicked or aimed at.
+        address: String,
+        /// The popover's stamp, echoed in the answer.
+        stamp: u64,
+    },
     /// Whether this store holds `message`, and its row: what a link opens.
     FindMessage(MessageId),
     /// The draft behind `message`, for the send verb `command` to settle.
@@ -1212,6 +1359,57 @@ pub enum Reply {
         /// Whether it was written, or the sentence saying why not.
         answer: Result<(), String>,
     },
+    /// The answer to [`Request::ContactsOverview`].
+    ContactsOverview(Result<postio_model::ContactsOverview, String>),
+    /// The answer to [`Request::ContactsPage`].
+    ContactsPage {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The page.
+        page: u32,
+        /// The rows, or why not.
+        answer: Result<postio_model::ContactsPageRead, String>,
+    },
+    /// The answer to [`Request::ContactsFiltered`].
+    ContactsFiltered {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The people, or why not.
+        answer: Result<Vec<postio_model::ContactListRow>, String>,
+    },
+    /// The answer to [`Request::ContactPosition`].
+    ContactPosition {
+        /// Who was asked about.
+        person: postio_model::ContactId,
+        /// Their place, or `None` when they are not in the list.
+        at: Option<u32>,
+    },
+    /// The answer to [`Request::ContactReview`].
+    ContactReview(Vec<postio_model::MergeGroup>),
+    /// The answer to [`Request::ContactMergeOf`].
+    ContactMergeOf(Option<Box<postio_model::MergeGroup>>),
+    /// The answer to [`Request::ContactGroups`].
+    ContactGroups(Result<Vec<String>, String>),
+    /// The answer to [`Request::ContactSeen`].
+    ContactSeen(Vec<postio_model::SeenItem>),
+    /// The answer to [`Request::ContactSuggestions`] and
+    /// [`Request::ContactSuggestionSet`]: all four, or why not.
+    ContactSuggestions(Result<postio_model::ContactSuggestions, String>),
+    /// The answer to [`Request::ContactCard`].
+    ContactCard {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The card, `None` for someone gone, or why not.
+        answer: Result<Option<Box<postio_model::ContactCardRead>>, String>,
+    },
+    /// The answer to [`Request::ContactGlance`]: the person, or `None` for an
+    /// address the store never saw.
+    ContactGlance {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the popover shows.
+        glance: Result<Option<Box<postio_model::ContactGlance>>, String>,
+    },
     /// The answer to [`Request::FindMessage`]: its row, when it is here.
     FoundMessage {
         /// The message asked about.
@@ -1256,6 +1454,15 @@ pub struct FocusController {
     digest: Option<digest::DigestWindow>,
     rule: Option<digest::RuleDialog>,
     capture: Option<capture::Capture>,
+    contact_popover: Option<contact_popover::ContactPopover>,
+    contacts: Option<contacts::Contacts>,
+    /// Settings > Contacts' Suggestions switches, once the pane has asked.
+    contacts_settings: Option<contacts_settings::Settings>,
+    /// Who the last import made or matched: the review's first look.
+    import_found: Vec<postio_model::ContactId>,
+    /// The first person the last import made, until the cursor has gone to
+    /// them.
+    import_cursor: Option<postio_model::ContactId>,
     confirm: Option<confirm::Asked>,
     /// The composer, and the composition in it.
     compose: compose::Compose,
@@ -1279,7 +1486,11 @@ impl FocusController {
             cursor: cursor::Cursor::default(),
             verbs: verbs::Verbs::default(),
             surfaces: surfaces::Surfaces::default(),
-            bar: bar::Bar::new(policy.platform, policy.caps.results_view),
+            bar: bar::Bar::new(
+                policy.platform,
+                policy.caps.results_view,
+                policy.caps.people_search,
+            ),
             pickers: pickers::Pickers::default(),
             toast_undo: None,
             shown: None,
@@ -1290,6 +1501,11 @@ impl FocusController {
             digest: None,
             rule: None,
             capture: None,
+            contact_popover: None,
+            contacts: None,
+            contacts_settings: None,
+            import_found: Vec::new(),
+            import_cursor: None,
             confirm: None,
             compose: compose::Compose::default(),
             stamps: 0,
@@ -1450,6 +1666,17 @@ impl FocusController {
                 | Reply::RuleSaved { .. }
                 | Reply::Vault { .. }
                 | Reply::Captured { .. }
+                | Reply::ContactGlance { .. }
+                | Reply::ContactsOverview(_)
+                | Reply::ContactsPage { .. }
+                | Reply::ContactsFiltered { .. }
+                | Reply::ContactCard { .. }
+                | Reply::ContactGroups(_)
+                | Reply::ContactReview(_)
+                | Reply::ContactPosition { .. }
+                | Reply::ContactMergeOf(_)
+                | Reply::ContactSeen(_)
+                | Reply::ContactSuggestions(_)
                 | Reply::FoundMessage { .. }
                 | Reply::DraftBehind { .. }),
             ) => {
@@ -1539,6 +1766,8 @@ impl FocusController {
                 steps.extend(self.feed.event(&event));
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
+                steps.extend(self.contacts_heard(&event));
+                steps.extend(self.contact_popover_heard(&event));
                 self.effects(steps)
             }
             Input::Config(config) => {
@@ -1627,6 +1856,54 @@ impl FocusController {
             }
             Input::OpenLink(uri) => {
                 let steps = self.open_link(&uri);
+                self.effects(steps)
+            }
+            Input::ContactPopoverAt(address) => {
+                let steps = self.open_contact_popover(Some(address), rows);
+                self.effects(steps)
+            }
+            Input::ContactsTab(tab) => {
+                let steps = self.contacts_tab(tab);
+                self.effects(steps)
+            }
+            Input::ContactsFilterTyped(text) => {
+                let steps = self.contacts_filter_typed(text);
+                self.effects(steps)
+            }
+            Input::ContactsPoint(index) => {
+                let steps = self.contacts_point(index);
+                self.effects(steps)
+            }
+            Input::ContactEditChange(change) => {
+                let steps = self.contact_edit_changed(change);
+                self.effects(steps)
+            }
+            Input::ContactSplit(address) => {
+                let steps = self.contact_split(&address);
+                self.effects(steps)
+            }
+            Input::ContactMergeKeep(index) => {
+                let steps = self.contact_merge_keep(index as usize);
+                self.effects(steps)
+            }
+            Input::ContactsImported { made, touched } => {
+                let steps = self.contacts_imported(made, touched);
+                self.effects(steps)
+            }
+            Input::ContactCardSwitch(index) => {
+                let steps = self.contact_card_switch(index);
+                self.effects(steps)
+            }
+            Input::ContactsSettingsOpened => {
+                let steps = self.contacts_settings_opened();
+                self.effects(steps)
+            }
+            Input::ContactsSuggestion(index) => {
+                let steps = self.contacts_suggestion_clicked(index);
+                self.effects(steps)
+            }
+            Input::ContactArrival(arrival) => {
+                let steps = self.contact_arrival_picked(arrival);
                 self.effects(steps)
             }
             Input::ComposerEdited => {
@@ -1804,6 +2081,20 @@ impl FocusController {
                 return self.open_capture(postio_ui::capture::Mode::Note, rows);
             }
             CommandId::DigestRule => return self.new_rule(rows),
+            CommandId::ContactPopover => return self.open_contact_popover(None, rows),
+            CommandId::OpenContacts => {
+                let mut steps = self.open_contacts();
+                steps.extend(self.contacts_go_to_import());
+                return steps;
+            }
+            // `g w` from anywhere: Contacts, and the queue read once its
+            // counts are asked for.
+            CommandId::ContactsSuggestions if self.policy.caps.contacts_view => {
+                let mut steps = self.open_contacts();
+                steps.extend(self.contacts_review_ask());
+                steps.extend(self.contacts_go_to_import());
+                return steps;
+            }
             _ => {}
         }
         // A message open that is on no cursor row -- a search hit, a digest's
@@ -1929,6 +2220,12 @@ impl FocusController {
             Some(SurfaceKind::Capture) if self.capture.is_some() => {
                 return self.capture_command(id);
             }
+            Some(SurfaceKind::ContactPopover) if self.contact_popover.is_some() => {
+                return self.contact_popover_command(id, rows);
+            }
+            Some(SurfaceKind::Contacts) if self.contacts.is_some() => {
+                return self.contacts_command(id, rows);
+            }
             _ => {}
         }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
@@ -1986,6 +2283,8 @@ impl FocusController {
                 }
                 Some(steps)
             }
+            // `i` on the message on screen: who it is from, at a glance.
+            CommandId::ContactPopover => Some(self.open_contact_popover(None, rows)),
             // `-` takes the marker off the message on screen alone.
             CommandId::DismissMarker => Some(self.verbs.post(Command::DismissMarker {
                 target: MessageTarget::Messages(vec![reading]),
@@ -2080,6 +2379,8 @@ impl FocusController {
             Some(SurfaceKind::Filtered) => Self::filtered_answers(id),
             Some(SurfaceKind::Digest) => Self::digest_answers(id),
             Some(SurfaceKind::Capture) => Self::capture_answers(id),
+            Some(SurfaceKind::ContactPopover) => Self::contact_popover_answers(id),
+            Some(SurfaceKind::Contacts) => Self::contacts_answers(id),
             _ => false,
         };
         if own {
@@ -2108,6 +2409,9 @@ impl FocusController {
                 | CommandId::CaptureTask
                 | CommandId::CaptureNote
                 | CommandId::DigestRule
+                | CommandId::ContactPopover
+                | CommandId::OpenContacts
+                | CommandId::ContactsSuggestions
         ) || bar::goes(id)
             || compose::compose_key(id)
             || pickers::opens_picker(id)
@@ -2277,6 +2581,12 @@ impl FocusController {
         if !self.surfaces.has(SurfaceKind::Capture) {
             self.capture = None;
         }
+        if !self.surfaces.has(SurfaceKind::ContactPopover) {
+            self.contact_popover = None;
+        }
+        if !self.surfaces.has(SurfaceKind::Contacts) {
+            self.contacts = None;
+        }
     }
 
     /// An answer for one of the surfaces over the list.
@@ -2290,6 +2600,17 @@ impl FocusController {
             | Reply::LikeThis { .. }
             | Reply::RuleSaved { .. }) => self.rule_reply(reply),
             reply @ (Reply::Vault { .. } | Reply::Captured { .. }) => self.capture_reply(reply),
+            Reply::ContactGlance { stamp, glance } => self.contact_popover_reply(stamp, glance),
+            reply @ (Reply::ContactsOverview(_)
+            | Reply::ContactsPage { .. }
+            | Reply::ContactsFiltered { .. }
+            | Reply::ContactCard { .. }
+            | Reply::ContactGroups(_)
+            | Reply::ContactReview(_)
+            | Reply::ContactPosition { .. }
+            | Reply::ContactMergeOf(_)
+            | Reply::ContactSeen(_)) => self.contacts_reply(reply),
+            Reply::ContactSuggestions(answer) => self.contacts_suggestions_read(answer),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
             _ => Vec::new(),

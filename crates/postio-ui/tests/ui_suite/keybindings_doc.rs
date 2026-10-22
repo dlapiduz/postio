@@ -33,7 +33,13 @@ fn document_path() -> PathBuf {
 
 /// Where a command is available, phrased for a reader rather than a compiler.
 fn where_available(contexts: ContextSet) -> String {
-    if contexts == ContextSet::ANY {
+    // Contacts is the Mac's, and this file documents Linux: a command that is
+    // everywhere but there is everywhere here.
+    if contexts
+        .with(Context::Contacts)
+        .with(Context::ContactPopover)
+        == ContextSet::ANY
+    {
         return "Everywhere".to_owned();
     }
     let names: Vec<&str> = contexts
@@ -41,7 +47,12 @@ fn where_available(contexts: ContextSet) -> String {
         // This file documents Linux, which has no results view until it
         // adopts it (spec 010 D17, D25): the list's verbs reach a result
         // on the Mac, and say nothing new here.
-        .filter(|context| *context != Context::Results)
+        .filter(|context| {
+            !matches!(
+                context,
+                Context::Results | Context::Contacts | Context::ContactPopover
+            )
+        })
         .map(|context| match context {
             Context::List => "list",
             Context::Conversation => "conversation",
@@ -58,6 +69,8 @@ fn where_available(contexts: ContextSet) -> String {
             Context::Filtered => "Filtered view",
             Context::Capture => "capture sheet",
             Context::Results => "search results",
+            Context::Contacts => "contacts",
+            Context::ContactPopover => "contact popover",
         })
         .collect();
     let mut sentence = names.join(", ");

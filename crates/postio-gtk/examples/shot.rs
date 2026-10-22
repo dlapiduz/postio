@@ -132,6 +132,26 @@ const SCREENS: &[(&str, &str)] = &[
     ("41", "Settings: Sync & storage, each folder's backfill"),
     ("42", "Settings: Keyboard"),
     ("43", "Settings: Privacy"),
+    (
+        "50",
+        "Contacts: the people, a card beside them (handoff 01, 02)",
+    ),
+    (
+        "51",
+        "Contacts: the merge sheet over the people (handoff 07)",
+    ),
+    (
+        "52",
+        "Contacts: the Edit form in the card's place (handoff 06)",
+    ),
+    (
+        "53",
+        "the contact popover at the cursor's sender (handoff 04, 05)",
+    ),
+    (
+        "54",
+        "Settings: Contacts, the Suggestions switches (handoff 08, less sync)",
+    ),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -732,6 +752,75 @@ fn stage(
             }) {
                 return Err("Filtered never listed the demo's filtered mail".into());
             }
+        }
+        "50" => {
+            window.act(CommandId::OpenContacts);
+            let ready = || {
+                window
+                    .contacts()
+                    .is_some_and(|view| view.total() > 0 && view.card_name().is_some())
+            };
+            if !settle_until(ready) {
+                return Err("the Contacts view never listed anyone".into());
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(400));
+        }
+        "54" => {
+            pick_three();
+            window.act(CommandId::Settings);
+            let settings = || window.settings().filter(|settings| settings.is_open());
+            if !settle_until(|| {
+                settings().is_some_and(|settings| {
+                    settings.panel().is_mapped() && settings.panel().width() > 0
+                })
+            }) {
+                return Err("Settings never opened".into());
+            }
+            let panel = settings().ok_or("Settings closed")?.panel().clone();
+            panel.show_section(postio_ui::settings::Section::Contacts);
+            if !settle_until(|| panel.suggestions_shown().is_some()) {
+                return Err("the Suggestions never landed".into());
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
+        }
+        "53" => {
+            pick_three();
+            window.press_command(CommandId::ContactPopover);
+            if !settle_until(|| window.contact_popover().is_some()) {
+                return Err("the popover never opened".into());
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
+        }
+        "51" | "52" => {
+            window.act(CommandId::OpenContacts);
+            let ready = || {
+                window
+                    .contacts()
+                    .is_some_and(|view| view.total() > 0 && view.card_name().is_some())
+            };
+            if !settle_until(ready) {
+                return Err("the Contacts view never listed anyone".into());
+            }
+            if screen == "51" {
+                window.press_command(CommandId::ContactsSuggestions);
+                if !settle_until(|| {
+                    window
+                        .contacts()
+                        .is_some_and(|view| !view.merge_texts().is_empty())
+                }) {
+                    return Err("the merge sheet never opened".into());
+                }
+            } else {
+                window.press_command(CommandId::ContactEdit);
+                if !settle_until(|| window.contacts().is_some_and(|view| view.has_form())) {
+                    return Err("the Edit form never opened".into());
+                }
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
         }
         "40" | "41" | "42" | "43" => {
             pick_three();

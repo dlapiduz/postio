@@ -16,11 +16,15 @@
 //! keeps its own `icon` beside this, because a GTK symbolic icon name is not
 //! an SF Symbol and neither frontend should carry the other's.
 
-/// One of the nine sections the nav lists, in canvas order.
+/// One of the ten sections the nav lists, in canvas order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     /// One row per account, and the form for the selected one.
     Accounts,
+    /// The four Suggestions switches (specs/011-focus-contacts D7), and on
+    /// the Mac what syncs with the address book. Kept in the store, not in
+    /// `config.toml`; the terminal has no Contacts, so it has no pane.
+    Contacts,
     /// `[focus] filtering` and `[focus.filter]` -- whether Focus files spam
     /// and automated updates away, and what the person has told it about
     /// that (spec 007 US9). The words are [`crate::filtering`]'s.
@@ -83,8 +87,9 @@ impl Group {
 
 impl Section {
     /// Every section, in nav order — the drawing's order, grouped.
-    pub const ALL: [Section; 9] = [
+    pub const ALL: [Section; 10] = [
         Section::Accounts,
+        Section::Contacts,
         Section::Filtering,
         Section::Filters,
         Section::Composing,
@@ -98,9 +103,11 @@ impl Section {
     /// Which sidebar heading this pane sits under.
     pub fn group(self) -> Group {
         match self {
-            Section::Accounts | Section::Filtering | Section::Filters | Section::Composing => {
-                Group::Mail
-            }
+            Section::Accounts
+            | Section::Contacts
+            | Section::Filtering
+            | Section::Filters
+            | Section::Composing => Group::Mail,
             Section::Appearance
             | Section::Keyboard
             | Section::Sync
@@ -121,6 +128,8 @@ impl Section {
             Section::Appearance => "ui",
             Section::Keyboard => "keys",
             Section::Accounts => "accounts",
+            // Not a table either: the switches live in the store.
+            Section::Contacts => "contacts",
             // `[focus]` holds `filtering` and the `[focus.filter]` table the
             // page lists; the rest of `[focus]` (digests, the vault, the
             // model) is edited where it is used, and in the file.
@@ -143,6 +152,7 @@ impl Section {
     pub fn label(self) -> &'static str {
         match self {
             Section::Accounts => "Accounts",
+            Section::Contacts => crate::contacts_settings::TITLE,
             Section::Filtering => "Filtering",
             Section::Filters => "Saved searches",
             Section::Composing => "Composing",
@@ -158,6 +168,7 @@ impl Section {
     pub fn description(self) -> &'static str {
         match self {
             Section::Accounts => "Every account this installation signs in to.",
+            Section::Contacts => crate::contacts_settings::DESCRIPTION,
             Section::Filtering => "Spam and updates, archived as they arrive, with a reason.",
             Section::Filters => {
                 "Saved searches, and which of them are pinned across the command bar."
@@ -182,6 +193,10 @@ impl Section {
     pub fn keywords(self) -> &'static str {
         match self {
             Section::Accounts => "account address imap smtp password oauth signature server remove",
+            Section::Contacts => {
+                "contacts people suggestions save automatically signature duplicates merge \
+                 newsletter list automated kind address book sync"
+            }
             Section::Filtering => {
                 "filtering filtered spam promotion notification receipt shipping social \
                  automated updates archive never pinned restore sweep marker"
@@ -206,7 +221,10 @@ impl Section {
     ///
     pub fn shown_in(self, frontend: postio_core::Frontend) -> bool {
         use postio_core::Frontend;
-        !matches!((self, frontend), (Section::Appearance, Frontend::Focus))
+        !matches!(
+            (self, frontend),
+            (Section::Appearance, Frontend::Focus) | (Section::Contacts, Frontend::Terminal)
+        )
     }
 
     /// The `config.toml` table this pane owns, for the footer line.
@@ -221,7 +239,7 @@ impl Section {
             // by onboarding and by the settings window. A footer claiming
             // otherwise sends somebody to edit a file that does not describe
             // their account, which is worse than saying nothing.
-            Section::Accounts => None,
+            Section::Accounts | Section::Contacts => None,
             Section::Filtering => Some("[focus]"),
             Section::Filters => Some("[saved_searches]"),
             Section::Composing => Some("[compose]"),
@@ -243,6 +261,7 @@ impl Section {
             // The one people most need told, because every other pane in the
             // window *is* about the file.
             Section::Accounts => "accounts are in the encrypted store, not in config.toml",
+            Section::Contacts => crate::contacts_settings::STORED_IN,
             Section::Filtering => "[focus] in config.toml · applied live",
             Section::Filters => "[saved_searches] in config.toml · applied live",
             Section::Composing => "[compose] in config.toml · applied live",
@@ -370,6 +389,7 @@ mod tests {
             focus,
             [
                 Section::Accounts,
+                Section::Contacts,
                 Section::Filtering,
                 Section::Filters,
                 Section::Composing,
@@ -382,8 +402,13 @@ mod tests {
         assert!(
             Section::ALL
                 .into_iter()
+                .filter(|section| *section != Section::Contacts)
                 .all(|section| section.shown_in(postio_core::Frontend::Terminal)),
             "the terminal shows all nine: filtering runs while it has the store"
+        );
+        assert!(
+            !Section::Contacts.shown_in(postio_core::Frontend::Terminal),
+            "Contacts is graphical: the registry offers a terminal none of its commands"
         );
     }
 
@@ -467,18 +492,21 @@ idle = true
     }
 
     #[test]
-    fn every_section_that_owns_a_table_names_one_and_the_three_that_do_not_say_so() {
+    fn every_section_that_owns_a_table_names_one_and_the_four_that_do_not_say_so() {
         for section in Section::ALL {
             match section {
                 // Accounts joined these when the footer was found claiming
                 // `[accounts] in config.toml` about accounts that have lived
                 // in the encrypted store since #470.
-                Section::Accounts | Section::Privacy | Section::ConfigFile => assert_eq!(
-                    section.table(),
-                    None,
-                    "{} owns no config.toml table",
-                    section.label()
-                ),
+                // Contacts keeps its switches in the store (specs/011 D7).
+                Section::Accounts | Section::Contacts | Section::Privacy | Section::ConfigFile => {
+                    assert_eq!(
+                        section.table(),
+                        None,
+                        "{} owns no config.toml table",
+                        section.label()
+                    )
+                }
                 other => {
                     let table = other.table().expect("a table");
                     assert!(

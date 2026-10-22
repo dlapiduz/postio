@@ -1,0 +1,5 @@
+label = "list"
+address = "users@lists.projecty.example.org"
+name = "ProjectY Users"
+messages = 90
+with_list_id = 90

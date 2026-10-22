@@ -34,6 +34,7 @@ pub fn spawn_idle_passes(wiring: &Wiring) {
     );
     repair_the_header_blocks(wiring);
     catch_up_the_header_index(wiring);
+    build_contacts(wiring);
     reclaim_disk(wiring);
     empty_junk_and_trash(wiring);
 }
@@ -144,6 +145,30 @@ pub fn catch_up_the_header_index(wiring: &Wiring) {
             // Recoverable, like every other idle pass here: `header:` is a
             // little less complete until the next start tries again.
             tracing::warn!(%error, "could not index the header blocks already on disk");
+        }
+    });
+}
+
+/// Make a person for every address the mail knew before contacts existed,
+/// out of the way (specs/011-focus-contacts plan 4.2).
+///
+/// Resumable by construction: an address with a person is not in the walk, so
+/// a pass cut off by quitting leaves the rest for the next start. A batch is
+/// one short transaction, a pause between them lets sync write, and a card on
+/// a sender the walk has not reached makes that person on demand.
+pub fn build_contacts(wiring: &Wiring) {
+    let database = wiring.database.clone();
+    wiring.runtime.spawn(async move {
+        if let Err(error) = crate::contacts::catch_up(&database, 500, |_| {}).await {
+            tracing::warn!(%error, "could not build contacts from the mail already here");
+        }
+        // After the people exist, so the newest of them are sorted too.
+        if let Err(error) = crate::contacts::detect_kinds(&database, 200).await {
+            tracing::warn!(%error, "could not sort contacts by kind");
+        }
+        // And, when the person asked for it, the people they write to.
+        if let Err(error) = crate::contacts::save_people_written_to(&database).await {
+            tracing::warn!(%error, "could not save the people written to");
         }
     });
 }

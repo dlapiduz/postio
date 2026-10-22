@@ -176,6 +176,9 @@ public struct FocusRowModel: Equatable, Sendable {
     public let thread: Int64?
     public let layout: Layout
     public let sender: String
+    /// The address of the sender the column names first: what a click on
+    /// the name asks the popover about.
+    public let fromAddress: String?
     public let subject: String
     public let preview: String?
     public let time: String
@@ -196,6 +199,7 @@ public struct FocusRowModel: Equatable, Sendable {
         thread = row.thread
         layout = Self.layout(of: row)
         sender = row.sender
+        fromAddress = row.fromAddress
         subject = row.subject
         preview = row.preview
         time = row.time

@@ -26,6 +26,13 @@ public enum DemoMode {
         windowSize(in: ProcessInfo.processInfo.environment)
     }
 
+    /// Whether the Contacts pane previews sync as soon as it appears, in a
+    /// demo only (`POSTIO_DEMO_SYNC_PREVIEW=1`): a picture of the dry run has
+    /// no pointer to press the button with. The demo's address book is a fake.
+    public static var previewsSync: Bool {
+        seed != nil && ProcessInfo.processInfo.environment["POSTIO_DEMO_SYNC_PREVIEW"] == "1"
+    }
+
     /// "light" or "dark" from `POSTIO_APPEARANCE`, to photograph either
     /// whatever the system is set to; nil to follow the system.
     public static var appearance: String? {

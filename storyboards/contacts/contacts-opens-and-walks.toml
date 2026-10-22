@@ -1,0 +1,37 @@
+# `g c` opens Contacts in the list's place (specs/011-focus-contacts S7,
+# handoff screens 01 and 02): the strip with Contacts ▾ and the total, the
+# five kind tabs with their counts, the filter and New contact, the "Worth a
+# look" line when something waits, the list under letter headings with 52
+# point rows, the card of the cursor's row beside it, and the footer with its
+# keys and the counts. j and k walk the list and the card follows; Escape
+# goes back to the inbox on the row it was.
+#
+# The controller's half is postio-focus tests/contacts.rs; the words are
+# postio-ui's contacts_view; the reads are postio-storage's contacts_view
+# suite.
+apps   = ["focus", "macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S7" }
+seed   = "small"
+design = "01-contacts-list-and-card"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list" }
+
+[[step]]
+id      = "open"
+command = "open_contacts"
+expect  = "Contacts fills the window in the list's place: “Contacts ▾ g c” and the total, All · People · Companies · Lists and newsletters · Automated with counts, a filter field with / and New contact, then the list under letters A, B, C, with the first row ringed, and its card to the right of it. The footer says j/k move, all mail, write, edit, contact popover, merge and filter, and on the right how many contacts and how many are saved."
+
+[[step]]
+command = "next_message"
+expect  = "The ring moves down a row and the card beside the list is that person's: avatar, name, role line, addresses, how mail arrives and its switches, notes, four tiles, the twelve-month strip, what is open between you, and recent files."
+
+[[step]]
+command = "contacts_tab_next"
+expect  = "People is chosen in the strip, the list starts over at the top for people only, and the cursor is on its first row."
+
+[[step]]
+command = "back"
+check   = { keyboard.region = "list", overlay.kind = "none" }
+expect  = "Escape leaves Contacts and the inbox is as it was, the keyboard on the list."

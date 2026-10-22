@@ -122,6 +122,9 @@ local_id!(
     /// however many messages name it. What search facets count people by
     /// (spec 010), so a count names a person once whatever display names
     /// their mail arrived under.
+    ///
+    /// A [`Contact`](crate::Contact) owns one or more of these, and an
+    /// address belongs to at most one contact (specs/005-contacts R1).
     AddressId
 );
 local_id!(

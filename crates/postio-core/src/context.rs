@@ -102,6 +102,20 @@ pub enum Context {
     /// rather than typing a letter, and not `List`'s, so `mod+1` picks a tab
     /// there and nothing in the inbox.
     Results,
+    /// The Contacts surface's list and card, once the keyboard is in them
+    /// (specs/005-contacts).
+    ///
+    /// Scoped to the list and the card rather than the whole surface, the way
+    /// `Accounts` and `Keys` are: it also holds a filter field and an editor,
+    /// and a bare-letter binding must not fire while someone types a name
+    /// there. One context for every kind of row it shows -- person, address,
+    /// group, suggestion -- and a command acts on the focused row's kind;
+    /// sub-contexts per kind would split one surface into four headings.
+    Contacts,
+    /// The contact popover, hung from a sender's name (specs/011-focus-contacts
+    /// S6): a small surface over the mail with its own keys -- `Return` is all
+    /// the mail, `c` writes -- that mean nothing to the list beneath it.
+    ContactPopover,
 }
 
 impl Context {
@@ -127,6 +141,10 @@ impl Context {
         // The Mac's search results (spec 010), at the end for the same
         // reason.
         Context::Results,
+        // Contacts (specs/005-contacts), at the end for the same reason.
+        Context::Contacts,
+        // The popover (specs/011-focus-contacts S6).
+        Context::ContactPopover,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -147,6 +165,8 @@ impl Context {
             Context::Filtered => "filtered",
             Context::Capture => "capture",
             Context::Results => "results",
+            Context::Contacts => "contacts",
+            Context::ContactPopover => "contact_popover",
         }
     }
 
@@ -155,14 +175,14 @@ impl Context {
         ContextSet::of(self)
     }
 
-    const fn bit(self) -> u16 {
-        // `u16`, not `u8`: the eight original contexts filled a byte exactly,
+    const fn bit(self) -> u32 {
+        // `u32`, not `u8`: the eight original contexts filled a byte exactly,
         // and `Accounts` made the ninth. That was not a silent overflow --
         // `ContextSet::ANY` is const-evaluated, so it was a compile error and
         // could never have reached a running build (#471). The room here is
         // for the next one; `every_context_fits_the_set` is what says when
         // this needs widening again.
-        1 << (self as u16)
+        1 << (self as u32)
     }
 }
 
@@ -209,7 +229,7 @@ impl FromStr for Context {
 /// answer "is this command available here?" but not "what is available here?",
 /// and the palette and cheat sheet need the second question answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ContextSet(u16);
+pub struct ContextSet(u32);
 
 impl ContextSet {
     /// The empty set. No command may keep this — see the registry tests.
@@ -223,7 +243,7 @@ impl ContextSet {
     /// been unreachable in the new one, which is the kind of bug that shows up
     /// as a key that does nothing in one pane.
     pub const ANY: ContextSet = {
-        let mut bits = 0u16;
+        let mut bits = 0u32;
         let mut index = 0;
         while index < Context::ALL.len() {
             bits |= Context::ALL[index].bit();
@@ -247,9 +267,16 @@ impl ContextSet {
         ContextSet(self.0 | context.bit())
     }
 
+    /// This set less `context`: "everywhere but there", for the one command
+    /// whose key another surface takes for its own (`add_account`'s
+    /// `mod+shift+n` is New contact in Contacts).
+    pub const fn without(self, context: Context) -> ContextSet {
+        ContextSet(self.0 & !context.bit())
+    }
+
     /// A set built from a slice, usable in a `const` table.
     pub const fn from_slice(contexts: &[Context]) -> ContextSet {
-        let mut bits = 0u16;
+        let mut bits = 0u32;
         let mut index = 0;
         while index < contexts.len() {
             bits |= contexts[index].bit();
@@ -323,7 +350,7 @@ mod tests {
 
     #[test]
     fn every_context_has_a_distinct_bit() {
-        let mut bits = 0u16;
+        let mut bits = 0u32;
         for context in Context::ALL {
             assert_eq!(bits & context.bit(), 0, "{context} reuses a bit");
             bits |= context.bit();

@@ -354,7 +354,8 @@ pub fn a_word_no_command_is_named_by_searches_first() {
 }
 
 /// `@` offers the correspondents the address book holds, and choosing one
-/// puts their `from:` search in the box.
+/// puts their `with:` search in the box: mail involving any of the person's
+/// addresses, as specs/005-contacts/contracts/query-with.md has the finder do.
 pub fn at_offers_correspondents() {
     crate::gtk_case(async {
         if !support::display() {
@@ -380,7 +381,7 @@ pub fn at_offers_correspondents() {
         let said = bar.texts();
         assert!(!said.iter().any(|line| line == "Lena Park"), "{said:?}");
         bar.run_search_row();
-        assert_eq!(bar.typed(), "from:ada@example.com");
+        assert_eq!(bar.typed(), "with:ada@example.com");
     });
 }
 

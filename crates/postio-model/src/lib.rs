@@ -44,9 +44,12 @@
 pub mod account;
 pub mod address;
 pub mod attachment;
+pub mod card;
 pub mod clock;
 pub mod contact;
+pub mod contact_form;
 pub mod contact_group;
+pub mod contact_settings;
 pub mod draft;
 pub mod egress;
 pub mod filing;
@@ -86,8 +89,23 @@ pub use account::{
 };
 pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
-pub use contact::{Contact, ContactSource};
+pub use contact::{
+    AddressMove, CARD_RECENT, Contact, ContactAddress, ContactCardRead, ContactDetail,
+    ContactGlance, ContactKind, ContactListRow, ContactSource, ContactState, ContactStats,
+    ContactTab, ContactView, ContactsOverview, ContactsPageRead, FileChip, IssueRead, JoinReceipt,
+    JoinSuggestion, KindSignals, KindSource, MergeGroup, OpenItem, OpenSide, PersonEdit,
+    PersonFields, RECENT, REVIEW_CAP, RecentMessage, ReviewSummary, ShowAs, SuggestionReason,
+    month_key,
+};
+pub use contact_form::{
+    AddressLabel, AddressNote, ContactForm, DetailKind, EvidenceKind, FormAddress, FormProblem,
+    Introduction, KeptDetail, PairEvidence, SeenItem, SenderPrior, SignatureDetails, split_name,
+};
 pub use contact_group::ContactGroup;
+pub use contact_settings::{
+    CardSwitch, ContactArrival, ContactSettings, ContactSuggestions, DigestSetting, StoppedMarker,
+    Suggestion,
+};
 pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};

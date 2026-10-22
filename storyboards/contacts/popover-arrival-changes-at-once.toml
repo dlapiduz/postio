@@ -1,0 +1,37 @@
+# The arrival control in the popover (specs/011-focus-contacts S6, handoff
+# screen 04): → and ← move along Inbox, Digest and Filtered out and stop at
+# the ends; the choice applies at once, with a toast and its Undo; and ⌘Z
+# puts the earlier choice back, drawn in the popover if it is still up.
+apps   = ["focus", "macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S6" }
+seed   = "small"
+design = "04-popover-known-sender"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "contact_popover"
+expect  = "The popover is up with Inbox chosen."
+
+[[step]]
+id      = "digest"
+command = "contact_arrival_next"
+expect  = "Digest is chosen at once, and a toast says where mail arrives was changed, with Undo."
+
+[[step]]
+command = "contact_arrival_next"
+expect  = "Filtered out is chosen."
+
+[[step]]
+command = "contact_arrival_next"
+expect  = "Nothing moves: Filtered out is the end of the control, and it does not wrap."
+
+[[step]]
+command = "undo"
+expect  = "The last change is taken back: Digest is chosen again."
+
+[[step]]
+command = "contact_set_arrival"
+expect  = "0 goes back to the default rules, which draws as Inbox."

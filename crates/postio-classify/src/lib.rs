@@ -24,16 +24,20 @@
 /// and the catch-up at Focus's start takes it (FR-141).
 pub const VERSION: u32 = 1;
 
+pub mod bounce;
 mod digests;
+pub mod duplicates;
 mod facts;
 mod filters;
 mod guards;
 mod input;
+pub mod kind;
 mod needs_action;
 mod outcome;
 mod pipeline;
 mod rules;
 mod senders;
+pub mod signature;
 
 pub use digests::Digests;
 pub use facts::Facts;

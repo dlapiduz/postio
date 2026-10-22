@@ -39,17 +39,20 @@ use postio_core::bridge::EventSink;
 use postio_core::dispatch::{CommandError, DispatcherBuilder};
 use postio_core::state::{Resolved, SharedState, ViewScope};
 use postio_core::undo::{UndoEntry, UndoKind, UndoStack};
-use postio_core::{Command, CommandId, Event, MessageTarget};
+use postio_core::{
+    Command, CommandId, ContactAddressAction, ContactEditAction, ContactGroupNewAction,
+    ContactJoinAction, ContactNewAction, Event, MessageTarget,
+};
 use postio_model::ids::DraftId;
 use postio_model::mailbox::MailboxRole;
 use postio_model::{
-    AccountId, DraftState, Flag, FlagSet, LabelId, MailboxId, Message, MessageId, Operation,
-    OperationTarget, ThreadId,
+    AccountId, AddressId, ContactGroupId, ContactId, ContactState, DraftState, Flag, FlagSet,
+    LabelId, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    ColumnFlag, DraftRepository, FlagSource, LabelRepository, MailboxRepository,
-    MailboxRoleRepository, MessageRepository, MessageSet, OperationQueueRepository, ThreadOrder,
-    ThreadRepository,
+    ColumnFlag, ContactGroupRepository, ContactRepository, DraftRepository, FlagSource,
+    LabelRepository, MailboxRepository, MailboxRoleRepository, MessageRepository, MessageSet,
+    OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
@@ -97,6 +100,20 @@ pub const WIRED: &[CommandId] = &[
     CommandId::MapMailboxRole,
     CommandId::RestoreFiltered,
     CommandId::SweepInbox,
+    CommandId::ContactSetArrival,
+    CommandId::ContactJoin,
+    CommandId::ContactAddAddress,
+    CommandId::ContactDetachAddress,
+    CommandId::ContactSetPreferred,
+    CommandId::ContactNew,
+    CommandId::ContactEdit,
+    CommandId::ContactDelete,
+    CommandId::ContactRestore,
+    CommandId::SuggestionDismiss,
+    CommandId::ContactGroupNew,
+    CommandId::ContactGroupRename,
+    CommandId::ContactGroupAdd,
+    CommandId::ContactGroupRemove,
 ];
 
 /// How long [`Command::Snooze`] hides a message for when it names no time:
@@ -216,6 +233,11 @@ struct Applied {
     /// Whether the account's folder tree itself changed -- a role moved from
     /// one folder to another -- so the sidebar has to re-read it.
     mailboxes_changed: bool,
+    /// Whether the address book changed, and if so whether whose name mail
+    /// shows could have (specs/005-contacts FR-023a) -- `Some(true)` makes
+    /// every list and reader re-read names, `Some(false)` only the Contacts
+    /// screen.
+    contacts_changed: Option<bool>,
     /// What takes it back.
     inverse: Vec<Command>,
     /// How long it can be taken back, when that is shorter than the undo
@@ -457,6 +479,89 @@ impl Actions {
                 self.map_mailbox_role(*account, *role, path.as_deref())
                     .await?,
             ],
+            Command::ContactJoin { action } => {
+                let applied = self.join_contacts(action).await?;
+                self.rules_follow_people().await;
+                vec![applied]
+            }
+            Command::ContactAddAddress { action } => {
+                let applied = self.contact_address(action).await?;
+                self.rules_follow_people().await;
+                vec![applied]
+            }
+            Command::ContactDetachAddress { address } => {
+                let address = address.ok_or_else(|| CommandError::rejected("Pick an address"))?;
+                let applied = self.detach_address(address).await?;
+                self.rules_follow_people().await;
+                vec![applied]
+            }
+            Command::ContactSetPreferred { person, address } => {
+                let (Some(person), Some(address)) = (person, address) else {
+                    return Err(CommandError::rejected("Pick an address"));
+                };
+                vec![self.set_preferred(*person, *address).await?]
+            }
+            Command::ContactNew { action } => {
+                let applied = self.new_contact(action).await?;
+                self.rules_follow_people().await;
+                vec![applied]
+            }
+            Command::ContactEdit { action } => vec![self.edit_contact(action).await?],
+            Command::ContactSetArrival { address, arrival } => {
+                let applied = self.set_arrival(address, *arrival).await?;
+                // The engine's rules read where a person's mail arrives.
+                self.rules_follow_people().await;
+                vec![applied]
+            }
+            Command::ContactDelete { person, group } => match (person, group) {
+                (Some(person), _) => {
+                    let applied = self.delete_contact(*person).await?;
+                    self.rules_follow_people().await;
+                    vec![applied]
+                }
+                (None, Some(group)) => vec![self.delete_group(*group).await?],
+                (None, None) => return Err(CommandError::rejected("Choose someone first")),
+            },
+            Command::ContactRestore { person, state } => {
+                let person =
+                    person.ok_or_else(|| CommandError::rejected("Choose someone first"))?;
+                let applied = self
+                    .restore_contact(person, state.unwrap_or(ContactState::Live))
+                    .await?;
+                self.rules_follow_people().await;
+                vec![applied]
+            }
+            // Not an undo unit (contracts/commands.md): it hides a
+            // suggestion and touches nobody, so it announces itself and
+            // records nothing.
+            Command::SuggestionDismiss { pair } => {
+                let (a, b) =
+                    pair.ok_or_else(|| CommandError::rejected("Choose a suggestion first"))?;
+                let (connection, _permit) = self.connect().await?;
+                ContactRepository::new(&connection)
+                    .dismiss(a, b)
+                    .await
+                    .map_err(contact_failure)?;
+                events.emit(Event::ContactsChanged {
+                    names_changed: false,
+                });
+                Vec::new()
+            }
+            Command::ContactGroupNew { action } => vec![self.new_group(action).await?],
+            Command::ContactGroupRename { group, name } => {
+                let (Some(group), Some(name)) = (group, name) else {
+                    return Err(CommandError::rejected("Name the group"));
+                };
+                vec![self.rename_group(*group, name).await?]
+            }
+            Command::ContactGroupAdd { group, people } => {
+                let group = group.ok_or_else(|| CommandError::rejected("Choose a group"))?;
+                vec![self.group_members(group, people, true).await?]
+            }
+            Command::ContactGroupRemove { group, people } => {
+                let group = group.ok_or_else(|| CommandError::rejected("Choose a group"))?;
+                vec![self.group_members(group, people, false).await?]
+            }
             Command::MarkReadOnDwell { message } => {
                 self.set_flag(
                     &MessageTarget::Messages(vec![*message]),
@@ -885,6 +990,7 @@ impl Actions {
             reloaded,
             changed: Vec::new(),
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse,
         })
     }
@@ -980,6 +1086,7 @@ impl Actions {
             count: messages.len(),
             messages,
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse: removed
                 .iter()
                 .map(|(source, ids)| Command::Move {
@@ -1111,6 +1218,7 @@ impl Actions {
             // Deliberately empty: see the doc comment. `u` says "nothing to
             // undo" rather than pretending a saga is a move.
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse: Vec::new(),
             arrived: None,
             reloaded: Vec::new(),
@@ -1171,6 +1279,7 @@ impl Actions {
             reloaded: Vec::new(),
             changed: Vec::new(),
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse: vec![Command::Unsnooze {
                 target: MessageTarget::Messages(ids),
             }],
@@ -1252,6 +1361,7 @@ impl Actions {
             reloaded,
             changed: Vec::new(),
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse: asleep
                 .into_iter()
                 .map(|(until, ids)| Command::Snooze {
@@ -1399,6 +1509,7 @@ impl Actions {
             // A label is a keyword on the message, not a move: no folder
             // gained or lost a row, so the sidebar has nothing to relabel.
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse: vec![inverse],
         })
     }
@@ -1624,6 +1735,7 @@ impl Actions {
             reloaded,
             changed: Vec::new(),
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse: vec![inverse],
         })
     }
@@ -1698,6 +1810,7 @@ impl Actions {
             reloaded: Vec::new(),
             changed: repaint,
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse: vec![inverse],
         })
     }
@@ -1737,6 +1850,9 @@ impl Actions {
         }
         if applied.surfaced {
             events.emit(Event::SurfacedChanged);
+        }
+        if let Some(names_changed) = applied.contacts_changed {
+            events.emit(Event::ContactsChanged { names_changed });
         }
         if !recording.records().await {
             return;
@@ -2048,6 +2164,7 @@ impl Actions {
             reloaded: Vec::new(),
             changed: Vec::new(),
             mailboxes_changed: true,
+            contacts_changed: None,
             // The command is its own inverse: what was mapped before.
             inverse: vec![Command::MapMailboxRole {
                 account: Some(account),
@@ -2055,6 +2172,616 @@ impl Actions {
                 path: previous,
             }],
         })
+    }
+
+    // ── The address book (specs/005-contacts User Story 2) ──────────────
+
+    /// What people decided covers the addresses they own, and a join, a
+    /// split, a deletion or a new person changes which those are: tell the
+    /// filing pass and Focus's tasks again (ADR 0048).
+    async fn rules_follow_people(&self) {
+        if self.focus.is_on()
+            && let Err(reason) = self.focus.refresh(&self.database).await
+        {
+            tracing::warn!(%reason, "could not follow a change to who owns what: {reason}");
+        }
+    }
+
+    /// Join people, or take a join back.
+    ///
+    /// The receipt the store hands back is the inverse: it names every
+    /// address that moved and every field and membership that changed, so
+    /// taking the join back is exact rather than a guess (research R8).
+    async fn join_contacts(&self, action: &ContactJoinAction) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let contacts = ContactRepository::new(&connection);
+        match action {
+            // The window turns `Ask` into the join dialog; one that arrives
+            // here is half a request, like `Move { to: None }`.
+            ContactJoinAction::Ask => Err(CommandError::rejected("Pick the people to join")),
+            ContactJoinAction::Join {
+                into,
+                others,
+                name,
+                organization,
+            } => {
+                if others.is_empty() {
+                    return Err(CommandError::rejected("Pick at least two people to join"));
+                }
+                if name.trim().is_empty() {
+                    return Err(CommandError::rejected("A joined contact needs a name"));
+                }
+                let receipt = contacts
+                    .join(*into, others, name.trim(), organization.as_deref())
+                    .await
+                    .map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::JoinContacts,
+                    true,
+                    vec![Command::ContactJoin {
+                        action: ContactJoinAction::Unjoin(receipt),
+                    }],
+                ))
+            }
+            ContactJoinAction::Unjoin(receipt) => {
+                contacts.unjoin(receipt).await.map_err(contact_failure)?;
+                // Only undo sends this, and a replay records nothing, so
+                // there is no inverse to keep.
+                Ok(contacts_applied(UndoKind::JoinContacts, true, Vec::new()))
+            }
+        }
+    }
+
+    /// Give a person an address: a typed one, or one someone else has.
+    async fn contact_address(
+        &self,
+        action: &ContactAddressAction,
+    ) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let contacts = ContactRepository::new(&connection);
+        match action {
+            ContactAddressAction::Ask => Err(CommandError::rejected("Type the address to add")),
+            ContactAddressAction::Add { person, address } => {
+                // Who had it before, if anyone: a deleted person's address
+                // moves without asking (FR-024), and undo gives it back.
+                let before = contacts
+                    .by_address(&address.address)
+                    .await
+                    .map_err(store_failure)?
+                    .map(|owner| (owner.id, owner.state));
+                let added = contacts
+                    .add_address(*person, address)
+                    .await
+                    .map_err(contact_failure)?;
+                let back = match before {
+                    Some((owner, state)) => {
+                        // Emptied by the add when it was their only address.
+                        let emptied = contacts
+                            .get(owner)
+                            .await
+                            .map_err(store_failure)?
+                            .filter(|now| now.addresses.is_empty())
+                            .map(|_| state);
+                        Command::ContactAddAddress {
+                            action: ContactAddressAction::Put {
+                                address: added,
+                                to: Some(owner),
+                                revive: emptied,
+                            },
+                        }
+                    }
+                    None => Command::ContactAddAddress {
+                        action: ContactAddressAction::Put {
+                            address: added,
+                            to: None,
+                            revive: None,
+                        },
+                    },
+                };
+                Ok(contacts_applied(UndoKind::ContactAddress, true, vec![back]))
+            }
+            ContactAddressAction::Put {
+                address,
+                to,
+                revive,
+            } => {
+                let moved = match to {
+                    Some(to) => contacts.move_address(*address, *to, *revive).await,
+                    None => contacts.release_address(*address).await,
+                }
+                .map_err(contact_failure)?;
+                let back = Command::ContactAddAddress {
+                    action: ContactAddressAction::Put {
+                        address: *address,
+                        to: moved.previous,
+                        revive: moved.emptied,
+                    },
+                };
+                Ok(contacts_applied(UndoKind::ContactAddress, true, vec![back]))
+            }
+        }
+    }
+
+    /// Make an address a person of its own; undo gives it back.
+    async fn detach_address(&self, address: AddressId) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let contacts = ContactRepository::new(&connection);
+        let original = contacts
+            .owner_of_address(address)
+            .await
+            .map_err(contact_failure)?
+            .ok_or_else(|| CommandError::rejected("That address belongs to nobody"))?;
+        contacts
+            .detach_address(address)
+            .await
+            .map_err(contact_failure)?;
+        Ok(contacts_applied(
+            UndoKind::DetachAddress,
+            true,
+            vec![Command::ContactAddAddress {
+                action: ContactAddressAction::Put {
+                    address,
+                    to: Some(original),
+                    revive: None,
+                },
+            }],
+        ))
+    }
+
+    /// Change which address completion offers first for a person.
+    async fn set_preferred(
+        &self,
+        person: ContactId,
+        address: AddressId,
+    ) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let previous = ContactRepository::new(&connection)
+            .set_preferred(person, address)
+            .await
+            .map_err(contact_failure)?;
+        // Which address is preferred shows in completion and on the
+        // Contacts screen, never in the name mail carries.
+        Ok(contacts_applied(
+            UndoKind::PreferredAddress,
+            false,
+            vec![Command::ContactSetPreferred {
+                person: Some(person),
+                address: Some(previous),
+            }],
+        ))
+    }
+
+    /// Make a person the user typed in (FR-020). Undo gives each address
+    /// back to whoever had it -- nobody, or a deleted person, who comes back
+    /// as they were -- and the person, left with none, is folded away.
+    async fn new_contact(&self, action: &ContactNewAction) -> Result<Applied, CommandError> {
+        let ContactNewAction::Create { name, addresses } = action else {
+            return Err(CommandError::rejected("Type a name and an address"));
+        };
+        if addresses.is_empty() {
+            return Err(CommandError::rejected("A contact needs an address"));
+        }
+        let (connection, _permit) = self.connect().await?;
+        let contacts = ContactRepository::new(&connection);
+        let mut before = Vec::with_capacity(addresses.len());
+        for address in addresses {
+            before.push(
+                contacts
+                    .by_address(&address.address)
+                    .await
+                    .map_err(store_failure)?
+                    .map(|owner| (owner.id, owner.state)),
+            );
+        }
+        let person = contacts
+            .create(name.as_deref(), addresses)
+            .await
+            .map_err(contact_failure)?;
+        let mut inverse = Vec::with_capacity(addresses.len());
+        for (address, before) in addresses.iter().zip(before) {
+            let Some(id) = contacts
+                .get(person)
+                .await
+                .map_err(store_failure)?
+                .and_then(|made| {
+                    made.addresses
+                        .iter()
+                        .find(|a| a.address.address.eq_ignore_ascii_case(&address.address))
+                        .map(|a| a.id)
+                })
+            else {
+                continue;
+            };
+            let back = match before {
+                Some((owner, state)) => {
+                    let emptied = contacts
+                        .get(owner)
+                        .await
+                        .map_err(store_failure)?
+                        .filter(|now| now.addresses.is_empty())
+                        .map(|_| state);
+                    ContactAddressAction::Put {
+                        address: id,
+                        to: Some(owner),
+                        revive: emptied,
+                    }
+                }
+                None => ContactAddressAction::Put {
+                    address: id,
+                    to: None,
+                    revive: None,
+                },
+            };
+            inverse.push(Command::ContactAddAddress { action: back });
+        }
+        Ok(contacts_applied(UndoKind::CreateContact, true, inverse))
+    }
+
+    /// Change a person's name, organisation and note (FR-021), or put an
+    /// earlier edit back.
+    async fn edit_contact(&self, action: &ContactEditAction) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let contacts = ContactRepository::new(&connection);
+        match action {
+            ContactEditAction::Ask => Err(CommandError::rejected("Choose someone to edit")),
+            ContactEditAction::Edit { person, edit } => {
+                let prior = contacts
+                    .edit(*person, edit)
+                    .await
+                    .map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::EditContact,
+                    true,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::Put {
+                            person: *person,
+                            fields: prior,
+                        },
+                    }],
+                ))
+            }
+            ContactEditAction::Switch {
+                address,
+                switch,
+                on,
+            } => {
+                use postio_storage::repository::ContactSettingsRepository;
+                let person = contacts
+                    .by_address(address.trim())
+                    .await
+                    .map_err(contact_failure)?
+                    .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+                    .id;
+                let settings = ContactSettingsRepository::new(&connection);
+                let mut held = settings.get(person).await.map_err(contact_failure)?;
+                let was = switch.is_on(&held);
+                switch.set(&mut held, *on);
+                settings.put(person, &held).await.map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::ContactArrival,
+                    false,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::Switch {
+                            address: address.clone(),
+                            switch: *switch,
+                            on: was,
+                        },
+                    }],
+                ))
+            }
+            ContactEditAction::AddSender { address, details } => {
+                let person = contacts
+                    .by_address(address.trim())
+                    .await
+                    .map_err(contact_failure)?
+                    .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+                    .id;
+                let prior = contacts
+                    .add_sender(person, details)
+                    .await
+                    .map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::CreateContact,
+                    true,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::RestoreSender { person, prior },
+                    }],
+                ))
+            }
+            ContactEditAction::RestoreSender { person, prior } => {
+                contacts
+                    .restore_sender(*person, prior)
+                    .await
+                    .map_err(contact_failure)?;
+                Ok(contacts_applied(UndoKind::EditContact, true, Vec::new()))
+            }
+            ContactEditAction::Detail {
+                address,
+                kind,
+                value,
+                keep,
+            } => {
+                let person = contacts
+                    .by_address(address.trim())
+                    .await
+                    .map_err(contact_failure)?
+                    .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+                    .id;
+                let was = contacts
+                    .details(person)
+                    .await
+                    .map_err(contact_failure)?
+                    .into_iter()
+                    .find(|d| d.kind == *kind && &d.value == value)
+                    .map(|d| d.added);
+                contacts
+                    .set_detail(person, *kind, value, *keep)
+                    .await
+                    .map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::EditContact,
+                    false,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::Detail {
+                            address: address.clone(),
+                            kind: *kind,
+                            value: value.clone(),
+                            keep: was,
+                        },
+                    }],
+                ))
+            }
+            ContactEditAction::Ignore { address, ignored } => {
+                use postio_storage::repository::ContactSettingsRepository;
+                let person = contacts
+                    .by_address(address.trim())
+                    .await
+                    .map_err(contact_failure)?
+                    .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+                    .id;
+                let settings = ContactSettingsRepository::new(&connection);
+                let mut held = settings.get(person).await.map_err(contact_failure)?;
+                let was = std::mem::replace(&mut held.ignored, *ignored);
+                settings.put(person, &held).await.map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::ContactArrival,
+                    false,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::Ignore {
+                            address: address.clone(),
+                            ignored: was,
+                        },
+                    }],
+                ))
+            }
+            ContactEditAction::Save { person, form } => {
+                let saved = contacts
+                    .save_form(*person, form)
+                    .await
+                    .map_err(contact_failure)?;
+                // A saved form puts back the form it found; a person just
+                // made is put back by deleting them.
+                let (kind, inverse) = match saved.prior {
+                    Some(prior) => (
+                        UndoKind::EditContact,
+                        Command::ContactEdit {
+                            action: ContactEditAction::Save {
+                                person: Some(saved.person),
+                                form: Box::new(prior),
+                            },
+                        },
+                    ),
+                    None => (
+                        UndoKind::CreateContact,
+                        Command::ContactDelete {
+                            person: Some(saved.person),
+                            group: None,
+                        },
+                    ),
+                };
+                Ok(contacts_applied(kind, true, vec![inverse]))
+            }
+            ContactEditAction::Put { person, fields } => {
+                contacts
+                    .put_fields(*person, fields)
+                    .await
+                    .map_err(contact_failure)?;
+                // Only undo sends this, and a replay records nothing.
+                Ok(contacts_applied(UndoKind::EditContact, true, Vec::new()))
+            }
+        }
+    }
+
+    /// Say where a person's mail arrives (the popover's segmented control),
+    /// or put the earlier choice back. The person is the one who owns
+    /// `address`; their other settings are left as they are.
+    async fn set_arrival(
+        &self,
+        address: &str,
+        arrival: Option<postio_model::ContactArrival>,
+    ) -> Result<Applied, CommandError> {
+        use postio_storage::repository::ContactSettingsRepository;
+        let (connection, _permit) = self.connect().await?;
+        let person = ContactRepository::new(&connection)
+            .by_address(address.trim())
+            .await
+            .map_err(contact_failure)?
+            .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+            .id;
+        let settings = ContactSettingsRepository::new(&connection);
+        let mut held = settings.get(person).await.map_err(contact_failure)?;
+        let prior = std::mem::replace(&mut held.arrival, arrival);
+        settings.put(person, &held).await.map_err(contact_failure)?;
+        Ok(contacts_applied(
+            UndoKind::ContactArrival,
+            false,
+            vec![Command::ContactSetArrival {
+                address: address.to_owned(),
+                arrival: prior,
+            }],
+        ))
+    }
+
+    /// Delete a person (FR-023); undo restores them in the state they had.
+    async fn delete_contact(&self, person: ContactId) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let was = ContactRepository::new(&connection)
+            .delete(person)
+            .await
+            .map_err(contact_failure)?;
+        Ok(contacts_applied(
+            UndoKind::DeleteContact,
+            true,
+            vec![Command::ContactRestore {
+                person: Some(person),
+                state: Some(was),
+            }],
+        ))
+    }
+
+    /// Bring a deleted person back (FR-023a); undo deletes them again.
+    async fn restore_contact(
+        &self,
+        person: ContactId,
+        state: ContactState,
+    ) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        ContactRepository::new(&connection)
+            .restore(person, state)
+            .await
+            .map_err(contact_failure)?;
+        Ok(contacts_applied(
+            UndoKind::RestoreContact,
+            true,
+            vec![Command::ContactDelete {
+                person: Some(person),
+                group: None,
+            }],
+        ))
+    }
+
+    // -- Groups (specs/005-contacts User Story 5) --------------------------
+
+    /// Make a group, or put a deleted one back.
+    async fn new_group(&self, action: &ContactGroupNewAction) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let id = match action {
+            ContactGroupNewAction::Ask => return Err(CommandError::rejected("Name the group")),
+            ContactGroupNewAction::Create { name, members } => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(CommandError::rejected("A group needs a name"));
+                }
+                let mut group = postio_model::ContactGroup::new(name, Utc::now());
+                let id = groups.create(&mut group).await.map_err(contact_failure)?;
+                groups
+                    .add_members(id, members)
+                    .await
+                    .map_err(store_failure)?;
+                id
+            }
+            ContactGroupNewAction::Restore { group, members } => {
+                groups
+                    .restore(group, members)
+                    .await
+                    .map_err(contact_failure)?;
+                group.id
+            }
+        };
+        Ok(contacts_applied(
+            UndoKind::CreateGroup,
+            false,
+            vec![Command::ContactDelete {
+                person: None,
+                group: Some(id),
+            }],
+        ))
+    }
+
+    /// Rename a group; undo gives it its old name.
+    async fn rename_group(
+        &self,
+        group: ContactGroupId,
+        name: &str,
+    ) -> Result<Applied, CommandError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(CommandError::rejected("A group needs a name"));
+        }
+        let (connection, _permit) = self.connect().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let before = groups
+            .get(group)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That group is no longer here"))?;
+        groups
+            .set_name(group, name)
+            .await
+            .map_err(contact_failure)?;
+        Ok(contacts_applied(
+            UndoKind::RenameGroup,
+            false,
+            vec![Command::ContactGroupRename {
+                group: Some(group),
+                name: Some(before.name),
+            }],
+        ))
+    }
+
+    /// Delete a group -- never its people; undo puts it back whole.
+    async fn delete_group(&self, group: ContactGroupId) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let (group, members) = ContactGroupRepository::new(&connection)
+            .remove(group)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That group is no longer here"))?;
+        Ok(contacts_applied(
+            UndoKind::DeleteGroup,
+            false,
+            vec![Command::ContactGroupNew {
+                action: ContactGroupNewAction::Restore { group, members },
+            }],
+        ))
+    }
+
+    /// Put people in a group, or take them out; undo reverses exactly the
+    /// memberships that changed.
+    async fn group_members(
+        &self,
+        group: ContactGroupId,
+        people: &[ContactId],
+        add: bool,
+    ) -> Result<Applied, CommandError> {
+        if people.is_empty() {
+            return Err(CommandError::rejected("Choose someone first"));
+        }
+        let (connection, _permit) = self.connect().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let changed = if add {
+            groups.add_members(group, people).await
+        } else {
+            groups.remove_members(group, people).await
+        }
+        .map_err(store_failure)?;
+        let inverse = if add {
+            Command::ContactGroupRemove {
+                group: Some(group),
+                people: changed,
+            }
+        } else {
+            Command::ContactGroupAdd {
+                group: Some(group),
+                people: changed,
+            }
+        };
+        Ok(contacts_applied(
+            UndoKind::GroupMembers,
+            false,
+            vec![inverse],
+        ))
     }
 
     /// Put a send that stopped back on the queue (spec 003 FR-024).
@@ -2096,6 +2823,7 @@ impl Actions {
             // The Outbox row appears when this succeeds, and the Drafts
             // attention count drops: both are sidebar numbers.
             mailboxes_changed: true,
+            contacts_changed: None,
             count: 1,
             messages: Vec::new(),
             removed: Vec::new(),
@@ -2150,6 +2878,7 @@ impl Actions {
                     kind: UndoKind::CancelledSend,
                     // And here the Outbox row may be the one that disappears.
                     mailboxes_changed: true,
+                    contacts_changed: None,
                     count: 1,
                     messages: Vec::new(),
                     removed: Vec::new(),
@@ -2275,6 +3004,7 @@ impl Actions {
             // which is a real act with a real effect, not to un-know
             // something.
             mailboxes_changed: false,
+            contacts_changed: None,
             inverse: Vec::new(),
         })
     }
@@ -2417,6 +3147,45 @@ async fn kind_for(flag: &Flag, wanted: bool) -> UndoKind {
         (Flag::Seen, false) => UndoKind::MarkUnread,
         (_, true) => UndoKind::Flag,
         (_, false) => UndoKind::Unflag,
+    }
+}
+
+/// A change to the address book, as a unit undo can hold.
+///
+/// Recorded as a bulk unit of one -- no messages named -- so two in a burst
+/// never coalesce: joins depend on one another, and one unit replaying both
+/// inverses would replay them in the wrong order. The account is the
+/// unassigned one because people are not any one account's.
+fn contacts_applied(kind: UndoKind, names_changed: bool, inverse: Vec<Command>) -> Applied {
+    Applied {
+        kind,
+        account: AccountId::UNASSIGNED,
+        messages: Vec::new(),
+        count: 1,
+        removed: Vec::new(),
+        arrived: None,
+        reloaded: Vec::new(),
+        changed: Vec::new(),
+        mailboxes_changed: false,
+        contacts_changed: Some(names_changed),
+        inverse,
+        lasts: None,
+        rows: None,
+        surfaced: false,
+    }
+}
+
+/// The store's refusals that are the user's to hear, said as such.
+fn contact_failure(error: postio_storage::Error) -> CommandError {
+    match error {
+        postio_storage::Error::AddressOwned { .. } => {
+            CommandError::rejected("That address belongs to someone else")
+        }
+        postio_storage::Error::NotFound { .. } => {
+            CommandError::rejected("That contact is no longer here")
+        }
+        postio_storage::Error::ForbiddenTransition { reason, .. } => CommandError::rejected(reason),
+        other => store_failure(other),
     }
 }
 
@@ -6009,5 +6778,679 @@ mod tests {
             world.drained().await.is_empty(),
             "and nothing was announced"
         );
+    }
+
+    // -- Contacts (specs/005-contacts User Story 2) ------------------------
+
+    mod contacts {
+        use super::*;
+        use postio_core::{ContactAddressAction, ContactJoinAction};
+        use postio_model::{ContactId, ContactState, EmailAddress};
+        use postio_storage::repository::ContactRepository;
+
+        async fn person(world: &World, name: &str, emails: &[&str]) -> ContactId {
+            let connection = world.database.connect().await.expect("a connection");
+            let addresses: Vec<EmailAddress> = emails
+                .iter()
+                .map(|e| EmailAddress::new(None::<String>, *e))
+                .collect();
+            ContactRepository::new(&connection)
+                .create(Some(name), &addresses)
+                .await
+                .expect("a person")
+        }
+
+        async fn get(world: &World, id: ContactId) -> Option<postio_model::Contact> {
+            let connection = world.database.connect().await.expect("a connection");
+            ContactRepository::new(&connection)
+                .get(id)
+                .await
+                .expect("get")
+        }
+
+        fn changed(events: &[Event]) -> Option<bool> {
+            events.iter().find_map(|event| match event {
+                Event::ContactsChanged { names_changed } => Some(*names_changed),
+                _ => None,
+            })
+        }
+
+        #[tokio::test]
+        async fn a_join_writes_says_so_and_undoes_exactly() {
+            let world = world().await;
+            let work = person(&world, "Ada at work", &["ada@work.example"]).await;
+            let home = person(&world, "Ada at home", &["ada@home.example"]).await;
+            let before = (get(&world, work).await, get(&world, home).await);
+
+            world
+                .run(Command::ContactJoin {
+                    action: ContactJoinAction::Join {
+                        into: work,
+                        others: vec![home],
+                        name: "Ada Lovelace".into(),
+                        organization: None,
+                    },
+                })
+                .await
+                .expect("join");
+            let events = world.drained().await;
+            assert_eq!(
+                changed(&events),
+                Some(true),
+                "a join changes whose name mail shows"
+            );
+            assert!(events.contains(&Event::ActionCompleted {
+                description: "Merged contacts".into(),
+                undoable: true,
+            }));
+            let joined = get(&world, work).await.expect("ada");
+            assert_eq!(joined.addresses.len(), 2);
+            assert_eq!(
+                get(&world, home).await.expect("home").state,
+                ContactState::Merged
+            );
+
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(
+                (get(&world, work).await, get(&world, home).await),
+                before,
+                "both people exactly as they were"
+            );
+            assert_eq!(changed(&world.drained().await), Some(true));
+        }
+
+        #[tokio::test]
+        async fn two_joins_in_a_burst_are_two_undos() {
+            // Joins depend on each other, so they must never coalesce into
+            // one unit whose inverses replay in the wrong order.
+            let world = world().await;
+            let a = person(&world, "A", &["a@example.com"]).await;
+            let b = person(&world, "B", &["b@example.com"]).await;
+            let c = person(&world, "C", &["c@example.com"]).await;
+            for other in [b, c] {
+                world
+                    .run(Command::ContactJoin {
+                        action: ContactJoinAction::Join {
+                            into: a,
+                            others: vec![other],
+                            name: "A".into(),
+                            organization: None,
+                        },
+                    })
+                    .await
+                    .expect("join");
+            }
+            world.run(Command::Undo).await.expect("undo the second");
+            assert_eq!(get(&world, c).await.expect("c").state, ContactState::Live);
+            assert_eq!(
+                get(&world, b).await.expect("b").state,
+                ContactState::Merged,
+                "the first join stands until it is undone too"
+            );
+        }
+
+        #[tokio::test]
+        async fn detaching_and_undoing_puts_the_address_back() {
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@work.example", "ada@old.example"]).await;
+            let old = get(&world, ada)
+                .await
+                .expect("ada")
+                .addresses
+                .into_iter()
+                .find(|a| a.address.address == "ada@old.example")
+                .expect("old")
+                .id;
+
+            world
+                .run(Command::ContactDetachAddress { address: Some(old) })
+                .await
+                .expect("detach");
+            assert_eq!(get(&world, ada).await.expect("ada").addresses.len(), 1);
+
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(get(&world, ada).await.expect("ada").addresses.len(), 2);
+        }
+
+        #[tokio::test]
+        async fn adding_an_address_and_undoing_lets_it_go() {
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@work.example"]).await;
+
+            world
+                .run(Command::ContactAddAddress {
+                    action: ContactAddressAction::Add {
+                        person: ada,
+                        address: EmailAddress::new(None::<String>, "ada@home.example"),
+                    },
+                })
+                .await
+                .expect("add");
+            assert_eq!(get(&world, ada).await.expect("ada").addresses.len(), 2);
+
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(get(&world, ada).await.expect("ada").addresses.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn an_owned_address_is_refused_by_add_and_moved_by_put() {
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            let grace = person(&world, "Grace", &["grace@example.org", "g@example.org"]).await;
+            let refused = world
+                .run(Command::ContactAddAddress {
+                    action: ContactAddressAction::Add {
+                        person: ada,
+                        address: EmailAddress::new(None::<String>, "grace@example.org"),
+                    },
+                })
+                .await;
+            assert!(refused.is_err(), "a live owner is asked, not overruled");
+
+            let address = get(&world, grace)
+                .await
+                .expect("grace")
+                .addresses
+                .into_iter()
+                .find(|a| a.address.address == "grace@example.org")
+                .expect("address")
+                .id;
+            world
+                .run(Command::ContactAddAddress {
+                    action: ContactAddressAction::Put {
+                        address,
+                        to: Some(ada),
+                        revive: None,
+                    },
+                })
+                .await
+                .expect("move it");
+            assert_eq!(get(&world, ada).await.expect("ada").addresses.len(), 2);
+
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(get(&world, grace).await.expect("grace").addresses.len(), 2);
+        }
+
+        #[tokio::test]
+        async fn a_preferred_address_change_undoes() {
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@work.example", "ada@home.example"]).await;
+            let before = get(&world, ada).await.expect("ada").preferred;
+            let other = get(&world, ada)
+                .await
+                .expect("ada")
+                .addresses
+                .into_iter()
+                .find(|a| a.id != before)
+                .expect("the other")
+                .id;
+
+            world
+                .run(Command::ContactSetPreferred {
+                    person: Some(ada),
+                    address: Some(other),
+                })
+                .await
+                .expect("prefer");
+            assert_eq!(get(&world, ada).await.expect("ada").preferred, other);
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(get(&world, ada).await.expect("ada").preferred, before);
+        }
+
+        #[tokio::test]
+        async fn an_ask_never_reaches_the_store() {
+            // The window turns a keystroke's `Ask` into the dialog; one that
+            // arrives here anyway is half a request.
+            let world = world().await;
+            assert!(
+                world
+                    .run(Command::ContactJoin {
+                        action: ContactJoinAction::Ask
+                    })
+                    .await
+                    .is_err()
+            );
+        }
+
+        #[tokio::test]
+        async fn making_a_person_and_undoing_leaves_no_one() {
+            use postio_core::ContactNewAction;
+            let world = world().await;
+            world
+                .run(Command::ContactNew {
+                    action: ContactNewAction::Create {
+                        name: Some("Grace Hopper".into()),
+                        addresses: vec![EmailAddress::new(None::<String>, "grace@example.org")],
+                    },
+                })
+                .await
+                .expect("create");
+            let events = world.drained().await;
+            assert_eq!(changed(&events), Some(true), "a new name for an address");
+            let connection = world.database.connect().await.expect("a connection");
+            let contacts = ContactRepository::new(&connection);
+            let grace = contacts
+                .by_address("grace@example.org")
+                .await
+                .expect("lookup")
+                .expect("grace");
+            assert_eq!(grace.state, ContactState::Live);
+
+            world.run(Command::Undo).await.expect("undo");
+            assert!(
+                contacts
+                    .by_address("grace@example.org")
+                    .await
+                    .expect("lookup")
+                    .is_none(),
+                "the address belongs to nobody again"
+            );
+            assert!(
+                contacts
+                    .complete("gra", 8)
+                    .await
+                    .expect("complete")
+                    .is_empty(),
+                "and nobody is offered"
+            );
+        }
+
+        #[tokio::test]
+        async fn an_edit_undoes_to_exactly_what_was_there() {
+            use postio_core::ContactEditAction;
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            let before = get(&world, ada).await;
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Edit {
+                        person: ada,
+                        edit: postio_model::PersonEdit {
+                            name: Some("Ada Lovelace".into()),
+                            organization: Some("Engines".into()),
+                            note: None,
+                        },
+                    },
+                })
+                .await
+                .expect("edit");
+            assert_eq!(changed(&world.drained().await), Some(true));
+            assert_eq!(
+                get(&world, ada).await.expect("ada").name.as_deref(),
+                Some("Ada Lovelace")
+            );
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(get(&world, ada).await, before);
+        }
+
+        #[tokio::test]
+        async fn a_card_switch_applies_at_once_and_undoes() {
+            use postio_core::ContactEditAction;
+            use postio_model::CardSwitch;
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            let notifies = |world: &World| {
+                let database = world.database.clone();
+                async move {
+                    let reader = database.read().await.expect("a reader");
+                    postio_storage::repository::ContactSettingsRepository::new(&reader)
+                        .get(ada)
+                        .await
+                        .expect("settings")
+                        .notify
+                }
+            };
+            assert!(!notifies(&world).await);
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Switch {
+                        address: "ADA@example.com".into(),
+                        switch: CardSwitch::Notify,
+                        on: true,
+                    },
+                })
+                .await
+                .expect("a switch");
+            assert!(notifies(&world).await);
+            world.run(Command::Undo).await.expect("undo");
+            assert!(!notifies(&world).await);
+        }
+
+        #[tokio::test]
+        async fn adding_a_sender_keeps_the_signature_and_undo_puts_it_all_back() {
+            use postio_core::ContactEditAction;
+            use postio_model::SignatureDetails;
+            let world = world().await;
+            let jonas = person(&world, "Jonas", &["jonas@harbordata.example"]).await;
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::AddSender {
+                        address: "JONAS@harbordata.example".into(),
+                        details: SignatureDetails {
+                            name: None,
+                            title: Some("Partnerships".into()),
+                            company: Some("Harbor Data Co.".into()),
+                            phones: vec!["+1 555 0142".into()],
+                            websites: Vec::new(),
+                        },
+                    },
+                })
+                .await
+                .expect("added");
+            let added = get(&world, jonas).await.expect("jonas");
+            assert_eq!(added.title.as_deref(), Some("Partnerships"));
+            world.run(Command::Undo).await.expect("undo");
+            let undone = get(&world, jonas).await.expect("jonas");
+            assert_eq!(undone.title, None);
+            assert_eq!(undone.organization, None);
+        }
+
+        #[tokio::test]
+        async fn ignoring_a_sender_is_a_setting_and_undo_offers_them_again() {
+            use postio_core::ContactEditAction;
+            let world = world().await;
+            let jonas = person(&world, "Jonas", &["jonas@harbordata.example"]).await;
+            let ignored = |world: &World| {
+                let database = world.database.clone();
+                async move {
+                    let reader = database.read().await.expect("a reader");
+                    postio_storage::repository::ContactSettingsRepository::new(&reader)
+                        .get(jonas)
+                        .await
+                        .expect("settings")
+                        .ignored
+                }
+            };
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Ignore {
+                        address: "jonas@harbordata.example".into(),
+                        ignored: true,
+                    },
+                })
+                .await
+                .expect("ignored");
+            assert!(ignored(&world).await);
+            world.run(Command::Undo).await.expect("undo");
+            assert!(!ignored(&world).await);
+        }
+
+        #[tokio::test]
+        async fn a_saved_form_makes_a_person_and_each_edit_undoes_in_turn() {
+            use postio_core::ContactEditAction;
+            use postio_model::{ContactForm, ContactKind, FormAddress};
+            let world = world().await;
+            let mut form = ContactForm::blank();
+            form.given = "Grace".into();
+            form.family = "Oyelaran".into();
+            form.addresses = vec![FormAddress {
+                address: "grace@example.org".into(),
+                ..FormAddress::blank()
+            }];
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Save {
+                        person: None,
+                        form: Box::new(form.clone()),
+                    },
+                })
+                .await
+                .expect("a new contact");
+            assert_eq!(changed(&world.drained().await), Some(true));
+            let database = world.database.clone();
+            let connection = database.connect().await.expect("a connection");
+            let contacts = ContactRepository::new(&connection);
+            let grace = contacts
+                .by_address("grace@example.org")
+                .await
+                .expect("lookup")
+                .expect("made");
+            assert_eq!(grace.display_name(), "Grace Oyelaran");
+
+            form.kind = ContactKind::Company;
+            form.title = "Founder".into();
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Save {
+                        person: Some(grace.id),
+                        form: Box::new(form),
+                    },
+                })
+                .await
+                .expect("an edit");
+            let edited = get(&world, grace.id).await.expect("grace");
+            assert_eq!(edited.kind, ContactKind::Company);
+            assert_eq!(edited.title.as_deref(), Some("Founder"));
+
+            world.run(Command::Undo).await.expect("undo the edit");
+            let undone = get(&world, grace.id).await.expect("grace");
+            assert_eq!(undone.kind, ContactKind::Person);
+            assert_eq!(undone.title, None);
+
+            world.run(Command::Undo).await.expect("undo the making");
+            assert_eq!(
+                get(&world, grace.id).await.expect("kept").state,
+                ContactState::Deleted
+            );
+        }
+
+        #[tokio::test]
+        async fn a_change_of_arrival_applies_at_once_and_undoes_to_what_was_there() {
+            use postio_model::ContactArrival;
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            let arrival = |world: &World| {
+                let database = world.database.clone();
+                async move {
+                    let reader = database.read().await.expect("a reader");
+                    postio_storage::repository::ContactSettingsRepository::new(&reader)
+                        .get(ada)
+                        .await
+                        .expect("settings")
+                        .arrival
+                }
+            };
+            assert_eq!(arrival(&world).await, None);
+
+            world
+                .run(Command::ContactSetArrival {
+                    address: "Ada@Example.com".into(),
+                    arrival: Some(ContactArrival::Digest),
+                })
+                .await
+                .expect("set");
+            let events = world.drained().await;
+            assert_eq!(arrival(&world).await, Some(ContactArrival::Digest));
+            assert!(events.contains(&Event::ActionCompleted {
+                description: "Changed where mail arrives".into(),
+                undoable: true,
+            }));
+
+            world
+                .run(Command::ContactSetArrival {
+                    address: "ada@example.com".into(),
+                    arrival: Some(ContactArrival::Filtered),
+                })
+                .await
+                .expect("set again");
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(arrival(&world).await, Some(ContactArrival::Digest));
+            world.run(Command::Undo).await.expect("undo the first");
+            assert_eq!(arrival(&world).await, None);
+
+            let stranger = world
+                .run(Command::ContactSetArrival {
+                    address: "nobody@example.org".into(),
+                    arrival: Some(ContactArrival::Inbox),
+                })
+                .await;
+            assert!(stranger.is_err(), "an address the mail never saw is no one");
+        }
+
+        #[tokio::test]
+        async fn a_delete_undoes_and_a_restore_undoes_too() {
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            world
+                .run(Command::ContactDelete {
+                    person: Some(ada),
+                    group: None,
+                })
+                .await
+                .expect("delete");
+            let events = world.drained().await;
+            assert_eq!(changed(&events), Some(true), "her name leaves the mail");
+            assert!(events.contains(&Event::ActionCompleted {
+                description: "Deleted a contact".into(),
+                undoable: true,
+            }));
+            assert_eq!(
+                get(&world, ada).await.expect("ada").state,
+                ContactState::Deleted
+            );
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(
+                get(&world, ada).await.expect("ada").state,
+                ContactState::Live
+            );
+
+            world
+                .run(Command::ContactDelete {
+                    person: Some(ada),
+                    group: None,
+                })
+                .await
+                .expect("delete again");
+            world
+                .run(Command::ContactRestore {
+                    person: Some(ada),
+                    state: None,
+                })
+                .await
+                .expect("restore");
+            assert_eq!(
+                get(&world, ada).await.expect("ada").state,
+                ContactState::Live
+            );
+            world.run(Command::Undo).await.expect("undo the restore");
+            assert_eq!(
+                get(&world, ada).await.expect("ada").state,
+                ContactState::Deleted
+            );
+        }
+
+        #[tokio::test]
+        async fn a_dismissal_hides_the_pair_and_is_not_an_undo() {
+            let world = world().await;
+            let a = person(&world, "Ada Lovelace", &["ada@work.example"]).await;
+            let b = person(&world, "Ada Lovelace", &["ada@home.example"]).await;
+            world
+                .run(Command::SuggestionDismiss { pair: Some((a, b)) })
+                .await
+                .expect("dismiss");
+            let events = world.drained().await;
+            assert_eq!(changed(&events), Some(false), "no name moved");
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, Event::ActionCompleted { undoable: true, .. })),
+                "nothing to take back: {events:?}"
+            );
+            let connection = world.database.connect().await.expect("a connection");
+            assert!(
+                ContactRepository::new(&connection)
+                    .suggestions(10)
+                    .await
+                    .expect("suggestions")
+                    .is_empty()
+            );
+        }
+
+        #[tokio::test]
+        async fn every_group_edit_undoes_exactly() {
+            use postio_core::ContactGroupNewAction;
+            use postio_storage::repository::ContactGroupRepository;
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            let grace = person(&world, "Grace", &["grace@example.org"]).await;
+            let connection = world.database.connect().await.expect("a connection");
+            let groups = ContactGroupRepository::new(&connection);
+            let members = async |name: &str| -> Option<Vec<ContactId>> {
+                let group = groups
+                    .list()
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .find(|g| g.name == name)?;
+                Some(
+                    groups
+                        .members(group.id)
+                        .await
+                        .expect("members")
+                        .iter()
+                        .map(|p| p.id)
+                        .collect(),
+                )
+            };
+
+            world
+                .run(Command::ContactGroupNew {
+                    action: ContactGroupNewAction::Create {
+                        name: "Family".into(),
+                        members: vec![ada],
+                    },
+                })
+                .await
+                .expect("create");
+            assert_eq!(changed(&world.drained().await), Some(false));
+            assert_eq!(members("Family").await, Some(vec![ada]));
+            let family = groups.list().await.expect("list")[0].id;
+
+            world
+                .run(Command::ContactGroupAdd {
+                    group: Some(family),
+                    people: vec![grace, ada],
+                })
+                .await
+                .expect("add");
+            world
+                .run(Command::ContactGroupRename {
+                    group: Some(family),
+                    name: Some("Kin".into()),
+                })
+                .await
+                .expect("rename");
+            world
+                .run(Command::ContactDelete {
+                    person: None,
+                    group: Some(family),
+                })
+                .await
+                .expect("delete the group");
+            assert_eq!(members("Kin").await, None);
+
+            world.run(Command::Undo).await.expect("undo the delete");
+            assert_eq!(members("Kin").await, Some(vec![ada, grace]));
+            world.run(Command::Undo).await.expect("undo the rename");
+            assert_eq!(members("Family").await, Some(vec![ada, grace]));
+            world.run(Command::Undo).await.expect("undo the add");
+            assert_eq!(
+                members("Family").await,
+                Some(vec![ada]),
+                "only grace, whom the add put there, comes out"
+            );
+            world
+                .run(Command::ContactGroupRemove {
+                    group: Some(family),
+                    people: vec![ada],
+                })
+                .await
+                .expect("remove");
+            assert_eq!(members("Family").await, Some(vec![]));
+            world.run(Command::Undo).await.expect("undo the remove");
+            assert_eq!(members("Family").await, Some(vec![ada]));
+            world.run(Command::Undo).await.expect("undo the create");
+            assert_eq!(members("Family").await, None);
+        }
     }
 }

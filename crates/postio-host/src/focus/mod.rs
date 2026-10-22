@@ -28,6 +28,7 @@
 
 mod body;
 mod catch_up;
+pub(crate) mod contacts_move;
 pub(crate) mod digests;
 mod due;
 pub(crate) mod filtered;
@@ -66,6 +67,10 @@ pub struct FocusSetup {
     /// How the person's model is reached instead of this computer's own
     /// sockets: a test's fake runtime.
     model_transport: Option<Arc<dyn postio_ai::Transport>>,
+    /// The remote-image list the senders' remembered treatments move out of,
+    /// once (ADR 0048). Nothing is moved without it, so a test never reads
+    /// the machine's own.
+    remote_images: Option<std::path::PathBuf>,
 }
 
 impl FocusSetup {
@@ -92,6 +97,13 @@ impl FocusSetup {
     /// (contracts/config.md). Without it, the path [`Host::open`] was given.
     pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
         self.config_path = Some(path);
+        self
+    }
+
+    /// Move the treatments the remote-image list at `path` remembers per
+    /// sender onto the senders, the first time Focus mode starts.
+    pub fn with_remote_images_path(mut self, path: std::path::PathBuf) -> Self {
+        self.remote_images = Some(path);
         self
     }
 
@@ -189,6 +201,54 @@ impl Host {
     /// A second call changes the filing pass and answers the tasks the
     /// first one started: it is how a changed `[focus]` reaches the pass.
     pub fn enable_focus(&self, setup: FocusSetup) -> FocusHandle {
+        // What correspondents decided is read once here, and kept current by
+        // the verbs that change it; the file is read by whoever reloads it.
+        let mut setup = setup;
+        let path = setup.config_path.clone().or_else(|| {
+            self.inner
+                .config_path
+                .lock()
+                .expect("never poisoned")
+                .clone()
+        });
+        // The first time, the file's address-keyed entries move onto the
+        // correspondents they name, and `[focus]` is what the file then says.
+        if let Some(path) = path.as_deref()
+            && !self.inner.contacts_moved.swap(true, Ordering::AcqRel)
+        {
+            let (database, file) = (self.inner.wiring.database.clone(), path.to_path_buf());
+            match postio_session::blocking::now(async move {
+                contacts_move::run(&database, &file).await
+            }) {
+                Ok(Some((_, focus))) => setup.config = focus,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "Focus could not move senders' settings: {error}");
+                }
+            }
+        }
+        if let Some(list) = setup.remote_images.clone()
+            && !self.inner.treatments_moved.swap(true, Ordering::AcqRel)
+        {
+            let database = self.inner.wiring.database.clone();
+            if let Err(error) = postio_session::blocking::now(async move {
+                contacts_move::run_treatments(&database, &list).await
+            }) {
+                tracing::warn!(%error, "Focus could not move senders' treatments: {error}");
+            }
+        }
+        let database = self.inner.wiring.database.clone();
+        let settings = self.inner.wiring.focus.clone();
+        if let Err(error) =
+            postio_session::blocking::now(async move { settings.load_contacts(&database).await })
+        {
+            tracing::warn!(%error, "Focus could not read what you decided about senders: {error}");
+        }
+        let raw = setup.config.clone();
+        let setup = {
+            let overlaid = self.inner.wiring.focus.overlaid(&raw);
+            setup.with_config(overlaid)
+        };
         self.inner.wiring.filing.set(Some(setup.pass()));
         let mut focus = self.inner.focus.lock().expect("never poisoned");
         let handle = match &*focus {
@@ -232,19 +292,12 @@ impl Host {
         // Focus's verbs read `[focus]` and write the person's corrections
         // to the file. What they write reaches the filing pass and Focus's
         // tasks at once, as a reload from the file would.
-        let path = setup.config_path.clone().or_else(|| {
-            self.inner
-                .config_path
-                .lock()
-                .expect("never poisoned")
-                .clone()
-        });
         let tasks = Arc::clone(&handle.config);
         let filing = self.inner.wiring.filing.clone();
         let chosen = setup.filing.clone();
         self.inner.wiring.focus.install(
             path,
-            setup.config,
+            raw,
             Arc::new(move |written: &FocusConfig| {
                 *tasks.write().expect("never poisoned") = written.clone();
                 filing.set(Some(chosen.clone().unwrap_or_else(|| {

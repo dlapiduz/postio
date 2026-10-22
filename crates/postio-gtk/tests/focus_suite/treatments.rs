@@ -52,7 +52,7 @@ pub fn a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours() {
         fixture
             .write_body(plain, "Noon at the usual place?\n")
             .await;
-        let (window, _client) = fixture.open().await;
+        let (window, client) = fixture.open().await;
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 3).await,
             "the inbox never reached the screen"
@@ -115,10 +115,15 @@ pub fn a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours() {
         );
 
         line.press_always();
-        assert_eq!(
-            reader.allowlist_snapshot().treatment_for(NEWS),
-            Some(Treatment::AppColours),
-            "Always for this sender was not stored with the sender's settings"
+        assert!(
+            crate::settle_until(async || {
+                client.treatments().await.is_ok_and(|kept| {
+                    kept.iter()
+                        .any(|(address, word)| address == NEWS && word == "app")
+                })
+            })
+            .await,
+            "Always for this sender was not kept on the sender (ADR 0048)"
         );
         assert!(!line.offers_always());
         assert!(
@@ -383,4 +388,123 @@ pub fn switching_a_marked_message_keeps_the_reading_position() {
             "switching took the column back to the marked sentence"
         );
     });
+}
+
+/// A treatment chosen for one address is the person's (ADR 0048): their other
+/// address opens in it too, without a restart.
+pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let other = "field-notes@treatments.example.com";
+        let (first, _) = fixture
+            .file(("Field Notes Weekly", NEWS), "Issue 50", "The light.", 5)
+            .await;
+        let (second, _) = fixture
+            .file(("Field Notes", other), "Issue 51", "The dark.", 6)
+            .await;
+        let page = html_of("html-newsletter-own-page");
+        fixture.write_html_body(first, &page).await;
+        fixture
+            .write_html_body(
+                second,
+                &page.replace("</body>", "<p>SECOND-MARK</p></body>"),
+            )
+            .await;
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            postio_storage::repository::ContactRepository::new(&connection)
+                .create(
+                    Some("Field Notes"),
+                    &[
+                        postio_model::EmailAddress::new(None::<String>, NEWS),
+                        postio_model::EmailAddress::new(None::<String>, other),
+                    ],
+                )
+                .await
+                .expect("one person, two addresses");
+        }
+        let (window, client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        let line = reader.render_mode_line().expect("Focus draws the line");
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
+            "a newsletter opens on paper by the rule"
+        );
+        // The person's other address opens on paper too, until a choice is made.
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Issue 51").await,
+            "j did not step to the other address's mail"
+        );
+        assert!(
+            crate::settle_until(async || reader.test_document().contains("SECOND-MARK")).await,
+            "the other address's mail never drew"
+        );
+        assert!(
+            crate::settle_until(async || drawn_as(reader, "paper")).await,
+            "the other address opens on paper by the rule"
+        );
+        support::keys(&window, &["k"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Issue 50").await,
+            "k did not step back"
+        );
+        assert!(
+            crate::settle_until(async || !reader.test_document().contains("SECOND-MARK")).await,
+            "the first address's mail never drew again"
+        );
+        assert!(
+            crate::settle_until(async || drawn_as(reader, "paper")).await,
+            "and so does the first"
+        );
+        assert!(
+            crate::settle_until(async || reader.switch_treatment()).await,
+            "an HTML body can be switched"
+        );
+        assert!(
+            crate::settle_until(async || drawn_as(reader, "app")).await,
+            "O did not switch to app colours"
+        );
+        line.press_always();
+        assert!(
+            crate::settle_until(async || {
+                client.treatments().await.is_ok_and(|kept| kept.len() == 2)
+            })
+            .await,
+            "the host should hold the choice for both of the person's addresses"
+        );
+
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Issue 51").await,
+            "j did not step to the other address's mail"
+        );
+        assert!(
+            crate::settle_until(async || reader.test_document().contains("SECOND-MARK")).await,
+            "the other address's mail never drew"
+        );
+        assert!(
+            crate::settle_until(async || drawn_as(reader, "app")).await,
+            "the person's other address did not open in the person's choice"
+        );
+    });
+}
+
+/// Whether the document on screen is drawn in the treatment `word` names.
+/// The stylesheet names both, so the page colour the newsletter paints for
+/// itself is what tells paper from app colours.
+fn drawn_as(reader: &postio_widgets::reader::Reader, word: &str) -> bool {
+    let document = reader.test_document();
+    let own_page = document.contains("f6f1e7");
+    document.contains(&format!("data-postio-treatment=\"{word}\""))
+        && (own_page == (word == "paper"))
 }

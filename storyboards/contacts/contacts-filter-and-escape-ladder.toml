@@ -1,0 +1,32 @@
+# The filter in the strip (specs/011-focus-contacts S7, handoff screen 01):
+# / puts the keyboard in the field, typing narrows the list to the people
+# the words name within the tab, and Escape clears the words first and only
+# then leaves Contacts.
+apps   = ["focus", "macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S7" }
+seed   = "small"
+design = "01-contacts-list-and-card"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_contacts"
+
+[[step]]
+id      = "filter"
+command = "contacts_filter"
+expect  = "The filter field has the keyboard, with its caret in it."
+
+[[step]]
+type    = "ada"
+expect  = "The list is the people matching ada, in the tab's order, with the first ringed and its card beside it."
+
+[[step]]
+command = "back"
+expect  = "Escape clears the field: the whole tab is listed again, and Contacts is still up."
+
+[[step]]
+command = "back"
+check   = { keyboard.region = "list" }
+expect  = "A second Escape leaves Contacts for the inbox."

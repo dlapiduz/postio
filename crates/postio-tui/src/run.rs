@@ -87,10 +87,10 @@ pub fn engage_focus(
     config: &postio_config::Config,
     config_path: Option<&std::path::Path>,
 ) -> postio_host::FocusHandle {
-    host.enable_focus(postio_host::FocusSetup::from_config(
-        config.focus.clone(),
-        config_path,
-    ))
+    host.enable_focus(
+        postio_host::FocusSetup::from_config(config.focus.clone(), config_path)
+            .with_remote_images_path(postio_ui::allowlist::RemoteImageAllowList::path()),
+    )
 }
 
 /// Apply `[focus]` to `host` again whenever the file at `path` changes it.
@@ -107,10 +107,13 @@ pub fn follow_focus_config(
         if update.changed.focus
             && let Some(host) = host.upgrade()
         {
-            host.enable_focus(postio_host::FocusSetup::from_config(
-                service.config().focus.clone(),
-                Some(service.path()),
-            ));
+            host.enable_focus(
+                postio_host::FocusSetup::from_config(
+                    service.config().focus.clone(),
+                    Some(service.path()),
+                )
+                .with_remote_images_path(postio_ui::allowlist::RemoteImageAllowList::path()),
+            );
         }
     })
     .inspect_err(|error| tracing::warn!(%error, "config will not be watched; edits need a restart"))
@@ -519,7 +522,14 @@ async fn drive(
     let mut terminal_events = EventStream::new();
     let host_events = client.events();
 
-    let contents = places_contents(client, senders.config.clone()).await;
+    let contents = places_contents(
+        client,
+        senders
+            .config
+            .clone()
+            .with_contacts(senders.host.wiring().focus.config()),
+    )
+    .await;
     // The first list is opened by what the places say: Focus's inbox, once
     // there is an account to show.
     let effects = update(app, Input::Places(contents));
@@ -1418,6 +1428,7 @@ fn perform(
             Effect::SaveSearch(query) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
+                let focus = senders.host.wiring().focus.config();
                 tokio::spawn(async move {
                     let saved = tokio::task::spawn_blocking(move || {
                         crate::config_file::path()
@@ -1428,7 +1439,8 @@ fn perform(
                     .unwrap_or_else(|error| Err(error.to_string()));
                     match saved {
                         Ok(read) => {
-                            let contents = places_contents(&client, read).await;
+                            let contents =
+                                places_contents(&client, read.with_contacts(focus)).await;
                             let _ = inputs.send(Input::Places(contents)).await;
                         }
                         Err(reason) => {
@@ -1460,7 +1472,8 @@ fn perform(
                 // not in what was read then.
                 let read = crate::config_file::path()
                     .and_then(|path| crate::config_file::read_at(&path))
-                    .unwrap_or_else(|| config.clone());
+                    .unwrap_or_else(|| config.clone())
+                    .with_contacts(senders.host.wiring().focus.config());
                 tokio::spawn(async move {
                     let contents = places_contents(&client, read).await;
                     let _ = inputs.send(Input::Places(contents)).await;

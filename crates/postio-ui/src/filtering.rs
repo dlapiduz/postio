@@ -137,20 +137,64 @@ pub fn page(focus: &FocusConfig, filtered_today: Option<u32>, keymap: &Keymap) -
         state,
         today,
         keys,
-        never: focus
-            .filter
-            .never
-            .iter()
-            .map(|entry| never(entry))
-            .collect(),
+        never: never_list(focus),
         never_empty,
-        stopped: focus
-            .filter
-            .stop_markers
-            .iter()
-            .map(|stop| stopped(&stop.sender, &stop.kind, stop.is_well_formed()))
-            .collect(),
+        stopped: stopped_list(focus),
     }
+}
+
+/// `never`, with a person's pin listed once, by name: it covers every
+/// address they own, and taking it back takes the person's pin back.
+fn never_list(focus: &FocusConfig) -> Vec<Listed> {
+    let mut listed_people: Vec<i64> = Vec::new();
+    let mut lines = Vec::new();
+    for entry in &focus.filter.never {
+        let Some(person) = focus.contact_pinned(entry) else {
+            lines.push(never(entry));
+            continue;
+        };
+        if listed_people.contains(&person.contact) {
+            continue;
+        }
+        listed_people.push(person.contact);
+        lines.push(Listed {
+            says: format!("{} \u{b7} {}", person.name, person.addresses.join(", ")),
+            acts: true,
+            undo: Undo::Never(entry.trim().to_owned()),
+        });
+    }
+    lines
+}
+
+/// `stop_markers`, with a person's listed once per kind, by name.
+fn stopped_list(focus: &FocusConfig) -> Vec<Listed> {
+    let mut listed: Vec<(i64, String)> = Vec::new();
+    let mut lines = Vec::new();
+    for stop in &focus.filter.stop_markers {
+        let Some(person) = focus.contact_stopped(&stop.sender, &stop.kind) else {
+            lines.push(stopped(&stop.sender, &stop.kind, stop.is_well_formed()));
+            continue;
+        };
+        let kind = stop.kind.trim().to_ascii_lowercase();
+        if listed.contains(&(person.contact, kind.clone())) {
+            continue;
+        }
+        listed.push((person.contact, kind.clone()));
+        let kinds = if kind == "todo" {
+            "To-dos"
+        } else {
+            "Questions"
+        };
+        lines.push(Listed {
+            says: format!("{kinds} in mail from {}", person.name),
+            acts: true,
+            undo: Undo::Marker {
+                sender: stop.sender.clone(),
+                kind: stop.kind.clone(),
+            },
+        });
+    }
+    lines
 }
 
 /// What filtering does now, in a sentence: what it files away and where,
@@ -263,6 +307,49 @@ mod tests {
 
     fn focus(text: &str) -> FocusConfig {
         Config::from_toml_str(text).expect("a config").focus
+    }
+
+    /// A person who decided, with the addresses it covers.
+    fn ada() -> postio_config::ContactRule {
+        let mut settings = postio_model::ContactSettings {
+            arrival: Some(postio_model::ContactArrival::Inbox),
+            ..postio_model::ContactSettings::default()
+        };
+        settings.set_stop(postio_model::StoppedMarker::Todo, true);
+        postio_config::ContactRule {
+            contact: 7,
+            name: "Ada Lovelace".into(),
+            addresses: vec!["ada@work.example".into(), "ada@home.example".into()],
+            settings,
+        }
+    }
+
+    #[test]
+    fn a_person_s_pin_and_markers_are_listed_by_name_once_whatever_their_addresses() {
+        let focus = focus("[focus.filter]\nnever = [\"@example.net\"]\n").with_contacts(&[ada()]);
+        let page = page(&focus, None, Keymap::defaults());
+
+        let never: Vec<&str> = page.never.iter().map(|entry| entry.says.as_str()).collect();
+        assert_eq!(
+            never,
+            [
+                "everyone at example.net",
+                "Ada Lovelace \u{b7} ada@work.example, ada@home.example"
+            ],
+            "one line for the person, not one per address"
+        );
+        let stopped: Vec<&str> = page
+            .stopped
+            .iter()
+            .map(|entry| entry.says.as_str())
+            .collect();
+        assert_eq!(stopped, ["To-dos in mail from Ada Lovelace"]);
+        assert!(page.never.iter().all(|entry| entry.acts));
+        // What takes it back names an address the write finds the person by.
+        assert_eq!(
+            page.never[1].undo,
+            Undo::Never("ada@work.example".to_owned())
+        );
     }
 
     #[test]

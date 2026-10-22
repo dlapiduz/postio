@@ -1,0 +1,5 @@
+label = "newsletter"
+address = "digest@trailmix.example"
+name = "Trail Digest"
+messages = 8
+with_unsubscribe = 8

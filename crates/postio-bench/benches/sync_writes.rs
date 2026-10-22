@@ -346,7 +346,8 @@ async fn measure(stored: usize) -> Measured {
         on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
         let recorder = ContactRepository::new(&unit);
         for message in &written {
-            on_runtime(recorder.record_message(message)).expect("record");
+            on_runtime(recorder.record_message(message, std::slice::from_ref(&account.address)))
+                .expect("record");
         }
         on_runtime(unit.execute("COMMIT", ())).expect("commit");
         contacts += started.elapsed();

@@ -333,6 +333,21 @@ pub async fn mailbox(connection: &Connection, account: &Account, path: &str) -> 
     mailbox
 }
 
+/// Say the store began without contacts: every message it holds now was
+/// stored before anything recorded who it was from, as in a store that was
+/// migrated. What a catch-up then folds into people, and what a first
+/// sighting of an old address adds to.
+pub async fn mark_contacts_history(connection: &Connection) {
+    connection
+        .execute_batch(
+            "INSERT OR REPLACE INTO settings (key, account_id, value, updated_at)
+             VALUES ('contacts.history_through', NULL,
+                     (SELECT CAST(coalesce(max(id), 0) AS TEXT) FROM messages), 0);",
+        )
+        .await
+        .expect("the history mark");
+}
+
 /// Creates an account with an INBOX, the shape almost every test wants.
 ///
 /// # Panics
@@ -405,6 +420,19 @@ pub fn sorts(plan: &str) -> bool {
 /// lock past `busy_timeout`: what a caller's retry has to recognise (#1594).
 pub fn busy() -> crate::Error {
     crate::Error::Engine(turso::Error::Busy("database is locked".to_owned()))
+}
+
+/// Every statement the Contacts list issues, named, with placeholders bound
+/// by [`plan`] -- so a budget can ask the planner about exactly the SQL that
+/// runs rather than a copy that drifts from it (specs/005-contacts T019).
+pub fn contact_list_statements() -> Vec<(&'static str, String)> {
+    crate::repository::contact_list_statements()
+}
+
+/// The statements the contact suggestions read issues, for the budget that
+/// asks the planner about them.
+pub fn contact_suggestion_statements() -> Vec<String> {
+    crate::repository::contact_suggestion_statements()
 }
 
 #[cfg(test)]

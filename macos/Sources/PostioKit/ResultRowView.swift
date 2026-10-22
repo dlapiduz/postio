@@ -16,11 +16,14 @@ public struct ResultRowView: View {
     let row: ResultRowFfi?
     /// Rows are being checked: the gutter shows a box, not the dot.
     let selecting: Bool
+    /// A click on the sender's name: its address, for the popover.
+    let onName: ((String) -> Void)?
     @Environment(\.colorScheme) private var scheme
 
-    public init(row: ResultRowFfi?, selecting: Bool) {
+    public init(row: ResultRowFfi?, selecting: Bool, onName: ((String) -> Void)? = nil) {
         self.row = row
         self.selecting = selecting
+        self.onName = onName
     }
 
     /// The columns of §3.4, and the gap between them.
@@ -93,6 +96,10 @@ public struct ResultRowView: View {
                 .font(.system(size: 13.5, weight: row.unread ? .bold : .regular))
                 .foregroundStyle(.primary)
                 .truncationMode(.tail)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let address = row.fromAddress { onName?(address) }
+                }
             if let reason = row.reason {
                 Text(reason).font(.system(size: 11.5)).foregroundStyle(.tertiary).truncationMode(.tail)
             }

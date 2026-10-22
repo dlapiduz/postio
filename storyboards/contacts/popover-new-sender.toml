@@ -1,0 +1,53 @@
+# `i` on a first email from someone new (specs/011-focus-contacts S9, handoff
+# screen 05): the popover says they are not saved yet and how they reached
+# you, shows what their signature said (read on this Mac, "Added only if you
+# save"), has the arrival control, and offers Add contact ⌘↩, Not now Esc and
+# Ignore sender ⌘⌫. Not now puts it away and changes nothing.
+#
+# The signature is `postio-classify`'s `signature::parse`, held by
+# tests/signature.rs; the words are postio-ui's `contact_popover`.
+apps   = ["focus", "macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S9" }
+seed   = "small"
+design = "05-popover-new-sender"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+key     = "j"
+
+[[step]]
+key     = "j"
+
+[[step]]
+key     = "j"
+
+[[step]]
+key     = "j"
+
+[[step]]
+key     = "j"
+
+[[step]]
+key     = "j"
+
+[[step]]
+key     = "j"
+
+[[step]]
+id      = "to-the-new-sender"
+key     = "j"
+expect  = "The cursor is on “Intro: Harbor data vendor”, the first email from Caspian Holt."
+
+[[step]]
+id      = "popover"
+command = "contact_popover"
+expect  = "The popover is up with no tiles: the name and address, “Sent 1 message” and when; “Not saved yet. First email <day>; Ben Adeyemi is on copy.”; a card “From their signature” with the title and company, and the phone and website in the monospaced face, and “Read on this Mac. Added only if you save.”; the arrival control with Inbox chosen; and along the foot Add contact ⌘↩ filled, Not now Esc and Ignore sender ⌘⌫."
+
+[[step]]
+id      = "not-now"
+command = "back"
+check   = { keyboard.region = "list", overlay.kind = "none" }
+expect  = "Not now puts the popover away; the keyboard is on the same row and nothing was saved."

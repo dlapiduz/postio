@@ -353,8 +353,10 @@ fn contexts_round_trip_through_strings() {
     // this is only the deliberate-act tripwire. Postio Focus's picker, digest
     // and Filtered view (spec 007) make thirteen, and its capture sheet
     // (milestone 3) fourteen, and the Mac's search results (spec 010 D17)
-    // fifteen.
-    assert_eq!(Context::ALL.len(), 15);
+    // fifteen, and Contacts (specs/005-contacts) sixteen, and the contact
+    // popover (specs/011-focus-contacts S6) seventeen: the first to need the
+    // set widened past sixteen bits.
+    assert_eq!(Context::ALL.len(), 17);
 }
 
 #[test]
@@ -462,10 +464,14 @@ fn adding_an_account_is_reachable_wherever_settings_is() {
     let spec = registry::get(CommandId::AddAccount);
 
     assert_eq!(
-        spec.contexts,
+        spec.contexts.with(Context::Contacts),
         registry::get(CommandId::Settings).contexts,
         "add account is reached from the same places settings is (ADR 0012 Q1); \
          a narrower set would hide it from a surface that offers settings"
+    );
+    assert!(
+        !spec.contexts.contains(Context::Contacts),
+        "Contacts is the one place it is not: `mod+shift+n` is New contact there"
     );
     assert!(
         spec.contexts.contains(Context::Sidebar),

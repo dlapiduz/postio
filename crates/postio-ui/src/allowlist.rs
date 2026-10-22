@@ -317,6 +317,19 @@ impl RemoteImageAllowList {
         }
     }
 
+    /// Every remembered treatment, by sender in address order: what moving
+    /// them onto the people they belong to reads (ADR 0048).
+    pub fn treatments(&self) -> impl Iterator<Item = (&str, Treatment)> {
+        self.treatments
+            .iter()
+            .map(|(sender, treatment)| (sender.as_str(), *treatment))
+    }
+
+    /// Forget every remembered treatment, in memory only, leaving the grants.
+    pub fn clear_treatments(&mut self) {
+        self.treatments.clear();
+    }
+
     /// Persist to [`path`](Self::path).
     pub fn save(&self) -> std::io::Result<()> {
         self.save_to(&Self::path())

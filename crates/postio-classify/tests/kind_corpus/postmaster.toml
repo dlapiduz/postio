@@ -1,0 +1,4 @@
+label = "automated"
+address = "postmaster@mx.example.net"
+name = "Postmaster"
+messages = 3

@@ -1,0 +1,16 @@
+[package]
+name = "postio-contact-sync"
+description = "Contacts sync as a plan: matching, field ownership, three-way diff and conflicts over fake snapshots, with no I/O and the gate that keeps writes shut (specs/011-focus-contacts S12)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+postio-model = { workspace = true }
+postio-workspace-hack.workspace = true
+
+[lints]
+workspace = true

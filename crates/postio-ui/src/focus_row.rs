@@ -92,6 +92,8 @@ pub const COMMAND_PROMPT: &str = "Search mail, go to a folder, or run a command"
 /// The main menu, top to bottom: each item's label and the command it runs
 /// (`None` for About, which is the application's, not a command).
 pub const MENU: &[(&str, Option<CommandId>)] = &[
+    // The people (specs/011-focus-contacts S13): `g c`.
+    ("Contacts", Some(CommandId::OpenContacts)),
     ("Settings", Some(CommandId::Settings)),
     // A check item (T232): checked while messages open beside the list.
     ("Read beside the list", Some(CommandId::ToggleReadingPane)),

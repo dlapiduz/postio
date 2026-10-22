@@ -5,7 +5,7 @@
 
 use chrono::Utc;
 use postio_ffi::{ExternalContactFfi, Session, SessionOptions};
-use postio_model::EmailAddress;
+use postio_model::{EmailAddress, Message};
 use postio_storage::repository::{ContactGroupRepository, ContactRepository};
 use postio_storage::test_support;
 
@@ -16,25 +16,42 @@ async fn directory() -> (std::sync::Arc<Session>, i64) {
     let database = test_support::memory().await;
     let account = {
         let connection = database.connect().await.expect("a connection");
-        let (account, _inbox) = test_support::account_with_inbox(&connection).await;
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let contacts = ContactRepository::new(&connection);
         let at = Utc::now();
-        let wrote = EmailAddress::new(Some("Adams Field"), "adams@example.org");
+        let own = [];
+        let mail = |name: Option<&str>, address: &str| {
+            let mut message = Message::new(account.id, inbox, at);
+            message.date = Some(at);
+            message.from = vec![EmailAddress::new(name, address)];
+            message
+        };
+        contacts
+            .record_message(&mail(Some("Adams Field"), "adams@example.org"), &own)
+            .await
+            .expect("a sighting");
         let member = contacts
-            .record(Some(account.id), &wrote, at)
+            .by_address("adams@example.org")
+            .await
+            .expect("a read")
+            .expect("a person")
+            .id;
+        contacts
+            .record_message(&mail(None, "adamant@example.net"), &own)
             .await
             .expect("a sighting");
-        let gone = contacts
-            .record(
-                Some(account.id),
-                &EmailAddress::new(None::<String>, "adamant@example.net"),
-                at,
-            )
-            .await
-            .expect("a sighting");
-        contacts.delete(gone).await.expect("suppressed");
+        // The person deleted this one: their address is offered nowhere.
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE contacts SET state = 'deleted' WHERE id IN
+               (SELECT contact_id FROM addresses
+                 WHERE address_normalized = 'adamant@example.net')",
+            (),
+        )
+        .await
+        .expect("deleted");
         for statement in [
-            "INSERT INTO addresses (address, address_normalized)
+            "INSERT OR IGNORE INTO addresses (address, address_normalized)
              VALUES ('adams@example.org', 'adams@example.org')",
             "INSERT INTO correspondents (address_id, sent_count, last_sent_at)
              SELECT id, 3, NULL FROM addresses
@@ -45,8 +62,7 @@ async fn directory() -> (std::sync::Arc<Session>, i64) {
                 .expect("written to three times");
         }
         let groups = ContactGroupRepository::new(&connection);
-        let mut group =
-            postio_model::contact_group::ContactGroup::new(Some(account.id), "Adam crew", at);
+        let mut group = postio_model::contact_group::ContactGroup::new("Adam crew", at);
         let group = groups.create(&mut group).await.expect("a group");
         groups.add_member(group, member).await.expect("a member");
         account.id

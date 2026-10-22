@@ -358,6 +358,33 @@ fn what_the_bar_searches_for_forgives_a_near_word() {
     assert!(forgiving, "{:?}", asked(&effects));
 }
 
+#[test]
+fn the_bar_searches_people_where_the_platform_has_adopted_them_and_words_where_it_has_not() {
+    // from: and to: that know people (specs/011-focus-contacts S4) are an
+    // option of the platform, off on Linux until it adopts Contacts.
+    let rows = List::of(3);
+    let ask = |mut focus: FocusController| {
+        let _ = bar_open(&mut focus, CommandId::Search, &rows);
+        let effects = typed(&mut focus, "from:lovelace", &rows);
+        asked(&effects)
+            .iter()
+            .filter_map(|request| match request {
+                Request::Search { query, .. } => Some(query.is_contact_aware()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let on_the_mac = ask(mac());
+    assert!(
+        !on_the_mac.is_empty() && on_the_mac.iter().all(|aware| *aware),
+        "{on_the_mac:?}"
+    );
+    let mut policy = Policy::for_platform(Platform::Freedesktop);
+    policy.caps.results_view = false;
+    let on_linux = ask(FocusController::new(policy));
+    assert!(on_linux.iter().all(|aware| !*aware), "{on_linux:?}");
+}
+
 // -- What a row runs -------------------------------------------------------
 
 #[test]

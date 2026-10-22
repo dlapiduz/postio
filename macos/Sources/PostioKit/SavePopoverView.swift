@@ -199,7 +199,7 @@ private struct FlowChips: View {
 
 /// Lays its views out in rows, left to right, wrapping at the width it is
 /// offered.
-private struct WrapLayout: Layout {
+struct WrapLayout: Layout {
     var spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

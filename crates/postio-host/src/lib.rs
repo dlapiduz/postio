@@ -80,6 +80,11 @@ struct Inner {
     /// Where `config.toml` is, when the host was opened on one: where Focus
     /// writes the person's corrections, unless told otherwise.
     config_path: Mutex<Option<std::path::PathBuf>>,
+    /// Whether this process has moved the file's address-keyed entries onto
+    /// the correspondents they name (`focus::contacts_move`).
+    contacts_moved: std::sync::atomic::AtomicBool,
+    /// Likewise for the remote-image list's treatments.
+    treatments_moved: std::sync::atomic::AtomicBool,
     /// The bodies a reading pane has asked for (#1788).
     asked_bodies: reading::AskedBodies,
     #[cfg(test)]
@@ -518,6 +523,8 @@ impl Host {
             engines: Engines::default(),
             focus: Mutex::new(None),
             config_path: Mutex::new(None),
+            contacts_moved: std::sync::atomic::AtomicBool::new(false),
+            treatments_moved: std::sync::atomic::AtomicBool::new(false),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
@@ -1041,6 +1048,116 @@ impl Inner {
             Req::Recipients { account, prefix } => {
                 Resp::Recipients(compose::recipients(&self.wiring.database, account, &prefix).await)
             }
+            Req::ContactForAddress(address) => Resp::ContactFor(
+                contacts::contact_for_address(&self.wiring.database, &address)
+                    .await
+                    .map(Box::new),
+            ),
+            Req::ContactGlance(address) => Resp::ContactGlance(
+                contacts::contact_glance(&self.wiring.database, &address, chrono::Utc::now())
+                    .await
+                    .map(Box::new),
+            ),
+            Req::ContactsPage {
+                tab,
+                after,
+                skip,
+                limit,
+            } => {
+                match contacts::contacts_page(&self.wiring.database, tab, after, skip, limit).await
+                {
+                    Ok(page) => Resp::ContactsPage(page),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
+            Req::ContactsFiltered { tab, text, cap } => {
+                match contacts::contacts_filtered(&self.wiring.database, tab, &text, cap).await {
+                    Ok(rows) => Resp::ContactsFiltered(rows),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
+            Req::ContactsOverview => match contacts::contacts_overview(&self.wiring.database).await
+            {
+                Ok(overview) => Resp::ContactsOverview(overview),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::ContactCard(person) => {
+                match contacts::contact_card(&self.wiring.database, person, chrono::Utc::now())
+                    .await
+                {
+                    Ok(card) => Resp::ContactCard(card.map(Box::new)),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
+            Req::ContactsSyncPlan {
+                records,
+                scope,
+                mode,
+            } => {
+                match contacts::contacts_sync_plan(&self.wiring.database, &records, scope, mode)
+                    .await
+                {
+                    Ok(plan) => Resp::ContactsSyncPlan(Box::new(plan)),
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
+            Req::ContactsImport(bytes) => {
+                match contacts::import_vcards(&self.wiring.database, &bytes).await {
+                    Ok(summary) => {
+                        // The lists and counts read the people again.
+                        self.hub.emit(Event::ContactsChanged {
+                            names_changed: true,
+                        });
+                        Resp::ContactsImported(Box::new(summary))
+                    }
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
+            Req::ContactsExport => match contacts::export_vcards(
+                &self.wiring.database,
+                contacts::ExportScope::View(postio_model::ContactView::Written),
+            )
+            .await
+            {
+                Ok((text, count)) => Resp::ContactsExported(text, count),
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+            },
+            Req::ContactReview(first) => {
+                Resp::ContactReview(contacts::contact_review(&self.wiring.database, &first).await)
+            }
+            Req::ContactPosition(person, tab) => Resp::ContactPosition(
+                contacts::contact_position(&self.wiring.database, person, tab).await,
+            ),
+            Req::ContactMergeOf(ids) => Resp::ContactMergeOf(
+                contacts::contact_merge_of(&self.wiring.database, &ids)
+                    .await
+                    .map(Box::new),
+            ),
+            Req::ContactSuggestions => {
+                Resp::ContactSuggestions(contacts::contact_suggestions(&self.wiring.database).await)
+            }
+            Req::ContactSuggestionSet(which, on) => {
+                match contacts::set_contact_suggestion(&self.wiring.database, which, on).await {
+                    Ok(switches) => {
+                        // The review's count and the kinds in the lists move
+                        // with the switches.
+                        self.hub.emit(Event::ContactsChanged {
+                            names_changed: false,
+                        });
+                        Resp::ContactSuggestions(switches)
+                    }
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
+            Req::ContactSeen(person) => {
+                Resp::ContactSeen(contacts::contact_seen(&self.wiring.database, person).await)
+            }
+            Req::ContactGroups => {
+                match contacts::contact_group_names(&self.wiring.database).await {
+                    Ok(names) => Resp::ContactGroups(names),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
             Req::RecipientDirectory(account) => Resp::RecipientDirectory(
                 compose::recipient_directory(&self.wiring.database, account).await,
             ),
@@ -1440,6 +1557,37 @@ impl Inner {
                 .map_or_else(Resp::Failed, Resp::DigestPreview),
             Req::SaveDigestRule { replacing, rule } => {
                 done(focus::rules::save(self, replacing, rule).await)
+            }
+            Req::TakeBackFilter { entry, kind } => done(
+                match kind {
+                    None => {
+                        self.wiring
+                            .focus
+                            .pin(&self.wiring.database, &entry, false)
+                            .await
+                    }
+                    Some(kind) => {
+                        self.wiring
+                            .focus
+                            .stop_marker(&self.wiring.database, &entry, &kind, false)
+                            .await
+                    }
+                }
+                .map(|_| ())
+                .map_err(postio_model::listing::StoreError::new),
+            ),
+            Req::Treatments => contacts::treatments(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::Treatments),
+            Req::SetTreatment { address, treatment } => {
+                let set =
+                    contacts::set_treatment(&self.wiring.database, &address, treatment.as_deref())
+                        .await;
+                if set.is_ok() {
+                    // The snapshot a reader starts from follows the change.
+                    let _ = self.wiring.focus.load_contacts(&self.wiring.database).await;
+                }
+                done(set)
             }
             Req::DeleteDigestRule(name) => focus::rules::delete(self, name)
                 .await
@@ -2242,6 +2390,7 @@ impl Transport for Local {
 }
 
 pub mod compose;
+pub mod contacts;
 pub mod export;
 mod focus;
 pub mod maintenance;

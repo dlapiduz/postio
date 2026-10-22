@@ -141,13 +141,8 @@ pub(crate) async fn save(
     inner
         .wiring
         .focus
-        .write(move |text| {
-            postio_config::focus_edit::put_digest_rule(text, replacing.as_deref(), &rule, None)
-                .map(Some)
-                .map_err(|_| "Postio could not write that rule to config.toml".to_owned())
-        })
+        .put_digest(&inner.wiring.database, replacing.as_deref(), &rule, None)
         .await
-        .map(|_| ())
         .map_err(StoreError::new)
 }
 
@@ -156,15 +151,10 @@ pub(crate) async fn save(
 /// it released. What a delivery already holds stays in that digest, on
 /// screen.
 pub(crate) async fn delete(inner: &Inner, name: String) -> Result<u32, StoreError> {
-    let removing = name.clone();
     inner
         .wiring
         .focus
-        .write(move |text| {
-            postio_config::focus_edit::remove_digest_rule(text, &removing)
-                .map(|removed| removed.map(|(text, _, _)| text))
-                .map_err(|_| "Postio could not take that rule out of config.toml".to_owned())
-        })
+        .remove_digest(&inner.wiring.database, &name)
         .await
         .map_err(StoreError::new)?;
     let connection = inner.wiring.database.connect().await?;

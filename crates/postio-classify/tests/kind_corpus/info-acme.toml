@@ -1,0 +1,5 @@
+label = "company"
+address = "info@acme.example"
+name = "Acme"
+messages = 6
+people_at_domain = 3

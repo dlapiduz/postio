@@ -1,0 +1,23 @@
+# Sync with Contacts, as a dry run only, in Settings > Contacts (specs/011-focus-contacts
+# S12 and D7, handoff screen 08). `v y` is a way in: it opens the settings window
+# on its Contacts pane. A demo uses a fake address book in memory: nothing here
+# reads or writes anyone's real Contacts, and the real store is never
+# constructed. The pane explains it; turning sync on is a click on "Turn on and
+# preview", the only moment access would be asked for, and nothing is read from
+# the Mac before it. Writes are shut behind a build flag and the person's
+# confirmation of the plan, and the pane says so.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S12" }
+seed   = "small"
+design = "08-settings-sync"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_contacts"
+
+[[step]]
+id      = "pane"
+command = "contacts_sync"
+expect  = "The settings window comes up on its Contacts pane, not a sheet over the Contacts view. At the top an explainer: “Your contacts live in Postio,” in bold, on this Mac next to your mail, sync is optional. Then Sync with: a row “Contacts on this Mac (iCloud)” with a mode menu reading Read only and a status line that says it is not turned on and nothing is read from Contacts until it is; a Turn on and preview button; What syncs with People, People and companies (chosen) and Everything saved and its note. Then Suggestions with four switches: Save people I write to, automatically (off); Recognise lists, newsletters and automated senders (on); Read signatures for details (on); Suggest merging duplicates (on); and the line saying signature reading, kind detection, duplicate checks and stats run on this Mac. Nothing has been asked of the Mac yet."

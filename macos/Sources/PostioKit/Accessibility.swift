@@ -60,7 +60,7 @@ public enum Intercepted {
     public static let findInMessage = "find_in_message"
     public static let findNext = "find_next"
     public static let findPrevious = "find_previous"
-    /// The reader's `i i`: the one-view render the notice's Show button runs, so
+    /// The reader's `alt+i`: the one-view render the notice's Show button runs, so
     /// the key, the palette row and the notice's Show button cannot drift.
     public static let showImages = "show_images"
     /// The palette's "Quit Postio"; AppKit answers `⌘Q` from the menu itself.
@@ -72,9 +72,17 @@ public enum Intercepted {
     /// button from the keyboard and the palette (#1953), and only while the
     /// banner offers it.
     public static let clearListMail = "clear_list_mail"
-    /// The reader's `i a`: the blocked-images notice's "Always allow", for
+    /// The reader's `alt+I`: the blocked-images notice's "Always allow", for
     /// the sender the notice names, and only where the notice is.
     public static let alwaysShowImages = "always_show_images"
+    /// File ▸ Import Contacts and Export Contacts: the panels are this
+    /// frontend's, because a file is read or written only through a panel the
+    /// user used (specs/011-focus-contacts S11).
+    public static let contactsImport = "contacts_import"
+    public static let contactsExport = "contacts_export"
+    /// File ▸ Sync Contacts: the dry-run sheet, which this frontend presents
+    /// because it holds the address book behind the sync (specs/011 S12).
+    public static let contactsSync = "contacts_sync"
     /// `o`/`A` over the open message: its attachments to choose from. The
     /// choice is a menu this frontend draws, and the file is handed to the
     /// system here.
@@ -105,5 +113,6 @@ public enum Intercepted {
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         showImages,
         quit, unsubscribe, clearListMail, alwaysShowImages, openAttachmentOrLink,
+        contactsImport, contactsExport, contactsSync,
     ] + composeVerbs
 }

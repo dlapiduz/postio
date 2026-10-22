@@ -219,6 +219,67 @@ pub enum Req {
     },
     /// The account's correspondents, for the finder's `@`.
     Correspondents(AccountId),
+    /// The person at an address, made now from the stored mail when the
+    /// catch-up has not reached them (specs/011-focus-contacts).
+    ContactForAddress(String),
+    /// What the known-sender popover shows for an address: the person, their
+    /// counts, what is open between them and the user, and where their mail
+    /// arrives (specs/011-focus-contacts S6).
+    ContactGlance(String),
+    /// A page of the Contacts list for a kind tab: past `after` (a sort key
+    /// and a person) and then `skip` more, at most `limit` rows.
+    ContactsPage {
+        /// The tab.
+        tab: postio_model::ContactTab,
+        /// Where the page starts, past this row.
+        after: Option<(String, postio_model::ContactId)>,
+        /// Rows to pass over after that.
+        skip: u32,
+        /// At most this many.
+        limit: u32,
+    },
+    /// The people in a tab matching what was typed, at most `cap`.
+    ContactsFiltered {
+        /// The tab.
+        tab: postio_model::ContactTab,
+        /// What was typed.
+        text: String,
+        /// At most this many.
+        cap: u32,
+    },
+    /// The strip's counts, the review queue and the catch-up's progress.
+    ContactsOverview,
+    /// Everything a person's card shows.
+    ContactCard(postio_model::ContactId),
+    /// The name of every contact group, by name.
+    ContactGroups,
+    /// What a sync with the Mac's Contacts would do, from a snapshot of their
+    /// side: a dry run, which writes nothing anywhere.
+    ContactsSyncPlan {
+        /// The other side's records.
+        records: Vec<postio_contact_sync::ExternalRecord>,
+        /// What syncs.
+        scope: postio_contact_sync::Scope,
+        /// Whether the plan may ask their side to change.
+        mode: postio_contact_sync::Mode,
+    },
+    /// Read the cards in a `.vcf` the user chose and apply them.
+    ContactsImport(Vec<u8>),
+    /// One `.vcf` of the people the Contacts list holds.
+    ContactsExport,
+    /// What the mail says about a person that the Edit form can keep.
+    ContactSeen(postio_model::ContactId),
+    /// Which Settings > Contacts Suggestions switches are on.
+    ContactSuggestions,
+    /// Turn one of them on or off; answers with all four.
+    ContactSuggestionSet(postio_model::Suggestion, bool),
+    /// The groups of records that look like one person, with the evidence;
+    /// those holding any of these people first.
+    ContactReview(Vec<postio_model::ContactId>),
+    /// Where a person is in a tab's list, or `None`.
+    ContactPosition(postio_model::ContactId, postio_model::ContactTab),
+    /// The group these records make, with whatever evidence there is.
+    ContactMergeOf(Vec<postio_model::ContactId>),
     /// Everything recipient completion can offer for an account, read once
     /// so each keystroke is answered from memory rather than by a query.
     RecipientDirectory(AccountId),
@@ -627,6 +688,28 @@ pub enum Req {
     /// Take a digest rule out of `config.toml` and release what it held into
     /// the inbox (spec 007 FR-126); answered with how many it released.
     DeleteDigestRule(String),
+    /// Take a filtering entry back: stop never filtering `entry` (an
+    /// address, or a whole domain), or with `kind` turn that marker back on.
+    /// Whichever home holds it -- the file, or the person it names -- is
+    /// where it goes from.
+    TakeBackFilter {
+        /// The pinned address or domain, or the marker's sender.
+        entry: String,
+        /// `question` or `todo` for a marker; `None` for a pin.
+        kind: Option<String>,
+    },
+    /// Every sender's remembered treatment, `(address, "app" | "paper")`:
+    /// what a reader that looks senders up from memory keeps.
+    Treatments,
+    /// Always draw `address`'s mail in `treatment` -- `app` or `paper` -- or
+    /// forget the choice with `None`. The treatment is the person's, so it
+    /// covers every address they own.
+    SetTreatment {
+        /// The sender.
+        address: String,
+        /// The choice, or none to forget it.
+        treatment: Option<String>,
+    },
 }
 
 /// A digest rule as the rule dialog writes it (spec 007 screen 24): what
@@ -759,6 +842,40 @@ pub enum Resp {
     Recipients(Vec<RecipientCandidate>),
     /// Correspondents, most often seen first.
     Correspondents(Vec<postio_model::Contact>),
+    /// The person at an address, if the store knows one.
+    ContactFor(Option<Box<postio_model::Contact>>),
+    /// The answer to [`Req::ContactGlance`].
+    ContactGlance(Option<Box<postio_model::ContactGlance>>),
+    /// The answer to [`Req::ContactsPage`].
+    ContactsPage(postio_model::ContactsPageRead),
+    /// The answer to [`Req::ContactsFiltered`].
+    ContactsFiltered(Vec<postio_model::ContactListRow>),
+    /// The answer to [`Req::ContactsOverview`].
+    ContactsOverview(postio_model::ContactsOverview),
+    /// The answer to [`Req::ContactCard`].
+    ContactCard(Option<Box<postio_model::ContactCardRead>>),
+    /// The answer to [`Req::ContactGroups`].
+    ContactGroups(Vec<String>),
+    /// The answer to [`Req::ContactsSyncPlan`].
+    ContactsSyncPlan(Box<postio_contact_sync::Plan>),
+    /// The answer to [`Req::ContactsImport`].
+    ContactsImported(Box<postio_model::card::ImportSummary>),
+    /// The answer to [`Req::ContactsExport`]: the file's text and how many
+    /// people it holds.
+    ContactsExported(String, usize),
+    /// The answer to [`Req::ContactSeen`].
+    ContactSeen(Vec<postio_model::SeenItem>),
+    /// The answer to [`Req::ContactSuggestions`] and
+    /// [`Req::ContactSuggestionSet`].
+    ContactSuggestions(postio_model::ContactSuggestions),
+    /// The answer to [`Req::ContactPosition`].
+    ContactPosition(Option<u32>),
+    /// The answer to [`Req::ContactReview`].
+    ContactReview(Vec<postio_model::MergeGroup>),
+    /// The answer to [`Req::ContactMergeOf`].
+    ContactMergeOf(Option<Box<postio_model::MergeGroup>>),
+    /// Each sender's remembered treatment.
+    Treatments(Vec<(String, String)>),
     /// What recipient completion can offer.
     RecipientDirectory(RecipientDirectory),
     /// Labels, by name.

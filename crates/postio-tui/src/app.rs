@@ -4333,6 +4333,20 @@ impl App {
                     .filter_map(|page| self.fetch_of(generation, page))
                     .collect()
             }
+            // A person was named: every resident row may read differently
+            // and none moved, so the pages held are read again where they are.
+            postio_ui::paging::Plan::Repaint => {
+                let generation = self.list.generation();
+                let pages = self.list.resident_pages();
+                let pending: Vec<u32> = pages
+                    .into_iter()
+                    .filter(|page| self.list.note_pending(*page))
+                    .collect();
+                pending
+                    .into_iter()
+                    .filter_map(|page| self.fetch_of(generation, page))
+                    .collect()
+            }
             postio_ui::paging::Plan::Reload => self
                 .scope
                 .map(|scope| vec![Effect::Recount(scope)])
@@ -6862,6 +6876,7 @@ pub(crate) mod tests {
             .collect();
         let expected: Vec<&str> = postio_ui::settings::Section::ALL
             .iter()
+            .filter(|section| section.shown_in(postio_core::Frontend::Terminal))
             .map(|section| section.label())
             .collect();
         assert_eq!(shown, expected);
@@ -7800,13 +7815,15 @@ pub(crate) mod tests {
         let drawn = reader_text(&app);
         assert!(drawn.contains("1 remote image blocked"), "{drawn}");
         assert!(
-            drawn.contains("i i"),
+            drawn.contains("alt+i"),
             "the key that shows them is named: {drawn}"
         );
 
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('i'));
-        let effects = update(&mut app, press('a'));
+        let effects = update(
+            &mut app,
+            key(KeyCode::Char('I'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+        );
         let saved = effects.iter().find_map(|effect| match effect {
             Effect::SaveAllowlist(list) => Some(list.clone()),
             _ => None,

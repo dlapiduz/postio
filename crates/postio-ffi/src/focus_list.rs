@@ -73,6 +73,10 @@ pub enum SurfaceKindFfi {
     Picker,
     /// A row's menu.
     RowMenu,
+    /// The known-sender popover, hung from a sender's name.
+    ContactPopover,
+    /// The Contacts view, in the list's place.
+    Contacts,
 }
 
 impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
@@ -90,6 +94,8 @@ impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
             SurfaceKindFfi::Filtered => Kind::Filtered,
             SurfaceKindFfi::Picker => Kind::Picker,
             SurfaceKindFfi::RowMenu => Kind::RowMenu,
+            SurfaceKindFfi::ContactPopover => Kind::ContactPopover,
+            SurfaceKindFfi::Contacts => Kind::Contacts,
         }
     }
 }
@@ -111,6 +117,8 @@ impl SurfaceKindFfi {
             Kind::Filtered => SurfaceKindFfi::Filtered,
             Kind::Picker => SurfaceKindFfi::Picker,
             Kind::RowMenu => SurfaceKindFfi::RowMenu,
+            Kind::ContactPopover => SurfaceKindFfi::ContactPopover,
+            Kind::Contacts => SurfaceKindFfi::Contacts,
             _ => return None,
         })
     }
@@ -229,6 +237,10 @@ pub struct FocusRowFfi {
     pub threads: Vec<i64>,
     /// The sender column: names, or "Digest" words for a digest.
     pub sender: String,
+    /// The address of the sender the column names first: what a click on
+    /// the name asks the popover about. `None` for a digest, or a message
+    /// with no sender.
+    pub from_address: Option<String>,
     /// The subject column.
     pub subject: String,
     /// The first line, as sent.
@@ -279,6 +291,7 @@ impl FocusRowFfi {
                     thread: None,
                     threads: Vec::new(),
                     sender: focus_row::digest_title(digest.cadence),
+                    from_address: None,
                     subject: focus_row::digest_subject(&digest.rule, digest.count),
                     preview: Some(focus_row::digest_line(
                         digest.summary_line.as_deref(),
@@ -336,6 +349,7 @@ fn conversation_row(
             .map(|thread| thread.get())
             .collect(),
         sender: focus_row::row_names(message),
+        from_address: message.from.as_ref().map(|from| from.address.clone()),
         subject: message.subject.clone().unwrap_or_default(),
         preview: message.preview.clone(),
         time: postio_ui::row::timestamp(summary.last_at, now),
@@ -601,6 +615,49 @@ impl FocusDriver {
         };
         self.apply(effects);
         None
+    }
+
+    /// The Contacts list's row at `index`; a miss asks for its page.
+    pub(crate) fn contacts_row(
+        self: &Arc<Self>,
+        index: u32,
+    ) -> Option<postio_ui::contacts_view::RowView> {
+        let effects = {
+            let mut focus = self.focus.lock().expect("focus lock");
+            if let Some(row) = focus.contacts_row(index) {
+                return Some(row);
+            }
+            focus.contacts_wanted(index)
+        };
+        self.apply(effects);
+        None
+    }
+
+    /// How many rows the Contacts list has.
+    pub(crate) fn contacts_total(&self) -> u32 {
+        self.focus.lock().expect("focus lock").contacts_total()
+    }
+
+    /// Where the Contacts cursor is.
+    pub(crate) fn contacts_cursor(&self) -> Option<u32> {
+        self.focus.lock().expect("focus lock").contacts_cursor()
+    }
+
+    /// The card beside the list, once read.
+    pub(crate) fn contacts_card(&self) -> Option<postio_ui::contacts_view::CardView> {
+        self.focus.lock().expect("focus lock").contacts_card()
+    }
+
+    /// Settings > Contacts' Suggestions section, once it has been read.
+    pub(crate) fn contacts_settings(
+        &self,
+    ) -> Option<postio_ui::contacts_settings::SuggestionsView> {
+        self.focus.lock().expect("focus lock").contacts_settings()
+    }
+
+    /// The Edit contact form, while one is open.
+    pub(crate) fn contact_edit(&self) -> Option<postio_ui::contact_edit::EditView> {
+        self.focus.lock().expect("focus lock").contact_edit()
     }
 
     /// The message under the cursor, once its page has landed: what a verb
@@ -948,6 +1005,30 @@ impl FocusDriver {
             Intent::Capture(view) => self.say(UiEvent::FocusCapture {
                 view: (*view).into(),
             }),
+            Intent::ContactPopover(view) => self.say(UiEvent::FocusContactPopover {
+                view: (*view).into(),
+            }),
+            Intent::WriteTo(address) => self.say(UiEvent::FocusWriteTo { address }),
+            Intent::Contacts(view) => self.say(UiEvent::FocusContacts {
+                view: (*view).into(),
+            }),
+            Intent::ContactsRows { first, count } => {
+                self.say(UiEvent::FocusContactsRows { first, count });
+            }
+            Intent::ContactsCursor(index) => self.say(UiEvent::FocusContactsCursor { index }),
+            Intent::ContactsCard(card) => self.say(UiEvent::FocusContactsCard {
+                card: card.map(|card| (*card).into()),
+            }),
+            Intent::ContactMerge(view) => self.say(UiEvent::FocusContactMerge {
+                view: view.map(|view| (*view).into()),
+            }),
+            Intent::ContactEdit(view) => self.say(UiEvent::FocusContactEdit {
+                view: view.map(|view| (*view).into()),
+            }),
+            Intent::ContactsSettings(view) => self.say(UiEvent::FocusContactsSettings {
+                view: (*view).into(),
+            }),
+            Intent::ContactsFocusFilter => self.say(UiEvent::FocusContactsFocusFilter),
             Intent::Composer { kind, message } => {
                 if let Some(kind) = crate::focus_compose::ComposerKindFfi::of(kind) {
                     self.say(UiEvent::FocusComposer {

@@ -24,6 +24,25 @@ impl Session {
 
 #[uniffi::export]
 impl Session {
+    /// The file a demo imports contacts from, in place of the open panel;
+    /// empty in a build without demos, which invents nothing.
+    pub fn demo_contacts_file(&self) -> Vec<u8> {
+        contacts_file()
+    }
+}
+
+#[cfg(feature = "demo")]
+fn contacts_file() -> Vec<u8> {
+    postio_demo::IMPORT_VCF.as_bytes().to_vec()
+}
+
+#[cfg(not(feature = "demo"))]
+fn contacts_file() -> Vec<u8> {
+    Vec::new()
+}
+
+#[uniffi::export]
+impl Session {
     /// Say what sync would have said about the demo's account, as the
     /// engine says it, so screens 16 to 19 can be photographed over a store
     /// that never syncs (specs/009-focus-macos T101): `offline`, `auth` (the

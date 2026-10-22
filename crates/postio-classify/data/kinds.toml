@@ -1,0 +1,74 @@
+# What a correspondent is: person, company, list, newsletter or automated
+# (specs/011-focus-contacts, plan section 5).
+#
+# Data, not code. `postio_classify::kind::detect` reads these tables and
+# decides in a fixed order, first match wins: list, newsletter, automated,
+# company, person. It counts evidence over a sender's newest messages, and a
+# header it never saw counts as absent, never as "no".
+#
+# Words are matched the way senders.toml matches: a local part is split at
+# `.`, `-`, `_` and `+`, and a pattern matches when its own words appear in
+# order and together ("no-reply" matches no-reply, no.reply, no_reply-billing).
+
+# A sender that says in its own address that no person reads replies.
+# Automated unless the user has written to them.
+robot_local = [
+  "no-reply",
+  "noreply",
+  "donotreply",
+  "do-not-reply",
+  "mailer-daemon",
+  "postmaster",
+  "bounce",
+  "bounces",
+  "notifications",
+  "notification",
+  "alerts",
+  "alert",
+  "automated",
+]
+
+# A role mailbox at an organisation. Company only on a non-freemail domain
+# where the user already knows at least `company_min_people` people.
+role_local = [
+  "info",
+  "office",
+  "hello",
+  "contact",
+  "team",
+  "sales",
+  "support",
+  "billing",
+  "accounts",
+  "admin",
+  "help",
+  "service",
+  "orders",
+]
+company_min_people = 2
+
+# A word in the display name, or a local part, that says bulk mail.
+bulk_words = ["newsletter", "digest", "weekly", "daily", "roundup", "updates", "news"]
+
+# Domains anyone can open a mailbox on: a role local part there is a person.
+# `freemail.example` is the reserved domain the tests use.
+freemail_domains = [
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "yahoo.com",
+  "icloud.com",
+  "me.com",
+  "proton.me",
+  "protonmail.com",
+  "aol.com",
+  "gmx.com",
+  "freemail.example",
+]
+
+# A header counts as the sender's habit when at least this share of the
+# counted messages carry it (precision before recall: one out-of-office
+# reply does not make a person a robot).
+habit_percent = 50

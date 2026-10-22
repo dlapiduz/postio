@@ -112,7 +112,40 @@ public final class FocusListTable: NSObject {
     }
 
     @objc private func rowClicked() {
-        clicked(row: tableView.clickedRow, modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+        let row = tableView.clickedRow
+        let event = NSApp.currentEvent
+        // A plain click on the sender's name points at the row and hangs the
+        // known-sender popover from the name (specs/011-focus-contacts S6).
+        if let event, event.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
+            let address = model.row(at: row)?.fromAddress,
+            let anchor = nameAnchor(row: row),
+            anchor.contains(tableView.convert(event.locationInWindow, from: nil))
+        {
+            onPoint?(row)
+            onContactName?(row, address)
+            return
+        }
+        clicked(row: row, modifiers: event?.modifierFlags ?? [])
+    }
+
+    /// A click landed on a sender's name: the row and its address, for the popover.
+    public var onContactName: ((Int, String) -> Void)?
+
+    /// Where the sender's name is in `row`, in the table's coordinates: what
+    /// the known-sender popover hangs from, and where a click opens it.
+    /// `nil` for a row with no name to ask about.
+    public func nameAnchor(row: Int) -> NSRect? {
+        guard row >= 0, row < tableView.numberOfRows, let shown = model.row(at: row),
+            shown.fromAddress != nil
+        else { return nil }
+        let frame = tableView.rect(ofRow: row)
+        let band = shown.heading == nil ? 0 : CGFloat(FocusRowMetrics.heading)
+        let columns = FocusRowMetrics.columns(width: Double(frame.width))
+        let bold = shown.bold || shown.layout == .digest
+        let name = Ink.width(shown.sender, bold ? Ink.bodyBold : Ink.body)
+        let width = min(name, CGFloat(columns.senderWidth))
+        let middle = frame.minY + band + CGFloat(FocusRowMetrics.firstLine)
+        return NSRect(x: frame.minX + CGFloat(FocusRowMetrics.senderX), y: middle - 10, width: width, height: 20)
     }
 
     @objc private func rowDoubleClicked() {

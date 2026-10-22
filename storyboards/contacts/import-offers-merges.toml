@@ -1,0 +1,27 @@
+# File > Import Contacts (specs/011-focus-contacts S11): the open panel is the
+# user's and a demo reads its own three-card file instead. Afterwards a sheet
+# says what was made and what was matched, that nothing was merged behind the
+# user's back, and that an import cannot be undone; Review opens the same
+# merge sheet as `g w`, with the imported look-alike and its evidence.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S11" }
+seed   = "small"
+design = "none: the handoff has no import screen; the sheet follows the merge sheet's layout"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "import"
+command = "contacts_import"
+expect  = "A sheet over the window titled “Imported 3 contacts”, and under it: 2 new people added, 1 person you already had matched by address, “1 contact may be someone you already have. Nothing was merged: review them to decide.”, and “An import cannot be undone. Delete a contact to take it back.” Along the foot Review g w and Done Esc."
+
+[[step]]
+id      = "review"
+command = "contacts_suggestions"
+expect  = "The sheet is gone and the merge sheet is up on the imported Ben Adeyemi beside the one the demo already had, with “Both are called ‘Ben Adeyemi’” under Why we think so. Nothing is merged until Return."
+
+[[step]]
+id      = "later"
+command = "back"
+expect  = "Later: the merge sheet is gone; both Bens are still in the list."
