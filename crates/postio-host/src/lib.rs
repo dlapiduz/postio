@@ -1747,6 +1747,7 @@ impl Inner {
     /// Ask the message's account for its body ahead of its backfill.
     async fn fetch_body(&self, message: postio_model::MessageId) {
         let Some(engine) = self.engine_for_message(message).await else {
+            tracing::debug!(message = message.get(), "no engine to fetch that body");
             return;
         };
         self.runtime().spawn(async move {

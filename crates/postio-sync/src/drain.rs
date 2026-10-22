@@ -65,7 +65,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use postio_account::backend::{BackendError, Capabilities, Capability, FlagChange, MailBackend};
+use postio_account::backend::{BackendError, Capabilities, FlagChange, MailBackend};
 use postio_model::{AccountId, Flag, FlagSet, MailboxId, Operation, OperationId, OperationTarget};
 use postio_storage::BlobStore;
 use postio_storage::Connection;
@@ -391,7 +391,7 @@ impl<'a> Drainer<'a> {
                 self.backend
                     .move_messages(&context.path, &context.ids, destination)
                     .await
-                    .map(|mapping| {
+                    .map(|_mapping| {
                         // An empty mapping is not a vanished message, with or
                         // without UIDPLUS. Without it, nothing is ever
                         // reported. With it, RFC 4315 §3 says a server SHOULD
@@ -406,15 +406,23 @@ impl<'a> Drainer<'a> {
                         // resync for nothing (#903). So: applied, and the
                         // destination is what gets resynced, because that is
                         // where the answer is.
-                        if capabilities.contains(Capability::UidPlus) && mapping.is_empty() {
-                            let landed = match &context.operation {
-                                Operation::Move { to, .. } => Some(*to),
-                                Operation::Delete { trash, .. } => Some(*trash),
-                                _ => None,
-                            };
-                            if let Some(landed) = landed {
-                                resync.insert(landed.get());
-                            }
+                        //
+                        // A mapping does not spare the resync either: the
+                        // local row left its folder with no UID (`move_to`
+                        // clears it), and only a sync of the destination
+                        // gives it one again. Until then the row has no
+                        // address, the reading pane's on-open fetch finds
+                        // nothing to ask for, and a filtered message, which
+                        // the filing pass moves before any body is fetched,
+                        // reads "Downloading" for as long as the folder goes
+                        // unsynced (#1978).
+                        let landed = match &context.operation {
+                            Operation::Move { to, .. } => Some(*to),
+                            Operation::Delete { trash, .. } => Some(*trash),
+                            _ => None,
+                        };
+                        if let Some(landed) = landed {
+                            resync.insert(landed.get());
                         }
                         Outcome::Applied
                     })
