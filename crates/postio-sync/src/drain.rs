@@ -507,27 +507,24 @@ impl<'a> Drainer<'a> {
             .backend
             .move_messages(&context.path, &context.ids, destination)
             .await?;
-        if let (Some(message), Some(landed), [mapping]) = (
-            context.message,
-            match &context.operation {
-                Operation::Move { to, .. } => Some(*to),
-                Operation::Delete { trash, .. } => Some(*trash),
-                _ => None,
-            },
-            mapping.as_slice(),
-        ) {
-            if let Err(error) = MessageRepository::new(connection)
+        let landed = match &context.operation {
+            Operation::Move { to, .. } => Some(*to),
+            Operation::Delete { trash, .. } => Some(*trash),
+            _ => None,
+        };
+        if let (Some(message), Some(landed), [landing]) =
+            (context.message, landed, mapping.as_slice())
+            && let Err(error) = MessageRepository::new(connection)
                 .adopt_moved_identity(
                     message,
                     landed,
-                    mapping.destination,
-                    mapping.uid_validity,
-                    &mapping.destination_remote_id(),
+                    landing.destination,
+                    landing.uid_validity,
+                    &landing.destination_remote_id(),
                 )
                 .await
-            {
-                tracing::warn!(%error, "could not record where the moved message landed");
-            }
+        {
+            tracing::warn!(%error, "could not record where the moved message landed");
         }
         Ok(mapping)
     }
