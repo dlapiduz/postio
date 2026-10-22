@@ -1205,6 +1205,11 @@ pub async fn demo() -> (Store, AccountId) {
     }
     // Earlier issues, a week apart, kept in the Archive: what makes a
     // newsletter's card say how often it comes (specs/011-focus-contacts S7).
+    // One transaction for the whole run: every window of the every-command
+    // pass seeds a store, and a commit per issue was a third of this.
+    postio_storage::sql::batch(&connection, "BEGIN IMMEDIATE")
+        .await
+        .expect("begin");
     let mut sent = std::collections::HashSet::new();
     for ((name, address), _, _) in NEWSLETTERS {
         if !sent.insert(*address) {
@@ -1223,6 +1228,9 @@ pub async fn demo() -> (Store, AccountId) {
             .await;
         }
     }
+    postio_storage::sql::batch(&connection, "COMMIT")
+        .await
+        .expect("commit");
     let due = today - chrono::Duration::minutes(9);
     let delivery = digests
         .deliver("Newsletters", due, due)
@@ -1330,11 +1338,13 @@ pub async fn demo() -> (Store, AccountId) {
         .note_move(receipts)
         .await
         .expect("a recent move");
+    // Before the search index exists: its triggers index every message
+    // this makes, and `ensure_schema` backfills the rest in one pass.
+    people(&connection).await;
     // The command bar searches this machine's index, as sync fills it.
     postio_index::index::ensure_schema(&connection)
         .await
         .expect("the search index");
-    people(&connection).await;
     drop(connection);
     (database, report.account.id)
 }
@@ -1393,6 +1403,11 @@ async fn sort_by_kind(connection: &postio_storage::Connection) {
 }
 
 async fn people(connection: &postio_storage::Connection) {
+    // The rows below are many small writes; one commit for them, up to the
+    // threads (whose messages go through the repository on their own).
+    postio_storage::sql::batch(connection, "BEGIN IMMEDIATE")
+        .await
+        .expect("begin");
     ContactRepository::new(connection)
         .catch_up_batch(None, 100_000)
         .await
@@ -1557,6 +1572,9 @@ async fn people(connection: &postio_storage::Connection) {
         )
         .await
         .expect("a Resent-From noted");
+        postio_storage::sql::batch(connection, "COMMIT")
+            .await
+            .expect("commit");
         // Two threads in the archive where a.moreno@example.net stops and
         // ada.moreno@northwind.example begins.
         for n in 0..2_i64 {
