@@ -117,6 +117,15 @@ pub async fn thread_readings(
 /// was down, and a person opening it again is asking again.
 const ASKED_PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How long after a fetch that did not come the next reading of the message
+/// asks again (#1985). Short, because the person opening it again is the
+/// retry; not nothing, because the failure itself makes a pane read again,
+/// and a link that fails at once would turn that into a loop.
+#[cfg(not(test))]
+const ASKED_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(test)]
+const ASKED_RETRY: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// The bodies a reading pane has asked the engines for, and when (#1788).
 ///
 /// A pane draws a message whose body is not here as "Downloading this
@@ -133,6 +142,15 @@ pub(crate) struct AskedBodies {
 }
 
 impl AskedBodies {
+    /// The engine says the fetch for `message` ended without its body: the
+    /// ask is over, and a reading after [`ASKED_RETRY`] makes it again.
+    pub(crate) fn failed(&self, message: MessageId, now: std::time::Instant) {
+        let mut asked = self.asked.lock().expect("never poisoned");
+        if let Some(when) = asked.get_mut(&message) {
+            *when = now.checked_sub(ASKED_PATIENCE - ASKED_RETRY).unwrap_or(now);
+        }
+    }
+
     /// Which of `readings` to ask the engines for now: those whose body is
     /// not here and not asked for within [`ASKED_PATIENCE`]. A body that is
     /// here is forgotten, so a message is never remembered past its fetch.
@@ -190,6 +208,26 @@ mod asked_tests {
             asked.to_ask(&absent, later),
             vec![MessageId::new(1)],
             "never delivered, so opening it again asks again"
+        );
+    }
+
+    #[test]
+    fn a_fetch_that_failed_is_asked_for_again_soon_not_after_the_patience() {
+        let asked = AskedBodies::default();
+        let now = std::time::Instant::now();
+        let absent = [reading(1, Body::Partial)];
+        assert_eq!(asked.to_ask(&absent, now).len(), 1);
+
+        asked.failed(MessageId::new(1), now);
+
+        assert!(
+            asked.to_ask(&absent, now).is_empty(),
+            "the repaint the failure itself causes does not ask"
+        );
+        assert_eq!(
+            asked.to_ask(&absent, now + ASKED_RETRY).len(),
+            1,
+            "opening it again does"
         );
     }
 

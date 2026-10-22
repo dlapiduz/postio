@@ -2975,6 +2975,41 @@ fn a_body_the_server_refuses_is_announced_and_then_read_as_failed() {
 }
 
 #[test]
+fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
+    // #1985: a timeout is not about the message, so nothing marked it and
+    // the pane went on saying "Downloading" for the sixty seconds the host
+    // remembered having asked. Opening it again is asking again.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, events) = world.frontend(ClientKind::Tui);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    let read = || {
+        world
+            .rt
+            .block_on(client.readings(vec![message], false))
+            .expect("an answer")
+            .pop()
+            .expect("a reading")
+            .body
+    };
+
+    mock.fail_all(postio_account::backend::Fault::Timeout);
+    assert_eq!(read(), postio_client::protocol::Body::Partial);
+    world.hear(
+        &events,
+        |event| matches!(event, Event::BodyFailed { message: failed, .. } if *failed == message),
+    );
+    mock.clear_faults();
+
+    let text = eventually(&world, || match read() {
+        postio_client::protocol::Body::Ready { body, .. } => body.text,
+        _ => None,
+    });
+    assert!(text.contains("The tide gate opens at nine."), "{text}");
+}
+
+#[test]
 fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
     // #1788: the reader said "Downloading this message" and nothing asked
     // for it. Opening it is the person asking; a repaint is not asking again.
