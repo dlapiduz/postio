@@ -2774,6 +2774,12 @@ pub(crate) fn placeholders(count: usize, first: usize) -> String {
 async fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
     let id = require_persisted(message.id.get(), "message")?;
 
+    // A header refresh carries no body, and a body is immutable for a given
+    // message: what is stored stays (#1982).
+    if message.sync.body_state == BodyState::HeadersOnly {
+        keep_fetched_content(connection, message).await?;
+    }
+
     let changed = sql::execute(
         connection,
         "UPDATE messages
@@ -2847,6 +2853,42 @@ async fn insert(connection: &Connection, message: &Message) -> Result<MessageId>
     .execute(row_values(0, message))
     .await?;
     Ok(MessageId::new(connection.last_insert_rowid()))
+}
+
+/// A header refresh of a known row must not forget the body already fetched.
+///
+/// Content is immutable for a given message on a server, so a flag change, a
+/// new `MODSEQ` or a move says nothing about it: the row's body state, raw
+/// blob, preview, part map and attachment rows (blobs included) are carried
+/// onto the refreshed message, whatever the backend. A row whose content was
+/// never fetched is written as the fetch has it. A real content change is a
+/// different row (another UID or `UIDVALIDITY`), never this one.
+async fn keep_fetched_content(connection: &Connection, message: &mut Message) -> Result<()> {
+    let Some(stored) = sql::first(
+        connection,
+        &format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"),
+        [message.id.get()],
+        read_message,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    if stored.sync.body_state == BodyState::HeadersOnly {
+        return Ok(());
+    }
+    message.sync.body_state = stored.sync.body_state;
+    message.raw_blob_id = stored.raw_blob_id;
+    message.preview = stored.preview;
+    message.content_type = stored.content_type;
+    message.text_part_id = stored.text_part_id;
+    message.text_part_headers = stored.text_part_headers;
+    message.html_part_id = stored.html_part_id;
+    message.html_part_headers = stored.html_part_headers;
+    message.text_is_flowed = stored.text_is_flowed;
+    message.read_receipt_requested = stored.read_receipt_requested;
+    message.attachments = read_attachments(connection, message.id).await?;
+    Ok(())
 }
 
 /// A late header fetch has no body or MIME structure of its own. Refresh its
