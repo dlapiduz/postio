@@ -1023,6 +1023,35 @@ jobs:
         if: ${{ !cancelled() }}
         uses: ./.github/actions/build-cache-save
 
+  # The one required check for the GTK suites.
+  #
+  # `Tests (GTK widgets N/2)` and `Tests (application)` were not required, and
+  # four GTK-only failures reached main in one session. They cannot simply be
+  # added to the ruleset: they are skipped when no Rust changed (a skip counts
+  # as passed) and the shards have matrix names. This job always runs, so the
+  # ruleset gets one fixed name, and it fails unless they succeeded -- or were
+  # skipped because `changes` said no Rust changed. Any other skip, say one
+  # because `changes` itself failed, is a gate green having done nothing, so
+  # `scripts/ci-frontends-gate.sh` refuses it. There is no label that bypasses
+  # it; a flake already gets one isolated retry.
+  #
+  # `macos` is not in it: it is gated on `macos`, not `rust`, and belongs to
+  # the Mac port's own lane. See the script.
+  frontends:
+    name: Frontends
+    runs-on: ubuntu-latest
+    needs: [changes, test-gtk, test-app]
+    if: always()
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Decide
+        env:
+          RUST: ${{ needs.changes.outputs.rust }}
+          CHANGES: ${{ needs.changes.result }}
+          GTK: ${{ needs.test-gtk.result }}
+          APP: ${{ needs.test-app.result }}
+        run: scripts/ci-frontends-gate.sh "$RUST" "$CHANGES" "test-gtk=$GTK" "test-app=$APP"
+
   # The macOS half, and the link.
   #
   # ADR 0019 Q7 says how Linux stays green and this is the other direction:

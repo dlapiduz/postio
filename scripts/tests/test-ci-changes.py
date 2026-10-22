@@ -72,6 +72,7 @@ def main() -> int:
     case("the root manifest", "pull_request", ["Cargo.toml"], "yes", "no", "yes")
     case("Cargo.lock alone", "pull_request", ["Cargo.lock"], "yes", "no", "yes")
     case("cargo config", "pull_request", [".cargo/config.toml"], "yes", "no", "yes")
+    case("the gate scripts cannot reach a compile", "pull_request", ["scripts/ci-frontends-gate.sh", "scripts/risk-of-diff.sh"], "no", "no", "no")
     case("the toolchain pin", "pull_request", ["rust-toolchain.toml"], "yes", "no", "yes")
     case("nextest config", "pull_request", [".config/nextest.toml"], "yes", "no", "yes")
     case("a fuzz target", "pull_request", ["fuzz/fuzz_targets/parse.rs"], "yes", "no", "yes")
