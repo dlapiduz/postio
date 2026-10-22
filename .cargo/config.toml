@@ -74,6 +74,16 @@ rustflags = [
     "-C", "link-arg=-Wl,--threads=4",
 ]
 
+# The Mac links through the same shim for one reason: it strips test
+# binaries' symbols after the link, a third of each binary, and leaves every
+# other link to plain `cc` (`scripts/linker.sh`). A bare name for the reason
+# above. No `rustflags` here, so the cfg tables' flags below still apply.
+#
+# Switching this costs one full rebuild per tree: cargo passes `-C linker` to
+# every unit, so it is in every fingerprint and every sccache key.
+[target.aarch64-apple-darwin]
+linker = "postio-linker"
+
 # Every test binary on **every Linux target** runs on a compositor of its own,
 # so `cargo test` is headless by default and nobody has to remember a wrapper.
 # The GTK suites present real windows; without this they land on whoever is
