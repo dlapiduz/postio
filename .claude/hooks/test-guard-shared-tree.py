@@ -659,6 +659,14 @@ LOOP_DENY = [
     "scripts/issue-land.sh -m 'feat(gtk): x'",
     "cd ~/src/postio-worktrees/issue-27 && scripts/issue-land.sh --full",
     "nohup scripts/issue-land.sh > land.log 2>&1 &",
+    # The git hooks are what check CLAUDE.md's commit rules.
+    "git commit --no-verify -m 'x'",
+    "git commit -n -m 'x'",
+    "git commit -nm 'x'",
+    "git commit --amend -n",
+    "git -c core.hooksPath=/dev/null commit -m 'x'",
+    "git config --unset core.hooksPath",
+    "git config core.hooksPath /dev/null",
 ]
 LOOP_ALLOW = [
     "cargo test --workspace --lib",
@@ -675,6 +683,11 @@ LOOP_ALLOW = [
     "scripts/issue-land.sh --status",
     "scripts/issue-land.sh --gates-only --detach",
     "cd ~/src/postio-worktrees/issue-27 && scripts/issue-land.sh --detach",
+    "git commit --amend --no-edit",
+    "git commit --only crates/postio-core/src/lib.rs -m 'x'",
+    "git commit -m 'never pass --no-verify'",
+    "git config core.hooksPath .githooks",
+    "git config --get core.hooksPath",
 ]
 for where in (SHARED, WORKTREE):
     for cmd in LOOP_DENY:

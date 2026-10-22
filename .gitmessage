@@ -2,9 +2,11 @@
 #
 # ── Subject ────────────────────────────────────────────────────────────
 # type:    feat fix docs test refactor perf chore ci build revert
-# scope:   crate without the postio- prefix (model, storage, search,
-#          config, imap, smtp, sync, core, gtk) or: workspace, ci, docs
-# summary: imperative mood, lower case, no trailing period, <= 50 chars
+# scope:   a crate without the postio- prefix (gtk, storage, ui, ...),
+#          a top-level directory (scripts, macos, specs, docs, ...), or
+#          workspace tooling ci deps release hooks skills checks land
+#          claim; several joined by commas: (ui,gtk)
+# summary: imperative mood, no trailing period, <= 50 chars
 #          "add draft autosave"  not  "Added draft autosave."
 #
 # ── Body (optional, wrap at 72) ────────────────────────────────────────
@@ -12,7 +14,11 @@
 # the change encodes a decision, a trade-off, or a non-obvious constraint.
 #
 # ── Footer ─────────────────────────────────────────────────────────────
-# Refs: #123                  (always — every commit belongs to an issue)
-# Closes: #123                (when this commit completes the issue —
-#                              put it in the PR body, which is what closes it)
-# BREAKING CHANGE: <what and what to do about it>
+# Refs: #123                  (on an issue branch; none on fix/ docs/ chore/)
+# Refs: specs/011-contacts T004   (on a feature/ branch)
+#
+# Never a closing keyword (close, fix, resolve + #N), not even negated:
+# GitHub closes #N when the squash lands. Write "leaves #N open". The
+# PR's Closes line does the closing.
+#
+# .githooks/commit-msg (scripts/commit-msg.py) refuses what breaks these.

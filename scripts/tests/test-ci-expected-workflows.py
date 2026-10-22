@@ -331,13 +331,14 @@ on:
         # schedules CI, and wait-for-checks.sh waits for it: the cheap jobs
         # run, the compile jobs report as skipped. "Full suite on request"
         # runs on every pull request too, for the same reason -- its check
-        # is required, so it reports "not requested" when nobody asked.
+        # is required, so it reports "not requested" when nobody asked. "PR
+        # title" checks the squash subject, which every pull request has.
         scheduled = sorted(prose.stdout.split("\n")) if prose.returncode == 0 else []
         scheduled = [name for name in scheduled if name]
-        if scheduled != ["CI", "Full suite on request"]:
+        if scheduled != ["CI", "Full suite on request", "PR title"]:
             FAILURES.append(
                 "a prose-only change against the real workflows must schedule "
-                f"CI and Full suite on request, whose expensive jobs then skip "
+                f"CI, Full suite on request and PR title, whose expensive jobs then skip "
                 f"themselves (exit {prose.returncode}, stdout {prose.stdout!r})"
             )
 

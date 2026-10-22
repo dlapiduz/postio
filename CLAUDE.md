@@ -117,13 +117,11 @@ least of all the maintainer's. Never paste real mail or unread logs.
 
 ## Commits and git
 
-- `<type>(<scope>): <summary>`: type from `feat fix docs test refactor
-  perf chore ci build revert`, scope the crate without its prefix, summary
-  imperative and at most 50 characters. The body says **why**, wrapped at
-  72. End with `Refs: #<issue>` (or `Refs: specs/<nnn>-<name>`); the PR's
-  `Closes` does the closing. Template in `.gitmessage`.
-- **Never write a closing keyword in a commit body**, not even negated:
-  GitHub closes the issue for "does not fix #12". Write "leaves #12 open".
+- The body of a commit says **why**. The format (`<type>(<scope>):
+  <summary>`, `Refs:`, no closing keywords even negated) is
+  `.gitmessage`, and `.githooks/commit-msg` refuses a message that breaks
+  it and names the rule. The PR title is the squash subject, so CI checks
+  it the same way; the PR's `Closes` does the closing.
 - A change too small for an issue gets none: branch it `fix/<slug>`,
   `docs/<slug>` or `chore/<slug>` and land it the same way.
 - PRs merge squashed. Fetch before you reason about the tree; other

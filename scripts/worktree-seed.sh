@@ -44,6 +44,10 @@ COLD=0
 # `.cargo/config.toml` points TMPDIR at target/tmp, and nothing else makes it.
 mkdir -p "$TREE/target/tmp"
 
+# The repository's git hooks, for a tree made without a claim. Shared
+# config: the same line issue-claim.sh runs.
+git -C "$TREE" config core.hooksPath .githooks
+
 if [ -d "$TREE/target/debug" ]; then
     echo "target: $TREE already has target/debug; leaving its build alone"
     exit 0

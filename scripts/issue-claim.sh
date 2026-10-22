@@ -381,6 +381,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-target.sh"
 # self-tests copy this script into a sandbox without its neighbours.
 [ -x "$REPO_ROOT/scripts/install-shims.sh" ] && "$REPO_ROOT/scripts/install-shims.sh"
 
+# The repository's git hooks (.githooks/commit-msg checks CLAUDE.md's
+# commit rules). Shared config, so one line covers every worktree; a tree
+# whose base predates .githooks simply has no hook to run.
+git -C "$REPO_ROOT" config core.hooksPath .githooks
+
 # Candidates: open, labelled `$READY_LABEL`, unclaimed, and not blocked by anything
 # still open. `epic`, `icebox`, `needs-architecture` and `needs-maintainer`
 # are never agent work -- an epic is a container, an icebox item is deferred,

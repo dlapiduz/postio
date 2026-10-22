@@ -210,6 +210,17 @@ LOOP_RULES: list[tuple[str, str]] = [
         "arguments after it), then `scripts/issue-land.sh --status` to read "
         "the log -- or background the call.",
     ),
+    (
+        # `-n` is commit's short --no-verify, alone or bundled (`-nm`).
+        r"git\s+(?:(?:-c\s+core\.hooksPath\S*|config\s+(?:[^|;&\n]*\s)?"
+        r"(?:--unset(?:-all)?\s+core\.hooksPath|core\.hooksPath\s+(?!\.githooks\b)\S))"
+        r"|commit\s+(?:[^|;&\n]*\s)?(?:--no-verify\b|-[a-zA-Z]*n[a-zA-Z]*\b))",
+        "Refusing to skip the git hooks: .githooks/commit-msg is what holds "
+        "commit messages to CLAUDE.md's rules, and a closing keyword it would "
+        "have caught closes an issue when the squash lands. If it refused "
+        "your message, fix the message -- the refusal names each rule -- and "
+        "commit again with -F on the file it names.",
+    ),
 ]
 
 # A `rustfmt` that will WRITE: at command position, or fed by xargs, and not

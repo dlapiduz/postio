@@ -1,0 +1,6 @@
+#!/bin/sh
+# Refuse a message CLAUDE.md's commit rules forbid: scripts/commit-msg.py
+# says which rule and how to fix it. Git finds this through
+# `core.hooksPath = .githooks`, which issue-claim.sh and worktree-seed.sh
+# set for the whole repository. Hooks run at the worktree's top level.
+exec python3 scripts/commit-msg.py "$1"
