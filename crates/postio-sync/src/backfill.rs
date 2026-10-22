@@ -574,6 +574,13 @@ pub struct Claim {
     pub cancel: CancelToken,
 }
 
+/// The first wait before an [interrupted](Outcome::Interrupted) body is
+/// offered again, doubling with each failure in a row.
+const RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The longest that wait grows to.
+const RETRY_CAP: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// What became of one body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -586,8 +593,16 @@ pub enum Outcome {
     /// deleted, or its mailbox was wiped by a `UIDVALIDITY` reset, while the
     /// request sat in the queue. Settled, not failed: nothing went wrong.
     Gone,
-    /// The fetch failed.
+    /// The fetch failed, and the message is why.
     Failed {
+        /// Why, for the user or a bug report.
+        reason: String,
+    },
+    /// The fetch stopped short for a reason that is not about the message: a
+    /// dropped link, a timeout, a cancel, a mailbox whose `UIDVALIDITY`
+    /// moved (#1985). Nothing says the bytes cannot come, so the message is
+    /// offered again after a backoff, and at once on the next reconnection.
+    Interrupted {
         /// Why, for the user or a bug report.
         reason: String,
     },
@@ -701,9 +716,18 @@ pub struct Backfill {
     /// by becoming `full`.
     ///
     /// In memory, like the rest of the queue, so a restart offers them once
-    /// more — which is the retry a transient failure deserves and the only one
-    /// it gets.
+    /// more. A fetch that merely stopped short is not here at all: see
+    /// [`interrupted`](Self::interrupted).
     set_aside: HashSet<MessageId>,
+    /// Messages whose fetch was [interrupted](Outcome::Interrupted): how many
+    /// times in a row, and the earliest they may be offered again.
+    ///
+    /// Held apart from `set_aside` because that one lasts the session. These
+    /// wait out a backoff and are forgiven altogether by
+    /// [`reconnected`](Self::reconnected); without the wait, a link that
+    /// fails every fetch fast would be re-seeded and re-failed at the speed
+    /// of the engine's own loop.
+    interrupted: HashMap<MessageId, (u32, std::time::Instant)>,
     /// Requests that arrived while the same message was already on the wire,
     /// re-offered the moment it settles.
     ///
@@ -733,6 +757,7 @@ impl Backfill {
             cancel: CancelToken::new(),
             cancelled: false,
             set_aside: HashSet::new(),
+            interrupted: HashMap::new(),
             deferred: HashMap::new(),
         }
     }
@@ -805,9 +830,19 @@ impl Backfill {
     /// which is what stops the engine's top-up looping (#318). It is also why
     /// the size skip is counted once rather than on every re-seed.
     pub fn enqueue(&mut self, request: BodyRequest) -> bool {
+        self.enqueue_at(request, std::time::Instant::now())
+    }
+
+    /// [`enqueue`](Self::enqueue) at a given moment, which is what a message
+    /// waiting out its backoff is measured against.
+    pub fn enqueue_at(&mut self, request: BodyRequest, now: std::time::Instant) -> bool {
         if self.cancelled
             || self.lanes.contains_key(&request.message)
             || self.set_aside.contains(&request.message)
+            || self
+                .interrupted
+                .get(&request.message)
+                .is_some_and(|(_, retry_at)| now < *retry_at)
         {
             return false;
         }
@@ -939,6 +974,7 @@ impl Backfill {
             }
             Some(Lane::Background) | None => {
                 self.set_aside.remove(&message);
+                self.interrupted.remove(&message);
                 if let Some(payloads) = payloads {
                     self.followups.insert(message, payloads);
                 }
@@ -1076,12 +1112,18 @@ impl Backfill {
 
     /// Records what became of a claim.
     pub fn finished(&mut self, message: MessageId, outcome: Outcome) {
+        self.finished_at(message, outcome, std::time::Instant::now());
+    }
+
+    /// [`finished`](Self::finished) at a given moment.
+    pub fn finished_at(&mut self, message: MessageId, outcome: Outcome, now: std::time::Instant) {
         if self.lanes.remove(&message) != Some(Lane::InFlight) {
             return;
         }
         self.progress.in_flight = self.progress.in_flight.saturating_sub(1);
         match outcome {
             Outcome::Stored { bytes } => {
+                self.interrupted.remove(&message);
                 self.progress.stored += 1;
                 self.progress.bytes += bytes;
                 if let Some(payloads) = self.followups.remove(&message) {
@@ -1093,9 +1135,10 @@ impl Backfill {
             // re-seed for ever: without this, a message the server has no
             // copy of, or one whose fetch keeps failing, would be re-queued
             // the instant the queue drained and fetched again immediately —
-            // a retry loop at the speed of the engine's own loop. It is
-            // offered once more on the next reconnection, and once more on
-            // the next start, which is the retry a transient failure earns.
+            // a retry loop at the speed of the engine's own loop. They are
+            // offered once more on the next start. A fetch that stopped
+            // short ([`Outcome::Interrupted`]) is the one that earns more:
+            // see below.
             Outcome::Gone => {
                 self.followups.remove(&message);
                 self.progress.gone += 1;
@@ -1105,6 +1148,18 @@ impl Backfill {
                 self.followups.remove(&message);
                 self.progress.failed += 1;
                 self.set_aside.insert(message);
+            }
+            // Not set aside: waits out a backoff that doubles from
+            // `RETRY_BASE` to `RETRY_CAP`, and a reconnection ends the wait.
+            Outcome::Interrupted { .. } => {
+                self.followups.remove(&message);
+                self.progress.failed += 1;
+                let tries = self
+                    .interrupted
+                    .get(&message)
+                    .map_or(0, |(tries, _)| *tries);
+                let wait = RETRY_BASE.saturating_mul(1 << tries.min(16)).min(RETRY_CAP);
+                self.interrupted.insert(message, (tries + 1, now + wait));
             }
         }
         // Whatever was asked for while this was on the wire. Offered even
@@ -1132,6 +1187,14 @@ impl Backfill {
         self.deferred.clear();
         self.progress.pending = 0;
         self.progress.in_flight = 0;
+    }
+
+    /// The link has just come up: every message whose fetch was
+    /// [interrupted](Outcome::Interrupted) is worth offering again now,
+    /// whatever is left of its backoff. Those the server refused, or does not
+    /// have, stay [set aside](Self::set_aside).
+    pub fn reconnected(&mut self) {
+        self.interrupted.clear();
     }
 
     /// Makes a cancelled backfill usable again, with a fresh token.
@@ -2856,5 +2919,107 @@ mod tests {
             },
         );
         assert!(backfill.next_body().is_none());
+    }
+
+    #[test]
+    fn an_interrupted_body_waits_out_a_backoff_and_is_then_offered_again() {
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        let start = std::time::Instant::now();
+        assert!(backfill.enqueue_at(request(1, 10), start));
+        let claim = backfill.next_body().expect("the body");
+        backfill.finished_at(
+            claim.request.message,
+            Outcome::Interrupted {
+                reason: "timed out".to_owned(),
+            },
+            start,
+        );
+
+        assert!(
+            !backfill.enqueue_at(request(1, 10), start + RETRY_BASE / 2),
+            "a link that fails every fetch fast is not hammered"
+        );
+        assert!(
+            backfill.enqueue_at(request(1, 10), start + RETRY_BASE),
+            "and the wait ends"
+        );
+    }
+
+    #[test]
+    fn each_interruption_in_a_row_waits_longer() {
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        let start = std::time::Instant::now();
+        for _ in 0..2 {
+            assert!(backfill.enqueue_at(request(1, 10), start + RETRY_CAP));
+            let claim = backfill.next_body().expect("the body");
+            backfill.finished_at(
+                claim.request.message,
+                Outcome::Interrupted {
+                    reason: "timed out".to_owned(),
+                },
+                start,
+            );
+        }
+        assert!(!backfill.enqueue_at(request(1, 10), start + RETRY_BASE));
+    }
+
+    #[test]
+    fn a_reconnection_offers_interrupted_bodies_again_but_not_refused_ones() {
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        for uid in 1..=3 {
+            assert!(backfill.enqueue(request(uid, 10)));
+        }
+        let outcomes = [
+            Outcome::Interrupted {
+                reason: "dropped".to_owned(),
+            },
+            Outcome::Failed {
+                reason: "refused".to_owned(),
+            },
+            Outcome::Gone,
+        ];
+        let mut lost = None;
+        for outcome in outcomes {
+            let claim = backfill.next_body().expect("a body");
+            if matches!(outcome, Outcome::Interrupted { .. }) {
+                lost = Some(claim.request.uid.get());
+            }
+            backfill.finished(claim.request.message, outcome);
+        }
+        let queued = |backfill: &mut Backfill| {
+            (1..=3)
+                .filter(|uid| backfill.enqueue(request(*uid, 10)))
+                .collect::<Vec<_>>()
+        };
+        assert!(queued(&mut backfill).is_empty(), "nothing yet");
+
+        backfill.reconnected();
+
+        assert_eq!(
+            queued(&mut backfill),
+            vec![lost.expect("one was interrupted")],
+            "only the one the link lost"
+        );
+    }
+
+    #[test]
+    fn a_body_that_lands_after_an_interruption_forgets_it() {
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        let start = std::time::Instant::now();
+        backfill.request_now(request(1, 10));
+        let claim = backfill.next_interactive_body().expect("the body");
+        backfill.finished_at(
+            claim.request.message,
+            Outcome::Interrupted {
+                reason: "dropped".to_owned(),
+            },
+            start,
+        );
+        backfill.request_now(request(1, 10));
+        let claim = backfill
+            .next_interactive_body()
+            .expect("asked again by hand");
+        backfill.finished_at(claim.request.message, Outcome::Stored { bytes: 1 }, start);
+        assert!(backfill.interrupted.is_empty());
     }
 }

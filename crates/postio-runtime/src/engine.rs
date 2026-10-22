@@ -1358,6 +1358,7 @@ async fn handle_link_transition(parts: &EngineParts, store: &Store, state: &mut 
         // offering again, and when a folder that had nothing left may have
         // grown one.
         state.backfill_covered = false;
+        state.backfill.reconnected();
         let outcome = drain(parts, store, state).await;
         announce_drain(parts, &outcome).await;
         // Before anything asks what is *in* a folder, find out which
@@ -2300,7 +2301,7 @@ async fn pump_body(
                     continue;
                 }
             };
-            let Some((message, result)) = settled else {
+            let Some((message, mailbox, result)) = settled else {
                 break;
             };
             // A slot just freed. If the user has opened something since this call
@@ -2314,33 +2315,7 @@ async fn pump_body(
                 // message, which is not a batch.
                 running.push(fetch_one_body(parts, store, inline_cap, None, next));
             }
-            let outcome = result.unwrap_or_else(|error| {
-                if let SyncError::Backend(backend) = &error {
-                    let moved = state.supervisor.observe(backend, Utc::now());
-                    announce_link(parts, state, moved);
-                }
-                Outcome::Failed {
-                    reason: error.to_string(),
-                }
-            });
-
-            // The reading pane is waiting on exactly this for whatever the user
-            // just opened, so it is worth saying the moment the bytes are local.
-            if matches!(outcome, Outcome::Stored { .. }) {
-                parts.events.emit(Event::BodyLoaded {
-                    account: parts.account,
-                    message,
-                });
-            }
-            // The open message reads again: a refusal changes its plate (#1918).
-            if matches!(outcome, Outcome::Failed { .. }) {
-                parts.events.emit(Event::BodyFailed {
-                    account: parts.account,
-                    message,
-                });
-            }
-            state.backfill.finished(message, outcome);
-            announce_backfill(parts, state, std::time::Instant::now()).await;
+            settle_body(parts, state, message, mailbox, result).await;
         }
 
         // The next batch: already here, still on the wire, or never claimed.
@@ -2453,13 +2428,18 @@ async fn fetch_one_body(
     inline_cap: Option<u64>,
     prefetched: Option<Rc<RefCell<postio_sync::backfill::Prefetched>>>,
     claim: postio_sync::backfill::Claim,
-) -> (MessageId, Result<Outcome, SyncError>) {
+) -> (MessageId, MailboxId, Result<Outcome, SyncError>) {
     let message = claim.request.message;
+    let mailbox = claim.request.mailbox;
     // A body queued behind the write gate when the shutdown fired has not
     // started, and its text may already be in the prefetch, so nothing below
     // would hear the token. Writes already begun finish; this one has not.
     if claim.cancel.is_cancelled() {
-        return (message, Err(SyncError::Backend(BackendError::Cancelled)));
+        return (
+            message,
+            mailbox,
+            Err(SyncError::Backend(BackendError::Cancelled)),
+        );
     }
     let connection = match store.connect_background().await {
         Ok(connection) => connection,
@@ -2468,6 +2448,7 @@ async fn fetch_one_body(
         Err(error) => {
             return (
                 message,
+                mailbox,
                 Ok(Outcome::Failed {
                     reason: error.to_string(),
                 }),
@@ -2491,7 +2472,7 @@ async fn fetch_one_body(
         &claim.cancel,
     )
     .await;
-    (message, result)
+    (message, mailbox, result)
 }
 
 /// Say how far the body queue has got.
@@ -3651,7 +3632,7 @@ async fn fetch_bodies(
 /// stopped short of because a job was waiting.
 #[derive(Default)]
 struct Fetched {
-    results: Vec<(MessageId, Result<Outcome, SyncError>)>,
+    results: Vec<(MessageId, MailboxId, Result<Outcome, SyncError>)>,
     unstarted: Vec<postio_sync::backfill::Claim>,
 }
 
@@ -3661,32 +3642,63 @@ async fn settle_bodies(parts: &EngineParts, state: &mut State, fetched: Fetched)
     for claim in fetched.unstarted {
         state.backfill.release(claim);
     }
-    for (message, result) in fetched.results {
-        let outcome = result.unwrap_or_else(|error| {
-            if let SyncError::Backend(backend) = &error {
-                let moved = state.supervisor.observe(backend, Utc::now());
-                announce_link(parts, state, moved);
-            }
-            Outcome::Failed {
-                reason: error.to_string(),
-            }
-        });
-        if matches!(outcome, Outcome::Stored { .. }) {
-            parts.events.emit(Event::BodyLoaded {
-                account: parts.account,
-                message,
-            });
-        }
-        // The open message reads again: a refusal changes its plate (#1918).
-        if matches!(outcome, Outcome::Failed { .. }) {
-            parts.events.emit(Event::BodyFailed {
-                account: parts.account,
-                message,
-            });
-        }
-        state.backfill.finished(message, outcome);
-        announce_backfill(parts, state, std::time::Instant::now()).await;
+    for (message, mailbox, result) in fetched.results {
+        settle_body(parts, state, message, mailbox, result).await;
     }
+}
+
+/// What the engine does with one fetched body, wherever it was fetched.
+///
+/// A fetch that errored did not necessarily fail *about the message*
+/// ([`backfill::fetch_body`] marks those itself): a dropped link, a timeout
+/// or a cancel is [`Outcome::Interrupted`], offered again after a backoff and
+/// on reconnection (#1985). A mailbox whose `UIDVALIDITY` moved has stale
+/// UIDs in the store, so it is queued for the resync that rebuilds them.
+async fn settle_body(
+    parts: &EngineParts,
+    state: &mut State,
+    message: MessageId,
+    mailbox: MailboxId,
+    result: Result<Outcome, SyncError>,
+) {
+    let outcome = result.unwrap_or_else(|error| {
+        if let SyncError::Backend(backend) = &error {
+            let moved = state.supervisor.observe(backend, Utc::now());
+            announce_link(parts, state, moved);
+            if backend.requires_full_resync() && !state.to_sync.contains(&mailbox) {
+                tracing::debug!(
+                    mailbox = mailbox.get(),
+                    "a body fetch found the mailbox renumbered; queueing its resync"
+                );
+                state.to_sync.push_back(mailbox);
+            }
+        }
+        Outcome::Interrupted {
+            reason: error.to_string(),
+        }
+    });
+    // The reading pane is waiting on exactly this for whatever the user just
+    // opened, so it is worth saying the moment the bytes are local.
+    if matches!(outcome, Outcome::Stored { .. }) {
+        parts.events.emit(Event::BodyLoaded {
+            account: parts.account,
+            message,
+        });
+    }
+    // The open message reads again: a refusal changes its plate (#1918), and
+    // an interruption tells the host the ask is over, so that opening the
+    // message again is asking again (#1985).
+    if matches!(
+        outcome,
+        Outcome::Failed { .. } | Outcome::Interrupted { .. }
+    ) {
+        parts.events.emit(Event::BodyFailed {
+            account: parts.account,
+            message,
+        });
+    }
+    state.backfill.finished(message, outcome);
+    announce_backfill(parts, state, std::time::Instant::now()).await;
 }
 
 /// What one pass did, before the engine's own state hears about it.
@@ -4701,6 +4713,78 @@ mod tests {
             received_at: Utc::now(),
             want: postio_sync::Want::Text,
         }
+    }
+
+    // -- A body fetch that errored (issue #1985) ----------------------
+
+    /// Claims `body_request(n)` and settles it with `result`, as the
+    /// engine's drain loop does.
+    async fn settle_claimed(
+        parts: &EngineParts,
+        state: &mut State,
+        n: u32,
+        result: Result<Outcome, SyncError>,
+    ) {
+        state.backfill.request_now(body_request(n));
+        let claim = state.backfill.next_interactive_body().expect("the claim");
+        settle_body(
+            parts,
+            state,
+            claim.request.message,
+            claim.request.mailbox,
+            result,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_body_fetch_that_asks_for_a_full_resync_queues_the_resync_of_its_folder() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, _events, _directory) = parts_over(database).await;
+        let mut state = empty_state();
+
+        let renumbered = BackendError::ResyncIntegrityLost {
+            mailbox: "INBOX".to_owned(),
+            skipped: 1,
+        };
+        settle_claimed(&parts, &mut state, 1, Err(SyncError::Backend(renumbered))).await;
+
+        assert_eq!(state.to_sync, [MailboxId::new(1)]);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_link_under_a_body_fetch_queues_no_resync_and_says_so_to_the_pane() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, events, _directory) = parts_over(database).await;
+        let mut state = empty_state();
+
+        settle_claimed(
+            &parts,
+            &mut state,
+            1,
+            Err(SyncError::Backend(BackendError::Cancelled)),
+        )
+        .await;
+
+        assert!(state.to_sync.is_empty());
+        let mut told = Vec::new();
+        while let Some(event) = events.try_next() {
+            told.push(event);
+        }
+        assert!(
+            told.iter().any(|event| matches!(
+                event,
+                Event::BodyFailed { message, .. } if *message == MessageId::new(1)
+            )),
+            "the pane reads again"
+        );
+        // Not set aside: after the backoff the same message is offered again.
+        assert!(
+            state
+                .backfill
+                .enqueue_at(body_request(1), Instant::now() + Duration::from_secs(3600)),
+            "a dropped link is not the message's fault"
+        );
     }
 
     /// Documents the throttle `announce_backfill` still has, over an

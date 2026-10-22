@@ -86,7 +86,7 @@ struct Inner {
     /// Likewise for the remote-image list's treatments.
     treatments_moved: std::sync::atomic::AtomicBool,
     /// The bodies a reading pane has asked for (#1788).
-    asked_bodies: reading::AskedBodies,
+    asked_bodies: Arc<reading::AskedBodies>,
     #[cfg(test)]
     searches_in_flight: AtomicU64,
 }
@@ -528,7 +528,7 @@ impl Host {
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
-            asked_bodies: reading::AskedBodies::default(),
+            asked_bodies: Arc::default(),
             #[cfg(test)]
             searches_in_flight: AtomicU64::new(0),
         });
@@ -815,11 +815,16 @@ impl Inner {
         // subscribe to: the client hears what its own commands say.
         let everybody = self.hub.subscribe(&label);
         let to_client = outbox.clone();
+        let asked_bodies = Arc::clone(&self.asked_bodies);
         let hearing = self.runtime().spawn(async move {
             let Some(everybody) = everybody else {
                 return;
             };
             while let Some(envelope) = everybody.next_tracked().await {
+                // A fetch that ended without the body: the ask is over (#1985).
+                if let Event::BodyFailed { message, .. } = &envelope.event {
+                    asked_bodies.failed(*message, std::time::Instant::now());
+                }
                 if to_client.send(envelope).await.is_err() {
                     return;
                 }
