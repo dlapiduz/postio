@@ -1557,8 +1557,21 @@ impl Session {
             .find(|part| part.id == attachment)
             .and_then(|part| part.filename.clone());
         // The bytes first, so a part that cannot be had leaves no empty file.
-        let bytes =
-            postio_host::parts::part_bytes(&database, &blobs, engine, message, attachment).await?;
+        let events = self
+            .wiring
+            .lock()
+            .expect("wiring lock")
+            .as_ref()
+            .map(|wiring| wiring.events.clone());
+        let bytes = postio_host::parts::part_bytes(
+            &database,
+            &blobs,
+            engine,
+            events.as_ref(),
+            message,
+            attachment,
+        )
+        .await?;
         let to = postio_host::parts::private_copy_path(
             &std::env::temp_dir(),
             message,
