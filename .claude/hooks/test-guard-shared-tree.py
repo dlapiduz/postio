@@ -667,6 +667,20 @@ LOOP_DENY = [
     "git -c core.hooksPath=/dev/null commit -m 'x'",
     "git config --unset core.hooksPath",
     "git config core.hooksPath /dev/null",
+    # A machine-wide jobserver hands out compile jobs.
+    "cargo build -j 8",
+    "cargo build -j8 -p postio-core",
+    "cargo test --jobs 4 -p postio-core",
+    "cargo clippy --workspace --jobs=2",
+    "cargo nextest run -p postio-gtk --build-jobs 4",
+    "CARGO_BUILD_JOBS=8 cargo build",
+    # Logging is POSTIO_LOG.
+    "RUST_LOG=debug cargo run -p postio-gtk",
+    "export RUST_LOG=info",
+    "env RUST_LOG=trace target/debug/postio",
+    # Filing searches for duplicates first.
+    "gh issue create --title 'x' --body 'y'",
+    "cd ~/src/postio-worktrees/issue-27 && gh issue create -t x -b y",
 ]
 LOOP_ALLOW = [
     "cargo test --workspace --lib",
@@ -688,6 +702,15 @@ LOOP_ALLOW = [
     "git commit -m 'never pass --no-verify'",
     "git config core.hooksPath .githooks",
     "git config --get core.hooksPath",
+    "cargo nextest run -p postio-gtk -j 2",
+    "cargo test -p postio-core -- --test-threads 1",
+    "make -j4",
+    "git commit -m 'never pass -j to cargo, nor RUST_LOG=debug'",
+    "POSTIO_LOG=info,postio_sync=debug cargo run -p postio-gtk",
+    "grep -rn RUST_LOG= crates",
+    "scripts/issue-file.sh --title 'x' --body 'y'",
+    "gh issue comment 12 --body 'y'",
+    "gh issue view 12",
 ]
 for where in (SHARED, WORKTREE):
     for cmd in LOOP_DENY:
