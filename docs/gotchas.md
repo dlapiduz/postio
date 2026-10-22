@@ -170,6 +170,10 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **sccache reads its settings when its server starts.** A bare `sccache --show-stats` after `--stop-server` starts a server at the 10 GiB default, which evicts the cache; restart with `scripts/sccache-restart.sh`. `SCCACHE_ERROR_LOG` records nothing unless `SCCACHE_LOG` is also set. A wedged daemon shows idle, minutes-old `rustc` processes and an executed count that does not move. Stopping it kills other sessions' compiles.
 
+**A cache hit rate near zero with `Cache write errors` climbing means the cache directory is gone.** The daemon keeps running against a directory that was deleted under it (`Cache location` in `sccache --show-stats`; on macOS `~/Library/Caches/Mozilla.sccache`), and every write fails silently. This happened on 2026-10-13 and went unnoticed for nine days. Recreate the directory with `mkdir -p`; no restart is needed.
+
+**Never set `CARGO_INCREMENTAL=1` with sccache.** sccache refuses it, and cargo caches that refusal in `target/.rustc_info.json`, keyed without the variable, so every later build in the tree fails with "incremental compilation is prohibited" even once the variable is unset. Delete that file to recover. Leave the variable unset locally: incremental is the dev default, and it makes one edit-and-rebuild about 4x faster than `=0` (6.5 s against 28 s, an edit in `postio-storage` then `session_suite`, 2026-10-22). sccache cannot win that back, because an edited crate and everything downstream of it miss the cache anyway. CI sets `=0`, where there is no edit loop.
+
 **A change to a profile or linker flag evicts the shared compile cache for everyone.** Make such changes rarely and in one commit. For line tables in a debugger, set `CARGO_PROFILE_DEV_DEBUG` for that one build.
 
 **Only `readelf -p .comment` tells you which linker ran.** gcc obeys the last `-fuse-ld`, and rustc appends its own. `scripts/linker.sh` puts mold last.
