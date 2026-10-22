@@ -49,6 +49,9 @@ pub struct Drawn {
     /// Whether the row drew itself selected: the neutral ground and the
     /// checked box.
     pub picked: bool,
+    /// Whether the unread dot stood in the gutter. A picked row never draws
+    /// it: the checked box takes its place.
+    pub dot: bool,
     /// The ink the row drew its text in.
     pub ink: gdk::RGBA,
     /// The accent a marker was drawn in, when the row has one.
@@ -87,6 +90,7 @@ impl Default for Drawn {
             pills: Vec::new(),
             bold: false,
             picked: false,
+            dot: false,
             ink: gdk::RGBA::TRANSPARENT,
             accent: None,
             actions: Vec::new(),
@@ -620,6 +624,7 @@ impl RowWidget {
             snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
             snapshot.append_color(&palette.accent, &dot);
             snapshot.pop();
+            drawn.dot = true;
         }
 
         // The trailing column first, from the right edge in, so the middle
