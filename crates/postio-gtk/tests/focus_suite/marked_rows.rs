@@ -153,14 +153,14 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             drawn.picked,
             drawn.dot
         );
-        // And the pixels agree, whenever a snapshot of the row can be taken:
-        // on a loaded runner the row's paintable sometimes comes back empty,
-        // which says nothing about what was drawn.
+        // And the pixels agree: exactly one mark, never the box over the dot.
         let marks = gutter_marks(&row);
-        assert!(
-            marks == 0 || marks == 1,
+        assert_eq!(
+            marks,
+            1,
             "selected, the gutter holds the checked box alone, not the box over the dot: \
-             {marks} marks"
+             {marks} marks\n{}",
+            dump_row(&row)
         );
         assert!(
             row.drawn().texts.iter().any(|text| text == "Question"),
@@ -241,6 +241,47 @@ fn gutter_marks(row: &postio_gtk::list::RowWidget) -> u32 {
         in_gutter(&node, &mut found);
     }
     found
+}
+
+fn dump(node: &gtk::gsk::RenderNode, depth: usize, out: &mut String) {
+    use gtk::gsk::{ClipNode, ContainerNode};
+    let b = node.bounds();
+    out.push_str(&format!(
+        "{}{:?} {:.0},{:.0} {:.0}x{:.0}\n",
+        " ".repeat(depth),
+        node.node_type(),
+        b.x(),
+        b.y(),
+        b.width(),
+        b.height()
+    ));
+    if let Some(c) = node.downcast_ref::<ContainerNode>() {
+        for i in 0..c.n_children() {
+            dump(&c.child(i), depth + 1, out);
+        }
+    } else if let Some(c) = node.downcast_ref::<ClipNode>() {
+        dump(&c.child(), depth + 1, out);
+    }
+}
+
+fn dump_row(row: &postio_gtk::list::RowWidget) -> String {
+    let paintable = gtk::WidgetPaintable::new(Some(row));
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(&snapshot, f64::from(row.width()), f64::from(row.height()));
+    let mut out = format!(
+        "mapped {} drawable {} opacity {} childvis {} {}x{}\n",
+        row.is_mapped(),
+        row.is_drawable(),
+        row.opacity(),
+        row.is_child_visible(),
+        row.width(),
+        row.height()
+    );
+    match snapshot.to_node() {
+        Some(n) => dump(&n, 0, &mut out),
+        None => out.push_str("NO NODE\n"),
+    }
+    out
 }
 
 fn in_gutter(node: &gtk::gsk::RenderNode, found: &mut u32) {
