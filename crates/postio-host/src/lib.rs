@@ -1530,6 +1530,7 @@ impl Inner {
                     &self.wiring.database,
                     &self.wiring.blobs,
                     self.engine_for_message(message).await,
+                    &self.wiring.events,
                     message,
                     &parts,
                 )
@@ -2250,6 +2251,7 @@ impl Inner {
             &self.wiring.database,
             &self.wiring.blobs,
             self.engine_for_message(message).await,
+            &self.wiring.events,
             message,
             attachment,
             &to,
