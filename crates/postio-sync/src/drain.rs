@@ -65,9 +65,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use postio_account::backend::{
-    BackendError, Capabilities, FlagChange, MailBackend, UidMapping,
-};
+use postio_account::backend::{BackendError, Capabilities, FlagChange, MailBackend, UidMapping};
 use postio_model::{
     AccountId, Flag, FlagSet, MailboxId, MessageId, Operation, OperationId, OperationTarget,
 };
