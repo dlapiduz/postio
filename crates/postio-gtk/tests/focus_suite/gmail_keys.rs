@@ -505,25 +505,53 @@ impl World {
                 }
             }
             Surface::Digest => {
-                // The digest's row is wherever it sorts; the cursor walks to it.
-                for _ in 0..8 {
-                    if matches!(
-                        window.cursor_row(),
-                        Some(postio_gtk::list::FocusRow::Digest(_))
-                    ) {
-                        break;
+                // The digest's row is wherever it sorts, and the list may
+                // still be settling under the cursor. Steer the cursor to the
+                // row by what it is, a step a turn, and open it only once the
+                // cursor is on it.
+                let pane = window.pane().expect("the list pane");
+                let digest_row = || {
+                    let list = pane.feed().list();
+                    (0..list.n_items()).find(|at| {
+                        list.item(*at)
+                            .and_downcast::<postio_gtk::list::RowObject>()
+                            .and_then(|row| row.item())
+                            .is_some_and(|row| matches!(row, postio_gtk::list::FocusRow::Digest(_)))
+                    })
+                };
+                let aimed = crate::settle_until(async || {
+                    let Some(target) = digest_row() else {
+                        return false;
+                    };
+                    match pane.cursor().selected() {
+                        gtk::INVALID_LIST_POSITION => window.act(CommandId::FirstMessage),
+                        at if at < target => window.act(CommandId::NextMessage),
+                        at if at > target => window.act(CommandId::PrevMessage),
+                        _ => return true,
                     }
-                    window.act(CommandId::NextMessage);
-                    crate::settle();
-                }
+                    false
+                })
+                .await;
+                assert!(
+                    aimed,
+                    "{surface:?}: the cursor never reached the digest row (cursor {:?}): {:?}",
+                    window.observe().cursor,
+                    window.rows_on_screen()
+                );
                 window.act(CommandId::OpenMessage);
+                let opened = crate::settle_until(async || window.digest().is_some()).await;
+                assert!(opened, "the digest window never opened over its row");
                 let digest = crate::settle_until(async || {
                     window
                         .digest()
                         .is_some_and(|digest| digest.subjects().len() == 2)
                 })
                 .await;
-                assert!(digest, "the digest never opened over its row");
+                assert!(
+                    digest,
+                    "the digest never listed the two newsletters it holds: {:?}",
+                    window.digest().map(|digest| digest.subjects())
+                );
             }
             Surface::Filtered => {
                 window.act(CommandId::GoToFiltered);
@@ -2312,6 +2340,30 @@ pub fn the_reader_names_the_key_that_checks_for_new_mail() {
         checked += 1;
     }
     assert_eq!(checked, 2);
+}
+
+/// The digest comes up whichever row the cursor was on, because the walk
+/// finds the row by what it is. The cases above reach it from the first row;
+/// a list that settles after the cursor was placed leaves the cursor
+/// anywhere, and walking a fixed count forward from row 0 opened whatever
+/// row the cursor was on instead (#1800).
+pub fn the_digest_opens_from_a_cursor_below_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let world = World::new(Flavor::Digest, Surface::Digest).await;
+        let window = &world.window;
+        window.act(CommandId::LastMessage);
+        let last = window.rows_on_screen().len() as u32 - 1;
+        assert!(
+            crate::settle_until(async || window.observe().cursor.index == Some(last)).await,
+            "the cursor never reached the last row: {:?}",
+            window.observe().cursor
+        );
+        world.enter(Surface::Digest).await;
+        window.destroy();
+    });
 }
 
 // ---------------------------------------------------------------------------

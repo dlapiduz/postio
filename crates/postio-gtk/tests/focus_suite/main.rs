@@ -1754,6 +1754,10 @@ const CASES: &[(&str, fn())] = &[
     ("gmail_keys::digest_opens", gmail_keys::digest_opens as fn()),
     ("gmail_keys::digest_goes", gmail_keys::digest_goes as fn()),
     (
+        "gmail_keys::the_digest_opens_from_a_cursor_below_it",
+        gmail_keys::the_digest_opens_from_a_cursor_below_it as fn(),
+    ),
+    (
         "gmail_keys::filtered_walks",
         gmail_keys::filtered_walks as fn(),
     ),
