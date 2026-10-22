@@ -1,6 +1,4 @@
 //! The server holds the store only while a call is being answered (ADR
-//!
-//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name.
 //! 0041: one Postio has the store at a time).
 //!
 //! An agent's MCP server runs for as long as its session does. If it kept
@@ -58,7 +56,11 @@ type Holder = (
 
 fn hold(store: &Path, hex: &str) -> Holder {
     let mut holder = Command::new(std::env::current_exe().expect("this test"))
-        .args([NAME, "--exact", "--nocapture"])
+        .args([
+            postio_test_support::this_test!(NAME).as_str(),
+            "--exact",
+            "--nocapture",
+        ])
         .env(STORE, store)
         .env(HOLD, hex)
         .stdin(Stdio::piped())

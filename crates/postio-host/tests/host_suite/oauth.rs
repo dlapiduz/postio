@@ -1,7 +1,5 @@
 //! A browser sign-in begun from a frontend (US7 scenario 2, T086).
 //!
-//! POSTIO-OWN-BINARY: the provider table is computed once per process, from the environment.
-//!
 //! Its own binary because the provider it signs in with is a user-overlay
 //! row, and the provider table is computed once per process from the
 //! environment (the classic app's OAuth sign-in test said why at length).
@@ -71,7 +69,10 @@ fn the_consent_url_comes_back_whole_and_nothing_is_opened_or_fetched() {
     let config = tempfile::tempdir().expect("a config directory");
     let ran = std::process::Command::new(std::env::current_exe().expect("this test"))
         .args([
-            "the_consent_url_comes_back_whole_and_nothing_is_opened_or_fetched",
+            postio_test_support::this_test!(
+                "the_consent_url_comes_back_whole_and_nothing_is_opened_or_fetched"
+            )
+            .as_str(),
             "--exact",
             "--nocapture",
         ])

@@ -38,6 +38,7 @@
 //! Passing the pump in keeps one primitive for every suite instead of one for
 //! the GTK crates and another for everyone else.
 
+pub mod child;
 pub mod cpu;
 #[cfg(feature = "fidelity")]
 pub mod fidelity;

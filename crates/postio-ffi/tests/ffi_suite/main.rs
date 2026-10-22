@@ -59,6 +59,7 @@ mod recipients;
 mod registry;
 mod saved_search;
 mod session;
+mod session_config_isolation;
 mod settings;
 mod store_on_disk;
 mod syncing;

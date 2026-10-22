@@ -14,4 +14,5 @@ mod focus_engine;
 mod gmail_keys;
 mod packaging;
 mod registry_parity;
+mod store_in_use;
 mod undo_key;

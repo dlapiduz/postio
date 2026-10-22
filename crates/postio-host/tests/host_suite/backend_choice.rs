@@ -1,7 +1,5 @@
 //! The backend choice, end to end, through the host (#545, ADR 0018 Q5).
 //!
-//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name, and the provider table is computed once per process.
-//!
 //! Two adds against user-overlay preset rows that advertise
 //! `backend = ["jmap", "imap"]`, all on loopback, from a client's side:
 //!
@@ -151,7 +149,10 @@ fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     let config = tempfile::tempdir().expect("a config directory");
     let ran = std::process::Command::new(std::env::current_exe().expect("this test"))
         .args([
-            "the_add_stores_the_first_backend_whose_proof_succeeds",
+            postio_test_support::this_test!(
+                "the_add_stores_the_first_backend_whose_proof_succeeds"
+            )
+            .as_str(),
             "--exact",
             "--nocapture",
         ])

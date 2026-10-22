@@ -1,6 +1,4 @@
 //! An agent's calls are answered by the Postio app that has the store open
-//!
-//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name.
 //! (ADR 0041, amended 2026-10-14).
 //!
 //! The app is this test binary run again with [`APP`] set: a host over a
@@ -124,7 +122,11 @@ fn an_open_app_answers_the_agent_and_its_window_sees_the_change() {
     let audit = directory.path().join("access.log");
 
     let mut app = Command::new(std::env::current_exe().expect("this test"))
-        .args([NAME, "--exact", "--nocapture"])
+        .args([
+            postio_test_support::this_test!(NAME).as_str(),
+            "--exact",
+            "--nocapture",
+        ])
         .env(APP, &socket)
         .env(APP_CONFIG, &config)
         .env(APP_AUDIT, &audit)
