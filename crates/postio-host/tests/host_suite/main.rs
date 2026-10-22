@@ -10,6 +10,9 @@
 //! it a file of its own in `tests/` and say why at its top.
 
 mod auto_empty;
+mod backend_choice;
 mod e2e;
+mod oauth;
+mod oauth_signin;
 mod reclaim;
 mod search_index;

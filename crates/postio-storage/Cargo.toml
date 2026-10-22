@@ -66,6 +66,8 @@ tracing = { workspace = true }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
+# `this_test!`: the name a case that reruns itself as a child passes `--exact`.
+postio-test-support.workspace = true
 # Self dev-dependency so `cargo test -p postio-storage` gets the harness without
 # making `test-support` a default feature.
 postio-model = { path = "../postio-model", features = ["test-corpus"] }

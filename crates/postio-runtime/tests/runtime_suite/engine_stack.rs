@@ -1,7 +1,5 @@
 //! The sync engine's thread does not borrow the ambient stack size (#1541).
 //!
-//! POSTIO-OWN-BINARY: it runs itself again as a child, with the stack-size variable set.
-//!
 //! `Engine::spawn` puts the whole engine on a thread of its own and then
 //! `block_on`s the sync loop there, so every frame of `sync_wave` →
 //! `sync_pass` → `resync_mailbox` → the backend's `select` future is stacked
@@ -139,7 +137,12 @@ async fn a_sync_pass_does_not_run_on_whatever_stack_it_was_given() {
 
     let exe = std::env::current_exe().expect("a test binary has a path");
     let output = Command::new(exe)
-        .args(["--exact", CASE, "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            postio_test_support::this_test!(CASE).as_str(),
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(CHILD, "1")
         .env("RUST_MIN_STACK", AMBIENT_STACK.to_string())
         .output()

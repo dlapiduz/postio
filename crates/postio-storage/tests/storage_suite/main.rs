@@ -74,6 +74,7 @@ mod read_receipt_requested;
 mod reclaim_pages;
 mod refuses_a_foreign_store;
 mod refuses_a_stale_schema;
+mod refuses_a_store_in_use;
 mod reminders;
 mod schema_fidelity;
 mod searches;

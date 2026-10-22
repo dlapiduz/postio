@@ -1,7 +1,5 @@
 //! A store another process has open is refused, in a sentence that says so.
 //!
-//! POSTIO-OWN-BINARY: it needs a second process, which is this binary run again by exact test name.
-//!
 //! Only one Postio may have the store open at a time -- the desktop app or
 //! the terminal, never both (docs/archive/specs/005-tui-frontend). The engine enforces
 //! that with a lock on the file; this is what the second one hears.
@@ -47,7 +45,8 @@ async fn a_store_open_in_another_process_is_refused_as_in_use() {
 
     let mut child = Command::new(std::env::current_exe().expect("this test"))
         .args([
-            "a_store_open_in_another_process_is_refused_as_in_use",
+            postio_test_support::this_test!("a_store_open_in_another_process_is_refused_as_in_use")
+                .as_str(),
             "--exact",
             "--nocapture",
         ])

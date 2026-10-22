@@ -1,7 +1,5 @@
 //! The browser sign-in, end to end, through the host (#534).
 //!
-//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name, and the provider table is computed once per process.
-//!
 //! Everything runs on loopback and in memory: the provider is a user-overlay
 //! preset row, the IdP is a scripted HTTP server on a thread, the person's
 //! browser is played by a plain GET to the redirect the host announced, the
@@ -173,7 +171,10 @@ fn a_preset_oauth_provider_signs_in_through_the_host_end_to_end() {
     let config = tempfile::tempdir().expect("a config directory");
     let ran = std::process::Command::new(std::env::current_exe().expect("this test"))
         .args([
-            "a_preset_oauth_provider_signs_in_through_the_host_end_to_end",
+            postio_test_support::this_test!(
+                "a_preset_oauth_provider_signs_in_through_the_host_end_to_end"
+            )
+            .as_str(),
             "--exact",
             "--nocapture",
         ])

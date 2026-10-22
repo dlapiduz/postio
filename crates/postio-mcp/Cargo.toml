@@ -50,6 +50,8 @@ tempfile = { workspace = true, optional = true }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
+# `this_test!`: the name a case that reruns itself as a child passes `--exact`.
+postio-test-support.workspace = true
 # The binary the stdio suite drives, with a demo store to serve.
 postio-mcp = { path = ".", features = ["demo"] }
 postio-index.workspace = true

@@ -1,6 +1,4 @@
 //! The terminal refuses to start over a store another Postio has open, and
-//!
-//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name.
 //! says to close it.
 //!
 //! One Postio at a time has the store -- the desktop app or the terminal --
@@ -44,7 +42,11 @@ fn keyring(hex: &str) -> Arc<dyn SecretStore> {
 fn again(store: &Path, role: &str, hex: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().expect("this test"));
     command
-        .args([NAME, "--exact", "--nocapture"])
+        .args([
+            postio_test_support::this_test!(NAME).as_str(),
+            "--exact",
+            "--nocapture",
+        ])
         .env("POSTIO_STORE", store)
         .env(role, hex);
     command

@@ -41,4 +41,5 @@ mod thread_store;
 
 // Shared by `engine`, `sync_wave` and `concurrent_accounts`, which each
 // declared it separately when they were separate binaries.
+mod engine_stack;
 mod harness;
