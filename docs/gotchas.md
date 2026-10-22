@@ -36,7 +36,7 @@ These are the traps in this repository that are still live and that no check, ho
 
 The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and most of what follows fails silently.
 
-**`fts_score` returns `0.0` unless it is projected bare and shares its parameter with the `fts_match`.** `-fts_score(..)` gives `0.0`. So does `?1` in the score beside `?2` in the match, even with the same value. Score in a subquery, do the arithmetic outside it, and reuse one explicit `?N`. A bare `?` written before an explicit `?N` collides with it. The rows and the count stay right and only the order changes, so a ranking test needs a case where an older, better match must beat a newer one. Pinned in `crates/postio-storage/tests/turso_capabilities.rs`.
+**`fts_score` returns `0.0` unless it is projected bare and shares its parameter with the `fts_match`.** `-fts_score(..)` gives `0.0`. So does `?1` in the score beside `?2` in the match, even with the same value. Score in a subquery, do the arithmetic outside it, and reuse one explicit `?N`. A bare `?` written before an explicit `?N` collides with it. The rows and the count stay right and only the order changes, so a ranking test needs a case where an older, better match must beat a newer one. Pinned in `crates/postio-storage/tests/storage_suite/turso_capabilities.rs`.
 
 **A row-value cursor filters instead of seeking.** `(received_at, id) < (?2, ?3)` walks everything above the cursor. Keep the redundant bare `received_at <= ?2` in front of it. Removing it as a tidy-up turns keyset paging back into a skip.
 
@@ -90,7 +90,7 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **A bulk verb whose effect depends on row state enqueues only the rows that disagree.** The queued rows are the undo set, so a row that already agreed would let `u` undo something the action never did.
 
-**io-imap keeps only the last untagged `* SEARCH` line.** `existing_uids` guards against this by checking the listing against `EXISTS`. `SORT` and `THREAD` have the same bug, so check them before calling either. When `crates/postio-account/tests/io_imap_search_defect.rs` fails, upstream has fixed it; delete the workarounds then.
+**io-imap keeps only the last untagged `* SEARCH` line.** `existing_uids` guards against this by checking the listing against `EXISTS`. `SORT` and `THREAD` have the same bug, so check them before calling either. When `crates/postio-account/tests/account_suite/io_imap_search_defect.rs` fails, upstream has fixed it; delete the workarounds then.
 
 **Decide QRESYNC from the `CAPABILITY` list after login, never from the `* ENABLED` echo.** Take expunges from `SELECT`'s `vanished_earlier`, not from `FETCH (VANISHED)`. An empty capability list after login is an error. Do not use `watch::ImapMailboxWatch`.
 

@@ -12,7 +12,7 @@
 # Running the tiles returns what typing those operators returns
 # (constitution III): the tiles are `natural::lower_with_origins`' query.
 #
-# The controller's half is postio-focus tests/bar.rs (plain_english_*).
+# The controller's half is postio-focus tests/controller_suite/bar.rs (plain_english_*).
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US7" }
 seed   = "search"

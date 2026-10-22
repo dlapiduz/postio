@@ -96,7 +96,7 @@ Hence a policy instead of a step: `Store::is_worth_reclaiming` asks for the
 holes to be both ≥64 MiB and ≥25% of the file before `reclaim_free_pages` is
 allowed to stall the writers, and the housekeeping worker asks on each pass.
 The thresholds are `store::reclaim_policy`'s to prove;
-`postio-host`'s `tests/reclaim.rs` proves the application reaches them, and
+`postio-host`'s `tests/host_suite/reclaim.rs` proves the application reaches them, and
 its last case fails the moment the incremental pragma arrives — which is the
 signal to take #381's conversion back out of the archive.
 

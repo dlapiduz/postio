@@ -6,7 +6,7 @@
 # keys and the counts. j and k walk the list and the card follows; Escape
 # goes back to the inbox on the row it was.
 #
-# The controller's half is postio-focus tests/contacts.rs; the words are
+# The controller's half is postio-focus tests/controller_suite/contacts.rs; the words are
 # postio-ui's contacts_view; the reads are postio-storage's contacts_view
 # suite.
 apps   = ["focus", "macos"]

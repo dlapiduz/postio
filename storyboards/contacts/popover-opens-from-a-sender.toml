@@ -5,7 +5,7 @@
 # actions All mail ↩, Write c and Open card ⌘I. Escape puts it away and the
 # keyboard is on the list again, on the same row.
 #
-# The controller's half is postio-focus tests/contact_popover.rs; the words
+# The controller's half is postio-focus tests/controller_suite/contact_popover.rs; the words
 # are postio-ui's contact_popover; what the host answers is postio-host's
 # contact_glance.
 apps   = ["focus", "macos"]

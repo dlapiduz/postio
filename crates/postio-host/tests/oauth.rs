@@ -1,5 +1,7 @@
 //! A browser sign-in begun from a frontend (US7 scenario 2, T086).
 //!
+//! POSTIO-OWN-BINARY: the provider table is computed once per process, from the environment.
+//!
 //! Its own binary because the provider it signs in with is a user-overlay
 //! row, and the provider table is computed once per process from the
 //! environment (the classic app's OAuth sign-in test said why at length).

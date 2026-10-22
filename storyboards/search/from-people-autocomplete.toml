@@ -12,7 +12,7 @@
 #
 # `label:` and `in:` behave the same with labels and folders.
 #
-# The controller's half is postio-focus tests/bar.rs (operator_*); the
+# The controller's half is postio-focus tests/controller_suite/bar.rs (operator_*); the
 # people's order is postio-index tests/index_suite/completions.rs.
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US7" }

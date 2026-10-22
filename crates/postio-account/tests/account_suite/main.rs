@@ -30,8 +30,10 @@ mod imap_oauth_session;
 mod imap_pool;
 mod imap_session;
 mod imap_stalls;
+mod io_imap_search_defect;
 mod keychain;
 #[cfg(feature = "maildir")]
 mod maildir;
 mod oauth_flow;
 mod secret;
+mod uidvalidity;

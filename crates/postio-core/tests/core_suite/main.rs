@@ -26,6 +26,7 @@
 //! it will change what its neighbours see.
 
 mod bridge;
+mod bridge_runtime_handle;
 mod command_registry;
 mod config;
 mod dispatch;

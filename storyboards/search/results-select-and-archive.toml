@@ -10,7 +10,7 @@
 # folder, so an archived result still matches and is asked for again
 # with its new folder ("in:Archive").
 #
-# The controller's half is postio-focus tests/results.rs (select_*,
+# The controller's half is postio-focus tests/controller_suite/results.rs (select_*,
 # bulk_*); the predicate's resolution is postio-host's
 # an_archive_aimed_at_a_query_*.
 apps   = ["macos"]

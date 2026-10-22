@@ -11,7 +11,7 @@
 # The words come from the index's best documents for `at*` (research R1,
 # D22): there is no vocabulary table.
 #
-# The controller's half is postio-focus tests/bar.rs (prefix_*); the
+# The controller's half is postio-focus tests/controller_suite/bar.rs (prefix_*); the
 # executor's is postio-index tests/index_suite/completions.rs.
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US7" }

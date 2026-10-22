@@ -1,4 +1,6 @@
 //! An agent's calls are answered by the Postio app that has the store open
+//!
+//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name.
 //! (ADR 0041, amended 2026-10-14).
 //!
 //! The app is this test binary run again with [`APP`] set: a host over a

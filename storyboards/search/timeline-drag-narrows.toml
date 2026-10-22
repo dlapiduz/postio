@@ -5,7 +5,7 @@
 # The drag is a pointer gesture the format cannot press, so its first
 # step is skipped with the reason; the drag's report is proven by
 # macos/Tests/PostioKitTests/TimelineTests.swift and the months it becomes
-# by postio-focus tests/results.rs. The keys are the keyboard's way to the
+# by postio-focus tests/controller_suite/results.rs. The keys are the keyboard's way to the
 # same range, and they are pressed here.
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US3" }

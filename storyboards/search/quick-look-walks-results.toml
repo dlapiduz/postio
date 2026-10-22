@@ -11,7 +11,7 @@
 # ring between the cards; Return opens the message and the panel goes;
 # Space or Esc closes it.
 #
-# The controller's half is postio-focus tests/results.rs (quick_look_*);
+# The controller's half is postio-focus tests/controller_suite/results.rs (quick_look_*);
 # the passages are postio-session's conversation_matches.
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US4" }

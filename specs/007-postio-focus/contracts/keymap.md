@@ -217,7 +217,7 @@ not collide with the message surfaces':
   there beside `z`. The terminal does not suspend.
 - Every key offered by All is deliverable by a terminal, `Delete`, `#`,
   `* a`, `;`, `alt+1`–`alt+4` and `!` included; the terminal's parity test
-  (`crates/postio-tui/tests/registry_parity.rs`) proves it.
+  (`crates/postio-tui/tests/tui_suite/registry_parity.rs`) proves it.
 - The terminal is Focus (C29): `Requirement::Focus` is met by it, and
   `Requirement::ThreePane` is not. It offers every Focus command but those
   that need pixels (`Requirement::Graphical`), and the Markdown composer's
