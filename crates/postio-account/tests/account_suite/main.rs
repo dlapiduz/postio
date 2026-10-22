@@ -35,3 +35,5 @@ mod keychain;
 mod maildir;
 mod oauth_flow;
 mod secret;
+mod io_imap_search_defect;
+mod uidvalidity;

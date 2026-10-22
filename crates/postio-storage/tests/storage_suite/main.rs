@@ -91,3 +91,8 @@ mod upsert_identity_cost;
 mod wal_ceiling;
 mod walk_columns;
 mod write_gate;
+mod glib_main_context;
+mod read_receipt_requested;
+mod refuses_a_foreign_store;
+mod refuses_a_stale_schema;
+mod turso_capabilities;

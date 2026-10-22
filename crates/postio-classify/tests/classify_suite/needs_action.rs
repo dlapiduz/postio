@@ -29,7 +29,7 @@ use postio_classify::{
 use postio_model::{AccountId, EmailAddress, Identity, MailboxId, MailboxRole, Message, ThreadId};
 use serde::Deserialize;
 
-const DATASET: &str = include_str!("data/needs_action.toml");
+const DATASET: &str = include_str!("../data/needs_action.toml");
 
 // --- The dataset ------------------------------------------------------------------
 

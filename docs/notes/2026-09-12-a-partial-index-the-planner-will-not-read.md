@@ -6,7 +6,7 @@
 
 Turso's planner **will not use a partial index for a read**, and **does
 enforce a partial `UNIQUE` constraint**. Both halves are pinned in
-`crates/postio-storage/tests/turso_capabilities.rs`:
+`crates/postio-storage/tests/storage_suite/turso_capabilities.rs`:
 
 - `the_planner_does_not_use_a_partial_index`
 - `a_partial_unique_index_is_still_enforced`

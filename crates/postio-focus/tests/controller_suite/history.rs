@@ -6,13 +6,12 @@
 //! through pages: the inbox comes back as it was left, and so do the
 //! results -- their query, tab, sort, focus ring and checked rows.
 
-mod search_support;
 
 use postio_core::CommandId;
 use postio_focus::Intent;
 use postio_search::results::{ConversationOrder, ResultsTab};
 use postio_ui::keymap::KeyContext;
-use search_support::*;
+use crate::search_support::*;
 
 #[test]
 fn entering_the_results_puts_the_inbox_behind_them() {

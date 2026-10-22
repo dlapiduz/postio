@@ -8,7 +8,7 @@
 # "Jul – Sep 2026". Return applies it; the Date button reads "Since July".
 #
 # The click on Date is skipped with the reason: the format has no pointer
-# input. The controller's half is postio-focus tests/results.rs
+# input. The controller's half is postio-focus tests/controller_suite/results.rs
 # (the_date_popover_turns_words_into_dates_and_its_presets_carry_counts).
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US3" }

@@ -8,7 +8,7 @@ import Testing
 /// design §2 "Keys in the dropdown").
 ///
 /// The controller decides what the dropdown shows and what a row runs
-/// (`crates/postio-focus`, the dropdown section of `tests/bar.rs`). The
+/// (`crates/postio-focus`, the dropdown section of `tests/controller_suite/bar.rs`). The
 /// one thing the Mac decides is where the arrows rest (009 FR-004): ↓/↑
 /// walk the rows that run, skipping headers and the cheat sheet; a new
 /// view keeps the highlight on the same row while it is still drawn, else

@@ -18,7 +18,7 @@
 # The query is the seed's analogue of screen 13's: Ada's mail with an
 # attachment before August whose subject says “budget” -- there is none.
 #
-# The controller's half is postio-focus tests/results.rs (no_results_*);
+# The controller's half is postio-focus tests/controller_suite/results.rs (no_results_*);
 # the counts are the host's (focus_asks_the_host_for_the_ways_out_of_no_results).
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US6" }

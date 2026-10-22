@@ -5,7 +5,7 @@
 # Ignore sender ⌘⌫. Not now puts it away and changes nothing.
 #
 # The signature is `postio-classify`'s `signature::parse`, held by
-# tests/signature.rs; the words are postio-ui's `contact_popover`.
+# tests/classify_suite/signature.rs; the words are postio-ui's `contact_popover`.
 apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S9" }
 seed   = "small"

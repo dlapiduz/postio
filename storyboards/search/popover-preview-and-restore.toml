@@ -13,7 +13,7 @@
 # The format has no pointer input (specs/008-storyboards
 # storyboard-format.md), so the click on From is a step the Mac skips with
 # the reason; the controller's half is proven by postio-focus
-# tests/results.rs (checking_a_person_previews_live_and_esc_restores_the_
+# tests/controller_suite/results.rs (checking_a_person_previews_live_and_esc_restores_the_
 # query_exactly, return_keeps_the_previewed_query).
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US3" }

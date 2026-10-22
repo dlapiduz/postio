@@ -8,7 +8,7 @@
 # the date rolling (off, saying what each way means for this query's
 # date). Cancel, or Save ↩.
 #
-# The controller's half is postio-focus tests/results.rs (save_*); what
+# The controller's half is postio-focus tests/controller_suite/results.rs (save_*); what
 # reaches config.toml is ffi_suite saved_search.
 apps   = ["macos"]
 source = { kind = "spec", ref = "specs/010-focus-search US5" }
