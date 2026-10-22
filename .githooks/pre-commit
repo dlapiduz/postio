@@ -1,0 +1,5 @@
+#!/bin/sh
+# Refuse a commit that stages personal data or unformatted Rust:
+# scripts/pre-commit.py names each file and the fix. Hooks run at the
+# worktree's top level.
+exec python3 scripts/pre-commit.py
