@@ -2405,17 +2405,41 @@ impl<'a> MessageRepository<'a> {
         &self,
         message_id: MessageId,
     ) -> Result<Option<BackfillCandidate>> {
+        self.candidate_where(message_id, "messages.body_state <> 'full'")
+            .await
+    }
+
+    /// One message's candidate for a fetch of every byte, when its raw source
+    /// is not on this machine, whatever its `body_state` says (#1984).
+    ///
+    /// The text axis stores no raw source (ADR 0017), so a message with no
+    /// attachments is `full` with nothing to read for view source, export or
+    /// drag-out. `None` once the raw blob is stored, or when the message is
+    /// gone or has no server identity yet.
+    pub async fn whole_candidate(
+        &self,
+        message_id: MessageId,
+    ) -> Result<Option<BackfillCandidate>> {
+        self.candidate_where(message_id, "messages.raw_blob_id IS NULL")
+            .await
+    }
+
+    async fn candidate_where(
+        &self,
+        message_id: MessageId,
+        condition: &str,
+    ) -> Result<Option<BackfillCandidate>> {
         let mut statement = sql::statement(
             self.connection,
-            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
+            &format!("SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path, messages.remote_id, messages.mailbox_id,
                     mailboxes.role, MAX(0, messages.size - (SELECT COALESCE(SUM(attachments.size), 0) FROM attachments WHERE attachments.message_id = messages.id AND attachments.part_id IS NOT NULL))
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.id = ?1
-                AND messages.body_state <> 'full'
+                AND {condition}
                 AND messages.uid IS NOT NULL
                 AND messages.remote_id IS NOT NULL
-                AND messages.deleted_locally = 0",
+                AND messages.deleted_locally = 0"),
         )
         .await?;
         crate::sql::first_of(&mut statement, [message_id.get()], |row| {
