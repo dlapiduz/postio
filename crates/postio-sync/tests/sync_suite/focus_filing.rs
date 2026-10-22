@@ -22,8 +22,8 @@ use postio_storage::repository::{
 use postio_storage::test_support::{self, counting};
 use postio_storage::{Checkout, Connection};
 use postio_sync::{
-    Classifier, FiledMessage, FilingEffects, FilingPass, FocusFiling, Outcome as Pass, SyncError,
-    resync_mailbox_filing, sync_mailbox,
+    Classifier, Drainer, FiledMessage, FilingEffects, FilingPass, FocusFiling, Outcome as Pass,
+    SyncError, resync_mailbox_filing, sync_mailbox,
 };
 
 const INBOX: &str = "INBOX";
@@ -84,13 +84,16 @@ struct World {
 }
 
 async fn world(with_archive: bool) -> World {
-    let backend = MockBackend::builder()
-        .mailbox(
-            MockMailbox::new(INBOX)
-                .uid_validity(UidValidity::new(VALIDITY))
-                .message(MockMessage::new(mail(0, "Old <old@example.org>", ""))),
-        )
-        .build();
+    let mut server = MockBackend::builder().mailbox(
+        MockMailbox::new(INBOX)
+            .uid_validity(UidValidity::new(VALIDITY))
+            .message(MockMessage::new(mail(0, "Old <old@example.org>", ""))),
+    );
+    if with_archive {
+        server =
+            server.mailbox(MockMailbox::new("Archive").uid_validity(UidValidity::new(VALIDITY)));
+    }
+    let backend = server.build();
     backend.connect().await.expect("connect");
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -180,6 +183,19 @@ impl World {
         (mailbox, decision)
     }
 
+    async fn id_of(&self, subject: &str) -> (MessageId, ()) {
+        let id: i64 = postio_storage::sql::first(
+            &self.connection,
+            "SELECT id FROM messages WHERE subject = ?1",
+            [subject],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("a read")
+        .unwrap_or_else(|| panic!("no message `{subject}`"));
+        (MessageId::new(id), ())
+    }
+
     /// A message the account sent to `to`, filed in Sent and counted as
     /// written, the way a local send files and counts it.
     async fn sent_to(&self, to: &str, message_id: &str) {
@@ -241,6 +257,51 @@ async fn a_filtered_arrival_is_archived_with_its_reason_and_the_move_queued() {
             from: world.inbox.id,
             to: archive.id
         }
+    );
+}
+
+#[tokio::test]
+async fn a_filtered_arrival_can_be_asked_for_once_its_move_has_drained() {
+    // #1978: the row leaves the inbox with no server identity, and the
+    // reading pane's on-open request answers "nothing to fetch" for such a
+    // row. Once the server has the move, the drain must have the archive
+    // resynced, so the message has an address again and its body is asked
+    // for -- the person sees it arrive instead of "Downloading" for ever.
+    let world = world(true).await;
+    world
+        .deliver(mail(1, "Forge <notifications@forge.example>", ""))
+        .await;
+    world.pass(&pass()).await;
+    let (id, _) = world.id_of("Arrival 1").await;
+
+    let report = Drainer::new(&world.backend)
+        .drain(&world.connection, world.account.id, chrono::Utc::now())
+        .await
+        .expect("drain");
+    assert_eq!(report.applied, 1, "the move reached the server: {report:?}");
+    // What the engine does with the report: sync each folder it names.
+    let mailboxes = postio_storage::repository::MailboxRepository::new(&world.connection);
+    for mailbox in &report.needs_resync {
+        let mailbox = mailboxes.get(*mailbox).await.unwrap().expect("a folder");
+        sync_mailbox(
+            &world.connection,
+            &world.backend,
+            &mailbox,
+            &CancelToken::new(),
+            |_| {},
+        )
+        .await
+        .expect("resync");
+    }
+
+    let mut backfill =
+        postio_sync::backfill::Backfill::new(postio_sync::backfill::BackfillPolicy::default());
+    let asked = postio_sync::backfill::request_body(&world.connection, &mut backfill, id)
+        .await
+        .expect("request_body");
+    assert!(
+        asked,
+        "a filtered message the server holds is asked for when opened"
     );
 }
 
