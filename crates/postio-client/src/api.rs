@@ -121,6 +121,7 @@ impl Req {
             Req::ContactsOverview => "ContactsOverview",
             Req::ContactCard(_) => "ContactCard",
             Req::ContactGroups => "ContactGroups",
+            Req::ContactsSyncBringIn { .. } => "ContactsSyncBringIn",
             Req::ContactsImport(_) => "ContactsImport",
             Req::ContactsSyncPlan { .. } => "ContactsSyncPlan",
             Req::ContactsExport => "ContactsExport",
@@ -738,6 +739,31 @@ impl Client {
             "the sync plan",
             |answer| match answer {
                 Resp::ContactsSyncPlan(plan) => Some(*plan),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Applies the Postio side of the plan the person was shown, if
+    /// `shown` is still its fingerprint. Postio's own database only.
+    pub async fn contacts_sync_bring_in(
+        &self,
+        records: Vec<postio_contact_sync::ExternalRecord>,
+        scope: postio_contact_sync::Scope,
+        mode: postio_contact_sync::Mode,
+        shown: u64,
+    ) -> Result<postio_contact_sync::BroughtIn, StoreError> {
+        self.read(
+            Req::ContactsSyncBringIn {
+                records,
+                scope,
+                mode,
+                shown,
+            },
+            "bringing contacts in",
+            |answer| match answer {
+                Resp::ContactsBroughtIn(done) => Some(*done),
                 _ => None,
             },
         )

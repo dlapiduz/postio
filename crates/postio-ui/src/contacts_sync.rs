@@ -87,6 +87,65 @@ pub struct PlanView {
     pub lines: Vec<String>,
     /// "Read only until writes are reviewed. Postio changed nothing ..."
     pub foot: String,
+    /// The button that applies the Postio side of the plan, when it has one.
+    pub bring_in: Option<BringIn>,
+}
+
+/// "Bring 12 into Postio": the person's yes to the plan above it, for
+/// Postio's own contacts only. Bound to the plan by its fingerprint, so a
+/// snapshot that changed since needs a new preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BringIn {
+    /// The button's words.
+    pub label: String,
+    /// The plan it applies.
+    pub fingerprint: u64,
+}
+
+/// The button's words for `people` who would come in and `fields` that would
+/// change in Postio, or `None` when there is nothing to bring.
+pub fn bring_in_label(people: usize, fields: usize) -> Option<String> {
+    match (people, fields) {
+        (0, 0) => None,
+        (people, 0) => Some(format!("Bring {people} into Postio")),
+        (0, fields) => Some(format!(
+            "Update {fields} {} in Postio",
+            if fields == 1 { "field" } else { "fields" }
+        )),
+        (people, fields) => Some(format!(
+            "Bring {people} into Postio and update {fields} {}",
+            if fields == 1 { "field" } else { "fields" }
+        )),
+    }
+}
+
+/// What bringing in did, in words: counts only.
+pub fn brought_in_note(people: usize, fields: usize, skipped: usize) -> String {
+    let mut parts = Vec::new();
+    if people > 0 {
+        parts.push(format!(
+            "Brought {people} {} into Postio",
+            if people == 1 { "person" } else { "people" }
+        ));
+    }
+    if fields > 0 {
+        parts.push(format!(
+            "updated {fields} {} in Postio",
+            if fields == 1 { "field" } else { "fields" }
+        ));
+    }
+    let mut note = match parts.as_slice() {
+        [] => "Nothing needed bringing in".to_owned(),
+        [one] => one.clone(),
+        [first, rest @ ..] => format!("{first}, {}", rest.join(", ")),
+    };
+    if skipped > 0 {
+        note.push_str(&format!(
+            ". {skipped} could not be kept and stayed in Contacts"
+        ));
+    }
+    note.push_str(". Nothing was written to Contacts.");
+    note
 }
 
 /// The scope's words.
@@ -184,8 +243,15 @@ pub fn plan_sheet(plan: &Plan, keymap: &Keymap) -> SyncSheetView {
         plan: Some(PlanView {
             summary: plan.summary(),
             lines,
-            foot: "Read only until writes are reviewed. Postio changed nothing in Contacts and nothing in Postio."
+            foot: "Read only until writes are reviewed. Postio changed nothing in Contacts and nothing in Postio yet. Bringing people in changes Postio only."
                 .to_owned(),
+            bring_in: {
+                let (people, fields) = plan.bring_in_counts();
+                bring_in_label(people, fields).map(|label| BringIn {
+                    label,
+                    fingerprint: plan.fingerprint(),
+                })
+            },
         }),
         primary: done(keymap),
         secondary: None,
@@ -319,7 +385,10 @@ mod tests {
         let sheet = plan_sheet(&plan, &keymap());
         assert_eq!(sheet.title, "Dry run: nothing was written");
         let view = sheet.plan.expect("a plan");
-        assert_eq!(view.summary, "Would add 1, update 0, ask about 0, delete 0");
+        assert_eq!(
+            view.summary,
+            "Would bring in 1, add 1, update 0, ask about 0, delete 0"
+        );
         assert!(
             view.lines
                 .iter()
@@ -334,6 +403,43 @@ mod tests {
         assert_eq!(sheet.primary.label, "Done");
         assert_eq!(sheet.primary.key.as_deref(), Some("Escape"));
         assert_eq!(book.applied(), 0);
+        let bring = view.bring_in.expect("Ada is in Contacts and not in Postio");
+        assert_eq!(bring.label, "Bring 1 into Postio");
+        assert_eq!(bring.fingerprint, plan.fingerprint());
+    }
+
+    #[test]
+    fn the_bring_in_button_says_what_it_applies_and_is_absent_when_there_is_nothing() {
+        assert_eq!(bring_in_label(0, 0), None);
+        assert_eq!(bring_in_label(3, 0).as_deref(), Some("Bring 3 into Postio"));
+        assert_eq!(
+            bring_in_label(0, 1).as_deref(),
+            Some("Update 1 field in Postio")
+        );
+        assert_eq!(
+            bring_in_label(2, 4).as_deref(),
+            Some("Bring 2 into Postio and update 4 fields")
+        );
+        let plan = postio_contact_sync::plan(&[], &[], &[], Scope::People, Mode::ReadOnly);
+        assert!(
+            plan_sheet(&plan, &keymap())
+                .plan
+                .unwrap()
+                .bring_in
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn what_was_brought_in_is_said_in_counts_and_that_contacts_was_not_written() {
+        assert_eq!(
+            brought_in_note(2, 0, 0),
+            "Brought 2 people into Postio. Nothing was written to Contacts."
+        );
+        assert_eq!(
+            brought_in_note(1, 3, 1),
+            "Brought 1 person into Postio, updated 3 fields in Postio. 1 could not be kept and stayed in Contacts. Nothing was written to Contacts."
+        );
     }
 
     #[test]

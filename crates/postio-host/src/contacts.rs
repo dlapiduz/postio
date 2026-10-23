@@ -310,17 +310,17 @@ pub async fn contact_seen(
     items
 }
 
-/// What a sync with the Mac's Contacts would do, from a snapshot of their
-/// side: a dry run. Reads Postio's saved people and nothing else, writes
-/// nothing to either side, and logs counts only; the plan holds names, for the
-/// person to read.
-pub async fn contacts_sync_plan(
+/// Who Postio would sync, and what it has linked: the plan's other inputs.
+async fn sync_inputs(
     database: &Store,
-    externals: &[postio_contact_sync::ExternalRecord],
-    scope: postio_contact_sync::Scope,
-    mode: postio_contact_sync::Mode,
-) -> Result<postio_contact_sync::Plan, String> {
-    use postio_contact_sync::{Fields, LocalRecord, plan};
+) -> Result<
+    (
+        Vec<postio_contact_sync::LocalRecord>,
+        Vec<postio_contact_sync::Link>,
+    ),
+    String,
+> {
+    use postio_contact_sync::{Fields, Link, LocalRecord};
     let failed = |error: postio_storage::Error| {
         tracing::warn!(%error, "could not read contacts to plan a sync");
         "Could not read your contacts".to_owned()
@@ -329,10 +329,9 @@ pub async fn contacts_sync_plan(
         tracing::warn!(%error, "could not open the store to plan a sync");
         "Could not read your contacts".to_owned()
     })?;
-    let saved = ContactRepository::new(&reader)
-        .saved_for_sync()
-        .await
-        .map_err(failed)?;
+    let repository = ContactRepository::new(&reader);
+    let saved = repository.saved_for_sync().await.map_err(failed)?;
+    let stored = repository.sync_links().await.map_err(failed)?;
     let locals: Vec<LocalRecord> = saved
         .into_iter()
         .map(|(person, phones)| {
@@ -363,12 +362,199 @@ pub async fn contacts_sync_plan(
             }
         })
         .collect();
-    // The dry run is what a two-way sync would do; nothing is written either
-    // way, and the gate (`postio_contact_sync::write`) is not called.
-    let plan = plan(&locals, externals, &[], scope, mode);
+    let links = stored
+        .into_iter()
+        .map(|link| Link {
+            local: link.contact,
+            external: link.external,
+            base: Fields {
+                given: link.base.given,
+                family: link.base.family,
+                emails: link.base.emails.into_iter().collect(),
+                phones: link.base.phones,
+                organization: link.base.organization,
+                title: link.base.title,
+            },
+        })
+        .collect();
+    Ok((locals, links))
+}
+
+/// Their records in a fixed order, so the same book plans the same way twice
+/// and a plan's fingerprint means the same thing at the preview and at the
+/// button.
+fn in_order(
+    externals: &[postio_contact_sync::ExternalRecord],
+) -> Vec<postio_contact_sync::ExternalRecord> {
+    let mut ordered = externals.to_vec();
+    ordered.sort_by(|a, b| a.id.cmp(&b.id));
+    ordered
+}
+
+/// What a sync with the Mac's Contacts would do, from a snapshot of their
+/// side: a dry run. Reads Postio's saved people and nothing else, writes
+/// nothing to either side, and logs counts only; the plan holds names, for the
+/// person to read.
+pub async fn contacts_sync_plan(
+    database: &Store,
+    externals: &[postio_contact_sync::ExternalRecord],
+    scope: postio_contact_sync::Scope,
+    mode: postio_contact_sync::Mode,
+) -> Result<postio_contact_sync::Plan, String> {
+    let (locals, links) = sync_inputs(database).await?;
+    // The dry run is what a sync would do; nothing is written either way,
+    // and the gate (`postio_contact_sync::write`) is not called.
+    let plan = postio_contact_sync::plan(&locals, &in_order(externals), &links, scope, mode);
     let (add, update, ask, delete) = plan.counts();
-    tracing::info!(add, update, ask, delete, "planned a contacts sync, dry run");
+    let (bring_in, fields) = plan.bring_in_counts();
+    tracing::info!(
+        bring_in,
+        fields,
+        add,
+        update,
+        ask,
+        delete,
+        "planned a contacts sync, dry run"
+    );
     Ok(plan)
+}
+
+/// Applies the Postio side of the plan the person was shown: saved contacts
+/// for the records only Contacts has, the fields Contacts changed, and the
+/// links that make the next sync a three-way comparison.
+///
+/// This writes Postio's database and nothing else. It never reaches an address
+/// book: it is handed their records as data, and the gate
+/// (`postio_contact_sync::write`) is not called. `shown` is the fingerprint of
+/// the plan the person saw; a snapshot that has changed since plans
+/// differently and is refused, so they preview again. Counts are logged, never
+/// names.
+pub async fn contacts_sync_bring_in(
+    database: &Store,
+    externals: &[postio_contact_sync::ExternalRecord],
+    scope: postio_contact_sync::Scope,
+    mode: postio_contact_sync::Mode,
+    shown: u64,
+) -> Result<postio_contact_sync::BroughtIn, String> {
+    use postio_contact_sync::{BroughtIn, Fields, Side};
+    use postio_storage::repository::{BookChanges, BookPerson, SyncLinkRow};
+    let externals = in_order(externals);
+    let (locals, links) = sync_inputs(database).await?;
+    let plan = postio_contact_sync::plan(&locals, &externals, &links, scope, mode);
+    if plan.fingerprint() != shown {
+        return Err("Contacts changed since the preview. Preview again.".to_owned());
+    }
+    let connection = database.connect().await.map_err(|error| {
+        tracing::warn!(%error, "could not open the store to bring contacts in");
+        "Could not bring those contacts in".to_owned()
+    })?;
+    let repository = ContactRepository::new(&connection);
+    let book_person = |kind, fields: &Fields| BookPerson {
+        kind,
+        given: fields.given.trim().to_owned(),
+        family: fields.family.trim().to_owned(),
+        organization: fields.organization.trim().to_owned(),
+        title: fields.title.trim().to_owned(),
+        emails: fields.emails.iter().cloned().collect(),
+        phones: fields.phones.clone(),
+    };
+    let link_of = |local: i64, external: &postio_contact_sync::ExternalRecord| SyncLinkRow {
+        contact: local,
+        external: external.id.clone(),
+        base: book_person(postio_model::ContactKind::Person, &external.fields),
+    };
+    let find = |id: &str| externals.iter().find(|e| e.id == id);
+    let mut done = BroughtIn::default();
+
+    for import in &plan.imports {
+        let person = book_person(import.kind, &import.fields);
+        match repository.bring_in(&person).await {
+            Ok(Some(id)) => {
+                done.people += 1;
+                done.made.push(id.get());
+                if let Some(external) = find(&import.external)
+                    && let Err(error) = repository.put_sync_link(&link_of(id.get(), external)).await
+                {
+                    tracing::warn!(%error, "could not record a sync link");
+                }
+            }
+            Ok(None) => done.skipped += 1,
+            Err(error) => {
+                tracing::warn!(%error, "could not bring a contact in");
+                done.skipped += 1;
+            }
+        }
+    }
+
+    // What Contacts changed, person by person.
+    let mut by_person: std::collections::BTreeMap<i64, BookChanges> =
+        std::collections::BTreeMap::new();
+    let mut fields_changed: std::collections::BTreeMap<i64, usize> =
+        std::collections::BTreeMap::new();
+    for change in plan.updates.iter().filter(|c| c.side == Side::Local) {
+        let changes = by_person.entry(change.local).or_default();
+        let first = change.values.first().cloned();
+        match change.field.as_str() {
+            "given name" => changes.given = first,
+            "family name" => changes.family = first,
+            "organization" => changes.organization = first,
+            "title" => changes.title = first,
+            "addresses" => changes.emails.clone_from(&change.values),
+            "phones" => changes.phones.clone_from(&change.values),
+            _ => continue,
+        }
+        *fields_changed.entry(change.local).or_default() += 1;
+    }
+    let mut failed: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+    for (local, changes) in &by_person {
+        match repository
+            .take_from_book(postio_model::ContactId::new(*local), changes)
+            .await
+        {
+            Ok(()) => {
+                done.fields += fields_changed.get(local).copied().unwrap_or(0);
+                done.touched.push(*local);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not take a change from contacts");
+                failed.insert(*local);
+                done.skipped += 1;
+            }
+        }
+    }
+
+    // Links: a match with nothing in question, and a link that has caught up.
+    let asked: std::collections::BTreeSet<i64> = plan.conflicts.iter().map(|c| c.local).collect();
+    let pairs = plan
+        .matches
+        .iter()
+        .map(|m| (m.local, m.external.as_str()))
+        .chain(links.iter().map(|l| (l.local, l.external.as_str())));
+    for (local, external) in pairs {
+        if asked.contains(&local) || failed.contains(&local) {
+            continue;
+        }
+        let Some(external) = find(external) else {
+            continue;
+        };
+        let row = link_of(local, external);
+        let kept = links
+            .iter()
+            .find(|l| l.local == local && l.external == external.id);
+        if kept.is_some_and(|l| l.base == external.fields) {
+            continue;
+        }
+        if let Err(error) = repository.put_sync_link(&row).await {
+            tracing::warn!(%error, "could not record a sync link");
+        }
+    }
+    tracing::info!(
+        people = done.people,
+        fields = done.fields,
+        skipped = done.skipped,
+        "brought contacts into postio"
+    );
+    Ok(done)
 }
 
 /// Where `person` is in `tab`'s list: what a cursor moves to after an import
@@ -1710,7 +1896,15 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             1,
             "Marisol is matched by her address: {plan:?}"
         );
-        assert_eq!(plan.left_alone, 1, "Zed stays where he is");
+        assert_eq!(
+            plan.imports
+                .iter()
+                .map(|i| i.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Zed Zimmer"],
+            "Zed is in Contacts and not in Postio, so he would come in"
+        );
+        assert_eq!(plan.left_alone, 0);
         let (add, _, _, delete) = plan.counts();
         assert!(
             add >= 1,
@@ -1779,6 +1973,209 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             "read only adds nothing to their side: {}",
             read_only.summary()
         );
+    }
+
+    fn book_record(
+        id: &str,
+        given: &str,
+        family: &str,
+        address: &str,
+        phone: &str,
+        organization: &str,
+    ) -> postio_contact_sync::ExternalRecord {
+        postio_contact_sync::ExternalRecord {
+            id: id.to_owned(),
+            label: format!("{given} {family}").trim().to_owned(),
+            fields: postio_contact_sync::Fields {
+                given: given.to_owned(),
+                family: family.to_owned(),
+                emails: [address.to_owned()].into_iter().collect(),
+                phones: if phone.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![phone.to_owned()]
+                },
+                organization: organization.to_owned(),
+                title: String::new(),
+            },
+        }
+    }
+
+    async fn save_person(database: &Store, given: &str, address: &str) {
+        let mut form = postio_model::ContactForm::blank();
+        form.given = given.into();
+        form.addresses = vec![postio_model::FormAddress {
+            address: address.into(),
+            ..postio_model::FormAddress::blank()
+        }];
+        let connection = database.connect().await.unwrap();
+        ContactRepository::new(&connection)
+            .save_form(None, &form)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn bringing_in_makes_saved_contacts_of_the_records_only_contacts_has() {
+        use postio_contact_sync::{Mode, Scope};
+        let database = test_support::memory().await;
+        save_person(&database, "Grace", "grace@example.org").await;
+        let externals = vec![
+            book_record("x1", "Grace", "", "grace@example.org", "", "Northwind"),
+            book_record(
+                "x2",
+                "Ada",
+                "Moreno",
+                "ada@example.org",
+                "+1 555 010 0199",
+                "Atlas",
+            ),
+        ];
+        let plan = contacts_sync_plan(&database, &externals, Scope::People, Mode::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(plan.bring_in_counts(), (1, 1));
+        let done = contacts_sync_bring_in(
+            &database,
+            &externals,
+            Scope::People,
+            Mode::ReadOnly,
+            plan.fingerprint(),
+        )
+        .await
+        .expect("brought in");
+        assert_eq!((done.people, done.fields, done.skipped), (1, 1, 0));
+
+        let reader = database.read().await.unwrap();
+        let saved = ContactRepository::new(&reader)
+            .saved_for_sync()
+            .await
+            .unwrap();
+        let ada = saved
+            .iter()
+            .find(|(p, _)| p.shown_as() == "Ada Moreno")
+            .expect("Ada is a saved contact now");
+        assert_eq!(ada.0.organization.as_deref(), Some("Atlas"));
+        assert_eq!(ada.1, ["+1 555 010 0199"]);
+        assert!(
+            ada.0
+                .addresses
+                .iter()
+                .any(|a| a.address.address == "ada@example.org"),
+            "{:?}",
+            ada.0.addresses
+        );
+        let grace = saved.iter().find(|(p, _)| p.shown_as() == "Grace").unwrap();
+        assert_eq!(grace.0.organization.as_deref(), Some("Northwind"));
+
+        // Linked, with their fields as the base: the next sync has nothing to
+        // bring and nothing to ask.
+        let links = ContactRepository::new(&reader).sync_links().await.unwrap();
+        assert_eq!(links.len(), 2, "{links:?}");
+        let again = contacts_sync_plan(&database, &externals, Scope::People, Mode::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(again.bring_in_counts(), (0, 0), "{again:?}");
+        assert!(
+            again.conflicts.is_empty() && again.ambiguous.is_empty(),
+            "{again:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_plan_that_changed_since_the_preview_is_refused_and_writes_nothing() {
+        use postio_contact_sync::{Mode, Scope};
+        let database = test_support::memory().await;
+        let before = vec![book_record(
+            "x2",
+            "Ada",
+            "Moreno",
+            "ada@example.org",
+            "",
+            "",
+        )];
+        let plan = contacts_sync_plan(&database, &before, Scope::People, Mode::ReadOnly)
+            .await
+            .unwrap();
+        let after = vec![
+            book_record("x2", "Ada", "Moreno", "ada@example.org", "", ""),
+            book_record("x3", "Ben", "Adeyemi", "ben@example.org", "", ""),
+        ];
+        let state = fingerprint(&database).await;
+        let refused = contacts_sync_bring_in(
+            &database,
+            &after,
+            Scope::People,
+            Mode::ReadOnly,
+            plan.fingerprint(),
+        )
+        .await;
+        assert_eq!(
+            refused.unwrap_err(),
+            "Contacts changed since the preview. Preview again."
+        );
+        assert_eq!(fingerprint(&database).await, state);
+    }
+
+    #[tokio::test]
+    async fn the_order_their_book_lists_records_in_does_not_change_the_plan() {
+        use postio_contact_sync::{Mode, Scope};
+        let database = test_support::memory().await;
+        let a = book_record("x1", "Ada", "Moreno", "ada@example.org", "", "");
+        let b = book_record("x2", "Ben", "Adeyemi", "ben@example.org", "", "");
+        let one = contacts_sync_plan(
+            &database,
+            &[a.clone(), b.clone()],
+            Scope::People,
+            Mode::ReadOnly,
+        )
+        .await
+        .unwrap();
+        let other = contacts_sync_plan(&database, &[b, a], Scope::People, Mode::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(one.fingerprint(), other.fingerprint());
+    }
+
+    #[tokio::test]
+    async fn someone_postio_only_knows_from_mail_is_saved_by_the_record_that_names_them() {
+        use postio_contact_sync::{Mode, Scope};
+        let database = test_support::memory().await;
+        {
+            let connection = database.connect().await.unwrap();
+            let repository = ContactRepository::new(&connection);
+            let address = postio_model::EmailAddress::new(Some("ada m"), "ada@example.org");
+            repository.create(Some("ada m"), &[address]).await.unwrap();
+        }
+        let externals = vec![book_record(
+            "x2",
+            "Ada",
+            "Moreno",
+            "ada@example.org",
+            "",
+            "",
+        )];
+        let plan = contacts_sync_plan(&database, &externals, Scope::People, Mode::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(plan.bring_in_counts().0, 1, "{plan:?}");
+        let done = contacts_sync_bring_in(
+            &database,
+            &externals,
+            Scope::People,
+            Mode::ReadOnly,
+            plan.fingerprint(),
+        )
+        .await
+        .unwrap();
+        assert_eq!((done.people, done.skipped), (1, 0));
+        let reader = database.read().await.unwrap();
+        let saved = ContactRepository::new(&reader)
+            .saved_for_sync()
+            .await
+            .unwrap();
+        assert_eq!(saved.len(), 1, "the one person, not a second: {saved:?}");
+        assert_eq!(saved[0].0.shown_as(), "Ada Moreno");
     }
 
     /// Everything a sync could change in Postio, summed: a dry run leaves it

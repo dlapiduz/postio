@@ -62,7 +62,14 @@ async fn the_intro_asks_nothing_and_the_plan_says_what_would_happen() {
     let sheet = result.sheet.expect("a sheet");
     assert_eq!(sheet.title, "Dry run: nothing was written");
     let plan = sheet.plan.expect("the plan");
-    assert_eq!(plan.summary, "Would add 1, update 0, ask about 0, delete 0");
+    assert_eq!(
+        plan.summary,
+        "Would bring in 1, add 1, update 0, ask about 0, delete 0"
+    );
+    assert_eq!(
+        plan.bring_in.expect("a button").label,
+        "Bring 1 into Postio"
+    );
     assert!(
         plan.lines.iter().any(|l| l == "Add Grace to Contacts"),
         "{:?}",
@@ -113,5 +120,90 @@ async fn a_refusal_has_its_own_sheet() {
     let (session, _database) = session_with_grace().await;
     let denied = session.contacts_sync_denied();
     assert_eq!(denied.title, "Contacts access was declined");
+    session.shutdown();
+}
+
+async fn contacts_listed(database: &postio_storage::Store) -> Vec<String> {
+    let reader = database.read().await.expect("a reader");
+    ContactRepository::new(&reader)
+        .saved_for_sync()
+        .await
+        .expect("saved people")
+        .into_iter()
+        .map(|(person, _)| person.shown_as().into_owned())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bringing_in_saves_the_people_only_contacts_has_and_only_for_the_plan_shown() {
+    let (session, database) = session_with_grace().await;
+    let records = vec![
+        theirs("x1", "Ada", "ada@example.org"),
+        theirs("x2", "Ben", "ben@example.org"),
+    ];
+    let s = session.clone();
+    let shown = {
+        let records = records.clone();
+        tokio::task::spawn_blocking(move || {
+            s.contacts_sync_plan(
+                records,
+                SyncScopeFfi::PeopleAndCompanies,
+                postio_ffi::SyncModeFfi::ReadOnly,
+            )
+        })
+        .await
+        .expect("planned")
+    };
+    let button = shown
+        .sheet
+        .and_then(|sheet| sheet.plan)
+        .and_then(|plan| plan.bring_in)
+        .expect("two people could come in");
+    assert_eq!(button.label, "Bring 2 into Postio");
+
+    // A snapshot that changed since the preview is not the plan that was
+    // shown: nothing is written and the person is told to preview again.
+    let s = session.clone();
+    let stale = {
+        let mut changed = records.clone();
+        changed.push(theirs("x3", "Cy", "cy@example.org"));
+        let fingerprint = button.fingerprint;
+        tokio::task::spawn_blocking(move || {
+            s.contacts_sync_bring_in(
+                changed,
+                SyncScopeFfi::PeopleAndCompanies,
+                postio_ffi::SyncModeFfi::ReadOnly,
+                fingerprint,
+            )
+        })
+        .await
+        .expect("answered")
+    };
+    assert_eq!(
+        stale.error.as_deref(),
+        Some("Contacts changed since the preview. Preview again.")
+    );
+    assert_eq!(contacts_listed(&database).await, ["Grace"]);
+
+    let s = session.clone();
+    let fingerprint = button.fingerprint;
+    let done = tokio::task::spawn_blocking(move || {
+        s.contacts_sync_bring_in(
+            records,
+            SyncScopeFfi::PeopleAndCompanies,
+            postio_ffi::SyncModeFfi::ReadOnly,
+            fingerprint,
+        )
+    })
+    .await
+    .expect("answered");
+    assert_eq!(
+        done.note.as_deref(),
+        Some("Brought 2 people into Postio. Nothing was written to Contacts."),
+        "{done:?}"
+    );
+    let mut listed = contacts_listed(&database).await;
+    listed.sort();
+    assert_eq!(listed, ["Ada", "Ben", "Grace"]);
     session.shutdown();
 }

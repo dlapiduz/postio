@@ -1106,6 +1106,31 @@ impl Inner {
                     Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
                 }
             }
+            Req::ContactsSyncBringIn {
+                records,
+                scope,
+                mode,
+                shown,
+            } => {
+                match contacts::contacts_sync_bring_in(
+                    &self.wiring.database,
+                    &records,
+                    scope,
+                    mode,
+                    shown,
+                )
+                .await
+                {
+                    Ok(done) => {
+                        // The lists and counts read the people again.
+                        self.hub.emit(Event::ContactsChanged {
+                            names_changed: true,
+                        });
+                        Resp::ContactsBroughtIn(Box::new(done))
+                    }
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
             Req::ContactsImport(bytes) => {
                 match contacts::import_vcards(&self.wiring.database, &bytes).await {
                     Ok(summary) => {

@@ -127,8 +127,8 @@ pub use focus_contacts_settings::{
     SyncSectionFfi, SyncStatusFfi,
 };
 pub use focus_contacts_sync::{
-    ExternalRecordFfi, SyncAccountFfi, SyncPlanFfi, SyncResultFfi, SyncScopeFfi,
-    SyncScopeOptionFfi, SyncSheetFfi,
+    BringInFfi, BringInResultFfi, ExternalRecordFfi, SyncAccountFfi, SyncPlanFfi, SyncResultFfi,
+    SyncScopeFfi, SyncScopeOptionFfi, SyncSheetFfi,
 };
 pub use focus_keymap::{KeyMapGroupFfi, KeyMapRowFfi, KeyMapSheetFfi};
 pub use focus_list::{

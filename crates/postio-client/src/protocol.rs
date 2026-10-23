@@ -263,6 +263,19 @@ pub enum Req {
         /// Whether the plan may ask their side to change.
         mode: postio_contact_sync::Mode,
     },
+    /// Apply the Postio side of the sync plan the person was shown: contacts
+    /// for the records only their side has, and the fields it changed. Writes
+    /// Postio's own database; their side is never written.
+    ContactsSyncBringIn {
+        /// The other side's records, as the preview was made from.
+        records: Vec<postio_contact_sync::ExternalRecord>,
+        /// What syncs.
+        scope: postio_contact_sync::Scope,
+        /// Whether the plan may ask their side to change.
+        mode: postio_contact_sync::Mode,
+        /// The fingerprint of the plan the person was shown.
+        shown: u64,
+    },
     /// Read the cards in a `.vcf` the user chose and apply them.
     ContactsImport(Vec<u8>),
     /// One `.vcf` of the people the Contacts list holds.
@@ -858,6 +871,8 @@ pub enum Resp {
     ContactGroups(Vec<String>),
     /// The answer to [`Req::ContactsSyncPlan`].
     ContactsSyncPlan(Box<postio_contact_sync::Plan>),
+    /// The answer to [`Req::ContactsSyncBringIn`].
+    ContactsBroughtIn(Box<postio_contact_sync::BroughtIn>),
     /// The answer to [`Req::ContactsImport`].
     ContactsImported(Box<postio_model::card::ImportSummary>),
     /// The answer to [`Req::ContactsExport`]: the file's text and how many

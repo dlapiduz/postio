@@ -524,3 +524,52 @@ fn an_import_with_contacts_closed_remembers_where_to_go_and_what_to_review() {
         "{effects:?}"
     );
 }
+
+/// Bringing people in from the Mac's Contacts says the people changed (the
+/// engine's `ContactsChanged`) and then which of them are new. With the view
+/// up they are on screen: the rows are read again and the cursor goes to the
+/// first one, even when it is not on the tab being shown.
+#[test]
+fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
+    let mut focus = mac();
+    open(&mut focus);
+    let changed = focus.handle_on(
+        Input::Event(postio_core::Event::ContactsChanged {
+            names_changed: true,
+        }),
+        &NoRows,
+    );
+    assert!(
+        shown(&changed)
+            .iter()
+            .any(|intent| matches!(intent, Intent::ContactsRows { .. })),
+        "the list reads its rows again: {changed:?}"
+    );
+    let effects = focus.handle_on(
+        Input::ContactsImported {
+            made: vec![ContactId::new(7), ContactId::new(8)],
+            touched: vec![ContactId::new(7), ContactId::new(8), ContactId::new(1)],
+        },
+        &NoRows,
+    );
+    let (ticket, person) = asks(&effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::ContactPosition { person, .. } => Some((ticket, person)),
+            _ => None,
+        })
+        .expect("where the first person brought in is, is asked");
+    assert_eq!(person, ContactId::new(7));
+
+    // On another tab the person is not in the list; the list is still current.
+    let effects = focus.handle_on(
+        Input::Reply(ticket, Reply::ContactPosition { person, at: None }),
+        &NoRows,
+    );
+    assert!(
+        shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::ContactsRows { .. })),
+        "a person on another tab still leaves the rows current: {effects:?}"
+    );
+}

@@ -133,6 +133,21 @@ pub struct Match {
     pub external: String,
 }
 
+/// A record only the other side has, which would come into Postio as a saved
+/// contact: a change to Postio's own database, never to theirs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Import {
+    /// The other side's id for it.
+    pub external: String,
+    /// For the report.
+    pub label: String,
+    /// A person, or a company when the record has an organisation and no
+    /// name.
+    pub kind: ContactKind,
+    /// What Postio would keep, and later compare against.
+    pub fields: Fields,
+}
+
 /// A saved contact the other side lacks: what would be created there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Create {
@@ -157,8 +172,11 @@ pub struct Change {
     pub side: Side,
     /// Which field.
     pub field: String,
-    /// What it becomes.
+    /// What it becomes, in words.
     pub to: String,
+    /// What it becomes, as values: one for a name, organisation or title, and
+    /// each address or number that goes across for a set.
+    pub values: Vec<String>,
 }
 
 /// A field both sides changed, to different values.
@@ -205,6 +223,23 @@ pub struct Gone {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delete;
 
+/// What bringing a plan's Postio side in did: Postio's database changed and
+/// no address book was touched.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BroughtIn {
+    /// Saved contacts made from records only the other side had.
+    pub people: usize,
+    /// Fields that changed in Postio.
+    pub fields: usize,
+    /// Records Postio could not keep (an address someone else has, a refusal),
+    /// which stay where they were.
+    pub skipped: usize,
+    /// Postio's ids of the people made, in order.
+    pub made: Vec<i64>,
+    /// Postio's ids of the people whose fields changed.
+    pub touched: Vec<i64>,
+}
+
 /// What a sync would do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
@@ -214,6 +249,9 @@ pub struct Plan {
     pub matches: Vec<Match>,
     /// Saved contacts the other side lacks.
     pub creates: Vec<Create>,
+    /// Records only the other side has, which would come into Postio. Both
+    /// modes plan them: they change Postio and nothing else.
+    pub imports: Vec<Import>,
     /// Fields that would change, one side or the other.
     pub updates: Vec<Change>,
     /// Fields both sides changed.
@@ -224,7 +262,9 @@ pub struct Plan {
     pub gone: Vec<Gone>,
     /// Always empty: a delete is never automatic.
     pub deletes: Vec<Delete>,
-    /// Records on the other side nothing in Postio matches, which stay there.
+    /// Records on the other side that stay there: out of scope, without an
+    /// address or a name Postio could keep them by, or a second record for an
+    /// address another already brings in.
     pub left_alone: usize,
 }
 
@@ -239,17 +279,36 @@ impl Plan {
         )
     }
 
-    /// "Would add 12, update 3, ask about 2, delete 0": counts only, so it
-    /// may be logged.
+    /// `(people who would come into Postio, fields that would change in
+    /// Postio)`: what bringing in applies, and all of it. Changes to the
+    /// other side are not in it.
+    pub fn bring_in_counts(&self) -> (usize, usize) {
+        let local = self
+            .updates
+            .iter()
+            .filter(|u| u.side == Side::Local)
+            .count();
+        (self.imports.len(), local)
+    }
+
+    /// "Would bring in 4, add 12, update 3, ask about 2, delete 0": counts
+    /// only, so it may be logged. "Bring in" is into Postio; "add" is into
+    /// the other side.
     pub fn summary(&self) -> String {
         let (add, update, ask, delete) = self.counts();
-        format!("Would add {add}, update {update}, ask about {ask}, delete {delete}")
+        let bring = self.imports.len();
+        format!(
+            "Would bring in {bring}, add {add}, update {update}, ask about {ask}, delete {delete}"
+        )
     }
 
     /// What the plan says in words, a line each, with names. It is the
     /// person's to read and is never logged.
     pub fn report(&self) -> Vec<String> {
         let mut lines = Vec::new();
+        for import in &self.imports {
+            lines.push(format!("Bring {} into Postio", import.label));
+        }
         for create in &self.creates {
             lines.push(format!("Add {} to Contacts", create.label));
         }
@@ -284,14 +343,16 @@ impl Plan {
         }
         if self.left_alone > 0 {
             lines.push(format!(
-                "{} in Contacts match no one in Postio and stay there",
+                "{} in Contacts stay there: out of scope, or without a name and an address Postio could keep them by",
                 self.left_alone
             ));
         }
         lines
     }
 
-    fn fingerprint(&self) -> u64 {
+    /// What the plan would do, as one number: the person's yes to a plan is
+    /// bound to it, so a plan that changed since is not the one confirmed.
+    pub fn fingerprint(&self) -> u64 {
         // FNV-1a over the plan's own text: stable, and different whenever
         // what would be written is.
         let text = format!("{self:?}");
@@ -341,6 +402,7 @@ pub fn plan(
         mode,
         matches: Vec::new(),
         creates: Vec::new(),
+        imports: Vec::new(),
         updates: Vec::new(),
         conflicts: Vec::new(),
         ambiguous: Vec::new(),
@@ -449,12 +511,40 @@ pub fn plan(
             });
         }
     }
-    plan.left_alone = externals
-        .iter()
-        .filter(|e| {
-            !used_external.contains(e.id.as_str()) && !ambiguous_externals.contains(e.id.as_str())
-        })
-        .count();
+    // A record only they have comes in, if Postio can keep it: it needs an
+    // address to be found by and a name or an organisation to be called by,
+    // and the scope must take its kind. A second record for an address one
+    // already brings in waits until the first is there.
+    let mut claimed: BTreeSet<String> = BTreeSet::new();
+    for external in externals {
+        if used_external.contains(external.id.as_str())
+            || ambiguous_externals.contains(external.id.as_str())
+        {
+            continue;
+        }
+        let fields = &external.fields;
+        let named = !fields.given.trim().is_empty() || !fields.family.trim().is_empty();
+        let kind = if named || fields.organization.trim().is_empty() {
+            ContactKind::Person
+        } else {
+            ContactKind::Company
+        };
+        let usable = !fields.emails.is_empty()
+            && (named || !fields.organization.trim().is_empty())
+            && scope.includes(kind);
+        let addresses: Vec<String> = fields.emails.iter().map(|e| e.to_lowercase()).collect();
+        if !usable || addresses.iter().any(|a| claimed.contains(a)) {
+            plan.left_alone += 1;
+            continue;
+        }
+        claimed.extend(addresses);
+        plan.imports.push(Import {
+            external: external.id.clone(),
+            label: external.label.clone(),
+            kind,
+            fields: fields.clone(),
+        });
+    }
     plan
 }
 
@@ -524,13 +614,13 @@ fn compare(plan: &mut Plan, local: &LocalRecord, external: &ExternalRecord, base
         })
         .collect();
     if !lacking_here.is_empty() {
-        let joined = lacking_here
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        plan.updates
-            .push(change(local, external, Side::Local, "addresses", &joined));
+        plan.updates.push(change_set(
+            local,
+            external,
+            Side::Local,
+            "addresses",
+            &lacking_here,
+        ));
     }
     let lacking_there: Vec<&String> = local
         .fields
@@ -545,17 +635,12 @@ fn compare(plan: &mut Plan, local: &LocalRecord, external: &ExternalRecord, base
         })
         .collect();
     if !lacking_there.is_empty() && plan.mode == Mode::TwoWay {
-        let joined = lacking_there
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        plan.updates.push(change(
+        plan.updates.push(change_set(
             local,
             external,
             Side::External,
             "addresses",
-            &joined,
+            &lacking_there,
         ));
     }
     let keys =
@@ -568,13 +653,13 @@ fn compare(plan: &mut Plan, local: &LocalRecord, external: &ExternalRecord, base
         .filter(|p| phone_key(p).is_some_and(|k| !mine.contains(&k)))
         .collect();
     if !new_here.is_empty() {
-        let joined = new_here
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        plan.updates
-            .push(change(local, external, Side::Local, "phones", &joined));
+        plan.updates.push(change_set(
+            local,
+            external,
+            Side::Local,
+            "phones",
+            &new_here,
+        ));
     }
     let new_there: Vec<&String> = local
         .fields
@@ -583,13 +668,13 @@ fn compare(plan: &mut Plan, local: &LocalRecord, external: &ExternalRecord, base
         .filter(|p| phone_key(p).is_some_and(|k| !theirs.contains(&k)))
         .collect();
     if !new_there.is_empty() && plan.mode == Mode::TwoWay {
-        let joined = new_there
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        plan.updates
-            .push(change(local, external, Side::External, "phones", &joined));
+        plan.updates.push(change_set(
+            local,
+            external,
+            Side::External,
+            "phones",
+            &new_there,
+        ));
     }
 }
 
@@ -607,6 +692,25 @@ fn change(
         side,
         field: field.to_owned(),
         to: to.to_owned(),
+        values: vec![to.to_owned()],
+    }
+}
+
+fn change_set(
+    local: &LocalRecord,
+    external: &ExternalRecord,
+    side: Side,
+    field: &str,
+    values: &[&String],
+) -> Change {
+    let joined = values
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Change {
+        values: values.iter().map(|s| (*s).clone()).collect(),
+        ..change(local, external, side, field, &joined)
     }
 }
 

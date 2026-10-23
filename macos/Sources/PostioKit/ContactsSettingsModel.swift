@@ -18,7 +18,9 @@ public enum SyncAccess: Equatable, Sendable {
 /// *out* of an address book. There is no `apply`, so there is no write path to
 /// guard; when one exists it will be behind the build flag and the person's
 /// confirmation of the dry-run plan (`postio_contact_sync::write`), and not
-/// before the maintainer has reviewed what a dry run printed.
+/// before the maintainer has reviewed what a dry run printed. Bringing people
+/// *into Postio* is not that path: it hands the engine a snapshot and writes
+/// Postio's own database.
 @MainActor
 public protocol SyncAddressBook: AnyObject {
     /// What the person has said. Never prompts.
@@ -37,6 +39,12 @@ public protocol ContactsSettingsEngine: AnyObject {
     func contactsSyncPlan(
         _ records: [ExternalRecordFfi], _ scope: SyncScopeFfi, _ mode: SyncModeFfi
     ) -> SyncResultFfi
+    /// Applies the Postio side of the plan with this fingerprint. Postio's
+    /// database only.
+    func contactsSyncBringIn(
+        _ records: [ExternalRecordFfi], _ scope: SyncScopeFfi, _ mode: SyncModeFfi,
+        _ fingerprint: UInt64
+    ) -> BringInResultFfi
     func focusContactsSettingsOpened()
     func focusContactsSuggestion(_ index: UInt32)
     func focusContactsSettings() -> SuggestionsViewFfi?
@@ -48,7 +56,8 @@ extension PostioSession: ContactsSettingsEngine {}
 /// pane's words, the four Suggestions switches, and the sync dry run. Rust
 /// decides and says everything; this asks the Mac for access when, and only
 /// when, the person presses "Turn on and preview", reads one snapshot, and
-/// sends a click on a switch. Nothing is written to either store.
+/// sends a click on a switch. The preview writes to neither store; "Bring in"
+/// writes Postio's, on the person's click, and never the address book.
 @MainActor
 @Observable
 public final class ContactsSettingsModel {
@@ -151,6 +160,35 @@ public final class ContactsSettingsModel {
         }
         refresh()
     }
+
+    /// "Bring N into Postio": the person's yes to the plan shown. Reads one
+    /// more snapshot (access was granted by the preview and is not asked
+    /// again) and hands it to the engine with the shown plan's fingerprint; a
+    /// book that changed since is refused there and needs a new preview. The
+    /// address book is read, never written.
+    public func bringIn() {
+        guard let book, let bring = plan?.bringIn else { return }
+        guard book.access == .authorized else {
+            plan = nil
+            status = .declined
+            refresh()
+            return
+        }
+        do {
+            let result = engine.contactsSyncBringIn(try book.snapshot(), scope, mode, bring.fingerprint)
+            if let note = result.note {
+                error = nil
+                plan = nil
+                status = .broughtIn(note: note)
+            } else {
+                error = result.error
+                if result.error != nil { plan = nil }
+            }
+        } catch {
+            self.error = "Postio could not read Contacts."
+        }
+        refresh()
+    }
 }
 
 /// An address book in memory that counts what reaches it: the demo's, and
@@ -162,6 +200,9 @@ public final class FakeSyncAddressBook: SyncAddressBook {
     private let records: [ExternalRecordFfi]
     public private(set) var prompts = 0
     public private(set) var snapshots = 0
+    /// Writes that reached the book: always 0, because the protocol has no
+    /// write to call. Here so a test says the property out loud.
+    public private(set) var writes = 0
 
     public init(
         access: SyncAccess = .authorized, grant: SyncAccess = .denied,
