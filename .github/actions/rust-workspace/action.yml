@@ -55,7 +55,46 @@ runs:
     #   sqlite-devel      -> libsqlite3-dev
     #   libsecret-devel   -> libsecret-1-dev
     #   glib2-devel       -> libglib2.0-dev
+    #
+    # # The packages come from a cache, not the mirror
+    #
+    # These pull in about two hundred packages, and the runner fetched every
+    # one from azure.archive.ubuntu.com on every job. That mirror is often
+    # slow: in the 30 CI runs before 2026-10-22, 18 had a job spend more than
+    # 10 minutes here -- up to 40 -- on a step that is otherwise under one,
+    # and those runs took 40.5 minutes against 14.9 for the rest. One
+    # `libwebkitgtk-6.0-4` download took 8 minutes alone.
+    #
+    # So the downloaded `.deb`s are cached and handed to apt as its archive
+    # directory: it still resolves against a fresh index, so a package Ubuntu
+    # has since updated is fetched, and only that one. The key ends in a hash
+    # of the archive's file names -- the package versions -- so `main` writes
+    # a new cache only when a version moved, never on every run, and a pull
+    # request restores `main`'s (`.github/actions/build-cache` says why only
+    # `main` writes). `autoclean` drops a superseded version before the save,
+    # so the cache does not grow.
+    - name: Name the system packages
+      id: apt
+      shell: bash
+      run: |
+        packages="build-essential pkg-config libgtk-4-dev libadwaita-1-dev
+          libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev libglib2.0-dev
+          libpango1.0-dev mutter dbus-daemon mold"
+        packages=$(echo $packages)
+        echo "APT_PACKAGES=$packages" >> "$GITHUB_ENV"
+        . /etc/os-release
+        echo "prefix=apt-$ID-$VERSION_ID-$(echo "$packages" | sha256sum | cut -c1-12)-" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the downloaded system packages
+      id: apt-restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/apt-archives
+        key: ${{ steps.apt.outputs.prefix }}restore
+        restore-keys: ${{ steps.apt.outputs.prefix }}
+
     - name: Install system dependencies
+      id: apt-install
       shell: bash
       run: |
         # The runner image ships apt sources this workspace never installs
@@ -68,19 +107,27 @@ runs:
         # stale Ubuntu index still fails loudly rather than quietly.
         sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu*' -print -delete
         sudo apt-get update
+        archives="$HOME/apt-archives"
+        mkdir -p "$archives/partial"
+        # apt downloads as `_apt`; a partial directory it cannot write makes
+        # it fall back to root with a warning on every job.
+        sudo chown _apt "$archives/partial"
+        echo "restored $(ls "$archives" | grep -c '\.deb$' || true) packages from the cache"
+        # shellcheck disable=SC2086 # the list is words on purpose
         sudo apt-get install --no-install-recommends -y \
-          build-essential \
-          pkg-config \
-          libgtk-4-dev \
-          libadwaita-1-dev \
-          libwebkitgtk-6.0-dev \
-          libsqlite3-dev \
-          libsecret-1-dev \
-          libglib2.0-dev \
-          libpango1.0-dev \
-          mutter \
-          dbus-daemon \
-          mold
+          -o Dir::Cache::Archives="$archives" $APT_PACKAGES
+        sudo apt-get autoclean -o Dir::Cache::Archives="$archives"
+        versions=$(cd "$archives" && { ls -- *.deb 2>/dev/null || true; } | sort | sha256sum | cut -c1-12)
+        echo "key=${{ steps.apt.outputs.prefix }}$versions" >> "$GITHUB_OUTPUT"
+
+    - name: Save the downloaded system packages
+      if: >-
+        github.ref == 'refs/heads/main'
+        && steps.apt-install.outputs.key != steps.apt-restore.outputs.cache-matched-key
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/apt-archives
+        key: ${{ steps.apt-install.outputs.key }}
 
     # Ask the runner how big it is rather than hardcoding a number.
     #
