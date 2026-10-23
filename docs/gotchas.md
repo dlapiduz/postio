@@ -32,6 +32,8 @@ These are the traps in this repository that are still live and that no check, ho
 
 **A test removal needs a mutation verdict, and the verdict is only as wide as its filters.** `scripts/test-removal-check.sh` judges only the mutants its `--package`, `-f` and `--re` select. cargo-mutants runs only the mutated crate's tests unless `--test-package` names the others. A "safe" from a check that reached one mutant says nothing about the rest of the code. The nextest wrapper behind per-case coverage (`profile.per-test-coverage`) is an experimental nextest feature: if an upgrade breaks it, `scripts/test-coverage-sets.py` stops with "left no profile" (specs/012-test-suite-value, research R2 and R4).
 
+**A GTK case that acts before layout passes only while rendering is slow.** Each nextest slot has its own compositor and a shader cache that outlives the case (#2027), so frames come quickly now, and a case that scrolls, measures or clicks right after opening something can reach a widget before it is laid out. Wait for the fact the action depends on, such as `adjustment.upper()` or `is_mapped()`, not for the thing that triggered it.
+
 **One clean run of a GUI suite on a loaded machine proves nothing.** Bisect by running each side two or three times. If a test is red for one person on every commit and a bisect finds nothing, the cause is machine state (a state file, the keyring), not the tree.
 
 ## The store and the search index

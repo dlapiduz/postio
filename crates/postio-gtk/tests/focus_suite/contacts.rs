@@ -261,9 +261,9 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
         assert!(
             crate::settle_until(async || window
                 .contacts()
-                .is_some_and(|view| !view.merge_texts().is_empty()))
+                .is_some_and(|view| view.total() == 3 && !view.merge_texts().is_empty()))
             .await,
-            "g w opens the sheet"
+            "g w opens the sheet over the three people"
         );
         let view = window.contacts().expect("the view");
         {
@@ -280,7 +280,6 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
         assert!(said.iter().any(|line| line == "Not the same"), "{said:?}");
         assert!(said.iter().any(|line| line == "Later"), "{said:?}");
         assert!(said.iter().any(|line| line == "Merge"), "{said:?}");
-        assert_eq!(view.total(), 3);
 
         // Later puts it away and leaves the people as they were.
         support::keys(&window, &["Escape"]);
@@ -501,7 +500,10 @@ pub fn v_i_imports_a_chosen_file_and_v_x_exports_one() {
             crate::settle_until(async || view.total() == 4
                 && view.cursor().and_then(|at| view.name_at(at)).as_deref() == Some("Zed Quinn"))
             .await,
-            "the cursor is on the first person the import made"
+            "the cursor is on the first person the import made: {} people, cursor {:?} on {:?}",
+            view.total(),
+            view.cursor(),
+            view.cursor().and_then(|at| view.name_at(at))
         );
         window.close_dialogs_for_test();
 

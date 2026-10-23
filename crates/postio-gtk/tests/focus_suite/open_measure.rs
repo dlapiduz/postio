@@ -154,6 +154,15 @@ pub fn opening_find_keeps_the_reading_position() {
         let reading = window.reading().expect("open");
         let view = reading.reader().view().clone();
         let column = scroller_of(&view).vadjustment();
+        // The body is laid out after the message opens, not by the time it
+        // has. Scrolling before then clamps to a column too short to move,
+        // which a faster renderer made the common case (#2027).
+        assert!(
+            crate::settle_until(async || column.upper() - column.page_size() > 2000.0).await,
+            "the 300-line body never grew taller than the window: upper {}, page {}",
+            column.upper(),
+            column.page_size()
+        );
         column.set_value(2000.0);
         crate::settle();
         let at = column.value();
