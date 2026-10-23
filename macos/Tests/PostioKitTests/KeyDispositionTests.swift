@@ -98,4 +98,39 @@ import Testing
                     modifiers: ModifiersFfi(control: false, option: false, shift: false, command: false)),
                 gridFocused: true))
     }
+
+    // -- an input method's marked text (⌘↩ in the composer did nothing) ---
+
+    private func key(
+        _ character: String?, name: String? = nil,
+        command: Bool = false, option: Bool = false, control: Bool = false
+    ) -> KeyEvent.Reduced {
+        KeyEvent.Reduced(
+            character: character, name: name,
+            modifiers: ModifiersFfi(control: control, option: option, shift: false, command: command)
+        )
+    }
+
+    @Test func aCommandChordIsNeverTheInputMethods() {
+        // Marked text sits at the caret mid-composition, and inline
+        // predictive text leaves it there after an ordinary word. ⌘↩ in the
+        // compose body went to the web view, which has no Send.
+        #expect(!KeyDisposition.belongsToInputMethod(key(nil, name: "return", command: true), composing: true))
+        #expect(!KeyDisposition.belongsToInputMethod(key("b", command: true), composing: true))
+    }
+
+    @Test func whatAnInputMethodComposesWithStaysWithIt() {
+        // Return chooses the candidate, Escape drops it, a letter or an
+        // Option character goes on building it.
+        #expect(KeyDisposition.belongsToInputMethod(key(nil, name: "return"), composing: true))
+        #expect(KeyDisposition.belongsToInputMethod(key(nil, name: "escape"), composing: true))
+        #expect(KeyDisposition.belongsToInputMethod(key("k"), composing: true))
+        #expect(KeyDisposition.belongsToInputMethod(key("e", option: true), composing: true))
+        #expect(KeyDisposition.belongsToInputMethod(key(" ", control: true), composing: true))
+    }
+
+    @Test func withNothingMarkedNoKeyIsTheInputMethods() {
+        #expect(!KeyDisposition.belongsToInputMethod(key("k"), composing: false))
+        #expect(!KeyDisposition.belongsToInputMethod(key(nil, name: "return"), composing: false))
+    }
 }

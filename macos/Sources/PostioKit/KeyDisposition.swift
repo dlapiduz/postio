@@ -38,6 +38,21 @@ public enum KeyDisposition {
         }
     }
 
+    /// Whether `key` belongs to an input method that is part-way through
+    /// composing, and so must reach it untouched.
+    ///
+    /// Every key but a Command chord. An input method builds a character
+    /// over several presses and marks the text while it does, and
+    /// swallowing one of those would break every keyboard that composes.
+    /// But AppKit itself hands a Command chord to the menus before the input
+    /// method sees it, so none composes with one -- and marked text is not
+    /// only composition: inline predictive text leaves it at the caret after
+    /// an ordinary word. Leaving ⌘↩ to the compose body there sent it to a
+    /// web view with no Send, and the key did nothing.
+    public static func belongsToInputMethod(_ key: KeyEvent.Reduced, composing: Bool) -> Bool {
+        composing && !key.modifiers.command
+    }
+
     /// Whether `key` is the focused text field's own editing -- select all,
     /// copy, cut, paste, undo, redo -- and so never a command while somebody
     /// is typing.
