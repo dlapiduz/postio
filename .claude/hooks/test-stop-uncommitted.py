@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parent / "stop-uncommitted.py")
@@ -21,9 +22,12 @@ def git(cwd: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def claim(tree: Path, session: str) -> None:
+def claim(tree: Path, session: str, since: float | None = None) -> None:
+    record = {"session": session, "at": 0}
+    if since is not None:
+        record["since"] = since
     Path(git(tree, "rev-parse", "--absolute-git-dir"), "postio-claim").write_text(
-        json.dumps({"session": session, "at": 0}))
+        json.dumps(record))
 
 
 def run(cwd: Path, root: Path, session: str = MINE, active: bool = False):
