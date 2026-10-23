@@ -567,6 +567,28 @@ mod wait_tests {
     }
 
     #[tokio::test]
+    async fn a_link_that_returns_does_not_say_the_server_refused() {
+        // #1986: the pane's re-read on the link's return must not read as a
+        // refusal to an attachment wait on the same message.
+        let (store, message, account) = message_with_an_unfetched_part().await;
+        let hub = EventHub::new();
+        let failures = hub.subscribe("test");
+        hub.sink().emit(Event::BodyReachable { account, message });
+
+        let said = wait_for_part(
+            &store,
+            message,
+            "2",
+            Some(&failures),
+            Duration::from_millis(150),
+        )
+        .await
+        .err()
+        .expect("nothing arrived");
+        assert!(!said.contains("could not be downloaded"), "{said}");
+    }
+
+    #[tokio::test]
     async fn another_messages_failure_does_not_end_the_wait() {
         let (store, message, account) = message_with_an_unfetched_part().await;
         let hub = EventHub::new();

@@ -550,8 +550,7 @@ impl Host {
                 while let Some(envelope) = news.next_tracked().await {
                     if let Event::ConnectionChanged { account, state } = envelope.event {
                         for message in links.changed(account, state) {
-                            // The same "read it again" a refused fetch asks for.
-                            hub.emit(Event::BodyFailed { account, message });
+                            hub.emit(Event::BodyReachable { account, message });
                         }
                     }
                 }

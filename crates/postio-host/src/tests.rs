@@ -3050,9 +3050,16 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
     );
 
     say(postio_core::ConnectionState::Online);
-    world.hear(
-        &events,
-        |event| matches!(event, Event::BodyFailed { message: again, .. } if *again == message),
+    let heard = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::BodyReachable { message: again, .. } | Event::BodyFailed { message: again, .. }
+                if *again == message
+        )
+    });
+    assert!(
+        matches!(heard, Event::BodyReachable { .. }),
+        "a returning link is not a refusal: {heard:?}"
     );
     let text = eventually(&world, || match read() {
         postio_client::protocol::Body::Ready { body, .. } => body.text,

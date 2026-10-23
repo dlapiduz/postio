@@ -4284,7 +4284,9 @@ impl App {
             // The words of a message on screen just landed (#1788): read that
             // one again, in place. Only one already drawn: a read still on
             // its way will see them anyway, and the list is never re-read.
-            Event::BodyLoaded { message, .. } | Event::BodyFailed { message, .. } => {
+            Event::BodyLoaded { message, .. }
+            | Event::BodyFailed { message, .. }
+            | Event::BodyReachable { message, .. } => {
                 let drawn = self.reading.as_ref().is_some_and(|reading| {
                     reading
                         .members
