@@ -276,7 +276,10 @@ _CONSTANT_ATOMS = [
     re.compile(r"\b(?:[a-z_][a-z0-9_]*::)*[A-Z][A-Z0-9_]*\b(?!\s*[(:{])"),  # LIST_MIN, keys::ARCHIVE
 ]
 _LEFTOVER_OK = re.compile(r"^[\s+\-*/%<>=!&|()]*$")
-_COUNTS = re.compile(r"\b(?:calls|call_count|times)\b")
+# A mock's own counter, read as one: `.calls()`, `call_count`, `.times(`. Not
+# a variable that happens to be called `calls`, nor "2 times" in a string.
+_COUNTS = re.compile(r"\.calls\(\)|\bcall_count\b|\.times\(")
+_STRING = re.compile(r'r#*"[^"]*"#*|"(?:\\.|[^"\\])*"')
 _DISPLAY_SKIP = re.compile(r'eprintln!\s*\(\s*"skipping[^"]*"\s*\)\s*;\s*return\b')
 
 
@@ -342,7 +345,7 @@ def smells(body: str, refs: list[str]) -> set[str]:
             for macro, ops in checks
         ):
             found.add("is-ok-only")
-        if all(any(_COUNTS.search(op) for op in ops) for _, ops in checks):
+        if all(any(_COUNTS.search(_STRING.sub('""', op)) for op in ops) for _, ops in checks):
             found.add("mock-count-only")
     if _DISPLAY_SKIP.search(body):
         found.add("display-skip")
