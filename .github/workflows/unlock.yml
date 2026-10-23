@@ -1,0 +1,52 @@
+name: Unlock
+
+# Green on main reopens the merges the red had locked.
+#
+# `ci.yml`'s `Nightly is green` fails on every pull request while the latest
+# full run on main is red, and a check does not re-ask by itself. So when a
+# run of `nightly.yml` on main ends green, this re-runs `Last nightly` -- and
+# with it the check that depends on it -- on every open pull request whose
+# latest CI run has the check red.
+#
+# A workflow of its own, not a job in `nightly.yml`: it needs `actions:
+# write`, and a job inside a workflow that `full-suite.yml` also calls may
+# not ask for more than that caller grants. `workflow_run` fires only for
+# runs on the default branch, which is the one the lock reads.
+on:
+  workflow_run:
+    workflows: [Nightly]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: read
+
+jobs:
+  unlock:
+    name: Unlock the waiting pull requests
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-ask `Nightly is green` where it was red
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          gh pr list -R "$GITHUB_REPOSITORY" --state open --json number,headRefOid \
+            --jq '.[]|"\(.number) \(.headRefOid)"' |
+          while read -r number sha; do
+            run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${sha}&event=pull_request&per_page=20" \
+                    --jq '[.workflow_runs[]|select(.name=="CI")][0].id' 2>/dev/null || true)
+            [ -n "$run" ] && [ "$run" != null ] || continue
+            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')
+            red=$(printf '%s' "$jobs" | jq -r '.jobs[]|select(.name=="Nightly is green" and .conclusion=="failure")|.id' | head -1)
+            [ -n "$red" ] || continue
+            ask=$(printf '%s' "$jobs" | jq -r '.jobs[]|select(.name=="Last nightly")|.id' | head -1)
+            if gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/jobs/${ask:-$red}/rerun" >/dev/null 2>&1; then
+              echo "#${number}: re-asking"
+            else
+              echo "#${number}: could not re-run job ${ask:-$red}"
+            fi
+          done
