@@ -90,7 +90,16 @@ shot|surface) ;;
     ;;
 esac
 
-DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless}"
+# One compositor per nextest slot, unless someone pinned a display (#2027).
+#
+# A slot runs one case at a time, so its compositor is never shared. One
+# compositor for every slot was: it ran at 85% of a core through a whole
+# focus_suite run while the machine sat 61% busy, cases queued behind it for
+# their frames, and the ones that timed out in that queue were the suite's
+# flakes. Per slot, the same run took 191 s instead of 278 s, used 92% of the
+# machine, and failed one case instead of twelve. Each slot's compositor is
+# started once and reused by every case that slot runs after it.
+DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless${NEXTEST_TEST_GLOBAL_SLOT:+-$NEXTEST_TEST_GLOBAL_SLOT}}"
 SOCKET="$XDG_RUNTIME_DIR/$DISPLAY_NAME"
 UNAVAILABLE="$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable"
 
@@ -222,6 +231,12 @@ fi
 
 export WAYLAND_DISPLAY="$DISPLAY_NAME"
 export GDK_BACKEND=wayland
+# A shader cache that outlives the case (#2027). The renderer runs on Mesa's
+# software GL here, and the Focus suite re-executes itself with a fresh
+# XDG_CACHE_HOME, which is where Mesa keeps its cache by default -- so every
+# case compiled every shader again, about 0.55 s of a 1.5 s case. Beside the
+# compositors, it lives as long as they do.
+export MESA_SHADER_CACHE_DIR="${MESA_SHADER_CACHE_DIR:-$XDG_RUNTIME_DIR/postio-mesa-shader-cache}"
 export GTK_A11Y="${GTK_A11Y:-none}"
 unset DISPLAY            # or GDK falls back through XWayland to the real session
 

@@ -34,12 +34,15 @@ case "${1:-}" in
         pkill -f "mutter --headless --wayland-display=$DISPLAY_NAME" 2>/dev/null \
             && echo "stopped the headless compositor" \
             || echo "no headless compositor was running"
-        rm -f "$SOCKET"
+        # And each nextest slot's own (#2027): the pattern above matches them
+        # by prefix, and their sockets would otherwise outlive them.
+        rm -f "$SOCKET" "$SOCKET"-[0-9]*
         # And the runner's "do not bother trying" marker. --stop is what
         # someone reaches for when the compositor is wedged, so it is the one
         # command that must leave nothing behind telling the next run to skip
         # starting a new one.
-        rm -f "$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable"
+        rm -f "$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable" \
+            "$XDG_RUNTIME_DIR/$DISPLAY_NAME"-[0-9]*.unavailable
         exit 0 ;;
     --status)
         running && echo "up: $SOCKET" || echo "down"

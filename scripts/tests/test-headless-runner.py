@@ -58,7 +58,11 @@ MUTTER_STUB = """#!/usr/bin/env bash
 # Pretend to be mutter: record the call, bind the socket the runner waits
 # for, and linger. The test kills us by the recorded pid.
 echo "$$" >> "$STUB_DIR/mutter.pids"
-exec python3 - "$XDG_RUNTIME_DIR/$POSTIO_TEST_DISPLAY" <<'PY'
+# Bind the display it was asked for, as mutter does: the runner chooses it.
+for argument in "$@"; do
+    case "$argument" in --wayland-display=*) name="${argument#--wayland-display=}" ;; esac
+done
+exec python3 - "$XDG_RUNTIME_DIR/${name:-$POSTIO_TEST_DISPLAY}" <<'PY'
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX)
 s.bind(sys.argv[1])
@@ -68,6 +72,10 @@ PY
 
 TARGET_STUB = """#!/usr/bin/env bash
 printf '%s' "${WAYLAND_DISPLAY:-<unset>}"
+"""
+
+SHADER_CACHE_STUB = """#!/usr/bin/env bash
+printf '%s' "${MESA_SHADER_CACHE_DIR:-<unset>}"
 """
 
 FAILURES: list[str] = []
@@ -223,6 +231,48 @@ def main() -> int:
                 "POSTIO_HEADLESS=0 still bypasses everything",
                 out == "<unset>",
                 f"WAYLAND_DISPLAY was {out!r}",
+            )
+
+            # ── one compositor per nextest slot (#2027) ───────────────────
+            #
+            # One headless mutter served every parallel GTK case and ran at
+            # 85% of a core for a whole focus_suite run: cases queued for
+            # their frames, the machine sat 61% busy, and the cases that
+            # timed out in the queue were the suite's flakes. A slot runs one
+            # case at a time, so a compositor per slot is never shared.
+            out = run(test_bin, stub_dir, runtime_dir, POSTIO_TEST_DISPLAY="", NEXTEST_TEST_GLOBAL_SLOT="3")
+            case(
+                "a nextest slot gets a compositor of its own",
+                out == "postio-headless-3",
+                f"WAYLAND_DISPLAY was {out!r}, expected 'postio-headless-3'",
+            )
+            out = run(test_bin, stub_dir, runtime_dir, NEXTEST_TEST_GLOBAL_SLOT="3")
+            case(
+                "a display someone pinned is theirs, slot or not",
+                out == DISPLAY,
+                f"WAYLAND_DISPLAY was {out!r}, expected the pinned {DISPLAY!r}",
+            )
+
+            # ── the shader cache outlives a case (#2027) ──────────────────
+            #
+            # focus_suite re-executes itself with a fresh XDG_CACHE_HOME, so
+            # Mesa's shader cache, which lives there by default, started
+            # empty in every case and every case compiled the renderer's
+            # shaders again.
+            shader_bin = stub_dir / "shaders-0123456789abcdef"
+            shader_bin.write_text(SHADER_CACHE_STUB)
+            shader_bin.chmod(0o755)
+            out = run(shader_bin, stub_dir, runtime_dir)
+            case(
+                "a test binary's shader cache lives with the compositors",
+                out == str(runtime_dir / "postio-mesa-shader-cache"),
+                f"MESA_SHADER_CACHE_DIR was {out!r}",
+            )
+            out = run(shader_bin, stub_dir, runtime_dir, MESA_SHADER_CACHE_DIR="/elsewhere")
+            case(
+                "a shader cache someone chose is kept",
+                out == "/elsewhere",
+                f"MESA_SHADER_CACHE_DIR was {out!r}",
             )
 
             # ── a socket with nothing behind it (#794) ────────────────────
