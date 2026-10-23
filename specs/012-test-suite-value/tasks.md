@@ -116,7 +116,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   See it fail.
 - [X] T012 [US2] Implement the candidate computation in `scripts/test-coverage-sets.py`, reading region sets and `cases.csv`, until T011 passes.
 - [X] T013 [US2] Write `scripts/per-test-profile.sh`. It execs `"$@"` with `LLVM_PROFILE_FILE="$NEXTEST_WORKSPACE_ROOT/target/test-audit/profiles/$NEXTEST_BINARY_ID/$(printf %s "$NEXTEST_TEST_NAME" | shasum | cut -c1-16)/%m.profraw"`, and fails loudly if either `NEXTEST_*` variable is unset.
-- [X] T014 [US2] Add `experimental = ["wrapper-scripts"]`, `[scripts.wrapper.per-test-profile]` and `[profile.per-test-coverage]` with a `[[profile.per-test-coverage.scripts]]` `run-wrapper` to `.config/nextest.toml`. The comment must say why this lives in a profile the merge path never selects (research R2). Check two things, red first:
+- [ ] T014 [US2] (Mac half proven 2026-10-23; the Linux display half runs with T019.) Add `experimental = ["wrapper-scripts"]`, `[scripts.wrapper.per-test-profile]` and `[profile.per-test-coverage]` with a `[[profile.per-test-coverage.scripts]]` `run-wrapper` to `.config/nextest.toml`. The comment must say why this lives in a profile the merge path never selects (research R2). Check two things, red first:
   - `cargo nextest run --profile per-test-coverage -p postio-config` writes one profile directory per case;
   - on Linux CI, one widgets case run under this profile still sees a display.
 
@@ -140,14 +140,14 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
 
 **Independent test**: quickstart §3, run on CI.
 
-- [ ] T017 [P] [US3] Write `scripts/tests/test-test-removal-check.py` with a stub `cargo` on `PATH` that replays recorded `mutants.out` directories (caught.txt and missed.txt for Pass A and Pass B). It asserts:
+- [X] T017 [P] [US3] Write `scripts/tests/test-test-removal-check.py` with a stub `cargo` on `PATH` that replays recorded `mutants.out` directories (caught.txt and missed.txt for Pass A and Pass B). It asserts:
   - a miss in A that is caught in B is a new survivor → exit 1, and the mutant is named;
   - a miss in A that is also in `docs/mutants-baseline.txt` is not counted;
   - no new survivors → exit 0 and the `safe:` line;
   - with no `CI` and no `POSTIO_ALLOW_MUTANTS_HERE`, it refuses with exit 2 and quotes `scripts/mutants.sh`'s reason.
 
   See it fail.
-- [ ] T018 [US3] Implement `scripts/test-removal-check.sh`:
+- [X] T018 [US3] Implement `scripts/test-removal-check.sh`:
   - Pass A is `cargo mutants --test-tool=nextest -f … --no-shuffle --jobs 1`, with `--cargo-test-arg=-E --cargo-test-arg='not (test(=…) | …)'`;
   - Pass B re-runs only A's misses that are not in the baseline, using a `--re` per mutant;
   - it writes `target/test-audit/verdict.json` per data-model **Verdict**.
