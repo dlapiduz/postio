@@ -126,6 +126,30 @@ fi
 exit 0
 """
 
+# As GH_STUB_LATE, and it marks the merge so the git shim below knows the
+# landing has reached its wait for the base branch.
+GH_STUB_LATE_MARKED = GH_STUB_LATE.replace(
+    'echo "Merged"\n    exit 0', 'touch "$STUB_DIR/merged"\n    echo "Merged"\n    exit 0'
+)
+
+# Every worktree on a machine shares `refs/remotes/origin/*`, so a fetch in
+# the landing's wait can lose a ref lock to another session's fetch:
+#
+#     error: cannot lock ref 'refs/remotes/origin/main': is at 9d4f067…
+#     but expected cf60fb6…
+#
+# It did, in this very test on main's CI (#2029): the stub's delayed push and
+# the loop's fetch moved the ref at once, and `set -e` ended the landing.
+# This shim makes that lose exactly once, deterministically, after the merge.
+GIT_SHIM_ONE_LOCK_FAILURE = """#!/usr/bin/env bash
+if [ "$1" = "fetch" ] && [ -e "$STUB_DIR/merged" ] && [ ! -e "$STUB_DIR/lost-a-lock" ]; then
+    touch "$STUB_DIR/lost-a-lock"
+    echo "error: cannot lock ref 'refs/remotes/origin/main': is at 1111111 but expected 2222222" >&2
+    exit 1
+fi
+exec REAL_GIT "$@"
+"""
+
 # Says MERGED and never pushes: the #312 shape, which must still fail.
 GH_STUB_NEVER = GH_STUB_LATE.replace(
     '( sleep "$PUSH_DELAY"; git push -q "$ORIGIN" "HEAD:refs/heads/main" ) >/dev/null 2>&1 &\n    disown\n',
@@ -186,7 +210,13 @@ def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
 
 
 def run_landing(
-    base: Path, name: str, channel: str, stub: str, push_delay: str, merged_timeout: str
+    base: Path,
+    name: str,
+    channel: str,
+    stub: str,
+    push_delay: str,
+    merged_timeout: str,
+    git_shim: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """One landing against its own repo, remote and `gh` stub."""
     root = base / name
@@ -196,6 +226,11 @@ def run_landing(
     (stub_dir / "bin" / "gh").write_text(stub, encoding="utf-8")
     (stub_dir / "bin" / "gh").chmod(0o755)
     (stub_dir / "calls").write_text("", encoding="utf-8")
+    if git_shim is not None:
+        real_git = shutil.which("git")
+        assert real_git, "git is on PATH"
+        (stub_dir / "bin" / "git").write_text(git_shim.replace("REAL_GIT", real_git), encoding="utf-8")
+        (stub_dir / "bin" / "git").chmod(0o755)
 
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     root.mkdir()
@@ -285,6 +320,22 @@ def main() -> int:
             FAILURES.append(
                 "the session was told the merge did not land, for work "
                 f"GitHub confirms is on the base branch:\n{result.stderr}"
+            )
+
+        # ── 1c. a fetch in the wait loses a ref lock once ───────────────
+        #
+        # Another session's fetch, in another worktree, moving the shared
+        # remote-tracking ref at the same moment. The wait polls; one failed
+        # poll is a reason to poll again, not to abandon a merge that landed.
+        result = run_landing(
+            base, "lost-lock", channel, GH_STUB_LATE_MARKED, "2", "90", git_shim=GIT_SHIM_ONE_LOCK_FAILURE
+        )
+        if not (base / "lost-lock-stub" / "lost-a-lock").exists():
+            FAILURES.append("the shim never failed a fetch, so this case tested nothing")
+        if result.returncode != 0 or "merged." not in result.stdout:
+            FAILURES.append(
+                "one fetch that lost a ref lock to a concurrent fetch ended the "
+                f"landing of a merge that happened:\n{result.stdout}\n{result.stderr}"
             )
 
         # ── 2. MERGED but the commits never appear: still a failure ───────
