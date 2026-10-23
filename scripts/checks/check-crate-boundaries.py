@@ -29,7 +29,8 @@ The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
     attachment already on this machine -- bytes in, located units out -- and
     the indexer in ``postio-session`` does the rest (spec 010 FR-052).
   * ``postio-model`` must not depend on ``ammonia``/``html5ever``,
-    ``rusqlite``/``turso``/``gtk4``, or ``tokio``. ADR 0004 Q1 rejected putting the
+    ``rusqlite``/``turso``/``gtk4``, ``tokio``, a protocol crate, or a
+    workspace crate that stores or speaks a protocol. ADR 0004 Q1 rejected putting the
     composer's document here for exactly this reason -- dependency weight on
     the crate the whole workspace waits on -- and the vCard parser went to a
     crate of its own for the same one (specs/005-contacts R9).
@@ -818,7 +819,25 @@ RULES: dict[str, dict[str, object]] = {
             "gtk4",
             "gtk4-sys",
             "gtk4-macros",
+            "libadwaita",
             "tokio",
+            # Protocol and storage crates, and the workspace crates built on
+            # them. These were model_suite/purity.rs's list, a test that read
+            # the manifest; here they are judged on the resolved graph, which
+            # also catches one arriving transitively (spec 012, T026).
+            "io-imap",
+            "io-smtp",
+            "imap",
+            "lettre",
+            "sqlx",
+            "postio-storage",
+            "postio-search",
+            "postio-account",
+            "postio-smtp",
+            "postio-sync",
+            "postio-core",
+            "postio-config",
+            "postio-gtk",
         ],
         "why": (
             "postio-model is what the whole workspace waits on to compile, "
