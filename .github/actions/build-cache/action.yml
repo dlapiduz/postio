@@ -66,6 +66,15 @@ runs:
   steps:
     # Named for the compiler that built it: a toolchain bump must not restore
     # 2 GB of artifacts cargo will throw away.
+    #
+    # And for where it was built. Inside the CI image (`.github/ci-image`)
+    # the checkout is /__w/postio/postio and HOME is /github/home; on a bare
+    # runner they are /home/runner/work/postio/postio and /home/runner.
+    # `actions/cache` stores `~/.cargo` relative to the checkout, so a
+    # runner's cache unpacked in the image aims at /.cargo, which tar cannot
+    # write -- and if it could, cargo would rebuild everything anyway, since
+    # its fingerprints hold the absolute paths. So each place reads only its
+    # own caches.
     - name: Identify the compiler
       id: key
       shell: bash
@@ -77,7 +86,8 @@ runs:
         EXTRA: ${{ inputs.extra-paths }}
       run: |
         rust=$(rustc --version | tr ' ()/' '----')
-        prefix="${RUNNER_OS}-cargo-${NAME}-e${EPOCH}-${rust}-"
+        where=${POSTIO_CI_IMAGE:+image-}
+        prefix="${RUNNER_OS}-${where}cargo-${NAME}-e${EPOCH}-${rust}-"
         {
           echo "BUILD_CACHE_KEY=${prefix}${FILES_HASH}"
           echo "BUILD_CACHE_PREFIX=${prefix}"

@@ -637,7 +637,12 @@ jobs:
   # which says why), built here first when the Dockerfile or the toolchain
   # pin changed (`.github/actions/ci-image`). The jobs that use it name it
   # in `container:`, as the runner's own user; `--shm-size` because Docker's
-  # default /dev/shm is 64 MB and GTK and WebKit draw through it.
+  # default /dev/shm is 64 MB and GTK and WebKit draw through it. The two
+  # `--security-opt`s because WebKit starts its web process in bubblewrap,
+  # which needs a user namespace, and Docker's default seccomp and AppArmor
+  # profiles refuse one: every composer test aborted on "bwrap: No
+  # permissions to create a new namespace". Relaxing the container keeps the
+  # sandbox the tests run under the one users get; turning it off would not.
   image:
     name: CI image
     runs-on: ubuntu-latest
@@ -674,7 +679,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ github.token }}
-      options: --shm-size=2g
+      options: --shm-size=2g --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -724,7 +729,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ github.token }}
-      options: --shm-size=2g
+      options: --shm-size=2g --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -788,7 +793,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ github.token }}
-      options: --shm-size=2g
+      options: --shm-size=2g --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -862,7 +867,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-nextest
-          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+          key: ${{ runner.os }}-image-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
 
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
@@ -1009,7 +1014,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ github.token }}
-      options: --shm-size=2g
+      options: --shm-size=2g --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace
@@ -1026,7 +1031,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-nextest
-          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+          key: ${{ runner.os }}-image-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
       - name: cargo nextest run -p postio-widgets (shard ${{ matrix.shard }}/2)
@@ -1051,7 +1056,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ github.token }}
-      options: --shm-size=2g
+      options: --shm-size=2g --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace
@@ -1068,7 +1073,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-nextest
-          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+          key: ${{ runner.os }}-image-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
       - name: cargo nextest run -p postio-gtk
