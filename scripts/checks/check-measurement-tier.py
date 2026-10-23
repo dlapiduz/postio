@@ -43,7 +43,10 @@ MARKER = "POSTIO-MEASUREMENT:"
 
 # `binary(name)` and `test(/^module::/)` are the two shapes the filter uses.
 BINARY = re.compile(r"binary\(([A-Za-z0-9_]+)\)")
-MODULE = re.compile(r"test\(/\^([A-Za-z0-9_]+)::/\)")
+# `test(/^m::/)`, or `(package(p) & test(/^m::/))` when a module name two
+# suites share is held out of one crate only: the GTK `gmail_keys` is a
+# 10-minute sweep, the TUI's is a second of ordinary cases.
+MODULE = re.compile(r"(?:package\(([A-Za-z0-9_-]+)\)\s*&\s*)?test\(/\^([A-Za-z0-9_]+)::/\)")
 
 
 def excluded_filter() -> str | None:
@@ -52,18 +55,19 @@ def excluded_filter() -> str | None:
     return parsed.get("profile", {}).get("default", {}).get("default-filter")
 
 
-def sources_for(binary: str, module: str | None = None) -> list[Path]:
+def sources_for(binary: str, module: str | None = None, package: str | None = None) -> list[Path]:
     """The file(s) a filter term names.
 
     A `binary(x)` term is `crates/*/tests/x.rs` or a custom-harness directory
     `crates/*/tests/x/`; a `test(/^m::/)` term is a module inside one of those
-    harnesses, `crates/*/tests/*/m.rs`.
+    harnesses, `crates/*/tests/*/m.rs`, or `crates/p/tests/*/m.rs` when the
+    term is scoped to `package(p)`.
     """
     if module is None:
         found = list(ROOT.glob(f"crates/*/tests/{binary}.rs"))
         found += [p for p in ROOT.glob(f"crates/*/tests/{binary}/main.rs")]
         return found
-    return list(ROOT.glob(f"crates/*/tests/*/{module}.rs"))
+    return list(ROOT.glob(f"crates/{package or '*'}/tests/*/{module}.rs"))
 
 
 def main() -> int:
@@ -77,8 +81,9 @@ def main() -> int:
     named: dict[str, list[Path]] = {}
     for binary in BINARY.findall(expression):
         named[f"binary({binary})"] = sources_for(binary)
-    for module in MODULE.findall(expression):
-        named[f"test(/^{module}::/)"] = sources_for(None if False else module, module)
+    for package, module in MODULE.findall(expression):
+        scope = f"package({package}) & " if package else ""
+        named[f"{scope}test(/^{module}::/)"] = sources_for(module, module, package or None)
 
     # 1. Every term names a file that exists and claims to be a measurement.
     for term, paths in named.items():

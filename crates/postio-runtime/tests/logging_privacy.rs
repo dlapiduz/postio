@@ -27,6 +27,11 @@
 //! capability list is the server's public advertisement; an endpoint is a
 //! hostname they chose to connect to. None of them says anything about who
 //! wrote to them or what was said.
+//!
+//! POSTIO-MEASUREMENT: it runs a corpus through the engine at every log
+//! level, 187 s, the longest case in this crate, so it runs on the nightly
+//! timer. It is a privacy gate: a red run there blocks the merge path like
+//! any other nightly failure.
 
 use std::sync::Arc;
 

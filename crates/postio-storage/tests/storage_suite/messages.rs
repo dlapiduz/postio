@@ -7,7 +7,7 @@
 //! `the_message_list_plan_never_sorts` is the structural half of the first.
 
 use postio_storage::sql::bind;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
@@ -979,7 +979,7 @@ async fn unsnoozing_clears_it_immediately_without_waiting_for_wake_due() {
 ///
 /// Raw SQL and one statement: this is the fixture for the paging tests, and
 /// building it through the repository would make them a test of insert speed.
-async fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
+pub(crate) async fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
     connection
         .execute(
             "WITH RECURSIVE seq(n) AS (
@@ -1332,8 +1332,9 @@ async fn the_message_list_plan_never_sorts() {
 
 /// A cursor page seeks past the cursor rather than filtering down to it.
 ///
-/// The clock version of this is `paging_stays_flat_over_a_hundred_thousand_messages`,
-/// which seeds 100,000 rows and takes two minutes. This asks the same question
+/// The clock version of this is
+/// `paging_scale::paging_stays_flat_over_a_hundred_thousand_messages`, which
+/// seeds 100,000 rows and takes two minutes, on the nightly timer. This asks the same question
 /// of the planner in a tenth of a second, and it is the one that will say
 /// *why*: an index term naming the sort column means a seek, and its absence
 /// means the engine found the scope, then walked every row above the cursor
@@ -1374,55 +1375,6 @@ async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
              the skip keyset paging exists to avoid:\n{plan}"
         );
     }
-}
-
-#[tokio::test]
-async fn paging_stays_flat_over_a_hundred_thousand_messages() {
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("checkout");
-    let (_account, inbox) = test_support::account_with_inbox(&connection).await;
-    seed(&connection, inbox, 100_000).await;
-    let messages = MessageRepository::new(&connection);
-
-    let query = ListQuery::mailbox(inbox).limit(50);
-    let time = async |query: &ListQuery| -> (Duration, Vec<_>) {
-        let start = Instant::now();
-        let page = messages.page(query).await.expect("page");
-        (start.elapsed(), page)
-    };
-
-    let (first_duration, first) = time(&query).await;
-    assert_eq!(first.len(), 50, "a page is a window, never the mailbox");
-
-    // Walk to the far end of the mailbox and time a page there.
-    let mut cursor = first.last().expect("a row").cursor();
-    let mut pages = 1;
-    while pages < 1_900 {
-        let page = messages
-            .page(&query.clone().after(cursor))
-            .await
-            .expect("page");
-        let Some(last) = page.last() else { break };
-        cursor = last.cursor();
-        pages += 1;
-    }
-
-    let (deep_duration, deep) = time(&query.clone().after(cursor)).await;
-    assert_eq!(deep.len(), 50, "still a full window, 95000 rows in");
-    assert!(
-        deep_duration < first_duration * 5 + Duration::from_millis(3),
-        "keyset paging is a seek, not a skip: first {first_duration:?}, deep {deep_duration:?}"
-    );
-
-    // And the whole mailbox is never materialized: the only way to see every
-    // row is to ask for one window at a time.
-    assert_eq!(
-        messages
-            .count(&ListQuery::mailbox(inbox))
-            .await
-            .expect("count"),
-        100_000
-    );
 }
 
 // ---------------------------------------------------------------------------

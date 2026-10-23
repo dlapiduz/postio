@@ -16,6 +16,9 @@
 //! makes *synchronously* is a read the frame is waiting on, while what it
 //! hands to the host's runtime -- the page fetch, the body-index catch-up --
 //! is off this thread by construction.
+//!
+//! POSTIO-MEASUREMENT: it builds a mailbox big enough that an unbounded
+//! startup read would show, 28 s, so it runs on the nightly timer.
 
 use gtk::prelude::*;
 use postio_storage::test_support::counting::{Counts, checkouts, counted};

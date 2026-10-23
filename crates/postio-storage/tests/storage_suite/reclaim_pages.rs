@@ -9,6 +9,9 @@
 //! What it does have is a full `VACUUM`, and these are the two halves of using
 //! it responsibly: it reclaims, and it is only attempted when the reclaim is
 //! worth what it costs.
+//!
+//! POSTIO-MEASUREMENT: it fills and frees a store large enough for reclaimed
+//! space to be measurable, 55 s; it runs on the nightly timer.
 
 use postio_storage::test_support;
 

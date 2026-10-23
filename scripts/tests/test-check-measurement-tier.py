@@ -114,6 +114,17 @@ def main() -> int:
     case("a measurement beside a capability-ignored test",
          config=config_with(FILTER), files=neighbour, expect_fail=False)
 
+    # A module name two suites share, held out of one crate only: the
+    # `package(p) &` scope decides which file must say so, and the other
+    # crate's module keeps running on every pull request, unmarked.
+    shared = dict(good)
+    shared["crates/q/tests/other_suite/measured.rs"] = "//! The other crate's, still on every pull request.\n"
+    case("a scoped term reaches only its crate", config=config_with(FILTER),
+         files=shared, expect_fail=False)
+    case("an unscoped term reaches every crate's module",
+         config=config_with("not (binary(slow_thing) + test(/^measured::/))"),
+         files=shared, expect_fail=True, mentions="crates/q/tests/other_suite/measured.rs")
+
     # `profile.ci-full` holds the storyboard passes out because
     # `profile.ci-storyboards` runs them. The two spellings must agree, or a
     # test is held out of one and selected by neither.

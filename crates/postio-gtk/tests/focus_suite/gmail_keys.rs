@@ -17,6 +17,11 @@
 //! is pressed without anyone remembering to add it here, and a command with
 //! a Gmail key that no probe or reason accounts for fails
 //! `every_gmail_command_is_probed_or_excused`.
+//!
+//! POSTIO-MEASUREMENT: it presses every Gmail key in every pane through the
+//! real window: 36 cases, 10 CPU-minutes on a CI runner, a fifth of the whole
+//! application suite, for a sweep no one change breaks in one place. It runs
+//! on the nightly timer; the per-feature cases stay on every pull request.
 
 use std::cell::RefCell;
 use std::fmt::Write as _;

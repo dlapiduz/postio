@@ -4,6 +4,10 @@
 //! What does not yet is named in `NOT_YET`, and each story empties it: a
 //! command that gains all three and is still listed fails too, so the list
 //! can only shrink.
+//!
+//! POSTIO-MEASUREMENT: a sweep over every command's key, bar row and control
+//! rather than a case about one of them; it runs on the nightly timer with
+//! `every_command` and `a11y_sweep`.
 
 use postio_config::paths::Platform;
 use postio_core::{ActionId, CommandId, CommandSpec, Frontend, Keymap, registry};

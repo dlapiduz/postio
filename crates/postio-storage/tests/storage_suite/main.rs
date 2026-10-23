@@ -69,6 +69,7 @@ mod markers;
 mod messages;
 mod migrations;
 mod operations;
+mod paging_scale;
 mod promoted_headers;
 mod read_receipt_requested;
 mod reclaim_pages;
