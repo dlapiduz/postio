@@ -167,3 +167,33 @@ Each entry gives the decision, why, and what was rejected. Facts were checked on
 - **is-ok-only, 28 cases.** Most assert the property they name: every corpus fixture parses, a 40,000-deep body hits the cap, a budget measured at exactly its limit passes, a gone account comes back as a sentence. Four only checked that something came back where the test is about *what* comes back, and were tightened: `matching_is_case_insensitive`, `a_remote_image_resolves_by_its_parsed_url`, `domain_matching_ignores_case`, `no_cap_means_no_cap`.
 - **Mock-count-only, 6 flags, 4 of them false.** The detector read `times` in "answered 2 times", `x_of(…, "Bus times")`, and a log held in a variable called `calls`. It now matches only a counter being read (`.calls()`, `call_count`, `.times(`), outside string literals.
 - **Consequence: FR-012's ratchet is withdrawn.** A check refusing new constant-only or is-ok-only assertions would have refused mostly good tests.
+
+### 2026-10-23: the whole-workspace inventory on Linux (T010)
+
+Run 39975019031 on `test-audit.yml`, at c404f8f, with durations from the same job's JUnit report.
+
+- **Cases by layer:**
+
+  | Layer | Cases | CPU-seconds |
+  |---|---|---|
+  | rule | 5,992 | 1,586 |
+  | frontend | 1,619 | 2,421 |
+  | controller | 370 | 16 |
+  | meta | 38 | 18 |
+  | measurement | 66 | not run on this path |
+
+  That is 8,085 cases and 4,040 CPU-seconds in all. The frontends are 20% of the cases and 60% of the CPU.
+- **Suites by CPU:**
+
+  | Suite | Cases | CPU-seconds | Share |
+  |---|---|---|---|
+  | `postio-gtk::focus_suite` | 428 | 1,961 | 49% |
+  | `postio-storage::storage_suite` | 714 | 413 | |
+  | `postio-runtime::runtime_suite` | 94 | 270 | |
+  | `postio-ffi::ffi_suite` | 400 | 212 | |
+  | `postio-widgets::widgets_suite` | 233 | 188 | |
+- **Parity clusters:** 58, holding 288 distinct frontend cases in 53 test files.
+  - Largest by CPU: `surface:search` (FFI `focus_search.rs`, 93 s), `surface:bar` (GTK `bar.rs`, 82 s), `surface:contacts`, `surface:state`.
+  - Largest by cases above the cheapest layer: `010/US2` (73), `surface:compose` (64), `surface:bar` (22), `surface:contacts` (22).
+- **Smells:** `display-skip` 108 (the widgets suite's inline checks, left to `display_required` per R8). `is-ok-only` 30, `constant-only` 8, `mock-count-only` 6 (before the detector fix). `untraced` 4,049. `ambiguous` 35.
+- **Read case by case, a cluster is mostly composition.** In `surface:pickers`, each of the six GTK cases and six FFI cases drives a different picker a person opens (`s`, `h`, `l`, `m`, Escape), which ADR 0049 keeps. `focus_suite` costs about 4.6 s a case in window and fixture setup. That cost is not duplication, and this spec's rubric does not reduce it.

@@ -87,7 +87,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
 
   Until T007 passes.
 - [X] T009 [US1] Run `scripts/test-inventory.py -p postio-config` in the worktree and check it against quickstart §1's count. Fix the mapping until `ambiguous` is 0 for that crate.
-- [ ] T010 [US1] Run the inventory on the whole workspace, using JUnit from the newest `full-suite.yml` artifact (`gh run download`) into `target/test-audit/junit.xml`. Record in `specs/012-test-suite-value/research.md` under a new "Measured" heading:
+- [X] T010 [US1] Run the inventory on the whole workspace, using JUnit from the newest `full-suite.yml` artifact (`gh run download`) into `target/test-audit/junit.xml`. Record in `specs/012-test-suite-value/research.md` under a new "Measured" heading:
   - cases per layer;
   - CPU-seconds per layer;
   - the 20 largest parity clusters;
