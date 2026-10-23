@@ -472,11 +472,10 @@ pub async fn contacts_sync_bring_in(
             Ok(Some(id)) => {
                 done.people += 1;
                 done.made.push(id.get());
-                if let Some(external) = find(&import.external) {
-                    if let Err(error) = repository.put_sync_link(&link_of(id.get(), external)).await
-                    {
-                        tracing::warn!(%error, "could not record a sync link");
-                    }
+                if let Some(external) = find(&import.external)
+                    && let Err(error) = repository.put_sync_link(&link_of(id.get(), external)).await
+                {
+                    tracing::warn!(%error, "could not record a sync link");
                 }
             }
             Ok(None) => done.skipped += 1,
