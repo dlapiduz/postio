@@ -229,3 +229,14 @@ The 83 that are not kept are listed in `parity-review.tsv` (group, verdict, file
 3. **`--test-package`**: a removed case in another crate never runs in either pass.
 
 cargo-mutants 27.1.0 also leaks "delete field" mutants past `--re`. `-f` keeps them inside the named files, and they are judged like any other mutant.
+
+### 2026-10-23: what became of the 83 (T030–T033)
+
+- **merge, 40, and fold, 1: declined** (maintainer, 2026-10-23). A merged case keeps every assertion, but it reports one name for several regressions (the FFI `keys.rs` cases each guard a separate past bug, #656 among them), and it stops at its first failing row. The whole saving was about 10 CPU-seconds, 0.25%. Named regressions are worth more than that. This is why T033's table merges were not done.
+- **misplaced, 5:**
+  - `config::seeding_never_touches_a_file_that_is_already_there` was removed. It duplicates `postio-config`'s `seeding_an_existing_file_never_touches_it` word for word, and the removal check said safe.
+  - `config::starting_the_log_seeds_a_config_file_when_there_is_none` stays. It also checks that the Mac's own validator, `postio_ffi::settings_status`, accepts the seeded file.
+  - `focus_compose::the_autosave_waits_what_the_widgets_composer_waited` stays. It pins the Mac's debounce to the widgets composer's, a cross-crate agreement no rule crate can see.
+  - `reader::view::tests::remote_image_urls_are_images_and_styles_never_links` stays. It is already a unit test that runs in a millisecond, and moving the function is a refactor for no test gain.
+  - `postio_handles_mailto_and_postio_links` stays. It reads a data file but uses the app's compiled constants, which a script cannot.
+- **branch, unsure, subsumed, 37:** each went to the removal check. 16 were removed on a "safe" verdict (commit 47af9e637). The rest are kept, or re-run case by case where a group's verdict pointed at only some of its cases.
