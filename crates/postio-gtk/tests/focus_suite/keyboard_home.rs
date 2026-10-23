@@ -60,13 +60,22 @@ pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
             crate::settle_until(async || !places.is_open()).await,
             "choosing a place closed the popover"
         );
-        crate::settle();
-        assert!(in_the_list(&window), "{}", said(&window));
+        // The keyboard comes back once the popover has gone and the list
+        // has drawn the place; a loaded machine takes more than one pass.
+        assert!(
+            crate::settle_until(async || in_the_list(&window)).await,
+            "{}",
+            said(&window)
+        );
 
         window.act(postio_core::CommandId::GoToFlagged);
-        crate::settle();
-        assert_eq!(window.place_name(), "Flagged");
-        assert!(in_the_list(&window), "{}", said(&window));
+        assert!(
+            crate::settle_until(async || window.place_name() == "Flagged" && in_the_list(&window))
+                .await,
+            "{}: {}",
+            window.place_name(),
+            said(&window)
+        );
     });
 }
 
