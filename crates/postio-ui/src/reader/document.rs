@@ -68,7 +68,7 @@ pub enum Absent {
 ///
 /// `None` is an account nothing has been said about yet: treated as
 /// reachable, so a pane never claims offline on no evidence (#1988). Only
-/// [`ConnectionState::Online`] reaches the server; a backoff, a missing
+/// [`postio_core::ConnectionState::Online`] reaches the server; a backoff, a missing
 /// network and a signed-out account all leave a queued request waiting (#1986).
 pub fn reaches_server(link: Option<postio_core::ConnectionState>) -> bool {
     matches!(link, None | Some(postio_core::ConnectionState::Online))
