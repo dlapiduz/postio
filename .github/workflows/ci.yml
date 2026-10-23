@@ -345,73 +345,34 @@ jobs:
         if: ${{ !cancelled() }}
         uses: ./.github/actions/build-cache-save
 
-  # Three jobs, because the question has two halves and one answer.
+  # The lock: nothing merges while the latest full run on `main` is red.
   #
-  # `nightly-status` asks what the last completed run concluded, and if it was
-  # red, *what* in it was red; it never fails. `nightly-rerun` runs that much
-  # of the nightly *here*, on this pull request, but only when the answer was
-  # red. `nightly` is the check the ruleset requires and is green if either
-  # half says so.
+  # The full suite -- the integration suites, the storyboards, the coverage
+  # floors, the docs -- runs on every push to `main` and every night
+  # (`nightly.yml`), not on pull requests: a pull request runs the merge-path
+  # tier, which is budgeted to finish in minutes. What keeps that honest is
+  # this pair of jobs. `Last nightly` asks what the latest completed run of
+  # `nightly.yml` on `main` concluded, and `Nightly is green`, a required
+  # check, fails on every pull request while that run is red -- except one
+  # labelled `fixes-nightly`, which is how the fix gets in. Its merge is a
+  # push to `main`, which runs the suite again, and a green run unlocks
+  # everyone: `nightly.yml`'s `unlock` job re-asks this check on every open
+  # pull request that was waiting.
   #
-  # # Why a pull request re-runs it at all
-  #
-  # The first version of this just failed while the last nightly was red, and
-  # that is a deadlock rather than a gate: the fix has to be on `main` before
-  # a nightly can go green, and the check blocks it getting there. The escape
-  # was going to be a repository admin bypassing the ruleset, which is a
-  # judgement call made by whoever is around at the time.
-  #
-  # Proving it instead is better on every count. It needs no bypass actor, so
-  # branch protection is never weakened for a routine event. It tests *this
-  # change* rather than yesterday's `main`, which is the stronger claim. And
-  # it is earned rather than granted -- any pull request that fixes the
-  # nightly clears the block, not only one somebody designated.
-  #
-  # # Why only what was red
-  #
-  # It used to re-run the whole nightly, on the theory that a broken nightly
-  # should be uncomfortable until somebody fixes it. Measured, it was mostly
-  # waste: 45% of pull-request runs took that path, at a 46-minute median
-  # against 6 when the nightly is green, and 28% of all runner-hours -- while
-  # five of the seven red nightlies were the Docs job alone (one broken
-  # intra-doc link) and the other two were one GTK test each.
-  #
-  # The claim the gate makes is unchanged: "the nightly passes on this
-  # branch". It is proved by re-running what failed, which is the part of
-  # the nightly that could still be failing -- a red Docs job re-runs Docs,
-  # a red suite re-runs the tests that failed twice there (the nightly
-  # uploads them as `nightly-failed-tests`). Fixing the failure on a branch
-  # still clears the gate, and only fixing it does. When the red set cannot
-  # be read it falls back to every job, with the suite minus the measurement
-  # tier. `scripts/ci-nightly-rerun.py` has the rules and its self-test holds
-  # them.
+  # Until 2026-10-23 a red nightly made every pull request re-run what was
+  # red on it, and pass if that passed. That was 40 minutes on nearly half
+  # of all runs, and a flake in the nightly was a flake on every pull
+  # request. The label is a social rule, not a technical one: a pull request
+  # that wears it and does not fix `main` leaves `main` red, with its name
+  # on the run.
   nightly-status:
     name: Last nightly
     runs-on: ubuntu-latest
     outputs:
       green: ${{ steps.ask.outputs.green }}
-      # The run `nightly` links to when it refuses. Undeclared, it was the
-      # empty string and the refusal pointed at nothing.
       url: ${{ steps.ask.outputs.url }}
-      # What to re-run; see `scripts/ci-nightly-rerun.py`. Left empty (the
-      # step below broke), `nightly.yml` runs everything, as it used to.
-      only: ${{ steps.scope.outputs.only }}
-      profile: ${{ steps.scope.outputs.profile }}
-      tests: ${{ steps.scope.outputs.tests }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          sparse-checkout: scripts
-
-      # Never fails. Its job is to answer, and `nightly` below is what turns
-      # the answer into a verdict -- a step that exited non-zero here would
-      # take `nightly-rerun` with it and there would be nothing to prove.
-      #
-      # Three states count as green, each for its own reason: never run (a
-      # fresh fork, or the workflow was just added), in progress (judging a
-      # run before it finishes is a coin toss), and cancelled or skipped (a
-      # runner outage says nothing about the tree).
-      - name: Ask what the last Nightly concluded
+      - name: Ask what the latest full run on main concluded
         id: ask
         env:
           GH_TOKEN: ${{ github.token }}
@@ -419,114 +380,71 @@ jobs:
           set -euo pipefail
           last=$(gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=completed&branch=main&per_page=1" \
-            --jq '.workflow_runs[0] | "\(.conclusion)\t\(.html_url)\t\(.created_at)\t\(.id)"' 2>/dev/null || true)
-
+            --jq '.workflow_runs[0] | "\(.conclusion)\t\(.html_url)\t\(.created_at)\t\(.event)"' 2>/dev/null || true)
           if [ -z "$last" ] || [ "$last" = "null" ]; then
-            echo "No completed Nightly to judge."
+            echo "No completed run to judge."
             echo "green=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           conclusion=$(printf '%s' "$last" | cut -f1)
           url=$(printf '%s' "$last" | cut -f2)
           when=$(printf '%s' "$last" | cut -f3)
-          id=$(printf '%s' "$last" | cut -f4)
-          # Any completed run on `main` counts, scheduled or dispatched -- `gh
-          # workflow run Nightly` after landing a fix is a documented way to
-          # clear this, and filtering to `event=schedule` would silently ignore
-          # it. A run on another branch never counts: an agent's full suite on a
-          # feature branch says nothing about `main`. A
-          # `workflow_call` from the job below does not appear here at all:
-          # a reused workflow's jobs belong to the caller's run.
-          echo "Last Nightly: $conclusion ($when)"
+          event=$(printf '%s' "$last" | cut -f4)
+          echo "Latest full run on main: $conclusion ($when, on $event)"
           echo "  $url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-
           case "$conclusion" in
             success|cancelled|skipped)
               echo "green=true" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "green=false" >> "$GITHUB_OUTPUT"
-              echo "::warning::The last Nightly failed ($url) — re-running what failed on this pull request to see whether this change fixes it."
+              echo "::warning::The latest full run on main failed ($url). Nothing merges until a pull request labelled fixes-nightly turns it green."
               ;;
           esac
 
-      # Which jobs were red, and in the suite, which tests. Never fails
-      # either: whatever it cannot read becomes "everything" in the script.
-      - name: Ask what in it was red
-        id: scope
-        if: steps.ask.outputs.green == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.ask.outputs.id }}
-        run: |
-          set -uo pipefail
-          work="${RUNNER_TEMP}/nightly-red"
-          mkdir -p "$work"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-            > "$work/jobs.json" 2>/dev/null || echo '{"jobs": []}' > "$work/jobs.json"
-          # Absent when the suite was green, or failed before naming a test.
-          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n nightly-failed-tests \
-            -D "$work/failed" 2>/dev/null || true
-          python3 scripts/ci-nightly-rerun.py scope --jobs "$work/jobs.json" \
-            --failed-tests "$work/failed/failed.txt" | tee -a "$GITHUB_OUTPUT" || true
-
-  # The nightly itself, on this pull request's merge commit. Skipped entirely
-  # while the last one is green, which is almost always.
-  nightly-rerun:
-    name: Nightly (re-run on this PR)
-    needs: nightly-status
-    if: needs.nightly-status.outputs.green != 'true'
-    uses: ./.github/workflows/nightly.yml
-    with:
-      only: ${{ needs.nightly-status.outputs.only }}
-      profile: ${{ needs.nightly-status.outputs.profile }}
-      tests: ${{ needs.nightly-status.outputs.tests }}
-
   nightly:
     name: Nightly is green
-    needs: [nightly-status, nightly-rerun]
-    # `always()`, because `nightly-rerun` is skipped on the ordinary path and a
-    # skipped dependency would otherwise skip this too -- and a skipped
-    # required check is a check that proved nothing while looking like it did.
+    needs: nightly-status
+    # `always()`: a skipped required check is a check that proved nothing
+    # while looking like it did.
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Decide
         env:
-          SCHEDULED_GREEN: ${{ needs.nightly-status.outputs.green }}
-          RERUN: ${{ needs.nightly-rerun.result }}
+          GREEN: ${{ needs.nightly-status.outputs.green }}
           URL: ${{ needs.nightly-status.outputs.url }}
+          EVENT: ${{ github.event_name }}
+          FIXES: ${{ contains(github.event.pull_request.labels.*.name, 'fixes-nightly') }}
         run: |
           set -euo pipefail
-          echo "last nightly green: ${SCHEDULED_GREEN}"
-          echo "re-run on this PR:            ${RERUN}"
-
-          if [ "${SCHEDULED_GREEN}" = "true" ]; then
-            echo "The nightly is green."
+          echo "latest full run on main green: ${GREEN}"
+          if [ "${GREEN}" = "true" ]; then
+            echo "main's full suite is green."
             exit 0
           fi
-          if [ "${RERUN}" = "success" ]; then
-            echo "The nightly is red, but it passes on this branch —"
-            echo "this change fixes it, so it is not blocked."
+          if [ "${EVENT}" != "pull_request" ]; then
+            echo "main is red, and this is main's own run: the lock is for pull requests."
             exit 0
           fi
-
-          echo "::error::The nightly is red and still red on this branch."
+          if [ "${FIXES}" = "true" ]; then
+            echo "main is red and this pull request says it fixes it (fixes-nightly)."
+            echo "It may merge; its merge runs the suite on main, and green unlocks the rest."
+            exit 0
+          fi
+          echo "::error::main's full suite is red, so nothing merges until it is fixed."
           echo
-          echo "The last run failed:"
+          echo "The run:"
           echo "  ${URL}"
           echo
-          echo "The pull-request gate is the sanity tier; the integration suites"
-          echo "that catch layers which each pass and were never joined up run in"
-          echo "that nightly. A red one means nothing is checking them."
-          echo
-          echo "This is not a deadlock: fix it on this branch and the re-run above"
-          echo "(of what failed in that run, not the whole nightly) goes green,"
-          echo "which is what clears this check. There is no override, because"
-          echo "there does not need to be one."
+          echo "A pull request runs the merge-path tier, budgeted to finish in minutes;"
+          echo "the integration suites, storyboards and coverage floors run on main after"
+          echo "every merge and every night. While that run is red nothing is checking"
+          echo "them, so nothing merges. The way through is the one pull request that"
+          echo "fixes it, labelled fixes-nightly:  gh pr edit <n> --add-label fixes-nightly"
+          echo "If this change is that fix, label it. If not, wait for the one that is,"
+          echo "or be it."
           exit 1
 
   docs:

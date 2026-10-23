@@ -38,20 +38,30 @@ on:
     # Offset from bench.yml (06:00) and audit.yml (06:30) so three scheduled
     # jobs are not queuing for a runner at the same minute.
     - cron: "0 7 * * *"
+  # And every push to main (2026-10-23). This is not the per-push run the
+  # header argues against: nothing waits on it, it runs beside the next pull
+  # request rather than in front of it, and it is what lets the merge-path
+  # tier be budgeted to minutes. A pull request runs that tier; the
+  # integration suites, the storyboards and the coverage floors run here,
+  # after every merge, so a merge that broke one shows within the hour
+  # rather than tomorrow. `ci.yml`'s `Nightly is green` reads the latest
+  # completed run here and locks every merge while it is red; the `unlock`
+  # job at the end reopens them.
+  push:
+    branches: [main]
   workflow_dispatch:
-  # Called by `ci.yml` when the last scheduled run was red, so a pull request
-  # can *prove* it fixed the nightly rather than waiting for tomorrow's.
+  # Called by `full-suite.yml` when a pull request asks for the whole run
+  # before it merges (`issue-land.sh --full-suite`).
   #
   # Reused rather than copied. A second definition of "what the nightly runs"
-  # living in `ci.yml` would drift from this one, and the day it did, a pull
+  # living elsewhere would drift from this one, and the day it did, a pull
   # request would clear a gate by passing something other than the thing
   # that was failing.
   #
-  # The inputs narrow it to *what was red*, and only that:
-  # `scripts/ci-nightly-rerun.py` reads the red run and decides. Re-running
-  # everything to clear one broken doc link put 45% of pull-request runs on
-  # a 46-minute path. Called with no inputs (`full-suite.yml`, a schedule,
-  # a dispatch) it is the whole nightly, as it always was.
+  # The inputs narrow a call to a subset, and `scripts/ci-nightly-rerun.py`
+  # turns a list of failed cases into the filter for it. Called with no
+  # inputs (`full-suite.yml`, a schedule, a push, a dispatch) it is the
+  # whole nightly, as it always was.
   workflow_call:
     inputs:
       # Single-line descriptions: `scripts/checks/ci-expected-workflows.py`
@@ -73,6 +83,13 @@ permissions:
   contents: read
   # The `changed` job below reads the previous run's head SHA and conclusion.
   actions: read
+
+# On main the newest push supersedes the one before it: the lock asks about
+# the latest state of main, not every state it passed through. Any other
+# trigger gets a group of its own and is never cancelled.
+concurrency:
+  group: nightly-${{ github.event_name == 'push' && 'main' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -422,3 +439,41 @@ jobs:
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-storyboards postio-gtk
+
+  # Green on main reopens the merges the red had locked. `ci.yml`'s
+  # `Nightly is green` failed on every pull request that ran while main was
+  # red, and a check does not re-ask by itself, so this re-runs `Last
+  # nightly` -- and with it the check that depends on it -- on every open
+  # pull request whose latest CI run has the check red. Only after a push
+  # to main, and only when nothing here failed or was cancelled.
+  unlock:
+    name: Unlock the waiting pull requests
+    needs: [changed, coverage, doc, full-suite, storyboards]
+    if: always() && github.event_name == 'push' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Re-ask `Nightly is green` where it was red
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          gh pr list -R "$GITHUB_REPOSITORY" --state open --json number,headRefOid \
+            --jq '.[]|"\(.number) \(.headRefOid)"' |
+          while read -r number sha; do
+            run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${sha}&event=pull_request&per_page=20" \
+                    --jq '[.workflow_runs[]|select(.name=="CI")][0].id' 2>/dev/null || true)
+            [ -n "$run" ] && [ "$run" != null ] || continue
+            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')
+            red=$(printf '%s' "$jobs" | jq -r '.jobs[]|select(.name=="Nightly is green" and .conclusion=="failure")|.id' | head -1)
+            [ -n "$red" ] || continue
+            ask=$(printf '%s' "$jobs" | jq -r '.jobs[]|select(.name=="Last nightly")|.id' | head -1)
+            if gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/jobs/${ask:-$red}/rerun" >/dev/null 2>&1; then
+              echo "#${number}: re-asking"
+            else
+              echo "#${number}: could not re-run job ${ask:-$red}"
+            fi
+          done
