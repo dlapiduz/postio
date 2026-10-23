@@ -100,7 +100,7 @@ pub fn wire_body(stored: Stored) -> Body {
 ///
 /// The parts are metadata the sync already stored -- `BODYSTRUCTURE`, not
 /// bytes -- so asking for them costs a row read and never a fetch.
-pub async fn load(
+pub(crate) async fn load(
     connection: &postio_storage::Checkout,
     message: MessageId,
     offline: bool,
