@@ -56,6 +56,7 @@ decision stands.
 | [0046](0046-content-identity-is-distinct-from-mailbox-identity.md) | Content identity is distinct from mailbox identity | Accepted, built in #1780 |
 | [0047](0047-one-feature-set-for-the-workspace.md) | One feature set for the workspace: `postio-workspace-hack`, and a boundary is what a crate can call | Built |
 | [0048](0048-per-contact-settings-are-the-one-home-of-sender-keyed-settings.md) | Per-contact settings are the one home of sender-keyed settings | Built for pins, markers, one-sender digests and the HTML treatment |
+| [0049](0049-each-layer-asserts-its-own-question.md) | Each test layer asserts its own question: branches once, frontends assert composition | Accepted; enforced per surface by spec 012 |
 
 ## Writing one
 

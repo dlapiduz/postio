@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run">
+<testsuite name="postio-focus::controller_suite">
+<testcase name="pickers::a_number_chooses" classname="postio-focus::controller_suite" time="0.01"></testcase>
+</testsuite>
+<testsuite name="postio-ffi::ffi_suite">
+<testcase name="focus_pickers::a_number_chooses_on_the_mac" classname="postio-ffi::ffi_suite" time="0.4"></testcase>
+</testsuite>
+<testsuite name="postio-gtk::focus_suite">
+<testcase name="pickers::s_then_2_snoozes" classname="postio-gtk::focus_suite" time="3.5"></testcase>
+</testsuite>
+</testsuites>

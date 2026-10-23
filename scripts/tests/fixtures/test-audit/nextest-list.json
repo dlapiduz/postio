@@ -1,0 +1,207 @@
+{
+ "rust-build-meta": {},
+ "test-count": 20,
+ "rust-suites": {
+  "postio-focus::controller_suite": {
+   "package-name": "postio-focus",
+   "binary-id": "postio-focus::controller_suite",
+   "binary-name": "controller_suite",
+   "kind": "test",
+   "binary-path": "/nonexistent/target/debug/deps/controller_suite-0",
+   "build-platform": "target",
+   "cwd": "/nonexistent/crates/postio-focus",
+   "status": "listed",
+   "testcases": {
+    "pickers::a_number_chooses": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    }
+   }
+  },
+  "postio-ffi::ffi_suite": {
+   "package-name": "postio-ffi",
+   "binary-id": "postio-ffi::ffi_suite",
+   "binary-name": "ffi_suite",
+   "kind": "test",
+   "binary-path": "/nonexistent/target/debug/deps/ffi_suite-0",
+   "build-platform": "target",
+   "cwd": "/nonexistent/crates/postio-ffi",
+   "status": "listed",
+   "testcases": {
+    "focus_pickers::a_number_chooses_on_the_mac": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "focus_pickers::opening_succeeds": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "focus_pickers::opening_yields_something": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "focus_pickers::opening_returns_the_picker": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "nested::in_mod_rs": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    }
+   }
+  },
+  "postio-gtk::focus_suite": {
+   "package-name": "postio-gtk",
+   "binary-id": "postio-gtk::focus_suite",
+   "binary-name": "focus_suite",
+   "kind": "test",
+   "binary-path": "/nonexistent/target/debug/deps/focus_suite-0",
+   "build-platform": "target",
+   "cwd": "/nonexistent/crates/postio-gtk",
+   "status": "listed",
+   "testcases": {
+    "pickers::s_then_2_snoozes": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "pickers::skips_without_a_display": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    }
+   }
+  },
+  "postio-storage": {
+   "package-name": "postio-storage",
+   "binary-id": "postio-storage",
+   "binary-name": "postio_storage",
+   "kind": "lib",
+   "binary-path": "/nonexistent/target/debug/deps/postio_storage-0",
+   "build-platform": "target",
+   "cwd": "/nonexistent/crates/postio-storage",
+   "status": "listed",
+   "testcases": {
+    "tests::counts_rows": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "change::tests::a_change_is_seen": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "deep::tests::dup": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "generated::dup": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    }
+   }
+  },
+  "postio-core::core_suite": {
+   "package-name": "postio-core",
+   "binary-id": "postio-core::core_suite",
+   "binary-name": "core_suite",
+   "kind": "test",
+   "binary-path": "/nonexistent/target/debug/deps/core_suite-0",
+   "build-platform": "target",
+   "cwd": "/nonexistent/crates/postio-core",
+   "status": "listed",
+   "testcases": {
+    "rules::the_label_is_fixed": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "rules::the_widths_add_up": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "rules::a_computed_value_meets_a_constant": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "rules::dispatch_calls_the_backend_once": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "rules::dispatch_moves_the_message": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "docs::the_reference_matches": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    },
+    "slow::measures_cost": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "mismatch",
+      "reason": "default-filter"
+     }
+    },
+    "docs::the_reference_is_current_through_a_helper": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
+     }
+    }
+   }
+  }
+ }
+}

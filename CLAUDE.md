@@ -67,6 +67,9 @@ are covered by tests.
   bugs here live between layers that each pass their tests. `focus_suite`
   (`crates/postio-gtk/tests/focus_suite/`) opens the real window and
   presses real keys.
+- Each layer asserts its own question (ADR 0049): a behaviour's branches
+  once, in a rule crate or the controller; a frontend suite drives
+  composition, one case per path a person takes, per platform.
 - A change to how an app behaves under the keyboard ships with its
   storyboard in `storyboards/`, written from the acceptance first and red
   on the base, and `/ux-review` before landing.

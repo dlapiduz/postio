@@ -46,6 +46,14 @@
 # ask for the profile that owns it:
 #
 #     cargo nextest run --profile nightly -E 'binary(cache_pressure)'
+# Wrapper scripts are an experimental nextest feature (0.9.98+). Only the
+# per-test-coverage profile at the end of this file uses one, and nothing on
+# the merge path selects that profile, so an upstream change can break
+# scripts/test-coverage-sets.py and nothing else -- loudly, since that
+# script refuses a case that left no profile (specs/012-test-suite-value,
+# research R2).
+experimental = ["wrapper-scripts"]
+
 [profile.default]
 # A test that hangs should fail, not stall the run. The GTK suites already
 # carry their own deadlines (`POSTIO_TEST_PATIENCE` scales them); this is the
@@ -333,3 +341,19 @@ threads-required = "num-test-threads"
 slow-timeout = { period = "120s", terminate-after = 6 }
 default-filter = 'binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))'
 fail-fast = false
+
+# One coverage profile per case, for scripts/test-coverage-sets.py (spec 012,
+# US2). Inherits the default profile, so its default-filter keeps the
+# measurement tier out, as the redundancy report requires. The wrapper sets
+# LLVM_PROFILE_FILE from the case's name, then runs the target runner --
+# on Linux the headless compositor every GTK case needs -- inside itself.
+[scripts.wrapper.per-test-profile]
+command = { command-line = "scripts/per-test-profile.sh", relative-to = "workspace-root" }
+target-runner = "within-wrapper"
+
+[profile.per-test-coverage]
+fail-fast = false
+
+[[profile.per-test-coverage.scripts]]
+filter = "all()"
+run-wrapper = "per-test-profile"
