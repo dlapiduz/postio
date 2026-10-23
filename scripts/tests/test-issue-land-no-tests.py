@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """A crate with no tests must not fail the landing gate (#1308).
 
-`issue-land.sh` runs the per-crate integration suites for every crate a branch
-changed. `postio-bench` has no tests and is not supposed to have any — it is
-bench targets, and `bench.yml` compiles them nightly and deliberately times
-nothing. nextest exits **4** when a run selects nothing, and the gate read that
-as a failure:
+`issue-land.sh` runs the unit tests of every crate a branch changed (and,
+under `--full`, their integration suites). `postio-bench` has no tests and is
+not supposed to have any — it is bench targets, and `bench.yml` compiles them
+nightly and deliberately times nothing. nextest exits **4** when a run selects
+nothing, and the gate read that as a failure:
 
     --- test (suites): postio-bench ---
         Starting 0 tests across 1 binary
@@ -104,10 +104,6 @@ def world(base: Path, *, with_a_failing_test: bool) -> tuple[Path, Path]:
     for name in ("wait-for-checks.sh", "install-shims.sh", "jobserver.sh"):
         (root / "scripts" / name).write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
         (root / "scripts" / name).chmod(0o755)
-    # The real one: it is the rule that decides which crates get a suite run,
-    # and stubbing it would stub the thing under test out of the picture.
-    shutil.copy(HERE / "full-suite-crates.sh", root / "scripts" / "full-suite-crates.sh")
-    (root / "scripts" / "full-suite-crates.sh").chmod(0o755)
     shutil.copy(ISSUE_LAND, root / "scripts" / "issue-land.sh")
     (root / "scripts" / "issue-land.sh").chmod(0o755)
     shutil.copytree(HERE / "lib", root / "scripts" / "lib")

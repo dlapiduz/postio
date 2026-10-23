@@ -15,7 +15,7 @@
 #   scripts/issue-land.sh --full                # integration suites too, not just units
 #   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
 #   scripts/issue-land.sh --full-suite          # CI runs the whole nightly on the PR too
-#                                               # (automatic for a high-risk diff: scripts/risk-of-diff.sh)
+#                                               # (the script names a high-risk diff: scripts/risk-of-diff.sh)
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
 #   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
@@ -51,10 +51,14 @@ set -euo pipefail
 #     cargo test   4511ms  4648ms  4988ms
 #     nextest      9311ms 11260ms 10700ms     <- 2.2x slower
 #
-# So: nextest for the integration tiers, `cargo test` for `--lib`. Same reason
-# `scripts/test-fast.sh` and `scripts/test-sanity.sh` were left alone -- they
-# are the between-edits loop, and switching them would be a tidy-looking
-# regression.
+# So nextest earned its keep on the integration tiers, and the unit tier
+# stayed on `cargo test` until #1976: the merge path's filter lives in
+# `.config/nextest.toml`, and `cargo test` reads no nextest config, so a
+# case held out for waiting on the clock ran at every landing anyway. The
+# default tier is the changed crates' units through nextest now, where
+# the per-process cost is a few hundred spawns rather than 1,459.
+# `scripts/test-fast.sh` and `scripts/test-sanity.sh` are the between-edits
+# loop and stay on `cargo test`.
 #
 # Fail open, like the wrappers in `.cargo/config.toml`: a machine without
 # nextest runs `cargo test` and gets the same answer, slower.
@@ -554,23 +558,33 @@ if [ "$GATES_GREEN" != 1 ]; then
         echo "[timing] rustdoc $crate: $(( $(date +%s) - PHASE_START ))s"
     done
 
-    # The test tier. Default is the whole workspace's *unit* tests: 1,313
-    # tests in ~5s warm, 19 binaries instead of 197. `--full` adds the
-    # per-crate integration suites, which is what this used to always do.
+    # The test tier. Default is the unit tests of the crates this branch
+    # changed, through nextest so the merge path's filter applies. `--full`
+    # adds those crates' integration suites, which is what this used to
+    # always do.
     #
-    # The reason for the change is the machine, not the tests. Several
-    # sessions share this workstation, and the per-crate integration suites
-    # are minutes each -- so landing became something you queued for.
-    # (This once blamed an "~11-minute compile and link" of one binary;
-    # that was a cold worktree, fixed at the claim -- #1101, #1102.)
+    # The default has been cut twice, and both times the argument was the
+    # same: something else proves the combination, so a landing should only
+    # prove what is cheap to prove here. #847 cut it from every changed
+    # crate's suites to the workspace's units, when the suites had become
+    # minutes each on a shared workstation. 2026-10-23 cut it again, from
+    # the workspace's units plus the vocabulary suites to the changed
+    # crates' units, when the pull request's checks came down from a
+    # 35-minute median to about five. A landing waits for those checks
+    # anyway, and they run the workspace's units (`ci.yml`, Tests), every
+    # crate's test targets under clippy, the suites a vocabulary change
+    # breaks, and the doctests. What is proved locally is what a red check
+    # would cost a round trip to learn and nothing more: formatting, clippy
+    # and rustdoc on the crates you touched, their units and doctests, and
+    # the repository invariants.
     #
-    # This is safe only because something else still proves the combination:
-    # CI runs the full workspace on every pull request, and the nightly run
-    # does it again on a schedule. That is not a formality. The bugs this
-    # project ships are layers that each pass and are not joined up -- the
-    # Reader was built, tested and never mounted -- and unit tests are
-    # precisely the tier that cannot see them. If the pull-request suite ever
-    # goes away, this default has to go back with it (#847).
+    # This is safe only because the checks still run on every pull request
+    # and the full suite runs on `main` after every merge. That is not a
+    # formality. The bugs this project ships are layers that each pass and
+    # are not joined up -- the Reader was built, tested and never mounted --
+    # and unit tests are precisely the tier that cannot see them. If the
+    # pull-request suite ever goes away, this default has to go back with
+    # it (#847).
     if [ "$FULL" = 1 ]; then
         for crate in $CRATES; do
             [ -d "$TREE/crates/$crate" ] || continue
@@ -586,33 +600,31 @@ if [ "$GATES_GREEN" != 1 ]; then
             echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
         done
     else
-        # The suites the sanity tier cannot fail for (#1047).
+        # The default tier: the unit tests of the crates this branch changed.
         #
-        # `--lib` proves the units and `cargo check --all-targets` proves
-        # everything compiles; neither can see a test that *enumerates* a
-        # vocabulary -- the golden binding table, `docs/keybindings.md`,
-        # `[keys]`, `docs/config.md`. Adding one `CommandId` touches six or
-        # seven places, the compiler checks two, and the branch builds and
-        # then fails CI ten minutes later on an assertion about a table.
+        # One invocation for all of them: one dependency graph to build, and
+        # nextest runs the binaries side by side. Through nextest, not
+        # `cargo test`, so the merge path's filter in .config/nextest.toml
+        # applies here exactly as on a pull request: a case held out for
+        # waiting on the clock stays out of the landing too. `cargo test`
+        # reads no nextest config and ran every one of them (and, in one
+        # process, let a slow case's deadline eat the others' time -- #1976).
         #
-        # So the crates you changed get their integration suites too, minus
-        # the handful whose suites are minutes. `full-suite-crates.sh` holds
-        # that rule and the measurements behind it; its self-test holds the
-        # direction it has to fail in.
-        for crate in $(printf '%s\n' $CRATES | scripts/full-suite-crates.sh); do
+        # Every changed crate is buildable here by construction: a changed
+        # crate this host cannot build was a hard stop above (#555). A
+        # branch that changes no crate runs no Rust here at all, and that
+        # is the design: the pull request's checks are the judge.
+        UNIT_CRATES=()
+        for crate in $CRATES; do
             [ -d "$TREE/crates/$crate" ] || continue
-            echo "--- test (suites): $crate ---"
-            PHASE_START=$(date +%s)
-            # `--no-fail-fast`, because this class of change breaks several
-            # tables at once and plain `cargo test` abandons the remaining
-            # binaries at the first failure. #1003 fixed one table, re-landed,
-            # and failed on a *different* one twenty-five minutes later; a
-            # probe of this gate reproduced exactly that -- `command_registry`
-            # and `keybindings_doc` both fail, and only the first is reported
-            # without this. (CLAUDE.md says the same about the reconcile pass.)
-            run_tests --no-fail-fast -p "$crate"
-            echo "[timing] suites $crate: $(( $(date +%s) - PHASE_START ))s"
+            UNIT_CRATES+=(-p "$crate")
         done
+        if [ ${#UNIT_CRATES[@]} -gt 0 ]; then
+            echo "--- test: unit tests of the changed crates (--full for their suites) ---"
+            PHASE_START=$(date +%s)
+            run_tests --lib "${UNIT_CRATES[@]}"
+            echo "[timing] unit tests: $(( $(date +%s) - PHASE_START ))s"
+        fi
 
         # Doctests, for the crates this branch changed (#1440).
         #
@@ -641,113 +653,39 @@ if [ "$GATES_GREEN" != 1 ]; then
             run_doctests -p "$crate"
             echo "[timing] doctests $crate: $(( $(date +%s) - PHASE_START ))s"
         done
-
-        echo "--- test: workspace unit tests (sanity tier; --full for the rest) ---"
-        PHASE_START=$(date +%s)
-        # `cargo test` deliberately, not `run_tests`. This tier is ~1,459
-        # small unit tests, and a process per test costs more than it saves
-        # there -- measured 4.5s here against nextest's 9.3s on a warm tree
-        # (scripts/lib/test-runner.sh has the numbers). nextest earns its
-        # keep on the integration suites above, where 140 binaries are the
-        # bottleneck rather than the tests inside them.
-        #
-        # `--lib` excludes doctests under either runner. The changed crates'
-        # doctests ran in their own pass above (#1440); this tier is the
-        # workspace's units and does not repeat them.
-        #
-        # Narrowed, not skipped, on a host missing the GTK libraries. The
-        # workspace *check* below is skipped outright there and that is the
-        # right call for a compile probe -- but this is the only real test
-        # gate a landing has, and skipping it would let a macOS session land
-        # with nothing run at all. Every crate the host can build still runs;
-        # the two it cannot are excluded by name and the PR already carries
-        # `needs-linux-verify` to say so.
-        #
-        # Without this a scripts-only change could not land from a Mac: no
-        # crate changed, so the #555 hard stop correctly did not fire, and
-        # then the tier compiled the whole workspace anyway and died on
-        # `glib-sys` (#1152). Excluding the two obvious crates is not enough
-        # either -- `postio-bench` dev-depends on the desktop app and drags the
-        # stack back in -- which is why the list is derived.
-        SANITY_EXCLUDES=()
-        for crate in $UNBUILDABLE; do
-            SANITY_EXCLUDES+=(--exclude "$crate")
-        done
-        if [ ${#SANITY_EXCLUDES[@]} -gt 0 ]; then
-            echo "note: excluding ${UNBUILDABLE// /, } -- this host cannot build them."
-        fi
-        #
-        # Through nextest, not `cargo test`, so the merge path's filter in
-        # .config/nextest.toml applies here exactly as on a pull request: a
-        # case held out for waiting on the clock stays out of the landing
-        # too. `cargo test` reads no nextest config and ran every one of
-        # them (and, in one process, let a slow case's deadline eat the
-        # others' time -- #1976).
-        run_tests --workspace --lib ${SANITY_EXCLUDES[@]+"${SANITY_EXCLUDES[@]}"}
-        echo "[timing] sanity tier: $(( $(date +%s) - PHASE_START ))s"
     fi
 
-    # Everyone else's *test* targets, against what this branch just changed.
+    # Adding a crate is the one edit whose blast radius is definitionally
+    # outside the crates it touches, so it is the one edit the per-crate
+    # gates cannot describe. `postio-session/src/logging.rs` keeps a list
+    # of every workspace crate and a test that fails when one is missing;
+    # `postio-ui` (#566) and `postio-ffi` (#571) each landed a red
+    # `postio-session` because neither branch changed it, so nothing in
+    # either chain had any reason to compile that test (#585). The other
+    # things that enumerate the workspace -- check-lint-floor.py,
+    # check-crate-boundaries.py -- fail the same way for the same reason.
     #
-    # The gates above run over the crates you changed, which is the right
-    # trade for speed and the wrong one for blast radius: a shared type that
-    # gains a field breaks call sites in crates you never named, and when
-    # those call sites are in test code the libraries still compile. So
-    # `cargo build` is green, `cargo check -p <the crate you changed>` is
-    # green, and `main` goes red for the next session unlucky enough to touch
-    # the crate whose tests stopped building. That happened twice in one day
-    # (#419): `Event::BackfillProgress` gained `footprint`, and six call
-    # sites in the GTK crate's tests were never updated.
+    # Rare enough to cost nothing in the ordinary case: this fires only
+    # when the root manifest's `members` actually changed, not merely
+    # because Cargo.toml was touched for a dependency bump. Skipped on a
+    # host without the GTK libraries, where a workspace run fails on
+    # system headers rather than on the branch; its PR already carries
+    # `needs-linux-verify`.
     #
-    # `check`, not `build` or `test`: no codegen, no linking, nothing
-    # executed -- the cheapest question that covers the whole workspace, and
-    # the only one that would have caught either of them.
-    #
-    # What it costs, measured on this workstation (#419): 6m20s against a
-    # cold target directory, 0.6s warm. A landing pays somewhere between,
-    # depending on how much of the graph the per-crate gates above already
-    # compiled -- close to nothing for a GTK-crate branch, most of the
-    # frontend for a leaf-crate one. A retry after a killed run pays the warm
-    # number, and the gate cache above usually skips it entirely.
-    #
-    # Skipped where the hard stop above would not have fired: a host without
-    # the GTK libraries would fail this on system headers rather than on the
-    # branch, and refusing there would stop such a host doing any work at
-    # all. Its PR already carries `needs-linux-verify`.
-    if [ -n "$UNBUILDABLE" ]; then
-        echo "--- workspace check: skipped ---"
-        echo "This host cannot build ${UNBUILDABLE// /, }, so a workspace-wide"
-        echo "check would fail on system libraries rather than on this branch."
-    else
-        echo "--- workspace check: every crate's test targets ---"
+    # Everyone else's test targets used to be type-checked here as well
+    # (`cargo check --workspace --all-targets`, #419), for the shared type
+    # that gains a field and breaks call sites in a crate nobody named.
+    # The pull request's clippy job compiles exactly those targets
+    # (`--workspace --all-targets`) a few minutes after the push, and the
+    # local pass cost most of the frontend in check mode on a leaf-crate
+    # branch, so it went with the rest of what CI re-proves (2026-10-23).
+    if [ -z "$UNBUILDABLE" ] && git diff -U0 "origin/$BASE...HEAD" -- Cargo.toml \
+       | grep -qE '^[+-].*crates/'; then
+        echo "--- workspace tests: this branch changes the members list ---"
         PHASE_START=$(date +%s)
-        cargo check --workspace --all-targets
-        echo "[timing] workspace check: $(( $(date +%s) - PHASE_START ))s"
-
-        # Adding a crate is the one edit whose blast radius is definitionally
-        # outside the crates it touches, so it is the one edit the per-crate
-        # gate cannot describe. `postio-session/src/logging.rs` keeps a list
-        # of every workspace crate and a test that fails when one is missing;
-        # `postio-ui` (#566) and `postio-ffi` (#571) each landed a red
-        # `postio-session` because neither branch changed it, so nothing in
-        # either chain had any reason to compile that test (#585).
-        #
-        # `check` above cannot catch it: the test compiles fine, it just
-        # fails. Only running it finds this, and the other things that
-        # enumerate the workspace -- check-lint-floor.py,
-        # check-crate-boundaries.py -- fail the same way for the same reason.
-        #
-        # Rare enough to cost nothing in the ordinary case: this fires only
-        # when the root manifest's `members` actually changed, not merely
-        # because Cargo.toml was touched for a dependency bump.
-        if git diff -U0 "origin/$BASE...HEAD" -- Cargo.toml \
-           | grep -qE '^[+-].*crates/'; then
-            echo "--- workspace tests: this branch changes the members list ---"
-            PHASE_START=$(date +%s)
-            run_tests --workspace
-            run_doctests --workspace
-            echo "[timing] workspace tests: $(( $(date +%s) - PHASE_START ))s"
-        fi
+        run_tests --workspace
+        run_doctests --workspace
+        echo "[timing] workspace tests: $(( $(date +%s) - PHASE_START ))s"
     fi
 fi
 
@@ -765,9 +703,9 @@ echo "[timing] invariants: $(( $(date +%s) - PHASE_START ))s"
 # the worst phase, which is what a person needs to decide whether a suite has
 # crept onto the merge path that should be on the nightly timer.
 #
-# The line moves when a crate's suite grows. `scripts/full-suite-crates.sh`
-# holds the deny list and the measurements behind it; `.config/nextest.toml`
-# holds the tier for a test that is slow rather than a crate that is.
+# The line moves when a crate's units grow. `.config/nextest.toml` holds
+# the tier for a test that is slow: the nightly's default-filter, with a
+# `POSTIO-MEASUREMENT` marker on the case.
 GATES_TOTAL=$(( $(date +%s) - GATES_START ))
 echo "[timing] TOTAL: ${GATES_TOTAL}s (budget ${GATE_BUDGET_SECONDS}s)"
 if [ "$GATES_TOTAL" -gt "$GATE_BUDGET_SECONDS" ]; then
@@ -778,10 +716,9 @@ if [ "$GATES_TOTAL" -gt "$GATE_BUDGET_SECONDS" ]; then
         | sed -E 's/^\[timing\] (.*): ([0-9]+)s$/\2 \1/' \
         | sort -rn | head -5 | awk '{printf "  %5ss  %s\n", $1, substr($0, index($0,$2))}'
     echo
-    echo "A suite that has grown past the merge path belongs on the nightly"
-    echo "timer: add the crate to SLOW in scripts/full-suite-crates.sh, or the"
-    echo "single test to .config/nextest.toml's default-filter with a"
-    echo "POSTIO-MEASUREMENT marker. Both are documented where they live."
+    echo "A test that has grown past the merge path belongs on the nightly"
+    echo "timer: .config/nextest.toml's default-filter, with a POSTIO-MEASUREMENT"
+    echo "marker on the case. It is documented where it lives."
 fi
 
 # Recorded only now, after every gate above has passed -- a failure exits

@@ -356,13 +356,13 @@ bookkeeping for work whose plan is already written down, not the discipline.
 **Three test tiers, and picking the right one is most of what makes iterating
 here cheap**: `scripts/test-fast.sh` between edits, `scripts/test-sanity.sh`
 before landing, the full suite on CI. Iterate at the cheapest layer that can
-fail. Landings run the sanity tier by default; `--full` requires a specific
-reason, and "this change is about wiring" is not one. Before landing, run the
-integration suites your diff actually touches.
+fail. Landings run the changed crates' units by default; `--full` requires a
+specific reason, and "this change is about wiring" is not one. Before landing,
+run the integration suites your diff actually touches.
 
-**Landing is `scripts/issue-land.sh --detach`.** It runs fmt, clippy, the sanity
-tier, `check.sh`, and one `cargo check --workspace --all-targets` over the
-changed crates, rebases, pushes, opens the PR, and arms auto-merge. CI decides.
+**Landing is `scripts/issue-land.sh --detach`.** It runs fmt, clippy, rustdoc,
+the units and doctests of the changed crates, and `check.sh`, then rebases,
+pushes, opens the PR, and arms auto-merge. CI decides.
 
 **CI gates every pull request and is not routed around.** A red check on a
 branch is that branch's work to fix, on the same branch, however green the

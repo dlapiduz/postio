@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""Self-test for #847: which tests a landing runs, and which it does not.
+"""Self-test for the landing's test tier: which tests a landing runs, and
+which it leaves to the pull request.
 
-Landing used to run `cargo test -p <crate>` for every crate a branch touched,
-integration binaries included. On this workstation that is the expensive part
-by a wide margin -- a single `postio-widgets` integration binary is an ~11-minute
-compile and link, several sessions share the machine with `jobs = 2`, and
-landing became something you queued for rather than something you did.
+The default tier has been cut twice. #847 cut it from every changed crate's
+integration suites to the workspace's unit tests, when the suites had become
+minutes each on a shared workstation. 2026-10-23 cut it again, to the unit
+tests of the crates the branch changed, when the pull request's checks came
+down from a 35-minute median to about five: a landing waits for those checks
+anyway, and they run the workspace's units, every crate's test targets under
+clippy, the suites a vocabulary change breaks, and the doctests. What a
+landing proves locally is what a red check would cost a round trip to learn.
 
-So the default tier is now the workspace's *unit* tests: 1,313 of them, ~5s
-warm, 19 binaries instead of 197. `--full` restores the old behaviour.
-
-Both directions are pinned here, and the second matters as much as the first:
-a "fast" default that quietly stopped running the integration suites under
+Three directions are pinned here, and the last matters as much as the first:
+the default runs the changed crates' units and their doctests; it runs
+neither the integration suites nor the whole workspace; and `--full` still
+runs the suites. A "fast" default that had quietly stopped running them under
 `--full` too would be indistinguishable from this change working.
 
-**This does not make unit tests sufficient.** CI still runs the whole
-workspace on every pull request, and the nightly job runs it again. That is
-what makes leaning on the fast tier safe, because the bugs this project ships
-are layers that each pass and are not joined up -- the Reader was built,
-tested and never mounted -- and unit tests are exactly the tier that cannot
-see them.
+**This does not make unit tests sufficient.** CI runs the sanity tier on every
+pull request and the full suite on `main` after every merge. That is what
+makes leaning on the fast tier safe, because the bugs this project ships are
+layers that each pass and are not joined up -- the Reader was built, tested
+and never mounted -- and unit tests are exactly the tier that cannot see them.
 
 Usage: scripts/tests/test-issue-land-tiers.py
 Exit status: 0 all cases behaved, 1 otherwise.
@@ -123,8 +125,8 @@ def workspace_toml(members: tuple[str, ...]) -> str:
     return f"[workspace]\nresolver = \"2\"\nmembers = [\n{listed},\n]\n"
 
 
-def world(base: Path, *, adds_a_crate: bool) -> tuple[Path, Path]:
-    """A sandbox whose branch either adds a workspace member or does not."""
+def world(base: Path) -> tuple[Path, Path]:
+    """A sandbox whose branch changes one crate, `postio-core`."""
     root = base / "repo"
     stub_dir = base / "stub"
     (stub_dir / "bin").mkdir(parents=True)
@@ -178,25 +180,12 @@ def world(base: Path, *, adds_a_crate: bool) -> tuple[Path, Path]:
     git("remote", "add", "origin", str(origin), cwd=root)
     git("push", "-q", "origin", "main", cwd=root)
 
-    git("checkout", "-q", "-b", "issue-1-new-crate", cwd=root)
-    if adds_a_crate:
-        # The shape of #585: a new member, and nothing at all touching the
-        # crates that enumerate the workspace.
-        (root / "crates" / "postio-ffi" / "src").mkdir(parents=True)
-        (root / "crates" / "postio-ffi" / "src" / "lib.rs").write_text(
-            "// a brand new crate\n", encoding="utf-8"
-        )
-        (root / "Cargo.toml").write_text(
-            workspace_toml(MEMBERS + ("postio-ffi",)), encoding="utf-8"
-        )
-        git("add", "-A", cwd=root)
-        git("commit", "-q", "-m", "add postio-ffi", cwd=root)
-    else:
-        (root / "crates" / "postio-core" / "src" / "lib.rs").write_text(
-            "// an ordinary change\n", encoding="utf-8"
-        )
-        git("add", "-A", cwd=root)
-        git("commit", "-q", "-m", "touch postio-core", cwd=root)
+    git("checkout", "-q", "-b", "issue-1-tiers", cwd=root)
+    (root / "crates" / "postio-core" / "src" / "lib.rs").write_text(
+        "// an ordinary change\n", encoding="utf-8"
+    )
+    git("add", "-A", cwd=root)
+    git("commit", "-q", "-m", "touch postio-core", cwd=root)
     return root, stub_dir
 
 
@@ -215,118 +204,106 @@ def land(root: Path, stub_dir: Path, *extra: str) -> subprocess.CompletedProcess
     )
 
 
-def workspace_tests(calls: str) -> list[str]:
-    """`cargo test --workspace` invocations, which is what #585 asks for.
-
-    Deliberately not counting `cargo check --workspace --all-targets`: that
-    one runs on every landing already (#419) and type-checks rather than
-    runs, so it cannot catch a test that compiles and fails.
-    """
+def test_runs(calls: str) -> list[str]:
+    """Every call that runs tests, under whichever runner the host has:
+    `cargo test ...` or `cargo nextest run ...`."""
     return [
         line
         for line in calls.splitlines()
         if line.startswith("cargo ")
-        and " test " in f" {line} "
-        and "--workspace" in line
-        # Not the sanity tier. Since #847 every landing runs `cargo test
-        # --workspace --lib`, so "a workspace test ran" no longer
-        # distinguishes this gate from the default -- and `--lib` would not
-        # catch what this gate is for anyway. The thing that broke in #566
-        # and #571 was a test that enumerates the workspace, and the next one
-        # of those may well be an integration test.
-        and "--lib" not in line
+        and (" test " in f" {line} " or " nextest run " in f" {line} ")
     ]
 
 
-def workspace_unit_tier(calls: str) -> list[str]:
-    """The sanity tier: the workspace's `--lib` tests, through whichever
-    runner the landing has. nextest since the merge path's filter has to
-    apply to it (`cargo nextest run --no-tests=pass --workspace --lib`);
-    `cargo test --workspace --lib` on a host without nextest."""
+def unit_runs(calls: str) -> list[str]:
+    """The default tier: the changed crates' units, `--lib -p <crate>`."""
     return [
-        l for l in calls.splitlines()
-        if l.startswith("cargo ")
-        and (" test " in f" {l} " or " nextest run " in f" {l} ")
-        and "--workspace" in l and "--lib" in l
+        line for line in test_runs(calls)
+        if " --lib " in f" {line} " and " -p " in f" {line} "
     ]
 
 
-def per_crate_tests(calls: str) -> list[str]:
-    """The per-crate *integration* runs -- the ones that cost binaries to link.
+def suite_runs(calls: str) -> list[str]:
+    """The integration suites -- the runs that cost binaries to link: a test
+    run that is neither `--lib` nor `--doc`, over a crate or the workspace.
 
     `--doc` is deliberately not one of them. A doctest run compiles the
     examples in a crate's own docs and links no test binary, which is why
     #1440 put it in the default tier; counting it here would make the tier
     look expensive for something that is nearly free, and would make this
     self-test fail on the very change it is meant to describe.
-
-    **`cargo nextest run` counts, and used to not.** The integration suites
-    have run under nextest since the tiers were measured, so a matcher that
-    only knew `cargo test` matched nothing in `--full` -- and the case that
-    asserts `--full` still runs them was passing on the doctest line instead,
-    which is a different tier's call and was not there until #1440 added it.
-    Two wrongs: the moment `--doc` was excluded above, the `--full` case went
-    red and said what it had really been resting on.
     """
     return [
-        l for l in calls.splitlines()
-        if l.startswith("cargo ")
-        and " -p " in f" {l} "
-        and (" test " in f" {l} " or " nextest run " in f" {l} ")
-        and " --doc " not in f" {l} "
+        line for line in test_runs(calls)
+        if " --lib " not in f" {line} " and " --doc " not in f" {line} "
     ]
 
 
-def per_crate_doctests(calls: str) -> list[str]:
-    return [
-        l for l in calls.splitlines()
-        if l.startswith("cargo ") and " test " in f" {l} " and " --doc " in f" {l} "
-    ]
+def workspace_runs(calls: str) -> list[str]:
+    """Any test run over the whole workspace, units included. Those are the
+    pull request's since 2026-10-23 (`ci.yml`, Tests)."""
+    return [line for line in test_runs(calls) if "--workspace" in line]
+
+
+def doctest_runs(calls: str) -> list[str]:
+    return [line for line in test_runs(calls) if " --doc " in f" {line} "]
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
-        # -- 1. the default tier: units for the workspace, no integration ---
-        root, stub_dir = world(base / "default", adds_a_crate=False)
+        # -- 1. the default tier: the changed crate's units, nothing wider --
+        root, stub_dir = world(base / "default")
         land(root, stub_dir)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
+        units = unit_runs(calls)
         case(
-            "a landing runs the workspace unit tier by default",
-            bool(workspace_unit_tier(calls)),
-            f"no workspace `--lib` tier (cargo test or nextest run) in:\n{calls}",
+            "a landing runs the unit tests of the crate it changed",
+            any("-p postio-core" in line for line in units),
+            f"no `--lib -p postio-core` run (cargo test or nextest run) in:\n{calls}",
         )
         case(
-            "and does not run the per-crate integration suites",
-            not per_crate_tests(calls),
+            "and only of the crates it changed",
+            not any("postio-gtk" in line or "postio-widgets" in line for line in units),
+            f"a crate the branch did not touch had its units run:\n{units}",
+        )
+        case(
+            "and does not run the integration suites",
+            not suite_runs(calls),
             "a default landing still paid for the integration binaries, which "
-            f"is the cost this change exists to remove:\n{per_crate_tests(calls)}",
+            f"is the cost #847 removed:\n{suite_runs(calls)}",
+        )
+        case(
+            "and does not run the whole workspace",
+            not workspace_runs(calls),
+            "a default landing ran a workspace-wide tier; that is the pull "
+            f"request's job since 2026-10-23:\n{workspace_runs(calls)}",
         )
 
         # The doctests are in the default tier, and that is the whole of
-        # #1440: `cargo test --lib` does not run them and does not say so, so
-        # a doctest that stopped compiling reached `main` and was found by
-        # CI's nightly rather than by the landing that broke it. Asserting
-        # only "no integration suites" above would pass just as happily if
-        # the doctest run had never been added.
+        # #1440: `--lib` does not run them and does not say so, so a doctest
+        # that stopped compiling reached `main` and was found by CI's nightly
+        # rather than by the landing that broke it. Asserting only "no
+        # integration suites" above would pass just as happily if the
+        # doctest run had never been added.
         case(
             "a default landing runs the doctests for a crate it changed",
-            bool(per_crate_doctests(calls)),
-            f"no `cargo test --doc -p <crate>` in:\n{calls}",
+            any("-p postio-core" in line for line in doctest_runs(calls)),
+            f"no `cargo test --doc -p postio-core` in:\n{calls}",
         )
 
-        # -- 2. --full still runs them ---------------------------------------
+        # -- 2. --full still runs the suites ---------------------------------
         #
         # The half that keeps the first half honest: a fast default that had
         # also broken `--full` would pass every assertion above.
-        root, stub_dir = world(base / "full", adds_a_crate=False)
+        root, stub_dir = world(base / "full")
         land(root, stub_dir, "--full")
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
         case(
-            "--full runs the per-crate integration suites",
-            bool(per_crate_tests(calls)),
-            f"`--full` ran no per-crate tests at all:\n{calls}",
+            "--full runs the changed crate's integration suites",
+            any("-p postio-core" in line for line in suite_runs(calls)),
+            f"`--full` ran no per-crate suites at all:\n{calls}",
         )
 
     for failure in FAILURES:

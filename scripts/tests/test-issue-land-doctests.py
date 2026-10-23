@@ -57,7 +57,9 @@ def main() -> int:
     # Split on the `--full` branch so a call that only exists there does not
     # satisfy this.
     full_branch = source.index('echo "--- test (full)')
-    default_branch = source.index("        # The suites the sanity tier cannot fail for")
+    default_branch = source.index(
+        "        # The default tier: the unit tests of the crates this branch changed."
+    )
     if default_branch < full_branch:
         fail("the branches moved; this test is reading the wrong halves")
         return 1
