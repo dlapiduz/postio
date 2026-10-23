@@ -676,7 +676,14 @@ if [ "$GATES_GREEN" != 1 ]; then
         if [ ${#SANITY_EXCLUDES[@]} -gt 0 ]; then
             echo "note: excluding ${UNBUILDABLE// /, } -- this host cannot build them."
         fi
-        cargo test --workspace --lib ${SANITY_EXCLUDES[@]+"${SANITY_EXCLUDES[@]}"}
+        #
+        # Through nextest, not `cargo test`, so the merge path's filter in
+        # .config/nextest.toml applies here exactly as on a pull request: a
+        # case held out for waiting on the clock stays out of the landing
+        # too. `cargo test` reads no nextest config and ran every one of
+        # them (and, in one process, let a slow case's deadline eat the
+        # others' time -- #1976).
+        run_tests --workspace --lib ${SANITY_EXCLUDES[@]+"${SANITY_EXCLUDES[@]}"}
         echo "[timing] sanity tier: $(( $(date +%s) - PHASE_START ))s"
     fi
 

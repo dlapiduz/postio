@@ -293,6 +293,9 @@ pub fn a_render_past_its_deadline_shows_the_plain_text() {
 
 /// FR-022: however tall the message, the tiles held stay within their
 /// budget, and scrolling reaches the very last line.
+///
+/// POSTIO-MEASUREMENT: it renders a very tall message to its end, 8 s on a CI runner,
+/// so it runs on the nightly timer.
 pub fn a_very_tall_message_scrolls_to_its_end_within_budget() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

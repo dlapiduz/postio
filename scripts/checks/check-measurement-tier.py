@@ -47,6 +47,10 @@ BINARY = re.compile(r"binary\(([A-Za-z0-9_]+)\)")
 # suites share is held out of one crate only: the GTK `gmail_keys` is a
 # 10-minute sweep, the TUI's is a second of ordinary cases.
 MODULE = re.compile(r"(?:package\(([A-Za-z0-9_-]+)\)\s*&\s*)?test\(/\^([A-Za-z0-9_]+)::/\)")
+# `(package(p) & test(=module::case))`: one case held out of a file whose
+# other cases are fast. The marker then sits on that case, in the doc or
+# attribute lines directly above its `fn`, rather than on the file.
+CASE = re.compile(r"package\(([A-Za-z0-9_-]+)\)\s*&\s*test\(=([A-Za-z0-9_:]+)\)")
 
 
 def excluded_filter() -> str | None:
@@ -70,6 +74,29 @@ def sources_for(binary: str, module: str | None = None, package: str | None = No
     return list(ROOT.glob(f"crates/{package or '*'}/tests/*/{module}.rs"))
 
 
+def case_sites(package: str, path: str) -> list[tuple[Path, int]]:
+    """Where `fn <last segment of path>` is defined in `package`'s tests or sources."""
+    name = path.rsplit("::", 1)[-1]
+    pattern = re.compile(r"^\s*(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+" + re.escape(name) + r"\s*\(", re.M)
+    found = []
+    for source in sorted(ROOT.glob(f"crates/{package}/tests/**/*.rs")) + sorted(ROOT.glob(f"crates/{package}/src/**/*.rs")):
+        text = source.read_text()
+        for match in pattern.finditer(text):
+            found.append((source, text.count("\n", 0, match.start()) + 1))
+    return found
+
+
+def marked_above(source: Path, line: int) -> bool:
+    """True if the doc and attribute lines directly above `line` carry the marker."""
+    lines = source.read_text().split("\n")
+    i = line - 2
+    while i >= 0 and lines[i].lstrip().startswith(("///", "//", "#[")):
+        if MARKER in lines[i]:
+            return True
+        i -= 1
+    return False
+
+
 def main() -> int:
     problems: list[str] = []
 
@@ -85,7 +112,21 @@ def main() -> int:
         scope = f"package({package}) & " if package else ""
         named[f"{scope}test(/^{module}::/)"] = sources_for(module, module, package or None)
 
+    cases: dict[str, list[tuple[Path, int]]] = {}
+    for package, path in CASE.findall(expression):
+        cases[f"package({package}) & test(={path})"] = case_sites(package, path)
+
     # 1. Every term names a file that exists and claims to be a measurement.
+    for term, sites in cases.items():
+        if not sites:
+            problems.append(f"{term} in the filter names no test fn under crates/")
+        for source, line in sites:
+            if not marked_above(source, line):
+                problems.append(
+                    f"{term} is excluded from profile.default, but "
+                    f"{source.relative_to(ROOT)}:{line} does not say so "
+                    f"(add a `/// {MARKER} ...` line above that case)"
+                )
     for term, paths in named.items():
         if not paths:
             problems.append(f"{term} in the filter names no file under crates/*/tests/")
@@ -105,6 +146,7 @@ def main() -> int:
         if MARKER in path.read_text()
     }
     covered = {path for paths in named.values() for path in paths}
+    covered |= {source for sites in cases.values() for source, _ in sites}
     for path in sorted(claimed - covered):
         problems.append(
             f"{path.relative_to(ROOT)} carries `{MARKER}` but nothing in "

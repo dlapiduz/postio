@@ -2054,6 +2054,9 @@ async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
 /// over the cap stays `body_state <> 'full'` for ever, so every re-seed sees
 /// it again. It has to be counted skipped **once** and then left alone, or a
 /// top-up that keeps finding rows it cannot use would never stop.
+///
+/// POSTIO-MEASUREMENT: it sleeps two seconds for a late re-seed to have its chance, so
+/// it runs on the nightly timer.
 #[tokio::test]
 async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
     let database = test_support::memory().await;
@@ -2622,6 +2625,8 @@ async fn a_queued_action_does_not_wait_out_a_sync_wave() {
     );
 }
 
+/// POSTIO-MEASUREMENT: it sleeps three seconds, twice, for the first sync to settle
+/// into the watch and for idleness to show, so it runs on the nightly timer.
 #[tokio::test]
 async fn an_idle_engine_does_not_poll_the_queue() {
     // The engine asked the store whether any operation was due every 500 ms

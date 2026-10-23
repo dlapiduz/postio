@@ -2986,6 +2986,9 @@ fn a_body_the_server_refuses_is_announced_and_then_read_as_failed() {
     );
 }
 
+/// POSTIO-MEASUREMENT: it waits out the host's body-fetch timeout in real time, about
+/// 5 s, so it runs on the nightly timer; a case that waits on the clock is
+/// not on the merge path (CLAUDE.md, Tests).
 #[test]
 fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
     // #1985: a timeout is not about the message, so nothing marked it and
@@ -3021,6 +3024,9 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
     assert!(text.contains("The tide gate opens at nine."), "{text}");
 }
 
+/// POSTIO-MEASUREMENT: it waits in real time for the link to drop and come back, 15 to
+/// 20 s on a CI runner, so it runs on the nightly timer; a case that waits
+/// on the clock is not on the merge path (CLAUDE.md, Tests).
 #[test]
 fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() {
     // #1986: GTK and the TUI passed `offline = false` and promised

@@ -22,6 +22,9 @@ use crate::support::{content, until};
 /// (sanitising the next message, laying out the dialog, a sync landing)
 /// found both due at once, ran the deadline first, and replaced a finished
 /// render with the plain-text fallback.
+///
+/// POSTIO-MEASUREMENT: it sleeps two seconds so the main loop is late, which no fake
+/// clock can stand in for under GTK, so it runs on the nightly timer.
 pub fn a_finished_render_is_shown_when_the_main_loop_was_late() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

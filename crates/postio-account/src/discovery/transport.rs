@@ -899,6 +899,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let held = std::thread::spawn(move || {
             let (socket, _) = listener.accept().unwrap();
+            // POSTIO-NOT-A-WAIT: the held socket is the subject; the client gives up in under 1.2 s
             std::thread::sleep(Duration::from_millis(1500));
             drop(socket);
         });

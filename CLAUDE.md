@@ -58,6 +58,11 @@ are covered by tests.
   keyring). A slow test goes in the nightly tier instead: a
   `//! POSTIO-MEASUREMENT:` marker and `.config/nextest.toml`'s
   `default-filter`.
+- No test on the merge path waits on the clock: no `sleep` of a second or
+  more, no product timer run in real time. Give the case a fake clock
+  (`#[tokio::test(start_paused = true)]`) or the nightly tier, with the
+  marker on the one case when the rest of its file is fast;
+  `check-no-clock-waits.py` refuses the rest.
 - Assert on what a person would see, not on what a layer was handed. The
   bugs here live between layers that each pass their tests. `focus_suite`
   (`crates/postio-gtk/tests/focus_suite/`) opens the real window and
