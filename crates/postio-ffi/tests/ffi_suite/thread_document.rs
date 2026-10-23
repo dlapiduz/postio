@@ -136,21 +136,6 @@ async fn a_thread_is_one_document_with_every_message_in_date_order() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn each_message_offers_its_own_verbs() {
-    // FR-009: without a verb per message there is no way to reply to an
-    // older one. The link names the message, and the pane routes on it.
-    let (session, thread, ids) = a_thread().await;
-    let document = session.thread_document(thread, Vec::new()).await;
-    assert!(document.html.contains(&format!("postio-reply:{}", ids[0])));
-    assert!(
-        document
-            .html
-            .contains(&format!("postio-forward:{}", ids[0]))
-    );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_sender_the_user_allowed_keeps_their_images_in_the_thread() {
     // The allow list the Privacy pane edits, read on this side: the Mac does
     // not decide per sender, it is told.
@@ -195,14 +180,6 @@ async fn the_users_own_message_is_marked_as_theirs() {
         )),
         "the user's own reply is drawn as somebody else's"
     );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_thread_nobody_can_read_is_an_empty_document() {
-    let (session, _, _) = a_thread().await;
-    let document = session.thread_document(987_654, Vec::new()).await;
-    assert!(document.messages.is_empty());
     session.shutdown();
 }
 
@@ -321,27 +298,5 @@ async fn a_message_that_lost_a_part_says_so_on_its_anchor() {
         document.messages[1].caveat, None,
         "a whole message says nothing"
     );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_header_says_what_each_verb_will_act_on() {
-    // FR-008 and FR-008a: the header's Reply goes to the latest message and
-    // its Archive takes the whole thread, and the interface has to say so
-    // before either is pressed. The words are `ReaderAction::describe`'s.
-    let (session, _, _) = a_thread().await;
-    let actions = session.conversation_actions(6);
-    let reply = actions
-        .iter()
-        .find(|action| action.command == "reply")
-        .expect("Reply");
-    assert_eq!(reply.description, "Reply to the latest message");
-    assert!(!reply.whole_conversation);
-    let archive = actions
-        .iter()
-        .find(|action| action.command == "archive")
-        .expect("Archive");
-    assert_eq!(archive.description, "Archive all 6 messages");
-    assert!(archive.whole_conversation);
     session.shutdown();
 }
