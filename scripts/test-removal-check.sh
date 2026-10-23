@@ -25,7 +25,28 @@
 # refuses to run where CI is unset, unless POSTIO_ALLOW_MUTANTS_HERE=1 says
 # this machine is yours. On CI, `.github/workflows/test-audit.yml` runs it.
 #
-#   scripts/test-removal-check.sh <source file>... -- '<binary id> <test name>'...
+#   scripts/test-removal-check.sh [--scope <filterset>] [--package <crate>] [--re <regex>]...
+#                                 [--test-package <crate>]...
+#                                 <source file>... -- '<binary id> <test name>'...
+#
+# --scope runs both passes over only the tests that filterset selects -- a
+# parity cluster's own suites, say, instead of all of postio-gtk's at ~4.6 s
+# a case, which no CI job could finish per mutant. It errs one way only: a
+# mutant that only a test outside the scope would catch can make the cases
+# look unique, never make them look removable.
+#
+# --package and --re narrow which mutants are made: cargo-mutants' own
+# package and name filters, for a glue file with hundreds of mutants of
+# which a candidate reaches a handful (postio-ffi's session.rs has 533).
+# `-f` alone finds nothing in a crate cargo-mutants was not pointed at, so
+# a check on another crate's files names it with --package. A mutant left
+# out by --re is not judged at all, so name every function the cases call.
+#
+# --test-package names a crate whose tests must run against each mutant.
+# cargo-mutants runs only the mutated package's tests by default, so a case
+# in another crate -- a Mac bridge case exercising postio-config, say --
+# would otherwise never run in either pass, and removing it would read as
+# safe for a reason that has nothing to do with redundancy.
 #
 # Writes target/test-audit/verdict.json. Exit status: 0 safe; 1 not safe;
 # 2 bad arguments, a missing tool, or refused to run here.
@@ -36,11 +57,25 @@ BASELINE=${MUTANTS_BASELINE:-$REPO/docs/mutants-baseline.txt}
 OUT=${TEST_AUDIT_OUT:-$REPO/target/test-audit}
 
 usage() {
-    echo "usage: scripts/test-removal-check.sh <source file>... -- '<binary id> <test name>'..." >&2
+    echo "usage: scripts/test-removal-check.sh [--scope <filterset>] <source file>... -- '<binary id> <test name>'..." >&2
     echo "  e.g. scripts/test-removal-check.sh crates/postio-config/src/keys.rs -- \\" >&2
     echo "         'postio-config keys::mod_token_tests::ctrl_stays_literal_on_both'" >&2
     exit 2
 }
+
+SCOPE=
+PACKAGE=
+NAME_RES=()
+TEST_PACKAGES=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --scope)   [ $# -ge 2 ] || usage; SCOPE=$2; shift 2 ;;
+        --package) [ $# -ge 2 ] || usage; PACKAGE=$2; shift 2 ;;
+        --re)      [ $# -ge 2 ] || usage; NAME_RES+=("$2"); shift 2 ;;
+        --test-package) [ $# -ge 2 ] || usage; TEST_PACKAGES+=("$2"); shift 2 ;;
+        *) break ;;
+    esac
+done
 
 FILES=()
 CASES=()
@@ -82,10 +117,25 @@ for case in "${CASES[@]}"; do
     filter=${filter:+$filter | }$term
 done
 filter="not ($filter)"
+B_ARGS=()
+if [ -n "$SCOPE" ]; then
+    filter="($SCOPE) & $filter"
+    B_ARGS=(--cargo-test-arg=-E "--cargo-test-arg=$SCOPE")
+fi
 
 FILE_ARGS=()
+[ -n "$PACKAGE" ] && FILE_ARGS+=(-p "$PACKAGE")
+# cargo-mutants runs the mutated package's tests and no others; cases that
+# live in another crate are only judged if that crate is named here.
+for package in ${TEST_PACKAGES[@]+"${TEST_PACKAGES[@]}"}; do
+    FILE_ARGS+=(--test-package "$package")
+done
 for file in "${FILES[@]}"; do
     FILE_ARGS+=(-f "$file")
+done
+A_RES=()
+for re in ${NAME_RES[@]+"${NAME_RES[@]}"}; do
+    A_RES+=(--re "$re")
 done
 
 WORK=$(mktemp -d)
@@ -94,7 +144,7 @@ mkdir -p "$OUT"
 
 # --no-shuffle and --jobs 1 for the reasons scripts/mutants.sh gives.
 env -u RUSTUP_TOOLCHAIN cargo mutants --test-tool=nextest --no-shuffle --jobs 1 "${FILE_ARGS[@]}" \
-    --output "$WORK/a" --cargo-test-arg=-E "--cargo-test-arg=$filter" || true
+    --output "$WORK/a" ${A_RES[@]+"${A_RES[@]}"} --cargo-test-arg=-E "--cargo-test-arg=$filter" || true
 if [ ! -f "$WORK/a/mutants.out/missed.txt" ]; then
     echo "Pass A produced no missed.txt; see $WORK/a/mutants.out for why." >&2
     trap - EXIT
@@ -114,7 +164,7 @@ if [ -s "$WORK/new-misses" ]; then
         RE_ARGS+=(--re "$(python3 -c 'import re,sys; f, _, rest = sys.argv[1].partition(":"); d = rest.split(": ", 1)[-1]; print(re.escape(f) + ".*" + re.escape(d))' "$mutant")")
     done < "$WORK/new-misses"
     env -u RUSTUP_TOOLCHAIN cargo mutants --test-tool=nextest --no-shuffle --jobs 1 "${FILE_ARGS[@]}" \
-        --output "$WORK/b" "${RE_ARGS[@]}" || true
+        --output "$WORK/b" "${RE_ARGS[@]}" ${B_ARGS[@]+"${B_ARGS[@]}"} || true
     if [ -f "$WORK/b/mutants.out/caught.txt" ]; then
         sort "$WORK/b/mutants.out/caught.txt" > "$WORK/b-caught"
         comm -12 "$WORK/new-misses" "$WORK/b-caught" > "$WORK/survivors"
@@ -126,13 +176,18 @@ if [ -s "$WORK/new-misses" ]; then
 fi
 
 commit=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)
-python3 - "$OUT/verdict.json" "$WORK/survivors" "$commit" "${#FILES[@]}" "${FILES[@]}" "${CASES[@]}" <<'PY'
+RES_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' ${NAME_RES[@]+"${NAME_RES[@]}"})
+TP_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' ${TEST_PACKAGES[@]+"${TEST_PACKAGES[@]}"})
+python3 - "$OUT/verdict.json" "$WORK/survivors" "$commit" "$SCOPE" "$PACKAGE" "$RES_JSON" "$TP_JSON" "${#FILES[@]}" "${FILES[@]}" "${CASES[@]}" <<'PY'
 import json, sys
-out, survivors, commit, nfiles = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-files, cases = sys.argv[5 : 5 + nfiles], sys.argv[5 + nfiles :]
+out, survivors, commit, scope, package, res, test_packages = sys.argv[1:8]
+nfiles = int(sys.argv[8])
+files, cases = sys.argv[9 : 9 + nfiles], sys.argv[9 + nfiles :]
 lost = [l for l in open(survivors).read().splitlines() if l]
 json.dump({"cases": cases, "files": files, "new_survivors": lost,
-           "result": "not safe" if lost else "safe", "commit": commit}, open(out, "w"), indent=1)
+           "result": "not safe" if lost else "safe", "commit": commit, "scope": scope or None,
+           "package": package or None, "re": json.loads(res), "test_packages": json.loads(test_packages)},
+          open(out, "w"), indent=1)
 PY
 
 count=$(wc -l < "$WORK/survivors" | tr -d ' ')

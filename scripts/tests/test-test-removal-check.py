@@ -29,7 +29,7 @@ ALREADY_SURVIVES = "crates/postio-config/src/compose.rs:45:9: replace SignatureP
 MISSED_EITHER_WAY = "crates/postio-config/src/change.rs:80:5: replace ConfigChanged::none -> bool with true"
 
 # The stub records its arguments and writes the scenario's mutants.out for the pass it recognises:
-# Pass A filters the cases out with `-E`, Pass B selects mutants with `--re`.
+# Pass A writes to `<work>/a` and Pass B to `<work>/b`.
 STUB = r'''#!/usr/bin/env python3
 import os, sys, pathlib
 args = sys.argv[1:]
@@ -37,14 +37,15 @@ log = pathlib.Path(os.environ["STUB_LOG"])
 log.write_text(log.read_text() + " ".join(args) + "\n" if log.exists() else " ".join(args) + "\n")
 out = pathlib.Path(args[args.index("--output") + 1]) / "mutants.out"
 out.mkdir(parents=True, exist_ok=True)
-which = "B" if "--re" in args else "A"
+which = "B" if args[args.index("--output") + 1].endswith("/b") else "A"
 for kind in ("missed", "caught"):
     lines = os.environ.get(f"STUB_{which}_{kind.upper()}", "")
     (out / f"{kind}.txt").write_text("".join(l + "\n" for l in lines.split("\n") if l))
 '''
 
 
-def run(tmp: Path, a_missed: list[str], b_caught: list[str], env_extra: dict[str, str] | None = None):
+def run(tmp: Path, a_missed: list[str], b_caught: list[str], env_extra: dict[str, str] | None = None,
+        scope: str | None = None, extra: list[str] | None = None):
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / "cargo"
@@ -67,7 +68,7 @@ def run(tmp: Path, a_missed: list[str], b_caught: list[str], env_extra: dict[str
         **(env_extra or {}),
     }
     result = subprocess.run(
-        ["bash", str(SCRIPT), "crates/postio-config/src/change.rs", "--",
+        ["bash", str(SCRIPT), *(["--scope", scope] if scope else []), *(extra or []), "crates/postio-config/src/change.rs", "--",
          "postio-config change::tests::changing_focus_touches_only_focus",
          "postio-config::config_suite schema::focus_filtering_is_on_unless_turned_off"],
         capture_output=True, text=True, env=env,
@@ -118,6 +119,33 @@ with tempfile.TemporaryDirectory() as tmp:
 
     result, _, _ = run(tmp, [], [], {"CI": "", "POSTIO_ALLOW_MUTANTS_HERE": "1"})
     check("POSTIO_ALLOW_MUTANTS_HERE=1 lets it run off CI", result.returncode == 0, result.stdout + result.stderr)
+
+    result, verdict, calls = run(tmp, [CAUGHT_ONLY_WITH], [CAUGHT_ONLY_WITH], scope="test(/^pickers::/)")
+    lines = calls.splitlines()
+    check("--scope narrows Pass A to the cluster, still without the cases",
+          len(lines) == 2 and "(test(/^pickers::/)) & not (" in lines[0], calls)
+    check("--scope narrows Pass B the same way, with the cases",
+          len(lines) == 2 and "-E" in lines[1] and "test(/^pickers::/)" in lines[1], calls)
+    check("the verdict records the scope", verdict.get("scope") == "test(/^pickers::/)", json.dumps(verdict))
+
+    result, verdict, calls = run(tmp, [CAUGHT_ONLY_WITH], [CAUGHT_ONLY_WITH],
+                                 extra=["--package", "postio-config", "--re", "ConfigChanged::any", "--re", "between"])
+    lines = calls.splitlines()
+    check("--package and --re narrow Pass A's mutants",
+          len(lines) == 2 and "-p postio-config" in lines[0] and "--re ConfigChanged::any --re between" in lines[0], calls)
+    check("--package reaches Pass B, whose own --re names the mutants",
+          len(lines) == 2 and "-p postio-config" in lines[1] and "--re between" not in lines[1], calls)
+    check("the verdict records the filters",
+          verdict.get("package") == "postio-config" and verdict.get("re") == ["ConfigChanged::any", "between"], json.dumps(verdict))
+
+    result, verdict, calls = run(tmp, [CAUGHT_ONLY_WITH], [CAUGHT_ONLY_WITH],
+                                 extra=["--package", "postio-config", "--test-package", "postio-config",
+                                        "--test-package", "postio-ffi"])
+    lines = calls.splitlines()
+    check("--test-package runs the removed cases' own crate in both passes",
+          len(lines) == 2 and all("--test-package postio-config --test-package postio-ffi" in l for l in lines), calls)
+    check("the verdict records the test packages", verdict.get("test_packages") == ["postio-config", "postio-ffi"],
+          json.dumps(verdict))
 
     bad = subprocess.run(["bash", str(SCRIPT), "crates/x.rs"], capture_output=True, text=True, env={**os.environ, "CI": "true"})
     check("no -- and no cases is a usage error, exit 2", bad.returncode == 2, bad.stdout + bad.stderr)

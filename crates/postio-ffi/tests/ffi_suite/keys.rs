@@ -82,18 +82,6 @@ fn a_bound_key_answers_the_command_it_is_bound_to() {
 }
 
 #[test]
-fn an_unbound_key_is_left_for_the_frontend_to_pass_on() {
-    let session = session();
-    // Not "do nothing": the caller has to be able to tell "Postio handled it"
-    // from "nobody wanted it", because only the second may reach AppKit.
-    assert_eq!(
-        typed(&session, "\u{00a7}", UiContext::List, false),
-        KeyOutcomeFfi::Unhandled
-    );
-    session.shutdown();
-}
-
-#[test]
 fn a_sequence_is_pending_until_its_last_chord() {
     let session = session();
     // `g` alone must not fire whatever `g g` is bound to, and it must not be

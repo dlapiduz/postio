@@ -30,6 +30,8 @@ These are the traps in this repository that are still live and that no check, ho
 
 **A `GtkWindow` joins the toplevel list as soon as it is constructed.** Dropping the Rust handle does not release it, so a test that builds windows must `destroy()` them. A teardown segfault is usually a race you cannot reproduce, so test the leak instead: hold a `WeakRef`, drop the window, turn the loop, and require `upgrade()` to be `None`.
 
+**A test removal needs a mutation verdict, and the verdict is only as wide as its filters.** `scripts/test-removal-check.sh` judges only the mutants its `--package`, `-f` and `--re` select. cargo-mutants runs only the mutated crate's tests unless `--test-package` names the others. A "safe" from a check that reached one mutant says nothing about the rest of the code. The nextest wrapper behind per-case coverage (`profile.per-test-coverage`) is an experimental nextest feature: if an upgrade breaks it, `scripts/test-coverage-sets.py` stops with "left no profile" (specs/012-test-suite-value, research R2 and R4).
+
 **One clean run of a GUI suite on a loaded machine proves nothing.** Bisect by running each side two or three times. If a test is red for one person on every commit and a bisect finds nothing, the cause is machine state (a state file, the keyring), not the tree.
 
 ## The store and the search index

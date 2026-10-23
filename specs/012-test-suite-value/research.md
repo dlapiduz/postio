@@ -167,3 +167,76 @@ Each entry gives the decision, why, and what was rejected. Facts were checked on
 - **is-ok-only, 28 cases.** Most assert the property they name: every corpus fixture parses, a 40,000-deep body hits the cap, a budget measured at exactly its limit passes, a gone account comes back as a sentence. Four only checked that something came back where the test is about *what* comes back, and were tightened: `matching_is_case_insensitive`, `a_remote_image_resolves_by_its_parsed_url`, `domain_matching_ignores_case`, `no_cap_means_no_cap`.
 - **Mock-count-only, 6 flags, 4 of them false.** The detector read `times` in "answered 2 times", `x_of(…, "Bus times")`, and a log held in a variable called `calls`. It now matches only a counter being read (`.calls()`, `call_count`, `.times(`), outside string literals.
 - **Consequence: FR-012's ratchet is withdrawn.** A check refusing new constant-only or is-ok-only assertions would have refused mostly good tests.
+
+### 2026-10-23: the whole-workspace inventory on Linux (T010)
+
+Run 39975019031 on `test-audit.yml`, at c404f8f, with durations from the same job's JUnit report.
+
+- **Cases by layer:**
+
+  | Layer | Cases | CPU-seconds |
+  |---|---|---|
+  | rule | 5,992 | 1,586 |
+  | frontend | 1,619 | 2,421 |
+  | controller | 370 | 16 |
+  | meta | 38 | 18 |
+  | measurement | 66 | not run on this path |
+
+  That is 8,085 cases and 4,040 CPU-seconds in all. The frontends are 20% of the cases and 60% of the CPU.
+- **Suites by CPU:**
+
+  | Suite | Cases | CPU-seconds | Share |
+  |---|---|---|---|
+  | `postio-gtk::focus_suite` | 428 | 1,961 | 49% |
+  | `postio-storage::storage_suite` | 714 | 413 | |
+  | `postio-runtime::runtime_suite` | 94 | 270 | |
+  | `postio-ffi::ffi_suite` | 400 | 212 | |
+  | `postio-widgets::widgets_suite` | 233 | 188 | |
+- **Parity clusters:** 58, holding 288 distinct frontend cases in 53 test files.
+  - Largest by CPU: `surface:search` (FFI `focus_search.rs`, 93 s), `surface:bar` (GTK `bar.rs`, 82 s), `surface:contacts`, `surface:state`.
+  - Largest by cases above the cheapest layer: `010/US2` (73), `surface:compose` (64), `surface:bar` (22), `surface:contacts` (22).
+- **Smells:** `display-skip` 108 (the widgets suite's inline checks, left to `display_required` per R8). `is-ok-only` 30, `constant-only` 8, `mock-count-only` 6 (before the detector fix). `untraced` 4,049. `ambiguous` 35.
+- **Read case by case, a cluster is mostly composition.** In `surface:pickers`, each of the six GTK cases and six FFI cases drives a different picker a person opens (`s`, `h`, `l`, `m`, Escape), which ADR 0049 keeps. `focus_suite` costs about 4.6 s a case in window and fixture setup. That cost is not duplication, and this spec's rubric does not reduce it.
+
+### 2026-10-23: the parity review, case by case (T030–T032)
+
+Every frontend case in a parity cluster was read against its controller, rule and other-frontend twins under ADR 0049: 288 cases in 53 files.
+
+**Verdicts:**
+
+| Verdict | Cases | Meaning |
+|---|---|---|
+| keep | 205 | A path a person takes on that platform that no other case in the same suite drives |
+| merge | 40 | The same path as a sibling with different data |
+| branch | 25 | Re-asserts a rule or controller branch while a sibling keeps the path |
+| unsure | 11 | Left to the removal check |
+| misplaced | 5 | A rule sitting in a frontend suite |
+| subsumed | 1 | Identical to a sibling |
+| fold | 1 | One assertion to move into a sibling |
+
+The 83 that are not kept are listed in `parity-review.tsv` (group, verdict, file, case, glue, note).
+
+**Where they are:**
+- **63 in `postio-ffi`**, at about 0.25 s a case.
+- **17 in `postio-gtk`**, at about 5 s a case.
+- **3 in `postio-tui` and `postio-widgets`.**
+
+**What it is worth:** if every one went, the suite would save roughly 100 CPU-seconds of 4,040 (about 2.5%). Most frontend cases are composition. ADR 0049 keeps them, and their cost is fixture and window setup, not duplication.
+
+**Mutation scope.** The removal check needed three narrowings before it could run on these at all, each found on a real candidate:
+1. **`--scope`**: GTK mutants re-run every case of the package, about 4.6 s a case.
+2. **`--package` and `--re`**: postio-ffi's `session.rs` has 533 mutants, and `-f` alone finds none outside the crate cargo-mutants was pointed at.
+3. **`--test-package`**: a removed case in another crate never runs in either pass.
+
+cargo-mutants 27.1.0 also leaks "delete field" mutants past `--re`. `-f` keeps them inside the named files, and they are judged like any other mutant.
+
+### 2026-10-23: what became of the 83 (T030–T033)
+
+- **merge, 40, and fold, 1: declined** (maintainer, 2026-10-23). A merged case keeps every assertion, but it reports one name for several regressions (the FFI `keys.rs` cases each guard a separate past bug, #656 among them), and it stops at its first failing row. The whole saving was about 10 CPU-seconds, 0.25%. Named regressions are worth more than that. This is why T033's table merges were not done.
+- **misplaced, 5:**
+  - `config::seeding_never_touches_a_file_that_is_already_there` was removed. It duplicates `postio-config`'s `seeding_an_existing_file_never_touches_it` word for word, and the removal check said safe.
+  - `config::starting_the_log_seeds_a_config_file_when_there_is_none` stays. It also checks that the Mac's own validator, `postio_ffi::settings_status`, accepts the seeded file.
+  - `focus_compose::the_autosave_waits_what_the_widgets_composer_waited` stays. It pins the Mac's debounce to the widgets composer's, a cross-crate agreement no rule crate can see.
+  - `reader::view::tests::remote_image_urls_are_images_and_styles_never_links` stays. It is already a unit test that runs in a millisecond, and moving the function is a refactor for no test gain.
+  - `postio_handles_mailto_and_postio_links` stays. It reads a data file but uses the app's compiled constants, which a script cannot.
+- **branch, unsure, subsumed, 37:** each went to the removal check. 16 were removed on a "safe" verdict (commit 47af9e637). The rest are kept, or re-run case by case where a group's verdict pointed at only some of its cases.

@@ -390,53 +390,6 @@ async fn atlas_budget_results() -> (std::sync::Arc<Session>, postio_ffi::Results
     (session, view)
 }
 
-/// Every top hit matched in its subject and its body, and shows the body's
-/// passage with the words marked (design §3.4: "every row has a
-/// passage"), not the subject again and not nothing. The seed's top hits
-/// are one-line messages whose match is in their first line.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_top_hit_matched_in_its_body_shows_the_bodys_passage_marked() {
-    let (session, view) = atlas_budget_results().await;
-    assert!(view.groups[0].top_hits);
-    let top = view.groups[0].rows;
-    assert!(top > 0);
-
-    // Passages land after their page: wait for them, a little.
-    let deadline = std::time::Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
-    let rows = loop {
-        let rows: Vec<_> = (0..top)
-            .filter_map(|position| session.focus_search_row(position))
-            .collect();
-        let landed = rows.len() as u64 == top && rows.iter().all(|row| !row.passage.is_empty());
-        if landed || std::time::Instant::now() > deadline {
-            break rows;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
-    for row in &rows {
-        assert!(
-            row.passage.iter().any(|run| run.highlighted),
-            "{} ({}): passage {:?}",
-            runs(&row.subject),
-            row.source_tag,
-            runs(&row.passage)
-        );
-        assert!(
-            !runs(&row.passage).contains("wrote:"),
-            "{}",
-            runs(&row.passage)
-        );
-        // The tag is the passage's source; the subject is the first line's.
-        assert!(
-            !row.source_tag.contains("subject"),
-            "{}: tagged {:?}",
-            runs(&row.subject),
-            row.source_tag
-        );
-    }
-    session.shutdown();
-}
-
 /// A result's label pill crosses with the label's own colour, as the
 /// list's pills do, so its dot is the label's and not grey (design §3.4:
 /// the orange dot for Atlas).
@@ -515,50 +468,6 @@ async fn a_popover_closed_with_esc_puts_back_the_query_it_opened_on() {
         button.open = false;
     }
     assert_eq!(restored, expected);
-    session.shutdown();
-}
-
-/// D27 end to end: with a person applied, reopening From lists everyone the
-/// rest of the query finds, the applied person checked -- the real engine
-/// answers the facets-only read.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_popover_reopened_with_its_field_applied_still_lists_everyone() {
-    use postio_ffi::FilterKindFfi;
-
-    let (session, _) = atlas_budget_results().await;
-    session.focus_search_popover(FilterKindFfi::From);
-    let first = next(&session, 10, |event| match event {
-        UiEvent::FocusPopover { view: Some(view) } if !view.rows.is_empty() => Some(view.clone()),
-        _ => None,
-    })
-    .await;
-    assert!(first.rows.len() >= 2, "a second person to check");
-
-    session.focus_search_popover_toggle(first.rows[0].token, false);
-    next(&session, 10, |event| match event {
-        UiEvent::FocusQuery { view } if !view.chips.is_empty() => Some(()),
-        _ => None,
-    })
-    .await;
-    session.focus_search_popover_done(true);
-    next(&session, 10, |event| match event {
-        UiEvent::FocusPopover { view: None } => Some(()),
-        _ => None,
-    })
-    .await;
-
-    session.focus_search_popover(FilterKindFfi::From);
-    let again = next(&session, 10, |event| match event {
-        UiEvent::FocusPopover { view: Some(view) } if !view.rows.is_empty() => Some(view.clone()),
-        _ => None,
-    })
-    .await;
-    assert_eq!(
-        again.rows.len(),
-        first.rows.len(),
-        "everyone the query without from: finds"
-    );
-    assert_eq!(again.rows.iter().filter(|row| row.checked).count(), 1);
     session.shutdown();
 }
 

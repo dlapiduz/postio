@@ -1,0 +1,59 @@
+# Case counts of the frontend test files spec 012 reviewed against ADR 0049.
+# Lower a line when a file shrinks. Raise one only in a commit that adds a
+# composition case -- a path a person takes that no case in that suite
+# drives -- and names the path. scripts/checks/check-frontend-suite-budget.py
+# says why. The review itself: specs/012-test-suite-value/parity-review.tsv.
+
+crates/postio-ffi/tests/ffi_suite/compose.rs 47
+crates/postio-ffi/tests/ffi_suite/config.rs 9
+crates/postio-ffi/tests/ffi_suite/contact_popover.rs 1
+crates/postio-ffi/tests/ffi_suite/contacts_settings.rs 3
+crates/postio-ffi/tests/ffi_suite/contacts_view.rs 2
+crates/postio-ffi/tests/ffi_suite/focus.rs 13
+crates/postio-ffi/tests/ffi_suite/focus_bar.rs 5
+crates/postio-ffi/tests/ffi_suite/focus_compose.rs 6
+crates/postio-ffi/tests/ffi_suite/focus_keymap.rs 3
+crates/postio-ffi/tests/ffi_suite/focus_pickers.rs 5
+crates/postio-ffi/tests/ffi_suite/focus_search.rs 12
+crates/postio-ffi/tests/ffi_suite/focus_states.rs 4
+crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs 8
+crates/postio-ffi/tests/ffi_suite/keys.rs 12
+crates/postio-ffi/tests/ffi_suite/mailboxes.rs 7
+crates/postio-ffi/tests/ffi_suite/reachability.rs 4
+crates/postio-ffi/tests/ffi_suite/thread_document.rs 11
+crates/postio-gtk/tests/focus_suite/bar.rs 15
+crates/postio-gtk/tests/focus_suite/capture.rs 5
+crates/postio-gtk/tests/focus_suite/compose.rs 5
+crates/postio-gtk/tests/focus_suite/contacts.rs 11
+crates/postio-gtk/tests/focus_suite/cursor.rs 4
+crates/postio-gtk/tests/focus_suite/digest.rs 6
+crates/postio-gtk/tests/focus_suite/drafts.rs 4
+crates/postio-gtk/tests/focus_suite/e2e.rs 1
+crates/postio-gtk/tests/focus_suite/filtered.rs 5
+crates/postio-gtk/tests/focus_suite/hostile_mail.rs 1
+crates/postio-gtk/tests/focus_suite/keymap.rs 1
+crates/postio-gtk/tests/focus_suite/one_keymap.rs 1
+crates/postio-gtk/tests/focus_suite/pickers.rs 5
+crates/postio-gtk/tests/focus_suite/reader_zoom.rs 1
+crates/postio-gtk/tests/focus_suite/selection.rs 5
+crates/postio-gtk/tests/focus_suite/settings.rs 11
+crates/postio-gtk/tests/focus_suite/state.rs 8
+crates/postio-gtk/tests/focus_suite/treatments.rs 5
+crates/postio-gtk/tests/focus_suite/undo.rs 2
+crates/postio-gtk/tests/packaging.rs 12
+crates/postio-tui/src/app/find.rs 9
+crates/postio-tui/tests/tui_suite/focus_engine.rs 2
+crates/postio-widgets/src/reader/view.rs 10
+crates/postio-widgets/tests/widgets_suite/body_view.rs 4
+crates/postio-widgets/tests/widgets_suite/body_view_find.rs 1
+crates/postio-widgets/tests/widgets_suite/body_view_select.rs 5
+crates/postio-widgets/tests/widgets_suite/body_view_zoom.rs 2
+crates/postio-widgets/tests/widgets_suite/capture.rs 4
+crates/postio-widgets/tests/widgets_suite/composer_confirms.rs 1
+crates/postio-widgets/tests/widgets_suite/composer_size.rs 1
+crates/postio-widgets/tests/widgets_suite/onboarding.rs 2
+crates/postio-widgets/tests/widgets_suite/pickers.rs 1
+crates/postio-widgets/tests/widgets_suite/present_compose.rs 1
+crates/postio-widgets/tests/widgets_suite/present_config.rs 1
+crates/postio-widgets/tests/widgets_suite/quote_folds.rs 2
+crates/postio-widgets/tests/widgets_suite/recipient_chips.rs 2
