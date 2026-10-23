@@ -20,7 +20,7 @@ crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs 8
 crates/postio-ffi/tests/ffi_suite/keys.rs 12
 crates/postio-ffi/tests/ffi_suite/mailboxes.rs 7
 crates/postio-ffi/tests/ffi_suite/reachability.rs 4
-crates/postio-ffi/tests/ffi_suite/thread_document.rs 11
+crates/postio-ffi/tests/ffi_suite/thread_document.rs 8
 crates/postio-gtk/tests/focus_suite/bar.rs 15
 crates/postio-gtk/tests/focus_suite/capture.rs 5
 crates/postio-gtk/tests/focus_suite/compose.rs 5
