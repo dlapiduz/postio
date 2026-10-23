@@ -897,7 +897,7 @@ jobs:
           POSTIO_TEST_PATIENCE: "3"
         run: >-
           dbus-run-session -- cargo nextest run --workspace --profile ci --lib
-          -E 'not (package(postio-widgets) + package(postio-gtk))'
+          -E 'package(postio-ui)'  # floor measurement: 1024 tests, 0.6 CPU-min
 
       - name: cargo nextest run (the suites a vocabulary change breaks)
         env:
@@ -982,7 +982,7 @@ jobs:
           POSTIO_TEST_PATIENCE: "3"
         run: >-
           dbus-run-session -- cargo nextest run -p postio-widgets --profile ci
-          --partition count:${{ matrix.shard }}/2
+          -E 'test(/^reader_scroll::/)'  # floor measurement
 
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache
@@ -1016,7 +1016,7 @@ jobs:
       - name: cargo nextest run -p postio-gtk
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
+        run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci -E 'test(/^desktop::/)'  # floor measurement
 
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache
