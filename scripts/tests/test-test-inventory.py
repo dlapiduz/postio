@@ -67,8 +67,17 @@ with tempfile.TemporaryDirectory() as tmp:
     check("summary counts the cases", summary.get("cases") == 20, str(summary.get("cases")))
     clusters = {c["item"]: c for c in summary.get("parity_clusters", {}).get("top", [])}
     fr021 = clusters.get("009/FR-021", {})
-    check("an item in three suites and two layers is a parity cluster",
+    check("an item cited in two behaviour layers is a parity cluster",
           fr021.get("suites") == 3 and sorted(fr021.get("cases_by_layer", {})) == ["controller", "frontend"], str(clusters))
+    pickers = clusters.get("surface:pickers", {})
+    check("a surface tested in the controller and the frontends is a parity cluster",
+          pickers.get("suites") == 3 and sorted(pickers.get("cases_by_layer", {})) == ["controller", "frontend"], str(clusters))
+    check("a frontend prefix does not hide a surface",
+          "postio-ffi::ffi_suite focus_pickers::opening_succeeds" in pickers.get("cases_by_layer", {}).get("frontend", []),
+          str(pickers))
+    check("an item cited in one layer only is not a cluster", "007/SC-002" not in clusters, str(clusters))
+    check("meta and measurement do not count as layers",
+          not any(k.startswith("surface:docs") or k.startswith("surface:slow") for k in clusters), str(clusters))
     check("a cluster sums its known CPU", abs(fr021.get("cpu_s", 0) - 3.91) < 1e-9, str(fr021))
     check("the summary counts smells", summary.get("smells_by_kind", {}).get("is-ok-only") == 2,
           str(summary.get("smells_by_kind")))

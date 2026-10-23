@@ -8,10 +8,10 @@ harness-free cases a grep for `#[test]` misses -- and joins each to its
 file, its layer (ADR 0049), its last recorded duration, the spec items and
 issues it cites, and the smells research R6 names.
 
-The summary groups cases by the spec item they cite. An item asserted in
-three or more suites spanning at least two layers is a *parity cluster*:
-the shape ADR 0049 says to reduce, and the order spec 012's cleanup
-batches take.
+The summary groups cases by the spec item they cite and by the surface
+their file is about (`pickers.rs`, `focus_pickers.rs`). One asserted in two
+or more behaviour layers is a *parity cluster*: the shape ADR 0049 says to
+reduce, and the order spec 012's cleanup batches take.
 
 Nothing leaves the machine. Durations come from a nextest JUnit report --
 by default the newest under `target/nextest/` -- and a case the report
@@ -44,8 +44,10 @@ import test_audit  # noqa: E402  -- enabled by the sys.path line above
 
 REPO = Path(__file__).resolve().parent.parent
 COLUMNS = ["id", "crate", "suite", "file", "layer", "cost_rank", "display", "ignored", "duration_s", "refs", "smells"]
-CLUSTER_SUITES = 3
+LAYER_ORDER = ["rule", "controller", "frontend"]
+BEHAVIOUR_LAYERS = set(LAYER_ORDER)  # meta and measurement assert no behaviour
 CLUSTER_LAYERS = 2
+FRONTEND_PREFIXES = ("focus_", "mac_", "gtk_", "tui_", "e2e_")
 TOP = 20
 
 
@@ -133,6 +135,7 @@ def main() -> int:
         writer.writerows(rows)
 
     summary = summarise(rows, root)
+    (out / "clusters.json").write_text(json.dumps(summary.pop("_all_clusters"), indent=1) + "\n")
     (out / "summary.json").write_text(json.dumps(summary, indent=1, sort_keys=True) + "\n")
     report_to(summary, out, report)
 
@@ -147,6 +150,24 @@ def main() -> int:
     return 0
 
 
+def surface_of(file: str) -> str | None:
+    """The surface an integration test file is about: `focus_pickers.rs` and `pickers.rs` are one.
+
+    Each layer cites its own task ids, so spec items rarely join a
+    controller case to its frontend twins; the file names do.
+    """
+    if file == "ambiguous" or "/tests/" not in file:
+        return None
+    path = Path(file)
+    stem = path.parent.name if path.stem == "mod" else path.stem
+    if stem in ("main", "support", "lib") or stem.startswith("support_"):
+        return None
+    for prefix in FRONTEND_PREFIXES:
+        if stem.startswith(prefix):
+            return stem[len(prefix) :]
+    return stem
+
+
 def summarise(rows: list[dict], root: Path) -> dict:
     by_layer = Counter(r["layer"] for r in rows)
     cpu_by_layer: dict[str, float] = defaultdict(float)
@@ -154,21 +175,31 @@ def summarise(rows: list[dict], root: Path) -> dict:
         if r["duration_s"] != "unknown":
             cpu_by_layer[r["layer"]] += float(r["duration_s"])
 
-    items: dict[str, list[dict]] = defaultdict(list)
+    groups: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
+        if r["layer"] not in BEHAVIOUR_LAYERS:
+            continue
         for ref in r["refs"].split(";"):
             if "/" in ref and not ref.startswith("?/"):
-                items[ref].append(r)
+                groups[ref].append(r)
+        surface = surface_of(r["file"])
+        if surface:
+            groups[f"surface:{surface}"].append(r)
     clusters = []
-    for item, cited in items.items():
+    for item, cited in groups.items():
         suites = {r["id"].split(" ", 1)[0] for r in cited}
         layers: dict[str, list[str]] = defaultdict(list)
         for r in cited:
             layers[r["layer"]].append(r["id"])
-        if len(suites) >= CLUSTER_SUITES and len(layers) >= CLUSTER_LAYERS:
+        if len(layers) >= CLUSTER_LAYERS:
             cpu = sum(float(r["duration_s"]) for r in cited if r["duration_s"] != "unknown")
-            clusters.append({"item": item, "suites": len(suites), "cases_by_layer": dict(layers), "cpu_s": round(cpu, 6)})
-    clusters.sort(key=lambda c: (-c["cpu_s"], -c["suites"], c["item"]))
+            cheapest = min(layers, key=LAYER_ORDER.index)
+            above = sum(len(ids) for name, ids in layers.items() if name != cheapest)
+            clusters.append(
+                {"item": item, "suites": len(suites), "cases_by_layer": dict(layers), "cpu_s": round(cpu, 6), "above_cheapest": above}
+            )
+    # The cases above a cluster's cheapest layer are the ones ADR 0049 would reduce.
+    clusters.sort(key=lambda c: (-c["cpu_s"], -c["above_cheapest"], c["item"]))
 
     smells = Counter(s for r in rows for s in r["smells"].split(";") if s)
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True)
@@ -177,6 +208,7 @@ def summarise(rows: list[dict], root: Path) -> dict:
         "cases_by_layer": dict(by_layer),
         "cpu_s_by_layer": {k: round(v, 3) for k, v in cpu_by_layer.items()},
         "parity_clusters": {"count": len(clusters), "top": clusters[:TOP]},
+        "_all_clusters": clusters,
         "smells_by_kind": dict(smells),
         "untraced": smells.get("untraced", 0),
         "ambiguous": sum(1 for r in rows if r["file"] == "ambiguous"),
@@ -192,10 +224,11 @@ def report_to(summary: dict, out: Path, junit: Path | None) -> None:
         print(f"  {layer:<12} {n:>6}  {summary['cpu_s_by_layer'].get(layer, 0):>10.1f} s")
     print()
     clusters = summary["parity_clusters"]
-    print(f"Parity clusters (an item in >= {CLUSTER_SUITES} suites and >= {CLUSTER_LAYERS} layers): {clusters['count']}")
+    print(f"Parity clusters (a spec item or surface in >= {CLUSTER_LAYERS} behaviour layers): {clusters['count']}")
     for c in clusters["top"][:10]:
         layers = ", ".join(f"{k} {len(v)}" for k, v in sorted(c["cases_by_layer"].items()))
-        print(f"  {c['item']:<14} {c['suites']} suites  {c['cpu_s']:>8.1f} s  ({layers})")
+        print(f"  {c['item']:<28} {c['suites']} suites  {c['cpu_s']:>8.1f} s  ({layers})")
+    print(f"  All of them, largest first: {out}/clusters.json")
     print("  ADR 0049: each keeps its branches in one layer. Read one with:")
     print(f"    grep '<item>' {out}/cases.csv")
     print()

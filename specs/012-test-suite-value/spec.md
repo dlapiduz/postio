@@ -76,7 +76,7 @@ The maintainer or a session runs one command and gets a table with a row for eve
 - the spec items and issues it cites;
 - any assertion smell it carries.
 
-A summary groups the cases by spec item and flags every item asserted in three or more suites, spanning at least two layers, as a **parity cluster**.
+A summary groups the cases by spec item and by surface, and flags every one asserted in two or more behaviour layers as a **parity cluster**.
 
 **Why this priority**: Every later decision reads this table. It is also useful on its own: it answers "how many tests, where, and what do they cost" today.
 
@@ -208,7 +208,7 @@ Once a surface is cleaned, a repository check refuses a change that grows that f
 
 - **FR-001**: The inventory MUST produce one row per test case the runner lists, including `harness = false` cases, with crate, suite, file, layer, duration, display need, cited refs and smell flags.
 - **FR-002**: The inventory MUST classify each case's layer as rule, controller, frontend, meta or measurement, using the crate and file, with no hand-kept list per test.
-- **FR-003**: The inventory MUST group cases by cited spec item and name every item cited in three or more suites spanning at least two layers as a parity cluster. Counting layers alone would miss the commonest shape: one controller case and one per frontend, which is two layers but four suites.
+- **FR-003**: The inventory MUST group cases by cited spec item, and by surface (the test file's name with a frontend prefix such as `focus_` removed). Every item or surface asserted in two or more behaviour layers (rule, controller, frontend) is a parity cluster. Surfaces are needed because each layer tends to cite its own task ids: on 2026-10-23 only 16 items were cited in two layers, while the duplication the sample found follows file names (`pickers.rs`, `focus_pickers.rs`).
 - **FR-004**: The inventory MUST flag these smells: constant-only assertion, `is_ok()`-only assertion, mock-call-count-only assertion, display skip, and untraced.
 - **FR-005**: The redundancy report MUST record the code each case executes, per case, and list subset and zero-coverage candidates for the crates named.
 - **FR-006**: The redundancy report MUST NOT propose removing a cheaper-layer case in favour of a more expensive one.
@@ -225,7 +225,7 @@ Once a surface is cleaned, a repository check refuses a change that grows that f
 ### Key Entities
 
 - **Test case**: one case the runner lists. It has a crate, suite, file, layer, duration, display need, refs and smells.
-- **Parity cluster**: a spec item cited by cases in three or more suites spanning at least two layers, together with those cases.
+- **Parity cluster**: a spec item or surface asserted by cases in two or more behaviour layers, together with those cases.
 - **Candidate**: a case the redundancy report proposes, with the case that subsumes it.
 - **Removal verdict**: the result of the removal check for a set of cases. It is either "no new survivor" or the list of mutants that would survive.
 - **Baseline**: a committed count or list that a ratchet compares against, which only moves down unless a change raises it with a reason.
