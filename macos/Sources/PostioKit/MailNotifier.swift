@@ -28,6 +28,8 @@ public enum Suppressed: Equatable, Sendable {
     case nothingArrived
     /// It landed in the folder the user is looking at, right now.
     case alreadyOnScreen
+    /// `[sync] notify_roles` does not list this folder's role.
+    case notWatched
     /// `[sync] notify = false`: the person turned new-mail notifications off.
     case turnedOff
 }
@@ -74,26 +76,33 @@ public enum MailNotifier {
     /// is the version of this check that silently swallows the notification
     /// somebody actually needed.
     ///
-    /// `enabled` is `[sync] notify`, the switch in Settings.
+    /// `enabled` is `[sync] notify`, the switch in Settings. `role` is the
+    /// folder's role and `notifyRoles` is `[sync] notify_roles`: a folder
+    /// whose role is not listed does not notify.
     public static func decide(
         _ arrival: MailArrival,
         showing: Int64?,
         isActive: Bool,
         mailboxName: String?,
-        enabled: Bool = true
+        enabled: Bool = true,
+        role: MailboxRoleFfi = .inbox,
+        notifyRoles: [String] = ["inbox"]
     ) -> NotificationDecision {
         guard enabled else { return .suppress(.turnedOff) }
         let decision = decideNotification(
             arrival: MailArrivalFfi(mailbox: arrival.mailbox, messages: arrival.messages),
             showing: showing,
             active: isActive,
-            mailboxName: mailboxName
+            mailboxName: mailboxName,
+            role: role,
+            notifyRoles: notifyRoles
         )
         switch decision {
         case let .suppress(reason):
             switch reason {
             case .nothingArrived: return .suppress(.nothingArrived)
             case .alreadyOnScreen: return .suppress(.alreadyOnScreen)
+            case .notWatched: return .suppress(.notWatched)
             }
         case let .deliver(notification):
             return .deliver(

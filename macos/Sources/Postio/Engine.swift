@@ -1816,6 +1816,7 @@ final class Engine {
 
     /// Decide what to do about new mail, and do it.
     private func arrived(_ arrival: MailArrival) {
+        let notices = session?.notices()
         let decision = MailNotifier.decide(
             arrival,
             // Focus's inbox is not one folder, so no arrival is "already on
@@ -1823,7 +1824,9 @@ final class Engine {
             showing: nil,
             isActive: NSApplication.shared.isActive,
             mailboxName: mailboxes.first { $0.id == arrival.mailbox }?.name,
-            enabled: session?.notices().notify ?? true
+            enabled: notices?.notify ?? true,
+            role: mailboxes.first { $0.id == arrival.mailbox }?.role ?? .regular,
+            notifyRoles: notices?.notifyRoles ?? ["inbox"]
         )
         guard case let .deliver(notification) = decision else { return }
         notifications.post(notification)

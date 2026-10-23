@@ -225,7 +225,8 @@ async fn notices_follow_the_sync_table_while_the_app_runs() {
         session.notices(),
         postio_ffi::NoticesFfi {
             notify: true,
-            badge: false
+            badge: false,
+            notify_roles: vec!["inbox".to_owned()]
         }
     );
 
@@ -242,7 +243,8 @@ async fn notices_follow_the_sync_table_while_the_app_runs() {
         session.notices(),
         postio_ffi::NoticesFfi {
             notify: false,
-            badge: true
+            badge: true,
+            notify_roles: vec!["inbox".to_owned()]
         }
     );
     session.shutdown();

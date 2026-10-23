@@ -8,11 +8,14 @@
 //! shim over this, and `UNUserNotificationCenter` is the only thing it adds.
 //!
 //! The master switch (`[sync] notify`) crosses as `Session::notices` and
-//! the frontend applies it; the role gate (`[sync] notify_roles`) is not
-//! applied here yet, so the macOS app notifies for every folder as it did
-//! before this function existed.
+//! the frontend applies it. The role gate (`[sync] notify_roles`) is decided
+//! here, by the same rule the host uses (`postio_ui::notify::role_watched`):
+//! the frontend passes the folder's role and the roles `Session::notices`
+//! reports, so the app notifies only for the folders the person chose.
 
 use postio_model::{MailboxId, MessageId};
+
+use crate::MailboxRoleFfi;
 use postio_ui::notify::{self, Attention, Decision, Suppressed, Wording};
 
 /// New mail that arrived, as `UiEvent::NewMail` reports it: ids only.
@@ -31,6 +34,8 @@ pub enum SuppressedFfi {
     NothingArrived,
     /// It landed in the folder the user is looking at, right now.
     AlreadyOnScreen,
+    /// `[sync] notify_roles` does not list the folder's role.
+    NotWatched,
 }
 
 /// One notification, ready to hand the notification centre.
@@ -68,14 +73,23 @@ pub enum NotificationDecisionFfi {
 /// `showing` is the folder the list currently has open and `active` is
 /// whether Postio is the frontmost application; both are needed to suppress
 /// (see [`Attention`]). `mailbox_name` is the folder's display name when the
-/// frontend knows it.
+/// frontend knows it. `role` is the folder's role and `notify_roles` is
+/// `[sync] notify_roles`: an arrival in a folder whose role is not listed is
+/// [`SuppressedFfi::NotWatched`].
 #[uniffi::export]
 pub fn decide_notification(
     arrival: MailArrivalFfi,
     showing: Option<i64>,
     active: bool,
     mailbox_name: Option<String>,
+    role: MailboxRoleFfi,
+    notify_roles: Vec<String>,
 ) -> NotificationDecisionFfi {
+    if !notify::role_watched(&notify_roles, role.into()) {
+        return NotificationDecisionFfi::Suppress {
+            reason: SuppressedFfi::NotWatched,
+        };
+    }
     let arrival = notify::Arrival {
         mailbox: MailboxId::new(arrival.mailbox),
         messages: arrival.messages.into_iter().map(MessageId::new).collect(),
@@ -120,6 +134,8 @@ mod tests {
             Some(99),
             true,
             Some("Inbox".to_owned()),
+            MailboxRoleFfi::Inbox,
+            vec!["inbox".to_owned()],
         );
         assert_eq!(
             decision,
@@ -135,6 +151,48 @@ mod tests {
         );
     }
 
+    fn inbox_only() -> Vec<String> {
+        vec!["inbox".to_owned()]
+    }
+
+    #[test]
+    fn an_arrival_in_a_folder_the_person_did_not_choose_is_not_told() {
+        // `[sync] notify_roles` defaults to the inbox. The macOS app used to
+        // notify for every folder, so a message landing in Trash said
+        // "New mail in Trash".
+        let arrival = || MailArrivalFfi {
+            mailbox: 9,
+            messages: vec![1],
+        };
+        let decide = |role, roles: Vec<String>| {
+            decide_notification(
+                arrival(),
+                None,
+                false,
+                Some("Trash".to_owned()),
+                role,
+                roles,
+            )
+        };
+        assert_eq!(
+            decide(MailboxRoleFfi::Trash, inbox_only()),
+            NotificationDecisionFfi::Suppress {
+                reason: SuppressedFfi::NotWatched
+            }
+        );
+        assert!(matches!(
+            decide(
+                MailboxRoleFfi::Trash,
+                vec!["inbox".to_owned(), "trash".to_owned()]
+            ),
+            NotificationDecisionFfi::Deliver { .. }
+        ));
+        assert!(matches!(
+            decide(MailboxRoleFfi::Inbox, inbox_only()),
+            NotificationDecisionFfi::Deliver { .. }
+        ));
+    }
+
     #[test]
     fn the_boundary_carries_the_reason_a_notification_was_suppressed() {
         let arrival = |messages: Vec<i64>| MailArrivalFfi {
@@ -142,13 +200,27 @@ mod tests {
             messages,
         };
         assert_eq!(
-            decide_notification(arrival(vec![]), None, false, None),
+            decide_notification(
+                arrival(vec![]),
+                None,
+                false,
+                None,
+                MailboxRoleFfi::Inbox,
+                inbox_only()
+            ),
             NotificationDecisionFfi::Suppress {
                 reason: SuppressedFfi::NothingArrived
             }
         );
         assert_eq!(
-            decide_notification(arrival(vec![10]), Some(5), true, None),
+            decide_notification(
+                arrival(vec![10]),
+                Some(5),
+                true,
+                None,
+                MailboxRoleFfi::Inbox,
+                inbox_only()
+            ),
             NotificationDecisionFfi::Suppress {
                 reason: SuppressedFfi::AlreadyOnScreen
             }
