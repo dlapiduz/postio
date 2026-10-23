@@ -75,6 +75,14 @@ pub fn the_open_message_is_one_scrolling_column() {
         );
         let fold_line = support::only(&dialog, "focus-open-fold-line");
         assert_eq!(scroller_of(&fold_line), column, "the fold line is outside");
+        // The first document drawn can be the body before its last layout
+        // pass, and the column's height follows it a frame later.
+        let _ = crate::settle_until(async || {
+            view.document()
+                .is_some_and(|document| document.size.height > 4.0 * 512.0)
+                && column.vadjustment().upper() > 2.0 * column.vadjustment().page_size()
+        })
+        .await;
         let document = view.document().expect("drawn");
         assert!(
             f64::from(view.height()) >= document.size.height.floor(),
