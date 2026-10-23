@@ -41,6 +41,12 @@ on:
       scope:
         description: "removal: a nextest filterset both passes run within, e.g. a cluster's suites (optional)"
         default: ""
+      package:
+        description: "removal: the crate whose files are mutated, when it is not the one cargo-mutants would pick (optional)"
+        default: ""
+      re:
+        description: "removal: mutant-name regexes, one per line, e.g. the functions the cases call (optional)"
+        default: ""
 
 permissions:
   contents: read
@@ -112,15 +118,21 @@ jobs:
           FILES: ${{ inputs.files }}
           CASES: ${{ inputs.cases }}
           SCOPE: ${{ inputs.scope }}
+          PACKAGE: ${{ inputs.package }}
+          RES: ${{ inputs.re }}
         run: |
           read -r -a files <<< "$FILES"
           cases=()
           while IFS= read -r line; do
             [ -n "$line" ] && cases+=("$line")
           done <<< "$CASES"
-          scope=()
-          [ -n "$SCOPE" ] && scope=(--scope "$SCOPE")
-          dbus-run-session -- scripts/test-removal-check.sh "${scope[@]}" "${files[@]}" -- "${cases[@]}"
+          narrow=()
+          [ -n "$SCOPE" ] && narrow+=(--scope "$SCOPE")
+          [ -n "$PACKAGE" ] && narrow+=(--package "$PACKAGE")
+          while IFS= read -r line; do
+            [ -n "$line" ] && narrow+=(--re "$line")
+          done <<< "$RES"
+          dbus-run-session -- scripts/test-removal-check.sh "${narrow[@]}" "${files[@]}" -- "${cases[@]}"
 
       - name: Keep the reports
         if: always()

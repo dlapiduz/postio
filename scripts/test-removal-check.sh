@@ -25,13 +25,21 @@
 # refuses to run where CI is unset, unless POSTIO_ALLOW_MUTANTS_HERE=1 says
 # this machine is yours. On CI, `.github/workflows/test-audit.yml` runs it.
 #
-#   scripts/test-removal-check.sh [--scope <filterset>] <source file>... -- '<binary id> <test name>'...
+#   scripts/test-removal-check.sh [--scope <filterset>] [--package <crate>] [--re <regex>]...
+#                                 <source file>... -- '<binary id> <test name>'...
 #
 # --scope runs both passes over only the tests that filterset selects -- a
 # parity cluster's own suites, say, instead of all of postio-gtk's at ~4.6 s
 # a case, which no CI job could finish per mutant. It errs one way only: a
 # mutant that only a test outside the scope would catch can make the cases
 # look unique, never make them look removable.
+#
+# --package and --re narrow which mutants are made: cargo-mutants' own
+# package and name filters, for a glue file with hundreds of mutants of
+# which a candidate reaches a handful (postio-ffi's session.rs has 533).
+# `-f` alone finds nothing in a crate cargo-mutants was not pointed at, so
+# a check on another crate's files names it with --package. A mutant left
+# out by --re is not judged at all, so name every function the cases call.
 #
 # Writes target/test-audit/verdict.json. Exit status: 0 safe; 1 not safe;
 # 2 bad arguments, a missing tool, or refused to run here.
@@ -49,11 +57,16 @@ usage() {
 }
 
 SCOPE=
-if [ "${1:-}" = "--scope" ]; then
-    [ $# -ge 2 ] || usage
-    SCOPE=$2
-    shift 2
-fi
+PACKAGE=
+NAME_RES=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --scope)   [ $# -ge 2 ] || usage; SCOPE=$2; shift 2 ;;
+        --package) [ $# -ge 2 ] || usage; PACKAGE=$2; shift 2 ;;
+        --re)      [ $# -ge 2 ] || usage; NAME_RES+=("$2"); shift 2 ;;
+        *) break ;;
+    esac
+done
 
 FILES=()
 CASES=()
@@ -102,8 +115,13 @@ if [ -n "$SCOPE" ]; then
 fi
 
 FILE_ARGS=()
+[ -n "$PACKAGE" ] && FILE_ARGS+=(-p "$PACKAGE")
 for file in "${FILES[@]}"; do
     FILE_ARGS+=(-f "$file")
+done
+A_RES=()
+for re in ${NAME_RES[@]+"${NAME_RES[@]}"}; do
+    A_RES+=(--re "$re")
 done
 
 WORK=$(mktemp -d)
@@ -112,7 +130,7 @@ mkdir -p "$OUT"
 
 # --no-shuffle and --jobs 1 for the reasons scripts/mutants.sh gives.
 env -u RUSTUP_TOOLCHAIN cargo mutants --test-tool=nextest --no-shuffle --jobs 1 "${FILE_ARGS[@]}" \
-    --output "$WORK/a" --cargo-test-arg=-E "--cargo-test-arg=$filter" || true
+    --output "$WORK/a" ${A_RES[@]+"${A_RES[@]}"} --cargo-test-arg=-E "--cargo-test-arg=$filter" || true
 if [ ! -f "$WORK/a/mutants.out/missed.txt" ]; then
     echo "Pass A produced no missed.txt; see $WORK/a/mutants.out for why." >&2
     trap - EXIT
@@ -144,13 +162,16 @@ if [ -s "$WORK/new-misses" ]; then
 fi
 
 commit=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)
-python3 - "$OUT/verdict.json" "$WORK/survivors" "$commit" "$SCOPE" "${#FILES[@]}" "${FILES[@]}" "${CASES[@]}" <<'PY'
+RES_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' ${NAME_RES[@]+"${NAME_RES[@]}"})
+python3 - "$OUT/verdict.json" "$WORK/survivors" "$commit" "$SCOPE" "$PACKAGE" "$RES_JSON" "${#FILES[@]}" "${FILES[@]}" "${CASES[@]}" <<'PY'
 import json, sys
-out, survivors, commit, scope, nfiles = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
-files, cases = sys.argv[6 : 6 + nfiles], sys.argv[6 + nfiles :]
+out, survivors, commit, scope, package, res = sys.argv[1:7]
+nfiles = int(sys.argv[7])
+files, cases = sys.argv[8 : 8 + nfiles], sys.argv[8 + nfiles :]
 lost = [l for l in open(survivors).read().splitlines() if l]
 json.dump({"cases": cases, "files": files, "new_survivors": lost,
-           "result": "not safe" if lost else "safe", "commit": commit, "scope": scope or None},
+           "result": "not safe" if lost else "safe", "commit": commit, "scope": scope or None,
+           "package": package or None, "re": json.loads(res)},
           open(out, "w"), indent=1)
 PY
 
