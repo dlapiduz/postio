@@ -1,0 +1,129 @@
+# Spec 012's three questions about the test suite, on a runner of their own
+# (specs/012-test-suite-value):
+#
+#   inventory  what is there and what it costs -- the whole workspace, GTK
+#              suites included, with durations from a JUnit report this job
+#              records, since no other workflow keeps one;
+#   coverage   which cases run nothing a case costing no more does not, per
+#              crate (scripts/test-coverage-sets.py);
+#   removal    whether removing named cases leaves a mutant uncaught
+#              (scripts/test-removal-check.sh) -- the only licence to remove
+#              a test under the spec, and too heavy for a shared machine.
+#
+# Dispatch-only: nothing here gates a pull request. Inputs reach the shell
+# through `env:`, never interpolated into a script. Reports are this
+# project's own artifacts, as mutants.yml's are; nothing goes elsewhere.
+#
+#   gh workflow run test-audit.yml -f mode=inventory
+#   gh workflow run test-audit.yml -f mode=coverage -f crates='postio-config postio-focus'
+#   gh workflow run test-audit.yml -f mode=removal \
+#       -f files='crates/postio-config/src/keys.rs' \
+#       -f cases='postio-config keys::mod_token_tests::ctrl_stays_literal_on_both'
+name: Test audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: inventory, coverage or removal
+        type: choice
+        options: [inventory, coverage, removal]
+        default: inventory
+      crates:
+        description: "coverage: packages to measure, space-separated"
+        default: postio-config
+      files:
+        description: "removal: source files to mutate, space-separated"
+        default: ""
+      cases:
+        description: "removal: the cases to remove, one '<binary id> <test name>' per line"
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_BUILD_JOBS: 4
+
+jobs:
+  audit:
+    name: Test audit (${{ inputs.mode }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/rust-workspace
+
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      - name: Cache cargo-nextest
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      - name: Install llvm-tools and cargo-llvm-cov
+        if: inputs.mode == 'coverage'
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --locked --version 0.9.0
+
+      - name: Install cargo-mutants
+        if: inputs.mode == 'removal'
+        run: cargo install cargo-mutants --locked --version 27.1.0
+
+      - name: Inventory, with durations from a run of the suite
+        if: inputs.mode == 'inventory'
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: |
+          # A failing case still has a duration; the inventory is about the suite, not its verdict.
+          dbus-run-session -- cargo nextest run --workspace --profile ci --no-fail-fast || true
+          scripts/test-inventory.py --junit target/nextest/ci/junit.xml
+
+      - name: Coverage sets
+        if: inputs.mode == 'coverage'
+        env:
+          CRATES: ${{ inputs.crates }}
+        run: |
+          read -r -a crates <<< "$CRATES"
+          packages=()
+          for crate in "${crates[@]}"; do packages+=(-p "$crate"); done
+          scripts/test-inventory.py "${packages[@]}"
+          dbus-run-session -- scripts/test-coverage-sets.py "${packages[@]}"
+
+      - name: Removal check
+        if: inputs.mode == 'removal'
+        env:
+          FILES: ${{ inputs.files }}
+          CASES: ${{ inputs.cases }}
+        run: |
+          read -r -a files <<< "$FILES"
+          cases=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && cases+=("$line")
+          done <<< "$CASES"
+          dbus-run-session -- scripts/test-removal-check.sh "${files[@]}" -- "${cases[@]}"
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-audit-${{ inputs.mode }}
+          path: |
+            target/test-audit/*.csv
+            target/test-audit/*.json
+            target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 30
