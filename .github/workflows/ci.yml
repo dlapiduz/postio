@@ -356,8 +356,8 @@ jobs:
   # check, fails on every pull request while that run is red -- except one
   # labelled `fixes-nightly`, which is how the fix gets in. Its merge is a
   # push to `main`, which runs the suite again, and a green run unlocks
-  # everyone: `nightly.yml`'s `unlock` job re-asks this check on every open
-  # pull request that was waiting.
+  # everyone: `unlock.yml` re-asks this check on every open pull
+  # request that was waiting.
   #
   # Until 2026-10-23 a red nightly made every pull request re-run what was
   # red on it, and pass if that passed. That was 40 minutes on nearly half
