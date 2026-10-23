@@ -106,7 +106,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
 
 **Independent test**: quickstart §2, where a planted duplicate in postio-config is reported as `subset`.
 
-- [ ] T011 [P] [US2] Write `scripts/tests/test-test-coverage-sets.py` against hand-written per-case region sets (JSON fixtures, no LLVM). It asserts:
+- [X] T011 [P] [US2] Write `scripts/tests/test-test-coverage-sets.py` against hand-written per-case region sets (JSON fixtures, no LLVM). It asserts:
   - mutual subsets keep the lower `cost_rank`, then the one with a spec ref, then the first by name;
   - a rule case is never reported as subsumed by a frontend case (FR-006);
   - an `ignored` or `measurement` case is never listed;
@@ -114,7 +114,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   - two runs on the same input give byte-identical output.
 
   See it fail.
-- [ ] T012 [US2] Implement the candidate computation in `scripts/test-coverage-sets.py`, reading region sets and `cases.csv`, until T011 passes.
+- [X] T012 [US2] Implement the candidate computation in `scripts/test-coverage-sets.py`, reading region sets and `cases.csv`, until T011 passes.
 - [ ] T013 [US2] Write `scripts/per-test-profile.sh`. It execs `"$@"` with `LLVM_PROFILE_FILE="$NEXTEST_WORKSPACE_ROOT/target/test-audit/profiles/$NEXTEST_BINARY_ID/$(printf %s "$NEXTEST_TEST_NAME" | shasum | cut -c1-16)/%m.profraw"`, and fails loudly if either `NEXTEST_*` variable is unset.
 - [ ] T014 [US2] Add `experimental = ["wrapper-scripts"]`, `[scripts.wrapper.per-test-profile]` and `[profile.per-test-coverage]` with a `[[profile.per-test-coverage.scripts]]` `run-wrapper` to `.config/nextest.toml`. The comment must say why this lives in a profile the merge path never selects (research R2). Check two things, red first:
   - `cargo nextest run --profile per-test-coverage -p postio-config` writes one profile directory per case;
