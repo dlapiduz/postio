@@ -194,6 +194,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **`check-crate-boundaries.py` checks only the crates in its `RULES` table.** A new crate has no boundary rules until someone writes one.
 
+**A GitHub `container:` job cannot run WebKit's sandbox.** WebKitGTK starts its web process under bubblewrap, which needs a user namespace and a `/proc` mount that Docker's default profiles refuse: first `bwrap: No permissions to create a new namespace`, then, with seccomp and AppArmor relaxed, `Can't mount proc on /newroot/proc`. Only `--privileged` gets past that, which is no container at all. Rootless podman grants both, so a GTK suite that passes in podman says nothing about the runner. The Linux jobs stay on the bare runner and install their packages from the apt cache (#1998); #2000 was the attempt, closed.
+
 ## Logging, privacy and hostile input
 
 **A `POSTIO_LOG` made only of per-target directives turns every other target off.** Start with a bare level, as in `POSTIO_LOG=info,postio_sync=debug`. If a run does not begin with `postio starting`, the filter is hiding everything.

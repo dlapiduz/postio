@@ -167,14 +167,17 @@ impl World {
         wanted: impl Fn(&Event) -> bool,
     ) -> Event {
         self.rt.block_on(async {
-            tokio::time::timeout(Duration::from_secs(10), async {
-                loop {
-                    let envelope = events.recv().await.expect("the host is running");
-                    if wanted(&envelope.event) {
-                        return envelope.event;
+            tokio::time::timeout(
+                postio_test_support::scaled(Duration::from_secs(10)),
+                async {
+                    loop {
+                        let envelope = events.recv().await.expect("the host is running");
+                        if wanted(&envelope.event) {
+                            return envelope.event;
+                        }
                     }
-                }
-            })
+                },
+            )
             .await
             .expect("the event arrived")
         })
@@ -1813,14 +1816,17 @@ fn a_stopped_discovery_has_stopped_its_connections_when_the_stop_returns() {
         async move { client.discover_until("ada@example.com".into(), stop).await }
     });
     let token = world.rt.block_on(async {
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                if let Some(token) = hanging.0.lock().expect("never poisoned").clone() {
-                    return token;
+        tokio::time::timeout(
+            postio_test_support::scaled(Duration::from_secs(10)),
+            async {
+                loop {
+                    if let Some(token) = hanging.0.lock().expect("never poisoned").clone() {
+                        return token;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
+            },
+        )
         .await
         .expect("the probe reached the transport")
     });
@@ -1982,7 +1988,13 @@ fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
     hub.sink().emit(Event::MailboxesChanged { account });
     let heard = world
         .rt
-        .block_on(async { tokio::time::timeout(Duration::from_secs(5), events.recv()).await })
+        .block_on(async {
+            tokio::time::timeout(
+                postio_test_support::scaled(Duration::from_secs(5)),
+                events.recv(),
+            )
+            .await
+        })
         .expect("in time")
         .expect("an event");
     assert_eq!(heard.event, Event::MailboxesChanged { account });
@@ -2780,7 +2792,7 @@ fn a_fresh_installation_has_nothing_to_prefill_with() {
 /// Ask `read` until it answers `Some`, failing after a while: for work the
 /// host does on its own time.
 pub(crate) fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) -> T {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(Duration::from_secs(20));
     loop {
         if let Some(found) = read() {
             return found;
@@ -5297,17 +5309,20 @@ fn an_archive_aimed_at_a_query_archives_what_it_matches_and_one_undo_restores_it
     let rt = &seed.rt;
     let hear = |wanted: &dyn Fn(&Event) -> bool| {
         rt.block_on(async {
-            tokio::time::timeout(Duration::from_secs(10), async {
-                loop {
-                    let envelope = events.recv().await.expect("the host is running");
-                    if let Event::CommandRejected { reason, .. } = &envelope.event {
-                        panic!("rejected: {reason}");
+            tokio::time::timeout(
+                postio_test_support::scaled(Duration::from_secs(10)),
+                async {
+                    loop {
+                        let envelope = events.recv().await.expect("the host is running");
+                        if let Event::CommandRejected { reason, .. } = &envelope.event {
+                            panic!("rejected: {reason}");
+                        }
+                        if wanted(&envelope.event) {
+                            return;
+                        }
                     }
-                    if wanted(&envelope.event) {
-                        return;
-                    }
-                }
-            })
+                },
+            )
             .await
             .expect("the event arrived")
         })

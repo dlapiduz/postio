@@ -6,6 +6,10 @@
 //! to the bottom of a long inbox reads the pages around the top and the
 //! pages around the bottom, and nothing between. Counted, not timed: the
 //! client's round trips by kind, which are the same on any machine.
+//!
+//! POSTIO-MEASUREMENT: its three cases seed folders large enough for an
+//! unbounded read to show, 18 to 34 s each, so they run on the nightly timer.
+//! The budget is a count, as true at 07:00 as on a pull request.
 
 use postio_ui::list::{CACHE_PAGES, PAGE_SIZE};
 use postio_widgets::list_model::WindowedModel;

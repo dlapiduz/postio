@@ -53,7 +53,17 @@
 # that never answers, a compositor that went away mid-test.
 slow-timeout = { period = "60s", terminate-after = 4 }
 
-default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + binary(first_sync_memory) + binary(body_backfill_cost) + binary(render_rss_plateau) + binary(body_index_memory) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-ffi) & test(/^focus_scroll::/)) + (package(postio-gtk) & test(/^every_command::/)) + (package(postio-gtk) & test(/^storyboard_catalogue::/)) + binary(startup_budget) + binary(excerpt_locate) + binary(first_classification))'
+# A second round, 2026-10-22, measured on the full suite of #1990: 8,040
+# tests, 127 CPU-minutes on a 4-core runner, and fourteen tests over a
+# minute were 39% of it. The application suite's `gmail_keys` alone, 36
+# cases pressing every Gmail key in every pane, was 10 CPU-minutes, a fifth
+# of that suite. What moved: the sweeps (`gmail_keys`, `registry_parity`,
+# `a11y_sweep`, `storyboards`), the large-fixture budgets (`visible_window`,
+# `startup_reads`, `search_statement_budget`, `ranking_weights`,
+# `reclaim_pages`, `paging_scale`) and `logging_privacy` (187 s). About 25
+# CPU-minutes off every pull request and every local landing; the nightly
+# runs every one of them.
+default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + binary(first_sync_memory) + binary(body_backfill_cost) + binary(render_rss_plateau) + binary(body_index_memory) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-ffi) & test(/^focus_scroll::/)) + (package(postio-gtk) & test(/^every_command::/)) + (package(postio-gtk) & test(/^storyboard_catalogue::/)) + binary(startup_budget) + binary(excerpt_locate) + binary(first_classification) + (package(postio-gtk) & test(/^gmail_keys::/)) + (package(postio-gtk) & test(/^visible_window::/)) + (package(postio-gtk) & test(/^startup_reads::/)) + (package(postio-gtk) & test(/^registry_parity::/)) + (package(postio-gtk) & test(/^a11y_sweep::/)) + (package(postio-gtk) & test(/^storyboards::/)) + (package(postio-index) & test(/^search_statement_budget::/)) + (package(postio-index) & test(/^ranking_weights::/)) + (package(postio-storage) & test(/^reclaim_pages::/)) + (package(postio-storage) & test(/^paging_scale::/)) + binary(logging_privacy))'
 
 # Retries are OFF by default, deliberately. A retry turns a real failure into
 # a slow pass, and this project's characteristic bug is something that works

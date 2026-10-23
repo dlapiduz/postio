@@ -48,6 +48,9 @@
 //! `executor::newest_order_answers_in_date_order_however_the_ranking_disagrees`
 //! pins that with a 5×-density contrast five hours apart, and the second
 //! assertion below pins it in the units this file measures.
+//!
+//! POSTIO-MEASUREMENT: what it reports is the engine's own scale, read off a
+//! built index, 57 s; it runs on the nightly timer.
 
 use chrono::{TimeZone, Utc};
 use postio_index::executor::rank_score;

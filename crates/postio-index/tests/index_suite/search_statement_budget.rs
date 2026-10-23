@@ -51,6 +51,10 @@
 //! hold is the same property — that a `header:` matching the whole mailbox
 //! costs no more statements than one matching a single message, and that a
 //! wider page costs no more either.
+//!
+//! POSTIO-MEASUREMENT: each case indexes a corpus large enough for a non-flat
+//! statement count to show, 83 s and 106 s, so they run on the nightly timer
+//! with `total_hits_cap`.
 
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};

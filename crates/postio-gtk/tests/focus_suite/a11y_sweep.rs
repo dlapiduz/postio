@@ -9,6 +9,10 @@
 //! window for any control a screen reader cannot name, closes it, and proves
 //! it closed. The harness runs under `GTK_A11Y=test`; `a11y.rs` proves the
 //! backend is recording before any conclusion is drawn.
+//!
+//! POSTIO-MEASUREMENT: the generic sweep over every surface; it runs on the
+//! nightly timer with `every_command`, where `profile.ci-full` already gives
+//! it its own clock and retries.
 
 use gtk::prelude::*;
 use gtk::{AccessibleProperty, AccessibleRelation, AccessibleRole};

@@ -6,6 +6,10 @@
 //! the binding Focus has for it in the context it is in, so a broken binding
 //! fails the step; every step is observed and checked; and `run.json` and
 //! the frames land where the output tree says.
+//!
+//! POSTIO-MEASUREMENT: it plays a whole storyboard through the window, 16 s,
+//! and the passes it belongs with (`every_command`, `storyboard_catalogue`)
+//! are already nightly.
 
 use std::path::Path;
 
