@@ -4,12 +4,13 @@
 //! tabs and the filter are the controller's, and Escape unwinds them in
 //! order.
 
+use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId};
 use postio_focus::{
     ContactsView, Effect, FocusController, Input, Intent, NoRows, Policy, Reply, Request,
-    SurfaceKind, Ticket,
+    SurfaceKind,
 };
 use postio_model::{
     AddressId, Contact, ContactAddress, ContactArrival, ContactCardRead, ContactId, ContactKind,
@@ -25,26 +26,6 @@ fn mac() -> FocusController {
         Platform::Apple,
     )));
     focus
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn frame(effects: &[Effect]) -> Option<ContactsView> {

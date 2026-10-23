@@ -6,6 +6,7 @@
 //! delivered under the list's own stamp, a failed page is asked again a
 //! bounded number of times, and an engine event re-reads what it moved.
 
+use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::Event;
 use postio_focus::{
@@ -32,16 +33,6 @@ fn ask(effects: &[Effect]) -> (Ticket, Request) {
         .collect();
     assert_eq!(asks.len(), 1, "one ask in {effects:?}");
     asks[0].clone()
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 fn opened(scope: ListScope, total: u32) -> Opened {

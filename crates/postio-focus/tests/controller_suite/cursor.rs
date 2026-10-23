@@ -7,6 +7,7 @@
 //! without taking it, `!` keeps the cursor on the same message, and every
 //! list opens on its first row.
 
+use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_core::state::Selection;
@@ -50,16 +51,6 @@ impl Rows for List {
 
 fn focus() -> FocusController {
     FocusController::new(Policy::for_platform(Platform::Apple))
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 fn cursor_of(effects: &[Effect]) -> Option<u32> {

@@ -7,12 +7,12 @@
 //! Escape puts it away. What is drawn is `postio_ui::contact_popover`'s, so
 //! these assert the keys and the asks, and a few words a person would read.
 
+use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId};
 use postio_focus::{
     Effect, FocusController, Input, Intent, Policy, Reply, Request, RowFacts, Rows, SurfaceKind,
-    Ticket,
 };
 use postio_model::listing::{MessageSummary, ThreadSummary};
 use postio_model::{
@@ -79,26 +79,6 @@ fn ready() -> FocusController {
     )));
     let _ = focus.landed(&List, true);
     focus
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn drawn(effects: &[Effect]) -> Option<PopoverView> {

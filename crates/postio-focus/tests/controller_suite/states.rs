@@ -8,6 +8,7 @@
 //! password offers to update it, and an inbox with no rows says why, with
 //! only the shortcuts that lead somewhere.
 
+use crate::search_support::asks;
 use chrono::{DateTime, Local, TimeZone};
 use postio_client::protocol::FocusCounts;
 use postio_config::FocusConfig;
@@ -15,7 +16,7 @@ use postio_config::paths::Platform;
 use postio_core::{CommandId, ConnectionState, Event, FailureReason};
 use postio_focus::{
     AccountsRead, BannerButton, BannerView, Effect, FocusController, Input, Intent, NoRows, Opened,
-    PageAnswer, Policy, Reply, Request, Ticket,
+    PageAnswer, Policy, Reply, Request,
 };
 use postio_model::{AccountId, FocusScope, ListScope, MailboxId};
 use postio_ui::focus_state::{self, AccountFacts, Banner, EmptyInbox, EmptyPlace, InboxSaying};
@@ -86,16 +87,6 @@ fn empties(effects: &[Effect]) -> Vec<Option<EmptyInbox>> {
         .iter()
         .filter_map(|effect| match effect {
             Effect::Show(Intent::Empty(page)) => Some(page.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
             _ => None,
         })
         .collect()

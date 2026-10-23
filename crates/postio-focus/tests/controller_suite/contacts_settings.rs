@@ -3,10 +3,9 @@
 //! on, a click on a switch asks the host to turn exactly that one over, and
 //! the pane is redrawn from the host's answer, not from a guess.
 
+use crate::search_support::asks;
 use postio_config::paths::Platform;
-use postio_focus::{
-    Effect, FocusController, Input, Intent, NoRows, Policy, Reply, Request, Ticket,
-};
+use postio_focus::{Effect, FocusController, Input, Intent, NoRows, Policy, Reply, Request};
 use postio_model::{ContactSuggestions, Suggestion};
 use postio_ui::contacts_settings::SuggestionsView;
 
@@ -17,16 +16,6 @@ fn controller(platform: Platform) -> FocusController {
         platform,
     )));
     focus
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn drawn(effects: &[Effect]) -> Option<SuggestionsView> {

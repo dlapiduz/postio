@@ -7,6 +7,7 @@
 //! selection goes once acted on, toasts say what the host said, and an
 //! undo puts the cursor on the row it brought back.
 
+use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::state::Selection;
 use postio_core::{Command, CommandId, Event, MessageTarget};
@@ -81,16 +82,6 @@ fn focus_on(rows: &List) -> FocusController {
 
 fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effect> {
     focus.handle_on(Input::Command(command), rows)
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 fn asks(effects: &[Effect]) -> Vec<Request> {

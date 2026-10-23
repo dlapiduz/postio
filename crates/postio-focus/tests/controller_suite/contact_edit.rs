@@ -3,12 +3,12 @@
 //! Escape arms before it discards, Save is one command or says why not, and
 //! the card's switches are the same kind of command.
 
+use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId};
 use postio_focus::{
-    EditChange, Effect, FocusController, Input, Intent, NoRows, Policy, Reply, Request,
-    SurfaceKind, Ticket,
+    EditChange, Effect, FocusController, Input, Intent, NoRows, Policy, Reply, Request, SurfaceKind,
 };
 use postio_model::{
     AddressId, Contact, ContactAddress, ContactArrival, ContactCardRead, ContactId, ContactKind,
@@ -23,26 +23,6 @@ fn mac() -> FocusController {
         Platform::Apple,
     )));
     focus
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn run(focus: &mut FocusController, command: CommandId) -> Vec<Effect> {

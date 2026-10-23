@@ -10,6 +10,7 @@
 
 use std::time::Duration;
 
+use crate::search_support::shown;
 use chrono::{NaiveDate, TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId};
@@ -111,16 +112,6 @@ fn mac() -> FocusController {
 
 fn linux() -> FocusController {
     controller(Platform::Freedesktop)
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 fn asked(effects: &[Effect]) -> Vec<(Ticket, Request)> {

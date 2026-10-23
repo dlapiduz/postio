@@ -7,6 +7,7 @@
 //! open message step the list behind it, a key the message does not own is
 //! the list's (#1754), and the Mac keeps one secondary window at a time.
 
+use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_focus::{
@@ -68,16 +69,6 @@ fn mac() -> FocusController {
 
 fn linux() -> FocusController {
     FocusController::new(Policy::for_platform(Platform::Freedesktop))
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 fn asked(effects: &[Effect]) -> Vec<Request> {
