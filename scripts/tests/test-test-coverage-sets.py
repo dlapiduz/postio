@@ -27,11 +27,13 @@ FAILURES: list[str] = []
 OWN = "crates/postio-config/src/change.rs"
 FRONT = "crates/postio-ffi/src/bridge.rs"
 OTHER = "crates/postio-model/src/lib.rs"
+TESTS = "crates/postio-config/tests/config_suite/change.rs"
 
 # id: (crate, layer, cost_rank, ignored, duration, refs, regions)
 CASES = {
     "postio-config a_spec_cited": ("postio-config", "rule", 0, "false", "0.01", "012/FR-001", [f"{OWN}:1:1", f"{OWN}:2:1"]),
-    "postio-config b_copy": ("postio-config", "rule", 0, "false", "0.02", "", [f"{OWN}:1:1", f"{OWN}:2:1"]),
+    # Each case also runs its own body, which no other case does; test code is not what a case protects.
+    "postio-config b_copy": ("postio-config", "rule", 0, "false", "0.02", "", [f"{OWN}:1:1", f"{OWN}:2:1", f"{TESTS}:40:5"]),
     "postio-ffi c_through_the_bridge": ("postio-ffi", "frontend", 2, "false", "0.5", "", [f"{OWN}:1:1", f"{OWN}:2:1", f"{FRONT}:9:1"]),
     "postio-ffi d_one_line_of_it": ("postio-ffi", "frontend", 3, "false", "3.0", "", [f"{OWN}:1:1", f"{FRONT}:9:1"]),
     "postio-config e_live_server": ("postio-config", "rule", 0, "true", "unknown", "", [f"{OWN}:1:1"]),

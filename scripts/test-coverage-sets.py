@@ -36,13 +36,16 @@ import csv
 import hashlib
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts" / "lib"))
+
+import test_audit  # noqa: E402  -- enabled by the sys.path line above
+
 NOT_JUDGED = {"measurement"}
 
 
@@ -63,9 +66,14 @@ def keeper_order(row: dict) -> tuple:
     return (int(row["cost_rank"]), not cites_spec, row["id"])
 
 
-def candidates(cases: dict[str, dict], regions: dict[str, list[str]]) -> list[dict]:
+def under_test(region: str, root: Path) -> bool:
+    file, line, _ = region.rsplit(":", 2)
+    return not test_audit.is_test_code(file, int(line), root)
+
+
+def candidates(cases: dict[str, dict], regions: dict[str, list[str]], root: Path = REPO) -> list[dict]:
     ids = sorted(cid for cid in regions if cid in cases and judged(cases[cid]))
-    sets = {cid: frozenset(regions[cid]) for cid in ids}
+    sets = {cid: frozenset(r for r in regions[cid] if under_test(r, root)) for cid in ids}
     found = []
     for cid in ids:
         row = cases[cid]
@@ -127,38 +135,49 @@ def tool(name: str) -> Path:
     return found[0]
 
 
-def coverage_env() -> dict[str, str]:
+def require_llvm_cov() -> None:
     if shutil.which("cargo-llvm-cov") is None:
         print("cargo-llvm-cov is not installed, so coverage cannot be measured.\n", file=sys.stderr)
         print("    rustup component add llvm-tools-preview", file=sys.stderr)
         print("    cargo install cargo-llvm-cov --locked", file=sys.stderr)
         sys.exit(2)
-    shown = subprocess.run(
-        ["cargo", "llvm-cov", "show-env", "--export-prefix"], cwd=REPO, capture_output=True, text=True, check=True
-    ).stdout
-    env = dict(os.environ)
-    for line in shown.splitlines():
-        if line.startswith("export "):
-            key, _, value = line[len("export ") :].partition("=")
-            env[key] = shlex.split(value)[0] if value else ""
-    return env
 
 
-def run_cases(packages: list[str], env: dict[str, str], profiles: Path) -> dict[str, Path]:
-    """Run every case under the per-test-coverage profile; binary id -> its test binary."""
+def run_cases(packages: list[str], profiles: Path) -> None:
+    """Run every case instrumented, one profile directory each.
+
+    `cargo llvm-cov nextest` builds into its own `target/llvm-cov-target`,
+    as `scripts/coverage.sh` does, so instrumented artifacts never mix with
+    the shared build. Its `--profile` is cargo's, so nextest's profile is
+    chosen through `NEXTEST_PROFILE`; the profile's wrapper then overrides
+    the `LLVM_PROFILE_FILE` cargo-llvm-cov sets.
+    """
     shutil.rmtree(profiles, ignore_errors=True)
-    package_args = [arg for p in packages for arg in ("-p", p)]
-    listed = subprocess.run(
-        ["cargo", "nextest", "list", "--message-format", "json", *package_args],
-        cwd=REPO, env=env, capture_output=True, text=True, check=True,
-    )
-    binaries = {s["binary-id"]: Path(s["binary-path"]) for s in json.loads(listed.stdout)["rust-suites"].values()}
+    env = {k: v for k, v in os.environ.items() if k != "RUSTUP_TOOLCHAIN"}
+    env["NEXTEST_PROFILE"] = "per-test-coverage"
     # A failing case still leaves a profile, and its coverage is still what it ran.
     subprocess.run(
-        ["cargo", "nextest", "run", "--profile", "per-test-coverage", "--no-fail-fast", *package_args],
+        ["cargo", "llvm-cov", "nextest", "--no-report", *[a for p in packages for a in ("-p", p)]],
         cwd=REPO, env=env,
     )
-    return binaries
+
+
+def instrumented_binaries(packages: list[str]) -> dict[str, Path]:
+    """binary id -> the newest instrumented build of that test binary."""
+    listed = subprocess.run(
+        ["cargo", "nextest", "list", "--message-format", "json", *[a for p in packages for a in ("-p", p)]],
+        cwd=REPO, capture_output=True, text=True, check=True,
+    )
+    deps = REPO / "target" / "llvm-cov-target" / "debug" / "deps"
+    found = {}
+    for suite in json.loads(listed.stdout)["rust-suites"].values():
+        builds = [
+            p for p in deps.glob(f"{suite['binary-name']}-*")
+            if p.is_file() and not p.suffix and os.access(p, os.X_OK)
+        ]
+        if builds:
+            found[suite["binary-id"]] = max(builds, key=lambda p: p.stat().st_mtime)
+    return found
 
 
 def case_dir(profiles: Path, binary_id: str, name: str) -> Path:
@@ -189,14 +208,10 @@ def regions_of(case_profiles: Path, binary: Path, profdata: Path, llvm_cov: Path
 
 
 def collect(cases: dict[str, dict], packages: list[str], profiles: Path, reuse: bool) -> dict[str, list[str]]:
-    env = coverage_env()
-    binaries = run_cases(packages, env, profiles) if not reuse else None
-    if binaries is None:
-        listed = subprocess.run(
-            ["cargo", "nextest", "list", "--message-format", "json", *[a for p in packages for a in ("-p", p)]],
-            cwd=REPO, env=env, capture_output=True, text=True, check=True,
-        )
-        binaries = {s["binary-id"]: Path(s["binary-path"]) for s in json.loads(listed.stdout)["rust-suites"].values()}
+    require_llvm_cov()
+    if not reuse:
+        run_cases(packages, profiles)
+    binaries = instrumented_binaries(packages)
     profdata, llvm_cov = tool("llvm-profdata"), tool("llvm-cov")
     regions, missing = {}, []
     for cid, row in sorted(cases.items()):
@@ -204,7 +219,7 @@ def collect(cases: dict[str, dict], packages: list[str], profiles: Path, reuse: 
             continue
         binary_id, name = cid.split(" ", 1)
         where = case_dir(profiles, binary_id, name)
-        if not any(where.glob("*.profraw")):
+        if binary_id not in binaries or not any(where.glob("*.profraw")):
             missing.append(cid)
             continue
         regions[cid] = regions_of(where, binaries[binary_id], profdata, llvm_cov)

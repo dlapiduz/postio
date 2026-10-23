@@ -108,3 +108,50 @@ Each entry gives the decision, why, and what was rejected. Facts were checked on
 ## Open items that do not block planning
 
 - Whether to include `postio-storage` in the first coverage-sets run: it is the largest suite (96 test files), so its per-case export time decides. It is measured in US2.
+
+## Measured
+
+### 2026-10-23: inventory, on a Mac (T010, partial)
+
+- **Coverage of this run:**
+  - Covers the 7,297 cases a Mac can build. `postio-gtk`, `postio-widgets` and `postio-bench` are left out (`scripts/unbuildable-crates.sh`).
+  - No durations: CI keeps no JUnit artifact. `test-audit.yml` produces both on Linux (T019), and the rest of T010 waits for it.
+- **Cases by layer:**
+
+  | Layer | Cases |
+  |---|---|
+  | rule | 6,000 |
+  | frontend | 881 |
+  | controller | 370 |
+  | meta | 32 |
+  | measurement | 14 |
+
+- **Smells:**
+
+  | Smell | Cases |
+  |---|---|
+  | is-ok-only | 28 |
+  | constant-only | 8 |
+  | mock-count-only | 6 |
+  | display-skip | 2 (the widgets suite's 125 are on Linux) |
+  | untraced | 3,904, mostly unit tests in `src/` |
+
+  9 files were `ambiguous`.
+- **Spec items rarely join layers.** Only 16 items are cited in two behaviour layers, because each layer cites its own task ids. Clusters were therefore extended to surfaces (FR-003). The run then found 28 clusters. The largest, by cases above their cheapest layer, are:
+  - `010/US2`: controller 73, rule 14;
+  - `surface:compose`: controller 21, frontend 58;
+  - `surface:search`: frontend 14, rule 1;
+  - `surface:keys`: controller 7, frontend 13;
+  - `surface:surfaces`: controller 26, frontend 10.
+
+### 2026-10-23: coverage sets, postio-config (T015, T016)
+
+- **What it costs:**
+  - an instrumented cold build of postio-config and its dependencies into `target/llvm-cov-target`: 4 min 34 s;
+  - the 257 cases: 6 s;
+  - per-case export and the report: 18 s (`--reuse`).
+- **Test code must be excluded.** The first report found 0 candidates: every case runs its own body, which no other case runs, so every set was unique. Regions under `tests/` and inside `#[cfg(test)]` modules are now excluded (`test_audit.is_test_code`).
+- **Result:**
+  - 111 subset candidates of 257, and 3 cases with no coverage of their own crate.
+  - Most of the subsets run the same function with different inputs. `keys::mod_token_tests` is typical: eight cases, each a subset of one. Coverage cannot tell inputs apart. These are the table-merge batch's material (T033) or the removal check's to reject, not deletions.
+- **Planted duplicate.** A copy of `keys::mod_token_tests::delete_is_the_key_a_mac_calls_delete` was reported as `subset` of its original (quickstart §2).

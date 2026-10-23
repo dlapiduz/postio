@@ -116,19 +116,19 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   See it fail.
 - [X] T012 [US2] Implement the candidate computation in `scripts/test-coverage-sets.py`, reading region sets and `cases.csv`, until T011 passes.
 - [X] T013 [US2] Write `scripts/per-test-profile.sh`. It execs `"$@"` with `LLVM_PROFILE_FILE="$NEXTEST_WORKSPACE_ROOT/target/test-audit/profiles/$NEXTEST_BINARY_ID/$(printf %s "$NEXTEST_TEST_NAME" | shasum | cut -c1-16)/%m.profraw"`, and fails loudly if either `NEXTEST_*` variable is unset.
-- [ ] T014 [US2] Add `experimental = ["wrapper-scripts"]`, `[scripts.wrapper.per-test-profile]` and `[profile.per-test-coverage]` with a `[[profile.per-test-coverage.scripts]]` `run-wrapper` to `.config/nextest.toml`. The comment must say why this lives in a profile the merge path never selects (research R2). Check two things, red first:
+- [X] T014 [US2] Add `experimental = ["wrapper-scripts"]`, `[scripts.wrapper.per-test-profile]` and `[profile.per-test-coverage]` with a `[[profile.per-test-coverage.scripts]]` `run-wrapper` to `.config/nextest.toml`. The comment must say why this lives in a profile the merge path never selects (research R2). Check two things, red first:
   - `cargo nextest run --profile per-test-coverage -p postio-config` writes one profile directory per case;
   - on Linux CI, one widgets case run under this profile still sees a display.
 
   Choose the wrapper's `target-runner` value (`within-wrapper` or `around-wrapper`) by the second check, and record the result in research R2.
-- [ ] T015 [US2] Implement the run half of `scripts/test-coverage-sets.py`:
+- [X] T015 [US2] Implement the run half of `scripts/test-coverage-sets.py`:
   - `cargo llvm-cov show-env --export-prefix`, then `cargo nextest run --profile per-test-coverage`;
   - per case, `llvm-profdata merge` and `llvm-cov export --format=text --skip-functions`;
   - region extraction limited to workspace crates;
   - `--reuse`;
   - exit 1 naming any case with no profile;
   - exit 2 with the install line when a tool is missing, worded as `scripts/coverage.sh` words it.
-- [ ] T016 [US2] Prove quickstart §2 on a scratch branch: the planted postio-config duplicate is reported `subset` of its original. Delete the scratch branch, and record the run time for postio-config in research.md "Measured".
+- [X] T016 [US2] Prove quickstart §2 on a scratch branch: the planted postio-config duplicate is reported `subset` of its original. Delete the scratch branch, and record the run time for postio-config in research.md "Measured".
 
 **Checkpoint**: candidates exist for any crate. None is acted on yet.
 

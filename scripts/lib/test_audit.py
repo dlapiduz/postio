@@ -402,3 +402,34 @@ def _repo_helpers(text: str) -> list[str]:
         if i >= 0 and _reads_repo(text[i : _matching(text, i, "{", "}")]):
             helpers.append(name)
     return helpers
+
+
+# --- which lines are test code ---------------------------------------------
+
+_CFG_TEST_MOD = re.compile(r"#\[cfg\(test\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
+
+
+@functools.lru_cache(maxsize=4096)
+def test_line_ranges(path: Path) -> list[tuple[int, int]]:
+    """The 1-based, inclusive line ranges of a file's inline `#[cfg(test)] mod … { }` blocks."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return []
+    ranges = []
+    for m in _CFG_TEST_MOD.finditer(text):
+        end = _matching(text, m.end() - 1, "{", "}")
+        ranges.append((text.count("\n", 0, m.start()) + 1, text.count("\n", 0, end - 1) + 1))
+    return ranges
+
+
+def is_test_code(file: str, line: int, root: Path) -> bool:
+    """A region a case runs that is test code, not code under test (research R3).
+
+    Every case runs its own body, which no other case does; counted, it
+    would make every covered set unique and the subset report empty.
+    """
+    path = Path(file)
+    if "tests" in path.parts or "benches" in path.parts or path.name in ("tests.rs", "test_support.rs"):
+        return True
+    return any(lo <= line <= hi for lo, hi in test_line_ranges(root / path))

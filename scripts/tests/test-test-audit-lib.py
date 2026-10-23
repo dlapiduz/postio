@@ -141,6 +141,12 @@ check("a case that reads the repository through a helper is meta",
       layer(CORE, "docs::the_reference_is_current_through_a_helper"), ("meta", 0, False))
 check("everything else is a rule", layer("postio-storage", "tests::counts_rows"), ("rule", 0, False))
 
+
+# Which lines of a source file are test code (research R3: not what a case protects).
+check("a #[cfg(test)] module's lines are test code",
+      test_audit.test_line_ranges(FIXTURE / "crates/postio-storage/src/lib.rs"), [(9, 15)])
+check("a file with no test module has none", test_audit.test_line_ranges(FIXTURE / "crates/postio-storage/src/other.rs"), [])
+
 if FAILURES:
     print("\n".join(FAILURES))
     sys.exit(1)
