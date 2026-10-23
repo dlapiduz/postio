@@ -162,7 +162,7 @@ The batches, in order of value per unit of effort:
 
 ### User Story 5: Stop it growing back (Priority: P2)
 
-Once a surface is cleaned, a repository check refuses a change that grows that frontend suite's count of behaviour cases past its committed baseline, unless the baseline is raised in the same change with a reason. A second check refuses new constant-only and `is_ok()`-only assertions. A display test that finds no display fails when it runs in CI or when a headless display was asked for, instead of passing silently.
+Once a surface is cleaned, a repository check refuses a change that grows that frontend suite's count of behaviour cases past its committed baseline, unless the baseline is raised in the same change with a reason. A second check refuses new constant-only and `is_ok()`-only assertions.
 
 **Why this priority**: Without a ratchet, the next feature re-creates the duplication. It only matters once there is something to protect.
 
@@ -172,7 +172,6 @@ Once a surface is cleaned, a repository check refuses a change that grows that f
 
 1. **Given** a cleaned surface, **When** a change adds a behaviour case to its frontend suite without raising the baseline, **Then** the check fails and names the controller suite as the place for it.
 2. **Given** a new test whose only assertion is `is_ok()`, **When** the check runs, **Then** it fails and names the case.
-3. **Given** `CI` is set and no display is reachable, **When** a widgets case starts, **Then** it fails rather than printing "skipping".
 
 ---
 
@@ -218,7 +217,7 @@ Once a surface is cleaned, a repository check refuses a change that grows that f
 - **FR-010**: The layer-ownership rule MUST be recorded as an ADR in `docs/decisions/`, and CLAUDE.md's Tests section MUST point to it.
 - **FR-011**: A repository check MUST refuse growth of a cleaned frontend suite's behaviour-case count past its committed baseline.
 - **FR-012**: A repository check MUST refuse new constant-only and `is_ok()`-only assertions, ratcheted against a committed baseline of existing ones.
-- **FR-013**: A display test that finds no display MUST fail when `CI` is set or a headless display was requested.
+- **FR-013**: *Withdrawn 2026-10-23.* A silent display skip is already guarded, by design, by one case: `display_required::ci_has_a_display_to_run_the_gtk_suites_on` (#114, #551). It fails when CI has no display and when cargo never routed the binary through the headless runner. Its header says it is deliberately one case "rather than an edit to every one". `display-skip` stays an inventory flag only.
 - **FR-014**: Every tool this feature adds MUST run entirely on the machine. Nothing is uploaded and no third-party service is used (Constitution VI).
 - **FR-015**: Every tool MUST name what to do next when it finds something, as the existing `scripts/checks` do.
 

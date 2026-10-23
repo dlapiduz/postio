@@ -6,7 +6,7 @@
 
 ## Summary
 
-This feature adds three local tools, an ADR, three ratchets and a series of cleanup batches.
+This feature adds three local tools, an ADR, two ratchets and a series of cleanup batches.
 
 **The three tools.** Each one answers one question about the suite.
 
@@ -21,7 +21,7 @@ This feature adds three local tools, an ADR, three ratchets and a series of clea
 **The ratchets.** All three are checks under `scripts/checks/`:
 - a frontend suite's behaviour-case count never grows;
 - no new constant-only or `is_ok()`-only assertion;
-- a widgets case with no display fails on CI.
+- (withdrawn: display skips are already guarded by `display_required`; see research R8).
 
 **The cleanup.** The batches then run behind the removal check, as the spec orders them.
 
@@ -125,7 +125,6 @@ scripts/
 docs/decisions/0049-each-layer-asserts-its-own-question.md   # FR-010 (new)
 CLAUDE.md                                # Tests: one bullet pointing at the ADR
 .claude/skills/steward/SKILL.md          # US6: run the inventory, post the delta
-crates/postio-widgets/tests/widgets_suite/support.rs   # display_or_fail() (US5)
 crates/*/tests/**                        # the cleanup batches (US4)
 ```
 
@@ -147,7 +146,7 @@ These map to the spec's user stories. `tasks.md` splits them further.
    2. smells;
    3. parity clusters, one surface per commit, largest first by the inventory's CPU-seconds;
    4. table merges.
-6. **US5, the ratchets.** The display-skip fix lands with batch 1. The two ratchets land with the first parity batch, with a baseline seeded from the tree as it then stands.
+6. **US5, the ratchets.** The two ratchets land with the first parity batch, with a baseline seeded from the tree as it then stands.
 7. **US6, the steward step.**
 
 The feature lands with `scripts/issue-land.sh --detach --full-suite`. US1–US3 and the ADR can land as a first PR before the batches, since they change no tests.

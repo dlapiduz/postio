@@ -95,15 +95,10 @@ Each entry gives the decision, why, and what was rejected. Facts were checked on
 - **Rationale**: This is a known shape with a self-test template, and it never blocks unrelated work.
 - **Rejected**: A hard cap per suite. It would block feature work on surfaces nobody has cleaned yet.
 
-## R8. Display skips
+## R8. Display skips (withdrawn)
 
-- **Decision**:
-  - Add one `display_or_fail()` helper in `widgets_suite`'s support module.
-  - It returns `false`, skipping with today's message, only when neither `CI` nor `POSTIO_HEADLESS=1` is set. Otherwise it panics with the remedy (`scripts/test-headless.sh --status`).
-  - The 125 inline checks become calls to it. `check-assertion-smells.py` then refuses a new inline `skipping: no display` in that suite.
-- **Rationale**:
-  - The CI guard case `display_required::ci_has_a_display_to_run_the_gtk_suites_on` stays.
-  - The helper makes every case honest on its own, including a local headless run that lost its compositor.
+- **Decision**: No change. `crates/postio-widgets/tests/widgets_suite/display_required.rs` already answers this. It is one case that fails when CI has no display, and when cargo never routed the binary through `scripts/headless-runner.sh` (the #551 bug). Its header records that it is one case on purpose, rather than an edit to the 126 inline checks.
+- **Rejected**: A `display_or_fail()` helper replacing the inline checks. It would duplicate that guard 126 times, and it would undo a decision already made.
 
 ## Open items that do not block planning
 

@@ -25,16 +25,6 @@ Every check runs from `scripts/check.sh`, parses files only, finishes in under 1
 - **Smells judged**:
   - `constant-only`;
   - `is-ok-only`;
-  - `inline-display-skip`, meaning `skipping: no display` outside `display_or_fail()`, in `crates/postio-widgets/tests` and `crates/postio-gtk/tests`.
 - **Fails when** a file's count for a smell rises or a new file appears. The message names the case and the remedy:
   - assert the value, not that a value exists;
-  - assert behaviour the constant drives, not the constant;
-  - call `display_or_fail()`.
-
-## Display skips (FR-013)
-
-- `display_or_fail()` returns `false`, which skips the case, only when neither `CI` nor `POSTIO_HEADLESS=1` is set.
-- Otherwise it panics:
-  ```text
-  no display, and CI / POSTIO_HEADLESS asked for one: see scripts/test-headless.sh --status
-  ```
+  - assert behaviour the constant drives, not the constant.

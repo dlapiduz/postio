@@ -172,9 +172,9 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
 
 The spec puts US5 after US4. This part goes first because batch 1 touches the same 125 sites.
 
-- [ ] T021 [US5] Add `display_or_fail() -> bool` to `crates/postio-widgets/tests/widgets_suite/` (in the suite's support module, or a new `support.rs` declared in `main.rs`, per `check-suite-modules.py`). It returns `false` with today's message only when neither `CI` nor `POSTIO_HEADLESS=1` is set; otherwise it panics with the contract's message.
+- [X] T021 [US5] *Withdrawn with FR-013 (2026-10-23): the existing `display_required` guard is the project's chosen answer, one case rather than an edit to every one (#114, #551).* Add `display_or_fail() -> bool` to `crates/postio-widgets/tests/widgets_suite/` (in the suite's support module, or a new `support.rs` declared in `main.rs`, per `check-suite-modules.py`). It returns `false` with today's message only when neither `CI` nor `POSTIO_HEADLESS=1` is set; otherwise it panics with the contract's message.
   - Red first: a case in `widgets_suite` that runs the helper with `CI=1` and the display env cleared in a child process (`postio-test-support`'s child-process helper) must see the panic.
-- [ ] T022 [US5] Replace the 125 inline `adw::init().is_err() || gdk::Display::default().is_none()` checks in `crates/postio-widgets/tests/widgets_suite/*.rs` with `if !display_or_fail() { return; }`. This is mechanical; one commit. Then run `cargo nextest run -p postio-widgets --test widgets_suite` under `scripts/test-headless.sh`.
+- [X] T022 [US5] *Withdrawn with FR-013.* Replace the 125 inline `adw::init().is_err() || gdk::Display::default().is_none()` checks in `crates/postio-widgets/tests/widgets_suite/*.rs` with `if !display_or_fail() { return; }`. This is mechanical; one commit. Then run `cargo nextest run -p postio-widgets --test widgets_suite` under `scripts/test-headless.sh`.
 
 ---
 
@@ -229,7 +229,7 @@ These land with the first parity batch (T030), so there is a cleaned surface to 
 
   See it fail.
 - [ ] T035 [US5] Implement `scripts/checks/check-frontend-suite-budget.py` until T034 passes. Seed `scripts/checks/frontend-suite-budget.txt` with each file T030–T032 cleaned, at its count after cleaning.
-- [ ] T036 [P] [US5] Write `scripts/tests/test-check-assertion-smells.py`. It asserts that each of `constant-only`, `is-ok-only` and `inline-display-skip` fails when a file's count rises or a new file appears, names the case, and names the remedy, and that a falling count passes. See it fail.
+- [ ] T036 [P] [US5] Write `scripts/tests/test-check-assertion-smells.py`. It asserts that each of `constant-only` and `is-ok-only` fails when a file's count rises or a new file appears, names the case, and names the remedy, and that a falling count passes. See it fail.
 - [ ] T037 [US5] Implement `scripts/checks/check-assertion-smells.py` on `scripts/lib/test_audit.py`'s `smells()` until T036 passes. Seed `scripts/checks/assertion-smells-baseline.txt` from the tree after batch 2. Confirm `scripts/check.sh` stays under its budget: the new checks add under 1 s.
 
 ---
