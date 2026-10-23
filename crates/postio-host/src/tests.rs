@@ -2779,6 +2779,7 @@ fn a_fresh_installation_has_nothing_to_prefill_with() {
 
 /// Ask `read` until it answers `Some`, failing after a while: for work the
 /// host does on its own time.
+#[track_caller]
 pub(crate) fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) -> T {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
@@ -2996,10 +2997,16 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
 
     mock.fail_all(postio_account::backend::Fault::Timeout);
     assert_eq!(read(), postio_client::protocol::Body::Partial);
-    world.hear(
-        &events,
-        |event| matches!(event, Event::BodyFailed { message: failed, .. } if *failed == message),
-    );
+    // The fault also takes the engine's own link down, and a pane over a
+    // down link reads "offline" and asks for nothing. Either way the fetch
+    // could not happen: the failure was announced, or the plate says so.
+    // (Hearing only the failure raced the link report: it never came.)
+    eventually(&world, || {
+        let failed = std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
+            matches!(envelope.event, Event::BodyFailed { message: failed, .. } if failed == message)
+        });
+        (failed || read() == postio_client::protocol::Body::Offline).then_some(())
+    });
     mock.clear_faults();
     let cleared = std::time::Instant::now();
 
@@ -3037,20 +3044,12 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
             .expect("a reading")
             .body
     };
-    let say = |state| {
-        world.host().inner.hub.emit(Event::ConnectionChanged {
-            account: world.account,
-            state,
-        });
-    };
-
-    // Said again on each look: the live engine of this world reports its
-    // own, better state now and then.
+    // The link goes down the way it does for a person: the server stops
+    // answering, the live engine reports its own backoff, and the host
+    // follows. Faking the report raced the engine's own, which overwrote it
+    // with Online and let a read in that window fetch the body for good.
+    mock.fail_all(postio_account::backend::Fault::Timeout);
     eventually(&world, || {
-        say(postio_core::ConnectionState::Failing {
-            reason: postio_core::FailureReason::Auth,
-        });
-        std::thread::sleep(Duration::from_millis(50));
         (read() == postio_client::protocol::Body::Offline).then_some(())
     });
     assert!(
@@ -3058,23 +3057,25 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
         "a down link asks for nothing"
     );
 
-    say(postio_core::ConnectionState::Online);
-    let heard = world.hear(&events, |event| {
-        matches!(
-            event,
-            Event::BodyReachable { message: again, .. } | Event::BodyFailed { message: again, .. }
-                if *again == message
-        )
-    });
-    assert!(
-        matches!(heard, Event::BodyReachable { .. }),
-        "a returning link is not a refusal: {heard:?}"
-    );
-    let text = eventually(&world, || match read() {
-        postio_client::protocol::Body::Ready { body, .. } => body.text,
-        _ => None,
+    // Nothing heard so far is about the return.
+    while events.try_recv().is_ok() {}
+    mock.clear_faults();
+    let mut heard = Vec::new();
+    let text = eventually(&world, || {
+        heard.extend(std::iter::from_fn(|| events.try_recv().ok()).map(|e| e.event));
+        match read() {
+            postio_client::protocol::Body::Ready { body, .. } => body.text,
+            _ => None,
+        }
     });
     assert!(text.contains("The tide gate opens at nine."), "{text}");
+    assert!(
+        heard.iter().any(|event| matches!(
+            event,
+            Event::BodyReachable { message: again, .. } if *again == message
+        )),
+        "the pane that read offline is told to read again: {heard:?}"
+    );
 }
 
 #[test]
