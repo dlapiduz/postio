@@ -1122,7 +1122,9 @@ jobs:
       # them by hand in the wrong order produces a Swift file that compiles
       # against nothing, which is why the script exists.
       - name: Build the macOS application
-        run: scripts/macos-build.sh
+        # `--with-tests`: the test bundle is built here, in the same pass, so
+        # the step below only runs it. It used to build the package twice.
+        run: scripts/macos-build.sh --with-tests
 
       # Runs `macos-build.sh --lib-only` itself first, so this cannot test
       # against a stale library.
