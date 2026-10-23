@@ -221,6 +221,32 @@ LOOP_RULES: list[tuple[str, str]] = [
         "your message, fix the message -- the refusal names each rule -- and "
         "commit again with -F on the file it names.",
     ),
+    (
+        # Compile jobs only: nextest's `-j` is test threads, and anything
+        # after a bare `--` belongs to the test binary.
+        r"(?:(?:export|env)\s+)?(?:[A-Za-z_]\w*=\S*\s+)*(?:CARGO_BUILD_JOBS="
+        r"|cargo\s+(?:\+\S+\s+)?(?:nextest\s+(?:(?!\s--\s)[^|;&\n])*?\s--build-jobs\b"
+        r"|(?!nextest\b)[a-z-]+\b(?:(?!\s--\s)[^|;&\n])*?\s(?:-j\s*\d|--jobs\b)))",
+        "Refusing a compile job count: a machine-wide jobserver hands out "
+        "compile jobs to every session (MAKEFLAGS in .claude/settings.json), "
+        "and -j / --jobs / CARGO_BUILD_JOBS takes jobs outside it, which is "
+        "how a shared box gets oversubscribed. Drop the flag; cargo already "
+        "gets its share.",
+    ),
+    (
+        r"(?:(?:export|env)\s+(?:-\S+\s+)*)?(?:[A-Za-z_]\w*=\S*\s+)*RUST_LOG=",
+        "Refusing RUST_LOG: Postio reads POSTIO_LOG (an EnvFilter, e.g. "
+        "POSTIO_LOG=info,postio_sync=debug), so RUST_LOG changes nothing and "
+        "the run looks like the logging is broken.",
+    ),
+    (
+        r"gh\s+issue\s+create\b",
+        "Refusing a raw gh issue create: scripts/issue-file.sh searches for "
+        "a duplicate first and stops if it finds one, which is the whole "
+        "point -- one bug once had three issue numbers in two days. Same "
+        "arguments: scripts/issue-file.sh --title '...' --body-file notes.md "
+        "[--label ...]; --anyway after reading what it found.",
+    ),
 ]
 
 # A `rustfmt` that will WRITE: at command position, or fed by xargs, and not
