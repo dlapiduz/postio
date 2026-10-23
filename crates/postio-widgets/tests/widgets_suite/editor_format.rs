@@ -139,6 +139,9 @@ fn lands(editor: &Editor, command: &str, landed: impl Fn() -> bool) {
     );
 }
 
+/// POSTIO-MEASUREMENT: a sweep of every formatting command through the real editor,
+/// 30 s on a CI runner and the widgets suite's longest-running flake
+/// (#1800), so it runs on the nightly timer; the per-command cases stay.
 pub fn every_formatting_command_lands_as_canonical_structure() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under the headless runner to exercise this)");
