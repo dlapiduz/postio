@@ -1223,6 +1223,46 @@ impl<'a> MessageRepository<'a> {
         Ok(sql::execute(self.connection, &sql, arguments).await? as usize)
     }
 
+    /// Gives a moved row the server identity the move's answer named (#1983).
+    ///
+    /// [`move_to`] clears a row's coordinates, and a later sync of the
+    /// destination can only re-attach the server's copy by `Message-ID`
+    /// ([`MessageRepository::upsert_batch`]) -- which a message without one
+    /// does not have, so its copy was inserted as a second row and the one in
+    /// view never got a UID. The server's `COPYUID` names the copy exactly,
+    /// whatever the headers say, so the drainer writes it here.
+    ///
+    /// Only a row still in `mailbox_id` with no identity at all is written: a
+    /// message the person has moved on again, or one a sync has already
+    /// adopted, is left as it is. Returns whether a row was written.
+    ///
+    /// [`move_to`]: MessageRepository::move_to
+    pub async fn adopt_moved_identity(
+        &self,
+        id: MessageId,
+        mailbox_id: MailboxId,
+        uid: Uid,
+        uid_validity: UidValidity,
+        remote_id: &RemoteId,
+    ) -> Result<bool> {
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE messages
+                SET uid = ?1, uid_validity = ?2, remote_id = ?3
+              WHERE id = ?4 AND mailbox_id = ?5
+                AND uid IS NULL AND remote_id IS NULL",
+            bind![
+                i64::from(uid.get()),
+                i64::from(uid_validity.get()),
+                remote_id.as_str(),
+                id.get(),
+                mailbox_id.get()
+            ],
+        )
+        .await?;
+        Ok(changed > 0)
+    }
+
     /// The distinct folders the rows a [`MessageSet`] names are in right now.
     ///
     /// One indexed `SELECT DISTINCT` over the same predicate the write uses,

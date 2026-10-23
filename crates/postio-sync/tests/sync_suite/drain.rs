@@ -434,6 +434,78 @@ async fn a_move_confirmed_without_copyuid_is_applied_and_the_destination_resynce
 }
 
 #[tokio::test]
+async fn a_moved_message_with_no_message_id_keeps_one_row_with_the_servers_identity() {
+    // The row has no `Message-ID`, so once a move nulls its coordinates the
+    // only things that can name it again are the COPYUID the server answers
+    // the move with and the queue row's snapshot (#1983). Without them the
+    // destination's sync inserted the server's copy as a second row and the
+    // one in view never got a UID, so its body could never be fetched.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let local = local(&connection).await;
+    let backend = server().await;
+
+    // The user's side of the move: enqueue (snapshotting where the server
+    // has it), then the local write that clears the coordinates.
+    enqueue(
+        &connection,
+        &local,
+        Operation::Move {
+            from: local.inbox,
+            to: local.archive,
+        },
+        at(9),
+    )
+    .await;
+    MessageRepository::new(&connection)
+        .move_to(&[local.message], local.archive)
+        .await
+        .expect("the local half of the move");
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, local.account, at(10))
+        .await
+        .expect("drain");
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    let archive = MailboxRepository::new(&connection)
+        .get(local.archive)
+        .await
+        .expect("read")
+        .expect("the archive");
+    postio_sync::sync_mailbox(
+        &connection,
+        &backend,
+        &archive,
+        &postio_account::cancel::CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("sync the destination");
+
+    let messages = MessageRepository::new(&connection);
+    assert_eq!(
+        messages
+            .count(&postio_storage::repository::ListQuery::account(
+                local.account
+            ))
+            .await
+            .expect("count"),
+        1,
+        "the server's copy is the row the person already has, not a second one"
+    );
+    let row = messages
+        .get(local.message)
+        .await
+        .expect("read")
+        .expect("the row the person is looking at survives");
+    assert!(
+        row.server.uid.is_some() && row.server.remote_id.is_some(),
+        "and it has the server's identity, so its body can be fetched"
+    );
+}
+
+#[tokio::test]
 async fn a_message_moved_on_both_sides_does_not_move_twice() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");

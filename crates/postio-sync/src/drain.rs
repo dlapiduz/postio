@@ -65,8 +65,10 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use postio_account::backend::{BackendError, Capabilities, FlagChange, MailBackend};
-use postio_model::{AccountId, Flag, FlagSet, MailboxId, Operation, OperationId, OperationTarget};
+use postio_account::backend::{BackendError, Capabilities, FlagChange, MailBackend, UidMapping};
+use postio_model::{
+    AccountId, Flag, FlagSet, MailboxId, MessageId, Operation, OperationId, OperationTarget,
+};
 use postio_storage::BlobStore;
 use postio_storage::Connection;
 use postio_storage::repository::{MailboxRepository, MessageRepository, OperationQueueRepository};
@@ -388,8 +390,7 @@ impl<'a> Drainer<'a> {
                     .destination
                     .as_deref()
                     .expect("a move always resolves a destination");
-                self.backend
-                    .move_messages(&context.path, &context.ids, destination)
+                self.move_and_adopt(connection, context, destination)
                     .await
                     .map(|_mapping| {
                         // An empty mapping is not a vanished message, with or
@@ -494,6 +495,46 @@ impl<'a> Drainer<'a> {
         }
     }
 
+    /// Runs the server move, then gives the local row the identity the
+    /// answer's `COPYUID` names (#1983).
+    ///
+    /// The local half of a move cleared the row's coordinates; a sync of the
+    /// destination re-attaches the server's copy by `Message-ID`, which a
+    /// message without one cannot be found by. The mapping can, so it is
+    /// written here, best effort: a failed write leaves the old behaviour,
+    /// and the destination resync the caller asks for still runs.
+    async fn move_and_adopt(
+        &self,
+        connection: &Connection,
+        context: &Context,
+        destination: &str,
+    ) -> std::result::Result<Vec<UidMapping>, BackendError> {
+        let mapping = self
+            .backend
+            .move_messages(&context.path, &context.ids, destination)
+            .await?;
+        let landed = match &context.operation {
+            Operation::Move { to, .. } => Some(*to),
+            Operation::Delete { trash, .. } => Some(*trash),
+            _ => None,
+        };
+        if let (Some(message), Some(landed), [landing]) =
+            (context.message, landed, mapping.as_slice())
+            && let Err(error) = MessageRepository::new(connection)
+                .adopt_moved_identity(
+                    message,
+                    landed,
+                    landing.destination,
+                    landing.uid_validity,
+                    &landing.destination_remote_id(),
+                )
+                .await
+        {
+            tracing::warn!(%error, "could not record where the moved message landed");
+        }
+        Ok(mapping)
+    }
+
     async fn store(
         &self,
         context: &Context,
@@ -557,6 +598,7 @@ impl<'a> Drainer<'a> {
                         destination: None,
                         ids: Vec::new(),
                         mailbox: MailboxId::UNASSIGNED,
+                        message: None,
                         send: Some(job),
                         draft: None,
                     }),
@@ -602,6 +644,7 @@ impl<'a> Drainer<'a> {
                 destination: None,
                 ids: snapshot.into_iter().collect(),
                 mailbox: MailboxId::UNASSIGNED,
+                message: None,
                 send: None,
                 draft: None,
             }));
@@ -615,6 +658,7 @@ impl<'a> Drainer<'a> {
                 destination: None,
                 ids: Vec::new(),
                 mailbox: MailboxId::UNASSIGNED,
+                message: None,
                 send: None,
                 draft: None,
             }));
@@ -714,6 +758,10 @@ impl<'a> Drainer<'a> {
             destination,
             ids,
             mailbox,
+            message: match step.target {
+                OperationTarget::Message(id) => Some(id),
+                _ => None,
+            },
             send: None,
             draft: None,
         }))
@@ -753,6 +801,7 @@ impl<'a> Drainer<'a> {
                 destination: None,
                 ids: Vec::new(),
                 mailbox: MailboxId::UNASSIGNED,
+                message: None,
                 send: None,
                 draft: Some(job),
             }),
@@ -904,6 +953,8 @@ struct Context {
     destination: Option<String>,
     ids: Vec<postio_model::RemoteId>,
     mailbox: MailboxId,
+    /// The local row a message-target step acts on.
+    message: Option<MessageId>,
     /// Resolved only for [`Operation::Send`]: everything local storage could
     /// answer, so [`Drainer::send`] has nothing left to look up. Boxed: it is
     /// by far the largest field here and every other operation leaves it
