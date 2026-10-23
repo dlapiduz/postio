@@ -150,3 +150,9 @@ Each entry gives the decision, why, and what was rejected. Facts were checked on
   - 111 subset candidates of 257, and 3 cases with no coverage of their own crate.
   - Most of the subsets run the same function with different inputs. `keys::mod_token_tests` is typical: eight cases, each a subset of one. Coverage cannot tell inputs apart. These are the table-merge batch's material (T033) or the removal check's to reject, not deletions.
 - **Planted duplicate.** A copy of `keys::mod_token_tests::delete_is_the_key_a_mac_calls_delete` was reported as `subset` of its original (quickstart §2).
+
+### 2026-10-23: the removal check on CI (T020)
+
+- **Removing all six of `change.rs`'s own unit tests: NOT SAFE.** The check named 14 mutants in `ConfigChanged::any` and `ConfigChanged::between` that only those cases catch. Run 39975022697, about 13 minutes.
+- **Removing a planted copy of `changing_focus_touches_only_focus`: safe.** Run 39975026200, about 10 minutes, on the scratch branch `chore/audit-planted-duplicate`.
+- **Baseline line numbers drift.** `docs/mutants-baseline.txt` holds `change.rs:71:13` for a mutant now at line 74. A drifted entry no longer matches, so Pass A treats it as new and Pass B re-runs it. It counts against the removal only if the cases catch it. Drift therefore costs time in Pass B, never a false verdict.

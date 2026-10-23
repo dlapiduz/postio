@@ -158,7 +158,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   - results uploaded as artifacts.
 
   (`scripts/checks/ci-expected-workflows.py` reads the workflow files themselves, so nothing needs registering. A dispatch-only workflow can be run only once it is on `main`, so T020 runs after the first PR lands.)
-- [ ] T020 [US3] Prove quickstart §3 on CI:
+- [X] T020 [US3] Prove quickstart §3 on CI:
   - a case that alone asserts `ConfigChanged::any` gives `NOT SAFE`, naming a `crates/postio-config/src/change.rs` mutant;
   - the T016 planted duplicate gives `safe`.
 
