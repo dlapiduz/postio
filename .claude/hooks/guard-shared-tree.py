@@ -404,12 +404,26 @@ def read_claim(stamp: str) -> tuple[str, float]:
         return "", 0.0
 
 
-def write_claim(stamp: str, session: str, now: float) -> None:
-    """Record the holder. Never raises: a stamp that cannot be written costs
-    a missed denial, in keeping with the rest of this hook failing open."""
+def claim_since(stamp: str) -> float:
+    """When the holder took the worktree, which a refresh keeps. 0.0 for a
+    stamp that does not say."""
+    try:
+        with open(stamp, encoding="utf-8") as handle:
+            return float(json.load(handle).get("since") or 0.0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 0.0
+
+
+def write_claim(stamp: str, session: str, now: float, since: float) -> None:
+    """Record the holder, and since when. Never raises: a stamp that cannot be
+    written costs a missed denial, in keeping with the rest of this hook
+    failing open.
+
+    `since` is what lets the Stop hook tell a session's own loose work from
+    what an earlier holder left behind in a tree it adopted."""
     try:
         with open(stamp, "w", encoding="utf-8") as handle:
-            json.dump({"session": session, "at": now}, handle)
+            json.dump({"session": session, "at": now, "since": since}, handle)
     except OSError:
         pass
 
@@ -452,7 +466,8 @@ def take_or_refuse(worktree: str, session: str) -> str | None:
     if holder and holder != session and now - at < CLAIM_LEASE:
         return claim_refusal(worktree, holder)
     if holder != session or now - at > CLAIM_REFRESH:
-        write_claim(stamp, session, now)
+        since = (claim_since(stamp) or now) if holder == session else now
+        write_claim(stamp, session, now, since)
     return None
 
 

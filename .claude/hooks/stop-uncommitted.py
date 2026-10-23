@@ -13,6 +13,11 @@ command in a worktree). A session's shell usually sits in the shared
 checkout, so its cwd says nothing; another session's loose work is never
 this one's to commit.
 
+Nor is what an earlier holder left in a tree this session adopted: running
+a command in a worktree whose claim has lapsed takes it, loose files and
+all. The stamp says `since` when this session took it, and only paths that
+changed at or after that count.
+
 It holds the stop once. Claude Code sets `stop_hook_active` on the stop
 that follows, and that one is let through, so a session stopping on
 purpose -- to ask the user something -- says so and stops.
@@ -41,12 +46,42 @@ def worktrees(cwd: str) -> list[str]:
             if line.startswith("worktree ")]
 
 
-def holder(tree: str) -> str:
+def holder(tree: str) -> tuple[str, float]:
+    """Who holds `tree`, and since when. A stamp from before the guard wrote
+    `since` falls back to `at`, its last refresh."""
     gitdir = git(tree, "rev-parse", "--absolute-git-dir").stdout.strip()
     try:
-        return str(json.loads(Path(gitdir, CLAIM_FILE).read_text()).get("session") or "")
-    except (OSError, ValueError, AttributeError):
-        return ""
+        record = json.loads(Path(gitdir, CLAIM_FILE).read_text())
+        return (str(record.get("session") or ""),
+                float(record.get("since") or record.get("at") or 0.0))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return "", 0.0
+
+
+def loose_since(tree: str, since: float) -> int:
+    """How many loose paths in `tree` changed at or after `since`: a path by
+    its own mtime, a deleted one by its directory's, which the deletion
+    touched."""
+    fields = git(tree, "status", "--porcelain", "-z", "--untracked-files=all").stdout.split("\0")
+    count, i = 0, 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        if entry[0] in "RC":
+            i += 1  # a rename or copy carries its old path next
+        path = Path(tree, entry[3:])
+        try:
+            mtime = path.lstat().st_mtime
+        except OSError:
+            try:
+                mtime = path.parent.lstat().st_mtime
+            except OSError:
+                mtime = since
+        if mtime >= since:
+            count += 1
+    return count
 
 
 def main() -> int:
@@ -62,11 +97,14 @@ def main() -> int:
         root = root.resolve()
         loose = []
         for tree in worktrees(payload.get("cwd") or os.getcwd()):
-            if root not in Path(tree).resolve().parents or holder(tree) != session:
+            if root not in Path(tree).resolve().parents:
                 continue
-            status = git(tree, "status", "--porcelain").stdout.splitlines()
-            if status:
-                loose.append(f"{tree} ({len(status)} path{'s' if len(status) != 1 else ''})")
+            held_by, since = holder(tree)
+            if held_by != session:
+                continue
+            count = loose_since(tree, since)
+            if count:
+                loose.append(f"{tree} ({count} path{'s' if count != 1 else ''})")
     except (OSError, subprocess.SubprocessError):
         return 0
     if not loose:

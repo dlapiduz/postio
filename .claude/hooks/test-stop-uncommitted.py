@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parent / "stop-uncommitted.py")
@@ -21,9 +22,12 @@ def git(cwd: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def claim(tree: Path, session: str) -> None:
+def claim(tree: Path, session: str, since: float | None = None) -> None:
+    record = {"session": session, "at": 0}
+    if since is not None:
+        record["since"] = since
     Path(git(tree, "rev-parse", "--absolute-git-dir"), "postio-claim").write_text(
-        json.dumps({"session": session, "at": 0}))
+        json.dumps(record))
 
 
 def run(cwd: Path, root: Path, session: str = MINE, active: bool = False):
@@ -90,6 +94,36 @@ with tempfile.TemporaryDirectory() as tmp:
 
     r = run(scratch, root)
     case("outside a repository it stays out of the way", r.returncode == 0 and not blocked(r), r)
+
+    # A tree this session adopted from one that left loose work in it: the
+    # guard stamps `since` when it takes the tree, and what was already loose
+    # by then is the earlier holder's, not this session's to commit.
+    adopted = root / "issue-3-adopted"
+    git(shared, "worktree", "add", "-q", "-b", "issue-3-adopted", str(adopted))
+    (adopted / "sub").mkdir()
+    (adopted / "sub" / "b.txt").write_text("b\n")
+    git(adopted, "add", "sub/b.txt")
+    git(adopted, "commit", "-qm", "sub")
+    (adopted / "a.txt").write_text("the earlier holder's edit\n")
+    (adopted / "sub" / "b.txt").unlink()
+    (adopted / "sub" / "left.txt").write_text("the earlier holder's new file\n")
+    hour_ago = time.time() - 3600
+    for path in [adopted / "a.txt", adopted / "sub" / "left.txt", adopted / "sub"]:
+        os.utime(path, (hour_ago, hour_ago))
+    claim(adopted, MINE, since=time.time() - 60)
+    r = run(shared, root)
+    case("an edit, a deletion and a new file older than the adoption are not mine",
+         r.returncode == 0 and not blocked(r), r)
+
+    (adopted / "sub" / "left.txt").write_text("now I touched it\n")
+    r = run(shared, root)
+    case("an inherited file I then change is mine, even inside a directory",
+         blocked(r) and "issue-3-adopted" in json.loads(r.stdout)["reason"], r)
+    os.utime(adopted / "sub" / "left.txt", (hour_ago, hour_ago))
+
+    (adopted / "a.txt").unlink()
+    r = run(shared, root)
+    case("a file I delete after adopting the tree is mine", blocked(r), r)
 
 print(f"\n{'all passed' if not failures else f'{failures} failed'}")
 sys.exit(1 if failures else 0)
