@@ -479,6 +479,12 @@ jobs:
     name: Nightly (re-run on this PR)
     needs: nightly-status
     if: needs.nightly-status.outputs.green != 'true'
+    # `nightly.yml` builds the CI image when it is missing, and a called
+    # workflow is granted no more than its caller.
+    permissions:
+      contents: read
+      actions: read
+      packages: write
     uses: ./.github/workflows/nightly.yml
     with:
       only: ${{ needs.nightly-status.outputs.only }}
@@ -627,6 +633,28 @@ jobs:
           arguments: --all-features
           rust-version: ${{ steps.pin.outputs.channel }}
 
+  # The image the Linux build jobs run in (`.github/ci-image/Dockerfile`,
+  # which says why), built here first when the Dockerfile or the toolchain
+  # pin changed (`.github/actions/ci-image`). The jobs that use it name it
+  # in `container:`, as the runner's own user; `--shm-size` because Docker's
+  # default /dev/shm is 64 MB and GTK and WebKit draw through it.
+  image:
+    name: CI image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.image.outputs.ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            .github
+            rust-toolchain.toml
+      - id: image
+        uses: ./.github/actions/ci-image
+
   # One job became three (#818). They ran in sequence inside a single job --
   # clippy, then test, then doc -- which is three full workspace compiles
   # queued behind each other for no reason but that they shared a checkout.
@@ -639,8 +667,14 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-26.04
-    needs: changes
+    needs: [changes, image]
     if: needs.changes.outputs.rust == 'yes'
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --shm-size=2g
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -683,8 +717,14 @@ jobs:
   rustdoc:
     name: Rustdoc links
     runs-on: ubuntu-26.04
-    needs: changes
+    needs: [changes, image]
     if: needs.changes.outputs.rust == 'yes'
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --shm-size=2g
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -741,8 +781,14 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-26.04
-    needs: changes
+    needs: [changes, image]
     if: needs.changes.outputs.rust == 'yes'
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --shm-size=2g
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -952,12 +998,18 @@ jobs:
   test-gtk:
     name: Tests (GTK widgets ${{ matrix.shard }}/2)
     runs-on: ubuntu-26.04
-    needs: changes
+    needs: [changes, image]
     if: needs.changes.outputs.rust == 'yes'
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2]
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --shm-size=2g
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace
@@ -992,8 +1044,14 @@ jobs:
   test-app:
     name: Tests (application)
     runs-on: ubuntu-26.04
-    needs: changes
+    needs: [changes, image]
     if: needs.changes.outputs.rust == 'yes'
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --shm-size=2g
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace

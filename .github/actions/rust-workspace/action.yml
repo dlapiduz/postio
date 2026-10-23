@@ -73,10 +73,22 @@ runs:
     # request restores `main`'s (`.github/actions/build-cache` says why only
     # `main` writes). `autoclean` drops a superseded version before the save,
     # so the cache does not grow.
+    #
+    # # Or they are already there
+    #
+    # The CI and nightly jobs run inside `.github/ci-image/Dockerfile`, which
+    # installs these when it is built, and this whole half is skipped there.
+    # It stays for the jobs on a bare runner (`release.yml`). The two lists
+    # must agree: change one, change the other.
     - name: Name the system packages
       id: apt
       shell: bash
       run: |
+        if [ -n "${POSTIO_CI_IMAGE:-}" ]; then
+          echo "image=true" >> "$GITHUB_OUTPUT"
+          echo "in the CI image: the system packages are part of it"
+          exit 0
+        fi
         packages="build-essential pkg-config libgtk-4-dev libadwaita-1-dev
           libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev libglib2.0-dev
           libpango1.0-dev mutter dbus-daemon mold"
@@ -87,6 +99,7 @@ runs:
 
     - name: Restore the downloaded system packages
       id: apt-restore
+      if: steps.apt.outputs.image != 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/apt-archives
@@ -95,6 +108,7 @@ runs:
 
     - name: Install system dependencies
       id: apt-install
+      if: steps.apt.outputs.image != 'true'
       shell: bash
       run: |
         # The runner image ships apt sources this workspace never installs
@@ -122,7 +136,8 @@ runs:
 
     - name: Save the downloaded system packages
       if: >-
-        github.ref == 'refs/heads/main'
+        steps.apt.outputs.image != 'true'
+        && github.ref == 'refs/heads/main'
         && steps.apt-install.outputs.key != steps.apt-restore.outputs.cache-matched-key
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:

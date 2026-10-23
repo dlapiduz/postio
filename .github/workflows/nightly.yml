@@ -206,11 +206,39 @@ jobs:
         if: ${{ !cancelled() }}
         uses: ./.github/actions/build-cache-save
 
+  # The image the Linux build jobs run in (`.github/ci-image/Dockerfile`,
+  # which says why), built here first when the Dockerfile or the toolchain
+  # pin changed (`.github/actions/ci-image`). The jobs that use it name it
+  # in `container:`, as the runner's own user; `--shm-size` because Docker's
+  # default /dev/shm is 64 MB and GTK and WebKit draw through it.
+  image:
+    name: CI image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.image.outputs.ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            .github
+            rust-toolchain.toml
+      - id: image
+        uses: ./.github/actions/ci-image
+
   doc:
     name: Docs
-    needs: changed
+    needs: [changed, image]
     if: needs.changed.outputs.run == 'true' && (!inputs.only || contains(format(' {0} ', inputs.only), ' doc '))
     runs-on: ubuntu-26.04
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --shm-size=2g
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace
@@ -236,9 +264,15 @@ jobs:
 
   full-suite:
     name: Full suite
-    needs: changed
+    needs: [changed, image]
     if: needs.changed.outputs.run == 'true' && (!inputs.only || contains(format(' {0} ', inputs.only), ' tests ') || contains(format(' {0} ', inputs.only), ' doctests '))
     runs-on: ubuntu-26.04
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --shm-size=2g
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace
@@ -396,9 +430,15 @@ jobs:
   # `-p postio-gtk`, so this builds the one crate whose suite it runs.
   storyboards:
     name: Storyboard passes
-    needs: changed
+    needs: [changed, image]
     if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --shm-size=2g
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace

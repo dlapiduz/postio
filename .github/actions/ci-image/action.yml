@@ -1,0 +1,59 @@
+name: CI image
+description: >
+  Name the image the Linux jobs run in, and build it first if it does not
+  exist yet. The image is `.github/ci-image/Dockerfile`; why it exists is that
+  file's header.
+
+  The tag is a hash of the two files that decide what is in it, the
+  Dockerfile and `rust-toolchain.toml`. So a pull request that changes either
+  builds and pushes its own image here, and its jobs run in it; every other
+  run finds the image already there and spends a few seconds asking. Nobody
+  has to build, push or bump anything by hand, and a toolchain bump cannot
+  run on the previous toolchain's image.
+
+  The job that uses this needs `packages: write`, and so does any workflow
+  that calls one containing it -- a called workflow gets no more than its
+  caller grants.
+
+outputs:
+  ref:
+    description: The image, for a job's `container.image`.
+    value: ${{ steps.image.outputs.ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Name the image
+      id: image
+      shell: bash
+      env:
+        OWNER: ${{ github.repository_owner }}
+      run: |
+        tag=$(cat .github/ci-image/Dockerfile rust-toolchain.toml | sha256sum | cut -c1-16)
+        ref="ghcr.io/${OWNER,,}/postio-ci:$tag"
+        echo "ref=$ref" >> "$GITHUB_OUTPUT"
+        echo "image: $ref"
+
+    - name: Log in to the registry
+      shell: bash
+      env:
+        TOKEN: ${{ github.token }}
+        ACTOR: ${{ github.actor }}
+      run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+    # The build context is the two inputs and nothing else, so it is the
+    # same bytes the tag was hashed from, and a checkout's other files can
+    # neither leak into the image nor slow the upload.
+    - name: Build and push it, if it is not there
+      shell: bash
+      env:
+        REF: ${{ steps.image.outputs.ref }}
+      run: |
+        if docker manifest inspect "$REF" >/dev/null 2>&1; then
+          echo "already built"
+          exit 0
+        fi
+        context=$(mktemp -d)
+        cp .github/ci-image/Dockerfile rust-toolchain.toml "$context/"
+        docker build -t "$REF" "$context"
+        docker push "$REF"

@@ -67,6 +67,12 @@ jobs:
     name: Full suite
     needs: requested
     if: needs.requested.outputs.run == 'true'
+    # `nightly.yml` builds the CI image when it is missing, and a called
+    # workflow is granted no more than its caller.
+    permissions:
+      contents: read
+      actions: read
+      packages: write
     uses: ./.github/workflows/nightly.yml
 
   result:
