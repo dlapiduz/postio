@@ -76,13 +76,12 @@ final class KeyMonitor {
     /// without a window server: what this returns is exactly what decides
     /// whether a key reaches the widget underneath.
     func handle(_ event: NSEvent) -> Bool {
-        // Mid-composition, always. An IME builds a character over several
-        // key presses and marks the text while it does; swallowing one of
-        // those would break every keyboard that composes, and no binding is
-        // worth that. Asked of the responder rather than the event, because
-        // it is a fact about what the input context is holding.
-        if isComposing() { return false }
         guard let reduced = KeyEvent.reduce(event) else { return false }
+        // Mid-composition, the input method's -- see
+        // `KeyDisposition.belongsToInputMethod`. Asked of the responder
+        // rather than the event, because it is a fact about what the input
+        // context is holding.
+        if KeyDisposition.belongsToInputMethod(reduced, composing: isComposing()) { return false }
 
         let typing = Self.isTyping()
         // The field's own editing, before anything resolves it -- see
