@@ -49,6 +49,11 @@ pub enum SyncStatusFfi {
     },
     /// The Mac said no.
     Declined,
+    /// People were brought into Postio; what was done.
+    BroughtIn {
+        /// "Brought 2 people into Postio. Nothing was written to Contacts."
+        note: String,
+    },
 }
 
 impl From<SyncStatusFfi> for SyncStatus {
@@ -57,6 +62,7 @@ impl From<SyncStatusFfi> for SyncStatus {
             SyncStatusFfi::NotOn => Self::NotOn,
             SyncStatusFfi::Previewed { summary } => Self::Previewed(summary),
             SyncStatusFfi::Declined => Self::Declined,
+            SyncStatusFfi::BroughtIn { note } => Self::BroughtIn(note),
         }
     }
 }
@@ -130,6 +136,7 @@ impl From<SyncSection> for SyncSectionFfi {
                 summary: plan.summary,
                 lines: plan.lines,
                 foot: plan.foot,
+                bring_in: plan.bring_in.map(Into::into),
             }),
         }
     }
@@ -205,6 +212,7 @@ impl Session {
             summary: plan.summary,
             lines: plan.lines,
             foot: plan.foot,
+            bring_in: plan.bring_in.map(Into::into),
         });
         let words = intro(Device::Mac, true);
         ContactsPaneFfi {

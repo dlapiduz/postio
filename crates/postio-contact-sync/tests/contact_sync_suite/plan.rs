@@ -133,15 +133,19 @@ fn a_saved_contact_nobody_matches_is_a_create_only_in_two_way_mode() {
 }
 
 #[test]
-fn an_unsaved_contact_never_syncs_and_a_record_nobody_has_is_left_alone() {
+fn an_unsaved_contact_never_syncs_and_a_record_nobody_has_comes_in() {
     let mut unsaved = local(1, fields("Ada", "Moreno", &["ada@example.org"], &[]));
     unsaved.saved = false;
     let stranger = external("x9", fields("Zed", "Zimmer", &["zed@example.org"], &[]));
     let p = run(&[unsaved], &[stranger], &[], Mode::TwoWay);
     assert!(p.creates.is_empty() && p.matches.is_empty());
     assert_eq!(
-        p.left_alone, 1,
-        "the other side's stranger stays there: {p:?}"
+        p.imports
+            .iter()
+            .map(|i| i.external.as_str())
+            .collect::<Vec<_>>(),
+        ["x9"],
+        "the stranger in Contacts would come in, and an unsaved contact is not theirs to match: {p:?}"
     );
 }
 
@@ -197,6 +201,7 @@ fn when_only_one_side_changed_a_field_since_the_last_sync_that_side_wins() {
             side: Side::External,
             field: "title".into(),
             to: "Finance lead".into(),
+            values: vec!["Finance lead".into()],
         }]
     );
 }
@@ -347,7 +352,10 @@ fn the_summary_says_what_would_happen_in_the_words_the_review_reads() {
         local(3, fields("Ben", "Adeyemi", &["ben@example.org"], &[])),
     ];
     let p = run(&locals, &[external("x1", theirs)], &[linked], Mode::TwoWay);
-    assert_eq!(p.summary(), "Would add 2, update 0, ask about 1, delete 0");
+    assert_eq!(
+        p.summary(),
+        "Would bring in 0, add 2, update 0, ask about 1, delete 0"
+    );
     assert_eq!(p.counts(), (2, 0, 1, 0));
 }
 
@@ -387,4 +395,201 @@ fn an_update_line_names_the_person_never_an_id() {
         "{report:?}"
     );
     assert!(!report.iter().any(|l| l.contains("93")), "{report:?}");
+}
+
+fn company_record(id: &str, name: &str, address: &str) -> ExternalRecord {
+    let mut f = fields("", "", &[address], &[]);
+    f.organization = name.to_owned();
+    ExternalRecord {
+        id: id.to_owned(),
+        label: name.to_owned(),
+        fields: f,
+    }
+}
+
+#[test]
+fn a_record_only_contacts_has_comes_in_in_both_modes() {
+    let theirs = [
+        external(
+            "x1",
+            fields("Ada", "Moreno", &["ada@example.org"], &["+1 555 010 0199"]),
+        ),
+        external("x2", fields("Ben", "Adeyemi", &["ben@example.org"], &[])),
+    ];
+    for mode in [Mode::ReadOnly, Mode::TwoWay] {
+        let p = run(&[], &theirs, &[], mode);
+        let names: Vec<&str> = p.imports.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(names, ["Ada Moreno", "Ben Adeyemi"], "{mode:?}");
+        assert_eq!(p.imports[0].kind, ContactKind::Person);
+        assert_eq!(p.imports[0].fields.phones, ["+1 555 010 0199"]);
+        assert_eq!(p.left_alone, 0, "{mode:?}: nobody is left behind");
+        assert!(
+            p.creates.is_empty(),
+            "{mode:?}: nothing is created in Contacts"
+        );
+    }
+}
+
+#[test]
+fn someone_already_matched_or_in_question_does_not_come_in_a_second_time() {
+    let l = local(1, fields("Ada", "Moreno", &["ada@example.org"], &[]));
+    let matched = external("x1", fields("Ada", "Moreno", &["ada@example.org"], &[]));
+    let p = run(std::slice::from_ref(&l), &[matched], &[], Mode::ReadOnly);
+    assert!(p.imports.is_empty(), "{p:?}");
+
+    let l2 = local(2, fields("Ada", "Moreno", &["ada@example.org"], &[]));
+    let twin = external("x2", fields("Ada", "M", &["ada@example.org"], &[]));
+    let p = run(&[l, l2], &[twin], &[], Mode::ReadOnly);
+    assert!(
+        p.imports.is_empty(),
+        "an ambiguous record is a question: {p:?}"
+    );
+    assert_eq!(p.ambiguous.len(), 2);
+}
+
+#[test]
+fn a_linked_record_does_not_come_in_again() {
+    let f = fields("Ada", "Moreno", &["ada@example.org"], &[]);
+    let link = Link {
+        local: 1,
+        external: "x1".into(),
+        base: f.clone(),
+    };
+    let p = run(
+        &[local(1, f.clone())],
+        &[external("x1", f)],
+        &[link],
+        Mode::ReadOnly,
+    );
+    assert!(p.imports.is_empty(), "{p:?}");
+}
+
+#[test]
+fn scope_decides_who_comes_in_and_a_name_free_record_with_an_organization_is_a_company() {
+    let theirs = [
+        external("x1", fields("Ada", "Moreno", &["ada@example.org"], &[])),
+        company_record("x2", "Northwind Partners", "office@northwind.example"),
+    ];
+    let kinds = |scope| {
+        plan(&[], &theirs, &[], scope, Mode::ReadOnly)
+            .imports
+            .iter()
+            .map(|i| (i.external.clone(), i.kind))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        kinds(Scope::People),
+        [("x1".to_owned(), ContactKind::Person)]
+    );
+    assert_eq!(
+        kinds(Scope::PeopleAndCompanies),
+        [
+            ("x1".to_owned(), ContactKind::Person),
+            ("x2".to_owned(), ContactKind::Company)
+        ]
+    );
+    assert_eq!(kinds(Scope::Everything).len(), 2);
+    let people = plan(&[], &theirs, &[], Scope::People, Mode::ReadOnly);
+    assert_eq!(people.left_alone, 1, "the company stays in Contacts");
+}
+
+#[test]
+fn a_record_postio_cannot_use_stays_where_it_is_and_is_counted() {
+    let theirs = [
+        external("x1", fields("Ada", "Moreno", &[], &["+1 555 010 0199"])),
+        external("x2", fields("", "", &["nobody@example.org"], &[])),
+        external("x3", fields("Ben", "Adeyemi", &["ben@example.org"], &[])),
+        external("x4", fields("Ben", "Adeyemi", &["ben@example.org"], &[])),
+    ];
+    let p = run(&[], &theirs, &[], Mode::ReadOnly);
+    assert_eq!(
+        p.imports
+            .iter()
+            .map(|i| i.external.as_str())
+            .collect::<Vec<_>>(),
+        ["x3"]
+    );
+    assert_eq!(
+        p.left_alone, 3,
+        "no address, no name, and a second record for one address"
+    );
+}
+
+#[test]
+fn the_summary_counts_who_would_come_in_and_the_report_names_them() {
+    let theirs = [external(
+        "x1",
+        fields("Ada", "Moreno", &["ada@example.org"], &[]),
+    )];
+    let p = run(&[], &theirs, &[], Mode::ReadOnly);
+    assert_eq!(
+        p.summary(),
+        "Would bring in 1, add 0, update 0, ask about 0, delete 0"
+    );
+    assert!(!p.summary().contains("Ada"));
+    assert!(
+        p.report()
+            .iter()
+            .any(|l| l == "Bring Ada Moreno into Postio"),
+        "{:?}",
+        p.report()
+    );
+    assert_eq!(p.bring_in_counts(), (1, 0));
+}
+
+#[test]
+fn what_comes_in_is_the_postio_side_only_and_the_fingerprint_follows_the_plan() {
+    let base = fields("Ada", "Moreno", &["ada@example.org"], &[]);
+    let mut theirs = base.clone();
+    theirs.organization = "Northwind Partners".to_owned();
+    let link = Link {
+        local: 1,
+        external: "x1".into(),
+        base: base.clone(),
+    };
+    let mut mine = base.clone();
+    mine.title = "Lead".to_owned();
+    let p = run(
+        &[local(1, mine.clone())],
+        &[
+            external("x1", theirs.clone()),
+            external("x2", fields("Ben", "Adeyemi", &["ben@example.org"], &[])),
+        ],
+        std::slice::from_ref(&link),
+        Mode::TwoWay,
+    );
+    assert_eq!(
+        p.bring_in_counts(),
+        (1, 1),
+        "one person, one Postio-side field: {p:?}"
+    );
+    assert!(
+        p.updates.iter().any(|u| u.side == Side::External),
+        "their side's change is planned, never applied here"
+    );
+    let again = run(
+        &[local(1, mine)],
+        &[
+            external("x1", theirs),
+            external("x2", fields("Ben", "Adeyemi", &["ben@example.org"], &[])),
+        ],
+        &[link],
+        Mode::TwoWay,
+    );
+    assert_eq!(p.fingerprint(), again.fingerprint());
+    let changed = run(
+        &[],
+        &[external(
+            "x2",
+            fields(
+                "Ben",
+                "Adeyemi",
+                &["ben@example.org", "b2@example.org"],
+                &[],
+            ),
+        )],
+        &[],
+        Mode::TwoWay,
+    );
+    assert_ne!(p.fingerprint(), changed.fingerprint());
 }

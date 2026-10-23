@@ -391,6 +391,15 @@ public final class PostioSession {
         inner.contactsSyncPlan(records: records, scope: scope, mode: mode)
     }
 
+    /// Applies the Postio side of the plan shown, under its fingerprint:
+    /// Postio's database only, never the address book.
+    public func contactsSyncBringIn(
+        _ records: [ExternalRecordFfi], _ scope: SyncScopeFfi, _ mode: SyncModeFfi,
+        _ fingerprint: UInt64
+    ) -> BringInResultFfi {
+        inner.contactsSyncBringIn(records: records, scope: scope, mode: mode, fingerprint: fingerprint)
+    }
+
     /// Settings > Contacts appeared: read the Suggestions switches.
     public func focusContactsSettingsOpened() { inner.focusContactsSettingsOpened() }
 

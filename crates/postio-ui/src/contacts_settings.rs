@@ -182,6 +182,8 @@ pub enum SyncStatus {
     Previewed(String),
     /// The Mac said no.
     Declined,
+    /// People were brought into Postio: what was done, in words.
+    BroughtIn(String),
 }
 
 /// "Sync with": the one account row, "What syncs", the preview button and
@@ -219,6 +221,7 @@ pub fn sync_section(
         }
         SyncStatus::Previewed(summary) => format!("{summary}. Dry run: nothing was written."),
         SyncStatus::Declined => "Contacts access was declined. Nothing was read.".to_owned(),
+        SyncStatus::BroughtIn(done) => done.clone(),
     };
     let note = match mode {
         ModeChoice::ReadOnly => status_line,
@@ -252,7 +255,7 @@ pub fn sync_section(
         scopes: scope_options(scope),
         scope_note: scope_note(scope),
         preview: match status {
-            SyncStatus::Previewed(_) => "Preview again",
+            SyncStatus::Previewed(_) | SyncStatus::BroughtIn(_) => "Preview again",
             _ => "Turn on and preview",
         }
         .to_owned(),

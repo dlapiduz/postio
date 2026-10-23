@@ -485,6 +485,13 @@ set.
 marked gone, card and stats kept. Deleted in Postio → if linked, the sheet asks
 "Delete from Contacts too?"; "no" unlinks, "yes" puts a delete in the plan.
 
+**Read only brings people in**: read only never writes to the address book, but
+what Contacts has comes into Postio. The plan's `imports` (Contacts-only people)
+and its `Side::Local` updates are applied by the dry-run sheet's "Bring N into
+Postio" button, bound to the shown plan's fingerprint, writing Postio's database
+and stored links (`base` = their fields) only. See
+`contracts/contact-sync.md`, "Read only brings Contacts into Postio".
+
 **Safety (M7)**: (1) **Read only first**: `apply` is never called while
 `writes=0`, and the Swift adapter's `apply` throws `.notEnabled` independently of
 Rust (two keys, as the privacy checks do). (2) **The gate is a reviewed commit**:

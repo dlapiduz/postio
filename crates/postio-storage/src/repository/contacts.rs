@@ -3833,6 +3833,233 @@ impl ContactRepository<'_> {
     }
 }
 
+/// A record of an address book, as Postio would keep it. Plain fields: the
+/// sync crate's types stop above the store.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BookPerson {
+    /// A company when the record has an organisation and no name.
+    pub kind: ContactKind,
+    /// Given name.
+    pub given: String,
+    /// Family name.
+    pub family: String,
+    /// Organisation.
+    pub organization: String,
+    /// Job title.
+    pub title: String,
+    /// Every address, lowercase.
+    pub emails: Vec<String>,
+    /// Every phone number, as written.
+    pub phones: Vec<String>,
+}
+
+/// What an address book changed about a person Postio has: the fields to take
+/// from it. Absent fields stay as they are, and nothing is ever taken away.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BookChanges {
+    /// A new given name.
+    pub given: Option<String>,
+    /// A new family name.
+    pub family: Option<String>,
+    /// A new organisation.
+    pub organization: Option<String>,
+    /// A new job title.
+    pub title: Option<String>,
+    /// Addresses to add.
+    pub emails: Vec<String>,
+    /// Phone numbers to add.
+    pub phones: Vec<String>,
+}
+
+/// A saved person and the address-book record they are the same person as,
+/// with the fields as of the last sync: what makes the next comparison
+/// three-way.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncLinkRow {
+    /// Postio's id.
+    pub contact: i64,
+    /// The address book's id for the record.
+    pub external: String,
+    /// The synced fields as of the last sync.
+    pub base: BookPerson,
+}
+
+fn lines(values: &[String]) -> String {
+    values.join("\n")
+}
+
+fn unlines(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+impl ContactRepository<'_> {
+    /// Brings a record of an address book into Postio as a saved contact, or
+    /// returns who it already is. Writes Postio's database and nothing else.
+    ///
+    /// The address decides who: nobody owning any of its addresses makes a new
+    /// person; one unsaved person owning them (a sender seen in mail) is saved
+    /// and takes the record's details; a saved person, or several, owning
+    /// them leaves the record where it is (`None`), because deciding that is a
+    /// merge the person is offered, not an import's to do.
+    pub async fn bring_in(&self, record: &BookPerson) -> Result<Option<ContactId>> {
+        let mut owners: Vec<Contact> = Vec::new();
+        for address in &record.emails {
+            if let Some(owner) = self.by_address(address).await?
+                && owner.state == ContactState::Live
+                && !owners.iter().any(|o| o.id == owner.id)
+            {
+                owners.push(owner);
+            }
+        }
+        if owners.iter().any(Contact::is_saved) || owners.len() > 1 {
+            return Ok(None);
+        }
+        let mut form = match owners.first() {
+            Some(owner) => self.form_of(owner.id).await?.ok_or(Error::NotFound {
+                entity: "contact",
+                id: owner.id.get(),
+            })?,
+            None => postio_model::ContactForm::blank(),
+        };
+        form.kind = record.kind;
+        form.given.clone_from(&record.given);
+        form.family.clone_from(&record.family);
+        form.company.clone_from(&record.organization);
+        form.title.clone_from(&record.title);
+        form.addresses.retain(|row| !row.address.trim().is_empty());
+        for address in &record.emails {
+            if !form
+                .addresses
+                .iter()
+                .any(|row| row.address.eq_ignore_ascii_case(address))
+            {
+                form.addresses.push(postio_model::FormAddress {
+                    address: address.clone(),
+                    ..postio_model::FormAddress::blank()
+                });
+            }
+        }
+        let saved = self.save_form(owners.first().map(|o| o.id), &form).await?;
+        for phone in &record.phones {
+            self.set_detail(
+                saved.person,
+                postio_model::DetailKind::Phone,
+                phone,
+                Some(true),
+            )
+            .await?;
+        }
+        Ok(Some(saved.person))
+    }
+
+    /// Takes `changes` from an address book into the saved `person`.
+    pub async fn take_from_book(&self, person: ContactId, changes: &BookChanges) -> Result<()> {
+        let mut form = self.form_of(person).await?.ok_or(Error::NotFound {
+            entity: "contact",
+            id: person.get(),
+        })?;
+        if let Some(given) = &changes.given {
+            form.given.clone_from(given);
+        }
+        if let Some(family) = &changes.family {
+            form.family.clone_from(family);
+        }
+        if let Some(organization) = &changes.organization {
+            form.company.clone_from(organization);
+        }
+        if let Some(title) = &changes.title {
+            form.title.clone_from(title);
+        }
+        for address in &changes.emails {
+            // An address another person has stays theirs.
+            if let Some(owner) = self.by_address(address).await?
+                && owner.state == ContactState::Live
+                && owner.id != person
+            {
+                continue;
+            }
+            if !form
+                .addresses
+                .iter()
+                .any(|row| row.address.eq_ignore_ascii_case(address))
+            {
+                form.addresses.push(postio_model::FormAddress {
+                    address: address.clone(),
+                    ..postio_model::FormAddress::blank()
+                });
+            }
+        }
+        self.save_form(Some(person), &form).await?;
+        for phone in &changes.phones {
+            self.set_detail(person, postio_model::DetailKind::Phone, phone, Some(true))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Every link between a saved person and an address-book record.
+    pub async fn sync_links(&self) -> Result<Vec<SyncLinkRow>> {
+        sql::all_unbounded(
+            self.connection,
+            "SELECT contact_id, external_id, given, family, organization, title, emails, phones
+               FROM contact_sync_links ORDER BY contact_id",
+            (),
+            |row| {
+                Ok(SyncLinkRow {
+                    contact: row.col(0)?,
+                    external: row.col(1)?,
+                    base: BookPerson {
+                        kind: ContactKind::Person,
+                        given: row.col(2)?,
+                        family: row.col(3)?,
+                        organization: row.col(4)?,
+                        title: row.col(5)?,
+                        emails: unlines(&row.col::<String>(6)?),
+                        phones: unlines(&row.col::<String>(7)?),
+                    },
+                })
+            },
+        )
+        .await
+    }
+
+    /// Records that `link.contact` and `link.external` are the same person, as
+    /// of these fields. Each side has at most one partner.
+    pub async fn put_sync_link(&self, link: &SyncLinkRow) -> Result<()> {
+        let link = link.clone();
+        sql::in_scope(self.connection, |transaction| async move {
+            sql::execute(
+                &transaction,
+                "DELETE FROM contact_sync_links WHERE contact_id = ?1 OR external_id = ?2",
+                bind![link.contact, link.external.clone()],
+            )
+            .await?;
+            sql::execute(
+                &transaction,
+                "INSERT INTO contact_sync_links
+                   (contact_id, external_id, given, family, organization, title, emails, phones)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                bind![
+                    link.contact,
+                    link.external.clone(),
+                    link.base.given.clone(),
+                    link.base.family.clone(),
+                    link.base.organization.clone(),
+                    link.base.title.clone(),
+                    lines(&link.base.emails),
+                    lines(&link.base.phones)
+                ],
+            )
+            .await?;
+            Ok(())
+        })
+        .await
+    }
+}
+
 impl ContactRepository<'_> {
     /// The phones and websites kept for `person`, or refused.
     pub async fn details(&self, person: ContactId) -> Result<Vec<postio_model::KeptDetail>> {

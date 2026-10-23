@@ -828,19 +828,21 @@ final class Engine {
     /// The demo's address book: in memory, invented, authorized. The real
     /// store is never constructed in a demo.
     @MainActor static func demoBook() -> SyncAddressBook {
-        func record(_ id: String, _ given: String, _ family: String, _ email: String, _ title: String)
-            -> ExternalRecordFfi
-        {
+        func record(
+            _ id: String, _ given: String, _ family: String, _ email: String, _ title: String,
+            phone: String? = nil, organization: String = ""
+        ) -> ExternalRecordFfi {
             ExternalRecordFfi(
-                id: id, given: given, family: family, emails: [email], phones: [],
-                organization: "", title: title)
+                id: id, given: given, family: family, emails: [email],
+                phones: phone.map { [$0] } ?? [], organization: organization, title: title)
         }
         return FakeSyncAddressBook(
             access: .authorized,
             records: [
                 record("demo-1", "Marisol", "Quint", "marisol@example.com", "Head of finance"),
                 record("demo-2", "Ben", "Adeyemi", "ben@example.net", ""),
-                record("demo-3", "Zed", "Zimmer", "zed@example.org", "Surveyor"),
+                record("demo-3", "Zed", "Zimmer", "zed@example.org", "Surveyor", phone: "+1 555 010 0142"),
+                record("demo-4", "", "", "office@northwind.example", "", organization: "Northwind Partners"),
             ])
     }
 

@@ -88,7 +88,14 @@ impl FocusController {
         }
         self.import_cursor = None;
         let (Some(at), Some(contacts)) = (at, self.contacts.as_mut()) else {
-            return Vec::new();
+            // Not on the tab being shown (or the view is down): the cursor
+            // stays, and the list is read once more so the new people are in
+            // whatever it shows.
+            return if self.contacts.is_some() {
+                vec![Step::Show(Intent::ContactsRows { first: 0, count: 0 })]
+            } else {
+                Vec::new()
+            };
         };
         contacts.cursor = Some(at);
         let mut steps = vec![

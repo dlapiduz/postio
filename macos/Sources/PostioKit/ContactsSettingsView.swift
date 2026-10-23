@@ -110,6 +110,20 @@ public struct ContactsSettingsView: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6)))
             Text(plan.foot).font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let bring = plan.bringIn {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button {
+                        model.bringIn()
+                    } label: {
+                        Text(bring.label).font(.system(size: 12.5, weight: .semibold))
+                            .padding(.horizontal, 12).frame(height: 28)
+                            .foregroundStyle(Color(nsColor: .textBackgroundColor))
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 

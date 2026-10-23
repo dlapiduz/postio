@@ -67,10 +67,12 @@ impl From<ExternalRecordFfi> for ExternalRecord {
             .to_owned();
         ExternalRecord {
             id: record.id,
-            label: if label.is_empty() {
-                record.emails.first().cloned().unwrap_or_default()
-            } else {
+            label: if !label.is_empty() {
                 label
+            } else if !record.organization.trim().is_empty() {
+                record.organization.trim().to_owned()
+            } else {
+                record.emails.first().cloned().unwrap_or_default()
             },
             fields: Fields {
                 given: record.given,
@@ -119,6 +121,45 @@ pub struct SyncPlanFfi {
     pub lines: Vec<String>,
     /// "Read only until writes are reviewed. ..."
     pub foot: String,
+    /// The button that brings Contacts-only people into Postio, when the plan
+    /// has any to bring.
+    pub bring_in: Option<BringInFfi>,
+}
+
+/// "Bring 12 into Postio", bound to the plan it was drawn under.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BringInFfi {
+    /// The button's words.
+    pub label: String,
+    /// The plan's fingerprint, handed back with the click.
+    pub fingerprint: u64,
+}
+
+impl From<postio_ui::contacts_sync::BringIn> for BringInFfi {
+    fn from(bring: postio_ui::contacts_sync::BringIn) -> Self {
+        Self {
+            label: bring.label,
+            fingerprint: bring.fingerprint,
+        }
+    }
+}
+
+impl From<BringInFfi> for postio_ui::contacts_sync::BringIn {
+    fn from(bring: BringInFfi) -> Self {
+        Self {
+            label: bring.label,
+            fingerprint: bring.fingerprint,
+        }
+    }
+}
+
+/// What bringing people in did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BringInResultFfi {
+    /// What was done, in words: counts only.
+    pub note: Option<String>,
+    /// Why nothing was.
+    pub error: Option<String>,
 }
 
 /// The sync sheet.
@@ -170,6 +211,7 @@ impl From<SyncSheetView> for SyncSheetFfi {
                 summary: plan.summary,
                 lines: plan.lines,
                 foot: plan.foot,
+                bring_in: plan.bring_in.map(Into::into),
             }),
             primary: button(sheet.primary),
             secondary: sheet.secondary.map(button),
@@ -226,6 +268,62 @@ impl Session {
             },
             Err(error) => SyncResultFfi {
                 sheet: None,
+                error: Some(error.to_string()),
+            },
+        }
+    }
+
+    /// Applies the Postio side of the plan the person was shown, under its
+    /// `fingerprint`: saved contacts for the records only Contacts has, and
+    /// the fields Contacts changed. Writes Postio's database and nothing
+    /// else; the address book is never handed anything. The Contacts list
+    /// reads the people again.
+    pub fn contacts_sync_bring_in(
+        &self,
+        records: Vec<ExternalRecordFfi>,
+        scope: SyncScopeFfi,
+        mode: crate::focus_contacts_settings::SyncModeFfi,
+        fingerprint: u64,
+    ) -> BringInResultFfi {
+        let Some(client) = self.client() else {
+            return BringInResultFfi {
+                note: None,
+                error: Some("Postio is still starting".to_owned()),
+            };
+        };
+        let records: Vec<ExternalRecord> = records.into_iter().map(Into::into).collect();
+        let scope: ScopeChoice = scope.into();
+        match crate::session::blocking(client.contacts_sync_bring_in(
+            records,
+            Scope::from(scope),
+            mode.into(),
+            fingerprint,
+        )) {
+            Ok(done) => {
+                let ids = |ids: &[i64]| -> Vec<postio_model::ContactId> {
+                    ids.iter()
+                        .copied()
+                        .map(postio_model::ContactId::new)
+                        .collect()
+                };
+                let made = ids(&done.made);
+                let mut touched = made.clone();
+                touched.extend(ids(&done.touched));
+                // The cursor goes to the first new person, and the review
+                // looks at what came in before anything else.
+                self.focus_driver()
+                    .input(postio_focus::Input::ContactsImported { made, touched });
+                BringInResultFfi {
+                    note: Some(postio_ui::contacts_sync::brought_in_note(
+                        done.people,
+                        done.fields,
+                        done.skipped,
+                    )),
+                    error: None,
+                }
+            }
+            Err(error) => BringInResultFfi {
+                note: None,
                 error: Some(error.to_string()),
             },
         }

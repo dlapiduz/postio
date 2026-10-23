@@ -747,12 +747,30 @@ CREATE INDEX idx_contact_evidence_value ON contact_evidence (kind, value);
     // Contacts (specs/011-focus-contacts D7).
     Migration {
         from: stamp(0x9fae_5a6c),
-        to: FINGERPRINT,
+        to: stamp(0x5689_ec6b),
         statements: r#"
 CREATE TABLE contact_suggestions (
     name    TEXT PRIMARY KEY CHECK (name IN
               ('save_automatically', 'recognise_kinds', 'read_signatures', 'suggest_merges')),
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
+);
+"#,
+    },
+    // `fix/contacts-sync-bring-in`: the links sync keeps between a saved person
+    // and an address-book record, with the fields as of the last sync.
+    Migration {
+        from: stamp(0x5689_ec6b),
+        to: FINGERPRINT,
+        statements: r#"
+CREATE TABLE contact_sync_links (
+    contact_id   INTEGER PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+    external_id  TEXT    NOT NULL UNIQUE,
+    given        TEXT    NOT NULL,
+    family       TEXT    NOT NULL,
+    organization TEXT    NOT NULL,
+    title        TEXT    NOT NULL,
+    emails       TEXT    NOT NULL,
+    phones       TEXT    NOT NULL
 );
 "#,
     },
@@ -1061,6 +1079,21 @@ CREATE TABLE contact_suggestions (
     name    TEXT PRIMARY KEY CHECK (name IN
               ('save_automatically', 'recognise_kinds', 'read_signatures', 'suggest_merges')),
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
+);
+
+CREATE TABLE contact_sync_links (
+    -- A saved person and the address-book record they are the same person as
+    -- (specs/011-focus-contacts S12), with the record's fields as of the last
+    -- sync: what makes the next comparison three-way. One partner each way.
+    contact_id   INTEGER PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+    external_id  TEXT    NOT NULL UNIQUE,
+    given        TEXT    NOT NULL,
+    family       TEXT    NOT NULL,
+    organization TEXT    NOT NULL,
+    title        TEXT    NOT NULL,
+    -- One per line.
+    emails       TEXT    NOT NULL,
+    phones       TEXT    NOT NULL
 );
 
 CREATE TABLE contact_terms (

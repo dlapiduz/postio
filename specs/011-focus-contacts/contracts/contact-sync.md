@@ -26,7 +26,8 @@ ExternalRecord { id, etag_or_hash, given, family, emails[], phones[{label,value}
 ## The plan (pure, `postio-contact-sync`)
 
 ```text
-Plan { creates[Contact → Account], updates[Link, fields], deletes[Link],
+Plan { imports[ExternalId → Contact],    // Contacts-only people who would come INTO Postio
+       creates[Contact → Account], updates[Link, side, fields], deletes[Link],
        conflicts[Conflict { contact, field, mine, theirs }], ambiguous[Contact, [ExternalId]],
        adoptions[Link] }   // matches that create a link and write nothing
 ```
@@ -42,6 +43,34 @@ no change. Address lists merge as sets. A record deleted externally → `unsave`
 contact and mark the link gone. A Postio delete of a linked contact → a `delete`
 **only after the person answered the question**. Kinds outside the scope never
 appear in a plan.
+
+## Read only brings Contacts into Postio
+
+Read only means *nothing goes out*, not *nothing comes in*. A record only the
+address book has (it matches no saved contact and is not ambiguous) is an
+`import`, in both modes: a saved contact in Postio with its addresses, phones,
+organisation and title. A record with no usable address, no name or
+organisation, a kind outside the scope, or an address another import already
+claims stays in Contacts and is counted. A record with an organisation and no
+name is a Company; otherwise a Person.
+
+Nothing is applied from the preview itself. The dry-run sheet offers one button,
+"Bring N into Postio", which applies **only the Postio side** of the plan the
+person was shown:
+
+- creates the saved contacts (a sender Postio already knows from mail, and has
+  not saved, is saved and takes the record's details; a saved owner of any of
+  the addresses leaves the record where it is);
+- applies the `Side::Local` updates (what Contacts changed, taken field by
+  field, addresses and phones as sets);
+- stores a link per pair with `base` = the record's fields, so the next sync is
+  a three-way comparison (a pair with an open conflict is not linked).
+
+The click is bound to the plan by its fingerprint. The engine plans again from
+the snapshot it is handed and refuses ("Contacts changed since the preview.
+Preview again.") if the fingerprint differs. This path writes Postio's own
+database. It never calls `apply` or `write`, so the gate below is untouched:
+`CONTACT_SYNC_WRITES` stays `false` and the adapter's `apply` still throws.
 
 ## The gate
 
