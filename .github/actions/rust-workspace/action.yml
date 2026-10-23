@@ -117,6 +117,13 @@ runs:
         sudo apt-get install --no-install-recommends -y \
           -o Dir::Cache::Archives="$archives" $APT_PACKAGES
         sudo apt-get autoclean -o Dir::Cache::Archives="$archives"
+        # apt leaves `lock` (root, 0640) and `partial/` (_apt, 0700) behind,
+        # and the save runs as the runner, whose tar can open neither:
+        # "Failed to save: tar failed with exit code 2" on every main run
+        # since #1998, so no cache was ever written and every job still
+        # fetched from the mirror. Both come back on the next install; the
+        # `.deb`s are what the cache is for.
+        sudo rm -rf "$archives/partial" "$archives/lock"
         versions=$(cd "$archives" && { ls -- *.deb 2>/dev/null || true; } | sort | sha256sum | cut -c1-12)
         echo "key=${{ steps.apt.outputs.prefix }}$versions" >> "$GITHUB_OUTPUT"
 
