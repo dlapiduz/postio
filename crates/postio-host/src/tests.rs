@@ -5464,32 +5464,33 @@ fn a_saved_search_counts_what_arrived_since_it_was_seen_and_viewing_clears_it() 
 fn a_badge_that_stopped_at_its_cap_says_it_is_a_floor() {
     // D30: the badge reads at most NEW_CAP conversations, and when every
     // one it read is new there may be more behind them -- "99+ new".
-    let seed = SearchSeed::new();
+    //
+    // Over an empty inbox, not the search seed: the cap is about the hundred
+    // arrivals this test writes, and the two-year seed the other search
+    // cases need cost this one ~9 s on a runner, over the merge path's
+    // 10 s budget under load (PR #2019).
+    let world = World::new();
+    let (client, _events) = world.frontend(ClientKind::Focus);
     let today = postio_demo::today().date_naive();
     let seen = (postio_demo::today() + chrono::TimeDelta::hours(1)).with_timezone(&chrono::Local);
     postio_model::clock::freeze(seen);
-    seed.rt
-        .block_on(seed.client.mark_seen("budget".to_owned()))
+    world
+        .rt
+        .block_on(client.mark_seen("budget".to_owned()))
         .expect("marked");
     postio_model::clock::thaw();
-    let inbox = seed
-        .rt
-        .block_on(postio_model::listing::MailStore::mailboxes(
-            &seed.client,
-            seed.account,
-        ))
-        .expect("the folders")
-        .into_iter()
-        .find(|folder| folder.role == postio_model::MailboxRole::Inbox)
-        .expect("an inbox")
-        .id;
     let arrivals = i64::from(crate::search::NEW_CAP) + 1;
-    seed.rt.block_on(async {
-        let connection = seed.database.connect().await.expect("a connection");
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        // The count is a conversation search, and a search needs the index
+        // the seed would have built; a search that cannot run counts zero.
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the search index");
         for minute in 1..=arrivals {
             let mut message = Message::new(
-                seed.account,
-                inbox,
+                world.account,
+                world.inbox,
                 (seen + chrono::TimeDelta::minutes(minute)).to_utc(),
             );
             message.subject = Some(format!("Atlas budget, line {minute}"));
@@ -5499,10 +5500,10 @@ fn a_badge_that_stopped_at_its_cap_says_it_is_a_floor() {
                 .expect("a message");
         }
     });
-    let counted = seed
+    let counted = world
         .rt
-        .block_on(seed.client.saved_counts(
-            seed.scope(),
+        .block_on(client.saved_counts(
+            postio_model::AccountScope::Account(world.account),
             today,
             vec![("budget".to_owned(), "atlas budget".to_owned())],
         ))
