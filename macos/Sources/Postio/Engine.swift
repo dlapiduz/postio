@@ -218,6 +218,8 @@ final class Engine {
                 Task { @MainActor in
                     self?.session?.setOffline(offline)
                     self?.vouch()
+                    // The plate said "Offline"; read again, it asks (#1986).
+                    if !offline { self?.messageWindow?.networkReturned() }
                 }
             }
         case let .failure(error):

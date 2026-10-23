@@ -155,14 +155,8 @@ pub async fn load_with_row(
             // costs the read it always did. A server's refusal outranks
             // `Offline` because it is the fact, and offline merely the
             // moment (#1918).
-            if repository.body_failed(id).await.unwrap_or(false) {
-                return (Body::Absent(Absent::Failed), Some(message));
-            }
-            let reason = if is_offline {
-                Absent::Offline
-            } else {
-                Absent::Partial
-            };
+            let failed = repository.body_failed(id).await.unwrap_or(false);
+            let reason = postio_ui::reader::document::unfetched(failed, is_offline);
             return (Body::Absent(reason), Some(message));
         }
         Ok(Some(message)) => message,

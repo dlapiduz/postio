@@ -249,6 +249,20 @@ struct MessageWindowModelTests {
         #expect(model.place?.message == 7 && model.shown == 7)
     }
 
+    @Test func theOpenMessageIsReadAgainWhenTheNetworkReturns() async {
+        // #1986: the plate said "Offline" and the network coming back
+        // re-read nothing, so nothing ever asked for the body.
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        let documents = source.documents.count
+        model.networkReturned()
+        await model.settled()
+        #expect(source.documents.count == documents + 1)
+        #expect(source.documents.last?.0 == 7)
+    }
+
     @Test func aBodyThatLandsUnderTheSourceLeavesTheSource() async {
         let source = Source()
         let (model, _) = Self.model(source)

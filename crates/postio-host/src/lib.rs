@@ -87,6 +87,8 @@ struct Inner {
     treatments_moved: std::sync::atomic::AtomicBool,
     /// The bodies a reading pane has asked for (#1788).
     asked_bodies: Arc<reading::AskedBodies>,
+    /// Each account's link, for the plate of a body that is not here (#1986).
+    links: Arc<reading::Links>,
     #[cfg(test)]
     searches_in_flight: AtomicU64,
 }
@@ -529,6 +531,7 @@ impl Host {
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
             asked_bodies: Arc::default(),
+            links: Arc::default(),
             #[cfg(test)]
             searches_in_flight: AtomicU64::new(0),
         });
@@ -538,6 +541,22 @@ impl Host {
                 pump.run(queued).await;
             }
         });
+        // The links, heard once for the host rather than once per client:
+        // the word is kept before the panes are told to read again.
+        if let Some(news) = inner.hub.subscribe("host:links") {
+            let links = Arc::clone(&inner.links);
+            let hub = inner.hub.clone();
+            inner.runtime().spawn(async move {
+                while let Some(envelope) = news.next_tracked().await {
+                    if let Event::ConnectionChanged { account, state } = envelope.event {
+                        for message in links.changed(account, state) {
+                            // The same "read it again" a refused fetch asks for.
+                            hub.emit(Event::BodyFailed { account, message });
+                        }
+                    }
+                }
+            });
+        }
         Host {
             inner,
             _bridge: bridge,
@@ -1498,7 +1517,9 @@ impl Inner {
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
             },
             Req::Readings { messages, offline } => {
-                match reading::readings(&self.wiring.database, &messages, offline).await {
+                match reading::readings(&self.wiring.database, &messages, offline, &self.links)
+                    .await
+                {
                     Ok(read) => self.opened(read).await,
                     Err(error) => Resp::Failed(error),
                 }
@@ -1512,6 +1533,7 @@ impl Inner {
                 thread,
                 limit as usize,
                 offline,
+                &self.links,
             )
             .await
             {

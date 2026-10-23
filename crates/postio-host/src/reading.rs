@@ -6,12 +6,75 @@
 //! (#1609). The store's owner does both now, and a frontend asks once.
 
 use postio_client::protocol::{Body, Reading};
-use postio_model::MessageId;
 use postio_model::listing::StoreError;
+use postio_model::{AccountId, MessageId};
 use postio_session::reading::Body as Stored;
 use postio_storage::Store;
 use postio_storage::repository::{MessageRepository, ThreadRepository};
 use postio_ui::reader::document::Absent;
+
+/// What the host knows of each account's link, and which panes are waiting
+/// on one (#1986).
+///
+/// A pane's plate for a body that is not here depends on whether a request
+/// for it can run, and the frontend is the wrong one to say: GTK and the TUI
+/// said "reachable" always. The engines announce every change of link, so
+/// the host keeps the last word per account, answers each reading from it,
+/// and, when an account comes back, tells the panes that were shown the
+/// offline plate to read again.
+#[derive(Default)]
+pub(crate) struct Links {
+    state: std::sync::Mutex<LinkState>,
+}
+
+#[derive(Default)]
+struct LinkState {
+    links: std::collections::HashMap<AccountId, postio_core::ConnectionState>,
+    waiting: std::collections::HashMap<AccountId, std::collections::HashSet<MessageId>>,
+}
+
+impl Links {
+    /// An account's link changed. Returns the messages whose panes were
+    /// told "offline" and should read again, when it is now reachable.
+    pub(crate) fn changed(
+        &self,
+        account: AccountId,
+        link: postio_core::ConnectionState,
+    ) -> Vec<MessageId> {
+        let mut state = self.state.lock().expect("never poisoned");
+        state.links.insert(account, link);
+        if postio_ui::reader::document::reaches_server(Some(link)) {
+            state
+                .waiting
+                .remove(&account)
+                .map(|set| set.into_iter().collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// `body` as drawn for a message of `account`: a body not here reads
+    /// "offline" whenever the account's link cannot run a request, whatever
+    /// the frontend passed.
+    fn settle(&self, account: AccountId, message: MessageId, body: Stored) -> Stored {
+        let mut state = self.state.lock().expect("never poisoned");
+        let link = state.links.get(&account).copied();
+        let body = match body {
+            Stored::Absent(Absent::Partial) => {
+                Stored::Absent(postio_ui::reader::document::unfetched(
+                    false,
+                    !postio_ui::reader::document::reaches_server(link),
+                ))
+            }
+            other => other,
+        };
+        if matches!(body, Stored::Absent(Absent::Offline)) {
+            state.waiting.entry(account).or_default().insert(message);
+        }
+        body
+    }
+}
 
 /// A stored body, as it crosses to a frontend.
 pub fn wire_body(stored: Stored) -> Body {
@@ -41,12 +104,17 @@ pub async fn load(
     connection: &postio_storage::Checkout,
     message: MessageId,
     offline: bool,
+    links: &Links,
 ) -> Reading {
     // The row the body was decided from, rather than a second read of it.
     // A draft this machine owns is answered from its buffer without reading
     // the row, so for that one the row is still read here.
     let (body, fetched) =
         postio_session::reading::load_with_row(connection, message, offline).await;
+    let body = match &fetched {
+        Some(row) => links.settle(row.account_id, message, body),
+        None => body,
+    };
     let headers = match &body {
         Stored::Ready { headers, .. } => headers.clone(),
         Stored::Absent(_) => None,
@@ -80,25 +148,27 @@ pub async fn load(
 }
 
 /// [`load`] for each of `messages`, on one reader turn, in the order asked.
-pub async fn readings(
+pub(crate) async fn readings(
     database: &Store,
     messages: &[MessageId],
     offline: bool,
+    links: &Links,
 ) -> Result<Vec<Reading>, StoreError> {
     let reader = database.read().await.map_err(StoreError::from)?;
     let mut read = Vec::with_capacity(messages.len());
     for &message in messages {
-        read.push(load(&reader, message, offline).await);
+        read.push(load(&reader, message, offline, links).await);
     }
     Ok(read)
 }
 
 /// [`readings`] for `thread`'s first `limit` members, oldest first.
-pub async fn thread_readings(
+pub(crate) async fn thread_readings(
     database: &Store,
     thread: postio_model::ThreadId,
     limit: usize,
     offline: bool,
+    links: &Links,
 ) -> Result<Vec<Reading>, StoreError> {
     let reader = database.read().await.map_err(StoreError::from)?;
     let members = ThreadRepository::new(&reader)
@@ -107,7 +177,7 @@ pub async fn thread_readings(
         .map_err(StoreError::from)?;
     let mut read = Vec::new();
     for message in members.into_iter().take(limit) {
-        read.push(load(&reader, message, offline).await);
+        read.push(load(&reader, message, offline, links).await);
     }
     Ok(read)
 }

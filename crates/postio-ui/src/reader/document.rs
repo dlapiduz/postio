@@ -64,6 +64,30 @@ pub enum Absent {
     Failed,
 }
 
+/// Whether a request for a body can run on an account in this state.
+///
+/// `None` is an account nothing has been said about yet: treated as
+/// reachable, so a pane never claims offline on no evidence (#1988). Only
+/// [`ConnectionState::Online`] reaches the server; a backoff, a missing
+/// network and a signed-out account all leave a queued request waiting (#1986).
+pub fn reaches_server(link: Option<postio_core::ConnectionState>) -> bool {
+    matches!(link, None | Some(postio_core::ConnectionState::Online))
+}
+
+/// The plate for a message whose body is not on this machine: the one rule
+/// every frontend draws from (#1986). A server's refusal outranks the
+/// link, which is the moment; the link outranks "downloading", which would
+/// promise a fetch that cannot start.
+pub fn unfetched(failed: bool, unreachable: bool) -> Absent {
+    if failed {
+        Absent::Failed
+    } else if unreachable {
+        Absent::Offline
+    } else {
+        Absent::Partial
+    }
+}
+
 /// What the pane says for each [`Absent`], as the document's body.
 ///
 /// A free function returning a string so the words and the key are testable
@@ -1794,6 +1818,41 @@ mod render_cache_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1986: the words follow the account's link, not a hard-coded false.
+    #[test]
+    fn the_plate_for_an_unfetched_body_follows_the_link() {
+        use postio_core::{ConnectionState, FailureReason};
+        for (link, reaches) in [
+            (None, true),
+            (Some(ConnectionState::Online), true),
+            (Some(ConnectionState::Connecting), false),
+            (Some(ConnectionState::Offline), false),
+            (
+                Some(ConnectionState::Failing {
+                    reason: FailureReason::Auth,
+                }),
+                false,
+            ),
+        ] {
+            assert_eq!(reaches_server(link), reaches, "{link:?}");
+            let plate = unfetched(false, !reaches_server(link));
+            assert_eq!(
+                plate,
+                if reaches {
+                    Absent::Partial
+                } else {
+                    Absent::Offline
+                },
+                "{link:?}"
+            );
+        }
+        assert_eq!(
+            unfetched(true, true),
+            Absent::Failed,
+            "a refusal is the fact"
+        );
+    }
 
     /// A body that lost a part says so, and a clean one stays silent.
     ///

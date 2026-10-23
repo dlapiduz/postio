@@ -146,7 +146,9 @@ pub enum Event {
     },
     /// The server would not give up a message's body (#1918): read the open
     /// message again, so "Downloading" becomes "could not be downloaded"
-    /// without waiting for anything else to prompt a re-read.
+    /// without waiting for anything else to prompt a re-read. Also said when
+    /// an account's link returns, for each message a pane drew as "not
+    /// downloaded, offline" (#1986): the same re-read, which now asks.
     BodyFailed {
         /// The account the message belongs to.
         account: AccountId,
