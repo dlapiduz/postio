@@ -975,6 +975,15 @@ fn run(
             handle_link_transition(&parts, &store, &mut state).await;
 
             loop {
+                // How long until a backing-off link is due. Computed before the
+                // `select!` so the branch holds a number, not a borrow of the
+                // state it then mutates.
+                let link_due = match state.supervisor.link() {
+                    postio_sync::Link::Waiting { retry_at, .. } => {
+                        Some((*retry_at - Utc::now()).to_std().unwrap_or(Duration::ZERO))
+                    }
+                    _ => None,
+                };
                 tokio::select! {
                     job = inbox.recv() => match job {
                         Ok(job) => {
@@ -984,6 +993,22 @@ fn run(
                         // Every handle dropped: nothing more will be asked.
                         Err(_) => break,
                     },
+                    // The link's own retry time, not the next tick: a backoff of
+                    // a second used to be spent waiting out the rest of
+                    // `POLL_INTERVAL`, and a body asked for in that time was
+                    // told the link was down (#1985).
+                    () = async {
+                        match link_due {
+                            Some(wait) => tokio::time::sleep(wait).await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        let moved = state
+                            .supervisor
+                            .poll(parts.backend.as_ref(), Utc::now(), entropy())
+                            .await;
+                        announce_link(&parts, &mut state, moved);
+                    }
                     _ = ticker.tick() => {
                         let moved = state
                             .supervisor
@@ -1631,9 +1656,20 @@ async fn keep_watch(
             link = %postio_model::address::redact_addresses(&format!("{:?}", state.supervisor.link())),
             "not connected; nothing to watch"
         );
-        // Dropping a sleep is harmless, so the plain race is fine here.
+        // Dropping a sleep is harmless, so the plain race is fine here. Not
+        // past the moment a backing-off link is due: the loop reconnects it
+        // when it gets back, and sleeping the whole interval through a
+        // backoff of a second is what left a body asked for in that time
+        // told the link was down (#1985).
+        let wait = match state.supervisor.link() {
+            postio_sync::Link::Waiting { retry_at, .. } => (*retry_at - Utc::now())
+                .to_std()
+                .unwrap_or(Duration::ZERO)
+                .min(POLL_INTERVAL),
+            _ => POLL_INTERVAL,
+        };
         tokio::select! {
-            _ = tokio::time::sleep(POLL_INTERVAL) => {}
+            _ = tokio::time::sleep(wait) => {}
             _ = interruption(parts, store, inbox) => {}
         }
         return;
