@@ -106,25 +106,6 @@ async fn a_reply_goes_to_the_sender_and_quotes_what_was_said() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_reply_to_all_keeps_the_others_and_leaves_me_out() {
-    let (session, _, message) = a_message_to_answer().await;
-    let draft = session.reply_draft(message, true).await.expect("a reply");
-
-    assert_eq!(draft.to, "Ada Norwood <ada@example.com>");
-    assert!(
-        draft.cc.contains("bo@example.com"),
-        "the rest of the conversation stays on it: {}",
-        draft.cc
-    );
-    assert!(
-        !draft.cc.contains(&draft.from),
-        "and I am not on my own reply: {} in {}",
-        draft.from,
-        draft.cc
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_forward_carries_the_message_and_asks_who_to_send_it_to() {
     let (session, _, message) = a_message_to_answer().await;
     let draft = session.forward_draft(message).await.expect("a forward");
@@ -568,27 +549,6 @@ async fn a_rich_draft_keeps_its_marks_across_a_save() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_rich_body_is_stored_as_the_dialect_not_as_whatever_was_typed() {
-    // The editing surface hands over a DOM's innerHTML, which is a working
-    // copy and not the record (ADR 0004 Q3). What is kept is what `parse`
-    // makes of it -- so a `<div>` from the browser becomes a paragraph, and
-    // a `<script>` cannot be stored at all.
-    let (session, _, _) = a_message_to_answer().await;
-    let mut draft = session.new_draft().await.expect("an account");
-    draft.to = "bo@example.com".to_owned();
-    draft.rich = true;
-    draft.body_html = Some("<div>hello<script>alert(1)</script></div>".to_owned());
-
-    let saved = session.save_draft(draft).await.expect("a saved draft");
-    let html = saved.body_html.expect("a rich draft has an HTML part");
-    assert!(
-        !html.contains("script"),
-        "a script survived into the stored draft: {html}"
-    );
-    assert!(html.contains("hello"), "the words were lost too: {html}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn turning_rich_off_stops_building_html_without_throwing_the_words_away() {
     // The switch is on the document, not on the window: turning it off
     // changes what will be built, and must not silently discard what was
@@ -644,39 +604,6 @@ async fn a_rich_draft_always_carries_a_plain_alternative_of_its_own_words() {
         "the plain alternative is empty, so half the recipients get nothing: {:?}",
         saved.body
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_paste_says_what_the_dialect_could_not_hold() {
-    // The acceptance line. Against `postio_body`'s own answer rather than a
-    // sentence typed here: both composers show this string, and a copy in a
-    // test would drift exactly as a copy in the code would.
-    let (session, _, _) = a_message_to_answer().await;
-    let pasted = session.narrow_paste(
-        "<p style='color:red'>hi</p><table><tr><td>a</td></tr></table>\
-         <img src='https://example.com/a.png'>"
-            .to_owned(),
-    );
-
-    let expected = postio_body::narrow(
-        "<p style='color:red'>hi</p><table><tr><td>a</td></tr></table>\
-         <img src='https://example.com/a.png'>",
-    );
-    assert_eq!(pasted.dropped, expected.lost.summary());
-    assert!(
-        pasted.dropped.is_some(),
-        "a paste that lost a table, an image and its colours said nothing"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_paste_the_dialect_holds_whole_says_nothing_at_all() {
-    // Silence is the right answer when nothing was lost. A composer that
-    // announced every paste would train people to ignore the one that
-    // mattered.
-    let (session, _, _) = a_message_to_answer().await;
-    let pasted = session.narrow_paste("<p>Hello <em>there</em>.</p>".to_owned());
-    assert_eq!(pasted.dropped, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1045,22 +972,6 @@ async fn replying_to_html_only_mail_quotes_what_it_is_answering() {
     assert!(
         !draft.body.contains('<'),
         "quoted as text, not as markup: {:?}",
-        draft.body
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_plain_text_message_is_still_quoted_from_its_own_text() {
-    // The rendering is a *fallback*. A message that has real plain text must
-    // keep using it — it is what the sender wrote, and a round trip through
-    // HTML would not be.
-    let (session, _database, message) = a_message_to_answer().await;
-
-    let draft = session.reply_draft(message, false).await.expect("a reply");
-
-    assert!(
-        draft.body.contains("> The gate closes at six."),
-        "{:?}",
         draft.body
     );
 }

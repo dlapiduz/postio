@@ -4,7 +4,7 @@
 # drives -- and names the path. scripts/checks/check-frontend-suite-budget.py
 # says why. The review itself: specs/012-test-suite-value/parity-review.tsv.
 
-crates/postio-ffi/tests/ffi_suite/compose.rs 52
+crates/postio-ffi/tests/ffi_suite/compose.rs 47
 crates/postio-ffi/tests/ffi_suite/config.rs 9
 crates/postio-ffi/tests/ffi_suite/contact_popover.rs 1
 crates/postio-ffi/tests/ffi_suite/contacts_settings.rs 3
@@ -16,7 +16,7 @@ crates/postio-ffi/tests/ffi_suite/focus_keymap.rs 3
 crates/postio-ffi/tests/ffi_suite/focus_pickers.rs 5
 crates/postio-ffi/tests/ffi_suite/focus_search.rs 12
 crates/postio-ffi/tests/ffi_suite/focus_states.rs 4
-crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs 10
+crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs 8
 crates/postio-ffi/tests/ffi_suite/keys.rs 12
 crates/postio-ffi/tests/ffi_suite/mailboxes.rs 7
 crates/postio-ffi/tests/ffi_suite/reachability.rs 4
@@ -35,7 +35,7 @@ crates/postio-gtk/tests/focus_suite/keymap.rs 1
 crates/postio-gtk/tests/focus_suite/one_keymap.rs 1
 crates/postio-gtk/tests/focus_suite/pickers.rs 5
 crates/postio-gtk/tests/focus_suite/reader_zoom.rs 1
-crates/postio-gtk/tests/focus_suite/selection.rs 6
+crates/postio-gtk/tests/focus_suite/selection.rs 5
 crates/postio-gtk/tests/focus_suite/settings.rs 11
 crates/postio-gtk/tests/focus_suite/state.rs 8
 crates/postio-gtk/tests/focus_suite/treatments.rs 5

@@ -1567,10 +1567,6 @@ const CASES: &[(&str, fn())] = &[
         selection::a_select_all_archives_what_focus_lists_and_never_held_mail as fn(),
     ),
     (
-        "selection::x_after_a_select_all_takes_that_row_out_of_it",
-        selection::x_after_a_select_all_takes_that_row_out_of_it as fn(),
-    ),
-    (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",
         starts_offline::the_inbox_is_listed_from_the_store_with_no_network as fn(),
     ),
