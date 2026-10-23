@@ -351,10 +351,28 @@ if ! git ls-remote --exit-code --heads origin "$BASE" >/dev/null 2>&1; then
     exit 2
 fi
 
+# Fetch the base, and try again when the fetch loses a ref lock. Every
+# worktree on this machine shares `refs/remotes/origin/*`, so another
+# session's fetch can move the ref under this one:
+#
+#     error: cannot lock ref 'refs/remotes/origin/main': is at … but expected …
+#
+# Under `set -e` that ended a landing whose merge had happened (#2029). The
+# ref the other session wrote is the same one this fetch wanted, so a retry
+# a moment later is all it takes; a fetch that keeps failing still fails.
+fetch_base() {
+    local attempt
+    for attempt in 1 2 3; do
+        git fetch --quiet origin "$BASE" && return 0
+        [ "$attempt" -lt 3 ] && sleep 1
+    done
+    return 1
+}
+
 # Everything below compares against the base, and nothing here had been
 # fetching it -- so the crate list, the PR body and the rebase were all reading
 # whatever the last fetch happened to leave behind.
-git fetch --quiet origin "$BASE"
+fetch_base
 
 # Which crates actually changed, so the gates run over those rather than the
 # whole workspace. CI proves the workspace; this proves your own work fast.
@@ -1321,7 +1339,8 @@ squash_landed() {
 }
 
 while :; do
-    git fetch -q origin "$BASE"
+    # A poll that cannot fetch is a poll that polls again (#2029).
+    fetch_base || true
     if squash_landed; then
         MISSING=
         break
@@ -1362,7 +1381,7 @@ if [ -n "$MISSING" ]; then
         while [ -n "$MISSING" ]; do
             [ "$(date +%s)" -lt "$MERGED_DEADLINE" ] || break
             sleep "$LANDED_POLL"
-            git fetch -q origin "$BASE"
+            fetch_base || true
             MISSING=$(missing_from "$(git log "origin/$BASE" --format=%s)")
         done
         [ -n "$MISSING" ] || echo "the commits are on origin/$BASE now."
