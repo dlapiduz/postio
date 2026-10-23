@@ -138,6 +138,15 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the verdict records the filters",
           verdict.get("package") == "postio-config" and verdict.get("re") == ["ConfigChanged::any", "between"], json.dumps(verdict))
 
+    result, verdict, calls = run(tmp, [CAUGHT_ONLY_WITH], [CAUGHT_ONLY_WITH],
+                                 extra=["--package", "postio-config", "--test-package", "postio-config",
+                                        "--test-package", "postio-ffi"])
+    lines = calls.splitlines()
+    check("--test-package runs the removed cases' own crate in both passes",
+          len(lines) == 2 and all("--test-package postio-config --test-package postio-ffi" in l for l in lines), calls)
+    check("the verdict records the test packages", verdict.get("test_packages") == ["postio-config", "postio-ffi"],
+          json.dumps(verdict))
+
     bad = subprocess.run(["bash", str(SCRIPT), "crates/x.rs"], capture_output=True, text=True, env={**os.environ, "CI": "true"})
     check("no -- and no cases is a usage error, exit 2", bad.returncode == 2, bad.stdout + bad.stderr)
 

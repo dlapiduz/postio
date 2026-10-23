@@ -47,6 +47,9 @@ on:
       re:
         description: "removal: mutant-name regexes, one per line, e.g. the functions the cases call (optional)"
         default: ""
+      test_packages:
+        description: "removal: crates whose tests run against each mutant, space-separated, when the cases live outside the mutated one (optional)"
+        default: ""
 
 permissions:
   contents: read
@@ -120,6 +123,7 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           PACKAGE: ${{ inputs.package }}
           RES: ${{ inputs.re }}
+          TEST_PACKAGES: ${{ inputs.test_packages }}
         run: |
           read -r -a files <<< "$FILES"
           cases=()
@@ -132,6 +136,7 @@ jobs:
           while IFS= read -r line; do
             [ -n "$line" ] && narrow+=(--re "$line")
           done <<< "$RES"
+          for package in $TEST_PACKAGES; do narrow+=(--test-package "$package"); done
           dbus-run-session -- scripts/test-removal-check.sh "${narrow[@]}" "${files[@]}" -- "${cases[@]}"
 
       - name: Keep the reports

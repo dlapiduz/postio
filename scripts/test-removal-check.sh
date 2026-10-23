@@ -26,6 +26,7 @@
 # this machine is yours. On CI, `.github/workflows/test-audit.yml` runs it.
 #
 #   scripts/test-removal-check.sh [--scope <filterset>] [--package <crate>] [--re <regex>]...
+#                                 [--test-package <crate>]...
 #                                 <source file>... -- '<binary id> <test name>'...
 #
 # --scope runs both passes over only the tests that filterset selects -- a
@@ -40,6 +41,12 @@
 # `-f` alone finds nothing in a crate cargo-mutants was not pointed at, so
 # a check on another crate's files names it with --package. A mutant left
 # out by --re is not judged at all, so name every function the cases call.
+#
+# --test-package names a crate whose tests must run against each mutant.
+# cargo-mutants runs only the mutated package's tests by default, so a case
+# in another crate -- a Mac bridge case exercising postio-config, say --
+# would otherwise never run in either pass, and removing it would read as
+# safe for a reason that has nothing to do with redundancy.
 #
 # Writes target/test-audit/verdict.json. Exit status: 0 safe; 1 not safe;
 # 2 bad arguments, a missing tool, or refused to run here.
@@ -59,11 +66,13 @@ usage() {
 SCOPE=
 PACKAGE=
 NAME_RES=()
+TEST_PACKAGES=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --scope)   [ $# -ge 2 ] || usage; SCOPE=$2; shift 2 ;;
         --package) [ $# -ge 2 ] || usage; PACKAGE=$2; shift 2 ;;
         --re)      [ $# -ge 2 ] || usage; NAME_RES+=("$2"); shift 2 ;;
+        --test-package) [ $# -ge 2 ] || usage; TEST_PACKAGES+=("$2"); shift 2 ;;
         *) break ;;
     esac
 done
@@ -116,6 +125,11 @@ fi
 
 FILE_ARGS=()
 [ -n "$PACKAGE" ] && FILE_ARGS+=(-p "$PACKAGE")
+# cargo-mutants runs the mutated package's tests and no others; cases that
+# live in another crate are only judged if that crate is named here.
+for package in ${TEST_PACKAGES[@]+"${TEST_PACKAGES[@]}"}; do
+    FILE_ARGS+=(--test-package "$package")
+done
 for file in "${FILES[@]}"; do
     FILE_ARGS+=(-f "$file")
 done
@@ -163,15 +177,16 @@ fi
 
 commit=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)
 RES_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' ${NAME_RES[@]+"${NAME_RES[@]}"})
-python3 - "$OUT/verdict.json" "$WORK/survivors" "$commit" "$SCOPE" "$PACKAGE" "$RES_JSON" "${#FILES[@]}" "${FILES[@]}" "${CASES[@]}" <<'PY'
+TP_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' ${TEST_PACKAGES[@]+"${TEST_PACKAGES[@]}"})
+python3 - "$OUT/verdict.json" "$WORK/survivors" "$commit" "$SCOPE" "$PACKAGE" "$RES_JSON" "$TP_JSON" "${#FILES[@]}" "${FILES[@]}" "${CASES[@]}" <<'PY'
 import json, sys
-out, survivors, commit, scope, package, res = sys.argv[1:7]
-nfiles = int(sys.argv[7])
-files, cases = sys.argv[8 : 8 + nfiles], sys.argv[8 + nfiles :]
+out, survivors, commit, scope, package, res, test_packages = sys.argv[1:8]
+nfiles = int(sys.argv[8])
+files, cases = sys.argv[9 : 9 + nfiles], sys.argv[9 + nfiles :]
 lost = [l for l in open(survivors).read().splitlines() if l]
 json.dump({"cases": cases, "files": files, "new_survivors": lost,
            "result": "not safe" if lost else "safe", "commit": commit, "scope": scope or None,
-           "package": package or None, "re": json.loads(res)},
+           "package": package or None, "re": json.loads(res), "test_packages": json.loads(test_packages)},
           open(out, "w"), indent=1)
 PY
 
