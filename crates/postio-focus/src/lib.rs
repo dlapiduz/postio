@@ -729,6 +729,13 @@ pub enum Request {
     },
     /// Send a command as it is: one that aims at nothing (`Undo`).
     Post(Command),
+    /// Bring the place on screen in line with the server. Aimed at no mail,
+    /// but at a view: which mailboxes to sync is the host's to work out from
+    /// it, and with none the host has nothing to refresh.
+    Refresh {
+        /// The place on screen, as a view; `None` before one is open.
+        viewing: Option<postio_core::state::ViewScope>,
+    },
     /// Mail left `mailbox`: said to the store before the list re-reads.
     NoteRemoved {
         /// The folder it left.
@@ -2543,6 +2550,13 @@ impl FocusController {
                     }
                     Effect::Show(intent)
                 }
+                // Refresh is posted from the key, the bar, a banner's Retry
+                // and a search's results alike, and only here is the place
+                // on screen known to all of them.
+                feed::Step::Ask(Request::Post(Command::Refresh)) => {
+                    let viewing = self.viewing();
+                    Effect::Ask(self.ticket(), Request::Refresh { viewing })
+                }
                 feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
                 feed::Step::Open(scope) => {
                     self.cursor.opening();
@@ -2552,6 +2566,19 @@ impl FocusController {
                 feed::Step::Timer { token, after } => Effect::Timer { token, after },
             })
             .collect()
+    }
+
+    /// The place on screen as the host's view of it. Every filter of
+    /// Focus's inbox draws from the same inboxes, so each refreshes them all.
+    fn viewing(&self) -> Option<postio_core::state::ViewScope> {
+        let accounts = self.cursor.accounts();
+        match self.feed.scope()? {
+            ListScope::Focus(_) => postio_core::aim::view_scope(
+                ListScope::Focus(postio_model::FocusScope::Inbox),
+                accounts,
+            ),
+            scope => postio_core::aim::view_scope(scope, accounts),
+        }
     }
 
     /// Ask for the header strip's counts.
