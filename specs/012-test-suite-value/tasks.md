@@ -41,7 +41,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
 
   See it fail, because the module is empty.
 - [X] T004 Implement `parse_nextest_list(json) -> list[Case]`, `case_file(case, root)`, `parse_refs(path, fn_name)` and `fn_body(path, fn_name)` (brace-matched) in `scripts/lib/test_audit.py` until T003 passes.
-- [ ] T005 Extend T003 with the smell cases, red first:
+- [X] T005 Extend T003 with the smell cases, red first:
   - `constant-only`;
   - `is-ok-only` (`assert!(x.is_ok())` alone; `.is_some()` alone);
   - `mock-count-only`;
@@ -50,7 +50,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   - a negative case for each, such as `assert_eq!(x, CONST)` where `x` is computed, which is *not* constant-only.
 
   Then implement `smells(body, refs) -> set[str]` in `scripts/lib/test_audit.py`.
-- [ ] T006 Extend T003 with layer and cost cases, red first:
+- [X] T006 Extend T003 with layer and cost cases, red first:
   - postio-focus → `controller`/1;
   - postio-ffi → `frontend`/2;
   - postio-gtk focus_suite → `frontend`/3 (display);

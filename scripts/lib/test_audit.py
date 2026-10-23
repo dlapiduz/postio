@@ -260,3 +260,125 @@ def parse_refs(path: Path | str, fn_name: str) -> list[str]:
     else:
         refs |= specs
     return sorted(refs)
+
+
+# --- what a case smells of ------------------------------------------------
+
+_ASSERT = re.compile(r"\b(assert|assert_eq|assert_ne|debug_assert|debug_assert_eq|debug_assert_ne)!\s*\(")
+_CONSTANT_ATOMS = [
+    re.compile(r'r#*"[^"]*"#*|"(?:\\.|[^"\\])*"'),  # strings
+    _CHAR,
+    re.compile(r"\b\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?(?:[iuf](?:8|16|32|64|128|size))?\b"),
+    re.compile(r"\b(?:true|false)\b"),
+    re.compile(r"\b[A-Z][A-Za-z0-9]*::default\(\)"),  # Placement::default()
+    re.compile(r"\b[A-Z][A-Za-z0-9]*(?:::[A-Z][A-Za-z0-9_]*)+\b"),  # Placement::Dialog
+    re.compile(r"\b(?:[a-z_][a-z0-9_]*::)*[A-Z][A-Z0-9_]*\b(?!\s*[(:{])"),  # LIST_MIN, keys::ARCHIVE
+]
+_LEFTOVER_OK = re.compile(r"^[\s+\-*/%<>=!&|()]*$")
+_COUNTS = re.compile(r"\b(?:calls|call_count|times)\b")
+_DISPLAY_SKIP = re.compile(r'eprintln!\s*\(\s*"skipping[^"]*"\s*\)\s*;\s*return\b')
+
+
+def _split_args(args: str) -> list[str]:
+    """Top-level comma-separated arguments of a macro call."""
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(args):
+        nxt = _skip(args, i)
+        if nxt != i:
+            i = nxt
+            continue
+        ch = args[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(args[start:i])
+            start = i + 1
+        i += 1
+    parts.append(args[start:])
+    return [p.strip() for p in parts if p.strip()]
+
+
+def assertions(body: str) -> list[tuple[str, list[str]]]:
+    """Each `assert*!` in `body`: its macro name and its top-level arguments."""
+    found = []
+    for m in _ASSERT.finditer(body):
+        end = _matching(body, m.end() - 1, "(", ")")
+        found.append((m.group(1), _split_args(body[m.end() : end - 1])))
+    return found
+
+
+def _is_constant(expr: str) -> bool:
+    rest = expr
+    for atom in _CONSTANT_ATOMS:
+        rest = atom.sub(" ", rest)
+    return _LEFTOVER_OK.match(rest) is not None
+
+
+def _compared(macro: str, args: list[str]) -> list[str]:
+    """The operands an assertion judges, without its message."""
+    return args[:2] if macro.endswith(("_eq", "_ne")) else args[:1]
+
+
+def smells(body: str, refs: list[str]) -> set[str]:
+    """The smells of research R6 that a case's body and refs carry.
+
+    Flags for a person to read, not verdicts: a constant-only case may be
+    pinning an accessibility label on purpose, and saying why is what moves
+    it out of this list.
+    """
+    found = set()
+    checks = [(macro, _compared(macro, args)) for macro, args in assertions(body)]
+    if checks:
+        if all(ops and all(_is_constant(op) for op in ops) for _, ops in checks):
+            found.add("constant-only")
+        if all(
+            macro.endswith("assert")
+            and ops
+            and re.search(r"\.is_(?:ok|some)\(\)\s*$", ops[0])
+            and not re.search(r"==|!=|&&|\|\|", ops[0])
+            for macro, ops in checks
+        ):
+            found.add("is-ok-only")
+        if all(any(_COUNTS.search(op) for op in ops) for _, ops in checks):
+            found.add("mock-count-only")
+    if _DISPLAY_SKIP.search(body):
+        found.add("display-skip")
+    if not refs:
+        found.add("untraced")
+    return found
+
+
+# --- which layer, and what it costs ---------------------------------------
+
+FRONTENDS = {"postio-ffi", "postio-gtk", "postio-widgets", "postio-tui"}
+CONTROLLERS = {"postio-focus"}
+DISPLAY_CRATES = {"postio-gtk", "postio-widgets"}  # their integration suites open windows
+MEASUREMENT_MARKER = "POSTIO-MEASUREMENT:"
+_READS_REPO = re.compile(r"CARGO_MANIFEST_DIR|include_str!\s*\(")
+_REPO_PATH = re.compile(r'"[^"]*(?:\.\./|docs/|scripts/|\.md"|Cargo\.toml)')
+
+
+def layer(case: Case, path: Path | str, body: str) -> tuple[str, int, bool]:
+    """`(layer, cost_rank, display)` for a case: ADR 0049's layers, by crate.
+
+    The layer is the crate's (no per-test list, FR-002), refined by two
+    facts in the source: the `POSTIO-MEASUREMENT:` marker the nightly tier
+    keys on, and a body that reads the repository's own files. Cost ranks
+    order the layers for the redundancy report: a case is only ever proposed
+    as redundant to one that is no more expensive (FR-006).
+    """
+    display = case.package in DISPLAY_CRATES and case.kind == "test"
+    if case.package in FRONTENDS:
+        name, rank = "frontend", 3 if display else 2
+    elif case.package in CONTROLLERS:
+        name, rank = "controller", 1
+    else:
+        name, rank = "rule", 0
+    text = path.read_text() if isinstance(path, Path) else ""
+    if case.filtered_out or MEASUREMENT_MARKER in file_header(text) or MEASUREMENT_MARKER in body:
+        name = "measurement"
+    elif _READS_REPO.search(body) and _REPO_PATH.search(body):
+        name = "meta"
+    return name, rank, display

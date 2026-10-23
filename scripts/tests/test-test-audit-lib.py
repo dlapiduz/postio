@@ -93,6 +93,52 @@ def body(c: test_audit.Case) -> str:
 check("braces in strings, chars and comments do not end a body",
       "assert_eq!" in body(case("postio-ffi::ffi_suite", "nested::in_mod_rs")), True)
 
+
+# What a case smells of (R6): each smell, and a near miss that is not one.
+def smells(binary: str, name: str) -> list[str]:
+    c = case(binary, name)
+    path = test_audit.case_file(c, FIXTURE)
+    return sorted(test_audit.smells(body(c), test_audit.parse_refs(path, c.fn_name)))
+
+
+CORE, FFI = "postio-core::core_suite", "postio-ffi::ffi_suite"
+check("a literal against a constant is constant-only", smells(CORE, "rules::the_label_is_fixed"), ["constant-only"])
+check("constant arithmetic and Type::default() are constant-only",
+      smells(CORE, "rules::the_widths_add_up"), ["constant-only"])
+check("a computed value against a constant is not constant-only",
+      smells(CORE, "rules::a_computed_value_meets_a_constant"), [])
+check("only counting mock calls is mock-count-only",
+      smells(CORE, "rules::dispatch_calls_the_backend_once"), ["mock-count-only"])
+check("a count beside an outcome is not mock-count-only",
+      smells(CORE, "rules::dispatch_moves_the_message"), [])
+check("assert!(x.is_ok()) alone is is-ok-only", smells(FFI, "focus_pickers::opening_succeeds"), ["is-ok-only"])
+check("assert!(x.is_some(), msg) alone is is-ok-only",
+      smells(FFI, "focus_pickers::opening_yields_something"), ["is-ok-only"])
+check("is_ok() beside a value assertion is not is-ok-only",
+      smells(FFI, "focus_pickers::opening_returns_the_picker"), [])
+check("an early return after 'skipping' is display-skip",
+      smells("postio-gtk::focus_suite", "pickers::skips_without_a_display"), ["display-skip"])
+check("no ref in the case or its file is untraced", smells(FFI, "nested::in_mod_rs"), ["untraced"])
+check("a call inside an assertion is not constant", smells("postio-storage", "deep::tests::dup"), [])
+
+
+# Which layer a case is in, and what it costs to run (FR-002, data-model Case).
+def layer(binary: str, name: str) -> tuple[str, int, bool]:
+    c = case(binary, name)
+    return test_audit.layer(c, test_audit.case_file(c, FIXTURE), body(c))
+
+
+check("postio-focus is the controller", layer("postio-focus::controller_suite", "pickers::a_number_chooses"),
+      ("controller", 1, False))
+check("postio-ffi is a frontend without a display", layer(FFI, "focus_pickers::opening_succeeds"),
+      ("frontend", 2, False))
+check("a GTK suite is a frontend with a display",
+      layer("postio-gtk::focus_suite", "pickers::s_then_2_snoozes"), ("frontend", 3, True))
+check("a POSTIO-MEASUREMENT file is the measurement tier", layer(CORE, "slow::measures_cost"),
+      ("measurement", 0, False))
+check("a case that reads the repository is meta", layer(CORE, "docs::the_reference_matches"), ("meta", 0, False))
+check("everything else is a rule", layer("postio-storage", "tests::counts_rows"), ("rule", 0, False))
+
 if FAILURES:
     print("\n".join(FAILURES))
     sys.exit(1)
