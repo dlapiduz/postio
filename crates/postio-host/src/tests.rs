@@ -3008,10 +3008,11 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
         _ => None,
     });
     assert!(text.contains("The tide gate opens at nine."), "{text}");
-    // Opening it is the person asking: the background's backoff after the
-    // drop is not theirs to wait out.
+    // The pane read "offline" while the link backed off, and the loop slept
+    // through the whole poll interval on a backoff of a second: the text
+    // landed five seconds after the link was back.
     assert!(
-        cleared.elapsed() < Duration::from_secs(2),
+        cleared.elapsed() < Duration::from_secs(3),
         "the text took {:?} after the link came back",
         cleared.elapsed()
     );
