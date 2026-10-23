@@ -500,7 +500,10 @@ pub fn v_i_imports_a_chosen_file_and_v_x_exports_one() {
             crate::settle_until(async || view.total() == 4
                 && view.cursor().and_then(|at| view.name_at(at)).as_deref() == Some("Zed Quinn"))
             .await,
-            "the cursor is on the first person the import made"
+            "the cursor is on the first person the import made: {} people, cursor {:?} on {:?}",
+            view.total(),
+            view.cursor(),
+            view.cursor().and_then(|at| view.name_at(at))
         );
         window.close_dialogs_for_test();
 
