@@ -3015,7 +3015,9 @@ impl FocusWindow {
                 mailbox, messages, ..
             } => self.announce(*mailbox, messages.clone()),
             // The open message's words landed: drawn in place (#1788).
-            Event::BodyLoaded { message, .. } | Event::BodyFailed { message, .. } => {
+            Event::BodyLoaded { message, .. }
+            | Event::BodyFailed { message, .. }
+            | Event::BodyReachable { message, .. } => {
                 if let Some(reading) = self.reading() {
                     reading.body_landed(*message);
                 }

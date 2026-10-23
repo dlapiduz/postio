@@ -218,6 +218,8 @@ final class Engine {
                 Task { @MainActor in
                     self?.session?.setOffline(offline)
                     self?.vouch()
+                    // The plate said "Offline"; read again, it asks (#1986).
+                    if !offline { self?.messageWindow?.networkReturned() }
                 }
             }
         case let .failure(error):
@@ -1596,7 +1598,8 @@ final class Engine {
             // Read state, mail leaving, the folder tree: the settings
             // window's folders and the strip's counts move with them.
             mailMoved()
-        case let .bodyLoaded(_, message), let .bodyFailed(_, message):
+        case let .bodyLoaded(_, message), let .bodyFailed(_, message),
+             let .bodyReachable(_, message):
             // The open message's words landed (#1788), or will not come
             // (#1918): either way it is read again, in place.
             messageWindow?.bodyLanded(message)

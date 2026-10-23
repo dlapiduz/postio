@@ -432,6 +432,12 @@ public final class MessageWindowModel {
         }
     }
 
+    /// The network came back (#1986): what the window drew as "Offline" is
+    /// read again, and a read with the network up is what asks for the body.
+    public func networkReturned() {
+        if let shown { bodyLanded(shown) }
+    }
+
     /// The body of `message`, drawn out of sight, has its height and has
     /// painted: put it on screen.
     public func bodyDrawn(_ message: Int64) {

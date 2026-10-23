@@ -608,6 +608,15 @@ pub enum UiEvent {
         /// The message whose body will not come.
         message: i64,
     },
+    /// An account's link is back and a window drew this message as not
+    /// downloaded, offline (#1986): read it again, and the read asks for
+    /// the body.
+    BodyReachable {
+        /// The account.
+        account: i64,
+        /// The message to read again.
+        message: i64,
+    },
     /// `[sync] notify` or `[sync] badge` changed while the app ran: read
     /// `notices` again, and repaint the app icon's count.
     ///
@@ -758,6 +767,10 @@ impl From<postio_core::Event> for UiEvent {
                 message: message.into(),
             },
             Event::BodyFailed { account, message } => UiEvent::BodyFailed {
+                account: account.into(),
+                message: message.into(),
+            },
+            Event::BodyReachable { account, message } => UiEvent::BodyReachable {
                 account: account.into(),
                 message: message.into(),
             },

@@ -153,6 +153,16 @@ pub enum Event {
         /// The message whose body will not come.
         message: MessageId,
     },
+    /// An account's link is back, and a pane drew this message as "not
+    /// downloaded, offline" (#1986): read it again, and the read asks for
+    /// the body. Not a refusal: nothing waiting on a fetch should hear it as
+    /// one.
+    BodyReachable {
+        /// The account the message belongs to.
+        account: AccountId,
+        /// The message to read again.
+        message: MessageId,
+    },
     /// The rows Focus's inbox surfaces among its conversations changed: a
     /// digest was delivered or archived, or a reminder fired or stopped
     /// standing (spec 007). Read them again with `surfaced()`.
@@ -462,6 +472,7 @@ mod tests {
             Event::ThreadChanged { account, thread },
             Event::BodyLoaded { account, message },
             Event::BodyFailed { account, message },
+            Event::BodyReachable { account, message },
         ];
         for event in events {
             let json = serde_json::to_string(&event).unwrap();

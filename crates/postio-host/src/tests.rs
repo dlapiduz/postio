@@ -3010,6 +3010,65 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
 }
 
 #[test]
+fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() {
+    // #1986: GTK and the TUI passed `offline = false` and promised
+    // "Downloading" for a fetch the engine could not start; and nothing
+    // asked once the link came back. The account's own state is the input.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, events) = world.frontend(ClientKind::Tui);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    let read = || {
+        world
+            .rt
+            .block_on(client.readings(vec![message], false))
+            .expect("an answer")
+            .pop()
+            .expect("a reading")
+            .body
+    };
+    let say = |state| {
+        world.host().inner.hub.emit(Event::ConnectionChanged {
+            account: world.account,
+            state,
+        });
+    };
+
+    // Said again on each look: the live engine of this world reports its
+    // own, better state now and then.
+    eventually(&world, || {
+        say(postio_core::ConnectionState::Failing {
+            reason: postio_core::FailureReason::Auth,
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        (read() == postio_client::protocol::Body::Offline).then_some(())
+    });
+    assert!(
+        mock.body_fetches().is_empty(),
+        "a down link asks for nothing"
+    );
+
+    say(postio_core::ConnectionState::Online);
+    let heard = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::BodyReachable { message: again, .. } | Event::BodyFailed { message: again, .. }
+                if *again == message
+        )
+    });
+    assert!(
+        matches!(heard, Event::BodyReachable { .. }),
+        "a returning link is not a refusal: {heard:?}"
+    );
+    let text = eventually(&world, || match read() {
+        postio_client::protocol::Body::Ready { body, .. } => body.text,
+        _ => None,
+    });
+    assert!(text.contains("The tide gate opens at nine."), "{text}");
+}
+
+#[test]
 fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
     // #1788: the reader said "Downloading this message" and nothing asked
     // for it. Opening it is the person asking; a repaint is not asking again.
