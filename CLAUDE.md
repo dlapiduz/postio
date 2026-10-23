@@ -141,9 +141,7 @@ cold. Cargo never deletes a superseded artifact, so a tree kept across
 rebases grows by gigabytes: `scripts/target-sweep.py` deletes what no build
 of it uses, and fails if the next build would rebuild anything.
 
-On this project's Macs, `unset RUSTUP_TOOLCHAIN` before cargo (mise exports
-it and it overrides the pin). The Mac app's build loops are in
-`macos/CLAUDE.md`.
+The Mac app's build loops are in `macos/CLAUDE.md`.
 
 ## Say it where it persists
 

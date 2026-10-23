@@ -160,7 +160,7 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **Cargo merges a nested worktree's config with its ancestors'.** Never put a checkout you build under another one: rustflags repeat and the reflinked build cache goes cold (#1818). `scripts/storyboards.sh base` therefore keeps its detached base checkout beside the worktrees, in `.storyboard-base/<worktree name>` (override with `STORYBOARD_BASE_DIR`), not under `target/`.
 
-**`RUSTUP_TOOLCHAIN` overrides `rust-toolchain.toml`, and mise exports it.** The land and test scripts unset it; your shell does not. When the pin moves, move the mise pin too and sweep stale `target/` directories. `fuzz/` pins its own dated nightly; run it through `scripts/fuzz.sh`, which changes into that directory.
+**`RUSTUP_TOOLCHAIN` overrides `rust-toolchain.toml`, and mise exports it.** The land and test scripts unset it, and so does the session-start hook for Claude's shell; a terminal of your own does not. When the pin moves, move the mise pin too and sweep stale `target/` directories. `fuzz/` pins its own dated nightly; run it through `scripts/fuzz.sh`, which changes into that directory.
 
 **`refs/stash` is shared by the whole repository, not kept per worktree.** A stash inside your worktree goes onto every session's stack. Commit work in progress instead.
 

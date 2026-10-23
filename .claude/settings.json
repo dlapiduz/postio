@@ -134,7 +134,7 @@
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)",
       "Bash(gh pr merge --admin:*)",
-      "Bash(gh pr merge:* --admin:*)"
+      "Bash(gh pr merge:* --admin*)"
     ]
   },
   "autoMode": {
