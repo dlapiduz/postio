@@ -25,7 +25,13 @@
 # refuses to run where CI is unset, unless POSTIO_ALLOW_MUTANTS_HERE=1 says
 # this machine is yours. On CI, `.github/workflows/test-audit.yml` runs it.
 #
-#   scripts/test-removal-check.sh <source file>... -- '<binary id> <test name>'...
+#   scripts/test-removal-check.sh [--scope <filterset>] <source file>... -- '<binary id> <test name>'...
+#
+# --scope runs both passes over only the tests that filterset selects -- a
+# parity cluster's own suites, say, instead of all of postio-gtk's at ~4.6 s
+# a case, which no CI job could finish per mutant. It errs one way only: a
+# mutant that only a test outside the scope would catch can make the cases
+# look unique, never make them look removable.
 #
 # Writes target/test-audit/verdict.json. Exit status: 0 safe; 1 not safe;
 # 2 bad arguments, a missing tool, or refused to run here.
@@ -36,11 +42,18 @@ BASELINE=${MUTANTS_BASELINE:-$REPO/docs/mutants-baseline.txt}
 OUT=${TEST_AUDIT_OUT:-$REPO/target/test-audit}
 
 usage() {
-    echo "usage: scripts/test-removal-check.sh <source file>... -- '<binary id> <test name>'..." >&2
+    echo "usage: scripts/test-removal-check.sh [--scope <filterset>] <source file>... -- '<binary id> <test name>'..." >&2
     echo "  e.g. scripts/test-removal-check.sh crates/postio-config/src/keys.rs -- \\" >&2
     echo "         'postio-config keys::mod_token_tests::ctrl_stays_literal_on_both'" >&2
     exit 2
 }
+
+SCOPE=
+if [ "${1:-}" = "--scope" ]; then
+    [ $# -ge 2 ] || usage
+    SCOPE=$2
+    shift 2
+fi
 
 FILES=()
 CASES=()
@@ -82,6 +95,11 @@ for case in "${CASES[@]}"; do
     filter=${filter:+$filter | }$term
 done
 filter="not ($filter)"
+B_ARGS=()
+if [ -n "$SCOPE" ]; then
+    filter="($SCOPE) & $filter"
+    B_ARGS=(--cargo-test-arg=-E "--cargo-test-arg=$SCOPE")
+fi
 
 FILE_ARGS=()
 for file in "${FILES[@]}"; do
@@ -114,7 +132,7 @@ if [ -s "$WORK/new-misses" ]; then
         RE_ARGS+=(--re "$(python3 -c 'import re,sys; f, _, rest = sys.argv[1].partition(":"); d = rest.split(": ", 1)[-1]; print(re.escape(f) + ".*" + re.escape(d))' "$mutant")")
     done < "$WORK/new-misses"
     env -u RUSTUP_TOOLCHAIN cargo mutants --test-tool=nextest --no-shuffle --jobs 1 "${FILE_ARGS[@]}" \
-        --output "$WORK/b" "${RE_ARGS[@]}" || true
+        --output "$WORK/b" "${RE_ARGS[@]}" ${B_ARGS[@]+"${B_ARGS[@]}"} || true
     if [ -f "$WORK/b/mutants.out/caught.txt" ]; then
         sort "$WORK/b/mutants.out/caught.txt" > "$WORK/b-caught"
         comm -12 "$WORK/new-misses" "$WORK/b-caught" > "$WORK/survivors"
@@ -126,13 +144,14 @@ if [ -s "$WORK/new-misses" ]; then
 fi
 
 commit=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)
-python3 - "$OUT/verdict.json" "$WORK/survivors" "$commit" "${#FILES[@]}" "${FILES[@]}" "${CASES[@]}" <<'PY'
+python3 - "$OUT/verdict.json" "$WORK/survivors" "$commit" "$SCOPE" "${#FILES[@]}" "${FILES[@]}" "${CASES[@]}" <<'PY'
 import json, sys
-out, survivors, commit, nfiles = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-files, cases = sys.argv[5 : 5 + nfiles], sys.argv[5 + nfiles :]
+out, survivors, commit, scope, nfiles = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
+files, cases = sys.argv[6 : 6 + nfiles], sys.argv[6 + nfiles :]
 lost = [l for l in open(survivors).read().splitlines() if l]
 json.dump({"cases": cases, "files": files, "new_survivors": lost,
-           "result": "not safe" if lost else "safe", "commit": commit}, open(out, "w"), indent=1)
+           "result": "not safe" if lost else "safe", "commit": commit, "scope": scope or None},
+          open(out, "w"), indent=1)
 PY
 
 count=$(wc -l < "$WORK/survivors" | tr -d ' ')

@@ -44,7 +44,8 @@ for kind in ("missed", "caught"):
 '''
 
 
-def run(tmp: Path, a_missed: list[str], b_caught: list[str], env_extra: dict[str, str] | None = None):
+def run(tmp: Path, a_missed: list[str], b_caught: list[str], env_extra: dict[str, str] | None = None,
+        scope: str | None = None):
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / "cargo"
@@ -67,7 +68,7 @@ def run(tmp: Path, a_missed: list[str], b_caught: list[str], env_extra: dict[str
         **(env_extra or {}),
     }
     result = subprocess.run(
-        ["bash", str(SCRIPT), "crates/postio-config/src/change.rs", "--",
+        ["bash", str(SCRIPT), *(["--scope", scope] if scope else []), "crates/postio-config/src/change.rs", "--",
          "postio-config change::tests::changing_focus_touches_only_focus",
          "postio-config::config_suite schema::focus_filtering_is_on_unless_turned_off"],
         capture_output=True, text=True, env=env,
@@ -118,6 +119,14 @@ with tempfile.TemporaryDirectory() as tmp:
 
     result, _, _ = run(tmp, [], [], {"CI": "", "POSTIO_ALLOW_MUTANTS_HERE": "1"})
     check("POSTIO_ALLOW_MUTANTS_HERE=1 lets it run off CI", result.returncode == 0, result.stdout + result.stderr)
+
+    result, verdict, calls = run(tmp, [CAUGHT_ONLY_WITH], [CAUGHT_ONLY_WITH], scope="test(/^pickers::/)")
+    lines = calls.splitlines()
+    check("--scope narrows Pass A to the cluster, still without the cases",
+          len(lines) == 2 and "(test(/^pickers::/)) & not (" in lines[0], calls)
+    check("--scope narrows Pass B the same way, with the cases",
+          len(lines) == 2 and "-E" in lines[1] and "test(/^pickers::/)" in lines[1], calls)
+    check("the verdict records the scope", verdict.get("scope") == "test(/^pickers::/)", json.dumps(verdict))
 
     bad = subprocess.run(["bash", str(SCRIPT), "crates/x.rs"], capture_output=True, text=True, env={**os.environ, "CI": "true"})
     check("no -- and no cases is a usage error, exit 2", bad.returncode == 2, bad.stdout + bad.stderr)

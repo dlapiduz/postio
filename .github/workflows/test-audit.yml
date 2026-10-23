@@ -38,6 +38,9 @@ on:
       cases:
         description: "removal: the cases to remove, one '<binary id> <test name>' per line"
         default: ""
+      scope:
+        description: "removal: a nextest filterset both passes run within, e.g. a cluster's suites (optional)"
+        default: ""
 
 permissions:
   contents: read
@@ -108,13 +111,16 @@ jobs:
         env:
           FILES: ${{ inputs.files }}
           CASES: ${{ inputs.cases }}
+          SCOPE: ${{ inputs.scope }}
         run: |
           read -r -a files <<< "$FILES"
           cases=()
           while IFS= read -r line; do
             [ -n "$line" ] && cases+=("$line")
           done <<< "$CASES"
-          dbus-run-session -- scripts/test-removal-check.sh "${files[@]}" -- "${cases[@]}"
+          scope=()
+          [ -n "$SCOPE" ] && scope=(--scope "$SCOPE")
+          dbus-run-session -- scripts/test-removal-check.sh "${scope[@]}" "${files[@]}" -- "${cases[@]}"
 
       - name: Keep the reports
         if: always()
