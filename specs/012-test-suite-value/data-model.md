@@ -22,12 +22,13 @@ One test case as the runner lists it.
 
 ## Parity cluster
 
-A spec item cited by cases in three or more distinct layers.
+A spec item cited by cases in three or more suites spanning at least two layers (FR-003).
 
 | Field | Type | Rule |
 |---|---|---|
 | `item` | `spec/item`, e.g. `009/FR-021` | `?/…` items are listed separately, not clustered |
 | `cases_by_layer` | map layer → list of case ids | |
+| `suites` | int | Distinct binaries; at least 3 |
 | `cpu_s` | float | Sum of known durations |
 
 ## Candidate

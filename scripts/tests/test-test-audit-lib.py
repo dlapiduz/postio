@@ -34,7 +34,7 @@ def check(name: str, got: object, want: object) -> None:
 
 cases = test_audit.parse_nextest_list(json.loads((FIXTURE / "nextest-list.json").read_text()), FIXTURE)
 by_id = {c.id: c for c in cases}
-check("one case per listed test", len(cases), 19)
+check("one case per listed test", len(cases), 20)
 
 
 def case(binary: str, name: str) -> test_audit.Case:
@@ -137,6 +137,8 @@ check("a GTK suite is a frontend with a display",
 check("a POSTIO-MEASUREMENT file is the measurement tier", layer(CORE, "slow::measures_cost"),
       ("measurement", 0, False))
 check("a case that reads the repository is meta", layer(CORE, "docs::the_reference_matches"), ("meta", 0, False))
+check("a case that reads the repository through a helper is meta",
+      layer(CORE, "docs::the_reference_is_current_through_a_helper"), ("meta", 0, False))
 check("everything else is a rule", layer("postio-storage", "tests::counts_rows"), ("rule", 0, False))
 
 if FAILURES:

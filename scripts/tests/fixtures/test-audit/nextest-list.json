@@ -1,6 +1,6 @@
 {
  "rust-build-meta": {},
- "test-count": 19,
+ "test-count": 20,
  "rust-suites": {
   "postio-focus::controller_suite": {
    "package-name": "postio-focus",
@@ -192,6 +192,13 @@
      "filter-match": {
       "status": "mismatch",
       "reason": "default-filter"
+     }
+    },
+    "docs::the_reference_is_current_through_a_helper": {
+     "kind": "test",
+     "ignored": false,
+     "filter-match": {
+      "status": "matches"
      }
     }
    }

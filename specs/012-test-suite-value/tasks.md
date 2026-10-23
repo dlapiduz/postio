@@ -70,7 +70,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
 
 **Independent test**: quickstart §1. The row count equals `cargo nextest list -p postio-config`'s count.
 
-- [ ] T007 [US1] Write `scripts/tests/test-test-inventory.py`. It runs the script with `--list-json` and `--junit` pointed at the T002 fixtures (a test-only flag that skips cargo) and asserts:
+- [X] T007 [US1] Write `scripts/tests/test-test-inventory.py`. It runs the script with `--list-json` and `--junit` pointed at the T002 fixtures (a test-only flag that skips cargo) and asserts:
   - the CSV columns and order match data-model **Case**;
   - a case missing from the JUnit file has `duration_s=unknown`;
   - an item cited by controller, ffi and gtk cases is in `summary.json`'s `parity_clusters`;
@@ -78,7 +78,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   - every stdout section ends with a next command (FR-015).
 
   See it fail.
-- [ ] T008 [US1] Implement `scripts/test-inventory.py`:
+- [X] T008 [US1] Implement `scripts/test-inventory.py`:
   - argument parsing per the contract;
   - run `cargo nextest list --message-format json [-p …]` (or read `--list-json`);
   - find the newest `target/nextest/*/junit.xml` unless `--junit` is given;
@@ -86,7 +86,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   - print the human summary.
 
   Until T007 passes.
-- [ ] T009 [US1] Run `scripts/test-inventory.py -p postio-config` in the worktree and check it against quickstart §1's count. Fix the mapping until `ambiguous` is 0 for that crate.
+- [X] T009 [US1] Run `scripts/test-inventory.py -p postio-config` in the worktree and check it against quickstart §1's count. Fix the mapping until `ambiguous` is 0 for that crate.
 - [ ] T010 [US1] Run the inventory on the whole workspace, using JUnit from the newest `full-suite.yml` artifact (`gh run download`) into `target/test-audit/junit.xml`. Record in `specs/012-test-suite-value/research.md` under a new "Measured" heading:
   - cases per layer;
   - CPU-seconds per layer;

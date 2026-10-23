@@ -26,7 +26,7 @@ scripts/test-inventory.py [-p <crate>]... [--junit <path>] [--out <dir>]
 | Code | Meaning |
 |---|---|
 | 0 | Written |
-| 1 | `cases.csv` row count ≠ the runner's case count. This is a bug in the mapping; the message names the first missing id |
+| 1 | `cases.csv` row count ≠ the runner's `test-count`. This is a bug in the parsing; the message gives both numbers |
 | 2 | Bad arguments or no runner |
 
 ## Guarantees

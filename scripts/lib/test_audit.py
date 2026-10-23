@@ -11,6 +11,7 @@ their harnesses answer `--list` the way libtest does.
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -379,6 +380,25 @@ def layer(case: Case, path: Path | str, body: str) -> tuple[str, int, bool]:
     text = path.read_text() if isinstance(path, Path) else ""
     if case.filtered_out or MEASUREMENT_MARKER in file_header(text) or MEASUREMENT_MARKER in body:
         name = "measurement"
-    elif _READS_REPO.search(body) and _REPO_PATH.search(body):
+    elif _reads_repo(body) or any(re.search(rf"\b{h}\s*\(", body) for h in _repo_helpers(text)):
         name = "meta"
     return name, rank, display
+
+
+def _reads_repo(body: str) -> bool:
+    return bool(_READS_REPO.search(body) and _REPO_PATH.search(body))
+
+
+@functools.lru_cache(maxsize=256)
+def _repo_helpers(text: str) -> list[str]:
+    """The functions in a file whose own bodies read the repository: one level deep."""
+    if not _READS_REPO.search(text):
+        return []
+    names = re.findall(r"^[ \t]*(?:pub(?:\([^)]*\))?\s+)?fn\s+(\w+)", text, re.M)
+    helpers = []
+    for name in names:
+        found = _fn_at(text, name)
+        i = text.find("{", found.end()) if found else -1
+        if i >= 0 and _reads_repo(text[i : _matching(text, i, "{", "}")]):
+            helpers.append(name)
+    return helpers
