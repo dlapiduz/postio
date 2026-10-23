@@ -361,6 +361,13 @@ class FakeWorktree:
         except (OSError, ValueError, KeyError):
             return ""
 
+    def since(self) -> float:
+        try:
+            with open(self.stamp, encoding="utf-8") as fh:
+                return float(_json.load(fh).get("since") or 0.0)
+        except (OSError, ValueError):
+            return 0.0
+
     def backdate(self, seconds: float) -> None:
         with open(self.stamp, encoding="utf-8") as fh:
             record = _json.load(fh)
@@ -419,6 +426,20 @@ with tempfile.TemporaryDirectory(
     failures += not ok
     claims += 1
     print(f"  {'ok  ' if ok else 'FAIL'} stamp names the session -> {mine.holder()!r}")
+
+    # And says since when, which a refresh keeps: it is how the Stop hook
+    # tells this session's loose work from what was there before it came.
+    adopted_at = mine.since()
+    ok = abs(adopted_at - _time.time()) < 60
+    failures += not ok
+    claims += 1
+    print(f"  {'ok  ' if ok else 'FAIL'} stamp says since when -> {adopted_at!r}")
+    mine.backdate(2 * 60)
+    decide("cargo test -p postio-core", cwd=mine.root, session="alpha")
+    ok = mine.since() == adopted_at
+    failures += not ok
+    claims += 1
+    print(f"  {'ok  ' if ok else 'FAIL'} a refresh keeps since -> {mine.since()!r}")
 
     # And the owner keeps it, including the destructive commands a worktree is
     # exempt from in the first place.
@@ -520,6 +541,10 @@ with tempfile.TemporaryDirectory(
     failures += not ok
     claims += 1
     print(f"  {'ok  ' if ok else 'FAIL'} and passes to whoever took it -> {mine.holder()!r}")
+    ok = mine.since() > adopted_at
+    failures += not ok
+    claims += 1
+    print(f"  {'ok  ' if ok else 'FAIL'} whose since starts when it took it -> {mine.since()!r}")
 
     # ...but not while the owner is merely being patient. A session waiting on
     # a backgrounded `issue-land.sh --full` runs no commands for twenty
