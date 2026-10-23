@@ -916,18 +916,26 @@ jobs:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo test --workspace --doc
 
-      # #1126: this job used to drop its own ~20 crates' artifacts here and
-      # keep only the ~400 third-party ones, because a fresh checkout's
-      # mtimes invalidated ours anyway and caching them bought nothing but
-      # upload/download bytes. "Restore mtimes from commit history" above is
-      # what removed that reason -- an unchanged crate's artifacts are
-      # genuinely reusable now, so the cache keeps them, and the reused
-      # `.fingerprint`/`deps` entries are what turns an 11-12 minute rebuild
-      # into a one-crate one. See `scripts/restore-mtimes.py`'s own doc for
-      # the property this depends on (`actions/cache` preserving mtimes
-      # through extraction) and what silently breaks if that ever stops
-      # being true.
+      # The workspace's own artifacts are dropped before the save, and the
+      # ~400 third-party crates are what the cache keeps. #1126 kept ours,
+      # on the argument that "Restore mtimes from commit history" above made
+      # an unchanged crate's artifacts reusable. It does, for as long as the
+      # cache is fresh -- and it is not: `actions/cache` cannot overwrite a
+      # key, so this cache is re-saved only when Cargo.lock or a profile
+      # changes, and within hours every merge to `main` has touched some
+      # crate whose dependants then rebuild. Measured on #2004, a pull
+      # request that changed no Rust at all: an exact cache hit, and all 46
+      # workspace units compiled anyway, 110 s. Keeping them bought nothing
+      # and cost 1.7 GB of the repository's 10 GB cache quota (4.6 GB of
+      # which this one cache was), which is what kept evicting the macOS
+      # cache, and 155 s of restore against ~90.
       #
+      # `scripts/lib/drop-workspace-artifacts.sh` is the one copy of what
+      # "ours" means; clippy and rustdoc above call the same script.
+      - name: Drop workspace artifacts before caching
+        if: always()
+        run: scripts/ci-drop-workspace-artifacts.sh
+
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache
         if: ${{ !cancelled() }}
