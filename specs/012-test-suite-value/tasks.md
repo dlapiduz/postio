@@ -16,8 +16,8 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Create `scripts/lib/test_audit.py` with an empty module docstring that names its three consumers: `test-inventory.py`, `test-coverage-sets.py` and `check-assertion-smells.py`. Add `target/test-audit/` to nothing. It is already under the ignored `target/`; confirm with `git check-ignore target/test-audit/x`.
-- [ ] T002 [P] Create a fixture workspace for the self-tests at `scripts/tests/fixtures/test-audit/`:
+- [X] T001 Create `scripts/lib/test_audit.py` with an empty module docstring that names its three consumers: `test-inventory.py`, `test-coverage-sets.py` and `check-assertion-smells.py`. Add `target/test-audit/` to nothing. It is already under the ignored `target/`; confirm with `git check-ignore target/test-audit/x`.
+- [X] T002 [P] Create a fixture workspace for the self-tests at `scripts/tests/fixtures/test-audit/`:
   - a two-crate cargo-free tree of `.rs` files: a `tests/<x>_suite/main.rs` with `mod` lines, one unit-test module, and one harness-free `CASES` table;
   - a recorded `nextest-list.json` and `junit.xml` that match it.
 
@@ -29,7 +29,7 @@
 
 The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as the spec.
 
-- [ ] T003 Write `scripts/tests/test-test-audit-lib.py` against the T002 fixture. It asserts:
+- [X] T003 Write `scripts/tests/test-test-audit-lib.py` against the T002 fixture. It asserts:
   - a suite case maps to `tests/<suite>/<mod>.rs`;
   - a `mod.rs` module maps to its file;
   - a unit case maps to `src/<path>.rs`;
@@ -40,7 +40,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   - `#1234` is kept.
 
   See it fail, because the module is empty.
-- [ ] T004 Implement `parse_nextest_list(json) -> list[Case]`, `case_file(case, root)`, `parse_refs(path, fn_name)` and `fn_body(path, fn_name)` (brace-matched) in `scripts/lib/test_audit.py` until T003 passes.
+- [X] T004 Implement `parse_nextest_list(json) -> list[Case]`, `case_file(case, root)`, `parse_refs(path, fn_name)` and `fn_body(path, fn_name)` (brace-matched) in `scripts/lib/test_audit.py` until T003 passes.
 - [ ] T005 Extend T003 with the smell cases, red first:
   - `constant-only`;
   - `is-ok-only` (`assert!(x.is_ok())` alone; `.is_some()` alone);
