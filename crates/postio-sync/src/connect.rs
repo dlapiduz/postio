@@ -367,6 +367,23 @@ impl Supervisor {
         Some(self.fail(now, entropy_from(now)))
     }
 
+    /// Collapses a reconnection backoff because the person has just asked for
+    /// something that needs the link: opening a message whose body was lost
+    /// to the drop (#1985).
+    ///
+    /// The wait exists to keep a failing link from being hammered by the
+    /// engine's own loop, not to make a person sit through it. Spends no
+    /// attempt, so a link that is still down fails again and backs off from
+    /// where it was. A link that is online, parked [`Link::Offline`] by the
+    /// operating system, or [`Link::Blocked`] on a credential is left alone:
+    /// asking changes none of those.
+    pub fn try_now(&mut self, now: DateTime<Utc>) -> Option<Link> {
+        match self.link {
+            Link::Waiting { retry_at, .. } if retry_at > now => self.retry_at(now),
+            _ => None,
+        }
+    }
+
     /// Clears a [`Link::Blocked`] so the supervisor will try again.
     ///
     /// What "the user typed a new password" means. The attempt count goes with
@@ -649,6 +666,37 @@ mod tests {
         );
         assert!(!Link::Offline.recovers_on_its_own());
         assert!(!Link::Blocked(Blocker::Authentication("no".into())).recovers_on_its_own());
+    }
+
+    #[test]
+    fn asking_for_something_collapses_a_backoff_but_nothing_else() {
+        // #1985: opening a message after the link is back must not wait out
+        // the delay a dropped fetch earned.
+        let mut state = Supervisor::new(ReconnectPolicy::default());
+        state.attempts = 3;
+        state.link = Link::Waiting {
+            attempts: 3,
+            retry_at: at(30),
+        };
+
+        let moved = state.try_now(at(2));
+
+        assert_eq!(
+            moved,
+            Some(Link::Waiting {
+                attempts: 3,
+                retry_at: at(2)
+            }),
+            "due now, and the attempts kept so a failure backs off further"
+        );
+        assert_eq!(state.try_now(at(2)), None, "already due: nothing to move");
+
+        state.link = Link::Offline;
+        assert_eq!(state.try_now(at(3)), None, "the network is not ours to ask");
+        state.link = Link::Online { since: at(0) };
+        assert_eq!(state.try_now(at(3)), None);
+        state.link = Link::Blocked(Blocker::Authentication("no".into()));
+        assert_eq!(state.try_now(at(3)), None, "a wrong password stays wrong");
     }
 
     #[test]

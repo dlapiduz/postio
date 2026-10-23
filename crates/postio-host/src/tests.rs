@@ -3001,12 +3001,20 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
         |event| matches!(event, Event::BodyFailed { message: failed, .. } if *failed == message),
     );
     mock.clear_faults();
+    let cleared = std::time::Instant::now();
 
     let text = eventually(&world, || match read() {
         postio_client::protocol::Body::Ready { body, .. } => body.text,
         _ => None,
     });
     assert!(text.contains("The tide gate opens at nine."), "{text}");
+    // Opening it is the person asking: the background's backoff after the
+    // drop is not theirs to wait out.
+    assert!(
+        cleared.elapsed() < Duration::from_secs(2),
+        "the text took {:?} after the link came back",
+        cleared.elapsed()
+    );
 }
 
 #[test]

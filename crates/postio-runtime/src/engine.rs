@@ -2629,6 +2629,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             let _ = reply.send(outcome);
         }
         Job::RequestBody { message, reply } => {
+            reconnect_for_a_request(parts, state).await;
             let outcome = match store.connect_background().await {
                 Ok(connection) => backfill::request_body(&connection, &mut state.backfill, message)
                     .await
@@ -2645,6 +2646,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             parts: sections,
             reply,
         } => {
+            reconnect_for_a_request(parts, state).await;
             let outcome = match store.connect_background().await {
                 Ok(connection) => {
                     backfill::request_payloads(&connection, &mut state.backfill, message, &sections)
@@ -4259,6 +4261,28 @@ fn connection_of(status: &SyncStatus) -> postio_core::ConnectionState {
             },
         },
     }
+}
+
+/// Tries the link now, if it is only backing off, because the person has just
+/// asked for something that needs it (#1985).
+///
+/// Opening a message whose body was lost to a dropped link is asking again,
+/// and the reconnection backoff is for the engine's own loop, not for them:
+/// without this the request sat queued until the next
+/// [`POLL_INTERVAL`] tick found the link due. A link that is still down fails
+/// the attempt and backs off from where it was.
+async fn reconnect_for_a_request(parts: &EngineParts, state: &mut State) {
+    if state.supervisor.link().is_online() {
+        return;
+    }
+    let now = Utc::now();
+    let collapsed = state.supervisor.try_now(now);
+    announce_link(parts, state, collapsed);
+    let moved = state
+        .supervisor
+        .poll(parts.backend.as_ref(), now, entropy())
+        .await;
+    announce_link(parts, state, moved);
 }
 
 /// Turn a link transition into what the status line shows.
