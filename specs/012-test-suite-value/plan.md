@@ -138,10 +138,10 @@ crates/*/tests/**                        # the cleanup batches (US4)
 
 These map to the spec's user stories. `tasks.md` splits them further.
 
-1. **US1, the inventory.** It first runs on `postio-config` and is checked against `nextest list`. Then it runs on the whole workspace, and its parity-cluster summary and CPU estimate replace SC-003's assumed 20% (spec Assumptions).
+1. **US1, the inventory.** It first runs on `postio-config` and is checked against `nextest list`. Then it runs on the whole workspace, and its parity-cluster summary orders the batches.
 2. **US2, coverage sets.** This adds the nextest profile and wrapper. It is proven on `postio-config` with a planted duplicate, then run on the coverage-floor crates on CI.
 3. **US3, the removal check.** It is proven on a unique case (red, naming the mutant) and on a planted duplicate (green).
-4. **ADR 0049 and the CLAUDE.md pointer.** These land before any parity batch, so the batches cite a rule.
+4. **ADR 0049 and the CLAUDE.md pointer.** These are written with the plan, so every batch cites a rule.
 5. **US4, the batches, in the spec's order.** Each batch is one commit with its proof in the body, and the PR body carries the totals:
    1. mechanical (helpers, the registry-derived key lists, display-free cases out of the GTK binary, `purity.rs`);
    2. smells;

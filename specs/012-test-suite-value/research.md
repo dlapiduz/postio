@@ -107,5 +107,4 @@ Each entry gives the decision, why, and what was rejected. Facts were checked on
 
 ## Open items that do not block planning
 
-- The real CPU-minutes estimate for SC-003 comes from the US1 run on JUnit from the latest `full-suite.yml` artifact, recorded in this file when known.
 - Whether to include `postio-storage` in the first coverage-sets run: it is the largest suite (96 test files), so its per-case export time decides. It is measured in US2.

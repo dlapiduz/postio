@@ -37,5 +37,4 @@
    spec names *what* each tool decides; how it measures (coverage
    instrumentation, mutation engine, runner output format) is left to
    `plan.md`.
-2. SC-003's 20% is an assumption to be replaced by the inventory's estimate
-   before the first cleanup batch.
+2. SC-003 has no numeric target, by the maintainer's decision of 2026-10-23.

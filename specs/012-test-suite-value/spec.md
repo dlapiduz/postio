@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-23
 
-**Status**: Draft
+**Status**: Draft. The maintainer decided on 2026-10-23 that the layer rule is an ADR (0049) and that there is no CPU target
 
 **Input**: The maintainer said: "I have a lot of tests in this repo, and it is hard to tell whether they are duplicates or whether they are valuable." They asked for a framework and a process that simplifies or reduces the suite while keeping its quality.
 
@@ -236,7 +236,7 @@ Once a surface is cleaned, a repository check refuses a change that grows that f
 
 - **SC-001**: The whole-suite inventory, including its parity-cluster summary, comes from one command, with a row count equal to the runner's case count.
 - **SC-002**: Every case removed under this feature has a recorded "no new survivor" verdict. Zero removals happen without one.
-- **SC-003**: The merge-path suite's CPU-minutes fall by at least 20% from the 2026-10-22 baseline of 127, with the mutants baseline not growing.
+- **SC-003**: The mutants baseline never grows as a result of a removal, and every batch reports cases and CPU-seconds before and after. There is no numeric reduction target (maintainer, 2026-10-23): the suite gets smaller by exactly what is proven redundant, and no more.
 - **SC-004**: No helper on the inventory's copy list is defined in more than one test file.
 - **SC-005**: After cleanup, every parity cluster has its branch cases in exactly one layer.
 - **SC-006**: Every coverage floor holds at every step.
@@ -244,7 +244,6 @@ Once a surface is cleaned, a repository check refuses a change that grows that f
 
 ## Assumptions
 
-- The 20% figure in SC-003 is a target set from the sample, not a measurement. The inventory replaces it with a real estimate before any batch lands. If the estimate is far off, this spec is revised; the target is not forced.
 - Per-case coverage relies on the runner giving each case its own process, which the workspace's runner already does.
 - Mutation runs go on CI or a machine of their own, never the shared workstation (`scripts/mutants.sh` records why).
 - GTK suites are judged by parity clusters and US3 on their glue files. Per-case coverage of display binaries is a stretch goal, not a requirement.
