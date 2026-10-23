@@ -1,0 +1,83 @@
+5	branch	crates/postio-ffi/tests/ffi_suite/config.rs	config::a_command_nobody_has_heard_of_has_no_binding	crates/postio-ffi/src/session.rs	twin partly core config warning
+5	merge	crates/postio-ffi/tests/ffi_suite/config.rs	config::an_override_wins_over_the_built_in	crates/postio-ffi/src/session.rs	partner a_mod_override_reaches_swift
+5	merge	crates/postio-ffi/tests/ffi_suite/config.rs	config::the_token_never_crosses_to_swift	crates/postio-ffi/src/session.rs	partner a_mod_override_reaches_swift
+5	merge	crates/postio-ffi/tests/ffi_suite/config.rs	config::a_file_that_says_nothing_leaves_the_built_in_sync_defaults_standing	crates/postio-ffi/src/session.rs	partner a_non_default_sync_section
+5	misplaced	crates/postio-ffi/tests/ffi_suite/config.rs	config::starting_the_log_seeds_a_config_file_when_there_is_none	-	pure postio-config rule
+5	misplaced	crates/postio-ffi/tests/ffi_suite/config.rs	config::seeding_never_touches_a_file_that_is_already_there	-	pure postio-config rule
+5	merge	crates/postio-ffi/tests/ffi_suite/reachability.rs	reachability::nothing_is_nudged_when_the_state_did_not_change	crates/postio-ffi/src/session.rs	table with transitions
+5	merge	crates/postio-ffi/tests/ffi_suite/reachability.rs	reachability::going_offline_is_never_a_nudge	crates/postio-ffi/src/session.rs	table with transitions
+5	branch	crates/postio-ffi/tests/ffi_suite/contact_popover.rs	contact_popover::nobody_at_that_address_draws_nothing	crates/postio-ffi/src/focus_contacts.rs	twin controller nobody_at_that_address_means_no_popover
+5	unsure	crates/postio-gtk/tests/focus_suite/treatments.rs	treatments::a_treatment_chosen_for_one_address_reaches_the_persons_other_address	crates/postio-gtk/src/open.rs	contact join
+5	misplaced	crates/postio-widgets/src/reader/view.rs	reader::view::tests::remote_image_urls_are_images_and_styles_never_links	-	pure rule in widgets
+3	unsure	crates/postio-gtk/tests/focus_suite/selection.rs	selection::archive_hands_the_cursor_to_the_row_below	crates/postio-gtk/src/list	widget seam #1746
+3	branch	crates/postio-gtk/tests/focus_suite/selection.rs	selection::x_after_a_select_all_takes_that_row_out_of_it	crates/postio-gtk/src/bulk.rs	twin core deselecting_inside_select_all
+3	branch	crates/postio-gtk/tests/focus_suite/undo.rs	undo::an_undo_puts_the_cursor_on_the_row_it_brought_back	crates/postio-gtk/src/window.rs	twin controller same name; vadjustment GTK-only
+3	unsure	crates/postio-ffi/tests/ffi_suite/focus_bar.rs	focus_bar::tab_with_no_bar_is_not_used	crates/postio-ffi/src/focus_bar.rs	only FFI caller of focus_bar_tab
+3	branch	crates/postio-tui/src/app/find.rs	app::find::tests::the_field_says_when_there_are_no_matches_and_marks_nothing	crates/postio-tui/src/app/find.rs	twin postio-ui count_label
+3	merge	crates/postio-tui/src/app/find.rs	app::find::tests::backspace_edits_the_query_and_the_matches_follow	crates/postio-tui/src/app/find.rs	partner no-matches case
+6	unsure	crates/postio-gtk/tests/focus_suite/compose.rs	compose::a_reply_nobody_wrote_in_is_discarded_on_esc_and_one_with_words_is_kept	crates/postio-gtk/src/compose/mod.rs	discard half is controller branch
+6	fold	crates/postio-gtk/tests/focus_suite/compose.rs	compose::a_reply_to_a_message_still_downloading_says_it_is_not_quoted	crates/postio-gtk/src/compose/seams.rs	fold into reply_all first case
+6	branch	crates/postio-gtk/tests/focus_suite/cursor.rs	cursor::a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row	crates/postio-gtk/src/list/pane.rs	fold into places.rs; twin controller a_list_that_lands_opens_on_its_first_row
+6	branch	crates/postio-ffi/tests/ffi_suite/focus_compose.rs	focus_compose::with_no_account_c_offers_to_add_one	crates/postio-ffi/src/focus_compose.rs	twin controller with_no_account_to_write_from_c_offers_add_account
+6	misplaced	crates/postio-ffi/tests/ffi_suite/focus_compose.rs	focus_compose::the_autosave_waits_what_the_widgets_composer_waited	-	asserts a postio_focus constant
+6	branch	crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs	focus_surfaces::a_message_link_names_its_message_and_nothing_else_does	crates/postio-ffi/src/links.rs	check postio-ui links parse tests
+6	unsure	crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs	focus_surfaces::a_resized_message_window_s_column_follows_its_width	crates/postio-ffi/src/focus_surfaces.rs	only caller of wrapper
+6	unsure	crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs	focus_surfaces::the_digest_window_is_the_message_window_s_width_and_column	crates/postio-ffi/src/focus_surfaces.rs	only caller of wrapper
+6	branch	crates/postio-ffi/tests/ffi_suite/focus_keymap.rs	focus_keymap::closing_the_key_map_by_its_keys_gives_the_keyboard_back	crates/postio-ffi/src/focus_keymap.rs	Mac regression guard; twin controller same
+2	branch	crates/postio-gtk/tests/focus_suite/bar.rs	bar::a_sentence_names_its_sender_from_the_address_book	crates/postio-gtk/src/bar.rs	chips path kept by tab_steps_into_the_chips
+2	merge	crates/postio-gtk/tests/focus_suite/bar.rs	bar::a_word_no_command_is_named_by_searches_first	crates/postio-gtk/src/bar.rs	partner a_plain_word_searches_as_it_is_typed
+2	unsure	crates/postio-gtk/tests/focus_suite/bar.rs	bar::half_typed_operators_show_no_error_and_results_keep_updating	crates/postio-gtk/src/bar.rs	no-error wording no twin
+2	branch	crates/postio-gtk/tests/focus_suite/pickers.rs	pickers::l_offers_the_labels_of_the_row_s_own_account	crates/postio-gtk/src/label_picker.rs	glue picks account at label_picker.rs:134
+2	merge	crates/postio-gtk/tests/focus_suite/drafts.rs	drafts::a_draft_the_terminal_kept_opens_in_focus	crates/postio-gtk/src/compose/mod.rs	partner g_t_lists_drafts_and_enter
+2	merge	crates/postio-ffi/tests/ffi_suite/mailboxes.rs	mailboxes::a_folder_carries_the_counts_the_sidebar_draws	crates/postio-ffi/src/mailbox.rs	weak assertion
+2	merge	crates/postio-ffi/tests/ffi_suite/mailboxes.rs	mailboxes::a_session_with_no_account_has_no_folders	crates/postio-ffi/src/mailbox.rs	table row
+2	merge	crates/postio-ffi/tests/ffi_suite/mailboxes.rs	mailboxes::a_view_row_carries_the_count_its_badge_needs	crates/postio-ffi/src/mailbox.rs	partner view_rows_cross
+2	merge	crates/postio-ffi/tests/ffi_suite/mailboxes.rs	mailboxes::the_folder_tree_crosses	crates/postio-ffi/src/mailbox.rs	implied by role case
+2	merge	crates/postio-ffi/tests/ffi_suite/mailboxes.rs	mailboxes::the_hierarchy_survives_the_crossing	crates/postio-ffi/src/mailbox.rs	vacuous loop
+2	branch	crates/postio-ffi/tests/ffi_suite/mailboxes.rs	mailboxes::the_sidebar_gets_the_inbox_first_and_one_row_per_role	crates/postio-ffi/src/mailbox.rs	twin postio-ui sidebar; #1155
+4	merge	crates/postio-gtk/tests/focus_suite/state.rs	state::offline_an_archive_takes_effect_at_once_and_queues	crates/postio-gtk/src/banner.rs	partner offline_a_label_shows
+4	merge	crates/postio-gtk/tests/focus_suite/state.rs	state::during_a_first_sync_what_has_arrived_is_listed	crates/postio-gtk/src/banner.rs	partner opens_and_is_found; strip count moves
+4	merge	crates/postio-gtk/tests/focus_suite/state.rs	state::a_failing_banner_says_the_syncs_own_reason	crates/postio-gtk/src/banner.rs	partner a_failing_account_is_named
+4	merge	crates/postio-gtk/tests/focus_suite/capture.rs	capture::n_on_an_open_message_opens_the_note_sheet	crates/postio-gtk/src/capture.rs	partner t_on_an_open_message
+4	branch	crates/postio-ffi/tests/ffi_suite/keys.rs	keys::an_unbound_key_is_left_for_the_frontend_to_pass_on	crates/postio-ffi/src/keys.rs	twin ui an_unbound_key_is_left_for_the_widget
+4	merge	crates/postio-ffi/tests/ffi_suite/keys.rs	keys::the_primary_modifier_is_this_platform_s	crates/postio-ffi/src/keys.rs	partner a_bound_key_answers
+4	merge	crates/postio-ffi/tests/ffi_suite/keys.rs	keys::a_named_key_is_named_rather_than_charactered	crates/postio-ffi/src/keys.rs	partner a_bound_key_answers
+4	merge	crates/postio-ffi/tests/ffi_suite/keys.rs	keys::a_key_with_neither_a_character_nor_a_name_is_unhandled	crates/postio-ffi/src/keys.rs	partner unbound
+4	merge	crates/postio-ffi/tests/ffi_suite/keys.rs	keys::slash_opens_search_from_the_list	crates/postio-ffi/src/keys.rs	partner a_bound_key_answers
+4	merge	crates/postio-ffi/tests/ffi_suite/keys.rs	keys::slash_is_refused_while_a_field_has_the_keyboard	crates/postio-ffi/src/keys.rs	partner typing_wins
+4	branch	crates/postio-ffi/tests/ffi_suite/thread_document.rs	thread_document::each_message_offers_its_own_verbs	crates/postio-ffi/src/conversation.rs	twin ui thread each_verb_scheme
+4	branch	crates/postio-ffi/tests/ffi_suite/thread_document.rs	thread_document::the_newest_message_says_its_body_is_still_coming	crates/postio-ffi/src/conversation.rs	twin ui thread
+4	merge	crates/postio-ffi/tests/ffi_suite/thread_document.rs	thread_document::the_users_own_message_is_marked_as_theirs	crates/postio-ffi/src/conversation.rs	partner main
+4	unsure	crates/postio-ffi/tests/ffi_suite/thread_document.rs	thread_document::a_thread_nobody_can_read_is_an_empty_document	crates/postio-ffi/src/conversation.rs	no twin
+4	merge	crates/postio-ffi/tests/ffi_suite/thread_document.rs	thread_document::a_verb_link_names_its_verb_and_its_message	crates/postio-ffi/src/conversation.rs	partner document_scripts
+4	merge	crates/postio-ffi/tests/ffi_suite/thread_document.rs	thread_document::each_anchor_carries_the_sender_the_show_link_would_allow	crates/postio-ffi/src/conversation.rs	partner main
+4	merge	crates/postio-ffi/tests/ffi_suite/thread_document.rs	thread_document::the_document_scripts_are_the_shared_ones	crates/postio-ffi/src/conversation.rs	partner verb_link
+4	branch	crates/postio-ffi/tests/ffi_suite/thread_document.rs	thread_document::the_header_says_what_each_verb_will_act_on	crates/postio-ffi/src/conversation.rs	only conversation_actions crossing
+4	unsure	crates/postio-ffi/tests/ffi_suite/focus_pickers.rs	focus_pickers::in_an_empty_filter_a_digit_or_space_is_the_pickers_and_otherwise_typing	crates/postio-ffi/src/focus_pickers.rs	rule owner unclear
+4	misplaced	crates/postio-gtk/tests/packaging.rs	postio_handles_mailto_and_postio_links	-	reads data file
+1	unsure	crates/postio-ffi/tests/ffi_suite/focus_search.rs	focus_search::a_top_hit_matched_in_its_body_shows_the_bodys_passage_marked	crates/postio-ffi/src/focus_search.rs	real-engine passage rules
+1	merge	crates/postio-ffi/tests/ffi_suite/focus_search.rs	focus_search::a_results_label_pill_carries_the_labels_colour	crates/postio-ffi/src/focus_search.rs	partner a_top_hit_matched
+1	branch	crates/postio-ffi/tests/ffi_suite/focus_search.rs	focus_search::a_popover_reopened_with_its_field_applied_still_lists_everyone	crates/postio-ffi/src/focus_search.rs	twin controller results D27
+1	branch	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_reply_to_all_keeps_the_others_and_leaves_me_out	crates/postio-ffi/src/compose.rs	twin model reply.rs
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::saving_the_same_draft_twice_updates_it_rather_than_writing_a_second_row	crates/postio-ffi/src/compose.rs	partner saving_a_draft
+1	branch	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::the_footer_says_where_the_draft_lives_and_what_will_be_sent	crates/postio-ffi/src/compose.rs	twin ui outgoing_shape
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_file_that_is_not_there_is_refused_and_the_draft_is_untouched	crates/postio-ffi/src/compose.rs	partner attaching
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_file_that_is_not_an_image_is_refused_and_the_draft_is_untouched	crates/postio-ffi/src/compose.rs	partner inserting_an_image
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::an_empty_edit_is_refused_and_the_draft_keeps_its_words	crates/postio-ffi/src/compose.rs	partner what_the_other_editor_wrote
+1	branch	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_rich_body_is_stored_as_the_dialect_not_as_whatever_was_typed	crates/postio-ffi/src/compose.rs	twin body document
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::turning_rich_off_stops_building_html_without_throwing_the_words_away	crates/postio-ffi/src/compose.rs	partner rich_draft_keeps_marks
+1	branch	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_rich_draft_reports_the_shape_it_will_actually_leave_as	crates/postio-ffi/src/compose.rs	twin ui outgoing_shape
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_rich_draft_always_carries_a_plain_alternative_of_its_own_words	crates/postio-ffi/src/compose.rs	partner rich_draft_keeps_marks
+1	branch	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_paste_says_what_the_dialect_could_not_hold	crates/postio-ffi/src/compose.rs	twin body narrow
+1	branch	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_paste_the_dialect_holds_whole_says_nothing_at_all	crates/postio-ffi/src/compose.rs	twin body narrow same name
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_draft_sent_as_plain_puts_no_html_on_the_wire_even_while_it_keeps_its_marks	crates/postio-ffi/src/compose.rs	partner sent_as_rich
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::writing_rich_and_switching_to_plain_sends_the_words_rather_than_nothing	crates/postio-ffi/src/compose.rs	partner sent_as_rich
+1	unsure	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::plain_text_turned_rich_is_a_document_of_the_same_words	crates/postio-ffi/src/compose.rs	body conversion no twin
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::switching_the_other_way_keeps_the_words_too	crates/postio-ffi/src/compose.rs	partner sent_as_rich
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_bare_mailto_opens_an_empty_draft_rather_than_refusing	crates/postio-ffi/src/compose.rs	partner mailto
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_mailto_with_no_account_to_write_from_answers_none	crates/postio-ffi/src/compose.rs	partner mailto
+1	subsumed	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_plain_text_message_is_still_quoted_from_its_own_text	crates/postio-ffi/src/compose.rs	identical to a_reply_goes_to_the_sender
+1	branch	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_reply_all_to_a_list_does_not_look_like_a_reply	crates/postio-ffi/src/compose.rs	twin ui recipient_summary
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_scheduled_send_is_refused_now_rather_than_at_the_hour	crates/postio-ffi/src/compose.rs	partner nobody_to_send_to
+1	merge	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::an_hour_already_gone_is_not_a_schedule	crates/postio-ffi/src/compose.rs	partner scheduled_send
+1	branch	crates/postio-ffi/tests/ffi_suite/compose.rs	compose::a_replys_quote_folds_and_says_what_it_holds	crates/postio-ffi/src/compose.rs	twin ui fold

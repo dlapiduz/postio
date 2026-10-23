@@ -197,3 +197,35 @@ Run 39975019031 on `test-audit.yml`, at c404f8f, with durations from the same jo
   - Largest by cases above the cheapest layer: `010/US2` (73), `surface:compose` (64), `surface:bar` (22), `surface:contacts` (22).
 - **Smells:** `display-skip` 108 (the widgets suite's inline checks, left to `display_required` per R8). `is-ok-only` 30, `constant-only` 8, `mock-count-only` 6 (before the detector fix). `untraced` 4,049. `ambiguous` 35.
 - **Read case by case, a cluster is mostly composition.** In `surface:pickers`, each of the six GTK cases and six FFI cases drives a different picker a person opens (`s`, `h`, `l`, `m`, Escape), which ADR 0049 keeps. `focus_suite` costs about 4.6 s a case in window and fixture setup. That cost is not duplication, and this spec's rubric does not reduce it.
+
+### 2026-10-23: the parity review, case by case (T030–T032)
+
+Every frontend case in a parity cluster was read against its controller, rule and other-frontend twins under ADR 0049: 288 cases in 53 files.
+
+**Verdicts:**
+
+| Verdict | Cases | Meaning |
+|---|---|---|
+| keep | 205 | A path a person takes on that platform that no other case in the same suite drives |
+| merge | 40 | The same path as a sibling with different data |
+| branch | 25 | Re-asserts a rule or controller branch while a sibling keeps the path |
+| unsure | 11 | Left to the removal check |
+| misplaced | 5 | A rule sitting in a frontend suite |
+| subsumed | 1 | Identical to a sibling |
+| fold | 1 | One assertion to move into a sibling |
+
+The 83 that are not kept are listed in `parity-review.tsv` (group, verdict, file, case, glue, note).
+
+**Where they are:**
+- **63 in `postio-ffi`**, at about 0.25 s a case.
+- **17 in `postio-gtk`**, at about 5 s a case.
+- **3 in `postio-tui` and `postio-widgets`.**
+
+**What it is worth:** if every one went, the suite would save roughly 100 CPU-seconds of 4,040 (about 2.5%). Most frontend cases are composition. ADR 0049 keeps them, and their cost is fixture and window setup, not duplication.
+
+**Mutation scope.** The removal check needed three narrowings before it could run on these at all, each found on a real candidate:
+1. **`--scope`**: GTK mutants re-run every case of the package, about 4.6 s a case.
+2. **`--package` and `--re`**: postio-ffi's `session.rs` has 533 mutants, and `-f` alone finds none outside the crate cargo-mutants was pointed at.
+3. **`--test-package`**: a removed case in another crate never runs in either pass.
+
+cargo-mutants 27.1.0 also leaks "delete field" mutants past `--re`. `-f` keeps them inside the named files, and they are judged like any other mutant.
