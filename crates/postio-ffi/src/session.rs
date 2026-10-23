@@ -4356,7 +4356,7 @@ impl Session {
 
     /// `[sync] notify` and `[sync] badge` as they stand.
     pub(crate) fn notices_now(&self) -> crate::NoticesFfi {
-        *self.notices.lock().expect("notices lock")
+        self.notices.lock().expect("notices lock").clone()
     }
 
     /// `[focus]` as it stands.

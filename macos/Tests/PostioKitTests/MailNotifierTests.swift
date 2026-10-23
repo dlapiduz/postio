@@ -56,6 +56,23 @@ struct MailNotifierTests {
         }
     }
 
+    @Test("a folder whose role is not in notify_roles does not notify")
+    func unwatchedRole() {
+        let trash = MailNotifier.decide(
+            arrival(), showing: nil, isActive: false, mailboxName: "Trash",
+            role: .trash, notifyRoles: ["inbox"]
+        )
+        #expect(trash == .suppress(.notWatched))
+        let chosen = MailNotifier.decide(
+            arrival(), showing: nil, isActive: false, mailboxName: "Trash",
+            role: .trash, notifyRoles: ["inbox", "trash"]
+        )
+        guard case .deliver = chosen else {
+            Issue.record("expected a notification, got \(chosen)")
+            return
+        }
+    }
+
     @Test("a burst is one notification carrying a count")
     func aBurstCounts() {
         guard case let .deliver(notification) = decide(arrival(messages: [1, 2, 3])) else {

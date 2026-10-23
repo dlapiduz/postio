@@ -58,12 +58,14 @@ pub struct FocusStripFfi {
 /// when it moved.
 ///
 /// [`UiEvent::NoticesChanged`]: crate::UiEvent::NoticesChanged
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct NoticesFfi {
     /// `[sync] notify`: post a notification for new mail.
     pub notify: bool,
     /// `[sync] badge`: show the unread count on the app's icon.
     pub badge: bool,
+    /// `[sync] notify_roles`: the roles of the folders whose arrivals notify.
+    pub notify_roles: Vec<String>,
 }
 
 impl From<&postio_config::SyncConfig> for NoticesFfi {
@@ -71,6 +73,7 @@ impl From<&postio_config::SyncConfig> for NoticesFfi {
         NoticesFfi {
             notify: sync.notify,
             badge: sync.badge,
+            notify_roles: sync.notify_roles.clone(),
         }
     }
 }

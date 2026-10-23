@@ -128,7 +128,14 @@ pub struct Notification {
 /// the one input that costs a store read to answer, and a frontend that
 /// fails it has no reason to go on and read the messages.
 pub fn watched(config: &SyncConfig, role: MailboxRole) -> bool {
-    config.notify && config.notify_roles.iter().any(|name| name == role.as_str())
+    config.notify && role_watched(&config.notify_roles, role)
+}
+
+/// Whether `notify_roles` (`[sync] notify_roles`) lists `role`: the part of
+/// [`watched`] a caller that holds only the roles, not the whole config,
+/// can ask.
+pub fn role_watched(notify_roles: &[String], role: MailboxRole) -> bool {
+    notify_roles.iter().any(|name| name == role.as_str())
 }
 
 /// A notification id scoped to one mailbox.
