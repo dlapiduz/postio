@@ -261,9 +261,9 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
         assert!(
             crate::settle_until(async || window
                 .contacts()
-                .is_some_and(|view| !view.merge_texts().is_empty()))
+                .is_some_and(|view| view.total() == 3 && !view.merge_texts().is_empty()))
             .await,
-            "g w opens the sheet"
+            "g w opens the sheet over the three people"
         );
         let view = window.contacts().expect("the view");
         {
@@ -280,7 +280,6 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
         assert!(said.iter().any(|line| line == "Not the same"), "{said:?}");
         assert!(said.iter().any(|line| line == "Later"), "{said:?}");
         assert!(said.iter().any(|line| line == "Merge"), "{said:?}");
-        assert_eq!(view.total(), 3);
 
         // Later puts it away and leaves the people as they were.
         support::keys(&window, &["Escape"]);
