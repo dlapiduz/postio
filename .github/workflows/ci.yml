@@ -971,52 +971,32 @@ jobs:
   # the suite across two runners halves the wall clock, and both restore the
   # same warm `build-gtk` cache, so the price is one runner's build check,
   # not a second cold build.
-  test-gtk:
-    name: Tests (GTK widgets ${{ matrix.shard }}/2)
-    runs-on: ubuntu-26.04
-    needs: changes
-    if: needs.changes.outputs.rust == 'yes'
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/rust-workspace
-        with:
-          cache-name: "build-gtk"
-      - name: Restore mtimes from commit history
-        run: scripts/restore-mtimes.py
-      - name: Give the GTK suites a runtime directory
-        run: |
-          runtime="${RUNNER_TEMP:-/tmp}/xdg"
-          mkdir -p "$runtime" && chmod 700 "$runtime"
-          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
-      - name: Cache cargo-nextest
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/bin/cargo-nextest
-          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
-      - name: Install cargo-nextest
-        run: scripts/install-nextest.sh
-      - name: cargo nextest run -p postio-widgets (shard ${{ matrix.shard }}/2)
-        env:
-          POSTIO_TEST_PATIENCE: "3"
-        run: >-
-          dbus-run-session -- cargo nextest run -p postio-widgets --profile ci
-          --partition count:${{ matrix.shard }}/2
-
-      - name: Every test under its budget
-        if: ${{ !cancelled() }}
-        run: scripts/ci-test-budget.py target/nextest/ci/junit.xml 10
-
-      # From `main` only; see .github/actions/build-cache.
-      - name: Save the build cache
-        if: ${{ !cancelled() }}
-        uses: ./.github/actions/build-cache-save
-
-  test-app:
-    name: Tests (application)
+  # The frontend suites: compiled once, run on six runners.
+  #
+  # They were two jobs, `Tests (GTK widgets N/2)` and `Tests (application)`,
+  # and each compiled its own crate's tests before running them: 2.7 minutes
+  # of runner start, cache restore and compile before the first test, then
+  # 11 minutes of application tests on four cores. Sharding that job the
+  # same way would have paid the 2.7 minutes on every shard.
+  #
+  # So one job builds the test binaries of both crates and ships them as a
+  # nextest archive (`cargo nextest archive`: the binaries, their build-script
+  # outputs, and nextest's own metadata; 169 MB for both crates), and six
+  # shards download it, check out the tree for the fixtures, and run their
+  # partition against it. A shard restores no build cache and compiles
+  # nothing; its floor is the apt cache, the toolchain and the download,
+  # about a minute. `--workspace-remap` is what lets a test find its
+  # fixtures by path in the checkout rather than where the archive was
+  # built, and the runner in `.cargo/config.toml` still applies, read from
+  # the checkout: every shard runs on its own headless compositor as before.
+  #
+  # Six, from the numbers of 2026-10-23: the two suites are about 33 CPU-
+  # minutes of tests after the sweeps moved to the nightly, so six shards of
+  # four cores run about 1.4 minutes each. The partition is `count`, which
+  # deals cases round-robin by binary and name and balances well now that no
+  # case takes more than 15 s.
+  frontend-build:
+    name: Build the frontend tests
     runs-on: ubuntu-26.04
     needs: changes
     if: needs.changes.outputs.rust == 'yes'
@@ -1027,6 +1007,44 @@ jobs:
           cache-name: "build-app"
       - name: Restore mtimes from commit history
         run: scripts/restore-mtimes.py
+      - name: Cache cargo-nextest
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+      - name: cargo nextest archive (postio-gtk, postio-widgets)
+        run: >-
+          cargo nextest archive -p postio-gtk -p postio-widgets --profile ci
+          --archive-file "$RUNNER_TEMP/frontend-tests.tar.zst"
+      - name: Ship the archive to the shards
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-tests
+          path: ${{ runner.temp }}/frontend-tests.tar.zst
+          retention-days: 1
+          if-no-files-found: error
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
+
+  test-frontends:
+    name: Tests (frontends ${{ matrix.shard }}/6)
+    runs-on: ubuntu-26.04
+    needs: [changes, frontend-build]
+    if: needs.changes.outputs.rust == 'yes'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The system libraries and the toolchain, and nothing to build.
+      - uses: ./.github/actions/rust-workspace
+        with:
+          build-cache: "false"
       - name: Give the GTK suites a runtime directory
         run: |
           runtime="${RUNNER_TEMP:-/tmp}/xdg"
@@ -1039,26 +1057,35 @@ jobs:
           key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
-      - name: cargo nextest run -p postio-gtk
+      - name: Fetch the archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: frontend-tests
+          path: ${{ runner.temp }}
+      # nextest extracts the archive to a temporary directory of its own and
+      # keeps its store -- the JUnit report the budget step reads -- under
+      # the remapped workspace's target/, the same place as a normal run
+      # (checked on the Linux box, 2026-10-23: 133 cases from the archive in
+      # 59 s, report at target/nextest/ci/junit.xml).
+      - name: cargo nextest run (shard ${{ matrix.shard }}/6)
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
-
+        run: >-
+          dbus-run-session -- cargo nextest run
+          --archive-file "$RUNNER_TEMP/frontend-tests.tar.zst"
+          --workspace-remap "$GITHUB_WORKSPACE"
+          --profile ci --partition count:${{ matrix.shard }}/6
       - name: Every test under its budget
         if: ${{ !cancelled() }}
         run: scripts/ci-test-budget.py target/nextest/ci/junit.xml 20
 
-      # From `main` only; see .github/actions/build-cache.
-      - name: Save the build cache
-        if: ${{ !cancelled() }}
-        uses: ./.github/actions/build-cache-save
-
   # The one required check for the GTK suites.
   #
-  # `Tests (GTK widgets N/2)` and `Tests (application)` were not required, and
-  # four GTK-only failures reached main in one session. They cannot simply be
-  # added to the ruleset: they are skipped when no Rust changed (a skip counts
-  # as passed) and the shards have matrix names. This job always runs, so the
+  # `Tests (frontends N/6)` and the build they run from are not required by
+  # name, and four GTK-only failures reached main in one session when their
+  # predecessors were not. They cannot simply be added to the ruleset: they
+  # are skipped when no Rust changed (a skip counts as passed) and the shards
+  # have matrix names. This job always runs, so the
   # ruleset gets one fixed name, and it fails unless they succeeded -- or were
   # skipped because `changes` said no Rust changed. Any other skip, say one
   # because `changes` itself failed, is a gate green having done nothing, so
@@ -1070,7 +1097,7 @@ jobs:
   frontends:
     name: Frontends
     runs-on: ubuntu-latest
-    needs: [changes, test-gtk, test-app]
+    needs: [changes, frontend-build, test-frontends]
     if: always()
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1078,9 +1105,9 @@ jobs:
         env:
           RUST: ${{ needs.changes.outputs.rust }}
           CHANGES: ${{ needs.changes.result }}
-          GTK: ${{ needs.test-gtk.result }}
-          APP: ${{ needs.test-app.result }}
-        run: scripts/ci-frontends-gate.sh "$RUST" "$CHANGES" "test-gtk=$GTK" "test-app=$APP"
+          BUILD: ${{ needs.frontend-build.result }}
+          SHARDS: ${{ needs.test-frontends.result }}
+        run: scripts/ci-frontends-gate.sh "$RUST" "$CHANGES" "frontend-build=$BUILD" "test-frontends=$SHARDS"
 
   # The macOS half, and the link.
   #

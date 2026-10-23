@@ -2,7 +2,7 @@
 # The verdict of the `Frontends` check: did the GTK suites actually pass?
 #
 #     scripts/ci-frontends-gate.sh <rust> <changes-result> <job>=<result>...
-#     scripts/ci-frontends-gate.sh yes success test-gtk=success test-app=success
+#     scripts/ci-frontends-gate.sh yes success frontend-build=success test-frontends=success
 #
 # `rust` is `needs.changes.outputs.rust`, `changes-result` is
 # `needs.changes.result`, and each `<job>=<result>` is a needed job's
