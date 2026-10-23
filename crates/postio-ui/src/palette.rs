@@ -293,8 +293,11 @@ mod tests {
 
     #[test]
     fn matching_is_case_insensitive() {
-        assert!(score("ARCH", "Archive").is_some());
-        assert!(score("arch", "Archive").is_some());
+        // Not merely a match each way: the same match, so a query's case
+        // never reorders the palette.
+        let lower = score("arch", "Archive");
+        assert!(lower.is_some());
+        assert_eq!(score("ARCH", "Archive"), lower);
     }
 
     #[test]
