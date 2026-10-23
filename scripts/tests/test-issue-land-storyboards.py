@@ -171,7 +171,7 @@ exit 2
 BRANCH = "issue-4242-storyboard-warning"
 
 
-def sandbox(base: Path, existing_pr: bool = False):
+def sandbox(base: Path, existing_pr: bool = False, changed: str = "src/extra.rs"):
     channel = pinned_channel()
     target = base / "target"
     root = base / "repo"
@@ -214,7 +214,9 @@ def sandbox(base: Path, existing_pr: bool = False):
     git("remote", "add", "origin", str(origin), cwd=root)
     git("push", "-q", "origin", "main", cwd=root)
     git("checkout", "-q", "-b", BRANCH, cwd=root)
-    (root / "crates" / "postio-gtk" / "src" / "extra.rs").write_text("// nothing\n")
+    path = root / "crates" / "postio-gtk" / changed
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("// nothing\n")
     return root, target, stub_dir
 
 
@@ -248,10 +250,10 @@ def summary(root: Path, key: str) -> None:
     )
 
 
-def case(name: str, key: str | None, existing_pr: bool, warned: bool, carried: str) -> None:
+def case(name: str, key: str | None, existing_pr: bool, warned: bool, carried: str, changed: str = "src/extra.rs") -> None:
     prefix = f"[{name}] "
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
-        root, target, stub_dir = sandbox(Path(directory))
+        root, target, stub_dir = sandbox(Path(directory), changed=changed)
         if key is not None:
             summary(root, key)
         result, calls = land(root, target, stub_dir, existing_pr)
@@ -290,6 +292,9 @@ def main() -> int:
     case("stale summary", "k-old", False, warned=True, carried="")
     case("current summary", "k-current", False, warned=False, carried="body")
     case("existing PR", "k-current", True, warned=False, carried="comment")
+    # A change to the app's tests changes nothing a storyboard films: moving a
+    # display-free case out of focus_suite drew a warning on #2025.
+    case("tests only", None, False, warned=False, carried="", changed="tests/suite.rs")
     print()
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed.", file=sys.stderr)

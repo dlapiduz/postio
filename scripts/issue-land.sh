@@ -941,13 +941,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
 # missing or stale one is a warning and a label anybody can see. "Current"
 # is the review key, built from the app crates' and the catalogue's git tree
 # ids, so a rebase that leaves them alone keeps it (research R13). The app
-# is Postio, whose crates are postio-gtk and postio-widgets (T265).
+# is Postio, whose crates are postio-gtk and postio-widgets (T265) -- the
+# code they ship, not their `tests/`: a change there alters no interaction a
+# storyboard could film, and labelling it trains people to ignore the label
+# (#2025 moved a display-free case out of focus_suite and was warned).
 STORYBOARD_REVIEWED=0
-for crate in $CRATES; do
-    case "$crate" in
-        postio-gtk|postio-widgets) STORYBOARD_REVIEWED=1 ;;
-    esac
-done
+if { git diff --name-only "origin/$BASE...HEAD"; git status --porcelain | sed 's/^...//'; } \
+    | grep -E '^crates/postio-(gtk|widgets)/' | grep -vqE '^crates/postio-(gtk|widgets)/tests/'; then
+    STORYBOARD_REVIEWED=1
+fi
 STORYBOARD_LABEL=""
 STORYBOARD_NOTE=""
 STORYBOARD_SUMMARY=""
