@@ -220,7 +220,7 @@ For each surface: the controller keeps its branches. Each frontend keeps one com
 
 These land with the first parity batch (T030), so there is a cleaned surface to protect. Contract: `contracts/ratchets.md`.
 
-- [ ] T034 [P] [US5] Write `scripts/tests/test-check-frontend-suite-budget.py`, modelled on `scripts/tests/test-check-spacing-literals-ratchet.py`. It asserts:
+- [X] T034 [P] [US5] Write `scripts/tests/test-check-frontend-suite-budget.py`, modelled on `scripts/tests/test-check-spacing-literals-ratchet.py`. It asserts:
   - a listed file over budget fails with the ADR 0049 message;
   - under budget passes and prints the line to lower;
   - an unlisted file is ignored;
@@ -228,7 +228,7 @@ These land with the first parity batch (T030), so there is a cleaned surface to 
   - harness-free `CASES` rows are counted.
 
   See it fail.
-- [ ] T035 [US5] Implement `scripts/checks/check-frontend-suite-budget.py` until T034 passes. Seed `scripts/checks/frontend-suite-budget.txt` with each file T030–T032 cleaned, at its count after cleaning.
+- [X] T035 [US5] Implement `scripts/checks/check-frontend-suite-budget.py` until T034 passes. Seed `scripts/checks/frontend-suite-budget.txt` with each file T030–T032 cleaned, at its count after cleaning.
 - [X] T036 [P] [US5] *Withdrawn with FR-012 (research, Measured).* Write `scripts/tests/test-check-assertion-smells.py`. It asserts that each of `constant-only` and `is-ok-only` fails when a file's count rises or a new file appears, names the case, and names the remedy, and that a falling count passes. See it fail.
 - [X] T037 [US5] *Withdrawn with FR-012.* Implement `scripts/checks/check-assertion-smells.py` on `scripts/lib/test_audit.py`'s `smells()` until T036 passes. Seed `scripts/checks/assertion-smells-baseline.txt` from the tree after batch 2. Confirm `scripts/check.sh` stays under its budget: the new checks add under 1 s.
 
