@@ -796,12 +796,17 @@ jobs:
       # crates report in a few minutes.
       # **The sanity tier, not the whole workspace** (2026-09-19).
       #
-      # A pull request now runs the same gate a landing does: the workspace's
-      # unit tests, plus the integration suites of the crates whose *tests
-      # enumerate a vocabulary* -- the golden binding tables, `[keys]`,
-      # `docs/keybindings.md`, `docs/config.md`. Those are the ones neither
-      # `--lib` nor `cargo check --all-targets` can fail for, which is the
-      # whole argument in `scripts/full-suite-crates.sh`.
+      # A pull request runs the workspace's unit tests, plus the integration
+      # suites of the crates whose *tests enumerate a vocabulary* -- the
+      # golden binding tables, `[keys]`, `docs/keybindings.md`,
+      # `docs/config.md`: `postio-core/tests/platform_bindings.rs`,
+      # `command_registry.rs` and `keybindings_doc.rs`,
+      # `postio-config/tests/schema.rs` and `config_doc.rs`. Adding one
+      # `CommandId` touches six or seven places and the compiler checks two
+      # of them, so neither `--lib` nor clippy over every target can fail
+      # for those; #1003 paid that twice in one session, on two different
+      # tables (#1047). Since 2026-10-23 this is more than a landing runs:
+      # the landing proves the changed crates' units and waits for this.
       #
       # The rest of the integration suites run on the nightly timer and again
       # as the release gate. That is a deliberate trade and it is not free:

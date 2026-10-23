@@ -50,7 +50,7 @@ are covered by tests.
 | fast | `scripts/test-fast.sh` | between edits: changed crates, `--lib` |
 | suite | `cargo nextest run -p <crate> --test <suite> [case]` | to confirm what you touched |
 | doctests | `cargo test -p <crate> --doc` | nextest does not run them |
-| landing | `issue-land.sh` runs the sanity tier and `check.sh` | always |
+| landing | `issue-land.sh`: clippy, rustdoc, units and doctests of the crates you changed, then `check.sh` | always |
 | CI | every suite, nightly; on the PR with `--full-suite` | new features, big changes |
 
 - Nothing in the default suite touches the network. `#[ignore]` means only
@@ -80,7 +80,9 @@ are covered by tests.
   not `RUST_LOG`. To see the app at a pinned commit,
   `scripts/run-isolated.sh [commit] [--shot]`.
 
-**Landing.** Use the default tier; `--full` needs a specific reason. Ask for
+**Landing.** The default tier is the cheap one: what you changed, locally,
+and the PR's checks as the judge about five minutes later. `--full` (those
+crates' suites, locally) needs a specific reason. Ask for
 `--full-suite` when the default tier does not give you confidence in a
 change: a new feature, a storage migration, a change across several crates.
 `issue-land.sh` names a high-risk diff (`scripts/risk-of-diff.sh`) but never
