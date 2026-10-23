@@ -1309,10 +1309,6 @@ const CASES: &[(&str, fn())] = &[
         one_keymap::a_registered_command_reaches_the_key_map_with_its_key as fn(),
     ),
     (
-        "one_keymap::no_default_key_means_two_things_and_each_app_runs_the_same_key",
-        one_keymap::no_default_key_means_two_things_and_each_app_runs_the_same_key as fn(),
-    ),
-    (
         "reload::a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map",
         reload::a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map as fn(),
     ),

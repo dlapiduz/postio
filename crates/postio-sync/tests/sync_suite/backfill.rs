@@ -339,7 +339,10 @@ async fn no_cap_means_no_cap() {
 
     backfill.enqueue(request(&local.inbox, MessageId::new(1), 1, u64::MAX));
 
-    assert!(backfill.next_body().is_some());
+    let claim = backfill
+        .next_body()
+        .expect("a body of any size is offered when nothing caps it");
+    assert_eq!(claim.request.message, MessageId::new(1));
 }
 
 // ---------------------------------------------------------------------------

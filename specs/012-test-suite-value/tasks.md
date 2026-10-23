@@ -158,7 +158,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   - results uploaded as artifacts.
 
   (`scripts/checks/ci-expected-workflows.py` reads the workflow files themselves, so nothing needs registering. A dispatch-only workflow can be run only once it is on `main`, so T020 runs after the first PR lands.)
-- [ ] T020 [US3] Prove quickstart §3 on CI:
+- [X] T020 [US3] Prove quickstart §3 on CI:
   - a case that alone asserts `ConfigChanged::any` gives `NOT SAFE`, naming a `crates/postio-config/src/change.rs` mutant;
   - the T016 planted duplicate gives `safe`.
 
@@ -186,16 +186,16 @@ The spec puts US5 after US4. This part goes first because batch 1 touches the sa
 
 ### Batch 1: mechanical (no removal check needed for moves; needed for deletions)
 
-- [ ] T023 [P] [US4] Move the copies of `fn shown(` (23 files), `fn asks(` (14) and `fn drawn(` (8) into one helper module per suite. Use the suite's existing support module, or `postio-test-support` if the copies span crates. Where copies differ, keep each difference as a parameter and do not paper over it. List the files using the T010 inventory.
-- [ ] T024 [P] [US4] Rewrite `crates/postio-gtk/tests/focus_suite/one_keymap.rs:636–731` so the expected key strings come from the registry's default binding table, not hand-copied literals. Confirm `check-one-default-binding-table.py` still passes. Red first: break one registry default in a scratch edit and see the rewritten case fail; then revert.
-- [ ] T025 [US4] Move the display-free assertions in `crates/postio-gtk/tests/focus_suite/one_keymap.rs` (the case near line 83, "no default key means two things…") out of the GTK binary. Where `crates/postio-core/tests/core_suite/one_keymap.rs:535,561` already asserts the same thing, delete the GTK copy behind a T018 `safe` verdict. Otherwise move it into `core_suite`.
-- [ ] T026 [US4] Delete `crates/postio-model/tests/model_suite/purity.rs` and its `mod` line once `check-crate-boundaries.py` is confirmed to refuse the same violation. Red first: plant a forbidden dependency in `postio-model/Cargo.toml` in a scratch edit and see the check fail; then revert.
+- [X] T023 [P] [US4] Move the copies of `fn shown(` (23 files), `fn asks(` (14) and `fn drawn(` (8) into one helper module per suite. Use the suite's existing support module, or `postio-test-support` if the copies span crates. Where copies differ, keep each difference as a parameter and do not paper over it. List the files using the T010 inventory.
+- [X] T024 [P] [US4] *Withdrawn 2026-10-23: `check-one-default-binding-table.py` says expectation tables in `tests/` are wanted, because a test that lists `("archive", "a")` asserts against the registry. These cases pin spec 010's decided keys, and deriving them from the registry would make them assert the registry against itself.* Rewrite `crates/postio-gtk/tests/focus_suite/one_keymap.rs:636–731` so the expected key strings come from the registry's default binding table, not hand-copied literals. Confirm `check-one-default-binding-table.py` still passes. Red first: break one registry default in a scratch edit and see the rewritten case fail; then revert.
+- [X] T025 [US4] Move the display-free assertions in `crates/postio-gtk/tests/focus_suite/one_keymap.rs` (the case near line 83, "no default key means two things…") out of the GTK binary. Where `crates/postio-core/tests/core_suite/one_keymap.rs:535,561` already asserts the same thing, delete the GTK copy behind a T018 `safe` verdict. Otherwise move it into `core_suite`.
+- [X] T026 [US4] Delete `crates/postio-model/tests/model_suite/purity.rs` and its `mod` line once `check-crate-boundaries.py` is confirmed to refuse the same violation. Red first: plant a forbidden dependency in `postio-model/Cargo.toml` in a scratch edit and see the check fail; then revert.
 
 ### Batch 2: smells
 
-- [ ] T027 [US4] For every `is-ok-only` case in the T010 inventory, tighten it to assert the value it produces. Where that duplicates an existing case, delete it behind a `safe` verdict. One commit per crate.
-- [ ] T028 [US4] For every `constant-only` case (e.g. `crates/postio-ui/src/search_view.rs:2478`, `crates/postio-ui/src/focus_dialog.rs:540,562`), either assert the behaviour the constant drives or delete it behind a `safe` verdict. One commit per crate.
-- [ ] T029 [US4] For every `mock-count-only` case (e.g. `crates/postio-core/tests/core_suite/dispatch.rs:110`, `crates/postio-host/tests/host_suite/oauth.rs:185`), add the outcome assertion a person would see (Constitution IV). Remove the count only if it then adds nothing and its removal is `safe`.
+- [X] T027 [US4] For every `is-ok-only` case in the T010 inventory, tighten it to assert the value it produces. Where that duplicates an existing case, delete it behind a `safe` verdict. One commit per crate.
+- [X] T028 [US4] For every `constant-only` case (e.g. `crates/postio-ui/src/search_view.rs:2478`, `crates/postio-ui/src/focus_dialog.rs:540,562`), either assert the behaviour the constant drives or delete it behind a `safe` verdict. One commit per crate.
+- [X] T029 [US4] For every `mock-count-only` case (e.g. `crates/postio-core/tests/core_suite/dispatch.rs:110`, `crates/postio-host/tests/host_suite/oauth.rs:185`), add the outcome assertion a person would see (Constitution IV). Remove the count only if it then adds nothing and its removal is `safe`.
 
 ### Batch 3: parity clusters, one surface per commit (ADR 0049)
 
@@ -229,8 +229,8 @@ These land with the first parity batch (T030), so there is a cleaned surface to 
 
   See it fail.
 - [ ] T035 [US5] Implement `scripts/checks/check-frontend-suite-budget.py` until T034 passes. Seed `scripts/checks/frontend-suite-budget.txt` with each file T030–T032 cleaned, at its count after cleaning.
-- [ ] T036 [P] [US5] Write `scripts/tests/test-check-assertion-smells.py`. It asserts that each of `constant-only` and `is-ok-only` fails when a file's count rises or a new file appears, names the case, and names the remedy, and that a falling count passes. See it fail.
-- [ ] T037 [US5] Implement `scripts/checks/check-assertion-smells.py` on `scripts/lib/test_audit.py`'s `smells()` until T036 passes. Seed `scripts/checks/assertion-smells-baseline.txt` from the tree after batch 2. Confirm `scripts/check.sh` stays under its budget: the new checks add under 1 s.
+- [X] T036 [P] [US5] *Withdrawn with FR-012 (research, Measured).* Write `scripts/tests/test-check-assertion-smells.py`. It asserts that each of `constant-only` and `is-ok-only` fails when a file's count rises or a new file appears, names the case, and names the remedy, and that a falling count passes. See it fail.
+- [X] T037 [US5] *Withdrawn with FR-012.* Implement `scripts/checks/check-assertion-smells.py` on `scripts/lib/test_audit.py`'s `smells()` until T036 passes. Seed `scripts/checks/assertion-smells-baseline.txt` from the tree after batch 2. Confirm `scripts/check.sh` stays under its budget: the new checks add under 1 s.
 
 ---
 

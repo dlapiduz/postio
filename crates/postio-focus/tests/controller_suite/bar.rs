@@ -9,6 +9,7 @@
 //! the list with the cursor on its first row, the go-to keys go by role, and
 //! the places are read in one request however many accounts there are.
 
+use crate::search_support::{asks, shown};
 use chrono::Utc;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
@@ -66,26 +67,6 @@ fn mac() -> FocusController {
     let mut policy = Policy::for_platform(Platform::Apple);
     policy.caps.results_view = false;
     FocusController::new(policy)
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn asked(effects: &[Effect]) -> Vec<Request> {

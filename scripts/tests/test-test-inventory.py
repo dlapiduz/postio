@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory() as tmp:
     result = run(out)
     check("exits 0 on a consistent listing", result.returncode == 0, result.stdout + result.stderr)
     rows = list(csv.DictReader((out / "cases.csv").open())) if (out / "cases.csv").exists() else []
-    check("one row per listed case", len(rows) == 20, f"{len(rows)} rows")
+    check("one row per listed case", len(rows) == 21, f"{len(rows)} rows")
     header = (out / "cases.csv").read_text().splitlines()[0].split(",") if rows else []
     check("columns are data-model Case, in order", header == COLUMNS, str(header))
     by_id = {r["id"]: r for r in rows}
@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory() as tmp:
           untimed.get("file") == "crates/postio-ffi/tests/ffi_suite/focus_pickers.rs", str(untimed))
 
     summary = json.loads((out / "summary.json").read_text()) if (out / "summary.json").exists() else {}
-    check("summary counts the cases", summary.get("cases") == 20, str(summary.get("cases")))
+    check("summary counts the cases", summary.get("cases") == 21, str(summary.get("cases")))
     clusters = {c["item"]: c for c in summary.get("parity_clusters", {}).get("top", [])}
     fr021 = clusters.get("009/FR-021", {})
     check("an item cited in two behaviour layers is a parity cluster",
@@ -91,11 +91,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
     broken = Path(tmp) / "broken.json"
     data = json.loads(LISTING.read_text())
-    data["test-count"] = 21
+    data["test-count"] = 22
     broken.write_text(json.dumps(data))
     result = run(Path(tmp) / "broken", listing=broken)
     check("a row count that disagrees with the runner exits 1 and names both numbers",
-          result.returncode == 1 and "21" in result.stdout + result.stderr and "20" in result.stdout + result.stderr,
+          result.returncode == 1 and "22" in result.stdout + result.stderr and "21" in result.stdout + result.stderr,
           f"exit {result.returncode}\n{result.stdout}{result.stderr}")
 
 if FAILURES:

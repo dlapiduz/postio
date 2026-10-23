@@ -10,13 +10,14 @@
 //! only once confirmed; `d` opens the rule dialog filled in. On the Mac a
 //! message from the digest's list opens in the digest's window too (M4).
 
+use crate::search_support::{asks, shown};
 use chrono::Utc;
 use postio_config::paths::Platform;
 use postio_config::{Config, FocusConfig};
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_focus::{
     DigestPage, DigestView, Effect, FocusController, Host, Input, Intent, Policy, Reply, Request,
-    RowFacts, Rows, RuleView, SurfaceKind, Ticket,
+    RowFacts, Rows, RuleView, SurfaceKind,
 };
 use postio_model::listing::{Cadence, MessageSummary, ThreadSummary};
 use postio_model::summary::{DigestSummary, SummaryReference, SummaryStatement};
@@ -118,26 +119,6 @@ fn config(model: bool) -> FocusConfig {
         );
     }
     Config::from_toml_str(&text).expect("a config").focus
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn run(focus: &mut FocusController, command: CommandId) -> Vec<Effect> {

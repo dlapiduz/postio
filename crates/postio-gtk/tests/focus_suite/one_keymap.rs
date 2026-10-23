@@ -1,43 +1,12 @@
-//! One keymap for every app (US7 scenarios 2, 3 and 5, T061).
+//! One keymap for every app (US7 scenario 2, T061): a command registered at
+//! run time reaches Focus's key map, keyed, with no code of Focus's.
 //!
-//! Scenario 2 on a display: a command registered at run time reaches Focus's
-//! key map, keyed, with no code of Focus's. Scenarios 3 and 5 need no
-//! display: they enumerate the one default keymap through each app's own
-//! resolver.
+//! Scenarios 3 and 5 need no display; they are in
+//! `crates/postio-ui/tests/ui_suite/one_keymap.rs` (ADR 0049).
 
-use std::time::Instant;
-
-use postio_core::{ActionId, Context, ContextSet, Frontend, Keymap, registry};
-use postio_ui::keymap::{Chord, KeyContext, Outcome, Resolver};
+use postio_core::{ActionId, Context, ContextSet, registry};
 
 use crate::support;
-
-/// Press `binding` -- a chord, or a sequence of them -- in `context`.
-fn press(resolver: &mut Resolver, binding: &str, context: KeyContext) -> Outcome {
-    let mut outcome = Outcome::Unhandled;
-    for chord in binding.split(' ') {
-        let chord: Chord = chord
-            .parse()
-            .unwrap_or_else(|_| panic!("{binding:?} is not a key"));
-        outcome = resolver.press(&chord, context, false, Instant::now());
-    }
-    outcome
-}
-
-/// Where a command's key is pressed: its first context, or the list for a
-/// command that works everywhere.
-fn context_of(contexts: ContextSet) -> KeyContext {
-    if contexts == ContextSet::ANY {
-        return KeyContext::List;
-    }
-    contexts
-        .iter()
-        .next()
-        .map(KeyContext::from)
-        .unwrap_or(KeyContext::Global)
-}
-
-const APPS: [Frontend; 2] = [Frontend::Terminal, Frontend::Focus];
 
 pub fn a_registered_command_reaches_the_key_map_with_its_key() {
     crate::gtk_case(async {
@@ -78,36 +47,4 @@ pub fn a_registered_command_reaches_the_key_map_with_its_key() {
             "the registered command is not in the key map with its key"
         );
     });
-}
-
-pub fn no_default_key_means_two_things_and_each_app_runs_the_same_key() {
-    let keymap = Keymap::defaults();
-    for app in APPS {
-        let (_, problems) = Resolver::from_commands_for(keymap, app);
-        assert!(
-            problems.is_empty(),
-            "{app:?}: the one keymap binds cleanly: {problems:?}"
-        );
-    }
-    let mut checked = 0;
-    for spec in registry::all() {
-        let Some(binding) = keymap.binding(spec.id) else {
-            continue;
-        };
-        let context = context_of(spec.contexts);
-        for app in APPS
-            .into_iter()
-            .filter(|app| spec.requires.offered_by(*app))
-        {
-            let (mut resolver, _) = Resolver::from_commands_for(keymap, app);
-            assert_eq!(
-                press(&mut resolver, binding, context),
-                Outcome::Command(spec.id.as_str().into()),
-                "{app:?}: {binding} in {context:?} runs {}",
-                spec.id.as_str()
-            );
-            checked += 1;
-        }
-    }
-    assert!(checked > 200, "only {checked} keys were checked");
 }

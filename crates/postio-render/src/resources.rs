@@ -368,10 +368,12 @@ mod tests {
     fn a_remote_image_resolves_by_its_parsed_url() {
         let table = Resources::new();
         table.insert_remote("https://IMAGES.example.net/a b.png", png(2, 2));
-        assert!(
+        assert_eq!(
             table
                 .resolve("https://images.example.net/a%20b.png")
-                .is_some()
+                .as_deref(),
+            Some(png(2, 2).as_slice()),
+            "the image inserted, not merely something"
         );
     }
 

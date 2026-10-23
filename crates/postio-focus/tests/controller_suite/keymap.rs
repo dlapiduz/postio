@@ -9,24 +9,15 @@
 
 use std::time::Instant;
 
+use crate::search_support::shown;
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;
 use postio_core::{CommandId, ConnectionState, Event, Keymap};
-use postio_focus::{Effect, FocusController, Input, Intent, Policy, SurfaceKind};
+use postio_focus::{FocusController, Input, Intent, Policy, SurfaceKind};
 use postio_ui::keymap::{Chord, KeyContext, Outcome};
 
 fn focus() -> FocusController {
     FocusController::new(Policy::for_platform(Platform::Apple))
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 fn press(focus: &mut FocusController, key: &str) -> Outcome {

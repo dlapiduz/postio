@@ -12,12 +12,13 @@
 //! toast stays eight seconds, a new one replaces the old, and a queued
 //! send's own Undo is the one Undo runs first.
 
+use crate::search_support::{asks, shown};
 use chrono::{DateTime, Local, TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_focus::{
     Anchor, Effect, FocusController, FoldersRead, Input, Intent, LabelsRead, PickerField,
-    PickerKind, PickerView, Policy, Reply, Request, RowFacts, Rows, SurfaceKind, Ticket, ToastKind,
+    PickerKind, PickerView, Policy, Reply, Request, RowFacts, Rows, SurfaceKind, ToastKind,
 };
 use postio_model::{
     AccountId, DraftId, Label, LabelId, Mailbox, MailboxId, MailboxRole, MessageId, ThreadId,
@@ -83,26 +84,6 @@ fn controller(platform: Platform) -> FocusController {
 
 fn mac() -> FocusController {
     controller(Platform::Apple)
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn asked(effects: &[Effect]) -> Vec<Request> {

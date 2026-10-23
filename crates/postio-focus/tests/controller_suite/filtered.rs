@@ -7,13 +7,14 @@
 //! restores the focused message and stops filtering its sender, and nothing
 //! in it is deleted but by Delete (C4: never automatically).
 
+use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_client::protocol::FilteredRow;
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_focus::{
     Effect, FilteredView, FocusController, Host, Input, Intent, Policy, Reply, Request, RowFacts,
-    Rows, SurfaceKind, Ticket,
+    Rows, SurfaceKind,
 };
 use postio_model::listing::MessageSummary;
 use postio_model::{EmailAddress, MessageId, ThreadId};
@@ -42,26 +43,6 @@ impl Rows for List {
 
 fn mac() -> FocusController {
     FocusController::new(Policy::for_platform(Platform::Apple))
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn run(focus: &mut FocusController, command: CommandId) -> Vec<Effect> {

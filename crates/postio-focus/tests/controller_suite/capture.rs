@@ -8,6 +8,7 @@
 //! `⌥S` swaps the subject in; the preview is the exact line written, with
 //! the message's `postio://` link before the date (C21).
 
+use crate::search_support::{asks, shown};
 use chrono::{NaiveDate, TimeZone, Utc};
 use postio_client::protocol::VaultPicture;
 use postio_config::paths::Platform;
@@ -15,7 +16,7 @@ use postio_config::{Config, FocusConfig};
 use postio_core::CommandId;
 use postio_focus::{
     CaptureMode, CaptureView, Effect, FocusController, Host, Input, Intent, Policy, Reply, Request,
-    RowFacts, Rows, SurfaceKind, Ticket,
+    RowFacts, Rows, SurfaceKind,
 };
 use postio_model::listing::{MarkerKind, MarkerSummary, MarkerWhen, MessageSummary, ThreadSummary};
 use postio_model::{EmailAddress, MessageId, ThreadId};
@@ -108,26 +109,6 @@ fn config(vault: bool) -> FocusConfig {
         ""
     };
     Config::from_toml_str(text).expect("a config").focus
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 fn run(focus: &mut FocusController, command: CommandId) -> Vec<Effect> {

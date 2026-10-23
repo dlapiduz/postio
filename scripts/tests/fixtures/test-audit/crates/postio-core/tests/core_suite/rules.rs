@@ -33,3 +33,9 @@ fn dispatch_moves_the_message() {
     assert_eq!(backend.calls().len(), 1);
     assert_eq!(store.folder_of(id), "Archive");
 }
+
+#[test]
+fn a_count_in_the_words_is_not_a_mock_count() {
+    let calls = log();
+    assert_eq!(line(&calls[1]), "answered 2 times");
+}

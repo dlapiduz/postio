@@ -622,8 +622,12 @@ mod tests {
     #[test]
     fn domain_matching_ignores_case() {
         for preset in presets() {
-            let domain = preset.domains()[0].to_uppercase();
-            assert!(lookup(&address_in(&domain), "a", &domain).is_some());
+            let domain = preset.domains()[0].as_str();
+            let upper = domain.to_uppercase();
+            let found = lookup(&address_in(&upper), "a", &upper);
+            assert!(found.is_some(), "{upper} found no preset");
+            // The same settings the domain's own spelling finds, not just some.
+            assert_eq!(found, lookup(&address_in(&upper), "a", domain), "{upper}");
         }
     }
 

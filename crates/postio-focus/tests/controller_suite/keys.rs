@@ -2,9 +2,10 @@
 //! T054, T055): the table a frontend that keeps the widgets of some
 //! surfaces itself reads, over the surface stack.
 
+use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
-use postio_focus::{Effect, FocusController, Input, Intent, Policy, Route, SurfaceKind};
+use postio_focus::{FocusController, Input, Intent, Policy, Route, SurfaceKind};
 use postio_ui::keymap::KeyContext;
 
 fn linux() -> FocusController {
@@ -15,16 +16,6 @@ fn with(kind: SurfaceKind) -> FocusController {
     let mut controller = linux();
     controller.handle(Input::SurfaceOpened(kind));
     controller
-}
-
-fn shown(effects: &[Effect]) -> Vec<Intent> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Show(intent) => Some(intent.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 #[test]

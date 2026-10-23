@@ -34,7 +34,7 @@ def check(name: str, got: object, want: object) -> None:
 
 cases = test_audit.parse_nextest_list(json.loads((FIXTURE / "nextest-list.json").read_text()), FIXTURE)
 by_id = {c.id: c for c in cases}
-check("one case per listed test", len(cases), 20)
+check("one case per listed test", len(cases), 21)
 
 
 def case(binary: str, name: str) -> test_audit.Case:
@@ -114,6 +114,8 @@ check("a count beside an outcome is not mock-count-only",
 check("assert!(x.is_ok()) alone is is-ok-only", smells(FFI, "focus_pickers::opening_succeeds"), ["is-ok-only"])
 check("assert!(x.is_some(), msg) alone is is-ok-only",
       smells(FFI, "focus_pickers::opening_yields_something"), ["is-ok-only"])
+check("a count word inside a string, or a variable named calls, is not mock-count-only",
+      smells(CORE, "rules::a_count_in_the_words_is_not_a_mock_count"), [])
 check("is_ok() beside a value assertion is not is-ok-only",
       smells(FFI, "focus_pickers::opening_returns_the_picker"), [])
 check("an early return after 'skipping' is display-skip",
