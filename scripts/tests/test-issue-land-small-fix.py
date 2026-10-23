@@ -109,6 +109,27 @@ def main() -> int:
         )
         problems += 1
 
+    # A spec branch is not a small fix, and its PR must not say it is. Its
+    # commits carry `Refs: specs/<nnn>-<name>` (CLAUDE.md), so the PR refers
+    # to the spec; and since its last commit rarely speaks for the whole
+    # branch, the title can be given (#2023 was titled after its last commit
+    # and described as "a small fix").
+    feature_blocks = re.findall(r'if \[ "\$FEATURE" = 1 \]; then\n(.*?)\n\s*elif', source, re.S)
+    if not any('CLOSES_LINE="Refs: ${SPEC' in block for block in feature_blocks):
+        print(
+            "FAIL: a feature/ branch's PR does not refer to its spec; it is "
+            "described as a small fix",
+            file=sys.stderr,
+        )
+        problems += 1
+    if "--title)" not in source or 'TITLE="${TITLE_ARG:-' not in source:
+        print(
+            "FAIL: there is no --title, so a spec branch's PR is titled "
+            "after whichever commit happened to be last",
+            file=sys.stderr,
+        )
+        problems += 1
+
     if problems:
         print(f"\n{problems} problem(s).", file=sys.stderr)
         return 1

@@ -31,8 +31,8 @@ branch: `git worktree add ~/src/postio-worktrees/<name> -b feature/<name>
 origin/main`, then `scripts/worktree-seed.sh` on it, then `printf
 'main\n' > "$(git rev-parse --git-dir)/postio-base"`. Work `tasks.md` top to
 bottom, a commit per task ending `Refs: specs/<nnn>-<name>` and the task id,
-and land with `scripts/issue-land.sh --detach --full-suite`. Do not file an
-issue per task. Work the spec does not cover is still filed.
+and land with `scripts/issue-land.sh --detach --full-suite --title
+'<what the branch does>'`. Do not file an issue per task. Work the spec does not cover is still filed.
 
 A spec records its decisions, so it gets no parallel ADR. Write an ADR only
 for a rule that outlives the feature and other work must obey; fold a

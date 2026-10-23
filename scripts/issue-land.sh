@@ -14,6 +14,7 @@
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
 #   scripts/issue-land.sh --full                # integration suites too, not just units
 #   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
+#   scripts/issue-land.sh --title "feat(x): y"  # the PR's title, when the last commit's is not it
 #   scripts/issue-land.sh --full-suite          # CI runs the whole nightly on the PR too
 #                                               # (the script names a high-risk diff: scripts/risk-of-diff.sh)
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
@@ -246,7 +247,7 @@ ORIGINAL_ARGS=("$@")
 # the twentieth.
 GATE_BUDGET_SECONDS=240
 
-MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0; REFS_ONLY=0; FULL_SUITE=0
+MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0; REFS_ONLY=0; FULL_SUITE=0; TITLE_ARG=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message) MSG="$2"; shift 2 ;;
@@ -257,6 +258,7 @@ while [ $# -gt 0 ]; do
         --wait)       WAIT=1;       shift ;;
         --refs-only)  REFS_ONLY=1;  shift ;;
         --full-suite) FULL_SUITE=1; shift ;;
+        --title)      TITLE_ARG="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -323,6 +325,10 @@ SMALL=0
 if [ -z "$ISSUE" ] && printf '%s' "$BRANCH" | grep -qE '^(fix|docs|chore|feature)/[a-z0-9._-]+$'; then
     SMALL=1
 fi
+# Landed the same way, but not described the same way: a spec branch is
+# the opposite of a small fix, and its PR refers to the spec its commits do.
+FEATURE=0
+case "$BRANCH" in feature/*) FEATURE=1 ;; esac
 if [ -z "$ISSUE" ] && [ "$SMALL" != 1 ]; then
     echo "Branch '$BRANCH' is not an issue branch (expected issue-<n>-<slug>)," >&2
     echo "not a small fix (expected fix/<slug>, docs/<slug> or chore/<slug>)," >&2
@@ -356,7 +362,9 @@ CRATES=$(git diff --name-only "origin/$BASE...HEAD"; git status --porcelain \
          | sed 's/^...//') 
 CRATES=$(printf '%s\n' $CRATES | sed -n 's|^crates/\([^/]*\)/.*|\1|p' | sort -u)
 
-if [ "$SMALL" = 1 ]; then
+if [ "$FEATURE" = 1 ]; then
+    echo "issue:  none (a spec feature branch; its tasks.md is the queue)"
+elif [ "$SMALL" = 1 ]; then
     echo "issue:  none (a small fix; CLAUDE.md's ten-minute rule)"
 else
     echo "issue:  #$ISSUE"
@@ -1000,7 +1008,15 @@ else
         # that is not this work's.
         echo "the previous PR for $BRANCH is $PR_STATE; opening a new one."
     fi
-    TITLE=$(git log -1 --format=%s)
+    # The squash subject. The last commit's is right for a branch of one
+    # change; a spec branch's last commit rarely speaks for the branch, so
+    # it says what the PR is with --title (#2023 went up titled after a CI
+    # workflow, the last of fourteen commits).
+    TITLE="${TITLE_ARG:-$(git log -1 --format=%s)}"
+    if [ "$FEATURE" = 1 ] && [ -z "$TITLE_ARG" ]; then
+        echo "warning: a feature branch's PR is titled after its last commit ('$TITLE');" >&2
+        echo "         pass --title to say what the whole branch does." >&2
+    fi
     # `Closes` auto-closes the issue the moment this merges -- right, for
     # the ordinary case of a PR that meets its issue's acceptance in full.
     # `--refs-only` is for the other case: a measurement that changed the
@@ -1011,7 +1027,11 @@ else
     # one that has to say so -- here, not by editing the PR after the fact
     # (#1189). Written out as "deliberately not `Closes`" rather than left
     # for a reader to guess whether it was an omission.
-    if [ "$SMALL" = 1 ]; then
+    if [ "$FEATURE" = 1 ]; then
+        SPEC=$(git log "origin/$BASE..HEAD" --format=%b \
+            | sed -n 's|^Refs: \(specs/[0-9][0-9]*-[a-z0-9-]*\).*|\1|p' | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}')
+        CLOSES_LINE="Refs: ${SPEC:-the spec this branch implements} — spec-driven work: its \`tasks.md\` is the queue and its \`spec.md\` the acceptance, so there is no issue to close."
+    elif [ "$SMALL" = 1 ]; then
         # Nothing to close. Said out loud so a reviewer does not go looking
         # for the issue this PR forgot to name.
         CLOSES_LINE="No issue: a small fix, made on the spot rather than filed (CLAUDE.md, \"Say it where it persists\")."
