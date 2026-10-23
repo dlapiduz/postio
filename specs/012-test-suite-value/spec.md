@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-23
 
-**Status**: Draft. The maintainer decided on 2026-10-23 that the layer rule is an ADR (0049) and that there is no CPU target
+**Status**: Built 2026-10-23 and closed. The tools, ADR 0049 and the frontend-suite budget are on `main`. The parity review removed 24 frontend cases on mutation evidence, about 70 CPU-seconds of 4,040. The maintainer chose to have no CPU target, and declined the merges. The review found the frontend suites to be mostly composition, so the next gain is per-case setup in `focus_suite` (49% of the suite's CPU). That is outside this spec's rubric and is filed on its own.
 
 **Input**: The maintainer said: "I have a lot of tests in this repo, and it is hard to tell whether they are duplicates or whether they are valuable." They asked for a framework and a process that simplifies or reduces the suite while keeping its quality.
 

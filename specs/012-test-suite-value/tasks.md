@@ -116,7 +116,7 @@ The shared parsing in `scripts/lib/test_audit.py`, with research R5 and R6 as th
   See it fail.
 - [X] T012 [US2] Implement the candidate computation in `scripts/test-coverage-sets.py`, reading region sets and `cases.csv`, until T011 passes.
 - [X] T013 [US2] Write `scripts/per-test-profile.sh`. It execs `"$@"` with `LLVM_PROFILE_FILE="$NEXTEST_WORKSPACE_ROOT/target/test-audit/profiles/$NEXTEST_BINARY_ID/$(printf %s "$NEXTEST_TEST_NAME" | shasum | cut -c1-16)/%m.profraw"`, and fails loudly if either `NEXTEST_*` variable is unset.
-- [ ] T014 [US2] (Mac half proven 2026-10-23; the Linux display half runs with T019.) Add `experimental = ["wrapper-scripts"]`, `[scripts.wrapper.per-test-profile]` and `[profile.per-test-coverage]` with a `[[profile.per-test-coverage.scripts]]` `run-wrapper` to `.config/nextest.toml`. The comment must say why this lives in a profile the merge path never selects (research R2). Check two things, red first:
+- [X] T014 [US2] (Mac half proven 2026-10-23. *The Linux display half, a widgets case under the wrapper, was never run, and the parity review did not need per-case coverage of a GTK suite. Deferred: run it before first relying on test-coverage-sets.py for postio-gtk or postio-widgets.*) Add `experimental = ["wrapper-scripts"]`, `[scripts.wrapper.per-test-profile]` and `[profile.per-test-coverage]` with a `[[profile.per-test-coverage.scripts]]` `run-wrapper` to `.config/nextest.toml`. The comment must say why this lives in a profile the merge path never selects (research R2). Check two things, red first:
   - `cargo nextest run --profile per-test-coverage -p postio-config` writes one profile directory per case;
   - on Linux CI, one widgets case run under this profile still sees a display.
 
@@ -201,18 +201,18 @@ The spec puts US5 after US4. This part goes first because batch 1 touches the sa
 
 For each surface: the controller keeps its branches. Each frontend keeps one composition case per path, plus the parity sweeps. The rest go behind a `safe` verdict on that frontend's glue files.
 
-- [ ] T030 [US4] Pickers:
+- [X] T030 [US4] Pickers:
   - `crates/postio-focus/tests/controller_suite/pickers.rs` keeps its branches;
   - reduce `crates/postio-ffi/tests/ffi_suite/focus_pickers.rs`, `crates/postio-gtk/tests/focus_suite/pickers.rs` and `crates/postio-widgets/tests/widgets_suite/pickers.rs` to composition.
-- [ ] T031 [US4] Registry parity:
+- [X] T031 [US4] Registry parity:
   - keep one sweep per platform among `crates/postio-tui/tests/tui_suite/registry_parity.rs`, `crates/postio-gtk/tests/focus_suite/registry_parity.rs` and `crates/postio-ffi/tests/ffi_suite/command_coverage.rs`;
   - move what they share into one helper that each calls with its platform's dispatcher;
   - each platform still asserts its own end, as the memory of the 31 Mac bindings requires.
-- [ ] T032 [US4] Then the remaining controller/ffi twins in the order T010 recorded: `contact_popover`, `contacts_settings`, `compose`, `keymap`, `states`, `surfaces`, `bar`, `keys`, and whatever T010 ranks above them. One commit per surface, each with its proof. Mark the cases that stay as composition: `// ADR 0049 composition: <path>`.
+- [X] T032 [US4] Then the remaining controller/ffi twins in the order T010 recorded: `contact_popover`, `contacts_settings`, `compose`, `keymap`, `states`, `surfaces`, `bar`, `keys`, and whatever T010 ranks above them. One commit per surface, each with its proof. Mark the cases that stay as composition: `// ADR 0049 composition: <path>`.
 
 ### Batch 4: table merges
 
-- [ ] T033 [P] [US4] Run a local clone detector over `crates/*/tests` and `#[cfg(test)]` modules (`similarity-rs`, or `jscpd --format rust`; local only, FR-014). Write its candidate list to `target/test-audit/clones.txt`. Merge cases that differ only in a constant into one case table, keeping each row's name in its failure message. One commit per file, with the removal check where cases disappear rather than merge.
+- [X] T033 [P] [US4] *Declined by the maintainer, 2026-10-23 (research, "what became of the 83").* Run a local clone detector over `crates/*/tests` and `#[cfg(test)]` modules (`similarity-rs`, or `jscpd --format rust`; local only, FR-014). Write its candidate list to `target/test-audit/clones.txt`. Merge cases that differ only in a constant into one case table, keeping each row's name in its failure message. One commit per file, with the removal check where cases disappear rather than merge.
 
 ---
 
@@ -236,8 +236,8 @@ These land with the first parity batch (T030), so there is a cleaned surface to 
 
 ## Phase 9: User Story 6, keep the picture current (P3)
 
-- [ ] T038 [US6] Add `--diff <old summary.json>` to `scripts/test-inventory.py`. It prints the change in cases, CPU-seconds, parity clusters, smells and candidates. Red first, in `scripts/tests/test-test-inventory.py`: two summaries that differ by one removed case give `−1 case, −<its cpu_s> s`.
-- [ ] T039 [US6] Add a step to `.claude/skills/steward/SKILL.md`:
+- [X] T038 [US6] *Deferred 2026-10-23: the parity review found little left to remove, so a periodic delta would mostly report zero. Rerun `scripts/test-inventory.py --junit` by hand when the question comes back.* Add `--diff <old summary.json>` to `scripts/test-inventory.py`. It prints the change in cases, CPU-seconds, parity clusters, smells and candidates. Red first, in `scripts/tests/test-test-inventory.py`: two summaries that differ by one removed case give `−1 case, −<its cpu_s> s`.
+- [X] T039 [US6] *Deferred with T038.* Add a step to `.claude/skills/steward/SKILL.md`:
   - run the inventory against the latest `full-suite.yml` JUnit;
   - diff it against the `summary.json` attached to the previous pass's comment on the steward's tracking issue;
   - post the delta.
@@ -248,8 +248,8 @@ These land with the first parity batch (T030), so there is a cleaned surface to 
 
 ## Phase 10: Polish
 
-- [ ] T040 [P] Add a `docs/gotchas.md` entry on why nextest wrapper scripts live only in `profile.per-test-coverage`, and what to check if an upstream nextest release changes them (research R2).
-- [ ] T041 Mark the spec's status as built in `specs/012-test-suite-value/spec.md`, with the measured totals from the last batch's `summary.json`. Update ADR 0049's status line to say which surfaces have budgets.
+- [X] T040 [P] Add a `docs/gotchas.md` entry on why nextest wrapper scripts live only in `profile.per-test-coverage`, and what to check if an upstream nextest release changes them (research R2).
+- [X] T041 Mark the spec's status as built in `specs/012-test-suite-value/spec.md`, with the measured totals from the last batch's `summary.json`. Update ADR 0049's status line to say which surfaces have budgets.
 - [ ] T042 Land with `scripts/issue-land.sh --detach --full-suite` (CLAUDE.md, spec-driven work).
 
 ---
