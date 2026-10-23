@@ -1104,15 +1104,20 @@ echo "$URL"
 # only if that run does, so auto-merge waits for it. Added here, with this
 # session's own token: a label the workflow token adds triggers nothing.
 #
-# It is also asked for when the diff itself is risky: the seeded mail and
-# fixtures, postio-focus, storage migrations, postio-sync, or three or more
-# crates (`scripts/risk-of-diff.sh`). An explicit `--full-suite` still forces
-# it; there is no flag that declines it.
+# Asked for by the author, never added here by itself. From #1971 to
+# 2026-10-23 a risky diff -- seeded mail, postio-focus, a storage migration,
+# postio-sync, three or more crates (`scripts/risk-of-diff.sh`) -- got the
+# label automatically, and 8 of the next 20 pull requests waited 40 to 135
+# minutes on the nightly's whole run, then re-ran its flakes. The nightly
+# still runs the whole suite every day; the label is for the author's own
+# low confidence in a change, which no path rule can read. The risk is still
+# named, so the choice is made knowing it.
 if [ "$FULL_SUITE" = 0 ]; then
     RISK=$(git diff --name-only "origin/$BASE...HEAD" | scripts/risk-of-diff.sh || true)
     if [ "$(printf '%s\n' "$RISK" | sed -n 1p)" = high ]; then
-        FULL_SUITE=1
-        echo "full suite: this diff is high risk ($(printf '%s\n' "$RISK" | sed -n 2p))."
+        echo "note: this diff is high risk ($(printf '%s\n' "$RISK" | sed -n 2p))."
+        echo "      \`--full-suite\` runs the nightly on the PR before it merges; ask for it"
+        echo "      when the default tier does not give you confidence in this change."
     fi
 fi
 if [ "$FULL_SUITE" = 1 ]; then
