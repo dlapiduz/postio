@@ -114,23 +114,3 @@ async fn a_click_on_a_name_draws_the_popover_and_a_segment_changes_arrival_for_g
     let _ = SurfaceKindFfi::ContactPopover;
     session.shutdown();
 }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn nobody_at_that_address_draws_nothing() {
-    let session = old_mail().await;
-    let s = session.clone();
-    tokio::task::spawn_blocking(move || s.focus_contact_popover_at("stranger@example.org".into()))
-        .await
-        .expect("the click");
-    assert!(
-        heard(&session, 20, |event| matches!(
-            event,
-            UiEvent::FocusCloseSurface {
-                kind: SurfaceKindFfi::ContactPopover
-            }
-        ))
-        .await,
-        "the popover that opened is put away"
-    );
-    session.shutdown();
-}

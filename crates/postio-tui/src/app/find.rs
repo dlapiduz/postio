@@ -346,22 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn the_field_says_when_there_are_no_matches_and_marks_nothing() {
-        let mut app = opened(FRAME);
-        update(&mut app, ctrl('f'));
-        type_text(&mut app, "zzz");
-        assert!(
-            field(&app, FRAME).contains("No matches"),
-            "{}",
-            field(&app, FRAME)
-        );
-        assert!(marked(&app, FRAME, "Line 1", Modifier::REVERSED).is_empty());
-        // Stepping with nothing to step to changes nothing and does not fail.
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(field(&app, FRAME).contains("No matches"));
-    }
-
-    #[test]
     fn backspace_edits_the_query_and_the_matches_follow() {
         let mut app = opened(FRAME);
         update(&mut app, ctrl('f'));

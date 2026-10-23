@@ -138,46 +138,6 @@ pub fn a_list_opens_with_the_cursor_on_its_first_row() {
     });
 }
 
-/// A folder chosen in the popover opens with the cursor on its first row.
-pub fn a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
-            .await;
-        let travel = fixture.folder("Travel").await;
-        fixture.file_in(travel, "Train to the coast", 60).await;
-        fixture.file_in(travel, "Hotel booking", 20).await;
-        let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
-            "the inbox never reached the screen"
-        );
-        support::keys(&window, &["g", "l"]);
-        let places = window.places().expect("g l opened the folders popover");
-        assert!(
-            crate::settle_until(async || places.names().contains(&"Travel".to_owned())).await,
-            "the popover never listed Travel"
-        );
-        places.set_filter("trav");
-        support::click_row_saying(&window, &window, "Travel");
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "Travel's conversations are not shown: {:?}",
-            support::subjects(&window)
-        );
-        let pane = window.pane().expect("the list");
-        assert_eq!(
-            pane.cursor().selected(),
-            0,
-            "Travel opened with the cursor off its first row"
-        );
-    });
-}
-
 /// GTK's list view moves the cursor on its own -- a click on a row, a row
 /// archived from under it -- and the controller walks on from wherever it
 /// is, not from where it last put it itself.

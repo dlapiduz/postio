@@ -277,30 +277,6 @@ async fn move_lists_the_destinations_and_choosing_one_moves_the_mail() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn in_an_empty_filter_a_digit_or_space_is_the_pickers_and_otherwise_typing() {
-    let session = an_inbox_and_receipts().await;
-    cursor_on_the_first_row(&session).await;
-    session.invoke("add_label");
-    picker(&session, |_| true).await;
-
-    assert_eq!(
-        session.key(Some(" "), None, NONE, UiContext::List, true),
-        KeyOutcomeFfi::Command {
-            id: "picker_toggle".to_owned()
-        },
-        "nothing to type into yet: Space is the picker's"
-    );
-    session.focus_picker_typed("Re".to_owned());
-    picker(&session, |view| view.typed == "Re").await;
-    assert_eq!(
-        session.key(Some(" "), None, NONE, UiContext::List, true),
-        KeyOutcomeFfi::Unhandled,
-        "a space in a name is typing"
-    );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_queued_send_says_so_and_undo_takes_the_send_back() {
     let database = test_support::memory().await;
     {

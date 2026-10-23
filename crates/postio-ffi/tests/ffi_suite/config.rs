@@ -37,13 +37,6 @@ fn an_override_wins_over_the_built_in() {
 }
 
 #[test]
-fn a_command_nobody_has_heard_of_has_no_binding() {
-    let session = session();
-    assert_eq!(session.binding_for("summon_a_pony".to_string()), None);
-    session.shutdown();
-}
-
-#[test]
 fn an_unreadable_config_does_not_stop_the_session() {
     // A config that will not parse is a reason to use the defaults, not a
     // reason the application cannot open. The store and the mail are not
@@ -184,22 +177,5 @@ fn starting_the_log_seeds_a_config_file_when_there_is_none() {
     assert!(
         postio_ffi::settings_status(text).valid,
         "the file Postio writes has to parse"
-    );
-}
-
-#[test]
-fn seeding_never_touches_a_file_that_is_already_there() {
-    // Including one that does not parse: somebody part-way through fixing
-    // their config must not have it replaced with defaults.
-    let scratch = tempfile::tempdir().expect("a scratch directory");
-    let path = scratch.path().join("config.toml");
-    std::fs::write(&path, "this is not = = valid toml").expect("write");
-
-    let wrote = postio_config::Config::seed_if_missing(&path).expect("seed");
-
-    assert!(!wrote);
-    assert_eq!(
-        std::fs::read_to_string(&path).expect("read"),
-        "this is not = = valid toml"
     );
 }

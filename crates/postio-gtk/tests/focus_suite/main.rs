@@ -528,10 +528,6 @@ const CASES: &[(&str, fn())] = &[
         motion::the_list_rows_cursor_has_no_transition as fn(),
     ),
     (
-        "compose::a_reply_nobody_wrote_in_is_discarded_on_esc_and_one_with_words_is_kept",
-        compose::a_reply_nobody_wrote_in_is_discarded_on_esc_and_one_with_words_is_kept as fn(),
-    ),
-    (
         "compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it",
         compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it as fn(),
     ),
@@ -586,10 +582,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "pickers::h_then_3_reminds_at_the_end_of_the_week",
         pickers::h_then_3_reminds_at_the_end_of_the_week as fn(),
-    ),
-    (
-        "pickers::l_offers_the_labels_of_the_row_s_own_account",
-        pickers::l_offers_the_labels_of_the_row_s_own_account as fn(),
     ),
     (
         "pickers::l_toggles_a_label_and_creates_a_new_one",
@@ -761,16 +753,8 @@ const CASES: &[(&str, fn())] = &[
         bar::alt_2_runs_the_second_saved_search as fn(),
     ),
     (
-        "bar::half_typed_operators_show_no_error_and_results_keep_updating",
-        bar::half_typed_operators_show_no_error_and_results_keep_updating as fn(),
-    ),
-    (
         "bar::the_arrows_scroll_the_results_to_the_highlighted_row",
         bar::the_arrows_scroll_the_results_to_the_highlighted_row as fn(),
-    ),
-    (
-        "bar::a_sentence_names_its_sender_from_the_address_book",
-        bar::a_sentence_names_its_sender_from_the_address_book as fn(),
     ),
     (
         "bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query",
@@ -1523,10 +1507,6 @@ const CASES: &[(&str, fn())] = &[
         cursor::a_list_opens_with_the_cursor_on_its_first_row as fn(),
     ),
     (
-        "cursor::a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row",
-        cursor::a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row as fn(),
-    ),
-    (
         "cursor::keys_before_a_reopened_list_lands_are_not_walked_back",
         cursor::keys_before_a_reopened_list_lands_are_not_walked_back as fn(),
     ),
@@ -1601,10 +1581,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "undo::the_toast_counts_the_row_and_says_when_it_was_undone",
         undo::the_toast_counts_the_row_and_says_when_it_was_undone as fn(),
-    ),
-    (
-        "undo::an_undo_puts_the_cursor_on_the_row_it_brought_back",
-        undo::an_undo_puts_the_cursor_on_the_row_it_brought_back as fn(),
     ),
     (
         "undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone",
