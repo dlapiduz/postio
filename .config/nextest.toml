@@ -149,6 +149,25 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 # Everything, measurements included. `nightly.yml`'s full-suite job runs this,
 # and it is also how you run one measurement by hand: `all()` is a filter an
 # `-E` on the command line narrows rather than fights.
+# The quarantine: cases that fail now and then under the shared compositor
+# on pull requests whose diff never touches them, each with the issue that
+# owns it and the date it went in. On a pull request one of these may fail
+# once and pass on its retry, which still proves the behaviour; every other
+# profile runs it once, so a nightly red says "still flaky" rather than
+# hiding it. A retry here is a loan, not a fix: the entry leaves when the
+# case is read and repaired, and the steward pass asks after any that has
+# stayed long. Over the 40 pull-request runs before 2026-10-23 these four
+# were 10 of the 17 failures in the 14 red application jobs, one a run.
+#
+#   marked_rows::a_selected_marked_row_shows_its_check_not_its_dot   4x  #1800, 2026-10-23
+#   unsubscribe::the_setting_makes_the_one_action_delete              3x  #1800, 2026-10-23
+#   unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail
+#                                                                      2x  #1800, 2026-10-23
+#   row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys 1x  #1800, 2026-10-23
+[[profile.ci.overrides]]
+filter = 'binary(focus_suite) & (test(=marked_rows::a_selected_marked_row_shows_its_check_not_its_dot) | test(=unsubscribe::the_setting_makes_the_one_action_delete) | test(=unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail) | test(=row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys))'
+retries = 1
+
 [profile.nightly]
 # A bench's clock, not the merge path's.
 #
