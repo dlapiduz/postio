@@ -287,7 +287,7 @@ def main() -> int:
             # What this case is really about is unchanged: a host that *can*
             # build the crate must not silently skip its gates.
             "clippy -p postio-gtk" in calls
-            and "test --workspace --lib" in calls,
+            and "--workspace --lib" in calls,
             f"the gates were skipped on a host that can run them:\n{calls}",
         )
 

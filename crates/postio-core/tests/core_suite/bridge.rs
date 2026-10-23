@@ -241,6 +241,7 @@ fn a_handler_slower_than_the_shutdown_timeout_does_not_panic_the_caller() {
 fn shutdown_does_not_wait_for_detached_background_work() {
     // A stuck sync task must not hold the application open at quit.
     let (bridge, _events) = Bridge::new(handler_fn(|_command: Command, _events| async move {
+        // POSTIO-NOT-A-WAIT: the stuck task is the subject; the test returns without it.
         tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
     }))
     .expect("the runtime starts");

@@ -961,6 +961,7 @@ impl Session {
     /// Accepts the command and never answers it.
     async fn stall(&mut self) -> io::Result<()> {
         loop {
+            // POSTIO-NOT-A-WAIT: a server that never answers is the subject; the client's timeout ends the test
             tokio::time::sleep(Duration::from_secs(3600)).await;
         }
     }

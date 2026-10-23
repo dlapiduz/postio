@@ -125,6 +125,21 @@ def main() -> int:
          config=config_with("not (binary(slow_thing) + test(/^measured::/))"),
          files=shared, expect_fail=True, mentions="crates/q/tests/other_suite/measured.rs")
 
+    # One case held out of a fast file: the marker sits on that case, and a
+    # bare `fn` of the same name with nothing above it is the drift.
+    percase = dict(good)
+    percase["crates/p/tests/suite/mixed.rs"] = (
+        "//! Fast cases, and one that waits.\n\n"
+        f"/// {MARKER} it sleeps two seconds.\n#[test]\nfn waits() {{}}\n\n#[test]\nfn quick() {{}}\n"
+    )
+    scoped_case = config_with(FILTER[:-1] + " + (package(p) & test(=mixed::waits)))")
+    case("a marked case held out by name passes", config=scoped_case,
+         files=percase, expect_fail=False)
+    unmarked = dict(percase)
+    unmarked["crates/p/tests/suite/mixed.rs"] = "//! Fast cases.\n\n#[test]\nfn waits() {}\n"
+    case("a case held out by name without its marker fails", config=scoped_case,
+         files=unmarked, expect_fail=True, mentions="mixed.rs:4 does not say so")
+
     # `profile.ci-full` holds the storyboard passes out because
     # `profile.ci-storyboards` runs them. The two spellings must agree, or a
     # test is held out of one and selected by neither.

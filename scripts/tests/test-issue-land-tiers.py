@@ -239,9 +239,15 @@ def workspace_tests(calls: str) -> list[str]:
 
 
 def workspace_unit_tier(calls: str) -> list[str]:
+    """The sanity tier: the workspace's `--lib` tests, through whichever
+    runner the landing has. nextest since the merge path's filter has to
+    apply to it (`cargo nextest run --no-tests=pass --workspace --lib`);
+    `cargo test --workspace --lib` on a host without nextest."""
     return [
         l for l in calls.splitlines()
-        if l.startswith("cargo ") and " test " in f" {l} " and "--workspace" in l and "--lib" in l
+        if l.startswith("cargo ")
+        and (" test " in f" {l} " or " nextest run " in f" {l} ")
+        and "--workspace" in l and "--lib" in l
     ]
 
 
@@ -289,7 +295,7 @@ def main() -> int:
         case(
             "a landing runs the workspace unit tier by default",
             bool(workspace_unit_tier(calls)),
-            f"no `cargo test --workspace --lib` in:\n{calls}",
+            f"no workspace `--lib` tier (cargo test or nextest run) in:\n{calls}",
         )
         case(
             "and does not run the per-crate integration suites",

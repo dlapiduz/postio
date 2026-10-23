@@ -248,6 +248,8 @@ async fn local_attachment(
     (message.id, id)
 }
 
+/// POSTIO-MEASUREMENT: it sleeps a full debounce to prove no late fetch was made, a
+/// second of real time, so it runs on the nightly timer.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_attachment_that_was_never_downloaded_is_never_fetched() {
     let database = test_support::temp().await;
