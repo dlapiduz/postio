@@ -104,6 +104,13 @@ threads-required = 4
 [profile.ci]
 fail-fast = false
 
+# A report of every case and its time, which `scripts/ci-test-budget.py`
+# reads after the run: no test on the merge path waits on the clock
+# (CLAUDE.md, Tests), and a product timer run in real time shows only as
+# duration. Written under target/nextest/ci/.
+[profile.ci.junit]
+path = "junit.xml"
+
 # **The outer watchdog has to outlast the inner one.**
 #
 # `profile.default`'s backstop is 60s x 4 = 240s, sized against this

@@ -899,12 +899,26 @@ jobs:
           dbus-run-session -- cargo nextest run --workspace --profile ci --lib
           -E 'not (package(postio-widgets) + package(postio-gtk))'
 
+      # No test on the merge path waits on the clock (CLAUDE.md, Tests). A
+      # literal sleep is caught by check-no-clock-waits.py; a product timer
+      # run in real time shows only as duration, so each nextest run above
+      # leaves a report and this refuses any case over the tier's budget:
+      # 10 s for a unit or integration case, 20 s for one that opens a GTK
+      # window. The numbers and the remedies are in the script.
+      - name: Every test under its budget
+        if: ${{ !cancelled() }}
+        run: scripts/ci-test-budget.py target/nextest/ci/junit.xml 10
+
       - name: cargo nextest run (the suites a vocabulary change breaks)
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: >-
           dbus-run-session -- cargo nextest run --profile ci
           -p postio-core -p postio-config
+
+      - name: Every test under its budget
+        if: ${{ !cancelled() }}
+        run: scripts/ci-test-budget.py target/nextest/ci/junit.xml 10
 
       # **nextest does not run doctests**, and does not say so. They are
       # compiled and run by rustdoc, not by a test binary it can list, so this
@@ -992,6 +1006,10 @@ jobs:
           dbus-run-session -- cargo nextest run -p postio-widgets --profile ci
           --partition count:${{ matrix.shard }}/2
 
+      - name: Every test under its budget
+        if: ${{ !cancelled() }}
+        run: scripts/ci-test-budget.py target/nextest/ci/junit.xml 10
+
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache
         if: ${{ !cancelled() }}
@@ -1025,6 +1043,10 @@ jobs:
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
+
+      - name: Every test under its budget
+        if: ${{ !cancelled() }}
+        run: scripts/ci-test-budget.py target/nextest/ci/junit.xml 20
 
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache
