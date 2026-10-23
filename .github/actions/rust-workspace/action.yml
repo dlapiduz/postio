@@ -33,6 +33,14 @@ inputs:
       `.github/actions/build-cache-save`, which writes it back from `main`.
     required: false
     default: "build"
+  build-cache:
+    description: >
+      "false" for a job that compiles nothing: the frontend test shards run
+      binaries another job built and shipped, and restoring a gigabyte of
+      target/ they will never read is the one cost the shards were made to
+      avoid. The registry goes with it; nothing there is needed to run.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -176,6 +184,7 @@ runs:
     # end of the job, from `main` only (#1710). The key, the fallback and why a
     # pull request never writes are that action's description.
     - name: Restore the build cache
+      if: inputs.build-cache == 'true'
       uses: ./.github/actions/build-cache
       with:
         name: ${{ inputs.cache-name }}

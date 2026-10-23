@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Self-test for scripts/ci-frontends-gate.sh.
 
-`Frontends` is the required check that stands for `Tests (GTK widgets N/2)` and
-`Tests (application)`. The trap it must not fall into is the one a skipped job
+`Frontends` is the required check that stands for `Build the frontend tests` and
+`Tests (frontends N/6)`. The trap it must not fall into is the one a skipped job
 sets: GitHub counts a skip as passed, so a gate that treats "skipped" as fine
 reports green having run nothing. A skip is legitimate only when the `changes`
 classification said no Rust changed.
@@ -45,28 +45,28 @@ def main() -> int:
         print(f"missing {SCRIPT}", file=sys.stderr)
         return 1
 
-    ok = ("test-gtk=success", "test-app=success")
+    ok = ("frontend-build=success", "test-frontends=success")
 
     case("all succeeded passes", 0, "yes", "success", *ok)
-    case("a failed shard fails", 1, "yes", "success", "test-gtk=failure", "test-app=success")
-    case("a failed app suite fails", 1, "yes", "success", "test-gtk=success", "test-app=failure")
-    case("a cancelled job fails", 1, "yes", "success", "test-gtk=cancelled", "test-app=success")
+    case("a failed build fails", 1, "yes", "success", "frontend-build=failure", "test-frontends=success")
+    case("a failed shard fails", 1, "yes", "success", "frontend-build=success", "test-frontends=failure")
+    case("a cancelled job fails", 1, "yes", "success", "frontend-build=cancelled", "test-frontends=success")
 
     # The trap: a skip with Rust changed means the work was not done.
-    case("skipped when Rust changed fails", 1, "yes", "success", "test-gtk=skipped", "test-app=skipped")
-    case("one skipped when Rust changed fails", 1, "yes", "success", "test-gtk=success", "test-app=skipped")
+    case("skipped when Rust changed fails", 1, "yes", "success", "frontend-build=skipped", "test-frontends=skipped")
+    case("one skipped when Rust changed fails", 1, "yes", "success", "frontend-build=success", "test-frontends=skipped")
 
     # And the legitimate skip.
-    case("skipped when no Rust changed passes", 0, "no", "success", "test-gtk=skipped", "test-app=skipped")
+    case("skipped when no Rust changed passes", 0, "no", "success", "frontend-build=skipped", "test-frontends=skipped")
     case("a failure is a failure even with no Rust changed", 1, "no", "success",
-         "test-gtk=failure", "test-app=skipped")
+         "frontend-build=failure", "test-frontends=skipped")
 
     # A classification that did not happen proves nothing.
-    case("a failed classification fails", 1, "", "failure", "test-gtk=skipped", "test-app=skipped")
-    case("a skipped classification fails", 1, "", "skipped", "test-gtk=skipped", "test-app=skipped")
-    case("an unreadable rust answer fails", 1, "", "success", "test-gtk=skipped", "test-app=skipped")
-    case("an unknown rust answer fails", 1, "maybe", "success", "test-gtk=skipped", "test-app=skipped")
-    case("an unknown result fails", 1, "yes", "success", "test-gtk=success", "test-app=")
+    case("a failed classification fails", 1, "", "failure", "frontend-build=skipped", "test-frontends=skipped")
+    case("a skipped classification fails", 1, "", "skipped", "frontend-build=skipped", "test-frontends=skipped")
+    case("an unreadable rust answer fails", 1, "", "success", "frontend-build=skipped", "test-frontends=skipped")
+    case("an unknown rust answer fails", 1, "maybe", "success", "frontend-build=skipped", "test-frontends=skipped")
+    case("an unknown result fails", 1, "yes", "success", "frontend-build=success", "test-frontends=")
     case("no jobs to check fails", 1, "yes", "success")
 
     for failure in FAILURES:
