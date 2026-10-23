@@ -9,12 +9,12 @@
 
 use crate::search_support::shown;
 use postio_config::paths::Platform;
-use postio_core::state::Selection;
+use postio_core::state::{Selection, ViewScope};
 use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_focus::{
     Effect, FocusController, Input, Intent, Policy, Request, RowFacts, Rows, ToastKind,
 };
-use postio_model::{AccountId, DeliveryId, MessageId, ThreadId};
+use postio_model::{AccountId, DeliveryId, FocusScope, ListScope, MailboxId, MessageId, ThreadId};
 use postio_ui::focus_list::{Digest, FocusRow};
 
 struct List {
@@ -444,4 +444,48 @@ fn the_controller_says_where_a_verb_would_go() {
     let aimed = focus.aim(&rows);
     assert!(aimed.aims.is_empty());
     assert!(aimed.everything.is_some());
+}
+
+/// The maintainer's report: `R` in the Focus inbox said "Nothing is open to
+/// refresh". Refresh aims at nothing, so it went out with no view beside it,
+/// and the host had nothing to say which mailboxes to sync. It goes with the
+/// place on screen, however it is asked for.
+#[test]
+fn refresh_goes_with_the_place_on_screen() {
+    let rows = List::of(&[1, 2, 3]);
+    let account = AccountId::new(1);
+    for (place, viewing) in [
+        (
+            ListScope::Focus(FocusScope::Inbox),
+            ViewScope::Focus {
+                accounts: vec![account],
+            },
+        ),
+        (
+            ListScope::Focus(FocusScope::HasAction),
+            ViewScope::Focus {
+                accounts: vec![account],
+            },
+        ),
+        (
+            ListScope::Mailbox(MailboxId::new(7)),
+            ViewScope::Mailbox(MailboxId::new(7)),
+        ),
+    ] {
+        let mut focus = focus_on(&rows);
+        let _ = focus.open(place);
+        let expected = vec![Request::Refresh {
+            viewing: Some(viewing),
+        }];
+        assert_eq!(
+            asks(&run(&mut focus, CommandId::Refresh, &rows)),
+            expected,
+            "the key, in {place:?}"
+        );
+        assert_eq!(
+            asks(&focus.handle_on(Input::Post(Command::Refresh), &rows)),
+            expected,
+            "the banner's Retry, in {place:?}"
+        );
+    }
 }

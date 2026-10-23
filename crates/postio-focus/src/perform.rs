@@ -141,6 +141,7 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         ),
+        Request::Refresh { viewing } => Reply::Sent(refresh(client, viewing).await),
         Request::Places => Reply::Places(places(client).await),
         Request::Search {
             query,
@@ -908,6 +909,23 @@ async fn send(
     Ok(())
 }
 
+/// `Refresh`, aimed at the place on screen: the host reads which mailboxes
+/// to sync from the view it is sent with, and this client's own state is
+/// never told what Focus shows.
+async fn refresh(client: &Client, viewing: Option<ViewScope>) -> Result<(), String> {
+    let state = SharedState::default();
+    if let Some(viewing) = viewing {
+        let (sink, _) = postio_core::bridge::event_channel();
+        state.update(&sink, |app| app.open_view(viewing));
+    }
+    client
+        .clone()
+        .with_state(state)
+        .send(Command::Refresh)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::Future;
@@ -1049,5 +1067,32 @@ mod tests {
             *transport.asked.lock().unwrap(),
             vec![Req::Rows(vec![message])]
         );
+    }
+
+    /// The host works out which mailboxes to sync from the view a refresh
+    /// is sent with; one sent with this client's own state said "Nothing is
+    /// open to refresh" in Focus's inbox.
+    #[test]
+    fn a_refresh_is_sent_with_the_place_on_screen() {
+        let viewing = ViewScope::Focus {
+            accounts: vec![postio_model::AccountId::new(1)],
+        };
+        let (client, transport) = client(vec![Resp::Done]);
+        assert_eq!(
+            now(perform(
+                &client,
+                Request::Refresh {
+                    viewing: Some(viewing.clone())
+                }
+            )),
+            Reply::Sent(Ok(())),
+        );
+        let asked = transport.asked.lock().unwrap();
+        let [Req::Send(Command::Refresh, aim)] = asked.as_slice() else {
+            panic!("one refresh, sent: {asked:?}");
+        };
+        let mut aimed = postio_core::state::AppState::new();
+        aimed.adopt(aim.clone());
+        assert_eq!(aimed.viewing(), Some(&viewing));
     }
 }
