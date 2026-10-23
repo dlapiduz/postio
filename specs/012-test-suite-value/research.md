@@ -156,3 +156,14 @@ Each entry gives the decision, why, and what was rejected. Facts were checked on
 - **Removing all six of `change.rs`'s own unit tests: NOT SAFE.** The check named 14 mutants in `ConfigChanged::any` and `ConfigChanged::between` that only those cases catch. Run 39975022697, about 13 minutes.
 - **Removing a planted copy of `changing_focus_touches_only_focus`: safe.** Run 39975026200, about 10 minutes, on the scratch branch `chore/audit-planted-duplicate`.
 - **Baseline line numbers drift.** `docs/mutants-baseline.txt` holds `change.rs:71:13` for a mutant now at line 74. A drifted entry no longer matches, so Pass A treats it as new and Pass B re-runs it. It counts against the removal only if the cases catch it. Drift therefore costs time in Pass B, never a false verdict.
+
+### 2026-10-23: triage of the assertion smells (T027–T029)
+
+- **Constant-only, 8 cases, all kept.** Each pins a decision:
+  - `SecretSource::default()` is the keyring;
+  - `CONTACT_SYNC_WRITES` ships off;
+  - `PRECEDENCE & AUTO_SUBMITTED == 0`;
+  - the search field's two placeholders.
+- **is-ok-only, 28 cases.** Most assert the property they name: every corpus fixture parses, a 40,000-deep body hits the cap, a budget measured at exactly its limit passes, a gone account comes back as a sentence. Four only checked that something came back where the test is about *what* comes back, and were tightened: `matching_is_case_insensitive`, `a_remote_image_resolves_by_its_parsed_url`, `domain_matching_ignores_case`, `no_cap_means_no_cap`.
+- **Mock-count-only, 6 flags, 4 of them false.** The detector read `times` in "answered 2 times", `x_of(…, "Bus times")`, and a log held in a variable called `calls`. It now matches only a counter being read (`.calls()`, `call_count`, `.times(`), outside string literals.
+- **Consequence: FR-012's ratchet is withdrawn.** A check refusing new constant-only or is-ok-only assertions would have refused mostly good tests.

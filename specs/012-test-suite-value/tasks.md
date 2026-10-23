@@ -193,9 +193,9 @@ The spec puts US5 after US4. This part goes first because batch 1 touches the sa
 
 ### Batch 2: smells
 
-- [ ] T027 [US4] For every `is-ok-only` case in the T010 inventory, tighten it to assert the value it produces. Where that duplicates an existing case, delete it behind a `safe` verdict. One commit per crate.
-- [ ] T028 [US4] For every `constant-only` case (e.g. `crates/postio-ui/src/search_view.rs:2478`, `crates/postio-ui/src/focus_dialog.rs:540,562`), either assert the behaviour the constant drives or delete it behind a `safe` verdict. One commit per crate.
-- [ ] T029 [US4] For every `mock-count-only` case (e.g. `crates/postio-core/tests/core_suite/dispatch.rs:110`, `crates/postio-host/tests/host_suite/oauth.rs:185`), add the outcome assertion a person would see (Constitution IV). Remove the count only if it then adds nothing and its removal is `safe`.
+- [X] T027 [US4] For every `is-ok-only` case in the T010 inventory, tighten it to assert the value it produces. Where that duplicates an existing case, delete it behind a `safe` verdict. One commit per crate.
+- [X] T028 [US4] For every `constant-only` case (e.g. `crates/postio-ui/src/search_view.rs:2478`, `crates/postio-ui/src/focus_dialog.rs:540,562`), either assert the behaviour the constant drives or delete it behind a `safe` verdict. One commit per crate.
+- [X] T029 [US4] For every `mock-count-only` case (e.g. `crates/postio-core/tests/core_suite/dispatch.rs:110`, `crates/postio-host/tests/host_suite/oauth.rs:185`), add the outcome assertion a person would see (Constitution IV). Remove the count only if it then adds nothing and its removal is `safe`.
 
 ### Batch 3: parity clusters, one surface per commit (ADR 0049)
 
@@ -229,8 +229,8 @@ These land with the first parity batch (T030), so there is a cleaned surface to 
 
   See it fail.
 - [ ] T035 [US5] Implement `scripts/checks/check-frontend-suite-budget.py` until T034 passes. Seed `scripts/checks/frontend-suite-budget.txt` with each file T030–T032 cleaned, at its count after cleaning.
-- [ ] T036 [P] [US5] Write `scripts/tests/test-check-assertion-smells.py`. It asserts that each of `constant-only` and `is-ok-only` fails when a file's count rises or a new file appears, names the case, and names the remedy, and that a falling count passes. See it fail.
-- [ ] T037 [US5] Implement `scripts/checks/check-assertion-smells.py` on `scripts/lib/test_audit.py`'s `smells()` until T036 passes. Seed `scripts/checks/assertion-smells-baseline.txt` from the tree after batch 2. Confirm `scripts/check.sh` stays under its budget: the new checks add under 1 s.
+- [X] T036 [P] [US5] *Withdrawn with FR-012 (research, Measured).* Write `scripts/tests/test-check-assertion-smells.py`. It asserts that each of `constant-only` and `is-ok-only` fails when a file's count rises or a new file appears, names the case, and names the remedy, and that a falling count passes. See it fail.
+- [X] T037 [US5] *Withdrawn with FR-012.* Implement `scripts/checks/check-assertion-smells.py` on `scripts/lib/test_audit.py`'s `smells()` until T036 passes. Seed `scripts/checks/assertion-smells-baseline.txt` from the tree after batch 2. Confirm `scripts/check.sh` stays under its budget: the new checks add under 1 s.
 
 ---
 
