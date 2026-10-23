@@ -87,8 +87,9 @@ It formats, runs clippy and the unit tests of what you changed plus
 closes the issue, and arms auto-merge. PRs land **squashed**. `--full` (the
 integration suites locally) needs a specific reason; run the suites your diff
 touches yourself instead. A high-risk diff (seeded mail or fixtures,
-`postio-focus`, storage migrations, `postio-sync`, or 3+ crates) gets
-`--full-suite` automatically and the script says which rule matched.
+`postio-focus`, storage migrations, `postio-sync`, or 3+ crates) is named
+by the script with the rule that matched; `--full-suite` is yours to ask
+for, and the full suite runs on `main` after the merge regardless.
 
 **Opening a PR by hand** -- from a host that cannot build a crate the branch
 touches, so `issue-land.sh` refuses -- skips its gates, so run the ones this
