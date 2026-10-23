@@ -15,7 +15,7 @@
 #   scripts/issue-land.sh --full                # integration suites too, not just units
 #   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
 #   scripts/issue-land.sh --full-suite          # CI runs the whole nightly on the PR too
-#                                               # (automatic for a high-risk diff: scripts/risk-of-diff.sh)
+#                                               # (the script names a high-risk diff: scripts/risk-of-diff.sh)
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
 #   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
