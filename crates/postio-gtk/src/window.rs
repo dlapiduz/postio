@@ -1674,6 +1674,14 @@ impl FocusWindow {
     pub fn act(&self, id: CommandId) {
         // A stall after this is blamed on it (`postio_widgets::jank`).
         postio_widgets::jank::note_action(id);
+        // A search's results are the controller's to drive: their keys --
+        // Quick Look, Save file, the tabs -- and the verbs on a result.
+        if self.results().is_some()
+            && let Some(pane) = self.pane()
+            && pane.feed().answers(id)
+        {
+            return self.run_in_controller(id);
+        }
         // The rules list takes the list's keys for its own rows; a verb on
         // mail has nothing under it there.
         if self.rules().is_some() && self.rules_act(id) {
@@ -2179,6 +2187,13 @@ impl FocusWindow {
                     results.show_popover(view.as_deref());
                 }
             }
+            Intent::QuickLook(view) => {
+                if let Some(results) = self.results() {
+                    let commands = postio_ui::search_view::quick_look_commands(&self.keymap());
+                    results.show_quick_look(view.as_deref(), &commands);
+                }
+            }
+            Intent::FileCopy(copy) => self.file_copy(copy.as_ref()),
             Intent::Place { name } => self.show_place(name),
             Intent::OpenPlaces => self.open_places(),
             Intent::PlacesChanged => {
@@ -4669,6 +4684,50 @@ impl FocusWindow {
         self.imp().launcher.replace(Some(Rc::new(launch)));
     }
 
+    /// A copy of a search's file, for the system (spec 010 FR-053). Space's
+    /// preview opens it in the desktop's app for its type: Linux has no
+    /// system Quick Look to hand it to. The copy stays until the controller
+    /// takes it away -- Space again, or leaving the results -- since the app
+    /// may still be reading it. Save asks where, writes it there, and lets
+    /// the copy go either way.
+    fn file_copy(&self, copy: Option<&postio_focus::FileCopy>) {
+        let Some(copy) = copy else {
+            return;
+        };
+        match copy.purpose {
+            postio_focus::FilePurpose::Preview => {
+                let uri = gio::File::for_path(&copy.path).uri();
+                self.launch(&uri);
+            }
+            postio_focus::FilePurpose::Save => {
+                let from = copy.path.clone();
+                let suggested = postio_ui::reader::parts::clean_file_name(&copy.name)
+                    .unwrap_or_else(|| "file".to_owned());
+                let weak = self.downgrade();
+                self.pick_place_or_not(
+                    crate::chooser::SavePick::File { suggested },
+                    move |chosen| {
+                        let Some(window) = weak.upgrade() else {
+                            return;
+                        };
+                        if let Some(to) = chosen
+                            && let Err(error) = std::fs::copy(&from, &to)
+                        {
+                            tracing::warn!(kind = ?error.kind(), "a search's file could not be saved");
+                            window.show_toast(
+                                "Postio could not save that file.",
+                                &postio_focus::ToastKind::Notice,
+                            );
+                        }
+                        if let Some(pane) = window.pane() {
+                            pane.feed().input(postio_focus::Input::FileCopyDone);
+                        }
+                    },
+                );
+            }
+        }
+    }
+
     /// Open `uri` outside Postio: a deliberate choice's only consequence.
     fn launch(&self, uri: &str) {
         let launch = self.imp().launcher.borrow().clone();
@@ -4726,14 +4785,23 @@ impl FocusWindow {
         pick: crate::chooser::SavePick,
         then: impl FnOnce(std::path::PathBuf) + 'static,
     ) {
-        let seam = self.imp().file_picker.borrow().clone();
         // Dismissed is a person's answer, not a fault: nothing is written
         // and nothing is said.
-        let answer = move |chosen: Option<std::path::PathBuf>| {
+        self.pick_place_or_not(pick, move |chosen| {
             if let Some(path) = chosen {
                 then(path);
             }
-        };
+        });
+    }
+
+    /// As [`pick_place`](Self::pick_place), but a dismissal is heard too,
+    /// as `None`: for a caller with something to undo either way.
+    fn pick_place_or_not(
+        &self,
+        pick: crate::chooser::SavePick,
+        answer: impl FnOnce(Option<std::path::PathBuf>) + 'static,
+    ) {
+        let seam = self.imp().file_picker.borrow().clone();
         if let Some(seam) = seam {
             return seam(pick, Box::new(answer));
         }

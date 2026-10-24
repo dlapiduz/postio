@@ -1068,15 +1068,29 @@ pub fn quick_look_walk(keymap: &Keymap) -> Option<Hint> {
 
 /// The header's buttons, each with its key: Open, Archive, Close.
 pub fn quick_look_actions(keymap: &Keymap) -> Vec<Hint> {
-    [
-        (CommandId::OpenMessage, "Open"),
-        (CommandId::Archive, "Archive"),
-        (CommandId::QuickLook, "Close"),
-    ]
-    .into_iter()
-    .filter_map(|(id, label)| hints::hint(keymap, id, label))
-    .collect()
+    QUICK_LOOK_ACTIONS
+        .into_iter()
+        .filter_map(|(id, label)| hints::hint(keymap, id, label))
+        .collect()
 }
+
+/// What each of [`quick_look_actions`]' buttons runs, in the same order:
+/// a button left out for want of a key leaves its command out too, so a
+/// frontend never runs one button's command from another.
+pub fn quick_look_commands(keymap: &Keymap) -> Vec<CommandId> {
+    QUICK_LOOK_ACTIONS
+        .into_iter()
+        .filter(|(id, _)| keymap.binding(*id).is_some())
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Quick Look's header buttons, left to right.
+const QUICK_LOOK_ACTIONS: [(CommandId, &str); 3] = [
+    (CommandId::OpenMessage, "Open"),
+    (CommandId::Archive, "Archive"),
+    (CommandId::QuickLook, "Close"),
+];
 
 /// How many matches the conversation holds: "4 matches in this
 /// conversation".
@@ -1793,6 +1807,25 @@ mod tests {
     }
 
     // US9, design §3.11: a People row's words and its footer.
+    #[test]
+    fn quick_look_s_buttons_run_what_they_say_with_a_key_unbound() {
+        // Linux binds no Quick Look key yet (D25): its button is left out,
+        // and the buttons after it must not shift onto the wrong command.
+        let keymap = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Freedesktop,
+        );
+        let labels: Vec<String> = quick_look_actions(&keymap)
+            .into_iter()
+            .map(|hint| hint.label)
+            .collect();
+        assert_eq!(labels, ["Open", "Archive"]);
+        assert_eq!(
+            quick_look_commands(&keymap),
+            [CommandId::OpenMessage, CommandId::Archive]
+        );
+    }
+
     #[test]
     fn a_toggle_button_names_its_term_and_a_popover_button_none() {
         let terms: Vec<_> = FilterKind::ALL

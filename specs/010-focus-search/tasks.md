@@ -490,8 +490,23 @@ turns on (T176).
     the new one, popped up after it is laid out. It opens from its button's
     start, so a compositor that does not slide popups still shows it whole.
     The share bars and the selected months are neutral ink (FR-091).
-- [ ] T173 The Files tab, Quick Look and Save file (`QuickLook`,
+- [x] T173 The Files tab, Quick Look and Save file (`QuickLook`,
   `FileCopy`).
+  - *As built:* `crates/postio-gtk/src/results_files.rs`: the Files grid
+    (a `GridView` read by position) in the rows' place, and Quick Look, a
+    panel over the results. Linux has no system Quick Look, so Space on a
+    file hands its copy to the desktop's app for its type
+    (`window.launch`, a test's seam); the copy stays until the controller
+    takes it, since that app may still be reading it. Save asks where
+    through the portal and lets the copy go either way. The results' keys
+    reached nothing on GTK -- `route` asks only the surfaces -- so `act`
+    now hands the controller what `answers` says it owns while the results
+    are up. Quick Look's buttons run `quick_look_commands`, a list that
+    leaves out what `quick_look_actions` leaves out: by position alone, an
+    unbound key shifted a button onto the next one's command (the Mac's
+    `QuickLookModel` still goes by position). The file-name cleaning for a
+    save is `postio_ui::reader::parts::clean_file_name`, shared with the
+    reader's.
 - [ ] T174 The People tab.
 - [ ] T175 No results and the relaxations (`Relaxations`).
 - [ ] T176 Turn `results_view` on for Freedesktop; offer the Apple-only
@@ -499,6 +514,9 @@ turns on (T176).
   chords do not carry over; regenerate `docs/keybindings.md`; play
   `storyboards/search/` on GTK and `/ux-review` them. Closes #1825 and
   #1790.
+  - Found at T173: `postio_ui::search_view::files_note` says "indexed on
+    this Mac" on Linux too; the words take the platform here, with the
+    rest of Linux's.
 
 ---
 
