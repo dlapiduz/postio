@@ -258,7 +258,12 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
 
         support::press(&window, "x", gdk::ModifierType::empty());
         support::press(&window, "J", gdk::ModifierType::SHIFT_MASK);
-        assert!(said("2 selected").await);
+        assert!(
+            said("2 selected").await,
+            "J after a tab: {:?} {:?}",
+            view.selected(),
+            view.texts()
+        );
         support::press(&window, "R", gdk::ModifierType::SHIFT_MASK);
         assert!(
             crate::settle_until(async || {
