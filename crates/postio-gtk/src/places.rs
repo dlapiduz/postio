@@ -54,6 +54,9 @@ pub struct Places {
     /// What each row of the list is: a section's heading, or the place at
     /// that index of `shown`.
     rows: RefCell<Vec<Option<usize>>>,
+    /// Each place's count label, by its index in `shown`: a count that
+    /// moves is written here rather than redrawn.
+    counts: RefCell<Vec<gtk::Label>>,
     keymap: RefCell<Keymap>,
     handler: RefCell<Option<Handler>>,
     /// Runs a place that is a command: Filtered.
@@ -123,6 +126,7 @@ impl Places {
             all: Rc::default(),
             shown: RefCell::default(),
             rows: RefCell::default(),
+            counts: RefCell::default(),
             keymap: RefCell::new(keymap.clone()),
             handler: RefCell::default(),
             command_handler: RefCell::default(),
@@ -340,8 +344,20 @@ impl Places {
     fn draw(&self, force: bool) {
         let filtered = self.filtered_today.get().map(rules::filtered_entry);
         let shown = rules::listed(&self.all.borrow(), filtered.as_ref(), &self.entry.text());
-        if !force && self.list.first_child().is_some() && *self.shown.borrow() == shown {
-            return;
+        if !force && self.list.first_child().is_some() {
+            if *self.shown.borrow() == shown {
+                return;
+            }
+            // The same places with other counts -- a read landing with them
+            // -- are the same rows: only what they say on the right moves.
+            if same_but_counts(&self.shown.borrow(), &shown) {
+                for (label, entry) in self.counts.borrow().iter().zip(&shown) {
+                    label.set_text(entry.count.as_deref().unwrap_or_default());
+                    label.set_visible(entry.count.is_some());
+                }
+                self.shown.replace(shown);
+                return;
+            }
         }
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
@@ -349,6 +365,7 @@ impl Places {
         let keymap = self.keymap.borrow();
         let accent_hue = accent_hue();
         let mut rows = Vec::new();
+        let mut counts = Vec::new();
         let mut section = None;
         let mut first = None;
         for (index, entry) in shown.iter().enumerate() {
@@ -372,12 +389,12 @@ impl Places {
             name.set_xalign(0.0);
             name.set_hexpand(true);
             row.append(&name);
-            if let Some(count) = &entry.count {
-                let count = gtk::Label::new(Some(count));
-                count.add_css_class("dim-label");
-                count.add_css_class("focus-places-count");
-                row.append(&count);
-            }
+            let count = gtk::Label::new(entry.count.as_deref());
+            count.add_css_class("dim-label");
+            count.add_css_class("focus-places-count");
+            count.set_visible(entry.count.is_some());
+            row.append(&count);
+            counts.push(count);
             if let Some(key) = entry
                 .go
                 .and_then(|command| postio_ui::hints::key(&keymap, command))
@@ -391,6 +408,7 @@ impl Places {
             rows.push(Some(index));
         }
         self.rows.replace(rows);
+        self.counts.replace(counts);
         self.shown.replace(shown);
         if let Some(first) = first {
             self.list.select_row(Some(&first));
@@ -567,6 +585,21 @@ fn accent_hue() -> f64 {
         byte(accent.blue()),
     )
     .hue()
+}
+
+/// Whether `now` lists the places `was` does, in the same order, differing
+/// at most in their counts.
+fn same_but_counts(was: &[Entry], now: &[Entry]) -> bool {
+    was.len() == now.len()
+        && was.iter().zip(now).all(|(was, now)| {
+            Entry {
+                count: None,
+                ..was.clone()
+            } == Entry {
+                count: None,
+                ..now.clone()
+            }
+        })
 }
 
 #[cfg(test)]
