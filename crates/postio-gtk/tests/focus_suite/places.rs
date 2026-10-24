@@ -265,6 +265,59 @@ pub fn every_place_shows_its_count() {
 }
 
 /// What the popover's row for `name` says, key included.
+/// A count that moves while the popover is up is written into the row it
+/// is on, not drawn with a new list: a click across a redraw lands on a row
+/// that no longer exists and goes nowhere.
+pub fn a_count_landing_keeps_the_rows_a_click_is_on() {
+    crate::gtk_case(async {
+        use gtk::prelude::*;
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (atlas, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
+            .await;
+        let (harbor, _) = fixture
+            .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
+            .await;
+        let (window, client) = fixture.open().await;
+        crate::commands::flag(&client, atlas).await;
+        let flagged_row = || {
+            support::descendants(&window).into_iter().find(|widget| {
+                widget.is::<gtk::ListBoxRow>()
+                    && widget.is_mapped()
+                    && support::texts(widget).iter().any(|text| text == "Flagged")
+            })
+        };
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the folders popover");
+        assert!(
+            crate::settle_until(async || flagged_row()
+                .is_some_and(|row| support::texts(&row).iter().any(|text| text == "1")))
+            .await,
+            "Flagged never counted one"
+        );
+        places.close();
+        crate::commands::flag(&client, harbor).await;
+
+        // Open again: the places drawn are the last ones read, and the read
+        // lands with Flagged's new count.
+        support::keys(&window, &["g", "l"]);
+        let row = flagged_row().expect("Flagged is listed at once");
+        assert!(
+            crate::settle_until(async || support::texts(&row).iter().any(|text| text == "2")).await,
+            "the Flagged row never said 2: it says {:?}, and is {}in the list",
+            support::texts(&row),
+            if row.root().is_some() {
+                ""
+            } else {
+                "no longer "
+            }
+        );
+    });
+}
+
 async fn row_saying(window: &postio_gtk::window::FocusWindow, name: &str) -> Vec<String> {
     use gtk::prelude::*;
     let said = std::cell::RefCell::new(Vec::new());
