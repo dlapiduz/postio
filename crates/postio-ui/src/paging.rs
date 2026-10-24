@@ -83,20 +83,6 @@ pub struct PageRequest {
 pub enum Fetch {
     /// A page of the scope in view, by offset.
     Scope(PageRequest),
-    /// A page of the result set: these ids, in this order.
-    ///
-    /// Search hits are ranked, not sorted, so no scope describes them and
-    /// the store cannot page them by offset; each page names the ids it
-    /// wants, and the order is the ranking — a store asked for a set of ids
-    /// answers in whatever order its index found them, and a page that
-    /// re-sorted the ranking would put the best match wherever its date
-    /// happened to fall.
-    Hits {
-        /// The page index, for the reply to be matched against.
-        page: u32,
-        /// The ids on it, most relevant first.
-        ids: Vec<MessageId>,
-    },
 }
 
 /// What the list does about one runtime event.
@@ -131,12 +117,6 @@ const FAILED_PAGE_ATTEMPTS: u8 = 3;
 pub struct Paging {
     /// What the list is showing: one folder, or a role-scoped query.
     scope: Option<ListScope>,
-    /// The hits in view, ranked, or `None` when the scope is in view.
-    ///
-    /// Only the ids: the rows are read a page at a time like any other, so
-    /// a query matching forty thousand messages costs forty thousand ids and
-    /// one page of mail.
-    results: Option<Vec<MessageId>>,
     /// Pages whose read failed, and how often they have been re-asked.
     ///
     /// Cleared whenever the scope changes: page 2 of the folder just left is
@@ -165,16 +145,14 @@ impl Paging {
         self.inboxes.get(&mailbox).copied().unwrap_or(false)
     }
 
-    /// Show `scope`, leaving any result set: the sidebar is a way out of a
-    /// search as much as `Esc` is.
+    /// Show `scope`.
     pub fn open(&mut self, scope: ListScope) {
         self.scope = Some(scope);
-        self.results = None;
         self.failed.clear();
     }
 
     /// What the list is showing, folder or query — `None` before anything
-    /// is open. Set aside, not forgotten, while a result set is in view.
+    /// is open.
     pub fn scope(&self) -> Option<ListScope> {
         self.scope
     }
@@ -188,31 +166,8 @@ impl Paging {
         self.scope.and_then(ListScope::mailbox)
     }
 
-    /// Show `ids` — the hits, most relevant first — instead of the scope,
-    /// and answer how many there are. The scope is remembered, not left.
-    pub fn show_results(&mut self, ids: Vec<MessageId>) -> u32 {
-        let total = ids.len() as u32;
-        self.results = Some(ids);
-        self.failed.clear();
-        total
-    }
-
-    /// What to read for `page`, or `None` when there is nothing to read:
-    /// nothing is open, or the page is past the end of the result set —
-    /// asking for ids a short last page does not have would make the store
-    /// answer for messages nobody matched.
+    /// What to read for `page`, or `None` when nothing is open.
     pub fn fetch_for(&self, page: u32) -> Option<Fetch> {
-        if let Some(results) = &self.results {
-            let start = (page * PAGE_SIZE) as usize;
-            if start >= results.len() {
-                return None;
-            }
-            let end = results.len().min(start + PAGE_SIZE as usize);
-            return Some(Fetch::Hits {
-                page,
-                ids: results[start..end].to_vec(),
-            });
-        }
         let scope = self.scope?;
         Some(Fetch::Scope(PageRequest {
             scope,
@@ -230,7 +185,7 @@ impl Paging {
     pub fn plan<'a>(&self, event: &'a Event) -> Plan<'a> {
         let (reaction, messages): (Reaction, &[MessageId]) = match event {
             Event::ContactsChanged { names_changed } => {
-                let showing = self.scope.is_some() || self.results.is_some();
+                let showing = self.scope.is_some();
                 return if *names_changed && showing {
                     Plan::Repaint
                 } else {
@@ -283,22 +238,13 @@ impl Paging {
         *attempts <= FAILED_PAGE_ATTEMPTS
     }
 
-    /// What the list does with one mailbox-shaped `arrival`, result set or
-    /// scope alike.
+    /// What the list does with one mailbox-shaped `arrival`.
     fn reaction(
         &self,
         arrival: Arrival,
         account: AccountId,
         mailbox: Option<MailboxId>,
     ) -> Reaction {
-        if self.results.is_some() {
-            return match arrival {
-                Arrival::MessagesChanged => Reaction::Refetch,
-                Arrival::NewMail | Arrival::MessagesRemoved | Arrival::MessageListChanged => {
-                    Reaction::Ignore
-                }
-            };
-        }
         let inbox = mailbox.and_then(|mailbox| self.inboxes.get(&mailbox).copied());
         self.scope
             .map(|scope| scope.reaction(arrival, account, mailbox, inbox))
@@ -350,9 +296,6 @@ mod tests {
         };
         assert_eq!(inbox().plan(&names), Plan::Repaint);
         assert_eq!(inbox().plan(&quiet), Plan::Ignore);
-        let mut results = Paging::default();
-        results.show_results(ids(1..4));
-        assert_eq!(results.plan(&names), Plan::Repaint, "search hits too");
         assert_eq!(
             Paging::default().plan(&names),
             Plan::Ignore,
@@ -408,33 +351,6 @@ mod tests {
     #[test]
     fn nothing_open_has_nothing_to_read() {
         assert_eq!(Paging::default().fetch_for(0), None);
-    }
-
-    #[test]
-    fn a_page_of_a_result_set_names_its_ids_in_ranking_order() {
-        let mut paging = inbox();
-        let total = paging.show_results(ids(1..(PAGE_SIZE as i64 + 4)));
-        assert_eq!(total, PAGE_SIZE + 3);
-        assert_eq!(
-            paging.fetch_for(0),
-            Some(Fetch::Hits {
-                page: 0,
-                ids: ids(1..(PAGE_SIZE as i64 + 1)),
-            })
-        );
-        assert_eq!(
-            paging.fetch_for(1),
-            Some(Fetch::Hits {
-                page: 1,
-                ids: ids((PAGE_SIZE as i64 + 1)..(PAGE_SIZE as i64 + 4)),
-            }),
-            "the last page is short, and asks only for the ids it has"
-        );
-        assert_eq!(
-            paging.fetch_for(2),
-            None,
-            "past the end of the ranking there is nothing to ask for"
-        );
     }
 
     #[test]
@@ -513,21 +429,6 @@ mod tests {
             "a delivery is neither flagged nor snoozed"
         );
         assert_eq!(paging.plan(&removed(INBOX)), Plan::Reload);
-    }
-
-    #[test]
-    fn a_result_set_only_refetches() {
-        let mut paging = inbox();
-        paging.show_results(ids(1..4));
-        assert_eq!(
-            paging.plan(&new_mail(INBOX, 3)),
-            Plan::Ignore,
-            "membership is the query's, not delivery order's"
-        );
-        assert_eq!(paging.plan(&removed(INBOX)), Plan::Ignore);
-        assert_eq!(paging.plan(&list_changed(INBOX)), Plan::Ignore);
-        let event = changed(ids(2..3));
-        assert_eq!(paging.plan(&event), Plan::Refetch(&ids(2..3)));
     }
 
     #[test]
