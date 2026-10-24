@@ -30,6 +30,9 @@ fn flags(raw: &str) -> FlagSet {
     raw.split_whitespace().map(Flag::parse).collect()
 }
 
+const RAW: &[u8] = b"From: Ada Lovelace <ada@example.com>\r\n\
+                      Subject: Analytical engine\r\n\r\nNotes.\r\n";
+
 /// A server with three folders and one message in the inbox.
 async fn server() -> MockBackend {
     let backend = MockBackend::builder()
@@ -68,6 +71,7 @@ async fn local(connection: &Connection) -> Local {
     let trash = test_support::mailbox(connection, &account, TRASH).await.id;
 
     let mut message = Message::new(account.id, inbox, at(8));
+    message.size = RAW.len() as u64;
     message.server.uid = Some(Uid::new(1));
     message.server.uid_validity = Some(UidValidity::new(1_707_000_000));
     message.server.remote_id = Some(postio_model::RemoteId::new("1707000000:1"));
@@ -447,6 +451,90 @@ async fn a_moved_message_with_no_message_id_keeps_one_row_with_the_servers_ident
 
     // The user's side of the move: enqueue (snapshotting where the server
     // has it), then the local write that clears the coordinates.
+    enqueue(
+        &connection,
+        &local,
+        Operation::Move {
+            from: local.inbox,
+            to: local.archive,
+        },
+        at(9),
+    )
+    .await;
+    MessageRepository::new(&connection)
+        .move_to(&[local.message], local.archive)
+        .await
+        .expect("the local half of the move");
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, local.account, at(10))
+        .await
+        .expect("drain");
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    let archive = MailboxRepository::new(&connection)
+        .get(local.archive)
+        .await
+        .expect("read")
+        .expect("the archive");
+    postio_sync::sync_mailbox(
+        &connection,
+        &backend,
+        &archive,
+        &postio_account::cancel::CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("sync the destination");
+
+    let messages = MessageRepository::new(&connection);
+    assert_eq!(
+        messages
+            .count(&postio_storage::repository::ListQuery::account(
+                local.account
+            ))
+            .await
+            .expect("count"),
+        1,
+        "the server's copy is the row the person already has, not a second one"
+    );
+    let row = messages
+        .get(local.message)
+        .await
+        .expect("read")
+        .expect("the row the person is looking at survives");
+    assert!(
+        row.server.uid.is_some() && row.server.remote_id.is_some(),
+        "and it has the server's identity, so its body can be fetched"
+    );
+}
+
+#[tokio::test]
+async fn a_moved_message_with_no_message_id_and_no_copyuid_keeps_one_row() {
+    // The server answers the move without a COPYUID (no UIDPLUS, or a
+    // UIDNOTSTICKY destination), so the drainer has no mapping to adopt and
+    // the row has no `Message-ID` for the destination's sync to match on
+    // (#1994). The sync then inserted the server's copy beside it: two rows
+    // for one message, and the one in view never got a UID.
+    let raw = RAW.to_vec();
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new(INBOX)
+                .uid_validity(UidValidity::new(1_707_000_000))
+                .message(MockMessage::new(raw.clone()).with_internal_date(at(8))),
+        )
+        .mailbox(MockMailbox::new(ARCHIVE))
+        .mailbox(MockMailbox::new(TRASH))
+        .build();
+    backend.connect().await.expect("connect");
+    backend.omit_uid_mappings();
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let local = local(&connection).await;
+    // `local` files the row at `at(8)` with the size of `raw`, as a sync of
+    // the inbox would have.
+
     enqueue(
         &connection,
         &local,
