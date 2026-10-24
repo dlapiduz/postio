@@ -3164,6 +3164,44 @@ fn a_body_asked_of_an_engine_that_is_replaced_is_asked_of_the_new_one_at_once() 
 }
 
 #[test]
+fn an_engine_that_is_replaced_stops_so_an_account_never_syncs_twice() {
+    // #1986: a re-authorisation started a second engine and left the first
+    // running, retained for the session.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, _events) = world.frontend(ClientKind::Tui);
+    world.host().start_syncing();
+    eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    let (account, old) = {
+        let running = world
+            .host()
+            .inner
+            .engines
+            .running
+            .lock()
+            .expect("never poisoned");
+        let (account, engine) = running.iter().next().expect("the account's engine");
+        (*account, engine.clone())
+    };
+    let account_row = world.rt.block_on(async {
+        let connection = world.database.read().await.expect("a connection");
+        postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .await
+            .expect("the accounts")
+            .into_iter()
+            .find(|row| row.id == account)
+            .expect("the account")
+    });
+    let wiring = world.host().inner.wiring.clone();
+    let new = postio_session::engine::start(&account_row, &wiring).expect("an engine");
+    super::adopt(&wiring, &world.host().inner.engines, account, new.clone());
+
+    assert!(old.is_stopped(), "the replaced engine is still running");
+    assert!(!new.is_stopped(), "the new one runs");
+}
+
+#[test]
 fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
     // #1788: the reader said "Downloading this message" and nothing asked
     // for it. Opening it is the person asking; a repaint is not asking again.
