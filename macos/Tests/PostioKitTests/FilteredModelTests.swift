@@ -16,24 +16,48 @@ import Testing
 struct FilteredModelTests {
     final class Engine: FilteredEngine {
         var pointed: [UInt32] = []
+        var picked: [Pick] = []
         var more = 0
         var invoked: [String] = []
         var bindings: [String: String] = [:]
 
+        struct Pick: Equatable {
+            let index: UInt32
+            let range: Bool
+        }
+
         func focusFilteredPoint(_ index: UInt32) { pointed.append(index) }
+        func focusFilteredPick(_ index: UInt32, range: Bool) { picked.append(Pick(index: index, range: range)) }
         func focusFilteredMore() { more += 1 }
         func invoke(_ id: String) { invoked.append(id) }
         func binding(for command: String) -> String? { bindings[command] }
     }
 
-    static func line(_ message: Int64, _ sender: String, pill: String, heading: String? = nil) -> FilteredLineFfi {
+    static func line(
+        _ message: Int64, _ sender: String, pill: String, heading: String? = nil, selected: Bool = false
+    ) -> FilteredLineFfi {
         FilteredLineFfi(
             message: message, sender: sender, subject: "Subject \(message)", preview: "First line",
-            pill: pill, time: "16:0\(message % 10)", heading: heading)
+            pill: pill, time: "16:0\(message % 10)", heading: heading, selected: selected)
+    }
+
+    static func bar(_ summary: String = "2 selected") -> FilteredBarFfi {
+        FilteredBarFfi(
+            summary: summary,
+            actions: [
+                FilteredBarActionFfi(command: "restore_filtered", label: "Restore", key: "R", primary: true),
+                FilteredBarActionFfi(command: "toggle_read", label: "Mark read", key: "I", primary: false),
+            ],
+            hints: [
+                FocusHintFfi(key: "x", label: "toggle"),
+                FocusHintFfi(key: "J/K", label: "extend"),
+                FocusHintFfi(key: "Escape", label: "clear"),
+            ])
     }
 
     static func view(
-        rows: [FilteredLineFfi]? = nil, focused: UInt32? = 0, more: Bool = false, on tab: Int = 0
+        rows: [FilteredLineFfi]? = nil, focused: UInt32? = 0, more: Bool = false, on tab: Int = 0,
+        bar: FilteredBarFfi? = nil
     ) -> FilteredViewFfi {
         let names = ["All", "Spam", "Promotions", "Notifications", "Receipts", "Shipping", "Social"]
         return FilteredViewFfi(
@@ -54,7 +78,8 @@ struct FilteredModelTests {
             footer: [
                 FocusHintFfi(key: "R", label: "restore + never filter sender"),
                 FocusHintFfi(key: "1\u{2013}7", label: "reason tabs"),
-            ])
+            ],
+            bar: bar)
     }
 
     static func model() -> (FilteredModel, Engine) {
@@ -150,5 +175,64 @@ struct FilteredModelTests {
         let (model, _) = Self.model()
         #expect(model.apply(.focusKeyboardHome) == nil)
         #expect(model.apply(.focusFilteredFocus(index: 1)) == nil, "no Filtered up to focus in")
+    }
+
+    // MARK: selecting, as the list does
+
+    @Test func theSelectionBoxesItsRowsAndBringsUpTheBar() {
+        let (model, _) = Self.model()
+        model.apply(.focusFiltered(view: Self.view()))
+        #expect(model.rows.allSatisfy { !$0.selected })
+        #expect(model.bar == nil)
+
+        #expect(model.apply(.focusFilteredSelection(selected: [1, 3], bar: Self.bar())) == .selection)
+        #expect(model.rows.map(\.selected) == [true, false, true])
+        #expect(model.bar?.summary == "2 selected", "the controller's words, not composed here")
+        #expect(model.bar?.actions.map(\.command) == ["restore_filtered", "toggle_read"])
+        #expect(model.bar?.actions.map(\.isDefault) == [true, false])
+        #expect(model.bar?.hints.map(\.label) == ["toggle", "extend", "clear"])
+        #expect(model.bar?.hints[1].caps.count == 2, "J/K are two keycaps")
+
+        #expect(model.apply(.focusFilteredSelection(selected: [], bar: nil)) == .selection)
+        #expect(model.rows.allSatisfy { !$0.selected })
+        #expect(model.bar == nil)
+    }
+
+    @Test func aRedrawCarriesTheSelectionAlong() {
+        let (model, _) = Self.model()
+        let rows = [
+            Self.line(1, "Build Bot", pill: "spam", selected: true),
+            Self.line(2, "Shop Example", pill: "promotion"),
+        ]
+        model.apply(.focusFiltered(view: Self.view(rows: rows, bar: Self.bar("1 selected"))))
+        #expect(model.rows.map(\.selected) == [true, false])
+        #expect(model.bar?.summary == "1 selected")
+        // Closing forgets it: the next opening starts clean.
+        model.apply(.focusCloseSurface(kind: .filtered))
+        #expect(model.bar == nil)
+    }
+
+    @Test func theModifiedClicksAreToldAndSelectNothingThemselves() {
+        let (model, engine) = Self.model()
+        model.apply(.focusFiltered(view: Self.view()))
+        model.toggle(2)
+        model.extend(1)
+        #expect(engine.picked == [.init(index: 2, range: false), .init(index: 1, range: true)])
+        #expect(model.rows.allSatisfy { !$0.selected }, "the boxes move when the controller says so")
+        model.toggle(9)
+        #expect(engine.picked.count == 2, "a row that is not there is not told")
+    }
+
+    @Test func theBarsVerbsAreTheirCommands() {
+        let (model, engine) = Self.model()
+        model.apply(.focusFiltered(view: Self.view()))
+        model.run("toggle_read")
+        #expect(engine.invoked == ["toggle_read"])
+    }
+
+    @Test func aSelectionNobodyAskedForIsIgnoredWhileClosed() {
+        let (model, _) = Self.model()
+        #expect(model.apply(.focusFilteredSelection(selected: [1], bar: Self.bar())) == nil)
+        #expect(model.bar == nil)
     }
 }

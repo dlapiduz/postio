@@ -987,6 +987,12 @@ impl FocusDriver {
                 view: (*view).into(),
             }),
             Intent::FilteredFocus(index) => self.say(UiEvent::FocusFilteredFocus { index }),
+            Intent::FilteredSelection { selected, bar } => {
+                self.say(UiEvent::FocusFilteredSelection {
+                    selected: selected.iter().map(|id| id.get()).collect(),
+                    bar: bar.map(Into::into),
+                });
+            }
             Intent::Digest(view) => self.say(UiEvent::FocusDigest {
                 view: (*view).into(),
             }),

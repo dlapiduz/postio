@@ -473,6 +473,13 @@ final class Engine {
         ) { [weak self] command in self?.session?.binding(for: command) }
     }
 
+    /// How far the toast rises above the bar at the bottom of the window:
+    /// the list's action bar, or Filtered's own while it is up.
+    var barHeightUnderToast: CGFloat {
+        if filtered?.isOpen == true { return filtered?.bar == nil ? 0 : ActionBar.height }
+        return actionBarWords == nil ? 0 : ActionBar.height
+    }
+
     /// The keycap the toast line's Undo shows.
     var undoCap: String? {
         _ = keymapVersion
