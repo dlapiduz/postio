@@ -258,6 +258,7 @@ pub fn every_section_focus_shows_is_reachable_and_appearance_is_not() {
             "Keyboard",
             "Sync & storage",
             "Privacy",
+            "Agents",
             "Config file",
         ];
         assert!(
@@ -1088,6 +1089,91 @@ pub fn a_click_into_settings_as_it_opens_waits_for_it_to_open() {
             crate::settle_until(async || pane_title(&dialog) == "Filtering").await,
             "clicking Filtering shows its pane, not {:?}",
             pane_title(&dialog)
+        );
+    });
+}
+
+/// Agents (#1832): opened from the nav, the pane shows what is shared and
+/// what an agent did, read from the log beside the store with its ids named
+/// as the rows they are, and Revoke takes the account out of the file.
+pub fn agents_in_settings_shows_the_log_and_revokes_from_the_file() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let message = fixture
+            .file_as(fixture.account.id, fixture.inbox, "Budget", 10)
+            .await;
+        let address = fixture.account.address.address.clone();
+        let text = format!("[mcp.accounts.\"{address}\"]\nmailboxes = [\"INBOX\"]\n");
+
+        let directory = tempfile::tempdir().expect("a directory");
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, &text).expect("the config");
+        let store = directory.path().join("postio.db");
+        let at = (chrono::Utc::now() - chrono::Duration::minutes(5)).to_rfc3339();
+        std::fs::write(
+            directory.path().join("mcp-access.log"),
+            format!(
+                "{{\"at\":\"{at}\",\"tool\":\"read_message\",\"accounts\":[{}],\
+                 \"mailboxes\":[{}],\"messages\":[{}],\"drafts\":[],\"labels\":[],\
+                 \"outcome\":\"answered\"}}\n",
+                fixture.account.id.get(),
+                fixture.inbox.get(),
+                message.get()
+            ),
+        )
+        .expect("the log");
+        let config = postio_config::Config::from_toml_str(&text).expect("a config");
+        let window = postio_gtk::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_gtk::startup::adopt_from(
+            &window,
+            fixture.host(),
+            &config,
+            Some(&path),
+            Some(&store),
+        ));
+        assert!(
+            crate::settle_until(async || !window.rows_on_screen().is_empty()).await,
+            "the store's inbox never reached the screen"
+        );
+
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        let (_, agents) = section_rows(&dialog)
+            .into_iter()
+            .find(|(name, _)| name == "Agents")
+            .expect("Agents is in the nav");
+        support::click(&window, &agents, 1);
+
+        let calls = || {
+            support::with_class(&dialog, "postio-settings-agents-call")
+                .iter()
+                .flat_map(support::texts)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            crate::settle_until(async || calls()
+                .iter()
+                .any(|line| line.contains("Budget") && line.contains(&address)))
+            .await,
+            "the call names the message and the account, not their ids: {:?}",
+            calls()
+        );
+
+        let revoke = support::with_class(&dialog, "postio-settings-agents-revoke")
+            .into_iter()
+            .next()
+            .expect("the shared account's Revoke");
+        support::click(&window, &revoke, 1);
+        assert!(
+            crate::settle_until(async || std::fs::read_to_string(&path)
+                .is_ok_and(|written| !written.contains("[mcp")))
+            .await,
+            "the revoke reached the file: {:?}",
+            std::fs::read_to_string(&path)
         );
     });
 }

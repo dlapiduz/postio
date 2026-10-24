@@ -1623,6 +1623,10 @@ const CASES: &[(&str, fn())] = &[
         settings::mod_e_opens_config_toml_in_the_persons_editor as fn(),
     ),
     (
+        "settings::agents_in_settings_shows_the_log_and_revokes_from_the_file",
+        settings::agents_in_settings_shows_the_log_and_revokes_from_the_file as fn(),
+    ),
+    (
         "drag_out::a_dragged_row_hands_a_file_manager_its_message_as_an_eml",
         drag_out::a_dragged_row_hands_a_file_manager_its_message_as_an_eml as fn(),
     ),

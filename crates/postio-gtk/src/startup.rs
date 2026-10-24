@@ -251,6 +251,18 @@ pub fn adopt_at(
     config: &postio_config::Config,
     config_path: Option<&std::path::Path>,
 ) -> Session {
+    adopt_from(window, host, config, config_path, None)
+}
+
+/// [`adopt_at`], for a store read from the file at `store`, beside which
+/// `postio-mcp` keeps the access log Settings shows (#1832).
+pub fn adopt_from(
+    window: &FocusWindow,
+    host: Host,
+    config: &postio_config::Config,
+    config_path: Option<&std::path::Path>,
+    store: Option<&std::path::Path>,
+) -> Session {
     let timeline = window.timeline();
     if let Some(timeline) = &timeline {
         timeline.mark(Phase::Account);
@@ -284,6 +296,27 @@ pub fn adopt_at(
         secrets: host.wiring().secrets.clone(),
         attachments_eager: config.sync.attachment_fetch
             == postio_config::sync::AttachmentFetch::Eager,
+        agent_activity: {
+            let database = host.wiring().database.clone();
+            let store = store.map(std::path::Path::to_path_buf);
+            std::sync::Arc::new(move || {
+                let database = database.clone();
+                let store = store.clone();
+                Box::pin(async move {
+                    match store {
+                        Some(store) => {
+                            postio_session::agent_access::activity_beside(Some(&database), &store)
+                                .await
+                        }
+                        // A store in memory has no log beside it.
+                        None => {
+                            postio_session::agent_access::activity(None, "", chrono::Utc::now())
+                                .await
+                        }
+                    }
+                })
+            })
+        },
     });
     // Focus's notifications follow the `[sync]` settings,
     // and are only ever about mail that stayed in its inbox (FR-153).
@@ -475,7 +508,13 @@ pub fn open(
                 if let Some(timeline) = window.timeline() {
                     timeline.mark(Phase::Store);
                 }
-                let session = adopt_at(&window, host, &config, opener.config_path());
+                let session = adopt_from(
+                    &window,
+                    host,
+                    &config,
+                    opener.config_path(),
+                    Some(&opener.store),
+                );
                 session.answer_agents(&opener.store, opener.config_path());
                 opened(session);
             }

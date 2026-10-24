@@ -22,6 +22,25 @@ pub fn log_path(store: &Path) -> Option<PathBuf> {
         .map(|dir| dir.join("mcp-access.log"))
 }
 
+/// What an agent's client should launch to reach this Postio, for the
+/// app whose executable is `exe`, or `None` when there is nothing to name.
+///
+/// Inside a Flatpak (`flatpak_id`, from `$FLATPAK_ID`) the server's path is
+/// the sandbox's, which nothing outside can launch, so it is the
+/// `flatpak run` command docs/mcp.md gives. Otherwise it is the
+/// `postio-mcp` the release puts beside the app, when `exists` finds one.
+pub fn entry_point(
+    exe: &Path,
+    flatpak_id: Option<&str>,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<String> {
+    if let Some(id) = flatpak_id.filter(|id| !id.is_empty()) {
+        return Some(format!("flatpak run --command=postio-mcp {id}"));
+    }
+    let beside = exe.parent()?.join("postio-mcp");
+    exists(&beside).then(|| beside.display().to_string())
+}
+
 /// The recent calls in `log` as of `now`, their ids resolved in `database`.
 ///
 /// A row that has since been deleted is left unnamed rather than failing
@@ -63,4 +82,48 @@ pub async fn activity_beside(database: Option<&Store>, store: &Path) -> Activity
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_default();
     activity(database, &log, Utc::now()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inside_a_flatpak_the_agent_is_pointed_at_flatpak_run() {
+        // The sandbox's /app/bin is not a path an agent's client outside it
+        // can launch; docs/mcp.md gives the command instead.
+        assert_eq!(
+            entry_point(
+                Path::new("/app/bin/postio"),
+                Some("dev.postio.Postio"),
+                |_| true
+            ),
+            Some("flatpak run --command=postio-mcp dev.postio.Postio".to_owned())
+        );
+    }
+
+    #[test]
+    fn otherwise_it_is_the_server_beside_the_app_when_there_is_one() {
+        assert_eq!(
+            entry_point(Path::new("/opt/postio/postio"), None, |path| path
+                == Path::new("/opt/postio/postio-mcp")),
+            Some("/opt/postio/postio-mcp".to_owned())
+        );
+        assert_eq!(
+            entry_point(Path::new("/opt/postio/postio"), None, |_| false),
+            None,
+            "a build with no server beside it points at nothing"
+        );
+    }
+
+    #[test]
+    fn the_log_is_beside_the_store_and_an_in_memory_store_has_none() {
+        assert_eq!(
+            log_path(Path::new("/home/ada/.local/share/postio/postio.db")),
+            Some(PathBuf::from(
+                "/home/ada/.local/share/postio/mcp-access.log"
+            ))
+        );
+        assert_eq!(log_path(Path::new("postio.db")), None);
+    }
 }
