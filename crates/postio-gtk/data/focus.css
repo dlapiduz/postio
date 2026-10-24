@@ -854,8 +854,12 @@ button.focus-marker-dismiss:hover {
 }
 
 /* ── The folders popover (screen 10) ─────────────────────────────────── */
+/* A popover is a surface of its own and does not inherit the window's
+   face: without this every name in it was set in the fallback mono (C25:
+   mono is for keys, counts and operators). */
 .focus-places {
   padding: var(--postio-space-2);
+  font-family: var(--postio-font-body);
 }
 
 .focus-places-section {
@@ -894,6 +898,7 @@ button.focus-marker-dismiss:hover {
 }
 
 .focus-places-count {
+  font-family: var(--postio-font-mono);
   font-variant-numeric: tabular-nums;
 }
 

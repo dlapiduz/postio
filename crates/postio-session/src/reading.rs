@@ -17,6 +17,8 @@
 //! Toolkit-free, like the rest of this crate: the absent states come from
 //! `postio_ui::reader`, the frontend-independent half of the reader.
 
+use postio_core::Event;
+use postio_core::bridge::{EventSink, EventStream};
 use postio_model::MessageBody;
 use postio_model::ids::MessageId;
 use postio_runtime::Engine;
@@ -290,10 +292,10 @@ pub async fn resolve_cid(
 ///
 /// Long enough for a slow server on a bad link, short enough that a save that
 /// is never going to work says so while the user is still looking at it.
-const PART_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+pub const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Where one part's bytes are, when they are on this machine at all.
-enum PartSource {
+pub enum PartSource {
     /// The part's own blob — what ADR 0017's payload axis writes into
     /// `attachments.blob_id` when somebody opens an attachment.
     Payload(postio_model::ids::BlobId),
@@ -387,6 +389,7 @@ pub async fn part_bytes_at(
     database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
+    events: Option<&EventSink>,
     message: MessageId,
     part_id: &str,
 ) -> Result<Vec<u8>, String> {
@@ -397,6 +400,11 @@ pub async fn part_bytes_at(
         None => {
             let engine =
                 engine.ok_or("This account is not syncing, so that part cannot be fetched")?;
+            // Subscribed before the ask, so a refusal that comes back
+            // faster than the next line cannot be missed (#1987). A sink
+            // with no hub has no news to hear, and the wait then runs on
+            // its deadline alone.
+            let failures = events.and_then(|events| events.subscribe("part wait"));
             // `request_payloads` puts the section at the front of the backfill
             // and returns as soon as it is queued -- `true` means "there was
             // something to fetch", not "here it is". The bytes land when the
@@ -406,7 +414,7 @@ pub async fn part_bytes_at(
                 .await
                 .map_err(|error| error.message().to_string())?
             {
-                wait_for_part(database, message, part_id).await?
+                wait_for_part(database, message, part_id, failures.as_ref(), BODY_WAIT).await?
             } else {
                 // "Nothing to fetch" has two readings, and the queue cannot
                 // tell them apart: there is truly nothing (the message is
@@ -457,13 +465,14 @@ pub async fn part_bytes(
     database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
+    events: Option<&EventSink>,
     message: MessageId,
     attachment: postio_model::ids::AttachmentId,
 ) -> Result<Vec<u8>, String> {
     let part_id = part_path(database, message, attachment)
         .await?
         .ok_or("That part has no place in the message to read it from")?;
-    part_bytes_at(database, blobs, engine, message, &part_id).await
+    part_bytes_at(database, blobs, engine, events, message, &part_id).await
 }
 
 /// Put one part's bytes at exactly `path`.
@@ -476,11 +485,12 @@ pub async fn save_part(
     database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
+    events: Option<&EventSink>,
     message: MessageId,
     part_id: &str,
     path: &std::path::Path,
 ) -> Result<(), String> {
-    let bytes = part_bytes_at(database, blobs, engine, message, part_id).await?;
+    let bytes = part_bytes_at(database, blobs, engine, events, message, part_id).await?;
     std::fs::write(path, &bytes).map_err(|error| format!("Could not save that part: {error}"))?;
     // Ids, counts and outcomes. Not the filename: the sender chose it, and it
     // is as much the user's mail as the body is.
@@ -512,6 +522,7 @@ pub async fn save_all_parts(
     database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
+    events: Option<&EventSink>,
     message: MessageId,
     directory: &std::path::Path,
 ) -> Result<SavedParts, String> {
@@ -529,11 +540,19 @@ pub async fn save_all_parts(
         failed: 0,
     };
     for (node, name) in leaves.iter().zip(names) {
-        let written =
-            match part_bytes_at(database, blobs, engine.clone(), message, &node.part_id).await {
-                Ok(bytes) => std::fs::write(directory.join(name), &bytes).is_ok(),
-                Err(_) => false,
-            };
+        let written = match part_bytes_at(
+            database,
+            blobs,
+            engine.clone(),
+            events,
+            message,
+            &node.part_id,
+        )
+        .await
+        {
+            Ok(bytes) => std::fs::write(directory.join(name), &bytes).is_ok(),
+            Err(_) => false,
+        };
         if written {
             outcome.saved += 1;
         } else {
@@ -551,41 +570,78 @@ pub async fn save_all_parts(
 
 /// Wait for a queued part to land, or give up saying so.
 ///
-/// Polling rather than listening: the engine announces arrivals on the event
-/// stream, but that stream has exactly one reader — the frontend — and a
-/// second consumer here would be a second place deciding what an event means.
-/// A save the user is waiting on can afford to look.
-///
-/// It watches for either shape the bytes can arrive in: the part's own blob,
+/// Polling, with an ear out for refusals. It
+/// watches for either shape the bytes can arrive in: the part's own blob,
 /// which is what a payload fetch writes, and the raw message, which is what
 /// the whole-message fallback writes for a row whose section could not be
 /// named.
 ///
-/// The deadline is what turns a server that never answers into a sentence
-/// rather than a spinner that never stops.
-async fn wait_for_part(
+/// `failures` is a subscription made *before* the fetch was queued. A fetch
+/// the server refuses leaves nothing in the store to poll for, only a
+/// `BodyFailed` on the event stream, so without listening the wait could not
+/// tell "slow" from "refused" and said "still downloading" for the whole of
+/// `wait` either way. The part is looked for first, so bytes that landed
+/// win over a failure heard in the same breath. The failure is matched on the
+/// message, not the part: the event carries no section, so a refused text
+/// fetch of the same message also ends the wait, and the sentence it ends
+/// with ("try again") is true of both.
+///
+/// `wait` is [`BODY_WAIT`] outside tests.
+pub async fn wait_for_part(
     database: &Store,
     message: MessageId,
     part_id: &str,
+    failures: Option<&EventStream>,
+    wait: std::time::Duration,
 ) -> Result<PartSource, String> {
-    let deadline = std::time::Instant::now() + PART_WAIT;
+    let started = std::time::Instant::now();
+    let deadline = started + wait;
     loop {
         // A read that fails here is usually the writer we are waiting for
         // holding the table, so contention is a reason to look again rather
         // than to give up. Only the deadline ends this.
         match locate_part(database, message, part_id).await {
-            Ok(Some(source)) => return Ok(source),
+            Ok(Some(source)) => {
+                tracing::debug!(
+                    message = message.get(),
+                    after_ms = started.elapsed().as_millis() as u64,
+                    "a part asked for arrived"
+                );
+                return Ok(source);
+            }
             Ok(None) => {}
             Err(error) if std::time::Instant::now() >= deadline => return Err(error),
             Err(_) => {}
         }
+        if failures.is_some_and(|events| fetch_failed(events, message)) {
+            tracing::debug!(
+                message = message.get(),
+                after_ms = started.elapsed().as_millis() as u64,
+                "the fetch for a part asked for failed"
+            );
+            return Err("That attachment could not be downloaded — the server \
+                        would not send it. Try again, or open the message \
+                        on another device"
+                .into());
+        }
         if std::time::Instant::now() >= deadline {
+            tracing::debug!(message = message.get(), "a part asked for never arrived");
             return Err("That part did not arrive in time — it is still \
                         downloading, so try again in a moment"
                 .into());
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+}
+
+/// Whether `events` holds a `BodyFailed` for `message`, taking everything
+/// queued so far.
+fn fetch_failed(events: &EventStream, message: MessageId) -> bool {
+    let mut failed = false;
+    while let Some(event) = events.try_next() {
+        failed |= matches!(event, Event::BodyFailed { message: m, .. } if m == message);
+    }
+    failed
 }
 
 /// The MIME path of one attachment row, while the row id still means
@@ -607,7 +663,7 @@ async fn part_path(
 ///
 /// The part's own blob first: it is the exact bytes, and reading it costs a
 /// file open where the raw message costs a parse of the whole thing.
-async fn locate_part(
+pub async fn locate_part(
     database: &Store,
     message: MessageId,
     part_id: &str,
@@ -638,4 +694,121 @@ async fn read_message(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "That message is no longer here".into())
+}
+
+#[cfg(test)]
+mod wait_tests {
+    use super::*;
+    use postio_core::Event;
+    use postio_core::bridge::EventHub;
+    use postio_model::{Attachment, Message};
+    use postio_storage::test_support;
+    use std::time::{Duration, Instant};
+
+    /// A message with one attachment, `2`, whose bytes were never fetched.
+    async fn message_with_an_unfetched_part() -> (Store, MessageId, postio_model::AccountId) {
+        let store = test_support::memory().await;
+        let connection = store.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let mut message = Message::new(account.id, inbox, chrono::Utc::now());
+        let mut report = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 19);
+        report.filename = Some("report.pdf".into());
+        report.part_id = Some("2".into());
+        message.attachments.push(report);
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        (store, id, account.id)
+    }
+
+    #[tokio::test]
+    async fn a_failed_fetch_ends_the_wait_at_once_and_says_it_failed() {
+        let (store, message, account) = message_with_an_unfetched_part().await;
+        let hub = EventHub::new();
+        let failures = hub.subscribe("test");
+        hub.sink().emit(Event::BodyFailed { account, message });
+
+        let started = Instant::now();
+        let said = wait_for_part(
+            &store,
+            message,
+            "2",
+            Some(&failures),
+            Duration::from_secs(30),
+        )
+        .await
+        .err()
+        .expect("a failed fetch is not a part");
+
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "waited {:?} for a fetch that had already failed",
+            started.elapsed()
+        );
+        assert!(said.contains("could not be downloaded"), "{said}");
+        assert!(!said.contains("still downloading"), "{said}");
+    }
+
+    #[tokio::test]
+    async fn another_messages_failure_does_not_end_the_wait() {
+        let (store, message, account) = message_with_an_unfetched_part().await;
+        let hub = EventHub::new();
+        let failures = hub.subscribe("test");
+        hub.sink().emit(Event::BodyFailed {
+            account,
+            message: MessageId::new(message.get() + 1000),
+        });
+
+        let said = wait_for_part(
+            &store,
+            message,
+            "2",
+            Some(&failures),
+            Duration::from_millis(150),
+        )
+        .await
+        .err()
+        .expect("nothing arrived");
+        assert!(said.contains("still downloading"), "{said}");
+    }
+
+    #[tokio::test]
+    async fn a_link_that_returns_does_not_say_the_server_refused() {
+        // #1986: the pane's re-read on the link's return must not read as a
+        // refusal to an attachment wait on the same message.
+        let (store, message, account) = message_with_an_unfetched_part().await;
+        let hub = EventHub::new();
+        let failures = hub.subscribe("test");
+        hub.sink().emit(Event::BodyReachable { account, message });
+
+        let said = wait_for_part(
+            &store,
+            message,
+            "2",
+            Some(&failures),
+            Duration::from_millis(150),
+        )
+        .await
+        .err()
+        .expect("nothing arrived");
+        assert!(!said.contains("could not be downloaded"), "{said}");
+    }
+
+    #[tokio::test]
+    async fn a_part_that_lands_is_returned_even_with_a_failure_heard() {
+        let (store, message, account) = message_with_an_unfetched_part().await;
+        let hub = EventHub::new();
+        let failures = hub.subscribe("test");
+        hub.sink().emit(Event::BodyFailed { account, message });
+        {
+            let connection = store.connect().await.expect("a connection");
+            let repository = MessageRepository::new(&connection);
+            let mut row = repository.get(message).await.unwrap().unwrap();
+            row.raw_blob_id = Some(postio_model::ids::BlobId::new("deadbeef"));
+            repository.update(&mut row).await.expect("updated");
+        }
+        let source = wait_for_part(&store, message, "2", Some(&failures), BODY_WAIT).await;
+        assert!(matches!(source, Ok(PartSource::Raw(_))));
+    }
 }

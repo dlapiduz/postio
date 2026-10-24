@@ -319,6 +319,10 @@ const CASES: &[(&str, fn())] = &[
         hit_composer::forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar as fn(),
     ),
     (
+        "hit_composer::escaping_a_reply_from_a_hit_returns_to_the_hit_then_the_search",
+        hit_composer::escaping_a_reply_from_a_hit_returns_to_the_hit_then_the_search as fn(),
+    ),
+    (
         "hit_verbs::e_in_a_message_opened_from_a_hit_archives_that_message",
         hit_verbs::e_in_a_message_opened_from_a_hit_archives_that_message as fn(),
     ),
@@ -769,8 +773,8 @@ const CASES: &[(&str, fn())] = &[
         bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query as fn(),
     ),
     (
-        "bar::a_misspelled_word_says_what_it_found_and_offers_the_typed_one",
-        bar::a_misspelled_word_says_what_it_found_and_offers_the_typed_one as fn(),
+        "bar::a_misspelled_word_finds_what_was_meant_and_quoted_is_exact",
+        bar::a_misspelled_word_finds_what_was_meant_and_quoted_is_exact as fn(),
     ),
     (
         "bar::a_result_gives_its_subject_room_before_its_first_line",

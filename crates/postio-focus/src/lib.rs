@@ -443,6 +443,38 @@ pub struct SearchesSaved {
     pub key: Option<String>,
 }
 
+/// Keep `save` in the `config.toml` at `path`, as
+/// `postio_ui::saved_search` writes one -- `[saved_searches]` alone, the
+/// rest of the file as it was -- and say what to answer the controller with
+/// ([`Input::SearchSaved`]): the pinned searches now, or the sentence the
+/// toast says instead. `None` is a window with no file to write to.
+pub fn save_search(
+    path: Option<&std::path::Path>,
+    save: &SaveSearch,
+) -> Result<SearchesSaved, String> {
+    let Some(path) = path else {
+        return Err(postio_ui::focus_target::NO_CONFIG_TO_SAVE.to_owned());
+    };
+    let verb = postio_ui::saved_search::Verb::Save {
+        query: &save.query,
+        name: save.name.as_deref(),
+        pin: save.pin,
+        notify: save.notify,
+        dates: save.dates,
+    };
+    postio_ui::saved_search::apply(path, verb)
+        .and_then(|edit| {
+            postio_config::Config::load_from_path(path).map(|config| SearchesSaved {
+                searches: postio_ui::saved_search::pinned(&config),
+                key: edit.changed,
+            })
+        })
+        .map_err(|error| {
+            tracing::warn!(%error, "Focus could not save the search");
+            postio_ui::focus_target::SEARCH_NOT_WRITTEN.to_owned()
+        })
+}
+
 /// What the frontend draws. Each one is drawable without asking the
 /// controller anything else.
 #[derive(Debug, Clone, PartialEq)]
@@ -773,6 +805,9 @@ pub enum Request {
         order: postio_search::ResultOrder,
         /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
+        /// Whether to read which hits a digest holds: only while a digest
+        /// rule can hold mail, since a hit then says where it waits.
+        held: bool,
     },
     /// Search this machine's index for conversations: the dropdown's top
     /// hits and the facets it narrows by (spec 010).
@@ -1798,6 +1833,7 @@ impl FocusController {
                 self.effects(steps)
             }
             Input::Config(config) => {
+                self.bar.digesting = !config.digests.is_empty();
                 let mut steps = self.bar_input(Input::Filtering(config.filtering), rows);
                 steps.extend(self.set_config(config));
                 self.effects(steps)
@@ -2786,6 +2822,7 @@ mod tests {
                 query,
                 order: postio_search::ResultOrder::default(),
                 stamp: 1,
+                held: false,
             },
         ] {
             assert_eq!(request.lane(), None, "{request:?}");

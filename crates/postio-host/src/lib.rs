@@ -119,6 +119,11 @@ type Engines = Arc<EngineTable>;
 #[derive(Default)]
 struct EngineTable {
     running: Mutex<HashMap<postio_model::AccountId, postio_runtime::Engine>>,
+    /// The bodies asked of these engines. A request waits in an engine's
+    /// memory, so a new engine for an account starts without the ones its
+    /// predecessor held, and what was asked of that one is asked again
+    /// ([`adopt`], #1986).
+    asked: Arc<reading::AskedBodies>,
     /// Held while engines start, so two asks at once -- the app's own at
     /// startup and one after an account is added -- cannot both find none
     /// running.
@@ -214,11 +219,25 @@ fn adopt(
 ) {
     postio_runtime::retain(engine.clone());
     wiring.engine.fill(account, engine.clone());
-    engines
+    let replaced = engines
         .running
         .lock()
         .expect("never poisoned")
         .insert(account, engine);
+    if let Some(old) = replaced {
+        // Two engines on one account would hold two connections, poll twice
+        // and drain one queue twice. The new one is in the table and wired
+        // above, so nothing lands on the closed channel of the old.
+        postio_runtime::retire(old);
+        // What the old engine had queued went with it, and the host would
+        // otherwise take the ask for still standing for a minute. Only what
+        // was asked is asked again, by the panes that were waiting on it.
+        for message in engines.asked.forget_account(account) {
+            wiring
+                .events
+                .emit(Event::BodyReachable { account, message });
+        }
+    }
 }
 
 /// Start the sync of the account saved for `address`, and no other.
@@ -515,6 +534,7 @@ impl Host {
 
     fn serving(wiring: Wiring, hub: EventSink, bridge: Option<Bridge>) -> Host {
         let (queue, commands) = async_channel::unbounded::<Queued>();
+        let engines = Engines::default();
         let inner = Arc::new(Inner {
             wiring,
             hub,
@@ -522,7 +542,8 @@ impl Host {
             next_client: AtomicU64::new(1),
             queue,
             notify: Mutex::new(postio_config::SyncConfig::default()),
-            engines: Engines::default(),
+            asked_bodies: Arc::clone(&engines.asked),
+            engines,
             focus: Mutex::new(None),
             config_path: Mutex::new(None),
             contacts_moved: std::sync::atomic::AtomicBool::new(false),
@@ -530,7 +551,6 @@ impl Host {
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
-            asked_bodies: Arc::default(),
             links: Arc::default(),
             #[cfg(test)]
             searches_in_flight: AtomicU64::new(0),

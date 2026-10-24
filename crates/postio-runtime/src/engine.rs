@@ -341,6 +341,22 @@ pub fn retain(engine: Engine) {
         .push(engine);
 }
 
+/// Wind down an engine that something else has replaced, without waiting.
+///
+/// Closes its job channel at once, so nothing more is queued on it, takes
+/// it out of the retained list so [`stop_retained`] does not hold or join
+/// it a second time, and joins its thread off the caller's thread: the
+/// caller may be the async executor or a UI loop (#1986).
+pub fn retire(engine: Engine) {
+    RETAINED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|kept| !Arc::ptr_eq(&kept.thread, &engine.thread));
+    engine.jobs.close();
+    JOB_SENT.notify_waiters();
+    std::thread::spawn(move || engine.thread.join_bounded());
+}
+
 /// Stop every retained engine and wait for its thread. Call before exiting.
 ///
 /// Idempotent, and a no-op in a process that retained none — which is every
@@ -650,6 +666,11 @@ impl Engine {
     /// filing pass: only under a host in Focus mode.
     pub fn files_arrivals(&self) -> bool {
         self.filing.get().is_some()
+    }
+
+    /// Whether the engine has been told to stop: its job channel is closed.
+    pub fn is_stopped(&self) -> bool {
+        self.jobs.is_closed()
     }
 
     /// Stop the engine and wait for its thread, whatever else still holds a

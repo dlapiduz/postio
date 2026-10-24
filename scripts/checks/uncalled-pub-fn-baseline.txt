@@ -106,3 +106,4 @@ with_connect_timeout              # crates/postio-account/src/imap/settings.rs:1
 with_html                         # crates/postio-model/src/account.rs:188
 with_internal_date                # crates/postio-account/src/backend/message.rs:638
 with_user_names                   # crates/postio-ui/src/reader/header.rs:162 -- the To and Cc names of the reader header (FR-032); the Mac window reads the sender the list statement already names
+reopen                            # crates/postio-account/src/secret.rs -- MemorySecretStore test support: other crates' suites reopen the same keyring to stand for a restart; no production code reopens one

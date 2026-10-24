@@ -191,14 +191,9 @@ mod imp {
         /// The command bar, over the list.
         pub bar: RefCell<Option<Rc<crate::bar::Bar>>>,
         /// The pinned saved searches, in order: each name and its query.
-        pub saved: RefCell<Vec<(String, String)>>,
+        pub saved: RefCell<Vec<postio_ui::saved_search::SavedSearch>>,
         /// The folders popover, built the first time it opens.
         pub places: RefCell<Option<Rc<crate::places::Places>>>,
-        /// Whether the list shows Focus's own inbox, rather than a folder.
-        pub at_inbox: Cell<bool>,
-        /// The place the list shows when it is not the inbox: what its
-        /// strip counts and what it says when it has nothing in it.
-        pub place: RefCell<Option<postio_ui::focus_state::EmptyPlace>>,
         /// The last key press `handle_key` was given, by its event time and
         /// key: so a press the window's controller and a dialog's both see
         /// is handled once (`keys_under_dialogs`).
@@ -335,8 +330,6 @@ mod imp {
                 bar: RefCell::default(),
                 saved: RefCell::default(),
                 places: RefCell::default(),
-                at_inbox: Cell::new(true),
-                place: RefCell::default(),
                 last_key: Cell::new(None),
                 dialogs: RefCell::default(),
                 snooze: RefCell::default(),
@@ -1005,6 +998,13 @@ impl FocusWindow {
             now.push(SurfaceKind::Message);
         }
         if self.compose().is_some_and(|compose| compose.is_showing()) {
+            // On Linux the composer stacks over the open message, which is
+            // still open under it and comes back when it goes: told closed,
+            // a hit's message would send the controller back to the search
+            // it came from (slice 8).
+            if !self.reading_beside() && self.reading().is_some_and(|reading| reading.is_open()) {
+                now.push(SurfaceKind::Message);
+            }
             now.push(SurfaceKind::Composer);
         } else if let Some(dialog) = self.visible_dialog() {
             let name = dialog.widget_name();
@@ -1310,10 +1310,9 @@ impl FocusWindow {
         match id.parse::<CommandId>() {
             // Back, find, More, the treatment, the source and the thread's
             // steps are the controller's (`Route::Controller`). A message
-            // found by search walks the results it came from; one
-            // opened from the list walks the list.
-            Ok(CommandId::NextMessage) if reading.step_found(1) => {}
-            Ok(CommandId::PrevMessage) if reading.step_found(-1) => {}
+            // found by search walks the results it came from, the
+            // controller's too (slice 8); one opened from the list walks
+            // the list.
             // The controller steps the list and shows the row it lands on.
             // A message the window showed itself is no list row of the
             // controller's, so the cursor's row is asked for after.
@@ -1703,44 +1702,38 @@ impl FocusWindow {
             CommandId::Back => {
                 if let Some(places) = self.places().filter(|places| places.is_open()) {
                     places.close();
-                } else if let Some(bar) = self.bar().filter(|bar| bar.is_open()) {
-                    bar.close();
+                } else if self.bar().is_some_and(|bar| bar.is_open()) {
+                    self.run_in_controller(CommandId::Back);
                 } else if self.filtered().is_some() {
                     self.leave_filtered();
                 } else {
                     self.cursor_command(CommandId::Back);
                 }
             }
+            // The bar, its keys, the saved searches and the go-to keys are
+            // the controller's (spec 009 slice 8): it opens the bar, says
+            // what it shows, and goes where a line or a key says. `/` is for
+            // mail and `Ctrl K` for commands: one bar, opened two ways (C24).
             CommandId::SavedSearch1
             | CommandId::SavedSearch2
             | CommandId::SavedSearch3
-            | CommandId::SavedSearch4 => {
-                let index = match id {
-                    CommandId::SavedSearch1 => 0,
-                    CommandId::SavedSearch2 => 1,
-                    CommandId::SavedSearch3 => 2,
-                    _ => 3,
-                };
-                let opened = self.bar().is_some_and(|bar| bar.open_saved(index));
-                if !opened {
-                    self.imp()
-                        .toast
-                        .show_notice(&postio_ui::focus_target::no_saved_search(index));
-                    self.follow_toast();
-                }
-            }
-            // `/` is for mail, `Ctrl K` for commands: one bar, opened two
-            // ways (spec C24).
-            CommandId::Search => {
-                if let Some(bar) = self.bar() {
-                    bar.open();
-                }
-            }
-            CommandId::CommandPalette => {
-                if let Some(bar) = self.bar() {
-                    bar.open_commands();
-                }
-            }
+            | CommandId::SavedSearch4
+            | CommandId::Search
+            | CommandId::CommandPalette
+            | CommandId::BackToWords
+            | CommandId::SaveSearch
+            | CommandId::ToggleResultOrder
+            | CommandId::GoToFolders
+            | CommandId::GoToInbox
+            | CommandId::GoToFiltered
+            | CommandId::GoToDrafts
+            | CommandId::GoToSent
+            | CommandId::GoToArchive
+            | CommandId::GoToSnoozed
+            | CommandId::GoToFlagged
+            | CommandId::GoToJunk
+            | CommandId::GoToTrash
+            | CommandId::GoToOutbox => self.run_in_controller(id),
             // The host's own verbs: `postio_ui::focus_target::dispatch` says
             // which are aimed at mail and which are not. Undo is the last
             // action this window took, whatever it was and however long ago
@@ -1793,11 +1786,8 @@ impl FocusWindow {
                 Some(digest) => self.open_digest(digest),
                 None => self.open_message(),
             },
-            CommandId::GoToFolders => self.open_places(),
-            CommandId::GoToInbox => self.go_to_inbox(),
             CommandId::NextScope => self.next_scope(),
             CommandId::ViewSource => self.view_source(),
-            CommandId::GoToFiltered => self.show_filtered(),
             // Contacts: the controller opens it and says what to draw.
             CommandId::OpenContacts
             | CommandId::ContactsSuggestions
@@ -1850,17 +1840,6 @@ impl FocusWindow {
             }
             CommandId::DigestRule => self.new_digest_rule(),
             CommandId::ToggleReadingPane => self.toggle_reading_pane(),
-            CommandId::BackToWords => {
-                if let Some(bar) = self.bar() {
-                    bar.back_to_words();
-                }
-            }
-            CommandId::SaveSearch => self.save_search(),
-            CommandId::ToggleResultOrder => {
-                if let Some(bar) = self.bar() {
-                    bar.toggle_order();
-                }
-            }
             CommandId::GoToDigestRules => self.show_rules(),
             CommandId::RestoreFiltered => {
                 if let Some(view) = self.filtered() {
@@ -1890,27 +1869,6 @@ impl FocusWindow {
             CommandId::AcceptInvite | CommandId::DeclineInvite => {
                 if let Some(message) = self.aimed_message() {
                     self.answer(message, id);
-                }
-            }
-            // `g d`: the Drafts folder, where Enter opens a draft to edit.
-            CommandId::GoToDrafts => self.go_to_role(postio_model::MailboxRole::Drafts),
-            // The rest of the go-to keys (T236): a folder by its role, a
-            // view by its scope.
-            CommandId::GoToSent => self.go_to_role(postio_model::MailboxRole::Sent),
-            CommandId::GoToArchive => self.go_to_role(postio_model::MailboxRole::Archive),
-            CommandId::GoToSnoozed => self.go_to_view(postio_model::MailboxRole::Snoozed),
-            CommandId::GoToFlagged => self.go_to_view(postio_model::MailboxRole::Flagged),
-            CommandId::GoToJunk => self.go_to_role(postio_model::MailboxRole::Junk),
-            CommandId::GoToTrash => self.go_to_role(postio_model::MailboxRole::Trash),
-            // A view over Drafts, of the first account, as the popover's row
-            // for it is of the account it lists.
-            CommandId::GoToOutbox => {
-                let account = self.imp().accounts.borrow().first().copied();
-                if let Some(account) = account {
-                    self.go_to(
-                        postio_ui::finder::Destination::Outbox(account),
-                        postio_ui::places::OUTBOX,
-                    );
                 }
             }
             // A Focus row is a whole conversation, so `E` is `e` here.
@@ -2175,18 +2133,33 @@ impl FocusWindow {
                     view.show_card(card.as_deref().cloned());
                 }
             }
-            // "All mail with them" from Contacts: the controller has closed the
-            // view and says what to search; the box is GTK's.
-            Intent::OpenBar {
-                mode: postio_focus::BarMode::Search,
-                text,
-                ..
-            } => {
+            // The bar (spec 009 slice 8): shown on the controller's words,
+            // drawn whole, closed by `CloseSurface(Bar)`.
+            Intent::OpenBar { text, select, .. } => {
                 if let Some(bar) = self.bar() {
-                    bar.open();
-                    bar.set_text(text);
+                    bar.open_on(text, *select);
                 }
             }
+            Intent::BarLines(view) => {
+                if let Some(bar) = self.bar() {
+                    bar.show(view);
+                }
+            }
+            Intent::Place { name } => self.show_place(name),
+            Intent::OpenPlaces => self.open_places(),
+            Intent::PlacesChanged => {
+                if let Some(bar) = self.bar() {
+                    bar.places_read();
+                }
+                if let Some(places) = self.places() {
+                    places.redraw();
+                }
+            }
+            Intent::ShowFiltered => self.show_filtered(),
+            Intent::SaveSearch(save) => self.save_search(save),
+            // A command the controller does not answer itself, run from the
+            // bar: the host's verbs, Compose, Settings.
+            Intent::Run(id) => self.act(*id),
             Intent::ContactPopover(view) => self.show_contact_popover(view),
             Intent::ContactsSettings(view) => {
                 if let Some(settings) = self.settings() {
@@ -2547,6 +2520,9 @@ impl FocusWindow {
         feed.input(postio_focus::Input::Config(
             imp.focus_config.borrow().clone(),
         ));
+        feed.input(postio_focus::Input::SavedSearches(
+            imp.saved.borrow().clone(),
+        ));
         let pane = ListPane::new(feed.clone(), self.keymap(), imp.picked.clone());
         // A row's drawn action does what its key does, for that row.
         pane.connect_row_action(glib::clone!(
@@ -2622,14 +2598,27 @@ impl FocusWindow {
         list_or_empty.add_named(empty.widget(), Some(EMPTY));
         list_or_empty.set_visible_child_name(LIST);
         // The command bar lies over the window, never beside the list.
-        let bar = crate::bar::Bar::new(client.clone(), &self.keymap());
-        bar.set_saved(imp.saved.borrow().clone());
-        bar.set_digesting(!imp.focus_config.borrow().digests.is_empty());
-        bar.connect_action(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            move |action| window.bar_action(action)
-        ));
+        let bar = crate::bar::Bar::new(&self.keymap());
+        // What is typed, run and tabbed into is the controller's to answer.
+        bar.connect_input({
+            let feed = feed.clone();
+            let window = self.downgrade();
+            move |input| match input {
+                crate::bar::BarInput::Typed(text) => {
+                    feed.input(postio_focus::Input::Typed { text })
+                }
+                crate::bar::BarInput::Run(token) => feed.input(postio_focus::Input::BarRun(token)),
+                crate::bar::BarInput::Command(id) => {
+                    if let Some(window) = window.upgrade() {
+                        window.run_in_controller(id);
+                    }
+                }
+            }
+        });
+        bar.connect_tab({
+            let feed = feed.clone();
+            move || feed.bar_tab()
+        });
         // Closing it hands the keyboard to the list.
         bar.set_home(pane.view().clone().upcast());
         // In place (spec C24): the bar's input is drawn over the top bar's
@@ -2826,60 +2815,6 @@ impl FocusWindow {
         });
     }
 
-    /// `g d`, `g t`, `g a`: list the folder of `role` in the account Focus
-    /// writes from -- the first with one. A role, not a name: what a provider
-    /// calls its sent mail does not matter.
-    fn go_to_role(&self, role: postio_model::MailboxRole) {
-        let Some(client) = self.imp().client.borrow().clone() else {
-            return;
-        };
-        let accounts = self.imp().accounts.borrow().clone();
-        let window = self.downgrade();
-        glib::spawn_future_local(async move {
-            use postio_model::listing::MailStore as _;
-            for account in accounts {
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                let Ok(folders) = client.mailboxes(account).await else {
-                    continue;
-                };
-                if let Some(folder) = folders.iter().find(|folder| folder.role == role)
-                    && let Some(window) = window.upgrade()
-                {
-                    window.go_to(
-                        postio_ui::finder::Destination::Mailbox(folder.id),
-                        &crate::places::place_name(folder),
-                    );
-                    return;
-                }
-            }
-        });
-    }
-
-    /// `g b`, `g s`: list a view -- Snoozed or Flagged -- which is a scope
-    /// over mail filed elsewhere, not a folder with an id of its own. Of every
-    /// enabled account, as Focus's inbox is.
-    fn go_to_view(&self, role: postio_model::MailboxRole) {
-        let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
-            return;
-        };
-        let (scope, name) = match role {
-            postio_model::MailboxRole::Snoozed => {
-                (ListScope::Focus(FocusScope::Snoozed), "Snoozed")
-            }
-            _ => (ListScope::Focus(FocusScope::Flagged), "Flagged"),
-        };
-        self.imp().at_inbox.set(false);
-        self.imp().place.replace(Some(match role {
-            postio_model::MailboxRole::Snoozed => postio_ui::focus_state::EmptyPlace::Snoozed,
-            _ => postio_ui::focus_state::EmptyPlace::Flagged,
-        }));
-        pane.feed().leave_list();
-        pane.feed().open(scope);
-        chrome.set_place(name);
-        self.show_counts();
-        self.focus_list_soon();
-    }
-
     /// Say the counts the host last gave, which the controller keeps: the
     /// strip's, the toggle's, and how many of how many the filter is
     /// showing. A place that is not the inbox counts what it lists.
@@ -2892,7 +2827,7 @@ impl FocusWindow {
         chrome.set_digest_rules(imp.focus_config.borrow().digests.len());
         // The host's counts are the inbox's, and beside "Flagged" they
         // described a place the person had left.
-        if imp.place.borrow().is_some() {
+        if !self.at_inbox() {
             let listed = feed
                 .as_ref()
                 .filter(|feed| feed.has_landed())
@@ -2912,8 +2847,9 @@ impl FocusWindow {
                 .filtering
                 .then_some(counts.filtered_today);
             chrome.set_filtered_today(filtered.filter(|count| *count > 0));
+            // The popover lists Filtered with the controller's count.
             if let Some(places) = imp.places.borrow().as_ref() {
-                places.set_filtered_today(filtered);
+                places.redraw();
             }
             // Settings' Filtering page says the same count (US9).
             if let Some(settings) = imp.settings.borrow().as_ref() {
@@ -2975,9 +2911,6 @@ impl FocusWindow {
 
     /// `[focus]`, for what the empty inbox names.
     pub fn set_focus_config(&self, focus: postio_config::FocusConfig) {
-        if let Some(bar) = self.bar() {
-            bar.set_digesting(!focus.digests.is_empty());
-        }
         let capture = focus.vault.is_some();
         let beside = focus.reading == postio_config::Reading::Pane;
         let for_controller = focus.clone();
@@ -3096,7 +3029,7 @@ impl FocusWindow {
         let imp = self.imp();
         // Looking at Focus's inbox is looking at every inbox it is made of.
         let looking = imp.pages.visible_child_name().as_deref() == Some(INBOX)
-            && imp.at_inbox.get()
+            && self.at_inbox()
             && self
                 .pane()
                 .is_some_and(|pane| pane.feed().is_inbox(mailbox));
@@ -3238,7 +3171,7 @@ impl FocusWindow {
                 if let Some(reading) = self.reading_dialog() {
                     // Over the digest, not in the pane behind it.
                     self.place_reading();
-                    reading.show_found(self, message, &subject, Vec::new());
+                    reading.show_found(self, message, &subject, None);
                 }
             }
         }
@@ -3498,41 +3431,18 @@ impl FocusWindow {
         self.imp().config_path.replace(path);
     }
 
-    /// `Ctrl+S` in the bar (T086): save its query to `config.toml` as a
-    /// pinned search -- `[saved_searches]` alone, the rest of the file as it
-    /// was -- and show it in the saved row.
-    fn save_search(&self) {
-        let Some(bar) = self.bar().filter(|bar| bar.is_open()) else {
-            return;
-        };
-        let query = bar.query();
-        if query.is_empty() {
-            return;
+    /// `Ctrl+S` in the bar (T086): the controller says what to save; it is
+    /// written to `config.toml` as `postio_focus::save_search` writes it,
+    /// and the controller told how that went, which it says.
+    fn save_search(&self, save: &postio_focus::SaveSearch) {
+        let path = self.imp().config_path.borrow().clone();
+        let saved = postio_focus::save_search(path.as_deref(), save);
+        if let Ok(saved) = &saved {
+            self.imp().saved.replace(saved.searches.clone());
         }
-        let Some(path) = self.imp().config_path.borrow().clone() else {
-            self.imp()
-                .toast
-                .show_notice(postio_ui::focus_target::NO_CONFIG_TO_SAVE);
-            self.follow_toast();
-            return;
-        };
-        let original = std::fs::read_to_string(&path).unwrap_or_default();
-        let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
-        config.save_filter(&query);
-        let written = postio_config::patch_filters(&original, &config.filters)
-            .and_then(|patched| postio_config::Config::write_text_to_path(&patched, &path));
-        let said = match written {
-            Ok(()) => {
-                self.set_saved_searches(postio_session::focus::saved_searches(&config));
-                postio_ui::focus_target::search_saved(&query)
-            }
-            Err(error) => {
-                tracing::warn!(%error, "Focus could not save the search");
-                postio_ui::focus_target::SEARCH_NOT_WRITTEN.to_owned()
-            }
-        };
-        self.imp().toast.show_notice(&said);
-        self.follow_toast();
+        if let Some(pane) = self.pane() {
+            pane.feed().input(postio_focus::Input::SearchSaved(saved));
+        }
     }
 
     /// The digest rules list, while it is the page on screen.
@@ -4111,7 +4021,7 @@ impl FocusWindow {
             FilteredAction::Back => self.leave_filtered(),
             FilteredAction::Open { message, subject } => {
                 if let Some(reading) = self.reading_dialog() {
-                    reading.show_found(self, message, &subject, Vec::new());
+                    reading.show_found(self, message, &subject, None);
                 }
             }
             FilteredAction::Restore(message) => self.restore_filtered(vec![message]),
@@ -4285,12 +4195,7 @@ impl FocusWindow {
                     return;
                 };
                 if let Some(reading) = window.reading_dialog() {
-                    reading.show_found(
-                        &window,
-                        message,
-                        &row.subject.unwrap_or_default(),
-                        Vec::new(),
-                    );
+                    reading.show_found(&window, message, &row.subject.unwrap_or_default(), None);
                 }
             }
         ));
@@ -4594,13 +4499,6 @@ impl FocusWindow {
                 self.follow_toast();
             }
             self.place_reading();
-            // A hit closed returns to the results it was opened from, the
-            // bar as it was.
-            if let Some(bar) = self.bar()
-                && let Some(typed) = bar.take_held()
-            {
-                bar.reopen(&typed, reading.shown());
-            }
         }
         // A message opening over an offer hides it: the offer ends with the
         // moment it was made, rather than staying reachable by key unseen.
@@ -4640,6 +4538,28 @@ impl FocusWindow {
                 .and_downcast::<RowObject>()
                 .and_then(|row| row.item())
         });
+        // A search's hit (slice 8): the controller opened it among the hits,
+        // which its place is among, whether or not the list has it too.
+        if self
+            .pane()
+            .is_some_and(|pane| pane.feed().among_hits(message))
+            && let Some(reading) = self.reading_dialog()
+        {
+            let subject = self
+                .bar()
+                .and_then(|bar| bar.subject_of(message))
+                .or_else(|| {
+                    row.as_ref()
+                        .and_then(|row| row.as_conversation())
+                        .and_then(|conversation| conversation.summary.subject.clone())
+                })
+                .unwrap_or_default();
+            let hit = crate::open::Position { index, total };
+            reading.show_found(self, message, &subject, Some(hit));
+            crate::a11y::teach_shortcuts(&reading.view());
+            crate::motion::keep_to_budget(&reading.view());
+            return;
+        }
         let (Some(row), Some(reading)) = (row, self.reading_dialog()) else {
             // Nothing to show: the controller has the message on its stack,
             // and it comes off.
@@ -4971,11 +4891,12 @@ impl FocusWindow {
         self.imp().runtime.replace(Some(runtime));
     }
 
-    /// The pinned saved searches, in `config.toml`'s order: each name and
-    /// its query.
-    pub fn set_saved_searches(&self, saved: Vec<(String, String)>) {
-        if let Some(bar) = self.bar() {
-            bar.set_saved(saved.clone());
+    /// The pinned saved searches, in `config.toml`'s order: what `alt+1`-`4`
+    /// and the bar's pills run.
+    pub fn set_saved_searches(&self, saved: Vec<postio_ui::saved_search::SavedSearch>) {
+        if let Some(pane) = self.pane() {
+            pane.feed()
+                .input(postio_focus::Input::SavedSearches(saved.clone()));
         }
         self.imp().saved.replace(saved);
     }
@@ -4994,8 +4915,7 @@ impl FocusWindow {
 
     /// `g l`, or a click on "Inbox ▾": the folders popover (screen 10).
     fn open_places(&self) {
-        let (Some(chrome), Some(client)) = (self.chrome(), self.imp().client.borrow().clone())
-        else {
+        let (Some(chrome), Some(pane)) = (self.chrome(), self.pane()) else {
             return;
         };
         let places = self
@@ -5003,18 +4923,15 @@ impl FocusWindow {
             .places
             .borrow_mut()
             .get_or_insert_with(|| {
-                let places =
-                    crate::places::Places::new(client, &self.keymap(), chrome.place_button());
-                places.connect_go(glib::clone!(
-                    #[weak(rename_to = window)]
-                    self,
-                    move |destination, name| window.go_to(destination, &name)
-                ));
-                places.connect_command(glib::clone!(
-                    #[weak(rename_to = window)]
-                    self,
-                    move |command| window.act(command)
-                ));
+                let places = crate::places::Places::new(&self.keymap(), chrome.place_button());
+                places.connect_source({
+                    let feed = pane.feed().clone();
+                    move |filter| feed.places(filter)
+                });
+                places.connect_go({
+                    let feed = pane.feed().clone();
+                    move |token| feed.input(postio_focus::Input::OpenPlace(token))
+                });
                 // Chosen from or dismissed, the keyboard goes back to the
                 // list, not to the button the popover hangs from.
                 places.connect_closed(glib::clone!(
@@ -5025,53 +4942,8 @@ impl FocusWindow {
                 places
             })
             .clone();
-        places.set_filtered_today(self.filtered_today());
         places.open();
         crate::motion::keep_to_budget(self);
-    }
-
-    /// Show `destination` in the list, and name it in the header strip. A
-    /// label is its search: Focus lists no label on its own.
-    fn go_to(&self, destination: postio_ui::finder::Destination, name: &str) {
-        use postio_ui::finder::Destination;
-        let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
-            return;
-        };
-        match destination {
-            Destination::Mailbox(mailbox) => {
-                let inbox = self.is_focus_inbox(mailbox);
-                self.imp().at_inbox.set(inbox);
-                if inbox {
-                    self.go_to_inbox();
-                    return;
-                }
-                self.open_mailbox(mailbox, name);
-            }
-            Destination::Label(_) => {
-                if let Some(bar) = self.bar() {
-                    bar.open();
-                    bar.set_text(&format!("label:\"{name}\""));
-                }
-            }
-            Destination::Search(query) => {
-                if let Some(bar) = self.bar() {
-                    bar.open();
-                    bar.set_text(&query);
-                }
-            }
-            // A view over Drafts, listed as Snoozed is (T239).
-            Destination::Outbox(account) => {
-                self.imp().at_inbox.set(false);
-                self.imp()
-                    .place
-                    .replace(Some(postio_ui::focus_state::EmptyPlace::Outbox));
-                pane.feed().leave_list();
-                pane.feed().open(ListScope::Outbox(account));
-                chrome.set_place(name);
-                self.show_counts();
-                self.focus_list_soon();
-            }
-        }
     }
 
     /// List one mailbox as a folder, named `name` in the header strip.
@@ -5079,12 +4951,6 @@ impl FocusWindow {
         let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
             return;
         };
-        self.imp().at_inbox.set(false);
-        self.imp()
-            .place
-            .replace(Some(postio_ui::focus_state::EmptyPlace::Folder(
-                name.to_owned(),
-            )));
         pane.feed().leave_list();
         pane.feed().note_place(name);
         pane.feed().open(ListScope::Mailbox(mailbox));
@@ -5128,7 +4994,7 @@ impl FocusWindow {
             };
             let ids: Vec<_> = inboxes.iter().map(|(id, _)| *id).collect();
             let here = match pane.feed().scope() {
-                _ if window.imp().at_inbox.get() => Some(Scope::Focus),
+                _ if window.at_inbox() => Some(Scope::Focus),
                 Some(ListScope::Mailbox(mailbox)) => Some(Scope::Inbox(mailbox)),
                 _ => None,
             };
@@ -5151,8 +5017,6 @@ impl FocusWindow {
         let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
             return;
         };
-        self.imp().at_inbox.set(true);
-        self.imp().place.replace(None);
         pane.feed().leave_list();
         pane.feed().open(ListScope::Focus(FocusScope::Inbox));
         chrome.set_place("Inbox");
@@ -5160,38 +5024,31 @@ impl FocusWindow {
         self.focus_list_soon();
     }
 
-    /// Whether `mailbox` is an inbox: going there is going to Focus's.
-    fn is_focus_inbox(&self, mailbox: postio_model::MailboxId) -> bool {
-        self.pane()
-            .is_some_and(|pane| pane.feed().is_inbox(mailbox))
+    /// Whether the list shows Focus's own inbox, rather than a folder or a
+    /// view: what the strip counts, and whether new mail is being looked
+    /// at. `!` narrows the inbox to what has an action, and is still it.
+    fn at_inbox(&self) -> bool {
+        self.pane().is_none_or(|pane| {
+            matches!(
+                pane.feed().scope(),
+                None | Some(ListScope::Focus(FocusScope::Inbox | FocusScope::HasAction))
+            )
+        })
+    }
+
+    /// The controller has taken the list to `name` (spec 009 slice 8): the
+    /// strip names it and counts what it lists, and the keyboard is on it.
+    fn show_place(&self, name: &str) {
+        if let Some(chrome) = self.chrome() {
+            chrome.set_place(name);
+        }
+        self.show_counts();
+        self.focus_list_soon();
     }
 
     /// The command bar, once the inbox is showing.
     pub fn bar(&self) -> Option<Rc<crate::bar::Bar>> {
         self.imp().bar.borrow().clone()
-    }
-
-    /// What a row of the bar asked for.
-    fn bar_action(&self, action: crate::bar::BarAction) {
-        match action {
-            // A hit opens by itself. It was opened through the list's
-            // cursor row first, so a window whose cursor was not on a row --
-            // an empty list -- opened nothing at all.
-            crate::bar::BarAction::Open { message, subject } => {
-                if let Some(reading) = self.reading_dialog() {
-                    reading.show_found(
-                        self,
-                        message,
-                        &subject,
-                        self.bar().map(|bar| bar.hits()).unwrap_or_default(),
-                    );
-                    crate::a11y::teach_shortcuts(&reading.view());
-                    crate::motion::keep_to_budget(&reading.view());
-                }
-            }
-            crate::bar::BarAction::Command(command) => self.act(command),
-            crate::bar::BarAction::Go { destination, name } => self.go_to(destination, &name),
-        }
     }
 
     /// The window became the active one, or stopped being it: the open
