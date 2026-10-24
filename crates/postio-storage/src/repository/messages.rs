@@ -3627,6 +3627,9 @@ async fn find_awaiting_identity(
 /// next such server copy finds the other. One seek on
 /// `idx_messages_account_list` (`account_id`, `received_at`), then the rest is
 /// a filter over the few rows at that instant.
+///
+/// A draft's own row is never a candidate: an append that could not be
+/// located is resolved by a resync of Drafts, never by a guess.
 async fn find_awaiting_headerless(
     connection: &Connection,
     account_id: AccountId,
@@ -3643,6 +3646,7 @@ async fn find_awaiting_headerless(
             AND remote_id IS NULL
             AND uid IS NULL
             AND deleted_locally = 0
+            AND NOT EXISTS (SELECT 1 FROM drafts WHERE drafts.message_id = messages.id)
           ORDER BY id
           LIMIT 1",
     )
