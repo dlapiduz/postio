@@ -1305,11 +1305,13 @@ fn click_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32) {
         .pick(x, y, gtk::PickFlags::DEFAULT)
         .unwrap_or_else(|| window.clone().upcast());
     // A popover is a surface of its own: an event on it goes up to the
-    // popover and no further, as it does to a dialog.
+    // popover and no further. A dialog is not -- it is a widget in the
+    // window, and the window's capture gestures see a press on it first, as
+    // GTK runs them (the add-account form's close button, T171).
     let mut chain = vec![picked.clone()];
     while !chain
         .last()
-        .is_some_and(|widget| widget.is::<adw::Dialog>() || widget.is::<gtk::Native>())
+        .is_some_and(|widget| widget.is::<gtk::Native>())
         && let Some(parent) = chain.last().and_then(|widget| widget.parent())
     {
         chain.push(parent);
