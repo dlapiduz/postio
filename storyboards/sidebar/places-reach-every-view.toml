@@ -48,4 +48,4 @@ settle  = { until = { rows.count = 8 } }
 command = "go_to_outbox"
 settle  = { until = { rows.count = 1 } }
 check   = { scope = "Outbox", rows.count = 1, cursor.index = 0 }
-expect  = "The Outbox has a key of its own, `g b`, as every other mailbox has."
+expect  = "The Outbox has a key of its own, `g o`, as every other mailbox has."
