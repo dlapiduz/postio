@@ -509,8 +509,11 @@ static SPECS: &[CommandSpec] = &[
         // here than a mnemonic nobody has.
         default_binding: "x",
         alternate_bindings: &[],
+        // And Focus's Filtered view, whose rows are selected as the list's
+        // are.
         contexts: ctx(LIST_SURFACES)
             .with(Context::Results)
+            .with(Context::Filtered)
             .with(Context::Contacts),
         destructive: false,
         // Changing what an action *would* hit changes no durable state, so
@@ -528,7 +531,11 @@ static SPECS: &[CommandSpec] = &[
         // thread's messages on `n` and `p` (#1007). `shift+Down` still
         // reaches this everywhere it ever did. Contacts too: a run of people
         // is selected the way a run of messages is (specs/005-contacts).
-        contexts: ctx(SELECTION_SURFACES).with(Context::Contacts),
+        // Filtered too: its rows are messages, walked and extended as the
+        // list's are.
+        contexts: ctx(SELECTION_SURFACES)
+            .with(Context::Filtered)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -539,7 +546,9 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "K",
         alternate_bindings: &["shift+Up"],
         // See `ExtendSelectionDown`.
-        contexts: ctx(SELECTION_SURFACES).with(Context::Contacts),
+        contexts: ctx(SELECTION_SURFACES)
+            .with(Context::Filtered)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -554,6 +563,7 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &["mod+a", "X"],
         contexts: ctx(LIST_SURFACES)
             .with(Context::Results)
+            .with(Context::Filtered)
             .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,

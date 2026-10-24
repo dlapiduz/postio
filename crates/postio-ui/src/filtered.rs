@@ -127,6 +127,30 @@ pub fn footer(keymap: &Keymap) -> Vec<Hint> {
     said
 }
 
+/// The verbs the selection bar offers over Filtered, in order: the first is
+/// the one a selection is usually for. Delete and Flag stay keys, as Delete
+/// is off the main list's bar (screen 01); Archive is not here at all,
+/// since Filtered mail is archived already.
+pub const BAR_VERBS: [(CommandId, &str); 2] = [
+    (CommandId::RestoreFiltered, "Restore"),
+    (CommandId::ToggleRead, "Mark read"),
+];
+
+/// The selection's own keys, on the right of its bar: "x toggle",
+/// "J/K extend", "Esc clear". Read from the keymap, so a rebinding shows.
+pub fn bar_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut said = Vec::new();
+    said.extend(hints::hint(keymap, CommandId::ToggleSelection, "toggle"));
+    said.extend(hints::pair(
+        keymap,
+        CommandId::ExtendSelectionDown,
+        CommandId::ExtendSelectionUp,
+        "extend",
+    ));
+    said.extend(hints::hint(keymap, CommandId::Back, "clear"));
+    said
+}
+
 /// How many rows a page of Filtered reads.
 pub const PAGE: u32 = 50;
 

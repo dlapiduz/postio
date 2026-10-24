@@ -306,7 +306,11 @@ impl Verbs {
     /// stand the cursor on the first row below it that stays. The list
     /// slides it up as the rows above go, so it lands on the row that
     /// followed, not on the slot the old row held (#468).
-    fn past_removed(selection: &Selection, cursor: &mut Cursor, rows: &dyn Rows) -> Vec<Step> {
+    pub(crate) fn past_removed(
+        selection: &Selection,
+        cursor: &mut Cursor,
+        rows: &dyn Rows,
+    ) -> Vec<Step> {
         let Selection::These(gone) = selection else {
             return Vec::new();
         };

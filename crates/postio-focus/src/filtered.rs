@@ -11,18 +11,28 @@
 //!
 //! Nothing in it is deleted automatically (C4): `R` restores, a tab
 //! narrows, the sweep asks first and moves mail *into* Filtered. Delete,
-//! Flag and read act on the focused message alone, as the person asked; a
-//! deleted one leaves the view because the store no longer lists it.
+//! Flag and read act on the selection, or on the focused message when
+//! nothing is selected, as the person asked; a deleted one leaves the view
+//! because the store no longer lists it.
+//!
+//! Selecting is the list's, not a second model of it: Filtered holds a
+//! [`Cursor`] of its own over its rows, so `x`, `J`/`K`, select all, the
+//! modified clicks and Back's first rung follow the same rules as in a
+//! folder, and the verbs aim through the same [`Verbs`]. A selection is the
+//! rows' messages, not their conversations -- Filtered lists messages --
+//! and never the "everything" predicate: the rows read are all it means.
 
 use postio_client::protocol::FilteredRow;
-use postio_core::{Command, CommandId, MessageTarget};
+use postio_core::state::Selection;
+use postio_core::{Command, CommandId};
 use postio_model::MessageId;
 use postio_ui::filtered as words;
 use postio_ui::hints;
 
-use crate::cursor::{RowFacts, Rows};
+use crate::cursor::{Cursor, RowFacts, Rows};
 use crate::feed::Step;
 use crate::surfaces::Origin;
+use crate::verbs::Verbs;
 use crate::{FocusController, Intent, Reply, Request, SurfaceKind, ToastKind};
 
 /// Filtered, drawable as it is.
@@ -52,6 +62,33 @@ pub struct FilteredView {
     pub more: bool,
     /// The footer's hints.
     pub footer: Vec<hints::Hint>,
+    /// The selection bar, while anything is selected.
+    pub bar: Option<FilteredBar>,
+}
+
+/// What the bar over Filtered says while anything is selected: the count,
+/// the verbs with their keys, and the selection's own keys.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilteredBar {
+    /// "3 selected".
+    pub summary: String,
+    /// The verbs, the first the one a selection is usually for.
+    pub actions: Vec<FilteredBarAction>,
+    /// "x toggle", "J/K extend", "Esc clear".
+    pub hints: Vec<hints::Hint>,
+}
+
+/// One verb on the selection bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilteredBarAction {
+    /// The command a press runs.
+    pub command: CommandId,
+    /// Its words.
+    pub label: String,
+    /// Its key, as the keymap in force spells it.
+    pub key: Option<String>,
+    /// Whether it is the verb a selection is usually for.
+    pub primary: bool,
 }
 
 /// One of Filtered's tabs.
@@ -84,6 +121,8 @@ pub struct FilteredLine {
     pub time: String,
     /// The day heading drawn above it, for the first row of each day.
     pub heading: Option<String>,
+    /// Whether it is in the selection: its box is checked.
+    pub selected: bool,
 }
 
 /// What the controller keeps of Filtered.
@@ -95,15 +134,59 @@ pub(crate) struct Filtered {
     counts: [u32; 7],
     /// The rows read, in order.
     rows: Vec<FilteredRow>,
-    /// The row with the keyboard.
-    focused: Option<usize>,
+    /// The row with the keyboard, and what is selected: the list's own
+    /// rules over these rows.
+    cursor: Cursor,
     /// Whether the last page read was full.
     more: bool,
     /// The read current now: a page for another is dropped.
     stamp: u64,
 }
 
+/// Filtered's rows as the cursor reads them: messages, never conversations.
+struct FilteredRows<'a>(&'a [FilteredRow]);
+
+impl Rows for FilteredRows<'_> {
+    fn len(&self) -> u32 {
+        self.0.len() as u32
+    }
+
+    fn facts(&self, position: u32) -> Option<RowFacts> {
+        self.0.get(position as usize).map(|row| RowFacts {
+            id: row.message.id,
+            digest: false,
+            threads: Vec::new(),
+            writes: false,
+        })
+    }
+
+    fn position_of(&self, message: MessageId) -> Option<u32> {
+        self.0
+            .iter()
+            .position(|row| row.message.id == message)
+            .map(|at| at as u32)
+    }
+}
+
 impl Filtered {
+    /// Run `f` with the cursor and the rows it reads, and the count a
+    /// selection's words use.
+    fn with_cursor<T>(&mut self, f: impl FnOnce(&mut Cursor, &FilteredRows<'_>, u32) -> T) -> T {
+        let mut cursor = std::mem::take(&mut self.cursor);
+        let out = f(
+            &mut cursor,
+            &FilteredRows(&self.rows),
+            self.rows.len() as u32,
+        );
+        self.cursor = cursor;
+        out
+    }
+
+    /// The row with the keyboard.
+    pub(crate) fn focused(&self) -> Option<usize> {
+        self.cursor.position().map(|at| at as usize)
+    }
+
     /// The message at `index`, as a verb or the open message sees it.
     pub(crate) fn facts(&self, index: usize) -> Option<RowFacts> {
         self.rows.get(index).map(|row| RowFacts {
@@ -150,7 +233,7 @@ impl FocusController {
             tab: 0,
             counts: [0; 7],
             rows: Vec::new(),
-            focused: None,
+            cursor: Cursor::default(),
             more: false,
             stamp,
         });
@@ -167,13 +250,17 @@ impl FocusController {
     /// A command while Filtered is on top, or `None` when the list's rules
     /// apply to it (the bar, the key map, Undo).
     pub(crate) fn filtered_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
-        let focused = self.filtered.as_ref()?.focused;
+        let focused = self.filtered.as_ref()?.focused();
         if let Some(tab) = words::TAB_COMMANDS.iter().position(|tab| *tab == id) {
             let stamp = self.stamp();
             let filtered = self.filtered.as_mut()?;
             filtered.tab = tab;
             filtered.more = false;
             filtered.stamp = stamp;
+            // Another place, as another folder is: what was selected is not
+            // shown any more. The view drawn next says so; nothing else
+            // needs telling.
+            let _ = filtered.cursor.leave(0);
             let reason = filtered.reason();
             return Some(vec![
                 Step::Show(Intent::Filtered(Box::new(self.filtered_view()?))),
@@ -189,41 +276,44 @@ impl FocusController {
                 let by = if id == CommandId::NextMessage { 1 } else { -1 };
                 self.step_filtered(by)
             }
+            CommandId::ToggleSelection
+            | CommandId::ExtendSelectionDown
+            | CommandId::ExtendSelectionUp => {
+                let filtered = self.filtered.as_mut()?;
+                let steps = filtered
+                    .with_cursor(|cursor, rows, total| cursor.command(id, rows, None, total, None));
+                self.filtered_drawn(steps.unwrap_or_default())
+            }
+            CommandId::SelectAll => {
+                let filtered = self.filtered.as_mut()?;
+                let steps =
+                    filtered.with_cursor(|cursor, rows, total| cursor.select_rows(rows, total));
+                self.filtered_drawn(steps)
+            }
             CommandId::OpenMessage => match focused {
                 Some(index) => self.open_filtered(index),
                 None => Vec::new(),
             },
-            CommandId::RestoreFiltered => match self
-                .filtered
-                .as_ref()
-                .zip(focused)
-                .and_then(|(filtered, at)| filtered.facts(at))
-            {
-                Some(row) => vec![Step::Ask(Request::Post(Command::RestoreFiltered {
-                    target: MessageTarget::Messages(vec![row.id]),
-                    restored: true,
-                }))],
-                None => Vec::new(),
-            },
+            CommandId::RestoreFiltered => self.restore_selected(),
             CommandId::SweepInbox => vec![Step::Ask(Request::SweepPreview)],
-            // The message, not its conversation: Filtered lists messages,
-            // and the rest of the conversation may be in the inbox.
+            // The selected messages, or the focused one alone: Filtered
+            // lists messages, and the rest of a conversation may be in the
+            // inbox, so the rows' conversations are not reached.
             CommandId::Delete | CommandId::Flag | CommandId::ToggleRead => {
-                let row = self
-                    .filtered
-                    .as_ref()
-                    .zip(focused)
-                    .and_then(|(filtered, at)| filtered.facts(at));
-                match row {
-                    Some(row) => {
-                        let row = RowFacts {
-                            threads: Vec::new(),
-                            ..row
-                        };
-                        self.verbs.command_on(id, &row).unwrap_or_default()
-                    }
-                    None => Vec::new(),
-                }
+                let filtered = self.filtered.as_mut()?;
+                let verbs = &mut self.verbs;
+                let steps = filtered
+                    .with_cursor(|cursor, rows, total| verbs.command(id, cursor, rows, total));
+                self.filtered_drawn(steps.unwrap_or_default())
+            }
+            // Back's first rung drops the selection, as in a folder; the
+            // next one leaves.
+            CommandId::Back
+                if self.filtered.as_ref()?.cursor.selection() != Selection::default() =>
+            {
+                let filtered = self.filtered.as_mut()?;
+                let steps = filtered.with_cursor(|cursor, _, total| cursor.clear(total));
+                self.filtered_drawn(steps)
             }
             CommandId::Back | CommandId::GoToInbox => self.leave_filtered(rows),
             CommandId::GoToFiltered => Vec::new(),
@@ -262,7 +352,13 @@ impl FocusController {
         words::TAB_COMMANDS.contains(&id)
             || matches!(
                 id,
-                CommandId::RestoreFiltered | CommandId::SweepInbox | CommandId::GoToFiltered
+                CommandId::RestoreFiltered
+                    | CommandId::SweepInbox
+                    | CommandId::GoToFiltered
+                    | CommandId::ToggleSelection
+                    | CommandId::ExtendSelectionDown
+                    | CommandId::ExtendSelectionUp
+                    | CommandId::SelectAll
             )
     }
 
@@ -271,18 +367,81 @@ impl FocusController {
         let Some(filtered) = self.filtered.as_mut() else {
             return Vec::new();
         };
-        if filtered.rows.is_empty() {
+        let (steps, moved) = filtered.with_cursor(|cursor, rows, _| cursor.step(by, rows));
+        if !moved {
             return Vec::new();
         }
-        let last = filtered.rows.len() as i64 - 1;
-        let next = filtered
-            .focused
-            .map_or(0, |at| (at as i64 + i64::from(by)).clamp(0, last)) as usize;
-        if filtered.focused == Some(next) {
+        self.filtered_drawn(steps)
+    }
+
+    /// Cursor and selection steps, as Filtered's own intents: the list's
+    /// `Cursor` and `Selection` are about the rows behind it.
+    fn filtered_drawn(&self, steps: Vec<Step>) -> Vec<Step> {
+        steps
+            .into_iter()
+            .map(|step| match step {
+                Step::Show(Intent::Cursor { position, .. }) => {
+                    Step::Show(Intent::FilteredFocus(Some(position)))
+                }
+                Step::Show(Intent::Selection { selection, summary }) => {
+                    Step::Show(Intent::FilteredSelection {
+                        selected: selection.ids().map(<[_]>::to_vec).unwrap_or_default(),
+                        bar: summary.map(|summary| self.filtered_bar(summary)),
+                    })
+                }
+                other => other,
+            })
+            .collect()
+    }
+
+    /// The bar over Filtered, for a selection `summary` counts.
+    fn filtered_bar(&self, summary: String) -> FilteredBar {
+        let keymap = self.keymap();
+        FilteredBar {
+            summary,
+            actions: words::BAR_VERBS
+                .iter()
+                .enumerate()
+                .map(|(index, (command, label))| FilteredBarAction {
+                    command: *command,
+                    label: (*label).to_owned(),
+                    key: hints::key(keymap, *command),
+                    primary: index == 0,
+                })
+                .collect(),
+            hints: words::bar_hints(keymap),
+        }
+    }
+
+    /// `R`: every selected row back to the inbox -- the focused one with
+    /// nothing selected -- as one command, so one Undo takes them all
+    /// back. What was selected has been acted on, so it goes, and the
+    /// keyboard steps to the first row below that stays.
+    fn restore_selected(&mut self) -> Vec<Step> {
+        let Some(filtered) = self.filtered.as_mut() else {
+            return Vec::new();
+        };
+        let (aims, steps) = filtered.with_cursor(|cursor, rows, total| {
+            let aims = Verbs::aimed(cursor, rows).aims;
+            let gone = match cursor.selection() {
+                Selection::These(ids) if !ids.is_empty() => ids,
+                _ => cursor.row(rows).map(|row| row.id).into_iter().collect(),
+            };
+            let mut steps = Verbs::past_removed(&Selection::These(gone), cursor, rows);
+            steps.extend(cursor.clear(total));
+            (aims, steps)
+        });
+        if aims.is_empty() {
             return Vec::new();
         }
-        filtered.focused = Some(next);
-        vec![Step::Show(Intent::FilteredFocus(Some(next as u32)))]
+        let mut steps = self.filtered_drawn(steps);
+        steps.extend(aims.into_iter().map(|target| {
+            Step::Ask(Request::Post(Command::RestoreFiltered {
+                target,
+                restored: true,
+            }))
+        }));
+        steps
     }
 
     /// Open Filtered's message at `index` over it, to be read.
@@ -293,7 +452,7 @@ impl FocusController {
         let Some(row) = filtered.facts(index) else {
             return Vec::new();
         };
-        filtered.focused = Some(index);
+        filtered.cursor.moved_to(Some(index as u32));
         let total = filtered.rows.len() as u32;
         let mut steps = self
             .surfaces
@@ -323,11 +482,21 @@ impl FocusController {
         let Some(filtered) = self.filtered.as_mut() else {
             return Vec::new();
         };
-        if index as usize >= filtered.rows.len() || filtered.focused == Some(index as usize) {
+        if index as usize >= filtered.rows.len() || filtered.focused() == Some(index as usize) {
             return Vec::new();
         }
-        filtered.focused = Some(index as usize);
+        filtered.cursor.moved_to(Some(index));
         vec![Step::Show(Intent::FilteredFocus(Some(index)))]
+    }
+
+    /// A modified click on Filtered's row at `position`.
+    pub(crate) fn filtered_pick(&mut self, position: u32, range: bool) -> Vec<Step> {
+        let Some(filtered) = self.filtered.as_mut() else {
+            return Vec::new();
+        };
+        let steps =
+            filtered.with_cursor(|cursor, rows, total| cursor.pick(position, range, rows, total));
+        self.filtered_drawn(steps)
     }
 
     /// Filtered was scrolled to its end: its next page, when there may be
@@ -406,18 +575,19 @@ impl FocusController {
                 };
                 filtered.more = words::page_is_full(page.len());
                 let kept = filtered
-                    .focused
+                    .focused()
                     .and_then(|at| filtered.rows.get(at))
                     .map(|row| row.message.id);
                 if offset == 0 {
                     filtered.rows.clear();
                 }
                 filtered.rows.extend(page);
-                filtered.focused = match kept.and_then(|message| filtered.index_of(message)) {
+                let focused = match kept.and_then(|message| filtered.index_of(message)) {
                     Some(at) => Some(at),
-                    None if offset > 0 => filtered.focused,
+                    None if offset > 0 => filtered.focused(),
                     None => (!filtered.rows.is_empty()).then_some(0),
                 };
+                filtered.cursor.moved_to(focused.map(|at| at as u32));
                 self.filtered_view()
                     .map(|view| vec![Step::Show(Intent::Filtered(Box::new(view)))])
                     .unwrap_or_default()
@@ -455,6 +625,9 @@ impl FocusController {
             .map(|row| row.at.with_timezone(&chrono::Local).date_naive())
             .collect();
         let headings = words::day_headings(&days, now.date_naive());
+        let selection = filtered.cursor.selection();
+        let bar = postio_ui::selection::summary(&selection, Some(filtered.rows.len() as u32), &[])
+            .map(|summary| self.filtered_bar(summary));
         Some(FilteredView {
             title: words::TITLE.to_owned(),
             subtitle: words::SUBTITLE.to_owned(),
@@ -490,11 +663,13 @@ impl FocusController {
                     pill: words::pill(&row.reason, row.source.as_deref()),
                     time: postio_ui::row::timestamp(row.at, now),
                     heading,
+                    selected: selection.contains(row.message.id),
                 })
                 .collect(),
-            focused: filtered.focused.map(|at| at as u32),
+            focused: filtered.focused().map(|at| at as u32),
             more: filtered.more,
             footer: words::footer(keymap),
+            bar,
         })
     }
 }
