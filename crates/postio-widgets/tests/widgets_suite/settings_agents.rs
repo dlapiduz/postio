@@ -97,7 +97,7 @@ pub fn opening_the_pane_asks_for_the_activity_and_draws_it() {
         calls: vec![
             CallRow {
                 when: "5 min ago".to_owned(),
-                line: "Archived no messages \u{b7} refused".to_owned(),
+                line: "Tried to archive messages \u{b7} refused".to_owned(),
                 refused: true,
             },
             CallRow {
@@ -117,7 +117,7 @@ pub fn opening_the_pane_asks_for_the_activity_and_draws_it() {
     assert_eq!(
         texts(&panel, "postio-settings-agents-call"),
         [
-            "Archived no messages \u{b7} refused",
+            "Tried to archive messages \u{b7} refused",
             "Read 1 message \u{201c}Receipt\u{201d} in INBOX",
         ]
     );

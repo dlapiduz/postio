@@ -216,8 +216,12 @@ pub struct Names {
     pub messages: HashMap<i64, String>,
 }
 
-/// What a tool did, as a verb phrase, and whether it names messages.
+/// What a tool did, as a verb phrase. A call that did not answer did
+/// nothing, so it says what was tried instead of what was done.
 fn verb(tool: &str, call: &AgentCall) -> String {
+    if call.outcome != CallOutcome::Answered {
+        return format!("Tried to {}", attempt(tool));
+    }
     let n = call.messages.len();
     let messages = |n: usize| match n {
         0 => "no messages".to_owned(),
@@ -236,6 +240,23 @@ fn verb(tool: &str, call: &AgentCall) -> String {
         "add_label" => format!("Labelled {}", messages(n)),
         "remove_label" => format!("Unlabelled {}", messages(n)),
         other => format!("Called {other}"),
+    }
+}
+
+/// What a tool asks to do, after "Tried to".
+fn attempt(tool: &str) -> String {
+    match tool {
+        "list_accounts" => "list the shared accounts".to_owned(),
+        "list_mailboxes" => "list folders".to_owned(),
+        "search_mail" => "search mail".to_owned(),
+        "read_message" => "read a message".to_owned(),
+        "read_thread" => "read a conversation".to_owned(),
+        "create_draft" => "write a draft".to_owned(),
+        "archive_messages" => "archive messages".to_owned(),
+        "move_messages" => "move messages".to_owned(),
+        "add_label" => "label messages".to_owned(),
+        "remove_label" => "unlabel messages".to_owned(),
+        other => format!("call {other}"),
     }
 }
 
@@ -430,14 +451,17 @@ mod tests {
                 ("1 h ago", false)
             ]
         );
-        assert_eq!(shown.calls[0].line, "Archived no messages \u{b7} refused");
+        assert_eq!(
+            shown.calls[0].line,
+            "Tried to archive messages \u{b7} refused"
+        );
     }
 
     #[test]
     fn a_refused_call_says_so_and_an_id_that_is_gone_is_not_named() {
         let calls = parse_log(LOG, 10);
         let line = call_line(&calls[0], &Names::default());
-        assert_eq!(line, "Archived no messages \u{b7} refused");
+        assert_eq!(line, "Tried to archive messages \u{b7} refused");
     }
 
     #[test]

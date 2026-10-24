@@ -102,7 +102,7 @@ async fn the_activity_resolves_ids_to_the_rows_they_name() {
     let address = &account.address.address;
     assert_eq!(
         activity.calls[0].line,
-        format!("Archived no messages \u{b7} {address} \u{b7} refused")
+        format!("Tried to archive messages \u{b7} {address} \u{b7} refused")
     );
     assert!(activity.calls[0].refused);
     assert_eq!(activity.calls[1].when, "1 h ago");
