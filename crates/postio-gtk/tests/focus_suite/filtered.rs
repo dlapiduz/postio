@@ -89,6 +89,13 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
             listed(&window)
         );
         let view = window.filtered().expect("the view");
+        // The tabs' counts are read apart from the rows and can land a pass
+        // after them.
+        let _ = crate::settle_until(async || {
+            let said = view.texts();
+            said.iter().any(|line| line == "4") && said.iter().any(|line| line == "2")
+        })
+        .await;
         let said = view.texts();
         for wanted in [
             "Filtered",
