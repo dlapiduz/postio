@@ -937,6 +937,18 @@ impl<'a> MessageRepository<'a> {
                         )
                         .await?
                     }
+                    // No `Message-ID` to match on, as with a server that
+                    // answered the move without a `COPYUID` (#1994).
+                    (None, None) => {
+                        find_awaiting_headerless(
+                            &transaction,
+                            message.account_id,
+                            message.mailbox_id,
+                            message.received_at,
+                            message.size,
+                        )
+                        .await?
+                    }
                     (existing, _) => existing,
                 };
 
@@ -3598,6 +3610,51 @@ async fn find_awaiting_identity(
     crate::sql::first_of(
         &mut statement,
         bind![account_id.get(), rfc.folded(), mailbox_id.get()],
+        |row| Ok(MessageId::new(row.col(0)?)),
+    )
+    .await
+}
+
+/// The header-less twin of [`find_awaiting_identity`] (#1994): a row this
+/// client holds with no server identity and no `Message-ID`, matched on what a
+/// move cannot change -- the internal date and the size, both of which the
+/// server copies verbatim into the destination.
+///
+/// Used only when the server's own copy has no `Message-ID` either, and only
+/// against rows that have no identity at all, so a message the server can
+/// place is never resolved this way. Two header-less rows with the same date
+/// and size are interchangeable for the reader, so the first is taken; the
+/// next such server copy finds the other. One seek on
+/// `idx_messages_account_list` (`account_id`, `received_at`), then the rest is
+/// a filter over the few rows at that instant.
+async fn find_awaiting_headerless(
+    connection: &Connection,
+    account_id: AccountId,
+    mailbox_id: MailboxId,
+    received_at: DateTime<Utc>,
+    size: u64,
+) -> Result<Option<MessageId>> {
+    let mut statement = sql::statement(
+        connection,
+        "SELECT id FROM messages
+          WHERE account_id = ?1 AND received_at = ?2
+            AND mailbox_id = ?3 AND size = ?4
+            AND rfc_message_id IS NULL
+            AND remote_id IS NULL
+            AND uid IS NULL
+            AND deleted_locally = 0
+          ORDER BY id
+          LIMIT 1",
+    )
+    .await?;
+    crate::sql::first_of(
+        &mut statement,
+        bind![
+            account_id.get(),
+            to_millis(received_at),
+            mailbox_id.get(),
+            size as i64
+        ],
         |row| Ok(MessageId::new(row.col(0)?)),
     )
     .await
