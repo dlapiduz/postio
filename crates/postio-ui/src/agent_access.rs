@@ -303,6 +303,41 @@ pub fn activity_summary(calls: &[AgentCall], now: DateTime<Utc>) -> String {
     }
 }
 
+/// One recent call, as a row draws it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallRow {
+    /// `5 min ago`.
+    pub when: String,
+    /// [`call_line`]'s sentence.
+    pub line: String,
+    /// Whether the call was turned away or failed, for the row's emphasis.
+    pub refused: bool,
+}
+
+/// The activity list: [`activity_summary`] over its rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Activity {
+    /// `12 calls · last 5 min ago`, or [`NO_ACTIVITY`].
+    pub summary: String,
+    /// Newest first.
+    pub calls: Vec<CallRow>,
+}
+
+/// `calls` as of `now`, over what their ids resolved to.
+pub fn activity(calls: &[AgentCall], names: &Names, now: DateTime<Utc>) -> Activity {
+    Activity {
+        summary: activity_summary(calls, now),
+        calls: calls
+            .iter()
+            .map(|call| CallRow {
+                when: when_label(call.at, now),
+                line: call_line(call, names),
+                refused: call.outcome != CallOutcome::Answered,
+            })
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use postio_config::Config;
@@ -374,6 +409,28 @@ mod tests {
             call_line(&calls[2], &names),
             "Searched mail, 2 messages found in INBOX \u{b7} ada@example.com"
         );
+    }
+
+    #[test]
+    fn the_activity_is_rows_ready_to_draw_newest_first() {
+        // What both panes draw, so neither maps calls to rows its own way.
+        let calls = parse_log(LOG, 10);
+        let shown = activity(&calls, &Names::default(), at("2026-10-16T11:35:00+00:00"));
+        assert_eq!(shown.summary, "3 calls \u{b7} last 5 min ago");
+        let rows: Vec<(&str, bool)> = shown
+            .calls
+            .iter()
+            .map(|row| (row.when.as_str(), row.refused))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("5 min ago", true),
+                ("35 min ago", false),
+                ("1 h ago", false)
+            ]
+        );
+        assert_eq!(shown.calls[0].line, "Archived no messages \u{b7} refused");
     }
 
     #[test]
