@@ -99,4 +99,34 @@ mod tests {
         assert!(broken.starts_with(&ZSTD_MAGIC));
         let _ = unpack(broken);
     }
+
+    /// A frame written by the zstd crate at 0.13 (libzstd 1.5.x), kept as
+    /// bytes: a store already on disk holds frames like it, and a newer
+    /// zstd must read them. The format is frozen (RFC 8878), so this fails
+    /// only if the crate stops reading what the old one wrote.
+    const FRAME_FROM_ZSTD_0_13: &str = "28b52ffd606800850100540244656172204164612c0a74686520696e766f6963652069732061747461636865643b202e0a0200295fa9785ccf27";
+
+    fn frame_from_zstd_0_13() -> Vec<u8> {
+        (0..FRAME_FROM_ZSTD_0_13.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&FRAME_FROM_ZSTD_0_13[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_body_compressed_by_an_older_zstd_still_reads() {
+        let text = "Dear Ada,\nthe invoice is attached; the invoice is attached.\n".repeat(6);
+        assert_eq!(unpack(frame_from_zstd_0_13()), text);
+    }
+
+    #[test]
+    fn a_frame_from_an_older_zstd_still_reads_through_the_stream_decoder() {
+        // The blob store reads through `stream::read::Decoder`, not `bulk`.
+        let text = "Dear Ada,\nthe invoice is attached; the invoice is attached.\n".repeat(6);
+        let frame = frame_from_zstd_0_13();
+        let mut decoder = zstd::stream::read::Decoder::new(frame.as_slice()).unwrap();
+        let mut out = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut out).unwrap();
+        assert_eq!(out, text);
+    }
 }
