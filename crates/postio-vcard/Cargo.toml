@@ -16,7 +16,7 @@ postio-workspace-hack.workspace = true
 # a deliberate bump that re-runs this crate's round-trip corpus, never a
 # `cargo update` side effect. The four features are its defaults, listed so the
 # set is a decision made here rather than inherited (specs/005-contacts R9).
-vcard-rs = { version = "=0.4.0", default-features = false, features = ["parser", "quoted-printable", "base64", "encoding"] }
+vcard-rs = { version = "=0.5.2", default-features = false, features = ["parser", "quoted-printable", "base64", "encoding"] }
 
 [lints]
 workspace = true

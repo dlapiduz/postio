@@ -25,7 +25,7 @@ postio-search = { workspace = true }
 zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2"] }
 # 0.41, the version already in the graph (through `wayland-scanner`), so
 # the workspace holds one copy; 0.42 adds nothing these walkers use.
-quick-xml = "0.41.0"
+quick-xml = "0.42.0"
 # A `text/*` part in whatever charset it declares, and UTF-16 by its BOM.
 encoding_rs = "0.8.42"
 postio-workspace-hack.workspace = true

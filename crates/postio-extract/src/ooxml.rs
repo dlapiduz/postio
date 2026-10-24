@@ -110,8 +110,8 @@ fn next<'b, R: std::io::BufRead>(
 /// (`&amp;`, `&#233;`) resolved. `None` for everything else.
 fn text_of(event: &Event<'_>) -> Option<Cow<'static, str>> {
     match event {
-        Event::Text(text) => text.decode().ok().map(|t| Cow::Owned(t.into_owned())),
-        Event::CData(data) => data.decode().ok().map(|t| Cow::Owned(t.into_owned())),
+        Event::Text(text) => Some(Cow::Owned(text.xml10_content().into_owned())),
+        Event::CData(data) => Some(Cow::Owned(data.xml10_content().into_owned())),
         Event::GeneralRef(reference) => {
             if reference.is_char_ref() {
                 reference
@@ -120,7 +120,7 @@ fn text_of(event: &Event<'_>) -> Option<Cow<'static, str>> {
                     .flatten()
                     .map(|c| Cow::Owned(c.to_string()))
             } else {
-                let name = reference.decode().ok()?;
+                let name = reference.xml10_content();
                 quick_xml::escape::resolve_predefined_entity(&name).map(Cow::Borrowed)
             }
         }
@@ -129,10 +129,10 @@ fn text_of(event: &Event<'_>) -> Option<Cow<'static, str>> {
 }
 
 /// An attribute's value by its local name, unescaped.
-fn attribute(element: &BytesStart<'_>, local: &[u8]) -> Option<String> {
+fn attribute(element: &BytesStart<'_>, local: &str) -> Option<String> {
     element.attributes().flatten().find_map(|attribute| {
         (attribute.key.local_name().as_ref() == local).then(|| {
-            let raw = String::from_utf8_lossy(&attribute.value).into_owned();
+            let raw = attribute.value.clone().into_owned();
             quick_xml::escape::unescape(&raw)
                 .map(Cow::into_owned)
                 .unwrap_or(raw)
@@ -187,12 +187,12 @@ fn relationships<R: Read + Seek>(
         loop {
             match next(reader, &mut buffer, budget, &mut count)? {
                 Event::Start(element) | Event::Empty(element)
-                    if element.local_name().as_ref() == b"Relationship" =>
+                    if element.local_name().as_ref() == "Relationship" =>
                 {
                     if let (Some(id), Some(kind), Some(target)) = (
-                        attribute(&element, b"Id"),
-                        attribute(&element, b"Type"),
-                        attribute(&element, b"Target"),
+                        attribute(&element, "Id"),
+                        attribute(&element, "Type"),
+                        attribute(&element, "Target"),
                     ) {
                         out.insert(id, (kind, resolve(dir, &target)));
                     }
@@ -238,27 +238,27 @@ fn docx<R: Read + Seek>(
             let event = next(reader, &mut buffer, budget, &mut count)?;
             match &event {
                 Event::Start(element) => match element.local_name().as_ref() {
-                    b"p" => paragraph_depth += 1,
-                    b"t" => in_text += 1,
-                    b"tbl" => {
+                    "p" => paragraph_depth += 1,
+                    "t" => in_text += 1,
+                    "tbl" => {
                         table_depth += 1;
                         if table_depth == 1 {
                             tables += 1;
                             rows = 0;
                         }
                     }
-                    b"tr" if table_depth == 1 => row.clear(),
+                    "tr" if table_depth == 1 => row.clear(),
                     _ => {}
                 },
                 Event::Empty(element) => match element.local_name().as_ref() {
-                    b"tab" if in_text == 0 => text.push('\t'),
-                    b"br" | b"cr" => text.push(' '),
-                    b"p" if table_depth == 0 && paragraph_depth == 0 => paragraphs += 1,
+                    "tab" if in_text == 0 => text.push('\t'),
+                    "br" | "cr" => text.push(' '),
+                    "p" if table_depth == 0 && paragraph_depth == 0 => paragraphs += 1,
                     _ => {}
                 },
                 Event::End(element) => match element.local_name().as_ref() {
-                    b"t" => in_text = in_text.saturating_sub(1),
-                    b"p" => {
+                    "t" => in_text = in_text.saturating_sub(1),
+                    "p" => {
                         paragraph_depth = paragraph_depth.saturating_sub(1);
                         if paragraph_depth == 0 {
                             if table_depth == 0 {
@@ -273,7 +273,7 @@ fn docx<R: Read + Seek>(
                             text.push(' ');
                         }
                     }
-                    b"tr" if table_depth == 1 => {
+                    "tr" if table_depth == 1 => {
                         rows += 1;
                         budget.push(
                             Location::Table {
@@ -284,7 +284,7 @@ fn docx<R: Read + Seek>(
                         )?;
                         row.clear();
                     }
-                    b"tbl" => table_depth = table_depth.saturating_sub(1),
+                    "tbl" => table_depth = table_depth.saturating_sub(1),
                     _ => {}
                 },
                 Event::Eof => return Ok(()),
@@ -319,10 +319,10 @@ fn xlsx<R: Read + Seek>(
         loop {
             match next(reader, &mut buffer, budget, &mut count)? {
                 Event::Start(element) | Event::Empty(element)
-                    if element.local_name().as_ref() == b"sheet" =>
+                    if element.local_name().as_ref() == "sheet" =>
                 {
-                    if let Some(name) = attribute(&element, b"name") {
-                        sheets.push((name, attribute(&element, b"id")));
+                    if let Some(name) = attribute(&element, "name") {
+                        sheets.push((name, attribute(&element, "id")));
                     }
                 }
                 Event::Eof => return Ok(sheets),
@@ -371,24 +371,24 @@ fn shared_strings<R: Read + Seek>(
             let event = next(reader, &mut buffer, budget, &mut count)?;
             match &event {
                 Event::Start(element) => match element.local_name().as_ref() {
-                    b"si" => {
+                    "si" => {
                         in_item = true;
                         current.clear();
                     }
-                    b"t" => in_text += 1,
-                    b"rPh" => in_phonetic += 1,
+                    "t" => in_text += 1,
+                    "rPh" => in_phonetic += 1,
                     _ => {}
                 },
-                Event::Empty(element) if element.local_name().as_ref() == b"si" => {
+                Event::Empty(element) if element.local_name().as_ref() == "si" => {
                     strings.push(String::new());
                 }
                 Event::End(element) => match element.local_name().as_ref() {
-                    b"si" => {
+                    "si" => {
                         in_item = false;
                         strings.push(std::mem::take(&mut current));
                     }
-                    b"t" => in_text = in_text.saturating_sub(1),
-                    b"rPh" => in_phonetic = in_phonetic.saturating_sub(1),
+                    "t" => in_text = in_text.saturating_sub(1),
+                    "rPh" => in_phonetic = in_phonetic.saturating_sub(1),
                     _ => {}
                 },
                 Event::Eof => return Ok(strings),
@@ -421,27 +421,27 @@ fn sheet<R: std::io::BufRead>(
         let event = next(reader, &mut buffer, budget, &mut count)?;
         match &event {
             Event::Start(element) => match element.local_name().as_ref() {
-                b"row" => {
-                    row_number = attribute(element, b"r")
+                "row" => {
+                    row_number = attribute(element, "r")
                         .and_then(|r| r.parse().ok())
                         .unwrap_or(row_number + 1);
                     row.clear();
                 }
-                b"c" => {
-                    cell_type = attribute(element, b"t");
+                "c" => {
+                    cell_type = attribute(element, "t");
                     cell.clear();
                 }
-                b"v" | b"t" => in_value += 1,
+                "v" | "t" => in_value += 1,
                 _ => {}
             },
-            Event::Empty(element) if element.local_name().as_ref() == b"row" => {
-                row_number = attribute(element, b"r")
+            Event::Empty(element) if element.local_name().as_ref() == "row" => {
+                row_number = attribute(element, "r")
                     .and_then(|r| r.parse().ok())
                     .unwrap_or(row_number + 1);
             }
             Event::End(element) => match element.local_name().as_ref() {
-                b"v" | b"t" => in_value = in_value.saturating_sub(1),
-                b"c" => {
+                "v" | "t" => in_value = in_value.saturating_sub(1),
+                "c" => {
                     let value = if cell_type.as_deref() == Some("s") {
                         cell.trim()
                             .parse::<usize>()
@@ -458,7 +458,7 @@ fn sheet<R: std::io::BufRead>(
                         row.push_str(value);
                     }
                 }
-                b"row" => {
+                "row" => {
                     budget.push(
                         Location::Sheet {
                             name: name.to_owned(),
@@ -497,14 +497,14 @@ fn pptx<R: Read + Seek>(
             loop {
                 match next(reader, &mut buffer, budget, &mut count)? {
                     Event::Start(element) | Event::Empty(element)
-                        if element.local_name().as_ref() == b"sldId" =>
+                        if element.local_name().as_ref() == "sldId" =>
                     {
                         // `id` is the slide's number; `r:id`, the prefixed
                         // one, is the relationship that names its part.
                         if let Some(relation) = element.attributes().flatten().find(|a| {
-                            a.key.prefix().is_some() && a.key.local_name().as_ref() == b"id"
+                            a.key.prefix().is_some() && a.key.local_name().as_ref() == "id"
                         }) {
-                            ids.push(String::from_utf8_lossy(&relation.value).into_owned());
+                            ids.push(relation.value.clone().into_owned());
                         }
                     }
                     Event::Eof => return Ok(ids),
@@ -527,13 +527,13 @@ fn pptx<R: Read + Seek>(
             loop {
                 let event = next(reader, &mut buffer, budget, &mut count)?;
                 match &event {
-                    Event::Start(element) if element.local_name().as_ref() == b"t" => in_text += 1,
+                    Event::Start(element) if element.local_name().as_ref() == "t" => in_text += 1,
                     Event::End(element) => match element.local_name().as_ref() {
-                        b"t" => in_text = in_text.saturating_sub(1),
-                        b"p" => text.push(' '),
+                        "t" => in_text = in_text.saturating_sub(1),
+                        "p" => text.push(' '),
                         _ => {}
                     },
-                    Event::Empty(element) if element.local_name().as_ref() == b"br" => {
+                    Event::Empty(element) if element.local_name().as_ref() == "br" => {
                         text.push(' ')
                     }
                     Event::Eof => break,

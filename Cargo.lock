@@ -4996,7 +4996,7 @@ dependencies = [
  "pdf-extract",
  "postio-search",
  "postio-workspace-hack",
- "quick-xml",
+ "quick-xml 0.42.0",
  "rustix 1.1.5",
  "zip",
 ]
@@ -5820,6 +5820,15 @@ name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
 dependencies = [
  "memchr",
 ]
@@ -7721,8 +7730,8 @@ dependencies = [
 
 [[package]]
 name = "turso"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "thiserror",
  "tracing",
@@ -7734,8 +7743,8 @@ dependencies = [
 
 [[package]]
 name = "turso_core"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "aegis",
  "aes",
@@ -7810,8 +7819,8 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",
@@ -7820,8 +7829,8 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7830,8 +7839,8 @@ dependencies = [
 
 [[package]]
 name = "turso_parser"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "bitflags 2.13.2",
  "memchr",
@@ -7844,8 +7853,8 @@ dependencies = [
 
 [[package]]
 name = "turso_sdk_kit"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "bindgen",
  "env_logger",
@@ -7860,8 +7869,8 @@ dependencies = [
 
 [[package]]
 name = "turso_sdk_kit_macros"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7870,8 +7879,8 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_engine"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -7892,8 +7901,8 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_sdk_kit"
-version = "0.8.1"
-source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
+version = "0.8.3"
+source = "git+https://github.com/dlapiduz/turso?rev=e01888d239f0bb81351c0902f89978c1ac2b00d5#e01888d239f0bb81351c0902f89978c1ac2b00d5"
 dependencies = [
  "bindgen",
  "env_logger",
@@ -8298,9 +8307,9 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vcard-rs"
-version = "0.4.0"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "255606ce9ec8950425d1dedd846cf11ef53c6705627025821d664a845eeeda3f"
+checksum = "a40d51ee30e110bb162cb9bc8d5d27696eb2d5e39ecff4e67de6069d014b230b"
 dependencies = [
  "base64 0.23.1",
  "encoding_rs",
@@ -8481,7 +8490,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "338e30461b3a2b67d70eb30a6d89f8e0c93a833e07d2ae89085cd070c4a00ac0"
 dependencies = [
  "proc-macro2",
- "quick-xml",
+ "quick-xml 0.41.0",
  "quote",
 ]
 
