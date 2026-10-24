@@ -1,0 +1,62 @@
+# Select in Filtered as a folder's list does, and restore the lot
+# (specs/009-focus-macos US9, screen 21; the list's selection rules,
+# `x`, `J`/`K` and Back's first rung, now over Filtered's rows).
+#
+# `x` boxes the focused row and brings the selection bar up; `J` takes the
+# next row in as the keyboard walks onto it. `R` restores every selected row
+# as one step, with one Undo; Escape drops a selection before it leaves
+# Filtered, and a reason tab, being another place, drops it too.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/009-focus-macos US9" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+command = "go_to_filtered"
+check   = { view = "filtered", selection.count = 0 }
+expect  = "Filtered fills the list's place with the first row ringed and nothing boxed; no selection bar."
+
+[[step]]
+command = "toggle_selection"
+check   = { view = "filtered", selection.count = 1 }
+expect  = "The first row's box is checked and the row takes the neutral selected ground, the ring staying on it. A bar over the footer says \"1 selected\", offers Restore and Mark read with their keys, and hints x, J/K and Esc."
+
+[[step]]
+command = "extend_selection_down"
+check   = { view = "filtered", selection.count = 2 }
+expect  = "The ring walks to the second row and both rows are boxed; the bar says \"2 selected\"."
+
+[[step]]
+command = "back"
+check   = { view = "filtered", selection.count = 0 }
+expect  = "The first Escape only drops the selection: the boxes and the bar go, and Filtered stays up with the ring where it was."
+
+[[step]]
+command = "toggle_selection"
+check   = { view = "filtered", selection.count = 1 }
+
+[[step]]
+command = "filtered_tab_4"
+check   = { view = "filtered", selection.count = 0 }
+expect  = "A tab is another place, as another folder is: nothing is boxed and the bar is gone."
+
+[[step]]
+command = "filtered_tab_1"
+check   = { view = "filtered", selection.count = 0 }
+
+[[step]]
+command = "select_all"
+check   = { view = "filtered", selection.count = 9 }
+expect  = "Every row read is boxed and the bar counts them all."
+
+[[step]]
+command = "restore_filtered"
+check   = { view = "filtered", selection.count = 0, notice.undo = true }
+expect  = "All the selected rows leave Filtered at once and the boxes and bar go with them. One toast offers Undo."
+
+[[step]]
+command = "undo"
+check   = { view = "filtered", selection.count = 0 }
+expect  = "One Undo puts every one of them back in Filtered."
