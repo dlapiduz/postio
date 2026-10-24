@@ -385,11 +385,12 @@ impl Accounts {
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: the app dials on its own runtime and answers
             // over a channel (`Outside`).
+            let reached: Reached = answer.await;
             let Reached {
                 incoming,
                 outgoing,
                 trouble,
-            } = answer.await;
+            } = reached;
             if let Some(panel) = panel.upgrade() {
                 // Said on the account's row as well as under the button, so
                 // the repair is offered where the account is (#1584). A test
