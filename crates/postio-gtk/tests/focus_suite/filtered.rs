@@ -253,6 +253,11 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
             crate::settle_until(async || !view.has_selection()).await,
             "a tab kept the selection"
         );
+        assert!(
+            crate::settle_until(async || listed(&window) == ["You have been selected"]).await,
+            "the Spam tab never listed: {:?}",
+            listed(&window)
+        );
         support::press(&window, "1", gdk::ModifierType::empty());
         assert!(crate::settle_until(async || listed(&window).len() == 4).await);
 
