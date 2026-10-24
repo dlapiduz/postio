@@ -6,4 +6,5 @@
 # (specs/007-postio-focus/screens.md records each one).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1832" }
+proof  = "base"
 preset = "settings/agents"
