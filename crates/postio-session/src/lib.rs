@@ -41,6 +41,7 @@
 //! left once that line is drawn, and it is smaller than it looks.
 
 pub mod actions;
+pub mod agent_access;
 pub mod attaching;
 mod attachment_text;
 pub mod auto_empty;

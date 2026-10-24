@@ -14,7 +14,7 @@ preset = "settings"
 id     = "opened"
 wait   = { ms = 100 }
 check  = { keyboard.region = "settings", app.focus.settings.section = "Accounts",
-           app.focus.settings.listed = "Accounts, Contacts, Filtering, Saved searches, Composing, Keyboard, Sync & storage, Privacy, Config file" }
+           app.focus.settings.listed = "Accounts, Contacts, Filtering, Saved searches, Composing, Keyboard, Sync & storage, Privacy, Agents, Config file" }
 expect = "Settings is open on Accounts, the keyboard in the find field, every section listed: Filtering second under MAIL."
 
 [[step]]

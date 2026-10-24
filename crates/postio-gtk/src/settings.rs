@@ -38,7 +38,18 @@ pub struct Seams {
     /// `[sync] attachment_fetch = "eager"`, which an account row's weight
     /// mentions.
     pub attachments_eager: bool,
+    /// What agents did lately, read from the log beside the store and
+    /// resolved in it, for the Agents pane (#1832). Run on `runtime`.
+    pub agent_activity: AgentActivity,
 }
+
+/// Reads the agents' access log, for [`Seams::agent_activity`].
+pub type AgentActivity = Arc<
+    dyn Fn() -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = postio_ui::agent_access::Activity> + Send>,
+        > + Send
+        + Sync,
+>;
 
 /// The settings dialog: built on the first open and kept, so a section, a
 /// scroll position and a half-typed search survive closing it.
@@ -492,6 +503,40 @@ impl crate::window::FocusWindow {
             // Contacts' Suggestions are the controller's: the pane asks
             // which are on when it is looked at, a flip is the click it
             // is, and the answer redraws it (`Intent::ContactsSettings`).
+            // Agents (#1832): where to point an agent's client, and what
+            // agents did, read from the log when the pane is looked at.
+            settings.panel().set_agent_entry(
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|exe| {
+                        postio_session::agent_access::entry_point(
+                            &exe,
+                            std::env::var("FLATPAK_ID").ok().as_deref(),
+                            std::path::Path::exists,
+                        )
+                    })
+                    .as_deref(),
+            );
+            if let Some(seams) = self.imp().settings_seams.borrow().clone() {
+                let panel = settings.panel().downgrade();
+                settings.panel().connect_agents_opened(move || {
+                    let (sender, receiver) = async_channel::bounded(1);
+                    let reading = (seams.agent_activity)();
+                    seams.runtime.spawn(async move {
+                        let _ = sender.send(reading.await).await;
+                    });
+                    let panel = panel.clone();
+                    glib::spawn_future_local(async move {
+                        // POSTIO-GLIB-SAFE: a channel receive; the log is read
+                        // on the host's runtime.
+                        if let Ok(activity) = receiver.recv().await
+                            && let Some(panel) = panel.upgrade()
+                        {
+                            panel.set_agent_activity(activity);
+                        }
+                    });
+                });
+            }
             settings.panel().connect_contacts(
                 {
                     let window = self.downgrade();

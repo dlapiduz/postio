@@ -1,0 +1,11 @@
+# Settings, Agents, with two accounts shared (#1832): each with what an
+# agent may reach and do, its Revoke, and Revoke all beneath; where to point
+# an agent's client; and the access log's recent calls resolved to
+# addresses, folders and a subject, the refused one dimmed.
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1832" }
+proof  = "base"
+preset = "settings/agents-shared"

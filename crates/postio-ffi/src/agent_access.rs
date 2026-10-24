@@ -108,20 +108,17 @@ pub fn settings_patch_revoke_all_agents(text: String) -> Result<String, Settings
     })
 }
 
-/// The recent calls in `log`, with ids resolved by `names`.
-pub(crate) fn activity(
-    names: &words::Names,
-    calls: &[words::AgentCall],
-    now: chrono::DateTime<chrono::Utc>,
-) -> AgentActivityFfi {
+/// The activity list across the boundary.
+pub(crate) fn from_activity(shown: words::Activity) -> AgentActivityFfi {
     AgentActivityFfi {
-        summary: words::activity_summary(calls, now),
-        calls: calls
-            .iter()
-            .map(|call| AgentCallFfi {
-                when: words::when_label(call.at, now),
-                line: words::call_line(call, names),
-                refused: call.outcome != words::CallOutcome::Answered,
+        summary: shown.summary,
+        calls: shown
+            .calls
+            .into_iter()
+            .map(|row| AgentCallFfi {
+                when: row.when,
+                line: row.line,
+                refused: row.refused,
             })
             .collect(),
     }

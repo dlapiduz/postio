@@ -36,7 +36,7 @@ crates/postio-gtk/tests/focus_suite/one_keymap.rs 1
 crates/postio-gtk/tests/focus_suite/pickers.rs 5
 crates/postio-gtk/tests/focus_suite/reader_zoom.rs 1
 crates/postio-gtk/tests/focus_suite/selection.rs 5
-crates/postio-gtk/tests/focus_suite/settings.rs 11
+crates/postio-gtk/tests/focus_suite/settings.rs 12
 crates/postio-gtk/tests/focus_suite/state.rs 8
 crates/postio-gtk/tests/focus_suite/treatments.rs 5
 crates/postio-gtk/tests/focus_suite/undo.rs 2

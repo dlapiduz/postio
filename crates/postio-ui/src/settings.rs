@@ -46,6 +46,10 @@ pub enum Section {
     /// not linkable from here — this crate is below the frontends, not beside
     /// them).
     Privacy,
+    /// `[mcp]` -- which accounts an AI agent may read through `postio-mcp`,
+    /// what it has done lately, and taking that back (ADR 0010 Q6, #1832).
+    /// The words are [`crate::agent_access`]'s.
+    Agents,
     /// The file itself, as text — the raw `TextView` every pane used to
     /// share. It is not a fallback: `config.toml` *is* the settings store,
     /// and a pane that shows it whole is how a person reaches a key no form
@@ -87,7 +91,7 @@ impl Group {
 
 impl Section {
     /// Every section, in nav order — the drawing's order, grouped.
-    pub const ALL: [Section; 10] = [
+    pub const ALL: [Section; 11] = [
         Section::Accounts,
         Section::Contacts,
         Section::Filtering,
@@ -97,6 +101,7 @@ impl Section {
         Section::Keyboard,
         Section::Sync,
         Section::Privacy,
+        Section::Agents,
         Section::ConfigFile,
     ];
 
@@ -112,6 +117,7 @@ impl Section {
             | Section::Keyboard
             | Section::Sync
             | Section::Privacy
+            | Section::Agents
             | Section::ConfigFile => Group::Application,
         }
     }
@@ -138,6 +144,7 @@ impl Section {
             Section::Filters => "saved_searches",
             Section::Composing => "compose",
             Section::Privacy => "privacy",
+            Section::Agents => "mcp",
             // Not a table: the pane shows every table there is.
             Section::ConfigFile => "",
         }
@@ -160,6 +167,7 @@ impl Section {
             Section::Keyboard => "Keyboard",
             Section::Sync => "Sync & storage",
             Section::Privacy => "Privacy",
+            Section::Agents => crate::agent_access::TITLE,
             Section::ConfigFile => "Config file",
         }
     }
@@ -178,6 +186,7 @@ impl Section {
             Section::Keyboard => "Every command and the key that runs it.",
             Section::Sync => "When mail syncs, and what the local store keeps.",
             Section::Privacy => "What Postio will not do without being asked.",
+            Section::Agents => crate::agent_access::DESCRIPTION,
             Section::ConfigFile => "The whole file, as text. Everything above writes here.",
         }
     }
@@ -207,6 +216,7 @@ impl Section {
             Section::Keyboard => "key binding shortcut rebind keys chord",
             Section::Sync => "sync idle poll interval storage index attachments notify size",
             Section::Privacy => "remote images trackers unsubscribe read receipts connections",
+            Section::Agents => "agents ai mcp assistant model shared access revoke log activity",
             Section::ConfigFile => "toml file text editor raw",
         }
     }
@@ -223,7 +233,10 @@ impl Section {
         use postio_core::Frontend;
         !matches!(
             (self, frontend),
-            (Section::Appearance, Frontend::Focus) | (Section::Contacts, Frontend::Terminal)
+            (Section::Appearance, Frontend::Focus)
+                | (Section::Contacts, Frontend::Terminal)
+                // The terminal draws no pane for it; `[mcp]` is in the file.
+                | (Section::Agents, Frontend::Terminal)
         )
     }
 
@@ -246,6 +259,7 @@ impl Section {
             Section::Appearance => Some("[ui]"),
             Section::Keyboard => Some("[keys]"),
             Section::Sync => Some("[sync]"),
+            Section::Agents => Some("[mcp]"),
             Section::Privacy | Section::ConfigFile => None,
         }
     }
@@ -269,6 +283,7 @@ impl Section {
             Section::Keyboard => "[keys] in config.toml · applied live",
             Section::Sync => "[sync] in config.toml · applied live",
             Section::Privacy => "kept outside config.toml, with the app's own state",
+            Section::Agents => crate::agent_access::STORED_IN,
             Section::ConfigFile => "config.toml · applied live",
         }
     }
@@ -396,20 +411,43 @@ mod tests {
                 Section::Keyboard,
                 Section::Sync,
                 Section::Privacy,
+                Section::Agents,
                 Section::ConfigFile,
             ]
         );
         assert!(
             Section::ALL
                 .into_iter()
-                .filter(|section| *section != Section::Contacts)
+                .filter(|section| !matches!(section, Section::Contacts | Section::Agents))
                 .all(|section| section.shown_in(postio_core::Frontend::Terminal)),
-            "the terminal shows all nine: filtering runs while it has the store"
+            "the terminal shows the other nine: filtering runs while it has the store"
         );
         assert!(
             !Section::Contacts.shown_in(postio_core::Frontend::Terminal),
             "Contacts is graphical: the registry offers a terminal none of its commands"
         );
+    }
+
+    #[test]
+    fn agents_is_an_application_page_over_mcp_just_above_the_file() {
+        // ADR 0010 Q6, #1832: what is shared with agents, and taking it back.
+        assert_eq!(Section::Agents.label(), "Agents");
+        assert_eq!(Section::Agents.group(), Group::Application);
+        assert_eq!(Section::Agents.key(), "mcp");
+        assert_eq!(Section::Agents.table(), Some("[mcp]"));
+        let at = Section::ALL.iter().position(|s| *s == Section::Agents);
+        assert_eq!(at, Some(Section::ALL.len() - 2), "the raw file stays last");
+        for word in ["agent", "mcp", "revoke"] {
+            assert!(
+                Section::Agents.keywords().contains(word),
+                "{word} finds Agents"
+            );
+        }
+        // The terminal has no pane for it: it shows what agents may read in
+        // the file, as the Config file pane does.
+        assert!(!Section::Agents.shown_in(postio_core::Frontend::Terminal));
+        let text = "[ui]\ntheme = \"dark\"\n\n[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"INBOX\"]\n";
+        assert_eq!(find_section(text, Section::Agents), Some(3));
     }
 
     #[test]

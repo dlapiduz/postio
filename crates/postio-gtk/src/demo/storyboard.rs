@@ -211,11 +211,14 @@ pub enum Preset {
     FilteringLists,
     /// The page a store that will not open leaves: here, a locked keyring.
     Locked,
+    /// Agents with two accounts shared, where to point an agent, and what
+    /// agents did lately, one call of them refused.
+    AgentsShared,
 }
 
 impl Preset {
     /// Every preset Focus can apply.
-    pub const ALL: [Preset; 18] = [
+    pub const ALL: [Preset; 20] = [
         Preset::Settings(Section::Accounts),
         Preset::Settings(Section::Filtering),
         Preset::Settings(Section::Filters),
@@ -224,6 +227,7 @@ impl Preset {
         Preset::Settings(Section::Sync),
         Preset::Settings(Section::Privacy),
         Preset::Settings(Section::ConfigFile),
+        Preset::Settings(Section::Agents),
         Preset::AccountForm,
         Preset::SignatureEditor,
         Preset::AccountWeights,
@@ -234,6 +238,7 @@ impl Preset {
         Preset::FilteringOff,
         Preset::FilteringLists,
         Preset::Locked,
+        Preset::AgentsShared,
     ];
 
     /// The name a storyboard uses. Settings' Appearance section is not one:
@@ -247,6 +252,7 @@ impl Preset {
             Preset::Settings(Section::Sync) => "settings/storage",
             Preset::Settings(Section::Privacy) => "settings/privacy",
             Preset::Settings(Section::ConfigFile) => "settings/configfile",
+            Preset::Settings(Section::Agents) => "settings/agents",
             Preset::Settings(_) => "settings",
             Preset::AccountForm => "settings/account-form",
             Preset::SignatureEditor => "settings/signature-editor",
@@ -258,6 +264,7 @@ impl Preset {
             Preset::FilteringOff => "settings/filtering-off",
             Preset::FilteringLists => "settings/filtering-lists",
             Preset::Locked => "locked",
+            Preset::AgentsShared => "settings/agents-shared",
         }
     }
 
@@ -289,6 +296,33 @@ impl Preset {
                 // one weight, wherever Settings says it.
                 let panel = open_settings(window, Section::Accounts)?;
                 show_mail_weight(&panel, started.account);
+                pump(Duration::from_millis(300));
+                Ok(())
+            }
+            Preset::Settings(Section::Agents) => {
+                let panel = open_settings(window, Section::Agents)?;
+                // What the pane's own read of a missing log says, set here
+                // so the frame does not wait on that read.
+                panel.set_agent_activity(postio_ui::agent_access::activity(
+                    &[],
+                    &Default::default(),
+                    frozen_now(),
+                ));
+                pump(Duration::from_millis(200));
+                Ok(())
+            }
+            Preset::AgentsShared => {
+                let panel = open_settings(window, Section::Agents)?;
+                let text = panel.text();
+                panel.set_text(&format!("{text}\n{AGENTS_SHARED}"));
+                panel.set_agent_entry(Some("/usr/bin/postio-mcp"));
+                let calls =
+                    postio_ui::agent_access::parse_log(AGENT_LOG, postio_ui::agent_access::RECENT);
+                panel.set_agent_activity(postio_ui::agent_access::activity(
+                    &calls,
+                    &agent_names(),
+                    frozen_now(),
+                ));
                 pump(Duration::from_millis(300));
                 Ok(())
             }
@@ -353,6 +387,42 @@ impl Preset {
 const FILTER_LISTS: &str = "[focus.filter]\n\
 never = [\"ada@example.org\", \"@harbor.example\", \"grace\"]\n\
 stop_markers = [{ sender = \"news@ledger.example\", kind = \"question\" }]\n";
+
+/// `[mcp]` sharing two accounts: one wholly, with archive and label, and
+/// one only its inbox, to read and draft.
+const AGENTS_SHARED: &str = "[mcp.accounts.\"lena.tomlin@example.com\"]\n\
+mailboxes = [\"*\"]\n\
+actions = [\"archive\", \"label\"]\n\
+[mcp.accounts.\"ops@example.org\"]\n\
+mailboxes = [\"INBOX\"]\n";
+
+/// Three calls an agent made, the oldest refused, as `mcp-access.log` holds
+/// them: ids only.
+const AGENT_LOG: &str = "\
+{\"at\":\"2026-06-01T16:10:00Z\",\"tool\":\"archive_messages\",\"accounts\":[2],\"mailboxes\":[],\"messages\":[],\"drafts\":[],\"labels\":[],\"outcome\":\"refused\"}
+{\"at\":\"2026-06-02T08:12:00Z\",\"tool\":\"search_mail\",\"accounts\":[1],\"mailboxes\":[10],\"messages\":[101,102,103],\"drafts\":[],\"labels\":[],\"outcome\":\"answered\"}
+{\"at\":\"2026-06-02T08:55:00Z\",\"tool\":\"read_message\",\"accounts\":[1],\"mailboxes\":[10],\"messages\":[101],\"drafts\":[],\"labels\":[],\"outcome\":\"answered\"}
+";
+
+/// What [`AGENT_LOG`]'s ids resolve to.
+fn agent_names() -> postio_ui::agent_access::Names {
+    postio_ui::agent_access::Names {
+        accounts: [
+            (1, "lena.tomlin@example.com".to_owned()),
+            (2, "ops@example.org".to_owned()),
+        ]
+        .into(),
+        mailboxes: [(10, "INBOX".to_owned())].into(),
+        messages: [(101, "Harbor lease renewal".to_owned())].into(),
+    }
+}
+
+/// The runner's clock: 2 June 2026, 09:00 UTC.
+fn frozen_now() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339("2026-06-02T09:00:00Z")
+        .expect("a fixed instant")
+        .with_timezone(&chrono::Utc)
+}
 
 /// Opens Settings by its command, as `ctrl+,` does, and shows `section`.
 fn open_settings(

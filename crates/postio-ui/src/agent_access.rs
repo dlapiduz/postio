@@ -216,8 +216,12 @@ pub struct Names {
     pub messages: HashMap<i64, String>,
 }
 
-/// What a tool did, as a verb phrase, and whether it names messages.
+/// What a tool did, as a verb phrase. A call that did not answer did
+/// nothing, so it says what was tried instead of what was done.
 fn verb(tool: &str, call: &AgentCall) -> String {
+    if call.outcome != CallOutcome::Answered {
+        return format!("Tried to {}", attempt(tool));
+    }
     let n = call.messages.len();
     let messages = |n: usize| match n {
         0 => "no messages".to_owned(),
@@ -236,6 +240,23 @@ fn verb(tool: &str, call: &AgentCall) -> String {
         "add_label" => format!("Labelled {}", messages(n)),
         "remove_label" => format!("Unlabelled {}", messages(n)),
         other => format!("Called {other}"),
+    }
+}
+
+/// What a tool asks to do, after "Tried to".
+fn attempt(tool: &str) -> String {
+    match tool {
+        "list_accounts" => "list the shared accounts".to_owned(),
+        "list_mailboxes" => "list folders".to_owned(),
+        "search_mail" => "search mail".to_owned(),
+        "read_message" => "read a message".to_owned(),
+        "read_thread" => "read a conversation".to_owned(),
+        "create_draft" => "write a draft".to_owned(),
+        "archive_messages" => "archive messages".to_owned(),
+        "move_messages" => "move messages".to_owned(),
+        "add_label" => "label messages".to_owned(),
+        "remove_label" => "unlabel messages".to_owned(),
+        other => format!("call {other}"),
     }
 }
 
@@ -300,6 +321,41 @@ pub fn activity_summary(calls: &[AgentCall], now: DateTime<Utc>) -> String {
             };
             format!("{count} \u{b7} last {}", when_label(latest.at, now))
         }
+    }
+}
+
+/// One recent call, as a row draws it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallRow {
+    /// `5 min ago`.
+    pub when: String,
+    /// [`call_line`]'s sentence.
+    pub line: String,
+    /// Whether the call was turned away or failed, for the row's emphasis.
+    pub refused: bool,
+}
+
+/// The activity list: [`activity_summary`] over its rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Activity {
+    /// `12 calls · last 5 min ago`, or [`NO_ACTIVITY`].
+    pub summary: String,
+    /// Newest first.
+    pub calls: Vec<CallRow>,
+}
+
+/// `calls` as of `now`, over what their ids resolved to.
+pub fn activity(calls: &[AgentCall], names: &Names, now: DateTime<Utc>) -> Activity {
+    Activity {
+        summary: activity_summary(calls, now),
+        calls: calls
+            .iter()
+            .map(|call| CallRow {
+                when: when_label(call.at, now),
+                line: call_line(call, names),
+                refused: call.outcome != CallOutcome::Answered,
+            })
+            .collect(),
     }
 }
 
@@ -377,10 +433,35 @@ mod tests {
     }
 
     #[test]
+    fn the_activity_is_rows_ready_to_draw_newest_first() {
+        // What both panes draw, so neither maps calls to rows its own way.
+        let calls = parse_log(LOG, 10);
+        let shown = activity(&calls, &Names::default(), at("2026-10-16T11:35:00+00:00"));
+        assert_eq!(shown.summary, "3 calls \u{b7} last 5 min ago");
+        let rows: Vec<(&str, bool)> = shown
+            .calls
+            .iter()
+            .map(|row| (row.when.as_str(), row.refused))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("5 min ago", true),
+                ("35 min ago", false),
+                ("1 h ago", false)
+            ]
+        );
+        assert_eq!(
+            shown.calls[0].line,
+            "Tried to archive messages \u{b7} refused"
+        );
+    }
+
+    #[test]
     fn a_refused_call_says_so_and_an_id_that_is_gone_is_not_named() {
         let calls = parse_log(LOG, 10);
         let line = call_line(&calls[0], &Names::default());
-        assert_eq!(line, "Archived no messages \u{b7} refused");
+        assert_eq!(line, "Tried to archive messages \u{b7} refused");
     }
 
     #[test]

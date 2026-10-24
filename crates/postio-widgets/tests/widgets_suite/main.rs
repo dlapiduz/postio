@@ -90,6 +90,7 @@ mod recipient_chips;
 mod segmented;
 mod settings_account_detail;
 mod settings_accounts;
+mod settings_agents;
 mod settings_filters;
 mod settings_frame;
 mod settings_keys;
@@ -646,6 +647,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_account_detail::a_role_the_server_refused_to_create_says_so_and_says_why",
         settings_account_detail::a_role_the_server_refused_to_create_says_so_and_says_why as fn(),
+    ),
+    (
+        "settings_agents::the_pane_lists_what_is_shared_and_revoking_takes_one_back",
+        settings_agents::the_pane_lists_what_is_shared_and_revoking_takes_one_back as fn(),
+    ),
+    (
+        "settings_agents::revoke_all_leaves_nothing_shared_and_says_so",
+        settings_agents::revoke_all_leaves_nothing_shared_and_says_so as fn(),
+    ),
+    (
+        "settings_agents::opening_the_pane_asks_for_the_activity_and_draws_it",
+        settings_agents::opening_the_pane_asks_for_the_activity_and_draws_it as fn(),
+    ),
+    (
+        "settings_agents::a_file_that_will_not_parse_revokes_nothing",
+        settings_agents::a_file_that_will_not_parse_revokes_nothing as fn(),
     ),
     (
         "settings_filters::filters_render_as_rows_and_hide_when_there_are_none",

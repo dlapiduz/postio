@@ -343,6 +343,7 @@ pub fn icon(section: Section) -> &'static str {
         Section::Keyboard => "preferences-desktop-keyboard-symbolic",
         Section::Sync => "emblem-synchronizing-symbolic",
         Section::Privacy => "security-high-symbolic",
+        Section::Agents => "system-run-symbolic",
         Section::ConfigFile => "text-x-generic-symbolic",
     }
 }
@@ -728,6 +729,24 @@ mod imp {
         /// Contacts' Suggestions switches (specs/011-focus-contacts D7).
         pub contacts_pane: gtk::Box,
         pub contacts_hooks: RefCell<Option<ContactsHooks>>,
+        /// Agents (#1832): what `[mcp]` shares, and what agents did.
+        pub agents_pane: gtk::Box,
+        /// One row per shared account, each with its Revoke.
+        pub agents_list: gtk::ListBox,
+        pub agents_scroller: gtk::ScrolledWindow,
+        /// Shown instead of `agents_scroller` when nothing is shared.
+        pub agents_empty: gtk::Label,
+        /// What revoking does not do, beside Revoke all.
+        pub agents_revoke_line: gtk::Box,
+        /// Where an agent's client should launch `postio-mcp`; hidden when
+        /// the app cannot say.
+        pub agents_entry_heading: gtk::Label,
+        pub agents_entry: gtk::Label,
+        /// `12 calls · last 5 min ago`, over the calls.
+        pub agents_summary: gtk::Label,
+        pub agents_calls: gtk::Box,
+        /// Run when the pane is shown, so the app reads the log then.
+        pub agents_opened: RefCell<Vec<Rc<dyn Fn()>>>,
         pub contacts_view: RefCell<Option<postio_ui::contacts_settings::SuggestionsView>>,
         pub config_pane: gtk::Box,
         /// Sync & storage's controls, built on first draw and updated after
@@ -1059,6 +1078,16 @@ mod imp {
                 filters_hint_cap: crate::widgets::keyhint::cap(""),
                 sync_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 ui_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                agents_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                agents_list: gtk::ListBox::new(),
+                agents_scroller: gtk::ScrolledWindow::new(),
+                agents_empty: gtk::Label::new(Some(postio_ui::agent_access::NOTHING_SHARED)),
+                agents_revoke_line: gtk::Box::new(gtk::Orientation::Horizontal, space::S3),
+                agents_entry_heading: gtk::Label::new(None),
+                agents_entry: gtk::Label::new(None),
+                agents_summary: gtk::Label::new(Some(postio_ui::agent_access::NO_ACTIVITY)),
+                agents_calls: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                agents_opened: RefCell::new(Vec::new()),
                 privacy_list: gtk::ListBox::new(),
                 privacy_scroller: gtk::ScrolledWindow::new(),
                 privacy_empty: gtk::Label::new(Some(postio_ui::privacy::NO_ALLOWED)),
@@ -1404,6 +1433,204 @@ impl SettingsPanel {
     }
 
     /// Rebuilds the privacy rows from whatever allow-list is held.
+    /// Run `opened` each time the Agents pane is shown: the app reads the
+    /// access log then, and hands it back through
+    /// [`set_agent_activity`](Self::set_agent_activity).
+    pub fn connect_agents_opened(&self, opened: impl Fn() + 'static) {
+        self.imp().agents_opened.borrow_mut().push(Rc::new(opened));
+    }
+
+    /// What agents did lately, newest first, ids already resolved (#1832).
+    pub fn set_agent_activity(&self, activity: postio_ui::agent_access::Activity) {
+        let imp = self.imp();
+        imp.agents_summary.set_label(&activity.summary);
+        while let Some(child) = imp.agents_calls.first_child() {
+            imp.agents_calls.remove(&child);
+        }
+        for call in &activity.calls {
+            let line = gtk::Label::new(Some(&call.line));
+            line.add_css_class("postio-settings-agents-call");
+            line.set_xalign(0.0);
+            line.set_hexpand(true);
+            line.set_wrap(true);
+            if call.refused {
+                line.add_css_class("dim-label");
+            }
+            let when = stat_line(&call.when);
+            when.set_valign(gtk::Align::Start);
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
+            row.add_css_class("postio-settings-agents-call-row");
+            row.set_margin_top(space::S1);
+            row.set_margin_bottom(space::S1);
+            row.append(&line);
+            row.append(&when);
+            imp.agents_calls.append(&row);
+        }
+    }
+
+    /// The path an agent's client should launch, or `None` to say nothing.
+    pub fn set_agent_entry(&self, entry: Option<&str>) {
+        let imp = self.imp();
+        imp.agents_entry.set_label(entry.unwrap_or_default());
+        imp.agents_entry.set_visible(entry.is_some());
+        imp.agents_entry_heading.set_visible(entry.is_some());
+    }
+
+    fn build_agents_pane(&self) {
+        use postio_ui::agent_access as words;
+        let imp = self.imp();
+        ListOrEmpty::dress(
+            &imp.agents_list,
+            &imp.agents_scroller,
+            &imp.agents_empty,
+            "postio-settings-agents-shared",
+            words::SHARED_HEADING,
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
+        imp.agents_empty
+            .add_css_class("postio-settings-agents-empty");
+        ListOrEmpty::show(&imp.agents_scroller, &imp.agents_empty, false);
+
+        let note = gtk::Label::new(Some(words::REVOKE_NOTE));
+        note.add_css_class("postio-settings-pane-description");
+        note.add_css_class("postio-settings-agents-note");
+        note.set_xalign(0.0);
+        note.set_wrap(true);
+        note.set_hexpand(true);
+        let revoke_all = gtk::Button::with_label(words::REVOKE_ALL);
+        revoke_all.add_css_class("postio-settings-agents-revoke-all");
+        crate::widgets::button::style(
+            &revoke_all,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
+        revoke_all.set_valign(gtk::Align::Center);
+        revoke_all.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.revoke_agents(None)
+        ));
+        imp.agents_revoke_line.append(&note);
+        imp.agents_revoke_line.append(&revoke_all);
+
+        imp.agents_entry
+            .add_css_class("postio-settings-agents-entry");
+        imp.agents_entry.add_css_class("monospace");
+        imp.agents_entry.set_xalign(0.0);
+        imp.agents_entry.set_selectable(true);
+        imp.agents_entry.set_wrap(true);
+        imp.agents_entry.set_wrap_mode(pango::WrapMode::Char);
+        imp.agents_summary
+            .add_css_class("postio-settings-agents-summary");
+        imp.agents_summary.set_xalign(0.0);
+
+        let agents = SettingsGroup::on(&imp.agents_pane);
+        imp.agents_pane.add_css_class("postio-settings-agents");
+        agents.section(words::SHARED_HEADING);
+        agents
+            .append(&imp.agents_scroller)
+            .append(&imp.agents_empty)
+            .note(&imp.agents_revoke_line);
+        // A heading of its own rather than `section`'s, so it can hide with
+        // the path when the app has none to give.
+        imp.agents_entry_heading.set_label(words::ENTRY_HEADING);
+        imp.agents_entry_heading.add_css_class("postio-kicker");
+        imp.agents_entry_heading.set_xalign(0.0);
+        agents.block(&imp.agents_entry_heading);
+        agents.control(&imp.agents_entry);
+        self.set_agent_entry(None);
+        agents.section(words::ACTIVITY_HEADING);
+        agents
+            .control(&imp.agents_summary)
+            .append(&imp.agents_calls);
+    }
+
+    /// Draws Agents from the buffer's current `[mcp]`.
+    ///
+    /// A file that will not parse leaves the pane as it was, insensitive,
+    /// so nothing can be revoked from a guess (the footer says why).
+    fn redraw_agents(&self) {
+        let imp = self.imp();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            imp.agents_pane.set_sensitive(false);
+            return;
+        };
+        imp.agents_pane.set_sensitive(true);
+        clear_rows(&imp.agents_list);
+        let shared = postio_ui::agent_access::shared_accounts(&config.mcp);
+        for account in &shared {
+            imp.agents_list.append(&self.agent_row(account));
+        }
+        ListOrEmpty::show(&imp.agents_scroller, &imp.agents_empty, !shared.is_empty());
+        imp.agents_revoke_line.set_visible(!shared.is_empty());
+    }
+
+    /// One shared account: its address, what an agent may do there, and
+    /// its Revoke.
+    fn agent_row(&self, account: &postio_ui::agent_access::SharedAccount) -> gtk::ListBoxRow {
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-agents-row");
+        row.set_selectable(false);
+        row.set_activatable(false);
+
+        let address = gtk::Label::new(Some(&account.address));
+        address.set_xalign(0.0);
+        address.set_ellipsize(pango::EllipsizeMode::Middle);
+        let facts = stat_line(&format!("{} \u{b7} {}", account.folders, account.abilities));
+        let text = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
+        text.set_hexpand(true);
+        text.append(&address);
+        text.append(&facts);
+
+        let revoke = gtk::Button::with_label(postio_ui::agent_access::REVOKE_ONE);
+        revoke.add_css_class("postio-settings-agents-revoke");
+        crate::widgets::button::style(
+            &revoke,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
+        revoke.set_valign(gtk::Align::Center);
+        revoke.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{} {}",
+            postio_ui::agent_access::REVOKE_ONE,
+            account.address
+        ))]);
+        let address_owned = account.address.clone();
+        revoke.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.revoke_agents(Some(&address_owned))
+        ));
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
+        box_.set_margin_top(space::S2);
+        box_.set_margin_bottom(space::S2);
+        box_.append(&text);
+        box_.append(&revoke);
+        row.set_child(Some(&box_));
+        row
+    }
+
+    /// Stop sharing `address` with agents, or every account with `None`.
+    ///
+    /// Only `[mcp]` changes, through `postio_config`'s patchers over the
+    /// buffer, and the panel's write takes it to disk. It bites on the
+    /// agent's next call: the server reads `[mcp]` again on each one.
+    fn revoke_agents(&self, address: Option<&str>) {
+        let original = self.text();
+        let patched = match address {
+            Some(address) => postio_config::revoke_mcp_account(&original, address),
+            None => postio_config::revoke_all_mcp(&original),
+        };
+        match patched {
+            Ok(patched) => {
+                self.imp().buffer.set_text(&patched);
+                self.redraw_agents();
+            }
+            Err(error) => tracing::error!(%error, "could not revoke agent access: {error}"),
+        }
+    }
+
     fn redraw_privacy(&self) {
         let imp = self.imp();
         clear_rows(&imp.privacy_list);
@@ -4337,6 +4564,13 @@ impl SettingsPanel {
             Section::Filtering => self.redraw_filtering(),
             Section::Sync => self.redraw_sync(),
             Section::Composing => self.redraw_compose(),
+            Section::Agents => {
+                self.redraw_agents();
+                let opened: Vec<Rc<dyn Fn()>> = imp.agents_opened.borrow().clone();
+                for opened in opened {
+                    opened();
+                }
+            }
             Section::Keyboard => {
                 self.ensure_capture_controller();
                 self.redraw_keys();
@@ -4860,6 +5094,8 @@ impl SettingsPanel {
             .append(&imp.egress_scroller)
             .append(&imp.egress_empty);
 
+        self.build_agents_pane();
+
         // ── keys: one row per command, a rebind capture button (#881) ────
         imp.keys_list.add_css_class("postio-settings-keys-list");
         imp.keys_list.set_selection_mode(gtk::SelectionMode::None);
@@ -5143,6 +5379,7 @@ impl SettingsPanel {
             (Section::Keyboard, &imp.keyboard_pane),
             (Section::Sync, &imp.sync_pane),
             (Section::Privacy, &imp.privacy_pane),
+            (Section::Agents, &imp.agents_pane),
             (Section::ConfigFile, &imp.config_pane),
         ] {
             pane.add_css_class("postio-settings-pane-body");
@@ -5152,7 +5389,11 @@ impl SettingsPanel {
             // height less 80, and one column of Sync & storage is taller.
             if matches!(
                 section,
-                Section::Filtering | Section::Composing | Section::Sync | Section::Privacy
+                Section::Filtering
+                    | Section::Composing
+                    | Section::Sync
+                    | Section::Privacy
+                    | Section::Agents
             ) {
                 let scroller = gtk::ScrolledWindow::builder()
                     .hscrollbar_policy(gtk::PolicyType::Never)
@@ -5238,6 +5479,7 @@ impl SettingsPanel {
             Section::Filtering => self.redraw_filtering(),
             Section::Sync => self.redraw_sync(),
             Section::Composing => self.redraw_compose(),
+            Section::Agents => self.redraw_agents(),
             Section::Keyboard => {
                 self.redraw_keys();
                 // The rebound count lives on the strip, so an edit to
