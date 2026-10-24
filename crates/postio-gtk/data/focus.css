@@ -1218,6 +1218,17 @@ button.focus-compose-detach {
   box-shadow: inset 0 0 0 2px var(--postio-accent);
 }
 
+/* A selected row: the list's neutral ground and checked box, never the
+   accent, which is the cursor's. */
+.focus-filtered-list > row.focus-filtered-picked {
+  background-color: var(--postio-selected-bg);
+}
+
+.focus-filtered-check {
+  margin-left: calc(-1 * var(--postio-space-3));
+  color: var(--postio-ink);
+}
+
 .focus-filtered-row {
   min-height: 40px;
   padding: 0 var(--postio-space-4) 0 56px;
