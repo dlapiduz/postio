@@ -451,6 +451,14 @@ pub enum UiEvent {
         /// The row, an index into the view's `rows`.
         index: Option<u32>,
     },
+    /// Filtered's selection changed: check the boxes of `selected` (and no
+    /// others), and draw the bar, or take it down with `None`.
+    FocusFilteredSelection {
+        /// The selected messages.
+        selected: Vec<i64>,
+        /// The bar over Filtered while anything is selected.
+        bar: Option<crate::focus_surfaces::FilteredBarFfi>,
+    },
     /// Draw the digest's window, whole (screens 22 and 23). It follows
     /// `FocusOpenDigest`, and again for every change: the reads landing,
     /// a reference stepped to, the page switched, an email opened in place.

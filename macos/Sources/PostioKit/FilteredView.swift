@@ -10,7 +10,9 @@ import SwiftUI
 /// Every word is the controller's (`FocusFiltered`); the keys reach it
 /// through the key monitor, and the pointer through `FilteredModel`. The
 /// focused row is ringed in the accent, as the list's cursor is, and
-/// carries the Restore button with its key.
+/// carries the Restore button with its key. A selected row has the list's
+/// checked box and neutral ground, and the bar over the footer says how
+/// many and what a key does to them.
 public struct FilteredView: View {
     let model: FilteredModel
 
@@ -32,6 +34,10 @@ public struct FilteredView: View {
             tabs
             Divider()
             rows
+            if let bar = model.bar {
+                ActionBar(words: bar, run: model.run)
+                    .transition(.opacity)
+            }
             Divider()
             FocusHintRow(model.footer.map { FocusHintRow.Hint(cap: $0.cap, label: $0.label) })
                 .padding(.horizontal, 20)
@@ -134,6 +140,7 @@ public struct FilteredView: View {
                             row: row, focused: model.focused == row.id,
                             restore: model.restoreWords, restoreCap: model.restoreCap,
                             point: { model.point(row.id) }, open: { model.open(row.id) },
+                            toggle: { model.toggle(row.id) }, extend: { model.extend(row.id) },
                             restoreAction: model.restore
                         )
                         .id(row.id)
@@ -161,6 +168,8 @@ struct FilteredRowView: View {
     let restoreCap: String?
     let point: () -> Void
     let open: () -> Void
+    let toggle: () -> Void
+    let extend: () -> Void
     let restoreAction: () -> Void
 
     var body: some View {
@@ -192,7 +201,19 @@ struct FilteredRowView: View {
         .padding(.leading, 56)
         .padding(.trailing, 24)
         .frame(height: FilteredView.rowHeight)
+        // A neutral ground for the selection, never the accent, which is
+        // the cursor's (the list's rule); the cursor's tint goes over it.
+        .background(row.selected ? Color.primary.opacity(0.06) : Color.clear)
         .background(focused ? Color.accentColor.opacity(0.08) : Color.clear)
+        .overlay(alignment: .leading) {
+            if row.selected {
+                Image(systemName: "checkmark.square.fill")
+                    .font(.system(size: 14))
+                    .frame(width: 14, height: 14)
+                    .position(x: FocusRowMetrics.gutterCentre, y: FilteredView.rowHeight / 2)
+                    .accessibilityHidden(true)
+            }
+        }
         .overlay {
             if focused {
                 Rectangle().strokeBorder(Color.accentColor, lineWidth: 2)
@@ -200,10 +221,17 @@ struct FilteredRowView: View {
         }
         .overlay(alignment: .bottom) { Rectangle().fill(.separator).frame(height: 1) }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2, perform: open)
-        .simultaneousGesture(TapGesture().onEnded(point))
+        // The list's gestures: a plain click points, a double-click opens,
+        // ⌘ toggles the row and ⇧ takes the range. The modifier decides in
+        // SwiftUI, so a ⌘-click is never also a point or an open.
+        .gesture(TapGesture(count: 2).modifiers([]).onEnded(open))
+        .gesture(TapGesture().modifiers([]).onEnded(point))
+        .gesture(TapGesture().modifiers(.command).onEnded(toggle))
+        .gesture(TapGesture().modifiers(.shift).onEnded(extend))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.sender), \(row.subject), \(row.pill), \(row.time)")
+        .accessibilityLabel(
+            "\(row.selected ? "Selected, " : "")\(row.sender), \(row.subject), \(row.pill), \(row.time)"
+        )
         .accessibilityAddTraits(focused ? .isSelected : [])
     }
 }
