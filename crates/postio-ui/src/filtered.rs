@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn the_footer_names_the_keys_the_keymap_binds() {
-        let said = hints::line(&footer(Keymap::defaults()));
+        let said = hints::line(&footer(Keymap::defaults(), true));
         assert_eq!(
             said,
             "R restore + never filter sender \u{b7} 1\u{2013}7 reason tabs \u{b7} Return open \u{b7} g i inbox"
