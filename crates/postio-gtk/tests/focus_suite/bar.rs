@@ -192,11 +192,16 @@ pub fn offline_search_answers_locally_one_request_a_keystroke() {
             .map(|(family, count)| (*family, count - before.get(family).copied().unwrap_or(0)))
             .filter(|(_, count)| *count > 0)
             .collect();
-        // Every keystroke is one search, as it is typed, and nothing else.
+        // A keystroke that makes a search is one search, as it is typed,
+        // and nothing else is asked: not every keystroke makes one -- a
+        // single letter is in most of a mailbox and is not a search yet
+        // (`ParsedQuery::is_searchable`), and the controller's bar asks for
+        // what its words are (spec 009 slice 8) -- and with no digest rule
+        // nothing is asked about held mail.
         assert_eq!(
             asked,
-            [("SearchHits", 8)],
-            "one search a keystroke, and nothing else asked for"
+            [("SearchHits", 5)],
+            "one search a keystroke that makes one, and nothing else asked for"
         );
     });
 }
@@ -579,10 +584,10 @@ pub fn the_bar_opens_in_the_top_bars_field() {
     });
 }
 
-/// T241, ADR 0037: a word that found nothing lists the mail for the word
-/// that was meant, and the bar says so, with a row that searches for the
-/// typed word exactly. Ported from the classic app's `search_instead`.
-pub fn a_misspelled_word_says_what_it_found_and_offers_the_typed_one() {
+/// T241, ADR 0037 as amended 2026-10-08: the bar's search forgives, so a
+/// misspelled word finds the mail that was meant, after anything it finds
+/// exactly; quoted, the word is exactly itself, which is the way out.
+pub fn a_misspelled_word_finds_what_was_meant_and_quoted_is_exact() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -604,55 +609,24 @@ pub fn a_misspelled_word_says_what_it_found_and_offers_the_typed_one() {
         );
         let bar = open_bar(&window);
         type_in(&bar, "qarterly").await;
-        bar.run_search();
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["Quarterly planning"]).await,
-            "the word that was meant was not searched: {:?}",
+            "the word that was meant was not found: {:?}",
             bar.result_subjects()
         );
-        let said = bar.texts();
         assert!(
-            said.iter()
-                .any(|line| line == "Showing results for quarterly"),
-            "the bar did not say which word it searched: {said:?}"
-        );
-        let offer = "Search instead for \u{201c}qarterly\u{201d}";
-        assert!(
-            said.iter().any(|line| line == offer),
-            "no row offers the typed word: {said:?}"
-        );
-        // ADR 0037: one row names the typed word, and it is the offer; the
-        // search row names what the results under it are for.
-        let naming_typed = said
-            .iter()
-            .filter(|line| line.starts_with("Search") && line.contains("qarterly"))
-            .count();
-        assert_eq!(
-            naming_typed, 1,
-            "two rows name the typed word, so Return's query is unclear: {said:?}"
-        );
-        assert!(
-            said.iter()
-                .any(|line| line == "Search mail for \u{201c}quarterly\u{201d}"),
-            "the search row does not name the results' query: {said:?}"
-        );
-        support::click_row_saying(&window, bar.widget(), offer);
-        assert_eq!(
-            bar.typed(),
-            "\"qarterly\"",
-            "the typed word is asked for exactly: quoted, which is never rewritten"
-        );
-        assert!(
-            crate::settle_until(async || {
-                let said = bar.texts();
-                bar.result_subjects().is_empty()
-                    && !said
-                        .iter()
-                        .any(|line| line.starts_with("Showing results for"))
-            })
-            .await,
-            "the exact word still lists the rewritten mail: {:?}",
             bar.texts()
+                .iter()
+                .any(|line| line == "Search mail for \u{201c}qarterly\u{201d}"),
+            "the search row names the words typed: {:?}",
+            bar.texts()
+        );
+
+        bar.set_text("\"qarterly\"");
+        assert!(
+            crate::settle_until(async || bar.result_subjects().is_empty()).await,
+            "the quoted word still lists the mail it does not hold: {:?}",
+            bar.result_subjects()
         );
     });
 }

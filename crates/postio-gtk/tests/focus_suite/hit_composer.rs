@@ -4,10 +4,10 @@
 //!
 //! A hit puts the bar away and holds its words to bring the bar back when
 //! the message closes. A reply must not count as the message closing. The
-//! shared controller got the fix (postio-focus `bar.rs`); GTK's bar has its
-//! own held words and its own reopening (`window::reading_changed`), so the
-//! window is what is asserted on: what a person sees, not what a layer
-//! was handed.
+//! words and the reopening are the shared controller's (postio-focus
+//! `bar.rs`, spec 009 slice 8), and what GTK tells it is open is the window's
+//! (`window::surfaces_now`), so the window is what is asserted on: what a
+//! person sees, not what a layer was handed.
 
 use gtk::prelude::*;
 
@@ -120,5 +120,48 @@ pub fn forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar() {
         let (window, bar) = open_a_hit(&fixture).await;
         support::keys(&window, &["f"]);
         composer_without_the_bar(&window, &bar, "forward").await;
+    });
+}
+
+/// The way back out (storyboards/flows/search-open-reply-back): Escape leaves
+/// the reply for the hit it answered, and a second Escape the hit for the
+/// search it was found by, its words still typed.
+pub fn escaping_a_reply_from_a_hit_returns_to_the_hit_then_the_search() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, bar) = open_a_hit(&fixture).await;
+        let hit = window.reading().and_then(|reading| reading.shown());
+        support::keys(&window, &["r"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "the reply opened no composer"
+        );
+
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_none()).await,
+            "Escape left the composer up"
+        );
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .reading()
+                    .is_some_and(|reading| reading.is_open() && reading.shown() == hit)
+            })
+            .await,
+            "the hit is not back under the reply"
+        );
+        assert!(!bar_showing(&bar), "the search came back over the hit");
+
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || bar.is_open() && bar.typed() == "harbor").await,
+            "the search did not come back on its words: open {}, {:?}",
+            bar.is_open(),
+            bar.typed()
+        );
     });
 }

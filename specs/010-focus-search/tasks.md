@@ -430,6 +430,48 @@ row reads "5,000+ results"; a capped search's Narrow to pills end in "+".
 - [x] T167 [P] [US1] [US6] Write failing tests: `relaxation_count`, `saved_count`, `new_badge`, `results_count` and `narrow_pill` floors in `crates/postio-ui/src/search_view.rs`; `relaxation_counts` past `TOTAL_HITS_CAP` flagged `capped` (`index_suite/relaxations.rs`); a badge that stopped at `NEW_CAP` (`postio-host/src/tests.rs`); `remember` keeps `capped` (`storage_suite/searches.rs`); in `crates/postio-focus/tests/{bar,results}.rs`, a capped way out, saved pill, badge, Recent row and Narrow to pills drawn as floors. Red: no flag past the index or the host, the words took none
 - [x] T168 [US1] [US6] Add `postio_search::results::Counted` and carry it through the relaxations and the saved searches' counts (`postio_client::protocol::SavedCount`); `recent_searches.capped` by a migration from `72d32a05`, through `RememberSearch` and `RecentSearch`; the words above take the flag. Make T167 green
 
+## Phase 17: Linux adopts search (#1825)
+
+**Goal**: GTK runs the search this spec built, from the same controller,
+so the two apps give the same answers.
+
+**Independent test**: US1-US9's independent tests pass on GTK, and the
+storyboards in `storyboards/search/` play on GTK as well as the Mac.
+
+Each task lands on `main` by itself, as spec 009's slices were adopted:
+`Policy.caps.results_view` stays off on Linux until GTK draws everything it
+turns on (T176).
+
+- [x] T169 GTK adopts spec 009 slice 8 first, since the dropdown is the
+  controller's bar: `bar.rs` draws `BarView` and hands back `Typed`,
+  `BarRun`, `BarTab` and the saved pills; the folders popover lists the
+  controller's places and goes by `OpenPlace`; the go-to keys, the saved
+  searches, `SaveSearch` and a hit's walk are the controller's. Shared on
+  the way: `postio_focus::save_search` (the FFI's, now both apps'),
+  `BarLine::message`, `FocusController::among_hits`, and `Request::Search`
+  asks what a digest holds only while a digest rule exists (GTK's rule,
+  now the Mac's).
+  - *As built:* the bar's search forgives on GTK now (ADR 0037 as amended
+    2026-10-08) and a single letter is not yet a search, so two focus_suite
+    cases were rewritten to the shared rule. A composer over an open message
+    reports the message still open under it (`surfaces_now`), so a reply to
+    a hit no longer sends the controller back to the search.
+- [ ] T170 Draw the dropdown (`Intent::Dropdown`, screens 01-05) in
+  `crates/postio-gtk/src/bar.rs`, with widget tests over `DropdownView`
+  values, behind a policy with `results_view` on in the tests only.
+- [ ] T171 The results view (`ShowResults`, `ResultsPage`, `ResultsCursor`,
+  `Query`, `LeaveResults`, History back and forward): the Conversations tab.
+- [ ] T172 The filter popovers and the timeline (`Popover`).
+- [ ] T173 The Files tab, Quick Look and Save file (`QuickLook`,
+  `FileCopy`).
+- [ ] T174 The People tab.
+- [ ] T175 No results and the relaxations (`Relaxations`).
+- [ ] T176 Turn `results_view` on for Freedesktop; offer the Apple-only
+  commands on Linux (`registry::offered_on`) with Linux keys where the ⌘
+  chords do not carry over; regenerate `docs/keybindings.md`; play
+  `storyboards/search/` on GTK and `/ux-review` them. Closes #1825 and
+  #1790.
+
 ---
 
 ## Dependencies

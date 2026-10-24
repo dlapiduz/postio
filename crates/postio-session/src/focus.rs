@@ -623,17 +623,3 @@ pub async fn sweep_preview(
     }
     Ok(count)
 }
-
-/// The pinned saved searches `config` holds, in the order `Alt+1`-`Alt+4`
-/// take them: each name as the person called it, and its query. What both
-/// Focus apps list as their saved searches.
-pub fn saved_searches(config: &postio_config::Config) -> Vec<(String, String)> {
-    config
-        .ordered_filter_keys()
-        .into_iter()
-        .filter_map(|key| {
-            let filter = config.filters.get(&key)?;
-            Some((filter.name.clone().unwrap_or(key), filter.query.clone()))
-        })
-        .collect()
-}

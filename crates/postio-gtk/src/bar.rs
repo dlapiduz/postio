@@ -1,20 +1,14 @@
 //! The command bar (screens 07-09; contracts/focus-surface.md, "The command
 //! bar"): `/` or `Ctrl K` opens one bar for search, places and commands.
 //!
-//! What the bar offers is `postio_ui::finder::blend`'s: the commands the
-//! words match, each with its key; the places they name, with their counts
-//! and keys; and one plain search row. The search itself runs on this
-//! machine's index, through the host, with the words lowered into the one
-//! query language (`postio_search::natural::lower`) and shown as chips.
-//! `in:` and a name complete a folder, and list its conversations newest
-//! first (screen 08). A half-typed operator is a partial, never an error:
-//! the bar draws no error at all.
-//!
-//! Results arrive as the words are typed, under the "Search mail for" row,
-//! which stays above them. A result set can be switched between relevance
-//! and date: the row that says which it is in switches it when run, and so
-//! does `alt+o` with the query holding the keyboard. `O` is a letter in the
-//! box, always -- typing wins over a bare key.
+//! What the bar says is the controller's (`postio_focus`, spec 009 slice
+//! 8): what is typed, the lines it answers with, which of them runs what,
+//! the chips the words were lowered to, and which results are current. This
+//! draws [`BarView`] and hands back what a person does -- the words as they
+//! change, Return or a click on a line, `Tab` into the chips, a saved
+//! search's pill -- through [`Bar::connect_input`]. The arrows' highlight is
+//! the toolkit's, as on the Mac: the view says only where a run or a
+//! landing moved it.
 //!
 //! Everything here is local. Nothing typed leaves the machine.
 
@@ -22,12 +16,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::glib;
+use gtk::pango;
 use gtk::prelude::*;
-use postio_client::Client;
 use postio_core::{ActionId, CommandId, Context, Frontend, Keymap};
-use postio_model::listing::{ListPage, MailStore as _, PageRequest};
-use postio_model::{AccountScope, ListScope, MailboxId, MessageId};
-use postio_ui::finder::{self, Place};
+use postio_focus::{BarLine, BarLineKind, BarView};
+use postio_model::{AccountScope, MessageId};
+use postio_ui::command_bar::{self as rules, SAVED};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
@@ -35,15 +29,23 @@ use postio_widgets::widgets::space::{S1, S2, S3};
 const WIDTH: i32 = 860;
 /// The top bar's field, which the bar's input takes the place of.
 const FIELD_WIDTH: i32 = 480;
-pub use postio_ui::command_bar::BarAction;
-use postio_ui::command_bar::{self as rules, Line, Row, Run, SAVED, said_of};
 
-/// What a run of the bar asks for.
-type Handler = Rc<dyn Fn(BarAction)>;
+/// What a person did in the bar, for the controller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BarInput {
+    /// The field holds these words now.
+    Typed(String),
+    /// Return on the highlighted line, or a click on one: its token.
+    Run(u64),
+    /// A saved search's pill, or another command the bar has a control for.
+    Command(CommandId),
+}
+
+type Handler = Rc<dyn Fn(BarInput)>;
+type TabHandler = Rc<dyn Fn() -> bool>;
 
 /// The bar.
 pub struct Bar {
-    client: Client,
     root: gtk::Box,
     /// The bar over its scrim: what the window lays over the list.
     over: gtk::Overlay,
@@ -52,78 +54,32 @@ pub struct Bar {
     echo: gtk::Label,
     heading: gtk::Label,
     list: gtk::ListBox,
-    footer: gtk::Label,
     keymap: RefCell<Keymap>,
-    /// Every place the bar can go, read when it opens.
-    places: Rc<RefCell<Vec<Place>>>,
-    /// Folder names by id, for a result's `in:`.
-    folders: Rc<RefCell<Vec<(MailboxId, String)>>>,
-    /// Who a typed name can mean, read with the places.
-    names: Rc<RefCell<postio_ui::names::Names>>,
-    /// What each row of the list runs, in order.
-    rows: Rc<RefCell<Vec<Row>>>,
-    /// The words typed when a hit was opened, until the window takes them.
-    held: RefCell<Option<String>>,
-    /// Moves with every keystroke, so a late answer to an earlier one is
-    /// dropped.
-    generation: Rc<Cell<u64>>,
+    /// The lines drawn now, one per row of `list`.
+    lines: RefCell<Vec<BarLine>>,
+    /// The view drawn now.
+    view: RefCell<BarView>,
+    /// The messages the last lines with any listed, and their subjects:
+    /// kept when the bar closes, since a hit opens as it does, and `j`/`k`
+    /// step to the others after.
+    found: RefCell<Vec<(MessageId, String)>>,
     open: Cell<bool>,
+    /// Set while the bar puts the controller's own words in the field, so
+    /// they are not said back as typing.
+    quiet: Cell<bool>,
+    /// Whether the places have been read since the bar last opened.
+    places_known: Cell<bool>,
     /// The top bar's field, which the bar's input stands in for while open.
     field: RefCell<Option<gtk::Widget>>,
     handler: RefCell<Option<Handler>>,
-    /// This bar, weakly: what a future comes back to.
+    tab: RefCell<Option<TabHandler>>,
+    /// This bar, weakly: what a signal comes back to.
     me: RefCell<std::rc::Weak<Bar>>,
-    /// The pinned saved searches, in order: each name and its query.
-    saved: RefCell<Vec<(String, String)>>,
-    /// Whether the places have been read since the bar last opened.
-    places_known: Cell<bool>,
     /// The saved row across the top.
     saved_row: gtk::Box,
-    /// Whether any digest rule can hold mail: a result then says where
-    /// held mail waits (US10 scenario 7).
-    digesting: Rc<Cell<bool>>,
-    /// The plain words typed, while `Tab` has stepped into the chips they
-    /// were lowered to: what `Ctrl+Backspace` goes back to (T086).
-    words: RefCell<Option<String>>,
-    /// The chip being edited, while the entry holds the chips.
-    editing: Cell<Option<usize>>,
-    /// The chips shown now, in order.
-    shown_chips: RefCell<Vec<String>>,
-    /// Which order a search's results come back in; kept across queries
-    /// while the bar is up, and relevance each time it opens.
-    order: Cell<postio_search::ResultOrder>,
-    /// Where the results go in the list: the index after the search row.
-    results_at: Cell<usize>,
-    /// While results are being drawn, where the next row is inserted.
-    inserting: Cell<Option<usize>>,
-    /// Where the highlight goes once the results are drawn.
-    pending: Cell<Pending>,
-    /// The generation the rows now show the results of.
-    loaded: Cell<u64>,
-    /// The results' heading, which is a row of the list.
-    result_heading: RefCell<String>,
-    /// Every correspondent, for `@`.
-    contacts: Rc<RefCell<Vec<postio_model::Contact>>>,
-    /// Which account each mailbox belongs to, when more than one is enabled.
-    owners: Rc<RefCell<Vec<(MailboxId, String)>>>,
     /// Where the keyboard goes when the bar closes: the list, once the
     /// window says which widget that is.
     home: RefCell<Option<gtk::Widget>>,
-}
-
-/// Where the highlight goes when the results have been drawn.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum Pending {
-    /// Stay where it is.
-    #[default]
-    Nowhere,
-    /// The first hit: Return on the search row asked to be among them.
-    FirstHit,
-    /// The order row, which was just run.
-    Order,
-    /// The hit that was opened and has just been closed: the person is
-    /// back among the results where they left them.
-    Hit(MessageId),
 }
 
 impl Bar {
@@ -136,8 +92,8 @@ impl Bar {
             .collect()
     }
 
-    /// A closed bar, reading through `client`, its keys from `keymap`.
-    pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
+    /// A closed bar, its keys from `keymap`.
+    pub fn new(keymap: &Keymap) -> Rc<Self> {
         let icon = gtk::Image::from_icon_name("system-search-symbolic");
         icon.set_accessible_role(gtk::AccessibleRole::Presentation);
         let chips = gtk::Box::new(gtk::Orientation::Horizontal, S1);
@@ -174,7 +130,9 @@ impl Bar {
             .propagate_natural_height(true)
             .max_content_height(520)
             .build();
-        let footer = gtk::Label::new(None);
+        let footer = gtk::Label::new(Some(
+            "\u{2191}\u{2193} move \u{b7} \u{21b5} open / run \u{b7} > commands only \u{b7} Local index",
+        ));
         footer.add_css_class("dim-label");
         footer.add_css_class("focus-bar-footer");
         footer.set_xalign(0.0);
@@ -213,7 +171,6 @@ impl Bar {
         over.set_visible(false);
 
         let bar = Rc::new(Bar {
-            client,
             root,
             over,
             entry,
@@ -221,33 +178,18 @@ impl Bar {
             echo,
             heading,
             list,
-            footer,
             keymap: RefCell::new(keymap.clone()),
-            places: Rc::default(),
-            names: Rc::default(),
-            folders: Rc::default(),
-            rows: Rc::default(),
-            held: RefCell::default(),
-            generation: Rc::default(),
+            lines: RefCell::default(),
+            view: RefCell::default(),
+            found: RefCell::default(),
             open: Cell::new(false),
+            quiet: Cell::new(false),
+            places_known: Cell::new(false),
             field: RefCell::default(),
             handler: RefCell::default(),
+            tab: RefCell::default(),
             me: RefCell::default(),
-            saved: RefCell::default(),
-            places_known: Cell::new(false),
             saved_row,
-            digesting: Rc::default(),
-            words: RefCell::default(),
-            editing: Cell::new(None),
-            shown_chips: RefCell::default(),
-            order: Cell::default(),
-            results_at: Cell::new(0),
-            inserting: Cell::new(None),
-            pending: Cell::default(),
-            loaded: Cell::new(0),
-            result_heading: RefCell::default(),
-            contacts: Rc::default(),
-            owners: Rc::default(),
             home: RefCell::default(),
         });
         bar.me.replace(Rc::downgrade(&bar));
@@ -266,7 +208,7 @@ impl Bar {
                     widget == *bar.root.upcast_ref::<gtk::Widget>() || widget.is_ancestor(&bar.root)
                 });
                 if !inside {
-                    bar.close();
+                    bar.dismiss();
                 }
             }
         });
@@ -274,8 +216,10 @@ impl Bar {
         bar.entry.connect_changed({
             let weak = weak.clone();
             move |entry| {
-                if let Some(bar) = weak.upgrade() {
-                    bar.update(&entry.text());
+                if let Some(bar) = weak.upgrade()
+                    && !bar.quiet.get()
+                {
+                    bar.say(BarInput::Typed(entry.text().to_string()));
                 }
             }
         });
@@ -304,7 +248,6 @@ impl Bar {
             }
         });
         bar.entry.add_controller(keys);
-        bar.set_keymap(keymap);
         bar
     }
 
@@ -326,77 +269,22 @@ impl Bar {
         &self.over
     }
 
-    /// Run `handler` with what a row asks for when it is run.
-    pub fn connect_action(&self, handler: impl Fn(BarAction) + 'static) {
+    /// Hand what a person does in the bar to `handler`.
+    pub fn connect_input(&self, handler: impl Fn(BarInput) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Read every key the bar shows from `keymap`.
+    /// Ask `tab` what `Tab` in the field does: `false` when it is the
+    /// toolkit's key, with no chip to step into.
+    pub fn connect_tab(&self, tab: impl Fn() -> bool + 'static) {
+        self.tab.replace(Some(Rc::new(tab)));
+    }
+
+    /// Read the keys the bar shows of its own from `keymap`: the saved
+    /// searches'. A line's key comes with the line.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.show_saved();
-        self.footer.set_text(
-            "\u{2191}\u{2193} move \u{b7} \u{21b5} open / run \u{b7} > commands only \u{b7} Local index",
-        );
-    }
-
-    /// The pinned saved searches, in order: each name and its query. The
-    /// first four run on `Alt+1`-`Alt+4`.
-    pub fn set_saved(&self, saved: Vec<(String, String)>) {
-        self.saved.replace(saved);
-        self.show_saved();
-    }
-
-    fn show_saved(&self) {
-        while let Some(child) = self.saved_row.first_child() {
-            self.saved_row.remove(&child);
-        }
-        let saved = self.saved.borrow();
-        self.saved_row.set_visible(!saved.is_empty());
-        if saved.is_empty() {
-            return;
-        }
-        let title = gtk::Label::new(Some("Saved"));
-        title.add_css_class("dim-label");
-        self.saved_row.append(&title);
-        let keymap = self.keymap.borrow();
-        for (index, (name, _)) in saved.iter().enumerate() {
-            let said = gtk::Box::new(gtk::Orientation::Horizontal, S1);
-            said.append(&gtk::Label::new(Some(name)));
-            if let Some(key) = SAVED
-                .get(index)
-                .and_then(|command| postio_ui::hints::key(&keymap, *command))
-            {
-                said.append(&keyhint::cap(&key));
-            }
-            let pill = gtk::Button::new();
-            pill.add_css_class("focus-bar-saved-pill");
-            pill.set_child(Some(&said));
-            pill.set_focus_on_click(false);
-            let weak = self.self_weak();
-            pill.connect_clicked(move |_| {
-                if let Some(bar) = weak.upgrade() {
-                    bar.open_saved(index);
-                }
-            });
-            self.saved_row.append(&pill);
-        }
-    }
-
-    /// Open the bar on the `index`th saved search, and run it.
-    pub fn open_saved(&self, index: usize) -> bool {
-        let Some((_, query)) = self.saved.borrow().get(index).cloned() else {
-            return false;
-        };
-        self.open();
-        self.set_text(&query);
-        true
-    }
-
-    /// Say whether a digest rule can hold mail, so results ask where held
-    /// mail waits; with no rule, nothing is held and nothing is asked.
-    pub fn set_digesting(&self, digesting: bool) {
-        self.digesting.set(digesting);
     }
 
     /// Hand the keyboard to `home` whenever the bar closes.
@@ -404,32 +292,33 @@ impl Bar {
         self.home.replace(Some(home));
     }
 
-    /// Open the bar, empty, and read the places it can go.
-    pub fn open(&self) {
-        self.open.set(true);
-        self.places_known.set(false);
-        self.words.replace(None);
-        self.editing.set(None);
-        self.order.set(postio_search::ResultOrder::Relevance);
-        self.over.set_visible(true);
-        self.show_field(false);
-        self.entry.set_text("");
-        self.update("");
+    /// Show the bar with `text` in its field and `select` of it selected:
+    /// the controller's [`postio_focus::Intent::OpenBar`]. Also how the
+    /// controller puts new words in the field of a bar already up.
+    pub fn open_on(&self, text: &str, select: Option<(u32, u32)>) {
+        if !self.open.get() {
+            self.open.set(true);
+            self.places_known.set(false);
+            self.over.set_visible(true);
+            self.show_field(false);
+        }
+        if self.entry.text() != text {
+            self.quiet.set(true);
+            self.entry.set_text(text);
+            self.quiet.set(false);
+        }
         self.entry.grab_focus();
-        self.read_places();
+        match select {
+            Some((start, end)) => self.entry.select_region(start as i32, end as i32),
+            None => self.entry.set_position(-1),
+        }
     }
 
-    /// Open the bar in command mode (`Ctrl K`): the command prefix already
-    /// typed, so only commands are offered, and what is typed after it
-    /// narrows them.
-    pub fn open_commands(&self) {
-        self.open();
-        self.set_text(&finder::COMMANDS_ONLY.to_string());
-    }
-
-    /// Close the bar. Nothing it showed is kept.
+    /// Close the bar, as the controller says. Nothing it showed is kept.
     pub fn close(&self) {
-        self.open.set(false);
+        if !self.open.replace(false) {
+            return;
+        }
         // The keyboard leaves the entry with the bar: left in a hidden
         // entry, every single-letter key after it would be taken for typing.
         if let Some(root) = self.entry.root()
@@ -444,17 +333,196 @@ impl Bar {
         }
         self.over.set_visible(false);
         self.show_field(true);
-        self.generation.set(self.generation.get() + 1);
+        self.quiet.set(true);
+        self.entry.set_text("");
+        self.quiet.set(false);
+        self.view.replace(BarView::default());
+        self.lines.borrow_mut().clear();
+        while let Some(child) = self.list.first_child() {
+            self.list.remove(&child);
+        }
+    }
+
+    /// Closed by the toolkit -- a click outside -- rather than by the
+    /// controller, which hears it as Back.
+    fn dismiss(&self) {
+        self.say(BarInput::Command(CommandId::Back));
+    }
+
+    /// The places the bar can go have been read since it opened.
+    pub fn places_read(&self) {
+        if self.open.get() {
+            self.places_known.set(true);
+        }
+    }
+
+    /// Draw `view`, whole: the controller's
+    /// [`postio_focus::Intent::BarLines`].
+    pub fn show(&self, view: &BarView) {
+        let kept = self.highlighted_line();
+        self.show_chips(&view.chips, view.editing);
+        self.echo.set_visible(view.echo.is_some());
+        self.echo.set_text(view.echo.as_deref().unwrap_or_default());
+        self.heading.set_visible(view.heading.is_some());
+        self.heading
+            .set_text(view.heading.as_deref().unwrap_or_default());
+        let same_lines = *self.lines.borrow() == view.lines;
+        if !same_lines {
+            while let Some(child) = self.list.first_child() {
+                self.list.remove(&child);
+            }
+            for line in &view.lines {
+                self.list.append(&self.line_row(line));
+            }
+            self.lines.replace(view.lines.clone());
+            let found: Vec<(MessageId, String)> = view
+                .lines
+                .iter()
+                .filter_map(|line| Some((line.message?, line.title.clone())))
+                .collect();
+            if !found.is_empty() {
+                self.found.replace(found);
+            }
+        }
+        let saved_changed = self.view.borrow().saved != view.saved;
+        self.view.replace(view.clone());
+        if saved_changed {
+            self.show_saved();
+        }
+        // Where a run or a landing put it; else where the arrows left it,
+        // while that line is still drawn -- the same line, though a later
+        // answer drew it under a new token; else the first line that runs.
+        let lines = self.lines.borrow();
+        let at = view
+            .highlight
+            .and_then(|token| lines.iter().position(|line| line.token == token))
+            .or_else(|| {
+                kept.as_ref()
+                    .and_then(|kept| lines.iter().position(|line| same_line(line, kept)))
+            })
+            .or_else(|| lines.iter().position(|line| line.selectable));
+        drop(lines);
+        match at.and_then(|at| self.list.row_at_index(at as i32)) {
+            Some(row) => {
+                self.list.select_row(Some(&row));
+                self.reveal(&row);
+            }
+            None => self.list.unselect_all(),
+        }
+    }
+
+    fn show_chips(&self, chips: &[String], editing: Option<u32>) {
+        while let Some(child) = self.chips.first_child() {
+            self.chips.remove(&child);
+        }
+        for (index, chip) in chips.iter().enumerate() {
+            let label = gtk::Label::new(Some(chip));
+            label.add_css_class("focus-bar-chip");
+            if editing == Some(index as u32) {
+                label.add_css_class("focus-bar-chip-editing");
+            }
+            self.chips.append(&label);
+        }
+    }
+
+    fn show_saved(&self) {
+        while let Some(child) = self.saved_row.first_child() {
+            self.saved_row.remove(&child);
+        }
+        let saved = self.view.borrow().saved.clone();
+        self.saved_row.set_visible(!saved.is_empty());
+        if saved.is_empty() {
+            return;
+        }
+        let title = gtk::Label::new(Some("Saved"));
+        title.add_css_class("dim-label");
+        self.saved_row.append(&title);
+        let keymap = self.keymap.borrow();
+        for (index, name) in saved.iter().enumerate() {
+            let said = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+            said.append(&gtk::Label::new(Some(name)));
+            let command = SAVED.get(index).copied();
+            if let Some(key) = command.and_then(|command| postio_ui::hints::key(&keymap, command)) {
+                said.append(&keyhint::cap(&key));
+            }
+            let pill = gtk::Button::new();
+            pill.add_css_class("focus-bar-saved-pill");
+            pill.set_child(Some(&said));
+            pill.set_focus_on_click(false);
+            if let Some(command) = command {
+                let weak = self.me.borrow().clone();
+                pill.connect_clicked(move |_| {
+                    if let Some(bar) = weak.upgrade() {
+                        bar.say(BarInput::Command(command));
+                    }
+                });
+            }
+            self.saved_row.append(&pill);
+        }
+    }
+
+    /// One line's row.
+    fn line_row(&self, line: &BarLine) -> gtk::ListBoxRow {
+        let row = gtk::ListBoxRow::new();
+        match line.kind {
+            BarLineKind::Heading => {
+                let label = gtk::Label::new(Some(&line.title));
+                label.add_css_class("focus-bar-section");
+                label.set_xalign(0.0);
+                row.set_child(Some(&label));
+            }
+            BarLineKind::Message => {
+                row.add_css_class("focus-bar-row");
+                row.set_child(Some(&message_line(line)));
+            }
+            _ => {
+                row.add_css_class("focus-bar-row");
+                row.set_child(Some(&plain_line(line)));
+            }
+        }
+        if !line.selectable {
+            row.set_selectable(false);
+            row.set_activatable(false);
+        }
+        row
+    }
+
+    /// Whether the bar is up.
+    pub fn is_open(&self) -> bool {
+        self.open.get()
+    }
+
+    /// Whether the places the bar can go have been read since it opened.
+    pub fn places_known(&self) -> bool {
+        self.places_known.get()
+    }
+
+    /// Handle one key in the bar's entry, as its key controller does;
+    /// `true` when the bar used it. The arrows walk the lines; `Tab` steps
+    /// into the chips, and on from chip to chip.
+    pub fn press(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
+        match key {
+            gtk::gdk::Key::Down => self.step(1),
+            gtk::gdk::Key::Up => self.step(-1),
+            gtk::gdk::Key::Tab if state.is_empty() => {
+                let tab = self.tab.borrow().clone();
+                return tab.is_some_and(|tab| tab());
+            }
+            // Typing wins: `O` is a letter for the entry. The order key
+            // carries `alt` and is the window's command.
+            _ => return false,
+        }
+        true
     }
 
     /// Run the search row: search for what is typed, as choosing
     /// "Search mail for …" does.
     pub fn run_search(&self) {
         let at = self
-            .rows
+            .lines
             .borrow()
             .iter()
-            .position(|row| *row == Row::Search);
+            .position(|line| line.kind == BarLineKind::Search);
         if let Some(at) = at {
             self.run(at);
         }
@@ -463,41 +531,6 @@ impl Bar {
     /// Run the highlighted row, as Return does.
     pub fn run_search_row(&self) {
         self.run_selected();
-    }
-
-    /// Whether the places the bar can go have been read since it opened.
-    pub fn places_known(&self) -> bool {
-        self.places_known.get()
-    }
-
-    /// Whether the bar is up.
-    pub fn is_open(&self) -> bool {
-        self.open.get()
-    }
-
-    /// Handle one key in the bar's entry, as its key controller does;
-    /// `true` when the bar used it. The arrows walk the results; `Tab`
-    /// steps into the chips, and on from chip to chip.
-    pub fn press(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
-        match key {
-            gtk::gdk::Key::Down => self.step(1),
-            gtk::gdk::Key::Up => self.step(-1),
-            gtk::gdk::Key::Tab if state.is_empty() => return self.next_chip(),
-            // Typing wins: `O` is a letter for the entry. The order key
-            // carries `alt` and is the window's command.
-            _ => return false,
-        }
-        true
-    }
-
-    /// Switch the results between relevance and date, and ask again.
-    pub fn toggle_order(&self) {
-        self.order.set(match self.order.get() {
-            postio_search::ResultOrder::Relevance => postio_search::ResultOrder::Newest,
-            postio_search::ResultOrder::Newest => postio_search::ResultOrder::Relevance,
-        });
-        self.pending.set(Pending::Order);
-        self.search_typed();
     }
 
     /// The bar's input, where the words are typed.
@@ -513,97 +546,11 @@ impl Bar {
     /// The query a search would ask: the chips the words were lowered to,
     /// or the words themselves when they lower to no chip.
     pub fn query(&self) -> String {
-        let chips = self.shown_chips.borrow();
+        let chips = self.chips();
         if chips.is_empty() {
             self.entry.text().trim().to_owned()
         } else {
             chips.join(" ")
-        }
-    }
-
-    /// `Tab`: from the words into the first chip, then to the next; the
-    /// entry holds the chips and selects the one being edited. `false`
-    /// with no chip to step into.
-    fn next_chip(&self) -> bool {
-        let chips = self.shown_chips.borrow().clone();
-        if chips.is_empty() {
-            return false;
-        }
-        let next = match self.editing.get() {
-            None => {
-                self.words.replace(Some(self.entry.text().to_string()));
-                0
-            }
-            Some(at) => (at + 1) % chips.len(),
-        };
-        self.editing.set(Some(next));
-        let query = chips.join(" ");
-        if self.entry.text() != query {
-            self.entry.set_text(&query);
-        } else {
-            self.show_editing();
-        }
-        let start: usize = chips[..next]
-            .iter()
-            .map(|chip| chip.chars().count() + 1)
-            .sum();
-        let end = start + chips[next].chars().count();
-        self.entry.grab_focus();
-        self.entry.select_region(start as i32, end as i32);
-        true
-    }
-
-    /// `Ctrl+Backspace`: back from the chips to the words they were
-    /// lowered from; whether there were words to go back to.
-    pub fn back_to_words(&self) -> bool {
-        let Some(words) = self.words.take() else {
-            return false;
-        };
-        self.editing.set(None);
-        self.entry.set_text(&words);
-        self.entry.set_position(-1);
-        true
-    }
-
-    /// The echo while a chip is edited: the words typed, which chip, and
-    /// the keys that move on and go back.
-    fn show_editing(&self) {
-        let (Some(at), Some(words)) = (self.editing.get(), self.words.borrow().clone()) else {
-            return;
-        };
-        let chips = self.shown_chips.borrow().clone();
-        let Some(chip) = chips.get(at.min(chips.len().saturating_sub(1))) else {
-            return;
-        };
-        let editing = match chip.split_once(':') {
-            Some((operator, _)) => format!("{operator}:"),
-            None => chip.clone(),
-        };
-        let keymap = self.keymap.borrow();
-        let mut hints = vec![postio_ui::hints::fixed(
-            "Tab",
-            "next chip",
-            "Tab moves between the bar's chips: the toolkit's focus order, not a command",
-        )];
-        hints.extend(postio_ui::hints::hint(
-            &keymap,
-            CommandId::BackToWords,
-            "back to plain words",
-        ));
-        self.echo.set_text(&format!(
-            "You typed \u{201c}{words}\u{201d} \u{b7} editing {editing} \u{b7} {}",
-            postio_ui::hints::line(&hints)
-        ));
-        let mut child = self.chips.first_child();
-        let mut index = 0;
-        while let Some(label) = child {
-            child = label.next_sibling();
-            if index == at {
-                label.add_css_class("focus-bar-chip-editing");
-            } else {
-                label.remove_css_class("focus-bar-chip-editing");
-            }
-            index += 1;
         }
     }
 
@@ -613,42 +560,25 @@ impl Bar {
         self.entry.set_position(-1);
     }
 
-    /// The messages the results list, with their subjects, in the bar's
-    /// order: what `j` and `k` walk once one is opened.
-    pub fn hits(&self) -> Vec<(MessageId, String)> {
-        self.rows
-            .borrow()
-            .iter()
-            .filter_map(|row| match row {
-                Row::Message { message, subject } => Some((*message, subject.clone())),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// Reopen the bar on `typed`, the highlight going to the hit `opened`
-    /// once the results are drawn: where a closed hit returns to.
-    pub fn reopen(&self, typed: &str, opened: Option<MessageId>) {
-        self.open();
-        self.set_text(typed);
-        if let Some(opened) = opened {
-            self.pending.set(Pending::Hit(opened));
-        }
-    }
-
-    /// What was typed when a hit was opened, once: the window reopens the
-    /// bar with it when that message closes.
-    pub fn take_held(&self) -> Option<String> {
-        self.held.take()
-    }
-
-    /// The results' heading.
+    /// The heading over a folder's conversations, or over a search's.
     pub fn heading(&self) -> String {
         if self.heading.is_visible() {
-            self.heading.text().to_string()
-        } else {
-            self.result_heading.borrow().clone()
+            return self.heading.text().to_string();
         }
+        // A search's: the first heading under the search line, which the
+        // results hang from.
+        let lines = self.lines.borrow();
+        let Some(search) = lines
+            .iter()
+            .position(|line| line.kind == BarLineKind::Search)
+        else {
+            return String::new();
+        };
+        lines[search..]
+            .iter()
+            .find(|line| line.kind == BarLineKind::Heading)
+            .map(|line| line.title.clone())
+            .unwrap_or_default()
     }
 
     /// Every command the bar can list: what typing its name finds.
@@ -672,14 +602,21 @@ impl Bar {
 
     /// The subjects of the messages listed, top to bottom.
     pub fn result_subjects(&self) -> Vec<String> {
-        self.rows
+        self.lines
             .borrow()
             .iter()
-            .filter_map(|row| match row {
-                Row::Message { subject, .. } => Some(subject.clone()),
-                _ => None,
-            })
+            .filter(|line| line.kind == BarLineKind::Message)
+            .map(|line| line.title.clone())
             .collect()
+    }
+
+    /// The subject of `message`, as the bar last listed it.
+    pub fn subject_of(&self, message: MessageId) -> Option<String> {
+        self.found
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == message)
+            .map(|(_, subject)| subject.clone())
     }
 
     /// The highlighted row, as a storyboard observes it: what kind of row
@@ -690,58 +627,37 @@ impl Bar {
     pub fn highlighted(&self) -> Option<(&'static str, Option<MessageId>, String)> {
         let selected = self.list.selected_row()?;
         let index = usize::try_from(selected.index()).ok()?;
-        let said = || {
-            let mut said = Vec::new();
-            let mut pending: Vec<gtk::Widget> = vec![selected.clone().upcast()];
-            while let Some(widget) = pending.pop() {
-                if let Some(label) = widget.downcast_ref::<gtk::Label>()
-                    && widget.is_visible()
-                    && !label.text().is_empty()
-                {
-                    said.push(label.text().to_string());
-                }
-                let mut child = widget.last_child();
-                while let Some(next) = child {
-                    child = next.prev_sibling();
-                    pending.push(next);
-                }
-            }
-            said.join(" ")
+        let line = self.lines.borrow().get(index)?.clone();
+        let kind = match line.kind {
+            BarLineKind::Heading => "heading",
+            BarLineKind::Hint => "hint",
+            BarLineKind::Command => "command",
+            BarLineKind::Place => "place",
+            BarLineKind::Search => "search",
+            BarLineKind::Instead => "instead",
+            BarLineKind::Order => "order",
+            BarLineKind::Correspondent => "correspondent",
+            BarLineKind::Message => "message",
         };
-        let rows = self.rows.borrow();
-        Some(match rows.get(index)? {
-            Row::Heading => ("heading", None, said()),
-            Row::Message { message, subject } => ("message", Some(*message), subject.clone()),
-            Row::Command(_) => ("command", None, said()),
-            Row::Place(_, name) => ("place", None, name.clone()),
-            Row::Search => ("search", None, said()),
-            Row::Instead(word) => ("instead", None, word.clone()),
-            Row::Order => ("order", None, said()),
-            Row::Correspondent(_) => ("correspondent", None, said()),
-            Row::Hint => ("hint", None, said()),
-        })
+        let text = match line.kind {
+            BarLineKind::Message | BarLineKind::Place => line.title.clone(),
+            _ => said(selected.upcast_ref()),
+        };
+        Some((kind, line.message, text))
     }
 
     /// How many lines of the empty bar's hints are showing.
     pub fn hints(&self) -> usize {
-        self.rows
+        self.lines
             .borrow()
             .iter()
-            .filter(|row| **row == Row::Hint)
+            .filter(|line| line.kind == BarLineKind::Hint)
             .count()
     }
 
     /// The chips the words were lowered to.
     pub fn chips(&self) -> Vec<String> {
-        let mut said = Vec::new();
-        let mut child = self.chips.first_child();
-        while let Some(chip) = child {
-            child = chip.next_sibling();
-            if let Some(label) = chip.downcast_ref::<gtk::Label>() {
-                said.push(label.text().to_string());
-            }
-        }
-        said
+        self.view.borrow().chips.clone()
     }
 
     /// Everything the bar says, as a person reads it.
@@ -767,556 +683,29 @@ impl Bar {
         said
     }
 
-    /// Answer what is typed: a folder's conversations after `in:`, and
-    /// otherwise the blended commands, places and search.
-    fn update(&self, text: &str) {
-        let generation = self.generation.get() + 1;
-        self.generation.set(generation);
-        self.clear_rows();
-        let text = text.to_owned();
-        let typed = text.trim();
-        self.echo.set_visible(!typed.is_empty());
-        self.echo.set_text(&rules::echo(typed));
-        match rules::route(typed) {
-            rules::Route::Folder(name) => {
-                self.show_chips(&[]);
-                self.show_folder(name, generation);
-                return;
-            }
-            rules::Route::Plain => {
-                self.show_blend(typed);
-                if typed.is_empty() {
-                    for line in rules::empty_lines() {
-                        self.append_line(&line);
-                    }
-                }
-                self.show_chips(&[]);
-                self.heading.set_visible(false);
-                return;
-            }
-            rules::Route::Correspondent(name) => {
-                self.show_chips(&[]);
-                self.heading.set_visible(false);
-                let hits = finder::contacts(&self.contacts.borrow(), name);
-                for line in rules::correspondent_lines(&hits) {
-                    self.append_line(&line);
-                }
-                return;
-            }
-            rules::Route::Blend => self.show_blend(typed),
-        }
-        let parsed = self.lowered(typed);
-        // Words that name what they want are a search, shown as its chips
-        // (screen 07); a plain word makes none. Either way the results come
-        // as it is typed, under the search row (screen 07 d).
-        match rules::chips(&parsed) {
-            Some(chips) => {
-                self.show_chips(&chips);
-                self.show_editing();
-            }
-            None => self.show_chips(&[]),
-        }
-        self.heading.set_visible(false);
-        self.search(parsed, generation);
-    }
-
-    /// `typed`, read as plain English against today and the address book.
-    fn lowered(&self, typed: &str) -> postio_search::ParsedQuery {
-        let names = self.names.borrow();
-        postio_search::natural::lower(typed, postio_ui::clock::now().date_naive(), &|name| {
-            names.lookup(name)
-        })
-    }
-
-    /// Search for what is typed now.
-    fn search_typed(&self) {
-        let typed = self.entry.text();
-        let typed = typed.trim();
-        if typed.is_empty() {
-            return;
-        }
-        let parsed = self.lowered(typed);
-        self.search(parsed, self.generation.get());
-    }
-
-    /// The chips the words were lowered to, in order.
-    fn show_chips(&self, chips: &[String]) {
-        self.shown_chips.replace(chips.to_vec());
-        while let Some(child) = self.chips.first_child() {
-            self.chips.remove(&child);
-        }
-        for chip in chips {
-            let label = gtk::Label::new(Some(chip));
-            label.add_css_class("focus-bar-chip");
-            self.chips.append(&label);
+    fn say(&self, input: BarInput) {
+        let handler = self.handler.borrow().clone();
+        if let Some(handler) = handler {
+            handler(input);
         }
     }
 
-    /// The commands and places `typed` matches, and the search row.
-    fn show_blend(&self, typed: &str) {
-        let places = self.places.borrow();
-        let state = postio_core::Availability {
-            scope: AccountScope::Unified,
-            store_open: true,
-            frontend: Frontend::Focus,
-        };
-        let keymap = self.keymap.borrow();
-        let mut blend = finder::blend(typed, &places, &keymap, Context::List, state);
-        let words = typed.strip_prefix(finder::COMMANDS_ONLY).unwrap_or(typed);
-        if typed.starts_with(finder::COMMANDS_ONLY) || !words.trim().is_empty() {
-            rules::add_account_verbs(&mut blend.commands, &keymap, state, words.trim());
-        }
-        for line in rules::blend_lines(&blend) {
-            self.append_line(&line);
-        }
-        // The results go under the search row.
-        let after = self
-            .rows
-            .borrow()
-            .iter()
-            .position(|row| *row == Row::Search)
-            .map_or(self.rows.borrow().len(), |at| at + 1);
-        self.results_at.set(after);
+    fn highlighted_line(&self) -> Option<BarLine> {
+        let selected = self.list.selected_row()?;
+        let index = usize::try_from(selected.index()).ok()?;
+        self.lines.borrow().get(index).cloned()
     }
 
-    /// Search this machine's index for `parsed`, and list what it finds
-    /// under the search row, one row per conversation.
-    fn search(&self, parsed: postio_search::ParsedQuery, generation: u64) {
-        let client = self.client.clone();
-        let current = Rc::clone(&self.generation);
-        let digesting = self.digesting.get();
-        let order = self.order.get();
-        let weak = self.self_weak();
-        glib::spawn_future_local(async move {
-            let search = client.search_hits(
-                AccountScope::Unified,
-                parsed,
-                postio_search::facets::Scope::AllMail,
-                order,
-                0,
-            );
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            let found = search.await;
-            if current.get() != generation {
-                return;
-            }
-            let Ok(Some(results)) = found else {
-                return;
-            };
-            let rows = rules::conversations(results.hits);
-            // Held mail says where it waits, not the folder it is filed in.
-            let held = if digesting {
-                let ids = rows.iter().map(|hit| hit.message_id).collect();
-                // POSTIO-GLIB-SAFE: as the search's.
-                let read = client.held(ids).await;
-                if current.get() != generation {
-                    return;
-                }
-                read.unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            if let Some(bar) = weak.upgrade() {
-                bar.show_results(rows, results.instead, order, &held, generation);
-            }
-        });
-    }
-
-    /// Draw a search's results under the search row, replacing the last.
-    fn show_results(
-        &self,
-        rows: Vec<postio_search::SearchHit>,
-        instead: Option<postio_search::Instead>,
-        order: postio_search::ResultOrder,
-        held: &[(MessageId, String, bool)],
-        generation: u64,
-    ) {
-        self.clear_results();
-        self.inserting.set(Some(self.results_at.get()));
-        let heading = rules::results_heading(rows.len());
-        self.result_heading.replace(heading.clone());
-        self.append_heading(&heading);
-        // The list is for another word than the box holds, and says so
-        // (ADR 0037); the typed word is one row away, quoted, which is how
-        // the query language says "this word, exactly".
-        if let Some(instead) = &instead {
-            self.retitle_search(&rules::search_title(&instead.typed, Some(&instead.term)));
-            self.append_heading(&rules::showing_results_for(&instead.term));
-            let (title, detail) = rules::search_instead(&instead.typed);
-            self.append_row(
-                Row::Instead(instead.typed.clone()),
-                &title,
-                Some(detail),
-                None,
-            );
-        }
-        if !rows.is_empty() {
-            let (title, detail) = rules::order_words(order);
-            let key = postio_ui::hints::key(&self.keymap.borrow(), CommandId::ToggleResultOrder);
-            self.append_row(Row::Order, &title, Some(&detail), key.as_deref());
-        }
-        let names = self.folders.borrow().clone();
-        let owners = self.owners.borrow().clone();
-        for hit in rows {
-            let subject = hit.subject.clone().unwrap_or_default();
-            let place = rules::result_place(&hit, held, &names);
-            let account = rules::result_account(&hit, &owners);
-            self.append_message(
-                hit.message_id,
-                hit.from.as_ref().map(said_of),
-                &subject,
-                hit.preview.as_deref(),
-                [place.as_deref(), account.as_deref()],
-                hit.received_at,
-            );
-        }
-        self.inserting.set(None);
-        self.loaded.set(generation);
-        self.apply_pending();
-    }
-
-    /// Say on the search row which query the results under it are for.
-    fn retitle_search(&self, title: &str) {
-        let at = self
-            .rows
-            .borrow()
-            .iter()
-            .position(|row| *row == Row::Search);
-        let name = at
-            .and_then(|at| self.list.row_at_index(at as i32))
-            .and_then(|row| row.child())
-            .and_then(|line| line.first_child())
-            .and_then(|name| name.downcast::<gtk::Label>().ok());
-        if let Some(name) = name {
-            name.set_text(title);
-        }
-    }
-
-    /// Move the highlight where the last run asked it to go.
-    fn apply_pending(&self) {
-        let wanted =
-            match self.pending.take() {
-                Pending::Nowhere => return,
-                Pending::FirstHit => self
-                    .rows
-                    .borrow()
-                    .iter()
-                    .position(|row| matches!(row, Row::Message { .. })),
-                Pending::Order => self.rows.borrow().iter().position(|row| *row == Row::Order),
-                Pending::Hit(wanted) => self.rows.borrow().iter().position(
-                    |row| matches!(row, Row::Message { message, .. } if *message == wanted),
-                ),
-            };
-        if let Some(row) = wanted.and_then(|at| self.list.row_at_index(at as i32)) {
-            self.list.select_row(Some(&row));
-        }
-    }
-
-    /// Take away the results, leaving the rows above them.
-    fn clear_results(&self) {
-        let at = self.results_at.get();
-        while let Some(row) = self.list.row_at_index(at as i32) {
-            self.list.remove(&row);
-        }
-        self.rows.borrow_mut().truncate(at);
-        self.result_heading.replace(String::new());
-    }
-
-    /// `in:` and `name`: the first folder whose name starts with it, and its
-    /// conversations newest first (screen 08).
-    fn show_folder(&self, name: &str, generation: u64) {
-        let folder = rules::folder_for(&self.places.borrow(), name);
-        let Some((name, mailbox)) = folder else {
-            self.heading.set_visible(false);
-            return;
-        };
-        let client = self.client.clone();
-        let current = Rc::clone(&self.generation);
-        let weak = self.self_weak();
-        glib::spawn_future_local(async move {
-            let scope = ListScope::Mailbox(mailbox);
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            let count = client.list_count(scope).await;
-            let read = client.list_page(PageRequest {
-                scope,
-                offset: 0,
-                limit: rules::FOLDER_ROWS,
-            });
-            // POSTIO-GLIB-SAFE: as above.
-            let page = read.await;
-            if current.get() != generation {
-                return;
-            }
-            let Some(bar) = weak.upgrade() else {
-                return;
-            };
-            bar.clear_rows();
-            bar.heading
-                .set_text(&rules::folder_heading(&name, count.unwrap_or(0)));
-            bar.heading.set_visible(true);
-            match page {
-                Ok(ListPage::Threads(page)) => {
-                    for thread in page.rows {
-                        let from = thread.representative.from.as_ref().map(said_of);
-                        bar.append_message(
-                            thread.representative.id,
-                            from,
-                            &thread.subject.clone().unwrap_or_default(),
-                            thread.representative.preview.as_deref(),
-                            [None, None],
-                            thread.last_at,
-                        );
-                    }
-                }
-                Ok(ListPage::Messages(page)) => {
-                    for message in page.rows {
-                        let from = message.from.as_ref().map(said_of);
-                        bar.append_message(
-                            message.id,
-                            from,
-                            &message.subject.clone().unwrap_or_default(),
-                            message.preview.as_deref(),
-                            [None, None],
-                            message.received_at,
-                        );
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "the bar could not list a folder: {error}"),
-            }
-        });
-    }
-
-    /// Read the places the bar can go: every account's mailboxes and
-    /// folders, its labels, and the correspondents a typed name can mean.
-    fn read_places(&self) {
-        let client = self.client.clone();
-        let (places, folders) = (Rc::clone(&self.places), Rc::clone(&self.folders));
-        let directory = Rc::clone(&self.names);
-        let weak = self.self_weak();
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            let Ok(accounts) = client.accounts().await else {
-                return;
-            };
-            let mut found = Vec::new();
-            let mut names = Vec::new();
-            let mut correspondents = Vec::new();
-            let mut owned = Vec::new();
-            for account in accounts.iter().filter(|account| account.enabled) {
-                // POSTIO-GLIB-SAFE: as above.
-                let read = client.mailboxes(account.id).await;
-                if let Ok(mailboxes) = read {
-                    for mailbox in mailboxes {
-                        owned.push((mailbox.id, account.address.address.clone()));
-                        names.push((mailbox.id, postio_ui::places::place_name(&mailbox)));
-                        found.push(postio_ui::places::mailbox_place(&mailbox));
-                    }
-                }
-                // POSTIO-GLIB-SAFE: as above.
-                let read = client.correspondents(account.id).await;
-                correspondents.extend(read.unwrap_or_default());
-                // POSTIO-GLIB-SAFE: as above.
-                let read = client.labels(account.id).await;
-                if let Ok(labels) = read {
-                    for label in labels {
-                        found.push(postio_ui::places::label_place(&label));
-                    }
-                }
-            }
-            places.replace(found);
-            folders.replace(names);
-            directory.replace(postio_ui::names::Names::new(&correspondents));
-            // Which account a result is from is said only where there is
-            // more than one to tell apart.
-            let several = accounts.iter().filter(|account| account.enabled).count() > 1;
-            if let Some(bar) = weak.upgrade() {
-                bar.owners.replace(if several { owned } else { Vec::new() });
-                bar.contacts.replace(correspondents);
-            }
-            // `in:` typed before the places landed is answered again, now
-            // that it has folders to complete. Nothing else needs them to
-            // answer, and a search is not asked for twice.
-            if let Some(bar) = weak.upgrade().filter(|bar| bar.is_open()) {
-                bar.places_known.set(true);
-                let typed = bar.entry.text();
-                if typed.trim().starts_with("in:") {
-                    bar.update(&typed);
-                }
-            }
-        });
-    }
-
-    /// A weak handle on this bar, for a future to come back to.
-    fn self_weak(&self) -> std::rc::Weak<Bar> {
-        self.me.borrow().clone()
-    }
-
-    fn clear_rows(&self) {
-        self.results_at.set(0);
-        self.result_heading.replace(String::new());
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
-        }
-        self.rows.borrow_mut().clear();
-    }
-
-    fn append_line(&self, line: &Line) {
-        match line {
-            Line::Heading(title) => self.append_heading(title),
-            Line::Row {
-                row,
-                title,
-                detail,
-                key,
-            } => self.append_row(row.clone(), title, detail.as_deref(), key.as_deref()),
-        }
-    }
-
-    fn append_heading(&self, title: &str) {
-        let label = gtk::Label::new(Some(title));
-        label.add_css_class("focus-bar-section");
-        label.set_xalign(0.0);
-        let row = gtk::ListBoxRow::new();
-        row.set_child(Some(&label));
-        row.set_selectable(false);
-        row.set_activatable(false);
-        self.put(&row, Row::Heading);
-    }
-
-    fn append_row(&self, target: Row, title: &str, detail: Option<&str>, key: Option<&str>) {
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
-        let name = gtk::Label::new(Some(title));
-        name.set_xalign(0.0);
-        line.append(&name);
-        if let Some(detail) = detail {
-            let detail = gtk::Label::new(Some(detail));
-            detail.add_css_class("dim-label");
-            detail.set_xalign(0.0);
-            detail.set_hexpand(true);
-            detail.set_ellipsize(pango::EllipsizeMode::End);
-            line.append(&detail);
-        } else {
-            name.set_hexpand(true);
-        }
-        if let Some(key) = key {
-            line.append(&keyhint::cap(key));
-        }
-        let row = gtk::ListBoxRow::new();
-        row.add_css_class("focus-bar-row");
-        row.set_child(Some(&line));
-        if !target.is_selectable() {
-            row.set_selectable(false);
-            row.set_activatable(false);
-        }
-        self.put(&row, target);
-        self.select_first();
-    }
-
-    /// Add `row`, which runs `target`: at the end, or where the results are
-    /// being drawn.
-    fn put(&self, row: &gtk::ListBoxRow, target: Row) {
-        match self.inserting.get() {
-            Some(at) => {
-                self.list.insert(row, at as i32);
-                self.rows.borrow_mut().insert(at, target);
-                self.inserting.set(Some(at + 1));
-            }
-            None => {
-                self.list.append(row);
-                self.rows.borrow_mut().push(target);
-            }
-        }
-    }
-
-    /// `wheres` is the folder and the account, each when there is one.
-    fn append_message(
-        &self,
-        message: MessageId,
-        from: Option<String>,
-        subject: &str,
-        preview: Option<&str>,
-        wheres: [Option<&str>; 2],
-        at: chrono::DateTime<chrono::Utc>,
-    ) {
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
-        let sender = gtk::Label::new(from.as_deref());
-        sender.add_css_class("focus-bar-sender");
-        sender.set_width_chars(18);
-        sender.set_max_width_chars(18);
-        sender.set_ellipsize(pango::EllipsizeMode::End);
-        sender.set_xalign(0.0);
-        let title = gtk::Label::new(Some(subject));
-        title.add_css_class("focus-bar-subject");
-        // The first line gives way before the subject (gtk-design): the
-        // subject keeps room for an ordinary one, and only longer ones are
-        // cut; the first line has what is left.
-        title.set_ellipsize(pango::EllipsizeMode::End);
-        title.set_width_chars(36);
-        let first = gtk::Label::new(preview);
-        first.add_css_class("dim-label");
-        first.set_width_chars(8);
-        first.set_ellipsize(pango::EllipsizeMode::End);
-        first.set_hexpand(true);
-        first.set_xalign(0.0);
-        line.append(&sender);
-        line.append(&title);
-        line.append(&first);
-        // The folder, and under it the account when there are several: one
-        // column two lines tall, not one long line.
-        if wheres.iter().any(Option::is_some) {
-            let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            lines.set_valign(gtk::Align::Center);
-            for text in wheres.into_iter().flatten() {
-                let label = gtk::Label::new(Some(text));
-                label.add_css_class("focus-bar-place");
-                label.set_xalign(1.0);
-                lines.append(&label);
-            }
-            line.append(&lines);
-        }
-        let date = gtk::Label::new(Some(&postio_ui::row::timestamp(
-            at,
-            postio_ui::clock::now(),
-        )));
-        date.add_css_class("dim-label");
-        line.append(&date);
-        let row = gtk::ListBoxRow::new();
-        row.add_css_class("focus-bar-row");
-        row.set_child(Some(&line));
-        self.put(
-            &row,
-            Row::Message {
-                message,
-                subject: subject.to_owned(),
-            },
-        );
-        self.select_first();
-    }
-
-    /// Select the first row that runs something, when nothing is selected.
-    fn select_first(&self) {
-        if self.list.selected_row().is_some() {
-            return;
-        }
-        let first = self.rows.borrow().iter().position(Row::is_selectable);
-        if let Some(row) = first.and_then(|at| self.list.row_at_index(at as i32)) {
-            self.list.select_row(Some(&row));
-        }
-    }
-
-    /// Move the selection `by` rows, skipping headings.
+    /// Move the selection `by` rows, skipping what runs nothing.
     fn step(&self, by: i32) {
-        let count = self.rows.borrow().len() as i32;
+        let count = self.lines.borrow().len() as i32;
         let mut at = self.list.selected_row().map_or(-1, |row| row.index());
         loop {
             at += by;
             if at < 0 || at >= count {
                 return;
             }
-            if self.rows.borrow()[at as usize].is_selectable() {
+            if self.lines.borrow()[at as usize].selectable {
                 break;
             }
         }
@@ -1362,42 +751,112 @@ impl Bar {
         }
     }
 
-    /// Run row `index`.
+    /// Run row `index`: the controller says what it does.
     fn run(&self, index: usize) {
-        let Some(row) = self.rows.borrow().get(index).cloned() else {
+        let Some(line) = self.lines.borrow().get(index).cloned() else {
             return;
         };
-        let action = match row.run() {
-            Run::Nothing => return,
-            Run::Search => {
-                // The results are already under the row, from typing: Return
-                // takes the keyboard to the first of them.
-                self.pending.set(Pending::FirstHit);
-                if self.loaded.get() == self.generation.get() {
-                    self.apply_pending();
-                } else {
-                    self.search_typed();
-                }
-                return;
-            }
-            Run::SearchFor(text) => {
-                self.set_text(&text);
-                self.search_typed();
-                return;
-            }
-            Run::ToggleOrder => {
-                self.toggle_order();
-                return;
-            }
-            Run::Action(action) => action,
-        };
-        if matches!(action, BarAction::Open { .. }) {
-            self.held.replace(Some(self.entry.text().to_string()));
-        }
-        self.close();
-        let handler = self.handler.borrow().clone();
-        if let Some(handler) = handler {
-            handler(action);
+        if line.selectable {
+            self.say(BarInput::Run(line.token));
         }
     }
+}
+
+/// Whether `line` is `was` drawn again: the same token, or the same message,
+/// or the same kind of line saying the same thing.
+fn same_line(line: &BarLine, was: &BarLine) -> bool {
+    line.token == was.token
+        || match (line.message, was.message) {
+            (Some(now), Some(then)) => now == then,
+            _ => line.kind == was.kind && line.title == was.title,
+        }
+}
+
+/// Every label under `widget`, as a person reads it, top to bottom.
+fn said(widget: &gtk::Widget) -> String {
+    let mut said = Vec::new();
+    let mut pending = vec![widget.clone()];
+    while let Some(widget) = pending.pop() {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>()
+            && widget.is_visible()
+            && !label.text().is_empty()
+        {
+            said.push(label.text().to_string());
+        }
+        let mut child = widget.last_child();
+        while let Some(next) = child {
+            child = next.prev_sibling();
+            pending.push(next);
+        }
+    }
+    said.join(" ")
+}
+
+/// A command's, a place's or the search's line: its title, its dimmer
+/// detail, and its key.
+fn plain_line(line: &BarLine) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+    let name = gtk::Label::new(Some(&line.title));
+    name.set_xalign(0.0);
+    row.append(&name);
+    if let Some(detail) = &line.detail {
+        let detail = gtk::Label::new(Some(detail));
+        detail.add_css_class("dim-label");
+        detail.set_xalign(0.0);
+        detail.set_hexpand(true);
+        detail.set_ellipsize(pango::EllipsizeMode::End);
+        row.append(&detail);
+    } else {
+        name.set_hexpand(true);
+    }
+    if let Some(key) = &line.key {
+        row.append(&keyhint::cap(key));
+    }
+    row
+}
+
+/// A message's line: who, the subject, the first line, where it is, when.
+fn message_line(line: &BarLine) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+    let sender = gtk::Label::new(line.sender.as_deref());
+    sender.add_css_class("focus-bar-sender");
+    sender.set_width_chars(18);
+    sender.set_max_width_chars(18);
+    sender.set_ellipsize(pango::EllipsizeMode::End);
+    sender.set_xalign(0.0);
+    let title = gtk::Label::new(Some(&line.title));
+    title.add_css_class("focus-bar-subject");
+    // The first line gives way before the subject (gtk-design): the
+    // subject keeps room for an ordinary one, and only longer ones are
+    // cut; the first line has what is left.
+    title.set_ellipsize(pango::EllipsizeMode::End);
+    title.set_width_chars(36);
+    let first = gtk::Label::new(line.detail.as_deref());
+    first.add_css_class("dim-label");
+    first.set_width_chars(8);
+    first.set_ellipsize(pango::EllipsizeMode::End);
+    first.set_hexpand(true);
+    first.set_xalign(0.0);
+    row.append(&sender);
+    row.append(&title);
+    row.append(&first);
+    // The folder, and under it the account when there are several: one
+    // column two lines tall, not one long line.
+    if !line.wheres.is_empty() {
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        lines.set_valign(gtk::Align::Center);
+        for text in &line.wheres {
+            let label = gtk::Label::new(Some(text));
+            label.add_css_class("focus-bar-place");
+            label.set_xalign(1.0);
+            lines.append(&label);
+        }
+        row.append(&lines);
+    }
+    if let Some(time) = &line.time {
+        let date = gtk::Label::new(Some(time));
+        date.add_css_class("dim-label");
+        row.append(&date);
+    }
+    row
 }
