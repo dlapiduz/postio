@@ -228,7 +228,7 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
         let view = window.filtered().expect("the view");
         let said = async |wanted: &str| {
             let wanted = wanted.to_owned();
-            crate::settle_until(async || view.texts().iter().any(|line| *line == wanted)).await
+            crate::settle_until(async || view.texts().contains(&wanted)).await
         };
 
         support::press(&window, "x", gdk::ModifierType::empty());

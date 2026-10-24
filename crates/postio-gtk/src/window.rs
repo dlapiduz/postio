@@ -5817,6 +5817,8 @@ impl FocusWindow {
         let row = self.cursor_row();
         let count = pane.as_ref().map(|pane| pane.feed().list().n_items());
         let selected = match self.selection() {
+            // Filtered's rows are selected apart from the list behind them.
+            _ if let Some(view) = self.filtered() => view.selected().len() as u32,
             Selection::These(ids) => ids.len() as u32,
             Selection::Everything { except } => {
                 count.unwrap_or(0).saturating_sub(except.len() as u32)
