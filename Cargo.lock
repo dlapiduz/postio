@@ -8210,9 +8210,9 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vcard-rs"
-version = "0.4.0"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "255606ce9ec8950425d1dedd846cf11ef53c6705627025821d664a845eeeda3f"
+checksum = "a40d51ee30e110bb162cb9bc8d5d27696eb2d5e39ecff4e67de6069d014b230b"
 dependencies = [
  "base64 0.23.1",
  "encoding_rs",
