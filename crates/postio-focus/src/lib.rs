@@ -60,7 +60,7 @@ pub use dropdown::{
     Run, RunStyle, UnderstoodTile,
 };
 pub use feed::{Opened, PageAnswer};
-pub use filtered::{FilteredLine, FilteredTab, FilteredView};
+pub use filtered::{FilteredBar, FilteredBarAction, FilteredLine, FilteredTab, FilteredView};
 pub use perform::{perform, perform_now};
 pub use pickers::{
     Anchor, FoldersRead, LabelsRead, PickerField, PickerKind, PickerRow, PickerView,
@@ -291,6 +291,16 @@ pub enum Input {
     Shown(Option<MessageId>),
     /// A click on Filtered's row at this index: the keyboard goes to it.
     FilteredPoint(u32),
+    /// A modified click on Filtered's row at `position`: with the
+    /// platform's toggle modifier the row goes in or out of the selection,
+    /// with Shift (`range`) every row from the anchor to it goes in. The
+    /// same gesture as [`Input::Pick`] on the list.
+    FilteredPick {
+        /// The row clicked.
+        position: u32,
+        /// Whether Shift was held.
+        range: bool,
+    },
     /// Filtered was scrolled to its end: read its next page, when there
     /// may be one.
     FilteredMore,
@@ -642,6 +652,14 @@ pub enum Intent {
     Filtered(Box<FilteredView>),
     /// The keyboard is on Filtered's row at this index now.
     FilteredFocus(Option<u32>),
+    /// Filtered's selection changed: draw the boxes of `selected`, and the
+    /// bar (or take it down with `None`).
+    FilteredSelection {
+        /// The rows selected, by message.
+        selected: Vec<MessageId>,
+        /// The selection bar, while anything is selected.
+        bar: Option<FilteredBar>,
+    },
     /// Draw the digest's window, whole.
     Digest(Box<DigestView>),
     /// Ask before doing something no undo takes back whole; say
@@ -1828,6 +1846,10 @@ impl FocusController {
             }
             Input::FilteredPoint(index) => {
                 let steps = self.filtered_point(index);
+                self.effects(steps)
+            }
+            Input::FilteredPick { position, range } => {
+                let steps = self.filtered_pick(position, range);
                 self.effects(steps)
             }
             Input::FilteredMore => {
