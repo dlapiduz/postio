@@ -106,13 +106,16 @@ pub fn pill(reason: &str, source: Option<&str>) -> String {
 }
 
 /// The footer's hints, read from the keymap.
-pub fn footer(keymap: &Keymap) -> Vec<Hint> {
+pub fn footer(keymap: &Keymap, rows: bool) -> Vec<Hint> {
     let mut said = Vec::new();
-    said.extend(hints::hint(
-        keymap,
-        CommandId::RestoreFiltered,
-        "restore + never filter sender",
-    ));
+    // Nothing to restore or open on an empty tab.
+    if rows {
+        said.extend(hints::hint(
+            keymap,
+            CommandId::RestoreFiltered,
+            "restore + never filter sender",
+        ));
+    }
     if let (Some(first), Some(last)) = (
         hints::key(keymap, TAB_COMMANDS[0]),
         hints::key(keymap, TAB_COMMANDS[6]),
@@ -122,7 +125,9 @@ pub fn footer(keymap: &Keymap) -> Vec<Hint> {
             label: "reason tabs".to_owned(),
         });
     }
-    said.extend(hints::hint(keymap, CommandId::OpenMessage, "open"));
+    if rows {
+        said.extend(hints::hint(keymap, CommandId::OpenMessage, "open"));
+    }
     said.extend(hints::hint(keymap, CommandId::GoToInbox, "inbox"));
     said
 }
