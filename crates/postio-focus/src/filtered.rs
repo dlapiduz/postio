@@ -404,6 +404,8 @@ impl FocusController {
             // shown any more. The view drawn next says so; nothing else
             // needs telling.
             let _ = filtered.cursor.leave(0);
+            // And it opens on its first row, as every place does.
+            filtered.cursor.moved_to(None);
             let reason = filtered.reason();
             return Some(vec![
                 Step::Show(Intent::Filtered(Box::new(self.filtered_view()?))),

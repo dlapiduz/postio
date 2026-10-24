@@ -341,6 +341,8 @@ impl FilteredView {
         // shown any more.
         let change = self.picker.borrow_mut().clear();
         self.apply(change);
+        // And it opens on its first row, as every place does.
+        self.picker.borrow_mut().set_rows(Vec::new());
         self.show_tabs();
         self.read_page(0);
     }
