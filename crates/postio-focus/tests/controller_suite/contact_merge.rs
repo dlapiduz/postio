@@ -424,24 +424,39 @@ fn split_takes_an_address_off_a_merged_person_and_a_lone_address_stays() {
     assert_eq!(id.get(), 9);
 }
 
-#[test]
-fn after_an_import_the_cursor_goes_to_the_first_new_person_and_the_review_looks_at_what_it_found() {
-    let mut focus = mac();
-    open(&mut focus);
+/// An import lands with the view up: the counts are read again, and then
+/// where the first new person is. Returns that question.
+fn imported(
+    focus: &mut FocusController,
+    made: Vec<ContactId>,
+    touched: Vec<ContactId>,
+) -> (postio_focus::Ticket, ContactId) {
+    let effects = focus.handle_on(Input::ContactsImported { made, touched }, &NoRows);
+    let [(ticket, Request::ContactsOverview)] = asks(&effects)[..] else {
+        panic!("the counts are read before the position: {effects:?}");
+    };
     let effects = focus.handle_on(
-        Input::ContactsImported {
-            made: vec![ContactId::new(3)],
-            touched: vec![ContactId::new(3), ContactId::new(1)],
-        },
+        Input::Reply(ticket, Reply::ContactsOverview(Ok(overview(None)))),
         &NoRows,
     );
-    let (ticket, person) = asks(&effects)
+    asks(&effects)
         .into_iter()
         .find_map(|(ticket, request)| match request {
             Request::ContactPosition { person, .. } => Some((ticket, person)),
             _ => None,
         })
-        .expect("where the first new person is, is asked");
+        .expect("where the first new person is, is asked")
+}
+
+#[test]
+fn after_an_import_the_cursor_goes_to_the_first_new_person_and_the_review_looks_at_what_it_found() {
+    let mut focus = mac();
+    open(&mut focus);
+    let (ticket, person) = imported(
+        &mut focus,
+        vec![ContactId::new(3)],
+        vec![ContactId::new(3), ContactId::new(1)],
+    );
     assert_eq!(person, ContactId::new(3));
     let effects = focus.handle_on(
         Input::Reply(
@@ -526,20 +541,11 @@ fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
             .any(|intent| matches!(intent, Intent::ContactsRows { .. })),
         "the list reads its rows again: {changed:?}"
     );
-    let effects = focus.handle_on(
-        Input::ContactsImported {
-            made: vec![ContactId::new(7), ContactId::new(8)],
-            touched: vec![ContactId::new(7), ContactId::new(8), ContactId::new(1)],
-        },
-        &NoRows,
+    let (ticket, person) = imported(
+        &mut focus,
+        vec![ContactId::new(7), ContactId::new(8)],
+        vec![ContactId::new(7), ContactId::new(8), ContactId::new(1)],
     );
-    let (ticket, person) = asks(&effects)
-        .into_iter()
-        .find_map(|(ticket, request)| match request {
-            Request::ContactPosition { person, .. } => Some((ticket, person)),
-            _ => None,
-        })
-        .expect("where the first person brought in is, is asked");
     assert_eq!(person, ContactId::new(7));
 
     // On another tab the person is not in the list; the list is still current.
@@ -552,5 +558,63 @@ fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
             .iter()
             .any(|intent| matches!(intent, Intent::ContactsRows { .. })),
         "a person on another tab still leaves the rows current: {effects:?}"
+    );
+}
+
+/// An import changes the people and says who is new; the engine's
+/// `ContactsChanged` re-reads the counts. However those answers arrive, the
+/// cursor ends on the first new person: a position answered before the new
+/// counts must not be undone by the restart they cause (#2027, where the
+/// GTK suite saw the cursor stay on the first row).
+#[test]
+fn the_cursor_reaches_the_imported_person_when_the_new_counts_come_last() {
+    let mut focus = mac();
+    open(&mut focus);
+    let mut pending = asks(&focus.handle_on(
+        Input::Event(postio_core::Event::ContactsChanged {
+            names_changed: true,
+        }),
+        &NoRows,
+    ));
+    pending.extend(asks(&focus.handle_on(
+        Input::ContactsImported {
+            made: vec![ContactId::new(4)],
+            touched: vec![ContactId::new(4)],
+        },
+        &NoRows,
+    )));
+    let mut grown = overview(None);
+    grown.total = 4;
+    for (tab, count) in &mut grown.tabs {
+        if matches!(tab, ContactTab::All | ContactTab::People) {
+            *count = 4;
+        }
+    }
+    // Positions first: the order that loses the cursor.
+    for _ in 0..8 {
+        pending.sort_by_key(|(_, request)| !matches!(request, Request::ContactPosition { .. }));
+        let Some(index) = pending.iter().position(|(_, request)| {
+            matches!(
+                request,
+                Request::ContactPosition { .. } | Request::ContactsOverview
+            )
+        }) else {
+            break;
+        };
+        let (ticket, request) = pending.remove(index);
+        let reply = match request {
+            Request::ContactPosition { person, .. } => Reply::ContactPosition {
+                person,
+                at: Some(3),
+            },
+            _ => Reply::ContactsOverview(Ok(grown.clone())),
+        };
+        pending.extend(asks(&focus.handle_on(Input::Reply(ticket, reply), &NoRows)));
+    }
+    assert_eq!(focus.contacts_total(), 4);
+    assert_eq!(
+        focus.contacts_cursor(),
+        Some(3),
+        "the cursor is on the imported person, not where the restart put it"
     );
 }

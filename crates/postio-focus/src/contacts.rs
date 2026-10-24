@@ -550,7 +550,9 @@ impl FocusController {
             steps.extend(self.contacts_go_to_import());
             return steps;
         }
-        self.draw_contacts()
+        let mut steps = self.draw_contacts();
+        steps.extend(self.contacts_go_to_import());
+        steps
     }
 
     fn contacts_page_read(
