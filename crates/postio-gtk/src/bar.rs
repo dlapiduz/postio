@@ -366,8 +366,21 @@ impl Bar {
         self.heading.set_visible(view.heading.is_some());
         self.heading
             .set_text(view.heading.as_deref().unwrap_or_default());
-        let same_lines = *self.lines.borrow() == view.lines;
-        if !same_lines {
+        // The same lines under new tokens -- a later answer drawing what is
+        // already there -- keep their rows: only what runs them changes.
+        let same_words = {
+            let lines = self.lines.borrow();
+            lines.len() == view.lines.len()
+                && lines.iter().zip(&view.lines).all(|(was, now)| {
+                    BarLine {
+                        token: now.token,
+                        ..was.clone()
+                    } == *now
+                })
+        };
+        if same_words {
+            self.lines.replace(view.lines.clone());
+        } else {
             while let Some(child) = self.list.first_child() {
                 self.list.remove(&child);
             }
