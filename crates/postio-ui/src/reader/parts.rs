@@ -386,6 +386,31 @@ pub fn spoken(node: &Node) -> String {
     format!("{name}, {}, {fetched}", human_size(node.size))
 }
 
+/// `name` as a file may be written under: a separator a dash, a control
+/// character gone, and no leading or trailing dot or space; `None` when
+/// nothing is left. A sender wrote it, so nothing in it is trusted.
+pub fn clean_file_name(name: &str) -> Option<String> {
+    let name = name.trim();
+    let cleaned: String = name
+        .chars()
+        // A separator becomes a dash: the sender meant a character to be
+        // there, and eliding it silently joins two name components.
+        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
+        // A control character is dropped rather than marked, because the
+        // sender did not mean anything by it that a reader could see.
+        //
+        // #147, found by the `parse_message` fuzz target: a NUL reaches
+        // here both from a literal `filename="a\0b.txt"` and from one
+        // base64'd inside an RFC 2047 encoded word. The name then goes to
+        // a file dialog, and gtk-rs converts a `&str` to a C string on
+        // the way — a conversion an interior NUL has no valid answer for.
+        // Pressing `s` on a message must not be how the application ends.
+        .filter(|c| !c.is_control())
+        .collect();
+    let cleaned = cleaned.trim_matches(['.', ' '].as_slice()).to_owned();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
 /// A filename safe to write `node` out under.
 ///
 /// The sender's name when there is one, with any path separators taken out —
@@ -404,29 +429,8 @@ pub fn spoken(node: &Node) -> String {
 /// miss a separator, and the platform that missed it would be the one with no
 /// test for the message that exploited it.
 pub fn save_name(node: &Node) -> String {
-    if let Some(name) = node.filename.as_deref().map(str::trim)
-        && !name.is_empty()
-    {
-        let cleaned: String = name
-            .chars()
-            // A separator becomes a dash: the sender meant a character to be
-            // there, and eliding it silently joins two name components.
-            .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-            // A control character is dropped rather than marked, because the
-            // sender did not mean anything by it that a reader could see.
-            //
-            // #147, found by the `parse_message` fuzz target: a NUL reaches
-            // here both from a literal `filename="a\0b.txt"` and from one
-            // base64'd inside an RFC 2047 encoded word. The name then goes to
-            // a file dialog, and gtk-rs converts a `&str` to a C string on
-            // the way — a conversion an interior NUL has no valid answer for.
-            // Pressing `s` on a message must not be how the application ends.
-            .filter(|c| !c.is_control())
-            .collect();
-        let cleaned = cleaned.trim_matches(['.', ' '].as_slice()).to_owned();
-        if !cleaned.is_empty() {
-            return cleaned;
-        }
+    if let Some(cleaned) = node.filename.as_deref().and_then(clean_file_name) {
+        return cleaned;
     }
     let extension = node
         .mime

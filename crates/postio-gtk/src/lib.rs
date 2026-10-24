@@ -36,6 +36,7 @@ pub mod places;
 pub mod reading_pane;
 mod rebuild;
 pub mod results;
+pub mod results_files;
 pub mod row_menu;
 pub mod rule_dialog;
 pub mod rules;
