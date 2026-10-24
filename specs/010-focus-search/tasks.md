@@ -507,7 +507,11 @@ turns on (T176).
     `QuickLookModel` still goes by position). The file-name cleaning for a
     save is `postio_ui::reader::parts::clean_file_name`, shared with the
     reader's.
-- [ ] T174 The People tab.
+- [x] T174 The People tab.
+  - *As built:* `PeopleList` in `crates/postio-gtk/src/results_files.rs`,
+    a third page of the results' body beside the rows and the Files grid,
+    read by position as they are; Return and a double-click search `from:`
+    the person through the controller.
 - [ ] T175 No results and the relaxations (`Relaxations`).
 - [ ] T176 Turn `results_view` on for Freedesktop; offer the Apple-only
   commands on Linux (`registry::offered_on`) with Linux keys where the ⌘

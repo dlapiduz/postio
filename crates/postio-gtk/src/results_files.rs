@@ -27,20 +27,20 @@ mod imp {
     use super::*;
 
     #[derive(Default)]
-    pub struct FileCards {
+    pub struct Positions {
         pub total: Cell<u32>,
     }
 
     #[glib::object_subclass]
-    impl ObjectSubclass for FileCards {
-        const NAME: &'static str = "PostioFileCards";
-        type Type = super::FileCards;
+    impl ObjectSubclass for Positions {
+        const NAME: &'static str = "PostioResultPositions";
+        type Type = super::Positions;
         type Interfaces = (gio::ListModel,);
     }
 
-    impl ObjectImpl for FileCards {}
+    impl ObjectImpl for Positions {}
 
-    impl ListModelImpl for FileCards {
+    impl ListModelImpl for Positions {
         fn item_type(&self) -> glib::Type {
             gtk::StringObject::static_type()
         }
@@ -57,18 +57,18 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// How many cards the grid holds; each is read when drawn.
-    pub struct FileCards(ObjectSubclass<imp::FileCards>)
+    /// How many cards or people a tab holds; each is read when drawn.
+    pub struct Positions(ObjectSubclass<imp::Positions>)
         @implements gio::ListModel;
 }
 
-impl Default for FileCards {
+impl Default for Positions {
     fn default() -> Self {
         glib::Object::new()
     }
 }
 
-impl FileCards {
+impl Positions {
     fn set_total(&self, total: u32) {
         let before = self.imp().total.replace(total);
         self.items_changed(0, before, total);
@@ -85,7 +85,7 @@ pub struct FilesGrid {
     root: gtk::Box,
     title: gtk::Label,
     note: gtk::Label,
-    cards: FileCards,
+    cards: Positions,
     grid: gtk::GridView,
     feed: Feed,
     act: Rc<dyn Fn(CommandId)>,
@@ -105,7 +105,7 @@ impl FilesGrid {
         head.add_css_class("focus-files-head");
         head.append(&title);
         head.append(&note);
-        let cards = FileCards::default();
+        let cards = Positions::default();
         let factory = gtk::SignalListItemFactory::new();
         let grid = gtk::GridView::new(
             Some(gtk::NoSelection::new(Some(cards.clone()))),
@@ -265,6 +265,164 @@ impl FilesGrid {
         click.connect_pressed(move |_, _, _, _| feed.input(Input::ResultsPoint(at)));
         root.add_controller(click);
         root
+    }
+}
+
+/// The People tab (design §3.11): everyone the results are from or to,
+/// most messages first, a row a person in the rows' place.
+pub struct PeopleList {
+    root: gtk::ScrolledWindow,
+    people: Positions,
+    list: gtk::ListView,
+    feed: Feed,
+}
+
+impl PeopleList {
+    /// An empty list over `feed`; `act` runs Return's command on a
+    /// double-click.
+    pub fn new(feed: Feed, act: Rc<dyn Fn(CommandId)>) -> Rc<Self> {
+        let people = Positions::default();
+        let factory = gtk::SignalListItemFactory::new();
+        let list = gtk::ListView::new(
+            Some(gtk::NoSelection::new(Some(people.clone()))),
+            Some(factory.clone()),
+        );
+        list.add_css_class("focus-results-list");
+        list.add_css_class("focus-people-list");
+        list.set_single_click_activate(false);
+        list.update_property(&[gtk::accessible::Property::Label(
+            postio_ui::search_view::A11Y_PEOPLE,
+        )]);
+        let root = gtk::ScrolledWindow::builder()
+            .child(&list)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .build();
+        let pane = Rc::new(PeopleList {
+            root,
+            people,
+            list,
+            feed,
+        });
+        let weak = Rc::downgrade(&pane);
+        factory.connect_bind({
+            let weak = weak.clone();
+            move |_, item| {
+                let (Some(item), Some(pane)) =
+                    (item.downcast_ref::<gtk::ListItem>(), weak.upgrade())
+                else {
+                    return;
+                };
+                let row = item
+                    .item()
+                    .and_downcast::<gtk::StringObject>()
+                    .and_then(|object| object.string().parse::<u64>().ok())
+                    .and_then(|at| pane.feed.result_person(at).map(|row| (at, row)));
+                match row {
+                    Some((at, row)) => {
+                        item.set_accessible_label(&row.accessible);
+                        item.set_child(Some(&pane.row(at, &row)));
+                    }
+                    None => item.set_child(None::<&gtk::Widget>),
+                }
+            }
+        });
+        pane.list.connect_activate(move |_, at| {
+            if let Some(pane) = weak.upgrade() {
+                pane.feed.input(Input::ResultsPoint(u64::from(at)));
+                act(CommandId::OpenMessage);
+            }
+        });
+        pane
+    }
+
+    /// What the results pane lays out.
+    pub fn widget(&self) -> &gtk::ScrolledWindow {
+        &self.root
+    }
+
+    /// `count` people, every drawn row read again.
+    pub fn show(&self, count: u64) {
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
+        if self.people.n_items() == count {
+            self.people.refresh();
+        } else {
+            self.people.set_total(count);
+        }
+    }
+
+    /// The rows drawn again: the ring moved.
+    pub fn refresh(&self) {
+        self.people.refresh();
+    }
+
+    /// Scroll the row at `at` into view.
+    pub fn reveal(&self, at: u64) {
+        if let Ok(at) = u32::try_from(at)
+            && at < self.people.n_items()
+        {
+            self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+        }
+    }
+
+    /// Take the keyboard.
+    pub fn focus(&self) {
+        self.list.grab_focus();
+    }
+
+    /// The people's names, in order: what a test reads.
+    pub fn names(&self) -> Vec<String> {
+        (0..u64::from(self.people.n_items()))
+            .filter_map(|at| self.feed.result_person(at))
+            .map(|row| row.name)
+            .collect()
+    }
+
+    /// One person: the avatar, the name over the address, how many
+    /// messages, the newest one's date.
+    fn row(&self, at: u64, row: &postio_focus::PersonRow) -> gtk::Box {
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+        line.add_css_class("focus-results-row");
+        line.add_css_class("focus-people-row");
+        if row.focused {
+            line.add_css_class("focus-results-cursor");
+        }
+        let avatar = gtk::Label::new(Some(&row.initials));
+        avatar.add_css_class("focus-dropdown-avatar");
+        avatar.add_css_class("focus-people-avatar");
+        avatar.set_accessible_role(gtk::AccessibleRole::Presentation);
+        avatar.set_valign(gtk::Align::Center);
+        line.append(&avatar);
+        let words = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        words.set_hexpand(true);
+        words.set_valign(gtk::Align::Center);
+        let name = gtk::Label::new(Some(&row.name));
+        name.set_xalign(0.0);
+        name.add_css_class("focus-people-name");
+        words.append(&name);
+        if row.address != row.name {
+            let address = gtk::Label::new(Some(&row.address));
+            address.add_css_class("dim-label");
+            address.add_css_class("focus-people-address");
+            address.set_xalign(0.0);
+            words.append(&address);
+        }
+        line.append(&words);
+        let messages = gtk::Label::new(Some(&row.messages));
+        messages.add_css_class("dim-label");
+        messages.add_css_class("focus-people-messages");
+        messages.set_valign(gtk::Align::Center);
+        line.append(&messages);
+        let last = gtk::Label::new(Some(&row.last));
+        last.add_css_class("focus-results-date");
+        last.set_xalign(1.0);
+        last.set_valign(gtk::Align::Center);
+        line.append(&last);
+        let click = gtk::GestureClick::new();
+        let feed = self.feed.clone();
+        click.connect_pressed(move |_, _, _, _| feed.input(Input::ResultsPoint(at)));
+        line.add_controller(click);
+        line
     }
 }
 

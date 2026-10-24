@@ -27,6 +27,7 @@
 //! | `s06` | Spec 010's results for `harbor`, in the inbox's place (staged on) |
 //! | `s08`, `s09` | The same with From ▾ open, and with Date ▾ open |
 //! | `s10`, `s11` | The same with Quick Look open, and on the Files tab |
+//! | `s12` | The same on the People tab |
 //! | `26` | The row menu (T199), right-clicked on a row below screen 01's selection |
 //! | `27` | A newsletter that paints its own page, opened: on paper (handoff screens 03, 04) |
 //! | `28` | Office mail in black text, opened: in app colours (handoff screens 11, 13) |
@@ -166,6 +167,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("s09", "spec 010's results with Date open (staged on)"),
     ("s10", "spec 010's results with Quick Look open (staged on)"),
     ("s11", "spec 010's results on the Files tab (staged on)"),
+    ("s12", "spec 010's results on the People tab (staged on)"),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -637,7 +639,7 @@ fn stage(
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(400));
         }
-        "s06" | "s08" | "s09" | "s10" | "s11" => {
+        "s06" | "s08" | "s09" | "s10" | "s11" | "s12" => {
             pick_three();
             window.act(CommandId::Search);
             let bar = window.bar().ok_or("no command bar")?;
@@ -663,6 +665,14 @@ fn stage(
                 let results = window.results().ok_or("no results")?;
                 if !settle_until(|| results.quick_look().is_open()) {
                     return Err("Quick Look never opened".into());
+                }
+            } else if screen == "s12" {
+                let results = window.results().ok_or("no results")?;
+                if !settle_until(|| results.click_tab("People")) {
+                    return Err("no People tab".into());
+                }
+                if !settle_until(|| !results.people().names().is_empty()) {
+                    return Err("the People tab drew nobody".into());
                 }
             } else if screen == "s11" {
                 let results = window.results().ok_or("no results")?;

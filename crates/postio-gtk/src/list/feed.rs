@@ -163,6 +163,12 @@ impl Feed {
         self.inner.focus.borrow().result_row(position)
     }
 
+    /// The People tab's row at `position`, drawn; `None` past the last, or
+    /// before the rows are read.
+    pub fn result_person(&self, position: u64) -> Option<postio_focus::PersonRow> {
+        self.inner.focus.borrow().result_person(position)
+    }
+
     /// The Files tab's card at `position`, drawn; `None` past the last, or
     /// before the cards are read.
     pub fn result_file(&self, position: u64) -> Option<postio_focus::FileCard> {

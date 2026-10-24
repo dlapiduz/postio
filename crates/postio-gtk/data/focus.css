@@ -1484,6 +1484,20 @@ button.focus-popover-preset.focus-popover-preset-selected {
   font-size: var(--postio-text-label);
 }
 
+/* ── The People tab (spec 010 §3.11) ─────────────────────────────────── */
+/* A result row's rhythm: 58 tall, the hairline, the cursor's ring; the
+   avatar, the name over the address, the count, the newest date. */
+.focus-people-avatar {
+  min-width: 32px;
+  min-height: 32px;
+  font-size: var(--postio-text-meta);
+}
+
+.focus-people-address,
+.focus-people-messages {
+  font-size: var(--postio-text-label);
+}
+
 /* ── The folders popover (screen 10) ─────────────────────────────────── */
 /* A popover is a surface of its own and does not inherit the window's
    face: without this every name in it was set in the fallback mono (C25:

@@ -490,6 +490,10 @@ const CASES: &[(&str, fn())] = &[
         results_files::quick_look_shows_a_conversation_s_matches as fn(),
     ),
     (
+        "results::return_on_a_person_searches_from_them",
+        results::return_on_a_person_searches_from_them as fn(),
+    ),
+    (
         "results::show_all_opens_the_results_and_back_returns_to_the_inbox",
         results::show_all_opens_the_results_and_back_returns_to_the_inbox as fn(),
     ),
