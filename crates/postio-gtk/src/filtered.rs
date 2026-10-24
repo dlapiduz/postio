@@ -51,6 +51,8 @@ pub struct FilteredView {
     list: gtk::ListBox,
     footer: KeyLine,
     /// The bar over the footer while anything is selected.
+    /// What stands in place of the rows when the tab has none.
+    empty: gtk::Label,
     bar: gtk::Box,
     bar_count: gtk::Label,
     bar_verbs: gtk::Box,
@@ -65,6 +67,8 @@ pub struct FilteredView {
     tab: Cell<usize>,
     /// Each tab's count, as last read.
     counts: Cell<[u32; 7]>,
+    /// Whether the counts have been read once.
+    counted: Cell<bool>,
     /// The rows listed, in order.
     rows: RefCell<Vec<FilteredRow>>,
     /// What each row of the list is: a day's heading, or the row at that
@@ -131,12 +135,17 @@ impl FilteredView {
             .vexpand(true)
             .build();
         let footer = KeyLine::new("focus-filtered-footer");
+        let empty = gtk::Label::new(Some(filtered::EMPTY));
+        empty.add_css_class("dim-label");
+        empty.set_vexpand(true);
+        empty.set_visible(false);
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("focus-filtered");
         root.append(&header);
         root.append(&tab_row);
         root.append(&scrolled);
+        root.append(&empty);
         // While anything is selected (screen 01's bar, over Filtered).
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         bar.add_css_class("focus-bulk-bar");
@@ -160,6 +169,7 @@ impl FilteredView {
             tabs,
             list,
             footer,
+            empty,
             bar,
             bar_count,
             bar_verbs,
@@ -169,6 +179,7 @@ impl FilteredView {
             keymap: RefCell::new(keymap.clone()),
             tab: Cell::new(0),
             counts: Cell::new([0; 7]),
+            counted: Cell::new(false),
             rows: RefCell::default(),
             shown: RefCell::default(),
             more: Cell::new(false),
@@ -496,10 +507,20 @@ impl FilteredView {
                 row.remove_css_class("focus-filtered-picked");
             }
             if let Some(check) = find_class(&row, "focus-filtered-check") {
-                check.set_visible(picked);
+                check.set_opacity(if picked { 1.0 } else { 0.0 });
             }
         }
         self.show_bar(&selected);
+    }
+
+    /// Say so when the tab on screen has nothing, once it has been read.
+    fn show_empty(&self) {
+        let nothing = self.counted.get() && self.rows.borrow().is_empty() && !self.more.get();
+        self.empty.set_visible(nothing);
+        if nothing {
+            // The rows the keyboard was on are gone: it stays in the view.
+            self.list.grab_focus();
+        }
     }
 
     fn show_bar(&self, selected: &[MessageId]) {
@@ -572,6 +593,8 @@ impl FilteredView {
                 return;
             };
             view.counts.set(filtered::tab_counts(&reasons));
+            view.counted.set(true);
+            view.show_empty();
             view.show_tabs();
         });
     }
@@ -705,7 +728,9 @@ impl FilteredView {
             // The list's checked box, in the gutter.
             let check = gtk::Image::from_icon_name("checkbox-checked-symbolic");
             check.add_css_class("focus-filtered-check");
-            check.set_visible(false);
+            // Always laid out, so a checked row's columns line up with the
+            // rest; only drawn while it is selected.
+            check.set_opacity(0.0);
             line.append(&check);
             let sender = gtk::Label::new(Some(
                 &row.message
@@ -763,6 +788,7 @@ impl FilteredView {
         drop(rows);
         self.shown.replace(shown);
         self.show_picks();
+        self.show_empty();
         // Rows are rebuilt here, including after `read_page`'s async
         // fetch lands, so a cap taught only once after `open()` would miss
         // every row a later page adds (T142, T143).

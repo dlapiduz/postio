@@ -57,7 +57,7 @@ struct FilteredModelTests {
 
     static func view(
         rows: [FilteredLineFfi]? = nil, focused: UInt32? = 0, more: Bool = false, on tab: Int = 0,
-        bar: FilteredBarFfi? = nil
+        bar: FilteredBarFfi? = nil, empty: String? = nil
     ) -> FilteredViewFfi {
         let names = ["All", "Spam", "Promotions", "Notifications", "Receipts", "Shipping", "Social"]
         return FilteredViewFfi(
@@ -79,7 +79,7 @@ struct FilteredModelTests {
                 FocusHintFfi(key: "R", label: "restore + never filter sender"),
                 FocusHintFfi(key: "1\u{2013}7", label: "reason tabs"),
             ],
-            bar: bar)
+            bar: bar, empty: empty)
     }
 
     static func model() -> (FilteredModel, Engine) {
@@ -234,5 +234,13 @@ struct FilteredModelTests {
         let (model, _) = Self.model()
         #expect(model.apply(.focusFilteredSelection(selected: [1], bar: Self.bar())) == nil)
         #expect(model.bar == nil)
+    }
+
+    @Test func anEmptyTabSaysSoInPlaceOfItsRows() {
+        let (model, _) = Self.model()
+        model.apply(.focusFiltered(view: Self.view(rows: [], focused: nil, empty: "Nothing is filtered here")))
+        #expect(model.empty == "Nothing is filtered here")
+        model.apply(.focusFiltered(view: Self.view()))
+        #expect(model.empty == nil)
     }
 }
