@@ -1460,8 +1460,8 @@ impl SettingsPanel {
             when.set_valign(gtk::Align::Start);
             let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
             row.add_css_class("postio-settings-agents-call-row");
-            row.set_margin_top(4);
-            row.set_margin_bottom(4);
+            row.set_margin_top(space::S1);
+            row.set_margin_bottom(space::S1);
             row.append(&line);
             row.append(&when);
             imp.agents_calls.append(&row);
@@ -1577,7 +1577,7 @@ impl SettingsPanel {
         address.set_xalign(0.0);
         address.set_ellipsize(pango::EllipsizeMode::Middle);
         let facts = stat_line(&format!("{} \u{b7} {}", account.folders, account.abilities));
-        let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let text = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
         text.set_hexpand(true);
         text.append(&address);
         text.append(&facts);
@@ -1603,8 +1603,8 @@ impl SettingsPanel {
         ));
 
         let box_ = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
-        box_.set_margin_top(6);
-        box_.set_margin_bottom(6);
+        box_.set_margin_top(space::S2);
+        box_.set_margin_bottom(space::S2);
         box_.append(&text);
         box_.append(&revoke);
         row.set_child(Some(&box_));
