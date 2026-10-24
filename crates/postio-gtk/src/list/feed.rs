@@ -66,6 +66,27 @@ impl PageSource for Source {
     }
 }
 
+thread_local! {
+    /// Whether a feed made on this thread runs spec 010's search: the
+    /// dropdown and the results view. Off until GTK draws all of it
+    /// (spec 010 T176); a test turns it on to drive what is drawn so far.
+    static RESULTS_VIEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run feeds made from now on, on this thread, with spec 010's search
+/// (`Policy.caps.results_view`) -- for tests only, until T176 turns it on
+/// for Freedesktop and this goes.
+pub fn stage_results_view(on: bool) {
+    RESULTS_VIEW.with(|staged| staged.set(on));
+}
+
+/// Linux's policy, with the staged search when a test asked for it.
+fn policy() -> Policy {
+    let mut policy = Policy::for_platform(Platform::Freedesktop);
+    policy.caps.results_view = RESULTS_VIEW.with(std::cell::Cell::get);
+    policy
+}
+
 impl Feed {
     /// A feed reading through `client`, with nothing open yet.
     pub fn new(client: Client) -> Self {
@@ -73,9 +94,7 @@ impl Feed {
             inner: Rc::new(Inner {
                 client,
                 list: FocusList::default(),
-                focus: RefCell::new(FocusController::new(Policy::for_platform(
-                    Platform::Freedesktop,
-                ))),
+                focus: RefCell::new(FocusController::new(policy())),
                 on_filled: RefCell::new(Vec::new()),
                 on_intent: RefCell::new(Vec::new()),
             }),

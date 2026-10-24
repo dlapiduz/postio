@@ -39,6 +39,8 @@ pub enum BarInput {
     Run(u64),
     /// A saved search's pill, or another command the bar has a control for.
     Command(CommandId),
+    /// The arrows came to rest on the dropdown's row with this token.
+    Highlighted(u64),
 }
 
 type Handler = Rc<dyn Fn(BarInput)>;
@@ -80,6 +82,13 @@ pub struct Bar {
     /// Where the keyboard goes when the bar closes: the list, once the
     /// window says which widget that is.
     home: RefCell<Option<gtk::Widget>>,
+    /// Spec 009's blend of lines: the saved row, the echo, the heading,
+    /// the lines and their footer.
+    blend: gtk::Box,
+    /// Spec 010's dropdown, drawn in the blend's place while the
+    /// controller sends [`postio_focus::Intent::Dropdown`].
+    dropdown: Rc<crate::dropdown::Dropdown>,
+    dropping: Cell<bool>,
 }
 
 impl Bar {
@@ -145,13 +154,18 @@ impl Bar {
         // results hang below it as a panel of their own.
         input.set_halign(gtk::Align::Center);
         input.set_width_request(FIELD_WIDTH);
+        let blend = gtk::Box::new(gtk::Orientation::Vertical, S2);
+        blend.append(&saved_row);
+        blend.append(&echo);
+        blend.append(&heading);
+        blend.append(&scrolled);
+        blend.append(&footer);
+        let dropdown = crate::dropdown::Dropdown::new();
+        dropdown.widget().set_visible(false);
         let panel = gtk::Box::new(gtk::Orientation::Vertical, S2);
         panel.add_css_class("focus-bar-panel");
-        panel.append(&saved_row);
-        panel.append(&echo);
-        panel.append(&heading);
-        panel.append(&scrolled);
-        panel.append(&footer);
+        panel.append(&blend);
+        panel.append(dropdown.widget());
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("focus-bar");
         root.set_width_request(WIDTH);
@@ -191,6 +205,9 @@ impl Bar {
             me: RefCell::default(),
             saved_row,
             home: RefCell::default(),
+            blend,
+            dropdown,
+            dropping: Cell::new(false),
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
@@ -213,6 +230,22 @@ impl Bar {
             }
         });
         bar.over.add_controller(outside);
+        bar.dropdown.connect_run({
+            let weak = weak.clone();
+            move |token| {
+                if let Some(bar) = weak.upgrade() {
+                    bar.say(BarInput::Run(token));
+                }
+            }
+        });
+        bar.dropdown.connect_highlighted({
+            let weak = weak.clone();
+            move |token| {
+                if let Some(bar) = weak.upgrade() {
+                    bar.say(BarInput::Highlighted(token));
+                }
+            }
+        });
         bar.entry.connect_changed({
             let weak = weak.clone();
             move |entry| {
@@ -337,6 +370,7 @@ impl Bar {
         self.entry.set_text("");
         self.quiet.set(false);
         self.view.replace(BarView::default());
+        self.drop_down(false);
         self.lines.borrow_mut().clear();
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
@@ -359,6 +393,7 @@ impl Bar {
     /// Draw `view`, whole: the controller's
     /// [`postio_focus::Intent::BarLines`].
     pub fn show(&self, view: &BarView) {
+        self.drop_down(false);
         let kept = self.highlighted_line();
         self.show_chips(&view.chips, view.editing);
         self.echo.set_visible(view.echo.is_some());
@@ -422,6 +457,25 @@ impl Bar {
             }
             None => self.list.unselect_all(),
         }
+    }
+
+    /// Draw the dropdown, whole: the controller's
+    /// [`postio_focus::Intent::Dropdown`], in the lines' place.
+    pub fn show_dropdown(&self, view: &postio_focus::DropdownView) {
+        self.drop_down(true);
+        self.dropdown.show(view);
+    }
+
+    /// The dropdown, for what a test reads of it.
+    pub fn dropdown(&self) -> &crate::dropdown::Dropdown {
+        &self.dropdown
+    }
+
+    /// Show the dropdown, or the blend of lines, in the panel.
+    fn drop_down(&self, dropping: bool) {
+        self.dropping.set(dropping);
+        self.dropdown.widget().set_visible(dropping);
+        self.blend.set_visible(!dropping);
     }
 
     fn show_chips(&self, chips: &[String], editing: Option<u32>) {
@@ -515,6 +569,8 @@ impl Bar {
     /// into the chips, and on from chip to chip.
     pub fn press(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
         match key {
+            gtk::gdk::Key::Down if self.dropping.get() => self.dropdown.step(1),
+            gtk::gdk::Key::Up if self.dropping.get() => self.dropdown.step(-1),
             gtk::gdk::Key::Down => self.step(1),
             gtk::gdk::Key::Up => self.step(-1),
             gtk::gdk::Key::Tab if state.is_empty() => {
@@ -757,6 +813,10 @@ impl Bar {
     }
 
     fn run_selected(&self) {
+        if self.dropping.get() {
+            self.dropdown.run_highlighted();
+            return;
+        }
         if let Some(row) = self.list.selected_row()
             && let Ok(index) = usize::try_from(row.index())
         {

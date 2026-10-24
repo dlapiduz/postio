@@ -2145,6 +2145,11 @@ impl FocusWindow {
                     bar.show(view);
                 }
             }
+            Intent::Dropdown(view) => {
+                if let Some(bar) = self.bar() {
+                    bar.show_dropdown(view);
+                }
+            }
             Intent::Place { name } => self.show_place(name),
             Intent::OpenPlaces => self.open_places(),
             Intent::PlacesChanged => {
@@ -2608,6 +2613,9 @@ impl FocusWindow {
                     feed.input(postio_focus::Input::Typed { text })
                 }
                 crate::bar::BarInput::Run(token) => feed.input(postio_focus::Input::BarRun(token)),
+                crate::bar::BarInput::Highlighted(token) => {
+                    feed.input(postio_focus::Input::SearchHighlighted(token))
+                }
                 crate::bar::BarInput::Command(id) => {
                     if let Some(window) = window.upgrade() {
                         window.run_in_controller(id);

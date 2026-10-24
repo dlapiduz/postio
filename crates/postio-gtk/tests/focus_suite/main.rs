@@ -46,6 +46,7 @@ mod digest;
 mod digest_summary;
 mod drafts;
 mod drag_out;
+mod dropdown;
 mod e2e;
 mod empty;
 mod every_command;
@@ -441,6 +442,26 @@ const CASES: &[(&str, fn())] = &[
     (
         "compose_layout::the_dialog_follows_the_message_dialogs_size_rule",
         compose_layout::the_dialog_follows_the_message_dialogs_size_rule as fn(),
+    ),
+    (
+        "dropdown::the_words_state_draws_hits_pills_and_show_all",
+        dropdown::the_words_state_draws_hits_pills_and_show_all as fn(),
+    ),
+    (
+        "dropdown::the_arrows_skip_what_runs_nothing_and_return_runs",
+        dropdown::the_arrows_skip_what_runs_nothing_and_return_runs as fn(),
+    ),
+    (
+        "dropdown::a_redraw_keeps_the_highlight_unless_told",
+        dropdown::a_redraw_keeps_the_highlight_unless_told as fn(),
+    ),
+    (
+        "dropdown::a_pill_runs_its_token",
+        dropdown::a_pill_runs_its_token as fn(),
+    ),
+    (
+        "dropdown::slash_opens_the_dropdown_and_a_word_finds_top_hits",
+        dropdown::slash_opens_the_dropdown_and_a_word_finds_top_hits as fn(),
     ),
     (
         "bar::a_hit_steps_the_results_and_its_own_thread",
