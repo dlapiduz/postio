@@ -1021,6 +1021,59 @@ fn tab_steps_into_the_chips_and_back_to_words_returns_to_what_was_typed() {
 // -- A hit, and back to the results ----------------------------------------
 
 #[test]
+fn a_hits_line_names_the_message_it_opens() {
+    // What a frontend observes and a storyboard checks: which message the
+    // highlighted line would open, without asking the controller again.
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = bar_open(&mut focus, CommandId::Search, &rows);
+    let effects = typed(&mut focus, "tide", &rows);
+    let effects = found(
+        &mut focus,
+        &effects,
+        vec![hit(1, "Tide tables"), hit(2, "Tide again")],
+    );
+    let lines = view(&effects);
+    assert_eq!(line(&lines, "Tide again").message, Some(MessageId::new(2)));
+    assert!(
+        lines
+            .lines
+            .iter()
+            .filter(|line| line.kind != BarLineKind::Message)
+            .all(|line| line.message.is_none()),
+        "only a message's line names one"
+    );
+}
+
+#[test]
+fn a_message_a_hit_opened_is_among_the_hits_until_it_closes() {
+    // How a frontend tells a hit from the same message as a list row: its
+    // position line is the hits', not the list's.
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = bar_open(&mut focus, CommandId::Search, &rows);
+    let effects = typed(&mut focus, "tide", &rows);
+    let effects = found(
+        &mut focus,
+        &effects,
+        vec![hit(1, "Tide tables"), hit(2, "Tide again")],
+    );
+    let second = line(&view(&effects), "Tide again").clone();
+    assert!(!focus.among_hits(MessageId::new(2)), "nothing is open yet");
+    let _ = focus.handle_on(Input::BarRun(second.token), &rows);
+    assert!(focus.among_hits(MessageId::new(2)));
+    assert!(
+        focus.among_hits(MessageId::new(1)),
+        "and so is the hit k walks to"
+    );
+    let _ = run(&mut focus, CommandId::Back, &rows);
+    assert!(
+        !focus.among_hits(MessageId::new(2)),
+        "closed, it is a row again"
+    );
+}
+
+#[test]
 fn a_hit_opens_walks_the_results_and_closing_it_reopens_the_bar_on_it() {
     let rows = List::of(3);
     let mut focus = mac();
@@ -2975,4 +3028,79 @@ mod dropdown {
         );
         assert!(!focus.answers(CommandId::ShowAllResults));
     }
+}
+
+// -- Saving a search ---------------------------------------------------------
+
+fn save(query: &str) -> postio_focus::SaveSearch {
+    postio_focus::SaveSearch {
+        query: query.to_owned(),
+        name: None,
+        pin: true,
+        notify: false,
+        dates: postio_ui::saved_search::Dates::AsTyped,
+    }
+}
+
+#[test]
+fn a_save_with_no_file_says_so_and_writes_nothing() {
+    assert_eq!(
+        postio_focus::save_search(None, &save("from:ada")),
+        Err(postio_ui::focus_target::NO_CONFIG_TO_SAVE.to_owned())
+    );
+}
+
+#[test]
+fn a_save_writes_the_search_pinned_and_answers_with_every_pinned_one() {
+    // Both apps write a save the same way: `[saved_searches]` alone, the
+    // rest of the file as it was.
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("config.toml");
+    std::fs::write(&path, "[ui]\ntheme = \"dark\"\n").expect("the file");
+
+    let saved = postio_focus::save_search(Some(&path), &save("from:ada")).expect("saved");
+
+    assert_eq!(
+        saved
+            .searches
+            .iter()
+            .map(|search| search.query.as_str())
+            .collect::<Vec<_>>(),
+        ["from:ada"]
+    );
+    assert!(saved.key.is_some(), "the key it was written under");
+    let written = std::fs::read_to_string(&path).expect("the file");
+    assert!(written.contains("theme = \"dark\""), "{written}");
+    assert!(written.contains("from:ada"), "{written}");
+}
+
+// -- What a search asks ------------------------------------------------------
+
+#[test]
+fn a_search_asks_what_a_digest_holds_only_while_a_digest_rule_can_hold_mail() {
+    // GTK's bar asked only then (US10 scenario 7): with no rule nothing is
+    // held, and asking again on every keystroke is a round trip for nothing.
+    let rows = List::of(3);
+    let held_asked = |focus: &mut FocusController| {
+        let _ = bar_open(focus, CommandId::Search, &rows);
+        let effects = typed(focus, "tide", &rows);
+        asked(&effects)
+            .into_iter()
+            .find_map(|request| match request {
+                Request::Search { held, .. } => Some(held),
+                _ => None,
+            })
+    };
+    let mut plain = mac();
+    assert_eq!(held_asked(&mut plain), Some(false), "no rule, nothing held");
+
+    let mut digesting = mac();
+    let config = postio_config::Config::from_toml_str(
+        "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.example\"]\n\
+         cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
+    )
+    .expect("a config")
+    .focus;
+    let _ = digesting.handle_on(Input::Config(config), &rows);
+    assert_eq!(held_asked(&mut digesting), Some(true));
 }

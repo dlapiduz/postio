@@ -147,9 +147,10 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             query,
             order,
             stamp,
+            held,
         } => Reply::Search {
             stamp,
-            answer: search(client, query, order).await,
+            answer: search(client, query, order, held).await,
         },
         Request::Conversations {
             query,
@@ -734,6 +735,7 @@ async fn search(
     client: &Client,
     query: postio_search::ParsedQuery,
     order: postio_search::ResultOrder,
+    held: bool,
 ) -> Result<Found, String> {
     let results = client
         .search_hits(
@@ -747,7 +749,7 @@ async fn search(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "nothing to search for".to_owned())?;
     let hits = postio_ui::command_bar::conversations(results.hits);
-    let held = if hits.is_empty() {
+    let held = if hits.is_empty() || !held {
         Vec::new()
     } else {
         let ids = hits.iter().map(|hit| hit.message_id).collect();

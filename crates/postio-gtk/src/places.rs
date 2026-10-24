@@ -5,17 +5,20 @@
 //!
 //! Focus has no folder sidebar: this, and `in:` in the command bar, are how
 //! a person gets anywhere but the inbox.
+//!
+//! Which places there are, what each counts and where each goes are the
+//! controller's (spec 009 slice 8): the popover asks it for the places a
+//! filter matches ([`Places::connect_source`]) and hands back the one chosen
+//! ([`Places::connect_go`]). The window redraws it when the controller says
+//! the places changed.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
-use postio_client::Client;
 use postio_core::{CommandId, Keymap};
-use postio_model::listing::MailStore as _;
-use postio_model::{FocusScope, ListScope, MailboxRole};
-use postio_ui::finder::Destination;
+use postio_model::MailboxRole;
 use postio_ui::label_colour::{Rgb, label_colour};
 use postio_ui::places as rules;
 use postio_widgets::widgets::keyhint;
@@ -33,24 +36,25 @@ const DOT_RADIUS: f64 = 4.0;
 use postio_ui::places::{Entry, Mark};
 pub use postio_ui::places::{OUTBOX, go_to, place_name};
 
-/// What a place that is a command asks the window to run.
-type CommandHandler = Rc<dyn Fn(CommandId)>;
+/// The places a filter matches, each with the token that goes there.
+type Source = Rc<dyn Fn(&str) -> Vec<(u64, Entry)>>;
 
-/// What going somewhere asks the window to do: the place, and its name.
-type Handler = Rc<dyn Fn(Destination, String)>;
+/// Going to the place with a token.
+type Handler = Rc<dyn Fn(u64)>;
 
 /// The popover.
 pub struct Places {
-    client: Client,
     popover: gtk::Popover,
     entry: gtk::SearchEntry,
     list: gtk::ListBox,
     /// The line under the places, which says what the highlighted row does.
     footer: gtk::Label,
-    /// Every place, as last read.
-    all: Rc<RefCell<Vec<Entry>>>,
+    /// Where the places come from.
+    source: RefCell<Option<Source>>,
     /// The places listed now, in order.
     shown: RefCell<Vec<Entry>>,
+    /// Each listed place's token, in `shown`'s order.
+    tokens: RefCell<Vec<u64>>,
     /// What each row of the list is: a section's heading, or the place at
     /// that index of `shown`.
     rows: RefCell<Vec<Option<usize>>>,
@@ -59,11 +63,6 @@ pub struct Places {
     counts: RefCell<Vec<gtk::Label>>,
     keymap: RefCell<Keymap>,
     handler: RefCell<Option<Handler>>,
-    /// Runs a place that is a command: Filtered.
-    command_handler: RefCell<Option<CommandHandler>>,
-    /// How many were filtered today, while filtering is on: whether the
-    /// popover lists Filtered, and what it says beside it.
-    filtered_today: std::cell::Cell<Option<u32>>,
     me: RefCell<std::rc::Weak<Places>>,
 }
 
@@ -74,8 +73,8 @@ impl Places {
         rules::direct_commands()
     }
 
-    /// A closed popover, anchored to `anchor`, reading through `client`.
-    pub fn new(client: Client, keymap: &Keymap, anchor: &impl IsA<gtk::Widget>) -> Rc<Self> {
+    /// A closed popover, anchored to `anchor`.
+    pub fn new(keymap: &Keymap, anchor: &impl IsA<gtk::Widget>) -> Rc<Self> {
         let entry = gtk::SearchEntry::new();
         entry.set_placeholder_text(Some(rules::FILTER_PLACEHOLDER));
         let list = gtk::ListBox::new();
@@ -118,19 +117,17 @@ impl Places {
         });
 
         let places = Rc::new(Places {
-            client,
             popover,
             entry,
             list,
             footer,
-            all: Rc::default(),
+            source: RefCell::default(),
             shown: RefCell::default(),
+            tokens: RefCell::default(),
             rows: RefCell::default(),
             counts: RefCell::default(),
             keymap: RefCell::new(keymap.clone()),
             handler: RefCell::default(),
-            command_handler: RefCell::default(),
-            filtered_today: std::cell::Cell::new(None),
             me: RefCell::default(),
         });
         places.me.replace(Rc::downgrade(&places));
@@ -189,20 +186,18 @@ impl Places {
         places
     }
 
-    /// Run `handler` with the place a person chooses.
-    pub fn connect_go(&self, handler: impl Fn(Destination, String) + 'static) {
+    /// Ask `source` for the places a filter matches.
+    pub fn connect_source(&self, source: impl Fn(&str) -> Vec<(u64, Entry)> + 'static) {
+        self.source.replace(Some(Rc::new(source)));
+    }
+
+    /// Run `handler` with the token of the place a person chooses.
+    pub fn connect_go(&self, handler: impl Fn(u64) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Run `handler` with the command a place stands for: Filtered's.
-    pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
-        self.command_handler.replace(Some(Rc::new(handler)));
-    }
-
-    /// How many were filtered today, or `None` while filtering is off:
-    /// Filtered is listed among the mailboxes with it (screen 10).
-    pub fn set_filtered_today(&self, count: Option<u32>) {
-        self.filtered_today.set(count);
+    /// The places changed: draw them again, if the popover is up.
+    pub fn redraw(&self) {
         if self.is_open() {
             self.show();
         }
@@ -216,14 +211,14 @@ impl Places {
         self.draw(true);
     }
 
-    /// Open the popover, unfiltered, and read the places.
+    /// Open the popover, unfiltered, on the places as last read: the
+    /// controller asks for them again as it opens, and says when they land.
     pub fn open(&self) {
         self.entry.set_text("");
         self.show();
         self.highlight_first();
         self.popover.popup();
         self.entry.grab_focus();
-        self.read();
     }
 
     /// Run `handler` each time the popover closes, however it did.
@@ -299,20 +294,13 @@ impl Places {
 
     /// Go to the `index`th place listed.
     fn go(&self, index: usize) {
-        let Some(entry) = self.shown.borrow().get(index).cloned() else {
+        let Some(token) = self.tokens.borrow().get(index).copied() else {
             return;
         };
         self.popover.popdown();
-        if let Some(command) = entry.command {
-            let handler = self.command_handler.borrow().clone();
-            if let Some(handler) = handler {
-                handler(command);
-            }
-            return;
-        }
         let handler = self.handler.borrow().clone();
         if let Some(handler) = handler {
-            handler(entry.destination, entry.name);
+            handler(token);
         }
     }
 
@@ -342,8 +330,13 @@ impl Places {
     /// read landing, the filtered count moving -- so the guard is here, on
     /// the one thing they all call, rather than on each of them.
     fn draw(&self, force: bool) {
-        let filtered = self.filtered_today.get().map(rules::filtered_entry);
-        let shown = rules::listed(&self.all.borrow(), filtered.as_ref(), &self.entry.text());
+        let source = self.source.borrow().clone();
+        let (tokens, shown): (Vec<u64>, Vec<Entry>) = source
+            .map(|source| source(&self.entry.text()))
+            .unwrap_or_default()
+            .into_iter()
+            .unzip();
+        self.tokens.replace(tokens);
         if !force && self.list.first_child().is_some() {
             if *self.shown.borrow() == shown {
                 return;
@@ -413,80 +406,6 @@ impl Places {
         if let Some(first) = first {
             self.list.select_row(Some(&first));
         }
-    }
-
-    /// Read every account's mailboxes and labels.
-    fn read(&self) {
-        let client = self.client.clone();
-        let all = Rc::clone(&self.all);
-        let weak = self.me.borrow().clone();
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            let Ok(accounts) = client.accounts().await else {
-                return;
-            };
-            let mut found = Vec::new();
-            for account in accounts.iter().filter(|account| account.enabled) {
-                // POSTIO-GLIB-SAFE: as above.
-                let read = client.mailboxes(account.id).await;
-                for mailbox in read.unwrap_or_default() {
-                    let mut entry = rules::mailbox_entry(&mailbox);
-                    // The count is conversations, as the strip counts them:
-                    // the inbox's is Focus's, which is what the strip reads.
-                    let scope = if mailbox.role == MailboxRole::Inbox {
-                        postio_model::ListScope::Focus(postio_model::FocusScope::Inbox)
-                    } else {
-                        postio_model::ListScope::Mailbox(mailbox.id)
-                    };
-                    // POSTIO-GLIB-SAFE: as above.
-                    if let Ok(conversations) = client.list_count(scope).await {
-                        entry.count = Some(conversations.to_string());
-                    }
-                    found.push(entry);
-                }
-                // The Outbox, while anything waits in it (T239): a view over
-                // Drafts, so it has no mailbox row of its own to be listed by.
-                let outbox = postio_model::ListScope::Outbox(account.id);
-                // POSTIO-GLIB-SAFE: as above.
-                let waiting = client.list_count(outbox).await.unwrap_or(0);
-                if waiting > 0 {
-                    found.push(rules::outbox_entry(account.id, waiting));
-                }
-                // POSTIO-GLIB-SAFE: as above.
-                let read = client.labels(account.id).await;
-                // POSTIO-GLIB-SAFE: as above.
-                let counted = client.label_counts(account.id).await.unwrap_or_default();
-                for label in read.unwrap_or_default() {
-                    // A label nothing carries is left out of the counts: it
-                    // holds none.
-                    let held = counted
-                        .iter()
-                        .find(|(id, _)| *id == label.id)
-                        .map_or(0, |(_, held)| *held);
-                    found.push(rules::label_entry(&label, Some(held)));
-                }
-            }
-            // Snoozed and Flagged: views over every account's mail, counted
-            // as the views list it.
-            for (role, scope) in [
-                (MailboxRole::Snoozed, FocusScope::Snoozed),
-                (MailboxRole::Flagged, FocusScope::Flagged),
-            ] {
-                // POSTIO-GLIB-SAFE: as above.
-                let held = client.list_count(ListScope::Focus(scope)).await.ok();
-                let view = rules::view_entry(role, held);
-                // A mailbox the server calls Flagged is this view's row.
-                found.retain(|entry| entry.go != view.go);
-                found.push(view);
-            }
-            // `open` has already drawn the rows from the last read; `show`
-            // redraws only if this one found something different.
-            all.replace(found);
-            if let Some(places) = weak.upgrade() {
-                places.show();
-            }
-        });
     }
 }
 
