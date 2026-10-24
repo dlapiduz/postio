@@ -15,6 +15,7 @@ use gtk::prelude::*;
 use postio_client::Client;
 use postio_client::protocol::FilteredRow;
 use postio_core::{CommandId, Keymap};
+use postio_focus::RowPicker;
 use postio_model::MessageId;
 use postio_ui::filtered;
 use postio_widgets::widgets::keyhint::{self, KeyLine};
@@ -36,6 +37,8 @@ pub enum FilteredAction {
     Restore(MessageId),
     /// Ask whether to sweep the inbox (FR-118).
     Sweep,
+    /// A verb on the selection bar: run this command on what is selected.
+    Verb(CommandId),
 }
 
 type Handler = Rc<dyn Fn(FilteredAction)>;
@@ -47,6 +50,14 @@ pub struct FilteredView {
     tabs: gtk::Box,
     list: gtk::ListBox,
     footer: KeyLine,
+    /// The bar over the footer while anything is selected.
+    bar: gtk::Box,
+    bar_count: gtk::Label,
+    bar_verbs: gtk::Box,
+    bar_keys: KeyLine,
+    /// The keyboard and the selection: the list's rules over these rows
+    /// (`postio_focus::RowPicker`), never a second set.
+    picker: RefCell<RowPicker>,
     /// The sweep button's words and key.
     sweep_words: gtk::Box,
     keymap: RefCell<Keymap>,
@@ -126,6 +137,21 @@ impl FilteredView {
         root.append(&header);
         root.append(&tab_row);
         root.append(&scrolled);
+        // While anything is selected (screen 01's bar, over Filtered).
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+        bar.add_css_class("focus-bulk-bar");
+        bar.add_css_class("focus-filtered-bar");
+        let bar_count = gtk::Label::new(None);
+        bar_count.add_css_class("focus-bulk-count");
+        let bar_verbs = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        let bar_keys = KeyLine::new("focus-bulk-keys");
+        bar_keys.widget().set_hexpand(true);
+        bar_keys.widget().set_halign(gtk::Align::End);
+        bar.append(&bar_count);
+        bar.append(&bar_verbs);
+        bar.append(bar_keys.widget());
+        bar.set_visible(false);
+        root.append(&bar);
         root.append(footer.widget());
 
         let view = Rc::new(FilteredView {
@@ -134,6 +160,11 @@ impl FilteredView {
             tabs,
             list,
             footer,
+            bar,
+            bar_count,
+            bar_verbs,
+            bar_keys,
+            picker: RefCell::default(),
             sweep_words,
             keymap: RefCell::new(keymap.clone()),
             tab: Cell::new(0),
@@ -187,9 +218,41 @@ impl FilteredView {
                         button.set_visible(selected.is_some_and(|selected| *selected == row));
                     }
                 }
-                let _ = weak.upgrade();
+                if let Some(view) = weak.upgrade() {
+                    let index = selected.and_then(|row| view.index_of_row(row.index()));
+                    view.picker.borrow_mut().focus(index.map(|at| at as u32));
+                }
             }
         });
+        // ⌘/Ctrl-click toggles a row and Shift-click takes a range, as the
+        // list's rows do; a plain click is the list's own.
+        let click = gtk::GestureClick::new();
+        click.set_button(gtk::gdk::BUTTON_PRIMARY);
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        click.connect_pressed({
+            let weak = weak.clone();
+            move |gesture, _, _, y| {
+                let state = gesture.current_event_state();
+                let range = state.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+                let toggle = state.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                if !range && !toggle {
+                    return;
+                }
+                let Some(view) = weak.upgrade() else {
+                    return;
+                };
+                let Some(row) = view.list.row_at_y(y as i32) else {
+                    return;
+                };
+                let Some(index) = view.index_of_row(row.index()) else {
+                    return;
+                };
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                let change = view.picker.borrow_mut().pick(index as u32, range);
+                view.apply(change);
+            }
+        });
+        view.list.add_controller(click);
         scrolled.connect_edge_reached({
             let weak = weak.clone();
             move |_, edge| {
@@ -212,6 +275,7 @@ impl FilteredView {
             CommandId::Back,
             CommandId::SweepInbox,
             CommandId::RestoreFiltered,
+            CommandId::ToggleRead,
         ]
         .into_iter()
         .chain(filtered::TAB_COMMANDS)
@@ -262,6 +326,10 @@ impl FilteredView {
             return;
         }
         self.tab.set(index);
+        // Another place, as another folder is: what was selected is not
+        // shown any more.
+        let change = self.picker.borrow_mut().clear();
+        self.apply(change);
         self.show_tabs();
         self.read_page(0);
     }
@@ -351,6 +419,124 @@ impl FilteredView {
         }
     }
 
+    /// The commands the view runs itself: the selection's, which the
+    /// controller's list behind it must never take.
+    pub fn runs(&self, id: CommandId) -> bool {
+        matches!(
+            id,
+            CommandId::ToggleSelection
+                | CommandId::ExtendSelectionDown
+                | CommandId::ExtendSelectionUp
+                | CommandId::SelectAll
+        ) || (id == CommandId::Back && self.has_selection())
+    }
+
+    /// Run a selection command, drawing what it changed; `j`/`k` stay with
+    /// [`Self::step`].
+    pub fn run(&self, id: CommandId) {
+        let change = self.picker.borrow_mut().run(id);
+        self.apply(change);
+    }
+
+    /// Whether anything is selected.
+    pub fn has_selection(&self) -> bool {
+        !self.picker.borrow().selected().is_empty()
+    }
+
+    /// The messages a verb is about: the selection, else the focused row.
+    pub fn aimed(&self) -> Vec<MessageId> {
+        self.picker.borrow().aimed()
+    }
+
+    /// The messages selected.
+    pub fn selected(&self) -> Vec<MessageId> {
+        self.picker.borrow().selected()
+    }
+
+    /// What a verb sent has acted on goes from the selection.
+    pub fn clear_selection(&self) {
+        let change = self.picker.borrow_mut().clear();
+        self.apply(change);
+    }
+
+    /// Draw a change the picker made: the keyboard's row, the boxes, the bar.
+    fn apply(&self, change: postio_focus::PickChange) {
+        if let Some(at) = change.focus
+            && let Some(row) = self.list_row(at as usize)
+        {
+            self.list.select_row(Some(&row));
+            row.grab_focus();
+        }
+        if change.selection.is_some() {
+            self.show_picks();
+        }
+    }
+
+    /// The index in `rows` of the list row at `index`, over day headings.
+    fn index_of_row(&self, index: i32) -> Option<usize> {
+        let at = usize::try_from(index).ok()?;
+        self.shown.borrow().get(at).copied().flatten()
+    }
+
+    /// Check the selected rows' boxes and bring the bar up or down.
+    fn show_picks(&self) {
+        let selected = self.picker.borrow().selected();
+        let mut at = 0;
+        let mut child = self.list.first_child();
+        while let Some(row) = child {
+            child = row.next_sibling();
+            let message = self
+                .index_of_row(at)
+                .and_then(|index| self.rows.borrow().get(index).map(|found| found.message.id));
+            at += 1;
+            let picked = message.is_some_and(|message| selected.contains(&message));
+            if picked {
+                row.add_css_class("focus-filtered-picked");
+            } else {
+                row.remove_css_class("focus-filtered-picked");
+            }
+            if let Some(check) = find_class(&row, "focus-filtered-check") {
+                check.set_visible(picked);
+            }
+        }
+        self.show_bar(&selected);
+    }
+
+    fn show_bar(&self, selected: &[MessageId]) {
+        if selected.is_empty() {
+            self.bar.set_visible(false);
+            return;
+        }
+        let keymap = self.keymap.borrow().clone();
+        let summary = postio_ui::selection::summary(
+            &postio_core::state::Selection::These(selected.to_vec()),
+            None,
+            &[],
+        );
+        self.bar_count.set_text(&summary.unwrap_or_default());
+        while let Some(child) = self.bar_verbs.first_child() {
+            self.bar_verbs.remove(&child);
+        }
+        for (command, label) in filtered::BAR_VERBS {
+            let button = gtk::Button::new();
+            button.add_css_class("flat");
+            button.set_child(Some(&keyhint::labelled(
+                label,
+                postio_ui::hints::key(&keymap, command).as_deref(),
+            )));
+            let weak = self.me.borrow().clone();
+            button.connect_clicked(move |_| {
+                if let Some(view) = weak.upgrade() {
+                    view.emit(FilteredAction::Verb(command));
+                }
+            });
+            self.bar_verbs.append(&button);
+        }
+        self.bar_keys.set(&filtered::bar_hints(&keymap));
+        self.bar.set_visible(true);
+        crate::a11y::teach_shortcuts(&self.bar);
+    }
+
     fn emit(&self, action: FilteredAction) {
         let handler = self.handler.borrow().clone();
         if let Some(handler) = handler {
@@ -422,7 +608,6 @@ impl FilteredView {
                 }
             };
             view.more.set(filtered::page_is_full(page.len()));
-            let focused = view.focused();
             {
                 let mut rows = view.rows.borrow_mut();
                 if offset == 0 {
@@ -430,17 +615,17 @@ impl FilteredView {
                 }
                 rows.extend(page);
             }
+            // Keep the keyboard on its message, or on the row that took its
+            // place, and what is selected.
+            let ids = view
+                .rows
+                .borrow()
+                .iter()
+                .map(|row| row.message.id)
+                .collect();
+            view.picker.borrow_mut().set_rows(ids);
             view.show_rows();
-            // Keep the keyboard where it was, or on the row that took its
-            // place.
-            let index = focused
-                .and_then(|message| {
-                    view.rows
-                        .borrow()
-                        .iter()
-                        .position(|row| row.message.id == message)
-                })
-                .unwrap_or(0);
+            let index = view.picker.borrow().focused().unwrap_or(0) as usize;
             if let Some(row) = view.list_row(index) {
                 view.list.select_row(Some(&row));
             }
@@ -517,6 +702,11 @@ impl FilteredView {
             }
             let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
             line.add_css_class("focus-filtered-row");
+            // The list's checked box, in the gutter.
+            let check = gtk::Image::from_icon_name("checkbox-checked-symbolic");
+            check.add_css_class("focus-filtered-check");
+            check.set_visible(false);
+            line.append(&check);
             let sender = gtk::Label::new(Some(
                 &row.message
                     .from
@@ -572,6 +762,7 @@ impl FilteredView {
         }
         drop(rows);
         self.shown.replace(shown);
+        self.show_picks();
         // Rows are rebuilt here, including after `read_page`'s async
         // fetch lands, so a cap taught only once after `open()` would miss
         // every row a later page adds (T142, T143).
@@ -587,6 +778,22 @@ fn restore_button(row: &gtk::Widget) -> Option<gtk::Button> {
     while let Some(widget) = stack.pop() {
         if widget.has_css_class("focus-filtered-restore") {
             return widget.downcast().ok();
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    None
+}
+
+/// The first widget under `root` with CSS class `class`.
+fn find_class(root: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
+    let mut stack = vec![root.clone()];
+    while let Some(widget) = stack.pop() {
+        if widget.has_css_class(class) {
+            return Some(widget);
         }
         let mut child = widget.first_child();
         while let Some(next) = child {
