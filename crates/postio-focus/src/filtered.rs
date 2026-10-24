@@ -143,6 +143,143 @@ pub(crate) struct Filtered {
     stamp: u64,
 }
 
+/// The list's cursor and selection rules over rows that are only
+/// messages, for a frontend that draws Filtered itself and keeps its own
+/// rows (GTK's Filtered reads its pages directly). It is [`Cursor`] and
+/// nothing else: the controller's Filtered holds the same one, so `x`,
+/// `J`/`K`, select all, the modified clicks and Back's first rung cannot
+/// differ between the two.
+#[derive(Debug, Default)]
+pub struct RowPicker {
+    cursor: Cursor,
+    ids: Vec<MessageId>,
+}
+
+/// What a [`RowPicker`] call changed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PickChange {
+    /// The row the keyboard went to.
+    pub focus: Option<u32>,
+    /// The messages selected now, when the selection changed.
+    pub selection: Option<Vec<MessageId>>,
+}
+
+struct IdRows<'a>(&'a [MessageId]);
+
+impl Rows for IdRows<'_> {
+    fn len(&self) -> u32 {
+        self.0.len() as u32
+    }
+
+    fn facts(&self, position: u32) -> Option<RowFacts> {
+        self.0.get(position as usize).map(|id| RowFacts {
+            id: *id,
+            digest: false,
+            threads: Vec::new(),
+            writes: false,
+        })
+    }
+
+    fn position_of(&self, message: MessageId) -> Option<u32> {
+        self.0
+            .iter()
+            .position(|id| *id == message)
+            .map(|at| at as u32)
+    }
+}
+
+impl RowPicker {
+    /// A picker over no rows.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The rows are these now. The keyboard stays on its message, or goes
+    /// to the first row when that one is gone; the selection is kept.
+    pub fn set_rows(&mut self, ids: Vec<MessageId>) {
+        let kept = self
+            .focused()
+            .and_then(|at| self.ids.get(at as usize).copied());
+        self.ids = ids;
+        let at = kept
+            .and_then(|message| IdRows(&self.ids).position_of(message))
+            .or((!self.ids.is_empty()).then_some(0));
+        self.cursor.moved_to(at);
+    }
+
+    /// The row with the keyboard.
+    pub fn focused(&self) -> Option<u32> {
+        self.cursor.position()
+    }
+
+    /// The frontend's own list put the keyboard on `position`.
+    pub fn focus(&mut self, position: Option<u32>) {
+        self.cursor.moved_to(position);
+    }
+
+    /// The messages selected, in the order they were taken.
+    pub fn selected(&self) -> Vec<MessageId> {
+        self.cursor
+            .selection()
+            .ids()
+            .map(<[_]>::to_vec)
+            .unwrap_or_default()
+    }
+
+    /// What a verb is about: the selection, or the focused row alone.
+    pub fn aimed(&self) -> Vec<MessageId> {
+        let selected = self.selected();
+        if !selected.is_empty() {
+            return selected;
+        }
+        self.focused()
+            .and_then(|at| self.ids.get(at as usize).copied())
+            .into_iter()
+            .collect()
+    }
+
+    /// `j`, `k`, `x`, `J`, `K`, select all, and Back's first rung: the
+    /// list's rules. Any other command changes nothing.
+    pub fn run(&mut self, id: CommandId) -> PickChange {
+        let total = self.ids.len() as u32;
+        let steps = match id {
+            CommandId::SelectAll => self.cursor.select_rows(&IdRows(&self.ids), total),
+            CommandId::Back => self.cursor.clear(total),
+            _ => self
+                .cursor
+                .command(id, &IdRows(&self.ids), None, total, None)
+                .unwrap_or_default(),
+        };
+        Self::changed(steps)
+    }
+
+    /// A modified click: `range` for Shift, a toggle otherwise.
+    pub fn pick(&mut self, position: u32, range: bool) -> PickChange {
+        let total = self.ids.len() as u32;
+        let steps = self.cursor.pick(position, range, &IdRows(&self.ids), total);
+        Self::changed(steps)
+    }
+
+    /// Drop the selection; the keyboard stays.
+    pub fn clear(&mut self) -> PickChange {
+        self.run(CommandId::Back)
+    }
+
+    fn changed(steps: Vec<Step>) -> PickChange {
+        let mut change = PickChange::default();
+        for step in steps {
+            match step {
+                Step::Show(Intent::Cursor { position, .. }) => change.focus = Some(position),
+                Step::Show(Intent::Selection { selection, .. }) => {
+                    change.selection = Some(selection.ids().map(<[_]>::to_vec).unwrap_or_default());
+                }
+                _ => {}
+            }
+        }
+        change
+    }
+}
+
 /// Filtered's rows as the cursor reads them: messages, never conversations.
 struct FilteredRows<'a>(&'a [FilteredRow]);
 

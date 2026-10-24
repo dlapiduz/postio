@@ -60,7 +60,9 @@ pub use dropdown::{
     Run, RunStyle, UnderstoodTile,
 };
 pub use feed::{Opened, PageAnswer};
-pub use filtered::{FilteredBar, FilteredBarAction, FilteredLine, FilteredTab, FilteredView};
+pub use filtered::{
+    FilteredBar, FilteredBarAction, FilteredLine, FilteredTab, FilteredView, PickChange, RowPicker,
+};
 pub use perform::{perform, perform_now};
 pub use pickers::{
     Anchor, FoldersRead, LabelsRead, PickerField, PickerKind, PickerRow, PickerView,

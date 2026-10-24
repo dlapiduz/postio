@@ -700,3 +700,38 @@ fn the_selection_keys_reach_filtered() {
         assert!(focus.answers(command), "{command:?} is the controller's");
     }
 }
+
+#[test]
+fn a_row_picker_is_the_same_rules_for_a_frontend_that_keeps_its_own_rows() {
+    use postio_focus::RowPicker;
+    let ids = |of: &[i64]| of.iter().map(|id| MessageId::new(*id)).collect::<Vec<_>>();
+    let mut picker = RowPicker::new();
+    picker.set_rows(ids(&[7, 8, 9]));
+    assert_eq!(picker.focused(), Some(0));
+    assert_eq!(
+        picker.aimed(),
+        ids(&[7]),
+        "the focused row, nothing selected"
+    );
+
+    let change = picker.run(CommandId::ToggleSelection);
+    assert_eq!(change.selection, Some(ids(&[7])));
+    let change = picker.run(CommandId::ExtendSelectionDown);
+    assert_eq!(
+        (change.focus, change.selection),
+        (Some(1), Some(ids(&[7, 8])))
+    );
+    let change = picker.pick(2, true);
+    assert_eq!(change.selection, Some(ids(&[7, 8, 9])));
+    assert_eq!(picker.aimed(), ids(&[7, 8, 9]));
+    let change = picker.pick(0, false);
+    assert_eq!(change.selection, Some(ids(&[8, 9])));
+    // A re-read keeps the keyboard on its message and the selection.
+    picker.set_rows(ids(&[6, 7, 8, 9]));
+    assert_eq!(picker.focused(), Some(1));
+    assert_eq!(picker.selected(), ids(&[8, 9]));
+    assert_eq!(picker.clear().selection, Some(Vec::new()));
+    assert_eq!(picker.clear(), Default::default(), "nothing to clear");
+    let change = picker.run(CommandId::SelectAll);
+    assert_eq!(change.selection, Some(ids(&[6, 7, 8, 9])));
+}
