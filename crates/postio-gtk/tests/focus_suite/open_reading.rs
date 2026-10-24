@@ -112,10 +112,12 @@ pub fn the_column_draws_only_the_window_of_a_long_body() {
         let window = opened(&fixture, 1).await;
         let view = window.reading().expect("open").reader().view().clone();
         // The first document drawn can be the body before its last layout
-        // pass; the case is about the long one, so it waits for that.
+        // pass; the case is about the long one, so it waits for that, and
+        // for the tiles it rasterises a frame later.
         let _ = crate::settle_until(async || {
             view.document()
                 .is_some_and(|document| document.size.height > 4.0 * 512.0)
+                && view.tile_bytes() > 0
         })
         .await;
         let document = view.document().expect("drawn");
