@@ -143,6 +143,12 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             crate::settle_until(async || row.drawn().picked).await,
             "`x` never selected the marked row"
         );
+        // The selection can rebind the row: wait for the one on screen now
+        // to have painted its gutter, whatever it painted there.
+        let _ = crate::settle_until(async || {
+            marked().is_some_and(|row| row.drawn().picked && gutter_marks(&row) > 0)
+        })
+        .await;
         let row = marked().expect("the marked row is still there");
         // What the row drew: the box in the dot's place, never both.
         let drawn = row.drawn();
