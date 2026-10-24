@@ -9,6 +9,10 @@ import PostioFFI
 public protocol FilteredEngine: AnyObject {
     /// Row `index` was clicked: the controller puts the keyboard there.
     func focusFilteredPoint(_ index: UInt32)
+    /// Row `index` was clicked with ⌘ (`range` false: it goes in or out of
+    /// the selection) or ⇧ (`range` true: the rows from the anchor to it go
+    /// in), as the list's rows are.
+    func focusFilteredPick(_ index: UInt32, range: Bool)
     /// The end of the rows read so far was reached: read the next page.
     func focusFilteredMore()
     /// A registry command, as a key press would send it.
@@ -61,6 +65,8 @@ public final class FilteredModel {
         case redraw
         /// The keyboard moved to another row.
         case focus
+        /// The selection, its boxes or its bar changed.
+        case selection
         /// Filtered is gone; the list is back.
         case close
     }
@@ -90,6 +96,14 @@ public final class FilteredModel {
         public let time: String
         /// The day heading above it, on the first row of each day.
         public let heading: String?
+        /// Whether its box is checked.
+        public let selected: Bool
+
+        func with(selected: Bool) -> Row {
+            Row(
+                id: id, message: message, sender: sender, subject: subject, preview: preview,
+                pill: pill, time: time, heading: heading, selected: selected)
+        }
     }
 
     /// One footer hint.
@@ -116,6 +130,11 @@ public final class FilteredModel {
     /// The row with the keyboard.
     public private(set) var focused: Int?
     public private(set) var footer: [Hint] = []
+    /// The bar over the rows while anything is selected: the controller's
+    /// count, verbs and keys, drawn as the list's action bar is.
+    public private(set) var bar: ActionBarWords?
+    /// What stands in place of the rows when the tab has none.
+    public private(set) var empty: String?
 
     /// Whether the rows on screen may not be all there is.
     @ObservationIgnored private var more = false
@@ -150,6 +169,12 @@ public final class FilteredModel {
             guard isOpen else { return nil }
             focused = index.map(Int.init)
             return .focus
+        case let .focusFilteredSelection(selected, bar):
+            guard isOpen else { return nil }
+            let boxed = Set(selected)
+            rows = rows.map { $0.with(selected: boxed.contains($0.message)) }
+            self.bar = bar.map(Self.words)
+            return .selection
         case .focusCloseSurface(.filtered):
             guard isOpen else { return nil }
             close()
@@ -163,6 +188,24 @@ public final class FilteredModel {
     public func point(_ index: Int) {
         guard rows.indices.contains(index) else { return }
         engine.focusFilteredPoint(UInt32(index))
+    }
+
+    /// Row `index` was clicked with ⌘: in or out of the selection. The box
+    /// is drawn when the controller says so.
+    public func toggle(_ index: Int) {
+        guard rows.indices.contains(index) else { return }
+        engine.focusFilteredPick(UInt32(index), range: false)
+    }
+
+    /// Row `index` was clicked with ⇧: the rows from the anchor to it.
+    public func extend(_ index: Int) {
+        guard rows.indices.contains(index) else { return }
+        engine.focusFilteredPick(UInt32(index), range: true)
+    }
+
+    /// A verb on the bar was pressed: its command, as its key would run it.
+    public func run(_ command: String) {
+        engine.invoke(command)
     }
 
     /// Row `index` was double-clicked: the keyboard goes there and its
@@ -215,8 +258,11 @@ public final class FilteredModel {
         rows = view.rows.enumerated().map { index, line in
             Row(
                 id: index, message: line.message, sender: line.sender, subject: line.subject,
-                preview: line.preview, pill: line.pill, time: line.time, heading: line.heading)
+                preview: line.preview, pill: line.pill, time: line.time, heading: line.heading,
+                selected: line.selected)
         }
+        bar = view.bar.map(Self.words)
+        empty = view.empty
         focused = view.focused.map(Int.init)
         footer = view.footer.map { Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
         more = view.more
@@ -224,7 +270,26 @@ public final class FilteredModel {
         if moved || !view.more { askedMore = false }
     }
 
+    /// The controller's bar, spelled for the action bar's view.
+    private static func words(_ bar: FilteredBarFfi) -> ActionBarWords {
+        ActionBarWords(
+            summary: bar.summary,
+            actions: bar.actions.map {
+                ActionBarWords.Action(
+                    command: $0.command, label: $0.label, cap: KeyCapSpelling.cap($0.key),
+                    isDefault: $0.primary)
+            },
+            hints: bar.hints.map { hint in
+                // "J/K" is two keys the controller joined.
+                let caps = hint.key.split(separator: "/", omittingEmptySubsequences: true)
+                    .map(String.init).compactMap { KeyCapSpelling.cap($0) }
+                return ActionBarWords.Hint(caps: caps, label: hint.label)
+            })
+    }
+
     private func close() {
+        bar = nil
+        empty = nil
         isOpen = false
         title = ""
         subtitle = ""

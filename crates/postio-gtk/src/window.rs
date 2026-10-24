@@ -909,6 +909,15 @@ impl FocusWindow {
             self.act(command);
             return glib::Propagation::Stop;
         }
+        // Filtered's rows are selected by the view itself: the controller
+        // behind it holds the inbox's list, which `x` must not reach.
+        if let Some(command) = command
+            && let Some(view) = self.filtered()
+            && view.runs(command)
+        {
+            view.run(command);
+            return glib::Propagation::Stop;
+        }
         if let Some(command) = command {
             match self.route(command) {
                 Route::Controller => {
@@ -1674,6 +1683,7 @@ impl FocusWindow {
                 CommandId::PrevMessage => return view.step(-1),
                 CommandId::OpenMessage => return view.open_focused(),
                 CommandId::GoToInbox => return self.leave_filtered(),
+                id if view.runs(id) => return view.run(id),
                 _ => {}
             }
         }
@@ -1743,8 +1753,9 @@ impl FocusWindow {
             CommandId::Delete | CommandId::ToggleRead | CommandId::Flag
                 if self.key_context() == KeyContext::Filtered =>
             {
-                if let Some(message) = self.filtered().and_then(|view| view.focused()) {
-                    self.filtered_verb(id, message);
+                if let Some(view) = self.filtered() {
+                    self.filtered_verb(id, view.aimed());
+                    view.clear_selection();
                 }
             }
             CommandId::Archive
@@ -1852,8 +1863,9 @@ impl FocusWindow {
             }
             CommandId::GoToDigestRules => self.show_rules(),
             CommandId::RestoreFiltered => {
-                if let Some(message) = self.filtered().and_then(|view| view.focused()) {
-                    self.restore_filtered(message);
+                if let Some(view) = self.filtered() {
+                    self.restore_filtered(view.aimed());
+                    view.clear_selection();
                 }
             }
             CommandId::FilteredTab1
@@ -4102,19 +4114,28 @@ impl FocusWindow {
                     reading.show_found(self, message, &subject, Vec::new());
                 }
             }
-            FilteredAction::Restore(message) => self.restore_filtered(message),
+            FilteredAction::Restore(message) => self.restore_filtered(vec![message]),
             FilteredAction::Sweep => self.ask_sweep(),
+            FilteredAction::Verb(command) => self.act(command),
         }
     }
 
     /// Put `message` back in the inbox, and never filter its sender (FR-116).
-    fn filtered_verb(&self, id: CommandId, message: MessageId) {
-        self.post(Command::default_for(id).with_target(MessageTarget::Messages(vec![message])));
+    fn filtered_verb(&self, id: CommandId, messages: Vec<MessageId>) {
+        if messages.is_empty() {
+            return;
+        }
+        self.post(Command::default_for(id).with_target(MessageTarget::Messages(messages)));
     }
 
-    fn restore_filtered(&self, message: MessageId) {
+    /// Put `messages` back in the inbox as one command, so one Undo takes
+    /// them all back.
+    fn restore_filtered(&self, messages: Vec<MessageId>) {
+        if messages.is_empty() {
+            return;
+        }
         self.post(Command::RestoreFiltered {
-            target: MessageTarget::Messages(vec![message]),
+            target: MessageTarget::Messages(messages),
             restored: true,
         });
     }
@@ -5796,6 +5817,8 @@ impl FocusWindow {
         let row = self.cursor_row();
         let count = pane.as_ref().map(|pane| pane.feed().list().n_items());
         let selected = match self.selection() {
+            // Filtered's rows are selected apart from the list behind them.
+            _ if let Some(view) = self.filtered() => view.selected().len() as u32,
             Selection::These(ids) => ids.len() as u32,
             Selection::Everything { except } => {
                 count.unwrap_or(0).saturating_sub(except.len() as u32)

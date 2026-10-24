@@ -47,6 +47,14 @@ public struct ActionBarWords: Equatable, Sendable {
     public let actions: [Action]
     public let hints: [Hint]
 
+    /// A bar whose words are all given: Filtered's, whose verbs and hints
+    /// are the controller's (`FilteredBarFfi`), not the list's table.
+    public init(summary: String, actions: [Action], hints: [Hint]) {
+        self.summary = summary
+        self.actions = actions
+        self.hints = hints
+    }
+
     /// The bar for a selection the controller summarised as `summary`, or
     /// `nil` while nothing is selected. `vault` says whether capture can
     /// write anywhere (C9).

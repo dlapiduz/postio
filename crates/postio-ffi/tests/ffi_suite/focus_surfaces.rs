@@ -245,6 +245,62 @@ async fn g_f_draws_filtered_with_its_seven_tabs() {
     session.shutdown();
 }
 
+/// Selecting in Filtered reaches the Mac: `x` boxes the focused row and
+/// brings the bar up, a Shift-click takes a range, and the bar's verb is a
+/// registry command. The rules are the controller's.
+#[tokio::test(flavor = "multi_thread")]
+async fn selecting_in_filtered_draws_the_boxes_and_the_bar() {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Small).await;
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.invoke("go_to_filtered");
+    let mut rows = Vec::new();
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusFiltered { view } if !view.rows.is_empty() => {
+                rows = view.rows.iter().map(|row| row.message).collect();
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "Filtered lists the filed mail"
+    );
+    assert!(rows.len() >= 3, "the seed files some: {rows:?}");
+
+    session.invoke("toggle_selection");
+    let mut bar = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusFilteredSelection {
+                selected,
+                bar: said,
+            } => {
+                assert_eq!(selected, &rows[..1], "the focused row is boxed");
+                bar = said.clone();
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "x draws the selection"
+    );
+    let bar = bar.expect("a selection has its bar");
+    assert_eq!(bar.summary, "1 selected");
+    assert_eq!(bar.actions[0].command, "restore_filtered");
+    assert!(bar.actions[0].primary);
+
+    session.focus_filtered_pick(2, true);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusFilteredSelection { selected, .. } if selected == &rows[..3]
+        ))
+        .await,
+        "a Shift-click takes the rows between"
+    );
+    session.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn return_on_a_digest_row_opens_its_window_on_the_list_without_a_model() {
     let (session, delivery, [ledger, _]) = a_delivered_digest(NEWSLETTERS).await;

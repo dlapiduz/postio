@@ -209,6 +209,88 @@ pub fn r_restores_the_focused_row_and_ctrl_z_takes_it_back() {
     });
 }
 
+/// Selecting in Filtered as the list does: `x` and `J` take rows in, the bar
+/// counts them, Escape clears before it leaves, a tab drops the selection,
+/// and `R` restores every selected row as one step one `Ctrl+Z` takes back.
+pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = fixture().await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "f"]);
+        assert!(
+            crate::settle_until(async || listed(&window).len() == 4).await,
+            "Filtered never listed: {:?}",
+            listed(&window)
+        );
+        let view = window.filtered().expect("the view");
+        let said = async |wanted: &str| {
+            let wanted = wanted.to_owned();
+            crate::settle_until(async || view.texts().contains(&wanted)).await
+        };
+
+        support::press(&window, "x", gdk::ModifierType::empty());
+        assert!(said("1 selected").await, "x: {:?}", view.texts());
+        support::press(&window, "J", gdk::ModifierType::SHIFT_MASK);
+        assert!(said("2 selected").await, "J: {:?}", view.texts());
+        assert_eq!(view.selected().len(), 2);
+
+        // The first Escape clears and stays; the second leaves.
+        support::press(&window, "Escape", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || !view.has_selection()).await,
+            "Escape did not clear the selection"
+        );
+        assert!(window.filtered().is_some(), "the first Escape only clears");
+
+        // A tab is another place: its selection is gone.
+        support::press(&window, "x", gdk::ModifierType::empty());
+        assert!(said("1 selected").await);
+        support::press(&window, "2", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || !view.has_selection()).await,
+            "a tab kept the selection"
+        );
+        assert!(
+            crate::settle_until(async || listed(&window) == ["You have been selected"]).await,
+            "the Spam tab never listed: {:?}",
+            listed(&window)
+        );
+        support::press(&window, "1", gdk::ModifierType::empty());
+        assert!(crate::settle_until(async || listed(&window).len() == 4).await);
+
+        support::press(&window, "x", gdk::ModifierType::empty());
+        support::press(&window, "J", gdk::ModifierType::SHIFT_MASK);
+        assert!(
+            said("2 selected").await,
+            "J after a tab: {:?} {:?}",
+            view.selected(),
+            view.texts()
+        );
+        support::press(&window, "R", gdk::ModifierType::SHIFT_MASK);
+        assert!(
+            crate::settle_until(async || {
+                listed(&window) == ["You have been selected", "Build 1182 passed"]
+            })
+            .await,
+            "R did not restore both selected rows: {:?}",
+            listed(&window)
+        );
+        assert!(
+            !view.has_selection(),
+            "what was acted on is no longer selected"
+        );
+        support::press(&window, "z", gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || listed(&window).len() == 4).await,
+            "one Ctrl+Z did not put both back: {:?}",
+            listed(&window)
+        );
+    });
+}
+
 /// T126: the header strip says how many were filtered since local
 /// midnight, with `g f`, and pressing it opens Filtered; the folders
 /// popover lists Filtered with the same count.

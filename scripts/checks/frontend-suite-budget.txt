@@ -16,7 +16,7 @@ crates/postio-ffi/tests/ffi_suite/focus_keymap.rs 3
 crates/postio-ffi/tests/ffi_suite/focus_pickers.rs 5
 crates/postio-ffi/tests/ffi_suite/focus_search.rs 12
 crates/postio-ffi/tests/ffi_suite/focus_states.rs 4
-crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs 8
+crates/postio-ffi/tests/ffi_suite/focus_surfaces.rs 9
 crates/postio-ffi/tests/ffi_suite/keys.rs 12
 crates/postio-ffi/tests/ffi_suite/mailboxes.rs 7
 crates/postio-ffi/tests/ffi_suite/reachability.rs 4
@@ -29,7 +29,7 @@ crates/postio-gtk/tests/focus_suite/cursor.rs 4
 crates/postio-gtk/tests/focus_suite/digest.rs 6
 crates/postio-gtk/tests/focus_suite/drafts.rs 4
 crates/postio-gtk/tests/focus_suite/e2e.rs 1
-crates/postio-gtk/tests/focus_suite/filtered.rs 5
+crates/postio-gtk/tests/focus_suite/filtered.rs 6
 crates/postio-gtk/tests/focus_suite/hostile_mail.rs 1
 crates/postio-gtk/tests/focus_suite/keymap.rs 1
 crates/postio-gtk/tests/focus_suite/one_keymap.rs 1

@@ -61,6 +61,55 @@ pub struct FilteredViewFfi {
     pub more: bool,
     /// The footer's hints.
     pub footer: Vec<FocusHintFfi>,
+    /// The selection bar, while anything is selected.
+    pub bar: Option<FilteredBarFfi>,
+    /// What to say in place of the rows when the tab has none.
+    pub empty: Option<String>,
+}
+
+/// What the bar over Filtered says while anything is selected: the count,
+/// the verbs, and the selection's own keys. A verb's press is
+/// `invoke(command)`; the words and keys are the controller's.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilteredBarFfi {
+    /// "3 selected".
+    pub summary: String,
+    /// The verbs, the first the one a selection is usually for.
+    pub actions: Vec<FilteredBarActionFfi>,
+    /// "x toggle", "J/K extend", "Esc clear".
+    pub hints: Vec<FocusHintFfi>,
+}
+
+/// One verb on the bar over Filtered.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilteredBarActionFfi {
+    /// The registry id a press invokes: "restore_filtered".
+    pub command: String,
+    /// Its words.
+    pub label: String,
+    /// Its key.
+    pub key: Option<String>,
+    /// Whether it is the verb a selection is usually for.
+    pub primary: bool,
+}
+
+impl From<postio_focus::FilteredBar> for FilteredBarFfi {
+    fn from(bar: postio_focus::FilteredBar) -> Self {
+        FilteredBarFfi {
+            summary: bar.summary,
+            actions: bar
+                .actions
+                .into_iter()
+                .map(|action| FilteredBarActionFfi {
+                    command: action.command.as_str().to_owned(),
+                    label: action.label,
+                    key: action.key,
+                    primary: action.primary,
+                })
+                .collect(),
+            hints: bar.hints.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 /// One of Filtered's tabs.
@@ -93,6 +142,8 @@ pub struct FilteredLineFfi {
     pub time: String,
     /// The day heading above it, on the first row of each day.
     pub heading: Option<String>,
+    /// Whether it is in the selection: its box is checked.
+    pub selected: bool,
 }
 
 impl From<postio_focus::FilteredView> for FilteredViewFfi {
@@ -126,11 +177,14 @@ impl From<postio_focus::FilteredView> for FilteredViewFfi {
                     pill: row.pill,
                     time: row.time,
                     heading: row.heading,
+                    selected: row.selected,
                 })
                 .collect(),
             focused: view.focused,
             more: view.more,
             footer: view.footer.into_iter().map(Into::into).collect(),
+            bar: view.bar.map(Into::into),
+            empty: view.empty,
         }
     }
 }
@@ -693,6 +747,14 @@ impl Session {
     pub fn focus_filtered_point(&self, index: u32) {
         self.focus_driver()
             .input(postio_focus::Input::FilteredPoint(index));
+    }
+
+    /// A modified click on Filtered's row at `position`: `range` when
+    /// Shift was held, a toggle when the platform's toggle modifier was
+    /// (Command on the Mac). As `focus_pick` is for the list.
+    pub fn focus_filtered_pick(&self, position: u32, range: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::FilteredPick { position, range });
     }
 
     /// Filtered was scrolled to its end: its next page, when `more`.

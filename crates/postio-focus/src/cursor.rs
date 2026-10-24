@@ -277,6 +277,21 @@ impl Cursor {
         steps
     }
 
+    /// Select every row `rows` has, digests walked over, and name them in
+    /// the selection instead of "everything": for a view whose rows are the
+    /// whole of what its selection can mean (Filtered), where there is no
+    /// predicate for the host to resolve. The cursor stays.
+    pub(crate) fn select_rows(&mut self, rows: &dyn Rows, total: u32) -> Vec<Step> {
+        let mut changed = false;
+        for position in 0..rows.len() {
+            if let Some(row) = rows.facts(position).filter(|row| !row.digest) {
+                self.reach.insert(row.id, row.threads);
+                changed |= self.selector.extend_to(row.id);
+            }
+        }
+        self.selection_steps(changed, total)
+    }
+
     /// The list is leaving for another place: the selection goes and `!`
     /// is off, since neither means anything there.
     pub(crate) fn leave(&mut self, total: u32) -> Vec<Step> {

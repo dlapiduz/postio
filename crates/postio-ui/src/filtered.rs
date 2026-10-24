@@ -106,13 +106,16 @@ pub fn pill(reason: &str, source: Option<&str>) -> String {
 }
 
 /// The footer's hints, read from the keymap.
-pub fn footer(keymap: &Keymap) -> Vec<Hint> {
+pub fn footer(keymap: &Keymap, rows: bool) -> Vec<Hint> {
     let mut said = Vec::new();
-    said.extend(hints::hint(
-        keymap,
-        CommandId::RestoreFiltered,
-        "restore + never filter sender",
-    ));
+    // Nothing to restore or open on an empty tab.
+    if rows {
+        said.extend(hints::hint(
+            keymap,
+            CommandId::RestoreFiltered,
+            "restore + never filter sender",
+        ));
+    }
     if let (Some(first), Some(last)) = (
         hints::key(keymap, TAB_COMMANDS[0]),
         hints::key(keymap, TAB_COMMANDS[6]),
@@ -122,8 +125,38 @@ pub fn footer(keymap: &Keymap) -> Vec<Hint> {
             label: "reason tabs".to_owned(),
         });
     }
-    said.extend(hints::hint(keymap, CommandId::OpenMessage, "open"));
+    if rows {
+        said.extend(hints::hint(keymap, CommandId::OpenMessage, "open"));
+    }
     said.extend(hints::hint(keymap, CommandId::GoToInbox, "inbox"));
+    said
+}
+
+/// What an empty tab says, once its count has been read: nothing there is
+/// wrong, and Back or `g i` goes to the inbox.
+pub const EMPTY: &str = "Nothing is filtered here";
+
+/// The verbs the selection bar offers over Filtered, in order: the first is
+/// the one a selection is usually for. Delete and Flag stay keys, as Delete
+/// is off the main list's bar (screen 01); Archive is not here at all,
+/// since Filtered mail is archived already.
+pub const BAR_VERBS: [(CommandId, &str); 2] = [
+    (CommandId::RestoreFiltered, "Restore"),
+    (CommandId::ToggleRead, "Mark read"),
+];
+
+/// The selection's own keys, on the right of its bar: "x toggle",
+/// "J/K extend", "Esc clear". Read from the keymap, so a rebinding shows.
+pub fn bar_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut said = Vec::new();
+    said.extend(hints::hint(keymap, CommandId::ToggleSelection, "toggle"));
+    said.extend(hints::pair(
+        keymap,
+        CommandId::ExtendSelectionDown,
+        CommandId::ExtendSelectionUp,
+        "extend",
+    ));
+    said.extend(hints::hint(keymap, CommandId::Back, "clear"));
     said
 }
 
@@ -206,7 +239,7 @@ mod tests {
 
     #[test]
     fn the_footer_names_the_keys_the_keymap_binds() {
-        let said = hints::line(&footer(Keymap::defaults()));
+        let said = hints::line(&footer(Keymap::defaults(), true));
         assert_eq!(
             said,
             "R restore + never filter sender \u{b7} 1\u{2013}7 reason tabs \u{b7} Return open \u{b7} g i inbox"

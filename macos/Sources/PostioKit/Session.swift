@@ -306,6 +306,11 @@ public final class PostioSession {
     /// Filtered's row `index` was clicked: the keyboard goes there.
     public func focusFilteredPoint(_ index: UInt32) { inner.focusFilteredPoint(index: index) }
 
+    /// Filtered's row `index` was clicked with ⌘ (`range` false) or ⇧.
+    public func focusFilteredPick(_ index: UInt32, range: Bool) {
+        inner.focusFilteredPick(position: index, range: range)
+    }
+
     /// Filtered was scrolled to the end of the rows it has: read more.
     public func focusFilteredMore() { inner.focusFilteredMore() }
 

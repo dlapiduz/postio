@@ -50,10 +50,10 @@ command from inside a text field.
 | `g g` | First message | List, conversation, reader, search |  | `first_message` |
 | `G` | Last message | List, conversation, reader, search |  | `last_message` |
 | `Return` or `o` or `Right` | Open message | List, conversation, search, digest, Filtered view |  | `open_message` |
-| `x` | Toggle selection | List, conversation, reader, search |  | `toggle_selection` |
-| `J` or `shift+Down` | Extend selection down | List, reader, search |  | `extend_selection_down` |
-| `K` or `shift+Up` | Extend selection up | List, reader, search |  | `extend_selection_up` |
-| `* a` or `ctrl+a` or `X` | Select all | List, conversation, reader, search |  | `select_all` |
+| `x` | Toggle selection | List, conversation, reader, search, Filtered view |  | `toggle_selection` |
+| `J` or `shift+Down` | Extend selection down | List, reader, search, Filtered view |  | `extend_selection_down` |
+| `K` or `shift+Up` | Extend selection up | List, reader, search, Filtered view |  | `extend_selection_up` |
+| `* a` or `ctrl+a` or `X` | Select all | List, conversation, reader, search, Filtered view |  | `select_all` |
 | `Left` or `u` | Previous view | List, conversation, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
 | `alt+o` | Toggle result order | Search |  | `toggle_result_order` |

@@ -125,7 +125,7 @@ struct MainWindow: View {
                     undo: { engine.run(Notice.undoCommand) },
                     dismiss: { engine.focus.dismissToast(token: $0) }
                 )
-                .padding(.bottom, engine.actionBarWords == nil || engine.filtered?.isOpen == true ? 0 : ActionBar.height)
+                .padding(.bottom, engine.barHeightUnderToast)
             }
         }
         .overlay(alignment: .bottomTrailing) {

@@ -13,8 +13,8 @@ use postio_client::protocol::FilteredRow;
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_focus::{
-    Effect, FilteredView, FocusController, Host, Input, Intent, Policy, Reply, Request, RowFacts,
-    Rows, SurfaceKind,
+    Effect, FilteredBar, FilteredView, FocusController, Host, Input, Intent, Policy, Reply,
+    Request, RowFacts, Rows, SurfaceKind,
 };
 use postio_model::listing::MessageSummary;
 use postio_model::{EmailAddress, MessageId, ThreadId};
@@ -398,4 +398,379 @@ fn the_delete_flag_and_read_keys_reach_filtered() {
             "{key} in Filtered"
         );
     }
+}
+
+// -- Selecting in Filtered, as the list does (the main list's rules) --------
+
+/// Three filtered messages, 7 to 9, newest first.
+fn three() -> Vec<FilteredRow> {
+    vec![
+        filed(7, "notification", 5),
+        filed(8, "spam", 9),
+        filed(9, "promotion", 20),
+    ]
+}
+
+/// The last selection Filtered drew in `effects`: the rows boxed, and its
+/// bar's count.
+fn selection(effects: &[Effect]) -> Option<(Vec<i64>, Option<String>)> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::FilteredSelection { selected, bar } => Some((
+                selected.iter().map(|id| id.get()).collect(),
+                bar.map(|bar: FilteredBar| bar.summary),
+            )),
+            _ => None,
+        })
+}
+
+fn pick(focus: &mut FocusController, position: u32, range: bool) -> Vec<Effect> {
+    focus.handle_on(Input::FilteredPick { position, range }, &List)
+}
+
+#[test]
+fn x_takes_the_focused_row_in_and_out_of_the_selection() {
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    let effects = run(&mut focus, CommandId::ToggleSelection);
+    assert_eq!(
+        selection(&effects),
+        Some((vec![7], Some("1 selected".to_owned()))),
+        "{effects:?}"
+    );
+    let _ = run(&mut focus, CommandId::NextMessage);
+    let effects = run(&mut focus, CommandId::ToggleSelection);
+    assert_eq!(
+        selection(&effects),
+        Some((vec![7, 8], Some("2 selected".to_owned())))
+    );
+    // Out again: the box clears, the bar stays for the one left.
+    let effects = run(&mut focus, CommandId::ToggleSelection);
+    assert_eq!(
+        selection(&effects),
+        Some((vec![7], Some("1 selected".to_owned())))
+    );
+    // Moving the keyboard selects nothing.
+    let effects = run(&mut focus, CommandId::NextMessage);
+    assert_eq!(selection(&effects), None);
+}
+
+#[test]
+fn j_and_k_capital_extend_the_selection_as_the_keyboard_walks() {
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    let effects = run(&mut focus, CommandId::ExtendSelectionDown);
+    assert_eq!(
+        selection(&effects),
+        Some((vec![7, 8], Some("2 selected".to_owned())))
+    );
+    assert_eq!(shown(&effects)[0], Intent::FilteredFocus(Some(1)));
+    let effects = run(&mut focus, CommandId::ExtendSelectionDown);
+    assert_eq!(selection(&effects).unwrap().0, vec![7, 8, 9]);
+    // Up from the last row takes the row it leaves in too, and walks back.
+    let effects = run(&mut focus, CommandId::ExtendSelectionUp);
+    assert_eq!(shown(&effects)[0], Intent::FilteredFocus(Some(1)));
+}
+
+#[test]
+fn select_all_takes_every_row_read() {
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    let effects = run(&mut focus, CommandId::SelectAll);
+    assert_eq!(
+        selection(&effects),
+        Some((vec![7, 8, 9], Some("3 selected".to_owned())))
+    );
+}
+
+#[test]
+fn a_click_with_the_toggle_modifier_toggles_and_shift_takes_a_range() {
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    let effects = pick(&mut focus, 1, false);
+    assert_eq!(selection(&effects).unwrap().0, vec![8], "{effects:?}");
+    assert!(
+        shown(&effects).contains(&Intent::FilteredFocus(Some(1))),
+        "the keyboard follows the click"
+    );
+    // Shift from the anchor (row 1) down to row 2.
+    let effects = pick(&mut focus, 2, true);
+    assert_eq!(selection(&effects).unwrap().0, vec![8, 9]);
+    let effects = pick(&mut focus, 1, false);
+    assert_eq!(selection(&effects).unwrap().0, vec![9]);
+    // A plain click selects nothing.
+    let effects = focus.handle_on(Input::FilteredPoint(0), &List);
+    assert_eq!(selection(&effects), None);
+}
+
+#[test]
+fn the_view_boxes_the_selected_rows_and_carries_the_bar() {
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    let _ = run(&mut focus, CommandId::ToggleSelection);
+    // A re-read, as mail moving elsewhere causes, keeps the selection.
+    let effects = opened_again(&mut focus, three());
+    let view = view(&effects).expect("redrawn");
+    let boxed: Vec<bool> = view.rows.iter().map(|row| row.selected).collect();
+    assert_eq!(boxed, [true, false, false]);
+    let bar = view.bar.expect("the bar is up with a selection");
+    assert_eq!(bar.summary, "1 selected");
+    let verbs: Vec<(CommandId, bool)> = bar
+        .actions
+        .iter()
+        .map(|action| (action.command, action.primary))
+        .collect();
+    assert_eq!(
+        verbs,
+        [
+            (CommandId::RestoreFiltered, true),
+            (CommandId::ToggleRead, false)
+        ]
+    );
+    assert_eq!(
+        bar.actions[0].key.as_deref(),
+        Some("R"),
+        "keys come from the keymap"
+    );
+    let hints: Vec<String> = bar.hints.iter().map(|hint| hint.label.clone()).collect();
+    assert_eq!(hints, ["toggle", "extend", "clear"]);
+}
+
+/// The view's own re-read: `Event::MessageListChanged`, answered.
+fn opened_again(focus: &mut FocusController, rows: Vec<FilteredRow>) -> Vec<Effect> {
+    let effects = focus.handle_on(
+        Input::Event(postio_core::Event::MessageListChanged {
+            account: postio_model::AccountId::new(1),
+            mailbox: postio_model::MailboxId::new(1),
+        }),
+        &List,
+    );
+    let mut out = Vec::new();
+    for (ticket, request) in asks(&effects) {
+        let reply = match request {
+            Request::FilteredTabs => Reply::FilteredTabs(Ok(Vec::new())),
+            Request::Filtered { stamp, offset, .. } => Reply::Filtered {
+                stamp,
+                offset,
+                answer: Ok(rows.clone()),
+            },
+            other => panic!("a re-read asked for {other:?}"),
+        };
+        out.extend(focus.handle_on(Input::Reply(ticket, reply), &List));
+    }
+    out
+}
+
+#[test]
+fn r_restores_every_selected_row_in_one_step_and_clears_the_selection() {
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    let _ = run(&mut focus, CommandId::ToggleSelection);
+    let _ = run(&mut focus, CommandId::NextMessage);
+    let _ = run(&mut focus, CommandId::NextMessage);
+    let _ = run(&mut focus, CommandId::ToggleSelection);
+    let effects = run(&mut focus, CommandId::RestoreFiltered);
+    assert_eq!(
+        asks(&effects)
+            .into_iter()
+            .map(|(_, asked)| asked)
+            .collect::<Vec<_>>(),
+        vec![Request::Post(Command::RestoreFiltered {
+            target: MessageTarget::Messages(vec![MessageId::new(7), MessageId::new(9)]),
+            restored: true,
+        })],
+        "one command, so one Undo takes both back"
+    );
+    assert_eq!(
+        selection(&effects),
+        Some((Vec::new(), None)),
+        "what the selection named has been acted on"
+    );
+}
+
+#[test]
+fn delete_flag_and_read_act_on_every_selected_row() {
+    for (key, made) in [
+        (CommandId::Delete, Command::default_for(CommandId::Delete)),
+        (CommandId::Flag, Command::default_for(CommandId::Flag)),
+        (
+            CommandId::ToggleRead,
+            Command::default_for(CommandId::ToggleRead),
+        ),
+    ] {
+        let mut focus = mac();
+        let _ = opened(&mut focus, three());
+        let _ = run(&mut focus, CommandId::ExtendSelectionDown);
+        let effects = run(&mut focus, key);
+        let sent: Vec<_> = asks(&effects)
+            .into_iter()
+            .filter_map(|(_, request)| match request {
+                Request::Send { command, aims, .. } => Some((command, aims)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sent,
+            vec![(
+                made,
+                vec![MessageTarget::Messages(vec![
+                    MessageId::new(7),
+                    MessageId::new(8)
+                ])]
+            )],
+            "{key:?}: the two selected messages, not their conversations"
+        );
+        assert_eq!(selection(&effects).unwrap().0, Vec::<i64>::new());
+    }
+}
+
+#[test]
+fn escape_clears_a_selection_before_it_leaves_filtered() {
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    let _ = run(&mut focus, CommandId::ToggleSelection);
+    let effects = run(&mut focus, CommandId::Back);
+    assert_eq!(selection(&effects), Some((Vec::new(), None)));
+    assert!(
+        !shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Filtered)),
+        "the first Escape only clears: {effects:?}"
+    );
+    assert_eq!(focus.key_context(), KeyContext::Filtered);
+    let effects = run(&mut focus, CommandId::Back);
+    assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Filtered)));
+}
+
+#[test]
+fn a_tab_is_another_place_so_the_selection_goes() {
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    let _ = run(&mut focus, CommandId::SelectAll);
+    let effects = run(&mut focus, CommandId::FilteredTab4);
+    let view = view(&effects).expect("the tabs are drawn again");
+    assert!(view.bar.is_none(), "{view:?}");
+    assert!(view.rows.iter().all(|row| !row.selected));
+    // And what was selected is not acted on from the new tab.
+    let _ = opened_again(&mut focus, three());
+    let sent = sent(&mut focus, CommandId::Delete);
+    assert_eq!(
+        sent[0].1,
+        vec![MessageTarget::Messages(vec![MessageId::new(7)])],
+        "the focused row alone"
+    );
+}
+
+#[test]
+fn leaving_filtered_leaves_the_lists_own_selection_alone() {
+    let mut focus = mac();
+    let _ = run(&mut focus, CommandId::ToggleSelection);
+    let before = focus.selection();
+    let _ = opened(&mut focus, three());
+    let _ = run(&mut focus, CommandId::SelectAll);
+    assert_eq!(focus.selection(), before, "Filtered's is its own");
+    let _ = run(&mut focus, CommandId::Back);
+    let _ = run(&mut focus, CommandId::Back);
+    assert_eq!(focus.selection(), before);
+}
+
+#[test]
+fn the_selection_keys_reach_filtered() {
+    use postio_ui::keymap::{Chord, Outcome};
+    let mut focus = mac();
+    let _ = opened(&mut focus, three());
+    for (key, command) in [
+        ("x", CommandId::ToggleSelection),
+        ("J", CommandId::ExtendSelectionDown),
+        ("K", CommandId::ExtendSelectionUp),
+        ("X", CommandId::SelectAll),
+    ] {
+        let chord: Chord = key.parse().expect("a chord");
+        let outcome = focus.press(
+            &chord,
+            focus.key_context(),
+            false,
+            std::time::Instant::now(),
+        );
+        assert_eq!(
+            outcome,
+            Outcome::Command(command.as_str().to_owned()),
+            "{key} in Filtered"
+        );
+        assert!(focus.answers(command), "{command:?} is the controller's");
+    }
+}
+
+#[test]
+fn a_row_picker_is_the_same_rules_for_a_frontend_that_keeps_its_own_rows() {
+    use postio_focus::RowPicker;
+    let ids = |of: &[i64]| of.iter().map(|id| MessageId::new(*id)).collect::<Vec<_>>();
+    let mut picker = RowPicker::new();
+    picker.set_rows(ids(&[7, 8, 9]));
+    assert_eq!(picker.focused(), Some(0));
+    assert_eq!(
+        picker.aimed(),
+        ids(&[7]),
+        "the focused row, nothing selected"
+    );
+
+    let change = picker.run(CommandId::ToggleSelection);
+    assert_eq!(change.selection, Some(ids(&[7])));
+    let change = picker.run(CommandId::ExtendSelectionDown);
+    assert_eq!(
+        (change.focus, change.selection),
+        (Some(1), Some(ids(&[7, 8])))
+    );
+    let change = picker.pick(2, true);
+    assert_eq!(change.selection, Some(ids(&[7, 8, 9])));
+    assert_eq!(picker.aimed(), ids(&[7, 8, 9]));
+    let change = picker.pick(0, false);
+    assert_eq!(change.selection, Some(ids(&[8, 9])));
+    // A re-read keeps the keyboard on its message and the selection.
+    picker.set_rows(ids(&[6, 7, 8, 9]));
+    assert_eq!(picker.focused(), Some(1));
+    assert_eq!(picker.selected(), ids(&[8, 9]));
+    assert_eq!(picker.clear().selection, Some(Vec::new()));
+    assert_eq!(picker.clear(), Default::default(), "nothing to clear");
+    let change = picker.run(CommandId::SelectAll);
+    assert_eq!(change.selection, Some(ids(&[6, 7, 8, 9])));
+}
+
+#[test]
+fn a_tab_with_nothing_says_so_once_it_has_been_counted() {
+    let mut focus = mac();
+    let asked = asks(&run(&mut focus, CommandId::GoToFiltered));
+    // Before the counts land, an empty list is not yet "nothing".
+    let (ticket, stamp) = asked
+        .iter()
+        .find_map(|(ticket, request)| match request {
+            Request::Filtered { stamp, .. } => Some((*ticket, *stamp)),
+            _ => None,
+        })
+        .expect("a page is asked");
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::Filtered {
+                stamp,
+                offset: 0,
+                answer: Ok(Vec::new()),
+            },
+        ),
+        &List,
+    );
+    assert_eq!(view(&effects).expect("drawn").empty, None);
+    let (ticket, _) = asked
+        .iter()
+        .find(|(_, request)| matches!(request, Request::FilteredTabs))
+        .cloned()
+        .expect("the tabs are counted");
+    let effects = focus.handle_on(
+        Input::Reply(ticket, Reply::FilteredTabs(Ok(Vec::new()))),
+        &List,
+    );
+    assert_eq!(
+        view(&effects).expect("drawn").empty.as_deref(),
+        Some(postio_ui::filtered::EMPTY)
+    );
 }

@@ -239,7 +239,7 @@ fn row_line(
 /// The footer's pieces, each a click for its command.
 fn footer(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     let mut x = area.x + 1;
-    for hint in filtered::footer(app.keymap()) {
+    for hint in filtered::footer(app.keymap(), true) {
         let command = match hint.label.as_str() {
             "restore + never filter sender" => Some(CommandId::RestoreFiltered),
             "inbox" => Some(CommandId::GoToInbox),
