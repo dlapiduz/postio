@@ -3097,6 +3097,73 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
 }
 
 #[test]
+fn a_body_asked_of_an_engine_that_is_replaced_is_asked_of_the_new_one_at_once() {
+    // #1986: a queued request lives in the engine's memory. When the account
+    // gets a new engine (a re-authorisation) it is gone, and the host went on
+    // remembering having asked for sixty seconds.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, events) = world.frontend(ClientKind::Tui);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    let read = || {
+        world
+            .rt
+            .block_on(client.readings(vec![message], false))
+            .expect("an answer")
+            .pop()
+            .expect("a reading")
+            .body
+    };
+    let (account, old) = {
+        let running = world
+            .host()
+            .inner
+            .engines
+            .running
+            .lock()
+            .expect("never poisoned");
+        let (account, engine) = running.iter().next().expect("the account's engine");
+        (*account, engine.clone())
+    };
+    // The request goes to an engine that cannot run it, as one queued in an
+    // engine that is then replaced is lost.
+    old.stop();
+    assert_eq!(read(), postio_client::protocol::Body::Partial);
+    assert!(mock.body_fetches().is_empty());
+
+    let account_row = world.rt.block_on(async {
+        let connection = world.database.read().await.expect("a connection");
+        postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .await
+            .expect("the accounts")
+            .into_iter()
+            .find(|row| row.id == account)
+            .expect("the account")
+    });
+    let wiring = world.host().inner.wiring.clone();
+    while events.try_recv().is_ok() {}
+    let new = postio_session::engine::start(&account_row, &wiring).expect("an engine");
+    super::adopt(&wiring, &world.host().inner.engines, account, new);
+
+    let mut told = false;
+    let text = eventually(&world, || {
+        told |= std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
+            matches!(envelope.event, Event::BodyReachable { message: again, .. } if again == message)
+        });
+        if !told {
+            return None;
+        }
+        match read() {
+            postio_client::protocol::Body::Ready { body, .. } => body.text,
+            _ => None,
+        }
+    });
+    assert!(text.contains("The tide gate opens at nine."), "{text}");
+}
+
+#[test]
 fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
     // #1788: the reader said "Downloading this message" and nothing asked
     // for it. Opening it is the person asking; a repaint is not asking again.

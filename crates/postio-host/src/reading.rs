@@ -208,16 +208,38 @@ const ASKED_RETRY: std::time::Duration = std::time::Duration::from_millis(200);
 /// re-offers it), so each message is asked for once until its body lands.
 #[derive(Default)]
 pub(crate) struct AskedBodies {
-    asked: std::sync::Mutex<std::collections::HashMap<MessageId, std::time::Instant>>,
+    asked: std::sync::Mutex<std::collections::HashMap<MessageId, Asked>>,
+}
+
+/// One ask: when, and of which account's engine.
+struct Asked {
+    when: std::time::Instant,
+    account: Option<AccountId>,
 }
 
 impl AskedBodies {
+    /// `account` has a new engine, and the requests the old one held are
+    /// gone with it: forget what was asked of it, and say which messages, so
+    /// the panes showing them read again and ask the new engine (#1986).
+    pub(crate) fn forget_account(&self, account: AccountId) -> Vec<MessageId> {
+        let mut asked = self.asked.lock().expect("never poisoned");
+        let mut forgotten = Vec::new();
+        asked.retain(|message, ask| {
+            let theirs = ask.account == Some(account);
+            if theirs {
+                forgotten.push(*message);
+            }
+            !theirs
+        });
+        forgotten
+    }
+
     /// The engine says the fetch for `message` ended without its body: the
     /// ask is over, and a reading after [`ASKED_RETRY`] makes it again.
     pub(crate) fn failed(&self, message: MessageId, now: std::time::Instant) {
         let mut asked = self.asked.lock().expect("never poisoned");
-        if let Some(when) = asked.get_mut(&message) {
-            *when = now.checked_sub(ASKED_PATIENCE - ASKED_RETRY).unwrap_or(now);
+        if let Some(ask) = asked.get_mut(&message) {
+            ask.when = now.checked_sub(ASKED_PATIENCE - ASKED_RETRY).unwrap_or(now);
         }
     }
 
@@ -226,7 +248,7 @@ impl AskedBodies {
     /// here is forgotten, so a message is never remembered past its fetch.
     pub(crate) fn to_ask(&self, readings: &[Reading], now: std::time::Instant) -> Vec<MessageId> {
         let mut asked = self.asked.lock().expect("never poisoned");
-        asked.retain(|_, when| now.saturating_duration_since(*when) < ASKED_PATIENCE);
+        asked.retain(|_, ask| now.saturating_duration_since(ask.when) < ASKED_PATIENCE);
         let mut ask = Vec::new();
         for reading in readings {
             match reading.body {
@@ -236,7 +258,10 @@ impl AskedBodies {
                     if let std::collections::hash_map::Entry::Vacant(first) =
                         asked.entry(reading.message)
                     {
-                        first.insert(now);
+                        first.insert(Asked {
+                            when: now,
+                            account: reading.row.as_ref().map(|row| row.account_id),
+                        });
                         ask.push(reading.message);
                     }
                 }
@@ -299,6 +324,37 @@ mod asked_tests {
             1,
             "opening it again does"
         );
+    }
+
+    #[test]
+    fn a_new_engine_forgets_only_what_its_account_was_asked() {
+        let asked = AskedBodies::default();
+        let now = std::time::Instant::now();
+        let mut mine = reading(1, Body::Partial);
+        mine.row = Some(Box::new(row_of(AccountId::new(1))));
+        let mut theirs = reading(2, Body::Partial);
+        theirs.row = Some(Box::new(row_of(AccountId::new(2))));
+        let read = [mine, theirs];
+        assert_eq!(asked.to_ask(&read, now).len(), 2);
+
+        assert_eq!(
+            asked.forget_account(AccountId::new(1)),
+            vec![MessageId::new(1)]
+        );
+
+        assert_eq!(
+            asked.to_ask(&read, now),
+            vec![MessageId::new(1)],
+            "asked again at once, and the other account's ask stands"
+        );
+    }
+
+    fn row_of(account: AccountId) -> postio_model::Message {
+        postio_model::Message::new(
+            account,
+            postio_model::MailboxId::new(1),
+            chrono::DateTime::UNIX_EPOCH,
+        )
     }
 
     #[test]
