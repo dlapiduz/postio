@@ -64,6 +64,9 @@ pub struct FilteredView {
     pub footer: Vec<hints::Hint>,
     /// The selection bar, while anything is selected.
     pub bar: Option<FilteredBar>,
+    /// What to say in place of the rows when the tab has none, once it has
+    /// been counted.
+    pub empty: Option<String>,
 }
 
 /// What the bar over Filtered says while anything is selected: the count,
@@ -132,6 +135,8 @@ pub(crate) struct Filtered {
     tab: usize,
     /// Each tab's count, as last read.
     counts: [u32; 7],
+    /// Whether the counts have been read once.
+    counted: bool,
     /// The rows read, in order.
     rows: Vec<FilteredRow>,
     /// The row with the keyboard, and what is selected: the list's own
@@ -369,6 +374,7 @@ impl FocusController {
         self.filtered = Some(Filtered {
             tab: 0,
             counts: [0; 7],
+            counted: false,
             rows: Vec::new(),
             cursor: Cursor::default(),
             more: false,
@@ -687,6 +693,7 @@ impl FocusController {
                     return Vec::new();
                 };
                 filtered.counts = words::tab_counts(&reasons);
+                filtered.counted = true;
                 self.filtered_view()
                     .map(|view| vec![Step::Show(Intent::Filtered(Box::new(view)))])
                     .unwrap_or_default()
@@ -807,6 +814,8 @@ impl FocusController {
             more: filtered.more,
             footer: words::footer(keymap),
             bar,
+            empty: (filtered.counted && filtered.rows.is_empty() && !filtered.more)
+                .then(|| words::EMPTY.to_owned()),
         })
     }
 }

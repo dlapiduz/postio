@@ -127,6 +127,10 @@ pub fn footer(keymap: &Keymap) -> Vec<Hint> {
     said
 }
 
+/// What an empty tab says, once its count has been read: nothing there is
+/// wrong, and Back or `g i` goes to the inbox.
+pub const EMPTY: &str = "Nothing is filtered here";
+
 /// The verbs the selection bar offers over Filtered, in order: the first is
 /// the one a selection is usually for. Delete and Flag stay keys, as Delete
 /// is off the main list's bar (screen 01); Archive is not here at all,

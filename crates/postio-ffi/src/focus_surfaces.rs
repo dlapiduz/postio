@@ -63,6 +63,8 @@ pub struct FilteredViewFfi {
     pub footer: Vec<FocusHintFfi>,
     /// The selection bar, while anything is selected.
     pub bar: Option<FilteredBarFfi>,
+    /// What to say in place of the rows when the tab has none.
+    pub empty: Option<String>,
 }
 
 /// What the bar over Filtered says while anything is selected: the count,
@@ -182,6 +184,7 @@ impl From<postio_focus::FilteredView> for FilteredViewFfi {
             more: view.more,
             footer: view.footer.into_iter().map(Into::into).collect(),
             bar: view.bar.map(Into::into),
+            empty: view.empty,
         }
     }
 }

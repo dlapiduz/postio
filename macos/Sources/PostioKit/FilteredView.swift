@@ -122,6 +122,13 @@ public struct FilteredView: View {
 
     private var rows: some View {
         ScrollViewReader { scroller in
+            if let empty = model.empty {
+                Text(empty)
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
                     ForEach(model.rows) { row in

@@ -133,6 +133,8 @@ public final class FilteredModel {
     /// The bar over the rows while anything is selected: the controller's
     /// count, verbs and keys, drawn as the list's action bar is.
     public private(set) var bar: ActionBarWords?
+    /// What stands in place of the rows when the tab has none.
+    public private(set) var empty: String?
 
     /// Whether the rows on screen may not be all there is.
     @ObservationIgnored private var more = false
@@ -260,6 +262,7 @@ public final class FilteredModel {
                 selected: line.selected)
         }
         bar = view.bar.map(Self.words)
+        empty = view.empty
         focused = view.focused.map(Int.init)
         footer = view.footer.map { Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
         more = view.more
@@ -286,6 +289,7 @@ public final class FilteredModel {
 
     private func close() {
         bar = nil
+        empty = nil
         isOpen = false
         title = ""
         subtitle = ""

@@ -735,3 +735,42 @@ fn a_row_picker_is_the_same_rules_for_a_frontend_that_keeps_its_own_rows() {
     let change = picker.run(CommandId::SelectAll);
     assert_eq!(change.selection, Some(ids(&[6, 7, 8, 9])));
 }
+
+#[test]
+fn a_tab_with_nothing_says_so_once_it_has_been_counted() {
+    let mut focus = mac();
+    let asked = asks(&run(&mut focus, CommandId::GoToFiltered));
+    // Before the counts land, an empty list is not yet "nothing".
+    let (ticket, stamp) = asked
+        .iter()
+        .find_map(|(ticket, request)| match request {
+            Request::Filtered { stamp, .. } => Some((*ticket, *stamp)),
+            _ => None,
+        })
+        .expect("a page is asked");
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::Filtered {
+                stamp,
+                offset: 0,
+                answer: Ok(Vec::new()),
+            },
+        ),
+        &List,
+    );
+    assert_eq!(view(&effects).expect("drawn").empty, None);
+    let (ticket, _) = asked
+        .iter()
+        .find(|(_, request)| matches!(request, Request::FilteredTabs))
+        .cloned()
+        .expect("the tabs are counted");
+    let effects = focus.handle_on(
+        Input::Reply(ticket, Reply::FilteredTabs(Ok(Vec::new()))),
+        &List,
+    );
+    assert_eq!(
+        view(&effects).expect("drawn").empty.as_deref(),
+        Some(postio_ui::filtered::EMPTY)
+    );
+}
