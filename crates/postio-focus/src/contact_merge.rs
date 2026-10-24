@@ -50,9 +50,13 @@ impl FocusController {
         vec![Step::Ask(Request::ContactReview { first })]
     }
 
-    /// An import ran. The cursor goes to the first new person (now, if the
-    /// view is up, else when it opens) and the next review looks at what the
-    /// import found before anything else.
+    /// An import ran. The cursor goes to the first new person (once the
+    /// view has the new counts, if it is up, else when it opens) and the next
+    /// review looks at what the import found before anything else.
+    ///
+    /// The position waits for the counts: asked at once, its answer could
+    /// land before the counts the import changed, and the restart those
+    /// counts cause would put the cursor back on the first row (#2027).
     pub(crate) fn contacts_imported(
         &mut self,
         made: Vec<ContactId>,
@@ -60,7 +64,10 @@ impl FocusController {
     ) -> Vec<Step> {
         self.import_found = touched;
         self.import_cursor = made.first().copied();
-        self.contacts_go_to_import()
+        if self.contacts.is_none() || self.import_cursor.is_none() {
+            return Vec::new();
+        }
+        vec![Step::Ask(Request::ContactsOverview)]
     }
 
     /// Asks where the import's first new person is, when the view is up.
