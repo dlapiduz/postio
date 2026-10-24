@@ -87,6 +87,8 @@ const CONTACTS_IO_DIALOG: &str = "focus-contacts-io";
 /// The Contacts view, in the inbox's body (specs/011-focus-contacts,
 /// screens 01 to 03), and the mail it stands in for.
 const CONTACTS: &str = "contacts";
+/// The body's page for spec 010's search results.
+const RESULTS: &str = "results";
 const MAIL: &str = "mail";
 /// The inbox's list, and the empty inbox in its place.
 const LIST: &str = "list";
@@ -235,6 +237,8 @@ mod imp {
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         /// The Contacts view, built the first time `g c` opens it.
         pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
+        /// Spec 010's results view, made the first time a search shows it.
+        pub results: RefCell<Option<Rc<crate::results::ResultsPane>>>,
         /// What the import or export sheet says, while it is up.
         pub contacts_io: RefCell<Option<postio_ui::contacts_io::IoSheetView>>,
         /// The contact popover, while one is up, and what it says.
@@ -345,6 +349,7 @@ mod imp {
                 warm: Cell::default(),
                 filtered: RefCell::default(),
                 contacts: RefCell::default(),
+                results: RefCell::default(),
                 contacts_io: RefCell::default(),
                 contact_popover: RefCell::default(),
                 digest_window: RefCell::default(),
@@ -2150,6 +2155,25 @@ impl FocusWindow {
                     bar.show_dropdown(view);
                 }
             }
+            // Spec 010's results, in the inbox's place: drawn whole, their
+            // rows read when the list draws them.
+            Intent::ShowResults(view) => self.show_results(view),
+            Intent::ResultsPage { first, count } => {
+                if let Some(results) = self.results() {
+                    results.rows_changed(*first, *count);
+                }
+            }
+            Intent::ResultsCursor(position) => {
+                if let Some(results) = self.results() {
+                    results.show_cursor(*position);
+                }
+            }
+            Intent::Query(query) => {
+                if let Some(results) = self.results() {
+                    results.show_query(query);
+                }
+            }
+            Intent::LeaveResults => self.leave_results(),
             Intent::Place { name } => self.show_place(name),
             Intent::OpenPlaces => self.open_places(),
             Intent::PlacesChanged => {
@@ -3735,6 +3759,52 @@ impl FocusWindow {
             return None;
         }
         imp.contacts.borrow().clone()
+    }
+
+    /// Spec 010's results view, while it is the page on screen.
+    pub fn results(&self) -> Option<Rc<crate::results::ResultsPane>> {
+        let imp = self.imp();
+        if imp.body.visible_child_name().as_deref() != Some(RESULTS) {
+            return None;
+        }
+        imp.results.borrow().clone()
+    }
+
+    /// Show all: the results in the inbox's place, as the controller says.
+    /// The first frame builds the page.
+    fn show_results(&self, frame: &postio_focus::ResultsView) {
+        let imp = self.imp();
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let view = imp.results.borrow().clone();
+        let view = view.unwrap_or_else(|| {
+            let view = crate::results::ResultsPane::new(
+                pane.feed().clone(),
+                glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |command| window.press_command(command)
+                ),
+            );
+            imp.body.add_named(view.widget(), Some(RESULTS));
+            imp.results.replace(Some(Rc::clone(&view)));
+            view
+        });
+        view.show(frame);
+        if imp.body.visible_child_name().as_deref() != Some(RESULTS) {
+            imp.body.set_visible_child_name(RESULTS);
+            view.focus();
+        }
+    }
+
+    /// The results are gone: the inbox is back, with the keyboard.
+    fn leave_results(&self) {
+        let imp = self.imp();
+        if imp.body.visible_child_name().as_deref() == Some(RESULTS) {
+            imp.body.set_visible_child_name(MAIL);
+            self.focus_list();
+        }
     }
 
     /// `g c`: the Contacts view in place of the inbox. The controller opened

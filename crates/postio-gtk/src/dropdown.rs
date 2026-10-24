@@ -690,7 +690,7 @@ fn cheat_sheet(rows: &[&DropdownRow]) -> gtk::Grid {
 
 /// `runs` in one label: bold, mono and the find highlight by attributes,
 /// so the words wrap and ellipsize as one line.
-fn runs_label(runs: &[Run], secondary: bool) -> gtk::Label {
+pub(crate) fn runs_label(runs: &[Run], secondary: bool) -> gtk::Label {
     let (colour, alpha) = if adw::StyleManager::default().is_dark() {
         FIND_DARK
     } else {

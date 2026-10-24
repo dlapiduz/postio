@@ -24,6 +24,7 @@
 //! | `07`, `08`, `09` | The command bar over screen 01: plain English, `in:Rec`, and `arch` |
 //! | `10` | The folders popover over screen 01 |
 //! | `s01`, `s03` | Spec 010's search dropdown over screen 01, staged on: empty, and `harbor` typed |
+//! | `s06` | Spec 010's results for `harbor`, in the inbox's place (staged on) |
 //! | `26` | The row menu (T199), right-clicked on a row below screen 01's selection |
 //! | `27` | A newsletter that paints its own page, opened: on paper (handoff screens 03, 04) |
 //! | `28` | Office mail in black text, opened: in app colours (handoff screens 11, 13) |
@@ -158,6 +159,7 @@ const SCREENS: &[(&str, &str)] = &[
         "s03",
         "spec 010's search dropdown, harbor typed (staged on)",
     ),
+    ("s06", "spec 010's results for harbor (staged on)"),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -628,6 +630,30 @@ fn stage(
             // What arrives after the first answer: the search's rows.
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(400));
+        }
+        "s06" => {
+            pick_three();
+            window.act(CommandId::Search);
+            let bar = window.bar().ok_or("no command bar")?;
+            bar.set_text("harbor");
+            if !settle_until(|| {
+                bar.dropdown()
+                    .texts()
+                    .iter()
+                    .any(|text| text.contains("Show all"))
+            }) {
+                return Err("no Show all for harbor".into());
+            }
+            bar.run_search_row();
+            if !settle_until(|| {
+                window
+                    .results()
+                    .is_some_and(|results| !results.subjects().is_empty())
+            }) {
+                return Err("the results never drew".into());
+            }
+            let started = Instant::now();
+            settle_until(|| started.elapsed() > Duration::from_millis(500));
         }
         "s01" | "s03" => {
             pick_three();
