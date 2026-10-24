@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 use postio_account::auth::{self, TokenSource};
 use postio_account::imap::{ImapConnector, ImapSession};
-use postio_account::secret::{AccountKey, SecretStore};
+use postio_account::secret::{AccountKey, SecretError, SecretStore};
 use postio_model::Account;
 use postio_smtp::session::SmtpSession;
 use postio_smtp::settings::ConnectionSettings as SmtpSettings;
@@ -66,6 +66,9 @@ pub enum Reachability {
     Refused {
         /// What went wrong, phrased for the person reading the settings.
         reason: String,
+        /// What was wrong with the credential, when that is why: the half
+        /// Settings needs to offer a repair rather than a retry (#1584).
+        trouble: Option<postio_ui::account::Trouble>,
     },
 }
 
@@ -84,9 +87,19 @@ impl Reachabilities {
     pub fn into_results(self) -> (Result<(), String>, Result<(), String>) {
         let result = |reachability| match reachability {
             Reachability::Reached => Ok(()),
-            Reachability::Refused { reason } => Err(reason),
+            Reachability::Refused { reason, .. } => Err(reason),
         };
         (result(self.incoming), result(self.outgoing))
+    }
+
+    /// What either server found wrong with the credential, incoming first.
+    pub fn trouble(&self) -> Option<postio_ui::account::Trouble> {
+        [&self.incoming, &self.outgoing]
+            .into_iter()
+            .find_map(|reachability| match reachability {
+                Reachability::Refused { trouble, .. } => *trouble,
+                Reachability::Reached => None,
+            })
     }
 }
 
@@ -109,10 +122,8 @@ pub async fn test_over_tls(account: &Account, secrets: &Arc<dyn SecretStore>) ->
                 .or_else(|| smtp.err().map(|error| error.to_string()))
                 .unwrap_or_else(|| "the TLS stack would not start".to_owned());
             Reachabilities {
-                incoming: Reachability::Refused {
-                    reason: reason.clone(),
-                },
-                outgoing: Reachability::Refused { reason },
+                incoming: refused(reason.clone()),
+                outgoing: refused(reason),
             }
         }
     }
@@ -172,14 +183,10 @@ async fn try_incoming(
         },
     )
     .await;
-    match attempt {
-        // The credential itself could not be had -- no keyring entry, a
-        // refresh that failed. Redacted, because this string is going on
-        // screen *and* into a log: `SecretError` names the account.
-        Err(error) => refused(postio_model::address::redact_addresses(&error.to_string())),
-        Ok(Err(error)) => refused(error.to_string()),
-        Ok(Ok(_session)) => Reachability::Reached,
-    }
+    judged(
+        attempt.map(|opened| opened.map(drop)),
+        postio_account::backend::BackendError::is_authentication_failure,
+    )
 }
 
 async fn try_outgoing(
@@ -207,13 +214,99 @@ async fn try_outgoing(
         },
     )
     .await;
+    judged(
+        attempt.map(|opened| opened.map(drop)),
+        postio_smtp::error::SmtpError::is_authentication_failure,
+    )
+}
+
+/// What one attempt through `auth::with_credential` comes to, `rejected`
+/// saying whether a protocol error is the server refusing the credential.
+///
+/// Its own function so the classification can be asserted without a server.
+fn judged<E: std::fmt::Display>(
+    attempt: Result<Result<(), E>, SecretError>,
+    rejected: impl Fn(&E) -> bool,
+) -> Reachability {
+    use postio_ui::account::Trouble;
     match attempt {
-        Err(error) => refused(postio_model::address::redact_addresses(&error.to_string())),
-        Ok(Err(error)) => refused(error.to_string()),
-        Ok(Ok(_session)) => Reachability::Reached,
+        Ok(Ok(())) => Reachability::Reached,
+        // The credential itself could not be had -- no keyring entry, a
+        // refresh that failed. Redacted, because this string is going on
+        // screen *and* into a log: `SecretError` names the account.
+        Err(error) => Reachability::Refused {
+            reason: postio_model::address::redact_addresses(&error.to_string()),
+            trouble: match error {
+                SecretError::NotFound { .. } => Some(Trouble::Missing),
+                SecretError::GrantExpired { .. } => Some(Trouble::Expired),
+                _ => None,
+            },
+        },
+        Ok(Err(error)) => Reachability::Refused {
+            reason: error.to_string(),
+            trouble: rejected(&error).then_some(Trouble::Rejected),
+        },
     }
 }
 
 fn refused(reason: String) -> Reachability {
-    Reachability::Refused { reason }
+    Reachability::Refused {
+        reason,
+        trouble: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use postio_ui::account::Trouble;
+
+    /// A protocol error that is or is not the server saying no to the
+    /// credential, standing in for IMAP's and SMTP's own.
+    #[derive(Debug)]
+    struct Said(&'static str, bool);
+
+    impl std::fmt::Display for Said {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    fn trouble(attempt: Result<Result<(), Said>, SecretError>) -> Option<Trouble> {
+        match judged(attempt, |said| said.1) {
+            Reachability::Refused { trouble, .. } => trouble,
+            Reachability::Reached => None,
+        }
+    }
+
+    #[test]
+    fn a_password_the_server_refused_is_credential_trouble() {
+        // A rotated app password: the one failure a retry never mends, so
+        // Settings has to offer a repair rather than "unreachable" (#1584).
+        assert_eq!(
+            trouble(Ok(Err(Said("authentication failed", true)))),
+            Some(Trouble::Rejected)
+        );
+    }
+
+    #[test]
+    fn nothing_in_the_keyring_and_an_expired_grant_are_credential_trouble() {
+        let account = "ada@example.com".to_owned();
+        assert_eq!(
+            trouble(Err(SecretError::NotFound {
+                account: account.clone()
+            })),
+            Some(Trouble::Missing)
+        );
+        assert_eq!(
+            trouble(Err(SecretError::GrantExpired { account })),
+            Some(Trouble::Expired)
+        );
+    }
+
+    #[test]
+    fn a_server_that_did_not_answer_is_no_credential_trouble() {
+        assert_eq!(trouble(Ok(Err(Said("connection refused", false)))), None);
+        assert_eq!(judged::<Said>(Ok(Ok(())), |_| true), Reachability::Reached);
+    }
 }

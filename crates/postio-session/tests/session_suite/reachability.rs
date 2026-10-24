@@ -119,7 +119,7 @@ async fn one_server_working_and_the_other_not_is_two_answers() {
 fn reason(outcome: &Reachability) -> String {
     match outcome {
         Reachability::Reached => panic!("expected a refusal"),
-        Reachability::Refused { reason } => reason.clone(),
+        Reachability::Refused { reason, .. } => reason.clone(),
     }
 }
 
@@ -194,4 +194,62 @@ async fn the_two_answers_are_independent() {
         reason(&found.outgoing),
         "both answers came out the same, so one of them is not being asked"
     );
+}
+
+#[tokio::test]
+async fn a_password_the_server_refuses_says_the_credential_was_refused() {
+    // A rotated app password. Settings offers a new password for this one,
+    // not another test (#1584), so the answer has to say the server said no
+    // to the credential rather than only that it did not connect.
+    let account = account();
+    let secrets = store_with_password(&account).await;
+    let refusing = ImapScripted::new(
+        ImapScript::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN] ready")
+            .on(
+                "AUTHENTICATE",
+                "{tag} NO [AUTHENTICATIONFAILED] invalid credentials",
+            )
+            .on(
+                "LOGIN",
+                "{tag} NO [AUTHENTICATIONFAILED] invalid credentials",
+            ),
+    );
+
+    let found = test_connection(&account, &secrets, &refusing, &working_smtp()).await;
+
+    assert_eq!(
+        found.trouble(),
+        Some(postio_ui::account::Trouble::Rejected),
+        "{found:?}"
+    );
+}
+
+#[tokio::test]
+async fn nothing_in_the_keyring_says_the_credential_is_missing() {
+    let account = account();
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+    let found = test_connection(&account, &secrets, &working_imap(), &working_smtp()).await;
+
+    assert_eq!(
+        found.trouble(),
+        Some(postio_ui::account::Trouble::Missing),
+        "{found:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_server_that_is_not_there_is_no_credential_trouble() {
+    let account = account();
+    let secrets = store_with_password(&account).await;
+
+    let found = test_connection(
+        &account,
+        &secrets,
+        &unreachable_imap("connection refused"),
+        &unreachable_smtp("connection refused"),
+    )
+    .await;
+
+    assert_eq!(found.trouble(), None, "{found:?}");
 }
