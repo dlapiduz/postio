@@ -153,6 +153,8 @@ pub struct OpenMessage {
     thread: Rc<RefCell<Vec<MessageId>>>,
     at: Rc<Cell<usize>>,
     position: Cell<Position>,
+    /// Where a search's hit is among the hits, while one is on screen.
+    hit: Cell<Option<Position>>,
     /// The enabled accounts' addresses, by id, while there is more than one:
     /// the place line names the message's account only then.
     accounts: RefCell<Vec<(postio_model::AccountId, String)>>,
@@ -160,11 +162,6 @@ pub struct OpenMessage {
     account_said: Rc<RefCell<Option<String>>>,
     /// The place line without its account.
     line_said: Rc<RefCell<String>>,
-    /// The results a message found by search was opened from, in the bar's
-    /// order, and which of them is on screen: what `j` and `k` walk. Empty
-    /// for a message opened from the list.
-    found: RefCell<Vec<(MessageId, String)>>,
-    found_at: Cell<usize>,
     messages: Cell<u32>,
     /// The parts of the message on screen, as its row lists them.
     parts: Rc<RefCell<Vec<Attachment>>>,
@@ -499,8 +496,7 @@ impl OpenMessage {
             account_said: Rc::default(),
             line_said: Rc::default(),
             position: Cell::new(Position { index: 0, total: 0 }),
-            found: RefCell::default(),
-            found_at: Cell::new(0),
+            hit: Cell::new(None),
             messages: Cell::new(1),
             parts: Rc::default(),
             marker: RefCell::default(),
@@ -1009,17 +1005,6 @@ impl OpenMessage {
     }
 
     fn run(&self, command: CommandId) {
-        // The step buttons walk the results a hit was opened from.
-        let by = match command {
-            CommandId::NextMessage => Some(1),
-            CommandId::PrevMessage => Some(-1),
-            _ => None,
-        };
-        if let Some(by) = by
-            && self.step_found(by)
-        {
-            return;
-        }
         let handler = self.handler.borrow().clone();
         if let Some(handler) = handler {
             handler(command);
@@ -1077,7 +1062,7 @@ impl OpenMessage {
         self.title.set_text(&subject);
         self.subject.set_text(&subject);
         self.position.set(position);
-        self.found.borrow_mut().clear();
+        self.hit.set(None);
         self.messages.set(summary.message_count.max(1));
         self.thread.borrow_mut().clear();
         self.at.set(0);
@@ -1095,47 +1080,22 @@ impl OpenMessage {
         }
     }
 
-    /// Show `message`, found by a search rather than a row of the list:
-    /// its subject, its place among the `hits` the bar held, and no marker
-    /// or labels until the reading has them. `j` and `k` walk the hits.
+    /// Show `message`, which is no row of the list -- a search's hit, a
+    /// digest's email -- under `subject`, with no marker or labels until the
+    /// reading has them. `j` and `k` are the controller's: a hit's step to
+    /// the next hit (spec 009 slice 8).
     pub fn show_found(
         &self,
         parent: &impl IsA<gtk::Widget>,
         message: MessageId,
         subject: &str,
-        hits: Vec<(MessageId, String)>,
+        hit: Option<Position>,
     ) {
-        let at = hits.iter().position(|(id, _)| *id == message).unwrap_or(0);
-        self.found.replace(hits);
-        self.found_at.set(at);
+        self.hit.set(hit);
         self.begin_hit(message, subject);
         self.present(parent.upcast_ref());
         self.show_message(message);
         self.read_hit_thread(message);
-    }
-
-    /// Step to the next (`1`) or previous (`-1`) result, when the message
-    /// was opened from search. Whether it was: a message opened from the
-    /// list is stepped by the list.
-    pub fn step_found(&self, by: isize) -> bool {
-        let (message, subject) = {
-            let found = self.found.borrow();
-            if found.is_empty() {
-                return false;
-            }
-            let Some(next) = self.found_at.get().checked_add_signed(by) else {
-                return true;
-            };
-            let Some(hit) = found.get(next) else {
-                return true;
-            };
-            self.found_at.set(next);
-            hit.clone()
-        };
-        self.begin_hit(message, &subject);
-        self.show_message(message);
-        self.read_hit_thread(message);
-        true
     }
 
     /// What a hit shows before its message is read.
@@ -1412,11 +1372,16 @@ impl OpenMessage {
         let messages = self.messages.get();
         let thread_len = self.thread.borrow().len();
         let latest = latest || thread_len == 0 || self.at.get() + 1 == thread_len;
-        let found = self.found.borrow().len();
-        let said = if found == 0 && position.total == 0 {
+        let said = if let Some(hit) = self.hit.get() {
+            focus_dialog::result_line(
+                hit.index as usize,
+                hit.total as usize,
+                messages,
+                self.at.get(),
+                latest,
+            )
+        } else if position.total == 0 {
             "Found by search".to_owned()
-        } else if found > 0 {
-            focus_dialog::result_line(self.found_at.get(), found, messages, self.at.get(), latest)
         } else {
             focus_dialog::position_line(
                 position.index as usize,

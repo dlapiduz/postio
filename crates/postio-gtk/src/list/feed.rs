@@ -138,6 +138,32 @@ impl Feed {
         Rc::clone(&self.inner).apply(effects);
     }
 
+    /// `Tab` in the bar's field: whether the controller used it, stepping
+    /// into the chips; `false` leaves the key to the toolkit.
+    pub fn bar_tab(&self) -> bool {
+        let effects = self
+            .inner
+            .focus
+            .borrow_mut()
+            .handle_on(Input::BarTab, &self.inner.list);
+        let used = !effects.is_empty();
+        Rc::clone(&self.inner).apply(effects);
+        used
+    }
+
+    /// Whether `message` is open among a search's hits rather than as the
+    /// list's row (spec 009 slice 8).
+    pub fn among_hits(&self, message: MessageId) -> bool {
+        self.inner.focus.borrow().among_hits(message)
+    }
+
+    /// The folders popover's places whose names hold `filter`, each with
+    /// the token [`Input::OpenPlace`] goes to it by, from the places the
+    /// controller last read.
+    pub fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {
+        self.inner.focus.borrow().places(filter)
+    }
+
     /// The Contacts list's row at `index`, or `None` while its page is on its
     /// way: a miss asks the store for it, and `ContactsRows` says when to
     /// draw again.

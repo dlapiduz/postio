@@ -4945,10 +4945,22 @@ impl Session {
         let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
         let message = message.into();
         let engine = self.engine_for_message(message).await;
-        Ok(
-            postio_session::reading::part_bytes_at(&database, &blobs, engine, message, &part_id)
-                .await?,
+        // The hub, so a refusal is heard rather than waited out (#1996).
+        let events = self
+            .wiring
+            .lock()
+            .expect("wiring lock")
+            .as_ref()
+            .map(|wiring| wiring.events.clone());
+        Ok(postio_session::reading::part_bytes_at(
+            &database,
+            &blobs,
+            engine,
+            events.as_ref(),
+            message,
+            &part_id,
         )
+        .await?)
     }
 
     /// The engine of the account `message` belongs to, once it has started.

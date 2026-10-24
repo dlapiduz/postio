@@ -23,6 +23,7 @@ postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 async-channel = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

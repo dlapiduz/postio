@@ -109,7 +109,7 @@ impl Session {
                 window.set_keymap(service.keymap().clone());
             }
             if update.changed.filters {
-                window.set_saved_searches(postio_session::focus::saved_searches(service.config()));
+                window.set_saved_searches(postio_ui::saved_search::pinned(service.config()));
             }
             if update.changed.sync {
                 host.notify_with(service.config().sync.clone());
@@ -284,7 +284,7 @@ pub fn adopt_from(
             .config()
             .unwrap_or_else(|| config.focus.clone()),
     );
-    window.set_saved_searches(postio_session::focus::saved_searches(config));
+    window.set_saved_searches(postio_ui::saved_search::pinned(config));
     window.set_compose_config(config.compose.clone());
     window.set_reader_config(&config.reader);
     window.set_remote_runtime(host.runtime());

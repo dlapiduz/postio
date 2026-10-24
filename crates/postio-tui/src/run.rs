@@ -1524,17 +1524,8 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let rows = match fetch {
-                        Fetch::Scope(request) => read_page(&client, request, placement).await,
-                        Fetch::Hits { ids, .. } => client
-                            .message_rows(ids)
-                            .await
-                            .map(|rows| postio_ui::paging::Page {
-                                total: 0,
-                                rows: rows.into_iter().map(crate::row::Row::from).collect(),
-                            })
-                            .map_err(|error| error.message().to_owned()),
-                    };
+                    let Fetch::Scope(request) = fetch;
+                    let rows = read_page(&client, request, placement).await;
                     let _ = inputs
                         .send(Input::Page {
                             generation,
