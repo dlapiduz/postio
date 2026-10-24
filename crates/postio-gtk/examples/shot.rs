@@ -23,6 +23,7 @@
 //! | `04` | The to-do about the API draft, opened over screen 01 |
 //! | `07`, `08`, `09` | The command bar over screen 01: plain English, `in:Rec`, and `arch` |
 //! | `10` | The folders popover over screen 01 |
+//! | `s01`, `s03` | Spec 010's search dropdown over screen 01, staged on: empty, and `harbor` typed |
 //! | `26` | The row menu (T199), right-clicked on a row below screen 01's selection |
 //! | `27` | A newsletter that paints its own page, opened: on paper (handoff screens 03, 04) |
 //! | `28` | Office mail in black text, opened: in app colours (handoff screens 11, 13) |
@@ -152,6 +153,11 @@ const SCREENS: &[(&str, &str)] = &[
         "54",
         "Settings: Contacts, the Suggestions switches (handoff 08, less sync)",
     ),
+    ("s01", "spec 010's search dropdown, empty (staged on)"),
+    (
+        "s03",
+        "spec 010's search dropdown, harbor typed (staged on)",
+    ),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -238,6 +244,9 @@ fn render(args: &[String]) -> Result<String, String> {
         adw::ColorScheme::ForceLight
     });
 
+    // Spec 010's search is staged on for its screens until T176 turns it
+    // on for Linux.
+    postio_gtk::list::feed::stage_results_view(request.screen.starts_with('s'));
     // Screen 33 is before there is a store at all: the page a store no
     // migration reaches leaves the window on (T215, T216).
     if request.screen == "33" {
@@ -617,6 +626,24 @@ fn stage(
                 return Err(format!("the bar never answered {typed:?}"));
             }
             // What arrives after the first answer: the search's rows.
+            let started = Instant::now();
+            settle_until(|| started.elapsed() > Duration::from_millis(400));
+        }
+        "s01" | "s03" => {
+            pick_three();
+            window.act(CommandId::Search);
+            let bar = window.bar().ok_or("no command bar")?;
+            let dropdown = bar.dropdown();
+            if !settle_until(|| !dropdown.titles().is_empty()) {
+                return Err("the dropdown never drew".into());
+            }
+            if screen == "s03" {
+                bar.set_text("harbor");
+                if !settle_until(|| dropdown.titles().first().is_some_and(|t| t == "Top hits")) {
+                    return Err("no Top hits for harbor".into());
+                }
+            }
+            // What arrives after the first answer: the passages and counts.
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(400));
         }

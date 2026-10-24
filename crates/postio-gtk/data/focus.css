@@ -853,6 +853,220 @@ button.focus-marker-dismiss:hover {
   font-size: var(--postio-text-meta);
 }
 
+/* ── The search dropdown (spec 010 screens 01-05) ───────────────────── */
+/* What the controller's DropdownView says, drawn as the Mac draws it:
+   sections under a bold secondary title, 38 px rows inset from the
+   panel's edge, pills, the cheat sheet's grid, and a footer of keys with
+   the count. The highlighted row is the neutral selection ground, as the
+   bar's and the places' are (FR-091). */
+.focus-dropdown {
+  font-family: var(--postio-font-body);
+}
+
+.focus-dropdown-list {
+  background: none;
+}
+
+.focus-dropdown-list > row {
+  padding: 0;
+  min-height: 0;
+  background: none;
+}
+
+.focus-dropdown-list > row.focus-dropdown-row {
+  min-height: 38px;
+  margin: 0 6px;
+  padding: 0 10px;
+  border-radius: 6px;
+}
+
+.focus-dropdown-list > row.focus-dropdown-person {
+  min-height: 48px;
+}
+
+.focus-dropdown-list > row.focus-dropdown-row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+}
+
+.focus-dropdown-list > row.focus-dropdown-row:hover:not(:selected) {
+  background-color: var(--postio-hover-bg);
+}
+
+.focus-dropdown-header {
+  min-height: 30px;
+  padding: 0 16px;
+}
+
+.focus-dropdown-title {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-dropdown-header .focus-dropdown-title {
+  margin-top: var(--postio-space-2);
+}
+
+.focus-dropdown-note {
+  font-size: var(--postio-text-label);
+}
+
+.focus-dropdown-row-title {
+  font-size: var(--postio-text-reading);
+}
+
+.focus-dropdown-secondary,
+.focus-dropdown-detail {
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-ui);
+}
+
+.focus-dropdown-folder {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-dropdown-right {
+  font-size: var(--postio-text-ui);
+  font-feature-settings: "tnum";
+}
+
+/* "↩ adds" stands in for the date only on the row the arrows rest on. */
+.focus-dropdown-adds {
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-dropdown-list > row:not(:selected) .focus-dropdown-adds {
+  opacity: 0;
+}
+
+.focus-dropdown-icon {
+  min-width: 24px;
+  color: var(--postio-dim);
+}
+
+.focus-dropdown-avatar,
+.focus-dropdown-tile-icon {
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 999px;
+  font-size: var(--postio-text-micro);
+  font-weight: bold;
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-dropdown-tile-icon {
+  border-radius: 6px;
+}
+
+.focus-dropdown-pills,
+.focus-dropdown-narrow {
+  min-height: 36px;
+  padding: 0 16px;
+}
+
+.focus-dropdown-narrow {
+  min-height: 48px;
+  border-top: 1px solid var(--postio-hairline);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+button.focus-dropdown-pill {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  font-weight: 600;
+  font-size: var(--postio-text-ui);
+}
+
+button.focus-dropdown-pill.focus-dropdown-pill-narrow {
+  border-color: transparent;
+  border-radius: 13px;
+  background-color: var(--postio-hover-bg);
+  font-weight: normal;
+}
+
+button.focus-dropdown-pill:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.focus-dropdown-op {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+  color: var(--postio-dim);
+}
+
+.focus-dropdown-pill-count {
+  font-weight: normal;
+  font-feature-settings: "tnum";
+}
+
+/* A saved search's quiet "3 new": the accent's tint, small (D15). */
+.focus-dropdown-fresh {
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: var(--postio-text-micro);
+  font-weight: 600;
+  color: var(--postio-accent);
+  background-color: color-mix(in srgb, var(--postio-accent) 12%, transparent);
+}
+
+.focus-dropdown-sheet {
+  padding: 0 16px;
+}
+
+.focus-dropdown-sheet > box {
+  min-height: 26px;
+  font-size: var(--postio-text-ui);
+}
+
+.focus-dropdown-example {
+  min-height: 36px;
+  margin: 5px 16px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background-color: var(--postio-hover-bg);
+}
+
+.focus-dropdown-understood {
+  min-height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-dropdown-tile {
+  padding: 4px 8px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: 6px;
+  background-color: var(--postio-raised-bg);
+}
+
+.focus-dropdown-term {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+}
+
+.focus-dropdown-origin {
+  font-size: var(--postio-text-micro);
+}
+
+.focus-dropdown-footer {
+  min-height: 34px;
+  padding: 0 16px;
+  font-size: var(--postio-text-label);
+}
+
+.focus-dropdown-count {
+  font-feature-settings: "tnum";
+}
+
 /* ── The folders popover (screen 10) ─────────────────────────────────── */
 /* A popover is a surface of its own and does not inherit the window's
    face: without this every name in it was set in the fallback mono (C25:

@@ -456,9 +456,17 @@ turns on (T176).
     cases were rewritten to the shared rule. A composer over an open message
     reports the message still open under it (`surfaces_now`), so a reply to
     a hit no longer sends the controller back to the search.
-- [ ] T170 Draw the dropdown (`Intent::Dropdown`, screens 01-05) in
+- [x] T170 Draw the dropdown (`Intent::Dropdown`, screens 01-05) in
   `crates/postio-gtk/src/bar.rs`, with widget tests over `DropdownView`
   values, behind a policy with `results_view` on in the tests only.
+  - *As built:* `crates/postio-gtk/src/dropdown.rs` draws the view in the
+    bar's panel in place of spec 009's lines, and says the arrows' row back
+    as `SearchHighlighted`. `list::feed::stage_results_view` is the tests'
+    switch (and `shot`'s `s01`/`s03`), gone at T176. The highlighted row is
+    the neutral selection ground, as the bar's and the places' are (FR-091),
+    not the Mac's accent ring. A hit has no icon: the theme's only mail
+    glyphs are the read and unread marks. The ghost after the caret (screen
+    02) is not drawn yet; it goes with T175's typing states or T176.
 - [ ] T171 The results view (`ShowResults`, `ResultsPage`, `ResultsCursor`,
   `Query`, `LeaveResults`, History back and forward): the Conversations tab.
 - [ ] T172 The filter popovers and the timeline (`Popover`).

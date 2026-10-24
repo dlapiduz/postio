@@ -21,6 +21,7 @@ pub mod contacts;
 pub mod demo;
 pub mod digest;
 pub mod drag;
+pub mod dropdown;
 pub mod empty;
 pub mod filtered;
 pub mod keymap_dialog;
