@@ -1069,6 +1069,207 @@ button.focus-dropdown-pill:hover {
   font-feature-settings: "tnum";
 }
 
+/* ── The search results (spec 010 screens 06, 07) ───────────────────── */
+/* In the inbox's place: a head with the count, the tabs and Sort; the
+   query's chips and the filter buttons; the rows, 58 tall (66 for a top
+   hit) under 32 px group headers; the footer of keys. The ring is the
+   list's cursor ring (FR-091); matched words wear the find highlight. */
+.focus-results {
+  background-color: var(--postio-surface);
+}
+
+.focus-results-head {
+  padding: var(--postio-space-3) var(--postio-space-4) var(--postio-space-2);
+}
+
+.focus-results-count {
+  font-size: var(--postio-text-title);
+  font-weight: bold;
+}
+
+.focus-results-sub {
+  font-size: var(--postio-text-label);
+}
+
+button.focus-results-tab {
+  font-weight: normal;
+}
+
+button.focus-results-tab.focus-results-tab-selected {
+  background-color: var(--postio-selected-bg);
+  font-weight: bold;
+}
+
+.focus-results-query {
+  min-height: 32px;
+  margin: 0 var(--postio-space-4);
+  padding: 0 var(--postio-space-3);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-raised-bg);
+}
+
+/* Nothing matches and the way out is in the field (§3.10): a strong ring.
+   The Mac's is the accent; whether Focus spends it here is T175's. */
+.focus-results-query.focus-results-query-ringed {
+  outline: 2px solid var(--postio-hairline-strong);
+  outline-offset: -2px;
+}
+
+.focus-results-chip {
+  padding: 0 0 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-md);
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+}
+
+.focus-results-chip-op {
+  color: var(--postio-dim);
+}
+
+button.focus-results-chip-remove {
+  min-height: 0;
+  min-width: 0;
+  padding: 2px;
+}
+
+.focus-results-filters {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+button.focus-results-filter {
+  min-height: 26px;
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline);
+  border-radius: 13px;
+  background: none;
+  box-shadow: none;
+  font-weight: normal;
+  font-size: var(--postio-text-ui);
+}
+
+button.focus-results-filter.focus-results-filter-applied {
+  border-color: var(--postio-hairline-strong);
+  background-color: var(--postio-selected-bg);
+  font-weight: 600;
+}
+
+.focus-results-list {
+  background: none;
+}
+
+.focus-results-list > row {
+  padding: 0;
+  transition: none;
+}
+
+.focus-results-header {
+  min-height: 32px;
+  padding: 0 var(--postio-space-4);
+}
+
+.focus-results-header-title {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-results-header > label {
+  font-size: var(--postio-text-label);
+}
+
+.focus-results-row {
+  min-height: 58px;
+  padding: 0 20px 0 12px;
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-results-row.focus-results-top-hit {
+  min-height: 66px;
+}
+
+.focus-results-row.focus-results-checked {
+  background-color: var(--postio-selected-bg);
+}
+
+/* The ring is where the keyboard is: the list cursor's own (FR-091). */
+.focus-results-row.focus-results-cursor {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+.focus-keyboard-away .focus-results-row.focus-results-cursor {
+  outline-color: var(--postio-hairline-strong);
+}
+
+.focus-results-gutter {
+  min-width: 28px;
+  color: var(--postio-ink-secondary);
+}
+
+.focus-results-sender {
+  min-width: 176px;
+}
+
+.focus-results-reason {
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.focus-results-unread {
+  font-weight: bold;
+}
+
+.focus-results-subject {
+  font-size: var(--postio-text-reading);
+}
+
+.focus-results-label {
+  padding: 0 var(--postio-space-1);
+  border: 1px solid var(--postio-hairline);
+  border-radius: 999px;
+  font-size: var(--postio-text-meta);
+}
+
+.focus-results-badge {
+  padding: 0 4px;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-sm);
+  font-size: var(--postio-text-micro);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-results-source {
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.focus-results-source-file {
+  font-style: italic;
+}
+
+.focus-results-folder {
+  min-width: 96px;
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.focus-results-date {
+  min-width: 62px;
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
+  font-feature-settings: "tnum";
+}
+
+.focus-results-footer {
+  min-height: 34px;
+  padding: 0 var(--postio-space-4);
+  font-size: var(--postio-text-label);
+}
+
 /* ── The folders popover (screen 10) ─────────────────────────────────── */
 /* A popover is a surface of its own and does not inherit the window's
    face: without this every name in it was set in the fallback mono (C25:

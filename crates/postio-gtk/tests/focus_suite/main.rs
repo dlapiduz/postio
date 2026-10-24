@@ -93,6 +93,7 @@ mod registry_parity;
 mod reload;
 mod remind_on_send;
 mod remote_images;
+mod results;
 mod row_menu;
 mod rows;
 mod rule_query;
@@ -462,6 +463,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "dropdown::slash_opens_the_dropdown_and_a_word_finds_top_hits",
         dropdown::slash_opens_the_dropdown_and_a_word_finds_top_hits as fn(),
+    ),
+    (
+        "results::show_all_opens_the_results_and_back_returns_to_the_inbox",
+        results::show_all_opens_the_results_and_back_returns_to_the_inbox as fn(),
+    ),
+    (
+        "results::a_toggle_filter_adds_its_chip_and_the_chip_removes_it",
+        results::a_toggle_filter_adds_its_chip_and_the_chip_removes_it as fn(),
     ),
     (
         "bar::a_hit_steps_the_results_and_its_own_thread",

@@ -467,8 +467,19 @@ turns on (T176).
     not the Mac's accent ring. A hit has no icon: the theme's only mail
     glyphs are the read and unread marks. The ghost after the caret (screen
     02) is not drawn yet; it goes with T175's typing states or T176.
-- [ ] T171 The results view (`ShowResults`, `ResultsPage`, `ResultsCursor`,
+- [x] T171 The results view (`ShowResults`, `ResultsPage`, `ResultsCursor`,
   `Query`, `LeaveResults`, History back and forward): the Conversations tab.
+  - *As built:* `crates/postio-gtk/src/results.rs` is a page of the
+    window's body beside the mail, as Contacts is: the head (count, tabs,
+    Sort), the query's chips with their ✕ and the filter buttons, a
+    `ListView` over a model that holds only the groups' starts, and the
+    footer's keys. Rows are read by position when drawn; a missing one is
+    asked for after the bind. Keys reach the controller through the
+    window's routing, so History back and forward needed nothing here. A
+    toggle button's term is `FilterKind::toggle_term` in `postio-ui` (the
+    Mac's Swift still has its own copy). The query's "nothing matches"
+    ring is neutral until T175 settles whether Focus spends the accent on
+    it. The timeline is T172's.
 - [ ] T172 The filter popovers and the timeline (`Popover`).
 - [ ] T173 The Files tab, Quick Look and Save file (`QuickLook`,
   `FileCopy`).

@@ -157,6 +157,20 @@ impl Feed {
         Rc::clone(&self.inner).apply(effects);
     }
 
+    /// The search result at `position`, drawn; `None` while its page is on
+    /// its way, which [`want_result`](Self::want_result) asks for.
+    pub fn result_row(&self, position: u64) -> Option<postio_focus::ResultRow> {
+        self.inner.focus.borrow().result_row(position)
+    }
+
+    /// The results view wants the row at `position`, which
+    /// [`result_row`](Self::result_row) could not give: its page is read,
+    /// and `Intent::ResultsPage` says when it lands.
+    pub fn want_result(&self, position: u64) {
+        let effects = self.inner.focus.borrow_mut().results_wanted(position);
+        Rc::clone(&self.inner).apply(effects);
+    }
+
     /// `Tab` in the bar's field: whether the controller used it, stepping
     /// into the chips; `false` leaves the key to the toolkit.
     pub fn bar_tab(&self) -> bool {

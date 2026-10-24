@@ -574,6 +574,21 @@ impl FilterKind {
         }
     }
 
+    /// A toggle button's term, as an operator's keyword and its value:
+    /// what a click adds or takes out. `None` for a button with a popover.
+    pub fn toggle_term(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            FilterKind::Attachment => Some(("has", "attachment")),
+            FilterKind::HasAction => Some(("has", "action")),
+            FilterKind::Unread => Some(("is", "unread")),
+            FilterKind::From
+            | FilterKind::To
+            | FilterKind::Date
+            | FilterKind::Anywhere
+            | FilterKind::Label => None,
+        }
+    }
+
     /// Whether it opens a popover (▾), rather than toggling.
     pub fn has_popover(self) -> bool {
         matches!(
@@ -1778,6 +1793,27 @@ mod tests {
     }
 
     // US9, design §3.11: a People row's words and its footer.
+    #[test]
+    fn a_toggle_button_names_its_term_and_a_popover_button_none() {
+        let terms: Vec<_> = FilterKind::ALL
+            .into_iter()
+            .map(|kind| (kind, kind.toggle_term()))
+            .collect();
+        assert_eq!(
+            terms,
+            [
+                (FilterKind::From, None),
+                (FilterKind::To, None),
+                (FilterKind::Date, None),
+                (FilterKind::Anywhere, None),
+                (FilterKind::Label, None),
+                (FilterKind::Attachment, Some(("has", "attachment"))),
+                (FilterKind::HasAction, Some(("has", "action"))),
+                (FilterKind::Unread, Some(("is", "unread"))),
+            ]
+        );
+    }
+
     #[test]
     fn a_people_row_says_its_messages_and_the_tab_its_keys() {
         assert_eq!(person_messages(1), "1 message");
