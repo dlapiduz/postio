@@ -594,6 +594,91 @@ async fn a_moved_message_with_no_message_id_and_no_copyuid_keeps_one_row() {
 }
 
 #[tokio::test]
+async fn a_bulk_moved_message_with_no_message_id_and_no_copyuid_keeps_one_row() {
+    // The same move made from a select-all: the local half is `move_set`,
+    // which must leave the row as `move_to` does, without the source's
+    // `remote_id`, or the destination's sync cannot recognise it.
+    let raw = RAW.to_vec();
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new(INBOX)
+                .uid_validity(UidValidity::new(1_707_000_000))
+                .message(MockMessage::new(raw.clone()).with_internal_date(at(8))),
+        )
+        .mailbox(MockMailbox::new(ARCHIVE))
+        .mailbox(MockMailbox::new(TRASH))
+        .build();
+    backend.connect().await.expect("connect");
+    backend.omit_uid_mappings();
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let local = local(&connection).await;
+    // `local` files the row at `at(8)` with the size of `raw`, as a sync of
+    // the inbox would have.
+
+    enqueue(
+        &connection,
+        &local,
+        Operation::Move {
+            from: local.inbox,
+            to: local.archive,
+        },
+        at(9),
+    )
+    .await;
+    MessageRepository::new(&connection)
+        .move_set(
+            &postio_storage::repository::MessageSet::in_mailbox(local.inbox),
+            local.archive,
+        )
+        .await
+        .expect("the local half of the move");
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, local.account, at(10))
+        .await
+        .expect("drain");
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    let archive = MailboxRepository::new(&connection)
+        .get(local.archive)
+        .await
+        .expect("read")
+        .expect("the archive");
+    postio_sync::sync_mailbox(
+        &connection,
+        &backend,
+        &archive,
+        &postio_account::cancel::CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("sync the destination");
+
+    let messages = MessageRepository::new(&connection);
+    assert_eq!(
+        messages
+            .count(&postio_storage::repository::ListQuery::account(
+                local.account
+            ))
+            .await
+            .expect("count"),
+        1,
+        "the server's copy is the row the person already has, not a second one"
+    );
+    let row = messages
+        .get(local.message)
+        .await
+        .expect("read")
+        .expect("the row the person is looking at survives");
+    assert!(
+        row.server.uid.is_some() && row.server.remote_id.is_some(),
+        "and it has the server's identity, so its body can be fetched"
+    );
+}
+
+#[tokio::test]
 async fn a_message_moved_on_both_sides_does_not_move_twice() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
