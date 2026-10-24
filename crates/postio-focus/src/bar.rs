@@ -90,6 +90,8 @@ pub struct BarLine {
     pub wheres: Vec<String>,
     /// A message's time column.
     pub time: Option<String>,
+    /// The message a hit's or a folder's line opens.
+    pub message: Option<MessageId>,
 }
 
 /// The bar, whole: what [`Intent::BarLines`] draws.
@@ -243,6 +245,9 @@ pub(crate) struct Bar {
     filtering: bool,
     /// The search half is the dropdown (spec 010 step 2), not the blend.
     results_view: bool,
+    /// Whether a digest rule can hold mail: a hit then says where it
+    /// waits, and a search asks which hits are held.
+    pub(crate) digesting: bool,
     /// `from:` and `to:` know people ([`crate::Capabilities::people_search`]).
     people_search: bool,
     /// The clock, when stopped: what the dropdown's dates count from.
@@ -361,6 +366,7 @@ impl Bar {
             places_read: 0,
             filtering: false,
             results_view,
+            digesting: false,
             people_search,
             clock: None,
             drop: None,
@@ -597,6 +603,7 @@ impl Bar {
                         query: parsed,
                         order: self.order,
                         stamp: self.stamp,
+                        held: self.digesting,
                     }));
                 } else {
                     self.results.clear();
@@ -743,6 +750,7 @@ impl Bar {
                 sender: row.from,
                 wheres: row.wheres,
                 time: Some(postio_ui::row::timestamp(row.at, postio_ui::clock::now())),
+                message: Some(message),
                 ..plain(BarLineKind::Message, token, row.subject)
             },
         }
@@ -831,6 +839,7 @@ impl Bar {
             query,
             order: self.order,
             stamp: self.stamp,
+            held: self.digesting,
         })]
     }
 
@@ -1135,6 +1144,7 @@ fn plain(kind: BarLineKind, token: u64, title: String) -> BarLine {
         sender: None,
         wheres: Vec::new(),
         time: None,
+        message: None,
     }
 }
 
@@ -1508,6 +1518,12 @@ impl FocusController {
             threads: hit.thread.into_iter().collect(),
             writes: false,
         })
+    }
+
+    /// Whether `message` is open among a search's hits, which `j` and `k`
+    /// walk: its place is the hits', even when the list has it too.
+    pub fn among_hits(&self, message: MessageId) -> bool {
+        self.bar.found.iter().any(|hit| hit.message == message)
     }
 
     /// The message a hit opened has closed: the bar comes back on the
