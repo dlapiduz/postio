@@ -2174,6 +2174,11 @@ impl FocusWindow {
                 }
             }
             Intent::LeaveResults => self.leave_results(),
+            Intent::Popover(view) => {
+                if let Some(results) = self.results() {
+                    results.show_popover(view.as_deref());
+                }
+            }
             Intent::Place { name } => self.show_place(name),
             Intent::OpenPlaces => self.open_places(),
             Intent::PlacesChanged => {

@@ -25,6 +25,7 @@
 //! | `10` | The folders popover over screen 01 |
 //! | `s01`, `s03` | Spec 010's search dropdown over screen 01, staged on: empty, and `harbor` typed |
 //! | `s06` | Spec 010's results for `harbor`, in the inbox's place (staged on) |
+//! | `s08`, `s09` | The same with From ▾ open, and with Date ▾ open |
 //! | `26` | The row menu (T199), right-clicked on a row below screen 01's selection |
 //! | `27` | A newsletter that paints its own page, opened: on paper (handoff screens 03, 04) |
 //! | `28` | Office mail in black text, opened: in app colours (handoff screens 11, 13) |
@@ -160,6 +161,8 @@ const SCREENS: &[(&str, &str)] = &[
         "spec 010's search dropdown, harbor typed (staged on)",
     ),
     ("s06", "spec 010's results for harbor (staged on)"),
+    ("s08", "spec 010's results with From open (staged on)"),
+    ("s09", "spec 010's results with Date open (staged on)"),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -631,7 +634,7 @@ fn stage(
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(400));
         }
-        "s06" => {
+        "s06" | "s08" | "s09" => {
             pick_three();
             window.act(CommandId::Search);
             let bar = window.bar().ok_or("no command bar")?;
@@ -651,6 +654,16 @@ fn stage(
                     .is_some_and(|results| !results.subjects().is_empty())
             }) {
                 return Err("the results never drew".into());
+            }
+            if screen != "s06" {
+                let results = window.results().ok_or("no results")?;
+                let label = if screen == "s08" { "From" } else { "Date" };
+                if !settle_until(|| results.click_filter(label)) {
+                    return Err(format!("no {label} button"));
+                }
+                if !settle_until(|| results.popover().is_open()) {
+                    return Err(format!("{label} never opened"));
+                }
             }
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(500));

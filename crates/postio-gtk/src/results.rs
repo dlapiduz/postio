@@ -149,6 +149,11 @@ pub struct ResultsPane {
     chips: gtk::Box,
     query_hint: gtk::Box,
     buttons: gtk::Box,
+    /// The filter buttons drawn, by kind: what a popover hangs from.
+    filter_buttons: RefCell<Vec<(FilterKind, gtk::Button)>>,
+    timeline: Rc<crate::search_popover::MonthChart>,
+    timeline_hint: gtk::Label,
+    popover: Rc<crate::search_popover::FilterPopover>,
     items: ResultsItems,
     list: gtk::ListView,
     hints: gtk::Box,
@@ -213,6 +218,20 @@ impl ResultsPane {
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         buttons.add_css_class("focus-results-filters");
 
+        // The timeline (design §3.3): a bar a month, the hint on its right.
+        let timeline = crate::search_popover::MonthChart::new();
+        timeline.widget().set_hexpand(true);
+        timeline.widget().set_halign(gtk::Align::Center);
+        let timeline_hint = gtk::Label::new(None);
+        timeline_hint.add_css_class("dim-label");
+        timeline_hint.add_css_class("focus-results-timeline-hint");
+        timeline_hint.set_xalign(1.0);
+        timeline_hint.set_justify(gtk::Justification::Right);
+        let timeline_line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+        timeline_line.add_css_class("focus-results-timeline");
+        timeline_line.append(timeline.widget());
+        timeline_line.append(&timeline_hint);
+
         let items = ResultsItems::default();
         let selection = gtk::NoSelection::new(Some(items.clone()));
         let factory = gtk::SignalListItemFactory::new();
@@ -242,10 +261,15 @@ impl ResultsPane {
         root.append(&head);
         root.append(&query);
         root.append(&buttons);
+        root.append(&timeline_line);
         root.append(&scrolled);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(&foot);
 
+        let popover_feed = feed.clone();
+        let popover = crate::search_popover::FilterPopover::new(move |input| {
+            popover_feed.input(input);
+        });
         let pane = Rc::new(ResultsPane {
             root,
             feed,
@@ -257,6 +281,10 @@ impl ResultsPane {
             chips,
             query_hint,
             buttons,
+            filter_buttons: RefCell::default(),
+            timeline,
+            timeline_hint,
+            popover,
             items,
             list,
             hints,
@@ -300,6 +328,15 @@ impl ResultsPane {
                 }
             }
         });
+        self.timeline.connect_months({
+            let weak = weak.clone();
+            move |first, last| {
+                if let Some(pane) = weak.upgrade() {
+                    pane.feed
+                        .input(Input::SearchEdit(TermEdit::SetMonths { first, last }));
+                }
+            }
+        });
         back.connect_clicked({
             let weak = weak.clone();
             move |_| {
@@ -333,6 +370,15 @@ impl ResultsPane {
         self.sub_line.set_visible(!view.sub_line.is_empty());
         self.show_tabs(view);
         self.sort.set_visible(view.sortable);
+        self.timeline.show(&view.months);
+        self.timeline.widget().set_visible(!view.months.is_empty());
+        // Two lines, broken at the hint's first middle dot, as screen 06
+        // draws it; then the key that steps a month while a range is set.
+        let mut hint = view.timeline_hint.replacen(" \u{b7} ", "\n", 1);
+        if let Some(step) = &view.timeline_step {
+            hint.push_str(&format!("\n{} {}", step.key, step.label));
+        }
+        self.timeline_hint.set_text(&hint);
         self.sort.set_label(&format!(
             "{} {}",
             words::SORT,
@@ -446,7 +492,10 @@ impl ResultsPane {
                 .inspect(|field| field.remove_css_class("focus-results-query-ringed"));
         }
 
+        // The popover hangs from a button about to go: off it first.
+        self.popover.unhang();
         clear(&self.buttons);
+        let mut drawn = Vec::new();
         for button in &query.buttons {
             let control = gtk::Button::new();
             let label = if button.kind.has_popover() {
@@ -471,7 +520,37 @@ impl ResultsPane {
                 }
             });
             self.buttons.append(&control);
+            drawn.push((kind, control));
         }
+        if let Some(kind) = self.popover.kind()
+            && let Some((_, button)) = drawn.iter().find(|(drawn, _)| *drawn == kind)
+        {
+            self.popover.rehang(button.upcast_ref());
+        }
+        self.filter_buttons.replace(drawn);
+    }
+
+    /// Draw the open filter popover, hung from its button, or close it:
+    /// `Intent::Popover`.
+    pub fn show_popover(&self, view: Option<&postio_focus::PopoverView>) {
+        let button = view.and_then(|view| {
+            self.filter_buttons
+                .borrow()
+                .iter()
+                .find(|(kind, _)| *kind == view.kind)
+                .map(|(_, button)| button.clone().upcast::<gtk::Widget>())
+        });
+        self.popover.show(view, button.as_ref());
+    }
+
+    /// The filter popover.
+    pub fn popover(&self) -> &crate::search_popover::FilterPopover {
+        &self.popover
+    }
+
+    /// The timeline.
+    pub fn timeline(&self) -> &crate::search_popover::MonthChart {
+        &self.timeline
     }
 
     /// A filter button: a toggle sends its term, the rest open their

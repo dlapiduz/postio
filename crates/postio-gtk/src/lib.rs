@@ -39,6 +39,7 @@ pub mod results;
 pub mod row_menu;
 pub mod rule_dialog;
 pub mod rules;
+pub mod search_popover;
 pub mod settings;
 pub mod source;
 mod split;
