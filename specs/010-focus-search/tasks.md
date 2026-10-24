@@ -480,7 +480,16 @@ turns on (T176).
     Mac's Swift still has its own copy). The query's "nothing matches"
     ring is neutral until T175 settles whether Focus spends the accent on
     it. The timeline is T172's.
-- [ ] T172 The filter popovers and the timeline (`Popover`).
+- [x] T172 The filter popovers and the timeline (`Popover`).
+  - *As built:* `crates/postio-gtk/src/search_popover.rs`: `MonthChart`
+    (the timeline's and the Date popover's bars; a drag is said once, on
+    release, as `SetMonths`) and `FilterPopover`, a `GtkPopover` hung from
+    its button, whose highlight, Space, Return and a click away are GTK's
+    as they are the Mac's. The controller redraws the filter buttons with
+    every popover, so the popover is taken off the old button and hung on
+    the new one, popped up after it is laid out. It opens from its button's
+    start, so a compositor that does not slide popups still shows it whole.
+    The share bars and the selected months are neutral ink (FR-091).
 - [ ] T173 The Files tab, Quick Look and Save file (`QuickLook`,
   `FileCopy`).
 - [ ] T174 The People tab.

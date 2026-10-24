@@ -169,3 +169,101 @@ pub fn a_toggle_filter_adds_its_chip_and_the_chip_removes_it() {
         );
     });
 }
+
+/// From ▾ opens its popover over the people in the results; Space checks
+/// the one the arrows rest on and Return keeps it, as a `from:` chip.
+pub fn from_checks_a_person_and_return_keeps_the_chip() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.click_filter("From")).await,
+            "no From button"
+        );
+        let popover = results.popover();
+        assert!(
+            crate::settle_until(async || popover.is_open() && popover.rows().len() == 3).await,
+            "From did not list the three senders: {:?}",
+            popover.rows()
+        );
+        assert!(
+            popover.key(gtk::gdk::Key::space),
+            "Space was not the popover's"
+        );
+        assert!(
+            crate::settle_until(async || popover.rows().iter().filter(|(_, on)| *on).count() == 1)
+                .await,
+            "Space checked nothing: {:?}",
+            popover.rows()
+        );
+        assert!(popover.key(gtk::gdk::Key::Return));
+        assert!(
+            crate::settle_until(async || !popover.is_open()
+                && results.chips().iter().any(|chip| chip.starts_with("from:")))
+            .await,
+            "Return kept no from: chip: {:?}",
+            results.chips()
+        );
+    });
+}
+
+/// A click away from a popover puts the query back as it was: what it
+/// previewed is not kept.
+pub fn a_click_away_from_a_popover_keeps_nothing() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(crate::settle_until(async || results.click_filter("From")).await);
+        let popover = results.popover();
+        assert!(
+            crate::settle_until(async || popover.is_open() && !popover.rows().is_empty()).await
+        );
+        popover.key(gtk::gdk::Key::space);
+        popover.dismiss();
+        assert!(
+            crate::settle_until(async || !popover.is_open()).await,
+            "the popover stayed up"
+        );
+        crate::settle();
+        assert!(
+            results.chips().is_empty(),
+            "a dismissed popover kept {:?}",
+            results.chips()
+        );
+    });
+}
+
+/// The timeline draws a bar a month; a drag across the newest narrows the
+/// query to it, and the bar is drawn selected.
+pub fn a_drag_across_the_timeline_narrows_the_dates() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        let timeline = results.timeline();
+        assert!(
+            crate::settle_until(async || timeline.bars().len() >= 12).await,
+            "no timeline: {:?}",
+            timeline.bars()
+        );
+        let newest = timeline.bars().len() as u32 - 1;
+        timeline.drag(newest, newest);
+        assert!(
+            crate::settle_until(async || !results.chips().is_empty()).await,
+            "the drag set no dates"
+        );
+        assert!(
+            crate::settle_until(async || timeline.bars().last().is_some_and(|(_, on)| *on)).await,
+            "the newest month is not drawn selected: {:?}",
+            timeline.bars()
+        );
+    });
+}

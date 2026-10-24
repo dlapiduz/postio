@@ -1270,6 +1270,88 @@ button.focus-results-filter.focus-results-filter-applied {
   font-size: var(--postio-text-label);
 }
 
+/* ── The month chart and the filter popovers (spec 010 screens 08, 09) ── */
+/* A bar a month, its height the controller's share of the tallest; inside
+   the query's dates it is drawn strong and its label bold, and while any is
+   the others fade. */
+.focus-results-timeline {
+  min-height: 66px;
+  padding: 0 var(--postio-space-4) var(--postio-space-2);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-results-timeline-hint {
+  font-size: var(--postio-text-label);
+}
+
+.focus-month-bar {
+  border-radius: 2px 2px 0 0;
+  background-color: var(--postio-hairline-strong);
+}
+
+.focus-month-selected .focus-month-bar {
+  background-color: var(--postio-ink-secondary);
+}
+
+.focus-month-faded .focus-month-bar {
+  background-color: var(--postio-hairline);
+}
+
+.focus-month-label {
+  font-size: var(--postio-text-micro);
+  color: var(--postio-dim);
+}
+
+.focus-month-selected .focus-month-label {
+  font-weight: bold;
+  color: var(--postio-ink);
+}
+
+.focus-filter-popover > contents {
+  padding: var(--postio-space-2);
+  font-family: var(--postio-font-body);
+}
+
+.focus-popover {
+  min-width: 320px;
+}
+
+.focus-popover-rows > row {
+  border-radius: var(--postio-radius-md);
+}
+
+.focus-popover-rows > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+}
+
+.focus-popover-row {
+  min-height: 36px;
+}
+
+.focus-popover-detail,
+.focus-popover-count,
+.focus-popover-footer {
+  font-size: var(--postio-text-label);
+}
+
+/* A row's share of the largest: a quiet bar, never the accent's (FR-091),
+   which libadwaita's level bar fills with. */
+.focus-popover-share trough {
+  min-height: 4px;
+  background-color: var(--postio-hairline);
+}
+
+.focus-popover-share block.filled,
+.focus-popover-share block.high,
+.focus-popover-share block.full {
+  background-color: var(--postio-ink-secondary);
+}
+
+button.focus-popover-preset.focus-popover-preset-selected {
+  background-color: var(--postio-selected-bg);
+}
+
 /* ── The folders popover (screen 10) ─────────────────────────────────── */
 /* A popover is a surface of its own and does not inherit the window's
    face: without this every name in it was set in the fallback mono (C25:
