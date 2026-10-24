@@ -138,6 +138,7 @@ impl FilteredView {
         let empty = gtk::Label::new(Some(filtered::EMPTY));
         empty.add_css_class("dim-label");
         empty.set_vexpand(true);
+        empty.set_focusable(true);
         empty.set_visible(false);
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -226,7 +227,10 @@ impl FilteredView {
                 while let Some(row) = child {
                     child = row.next_sibling();
                     if let Some(button) = restore_button(&row) {
-                        button.set_visible(selected.is_some_and(|selected| *selected == row));
+                        let none_selected = weak.upgrade().is_none_or(|view| !view.has_selection());
+                        button.set_visible(
+                            none_selected && selected.is_some_and(|selected| *selected == row),
+                        );
                     }
                 }
                 if let Some(view) = weak.upgrade() {
@@ -313,7 +317,7 @@ impl FilteredView {
             filtered::SWEEP_BUTTON,
             postio_ui::hints::key(keymap, CommandId::SweepInbox).as_deref(),
         ));
-        self.footer.set(&filtered::footer(keymap));
+        self.footer.set(&filtered::footer(keymap, true));
         self.show_tabs();
         self.show_rows();
     }
@@ -508,6 +512,16 @@ impl FilteredView {
             } else {
                 row.remove_css_class("focus-filtered-picked");
             }
+            // One key, one scope: with a selection, R is the bar's.
+            if let Some(button) = find_class(&row, "focus-filtered-restore") {
+                button.set_visible(
+                    selected.is_empty()
+                        && self
+                            .list
+                            .selected_row()
+                            .is_some_and(|on| on.index() == at - 1),
+                );
+            }
             if let Some(check) = find_class(&row, "focus-filtered-check") {
                 check.set_opacity(if picked { 1.0 } else { 0.0 });
             }
@@ -519,9 +533,11 @@ impl FilteredView {
     fn show_empty(&self) {
         let nothing = self.counted.get() && self.rows.borrow().is_empty() && !self.more.get();
         self.empty.set_visible(nothing);
+        self.footer
+            .set(&filtered::footer(&self.keymap.borrow(), !nothing));
         if nothing {
             // The rows the keyboard was on are gone: it stays in the view.
-            self.list.grab_focus();
+            self.empty.grab_focus();
         }
     }
 

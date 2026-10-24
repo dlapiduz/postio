@@ -814,7 +814,7 @@ impl FocusController {
                 .collect(),
             focused: filtered.focused().map(|at| at as u32),
             more: filtered.more,
-            footer: words::footer(keymap),
+            footer: words::footer(keymap, !filtered.rows.is_empty()),
             bar,
             empty: (filtered.counted && filtered.rows.is_empty() && !filtered.more)
                 .then(|| words::EMPTY.to_owned()),

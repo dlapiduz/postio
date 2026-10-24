@@ -145,7 +145,7 @@ public struct FilteredView: View {
                         }
                         FilteredRowView(
                             row: row, focused: model.focused == row.id,
-                            restore: model.restoreWords, restoreCap: model.restoreCap,
+                            restore: model.bar == nil ? model.restoreWords : "", restoreCap: model.restoreCap,
                             point: { model.point(row.id) }, open: { model.open(row.id) },
                             toggle: { model.toggle(row.id) }, extend: { model.extend(row.id) },
                             restoreAction: model.restore
