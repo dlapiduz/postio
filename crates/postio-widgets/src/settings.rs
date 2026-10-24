@@ -811,6 +811,10 @@ mod imp {
         /// now, the same "absent means nothing to say" shape
         /// `token_expiries` uses.
         pub reindex_progress: RefCell<Vec<(AccountId, (u32, u32))>>,
+        /// What the last connection test found wrong with each account's
+        /// credential (#1584). Kept per account so it cannot follow the
+        /// selection to another row.
+        pub credential_trouble: RefCell<Vec<(AccountId, postio_ui::account::Trouble)>>,
         /// The account row context menu currently open, if one is — tracked
         /// so a second right click closes the first, the same reason
         /// `Sidebar` tracks `saved_search_menu`.
@@ -1015,6 +1019,7 @@ mod imp {
                 accounts: RefCell::new(Vec::new()),
                 token_expiries: RefCell::new(Vec::new()),
                 reindex_progress: RefCell::new(Vec::new()),
+                credential_trouble: RefCell::new(Vec::new()),
                 weights: RefCell::new(Vec::new()),
                 attachments_included: Cell::new(false),
                 account_menu: RefCell::new(None),
@@ -1318,6 +1323,20 @@ impl SettingsPanel {
             readings.push((account, progress));
         }
         drop(readings);
+        self.redraw_accounts();
+    }
+
+    /// What a connection test found wrong with `account`'s credential, or
+    /// `None` once a test reached it or a repair went through (#1584).
+    pub fn set_credential_trouble(
+        &self,
+        account: AccountId,
+        trouble: Option<postio_ui::account::Trouble>,
+    ) {
+        let mut found = self.imp().credential_trouble.borrow_mut();
+        found.retain(|(id, _)| *id != account);
+        found.extend(trouble.map(|trouble| (account, trouble)));
+        drop(found);
         self.redraw_accounts();
     }
 
@@ -1719,9 +1738,26 @@ impl SettingsPanel {
         // now.
         let standing = self.token_standing(account.id);
         let expired = standing.is_expired();
+        let found = self
+            .imp()
+            .credential_trouble
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account.id)
+            .map(|(_, trouble)| *trouble);
+        let offer =
+            postio_ui::account::offer(postio_ui::account::repair(account), expired, found, false);
         let mut facts = vec![account_badge(account)];
         facts.extend(self.mail_weight(account.id));
         facts.extend(standing.line());
+        // An expiry already says so on its validity line; anything a test
+        // found is said here, since nothing else on the row would.
+        facts.extend(
+            offer
+                .as_ref()
+                .filter(|_| !expired)
+                .map(|offer| offer.reason.clone()),
+        );
         facts.extend(self.reindex_status(account.id));
         if !account.enabled {
             facts.push("disabled".to_owned());
@@ -1738,10 +1774,10 @@ impl SettingsPanel {
         let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
         text.set_hexpand(true);
         text.append(&name_line);
-        // An expired token is the one state on this row that is a problem
-        // rather than a fact, so it gets the mark that says so — beside the
-        // line it is about, not as a fifth line of its own.
-        if expired {
+        // A broken credential is the one state on this row that is a
+        // problem rather than a fact, so it gets the mark that says so —
+        // beside the line it is about, not as a fifth line of its own.
+        if offer.is_some() {
             let flagged = gtk::Box::new(gtk::Orientation::Horizontal, 7);
             let warning = gtk::Image::from_icon_name("dialog-warning-symbolic");
             warning.add_css_class("postio-settings-account-warning");
@@ -1761,8 +1797,9 @@ impl SettingsPanel {
         // expired is not looking for a context menu; they are looking for
         // the button that fixes it, and it belongs where the problem is
         // stated rather than three keystrokes away.
-        if expired {
-            let reconnect = gtk::Button::with_label("Reconnect");
+        if let Some(label) = offer.as_ref().and_then(|offer| offer.button) {
+            let reconnect = gtk::Button::with_label(label);
+            reconnect.add_css_class("postio-settings-account-repair");
             crate::widgets::button::style(
                 &reconnect,
                 crate::widgets::button::Kind::Secondary,

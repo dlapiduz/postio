@@ -179,6 +179,71 @@ pub fn repair(account: &Account) -> Repair {
     }
 }
 
+/// What a connection test found wrong with an account's credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trouble {
+    /// A grant past its expiry.
+    Expired,
+    /// The server refused the credential it was given: a rotated app
+    /// password, or a revoked grant.
+    Rejected,
+    /// Nothing in the keyring to sign in with.
+    Missing,
+}
+
+/// What an account row says is wrong with its credential, and what to press.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offer {
+    /// What is wrong, in words: a button with no reason beside it is a
+    /// button nobody knows whether to press.
+    pub reason: String,
+    /// What the button says, or `None` when there is nothing the pane can
+    /// put right -- the row still says what is wrong.
+    pub button: Option<&'static str>,
+}
+
+/// What the row offers for an account whose repair route is `repair`, or
+/// `None` when its credential is fine as far as anything knows.
+///
+/// `expired` is the stored token's standing, read fresh on every settings
+/// open, so it outranks `found`, which is whatever the last connection test
+/// said. Every state a person can repair gets the same offer (#1584), and the
+/// button is named after what it does on that route: "Reconnect" in front of
+/// a password field promises a browser that is not going to open.
+pub fn offer(
+    repair: Repair,
+    expired: bool,
+    found: Option<Trouble>,
+    running: bool,
+) -> Option<Offer> {
+    let trouble = if expired { Trouble::Expired } else { found? };
+    let (held, button) = match repair {
+        Repair::Nothing => ("credential", None),
+        Repair::Password => (
+            "password",
+            Some(if running {
+                "Saving…"
+            } else {
+                "New password…"
+            }),
+        ),
+        Repair::Browser => (
+            "sign-in",
+            Some(if running {
+                "Signing in…"
+            } else {
+                "Reconnect"
+            }),
+        ),
+    };
+    let reason = match trouble {
+        Trouble::Expired => format!("This account's {held} has expired."),
+        Trouble::Rejected => format!("The server refused this account's {held}."),
+        Trouble::Missing => format!("This account has no {held} in your keyring yet."),
+    };
+    Some(Offer { reason, button })
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -385,6 +450,67 @@ mod tests {
                 AuthMethod::Password
             )),
             Repair::Nothing
+        );
+    }
+
+    #[test]
+    fn every_broken_credential_gets_a_reason_and_a_button_by_its_route() {
+        // A refused password -- a rotated app password, the commonest way an
+        // account stops working -- and nothing in the keyring at all used to
+        // get no button; only an expired grant did (#1584).
+        let refused = offer(Repair::Password, false, Some(Trouble::Rejected), false)
+            .expect("a refused password is something to repair");
+        assert_eq!(
+            refused.reason,
+            "The server refused this account's password."
+        );
+        assert_eq!(refused.button, Some("New password…"));
+
+        let missing = offer(Repair::Browser, false, Some(Trouble::Missing), false)
+            .expect("a missing credential is something to repair");
+        assert_eq!(
+            missing.reason,
+            "This account has no sign-in in your keyring yet."
+        );
+        assert_eq!(missing.button, Some("Reconnect"));
+
+        let expired = offer(Repair::Browser, true, None, false).expect("an expiry is trouble");
+        assert_eq!(expired.reason, "This account's sign-in has expired.");
+    }
+
+    #[test]
+    fn an_expiry_outranks_what_a_test_found_and_nothing_found_offers_nothing() {
+        // The expiry is read fresh on every settings open; a test result is
+        // whatever the last press of the button said.
+        assert_eq!(
+            offer(Repair::Browser, true, Some(Trouble::Rejected), false).map(|offer| offer.reason),
+            Some("This account's sign-in has expired.".to_owned())
+        );
+        assert_eq!(offer(Repair::Password, false, None, false), None);
+    }
+
+    #[test]
+    fn a_credential_nothing_here_can_mend_is_said_but_offers_no_button() {
+        // A broker's token: the row still says what is wrong.
+        let broker = offer(Repair::Nothing, false, Some(Trouble::Rejected), false)
+            .expect("the trouble is still said");
+        assert_eq!(
+            broker.reason,
+            "The server refused this account's credential."
+        );
+        assert_eq!(broker.button, None);
+    }
+
+    #[test]
+    fn the_button_says_what_it_is_doing_while_it_runs() {
+        assert_eq!(
+            offer(Repair::Password, false, Some(Trouble::Rejected), true)
+                .and_then(|offer| offer.button),
+            Some("Saving…")
+        );
+        assert_eq!(
+            offer(Repair::Browser, true, None, true).and_then(|offer| offer.button),
+            Some("Signing in…")
         );
     }
 }

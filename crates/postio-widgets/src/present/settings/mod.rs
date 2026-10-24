@@ -47,9 +47,17 @@ pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
 /// An answer the app gives later, on the main loop.
 pub type Later<T> = Pin<Box<dyn Future<Output = T>>>;
 
-/// What a connection test found: the incoming server's answer, then the
-/// outgoing one's, each `Err` with the reason it refused.
-pub type Reached = (Result<(), String>, Result<(), String>);
+/// What a connection test found.
+#[derive(Debug, Clone)]
+pub struct Reached {
+    /// The incoming server's answer, `Err` with the reason it refused.
+    pub incoming: Result<(), String>,
+    /// The outgoing server's answer, likewise.
+    pub outgoing: Result<(), String>,
+    /// What either found wrong with the credential, for the row's repair
+    /// (#1584).
+    pub trouble: Option<postio_ui::account::Trouble>,
+}
 
 /// What the settings window asks of the app it is drawn in.
 pub trait Outside {

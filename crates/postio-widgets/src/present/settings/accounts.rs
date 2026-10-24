@@ -27,7 +27,7 @@ use postio_client::Client;
 use postio_client::protocol::{AccountField, AccountOp};
 use postio_model::ids::AccountId;
 
-use super::{Outside, Reindexing};
+use super::{Outside, Reached, Reindexing};
 use crate::settings::{
     AccountAction, AccountEdit, AccountMailboxes, ConnectionStatus, SettingsPanel, SignatureDraft,
 };
@@ -385,8 +385,17 @@ impl Accounts {
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: the app dials on its own runtime and answers
             // over a channel (`Outside`).
-            let (incoming, outgoing) = answer.await;
+            let reached: Reached = answer.await;
+            let Reached {
+                incoming,
+                outgoing,
+                trouble,
+            } = reached;
             if let Some(panel) = panel.upgrade() {
+                // Said on the account's row as well as under the button, so
+                // the repair is offered where the account is (#1584). A test
+                // that got through clears what an earlier one found.
+                panel.set_credential_trouble(id, trouble);
                 panel.set_connection_status(ConnectionStatus::Answered { incoming, outgoing });
             }
         });
@@ -399,6 +408,9 @@ impl Accounts {
         self.outside.update_credential(
             id,
             Box::new(move || {
+                if let Some(panel) = accounts.panel.upgrade() {
+                    panel.set_credential_trouble(id, None);
+                }
                 let accounts = accounts.clone();
                 postio_core::blocking::now(async move { accounts.refresh().await })
             }),

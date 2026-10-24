@@ -411,6 +411,76 @@ pub fn an_account_row_says_whether_its_token_is_still_good() {
     window.destroy();
 }
 
+/// #1584 on Linux: a password the server refused gets a reason and a
+/// button on its row, as an expired grant always did, and the button opens
+/// the same credential dialog. A repair that went through takes both away.
+pub fn a_refused_password_offers_a_new_one_on_its_row() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let panel = SettingsPanel::new();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&panel));
+    window.present();
+    panel.set_accounts(vec![an_account(1, "Ada", "ada@example.com")]);
+    pump();
+    assert_eq!(
+        repair_button_in(&rows(&panel)[0]),
+        None,
+        "nothing is wrong yet"
+    );
+
+    let heard: Rc<RefCell<Vec<(AccountId, AccountAction)>>> = Rc::new(RefCell::new(Vec::new()));
+    panel.connect_account_action({
+        let heard = heard.clone();
+        move |id, action| heard.borrow_mut().push((id, action))
+    });
+    panel.set_credential_trouble(
+        AccountId::new(1),
+        Some(postio_ui::account::Trouble::Rejected),
+    );
+    pump();
+
+    let row = &rows(&panel)[0];
+    assert_eq!(
+        fact_in(row, |fact| fact.starts_with("The server")).as_deref(),
+        Some("The server refused this account's password.")
+    );
+    let button = repair_button_in(row).expect("a refused password has a repair");
+    assert_eq!(button.label().as_deref(), Some("New password…"));
+    button.emit_clicked();
+    assert_eq!(
+        *heard.borrow(),
+        vec![(AccountId::new(1), AccountAction::UpdateCredential)]
+    );
+
+    panel.set_credential_trouble(AccountId::new(1), None);
+    pump();
+    assert_eq!(
+        repair_button_in(&rows(&panel)[0]),
+        None,
+        "the repair went through"
+    );
+
+    window.destroy();
+}
+
+/// The repair button on a row, if it offers one.
+fn repair_button_in(row: &gtk::ListBoxRow) -> Option<gtk::Button> {
+    collect(
+        row.upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-repair",
+    )
+    .into_iter()
+    .find_map(|widget| widget.downcast::<gtk::Button>().ok())
+}
+
 /// #981: a rebuild in progress is said out loud on the row, not run
 /// silently, and clears the moment nothing is reported for that account any
 /// more.
