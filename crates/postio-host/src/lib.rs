@@ -224,7 +224,11 @@ fn adopt(
         .lock()
         .expect("never poisoned")
         .insert(account, engine);
-    if replaced.is_some() {
+    if let Some(old) = replaced {
+        // Two engines on one account would hold two connections, poll twice
+        // and drain one queue twice. The new one is in the table and wired
+        // above, so nothing lands on the closed channel of the old.
+        postio_runtime::retire(old);
         // What the old engine had queued went with it, and the host would
         // otherwise take the ask for still standing for a minute. Only what
         // was asked is asked again, by the panes that were waiting on it.
