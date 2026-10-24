@@ -1008,14 +1008,16 @@ button.focus-dropdown-pill:hover {
   font-feature-settings: "tnum";
 }
 
-/* A saved search's quiet "3 new": the accent's tint, small (D15). */
+/* A saved search's quiet "3 new" (D15): a small pill in the neutral
+   ground. The Mac tints it with the accent; Focus keeps the accent for
+   markers, the focus ring and the has-action toggle (FR-091). */
 .focus-dropdown-fresh {
   padding: 0 5px;
   border-radius: 999px;
   font-size: var(--postio-text-micro);
   font-weight: 600;
-  color: var(--postio-accent);
-  background-color: color-mix(in srgb, var(--postio-accent) 12%, transparent);
+  color: var(--postio-ink-secondary);
+  background-color: var(--postio-selected-bg);
 }
 
 .focus-dropdown-sheet {
