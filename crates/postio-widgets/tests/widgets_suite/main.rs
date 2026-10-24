@@ -568,6 +568,10 @@ const CASES: &[(&str, fn())] = &[
         settings_accounts::an_account_row_says_whether_its_token_is_still_good as fn(),
     ),
     (
+        "settings_accounts::a_refused_password_offers_a_new_one_on_its_row",
+        settings_accounts::a_refused_password_offers_a_new_one_on_its_row as fn(),
+    ),
+    (
         "settings_accounts::an_account_row_says_when_its_search_index_is_being_rebuilt",
         settings_accounts::an_account_row_says_when_its_search_index_is_being_rebuilt as fn(),
     ),

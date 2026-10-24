@@ -292,20 +292,34 @@ pub struct FocusOutside {
 impl Outside for FocusOutside {
     fn test_connection(&self, account: Account) -> Later<Reached> {
         let Some(seams) = self.seams.clone() else {
-            return Box::pin(std::future::ready((
-                Err("this window opened no store to test from".to_owned()),
-                Err("this window opened no store to test from".to_owned()),
-            )));
+            let refused = || Err("this window opened no store to test from".to_owned());
+            return Box::pin(std::future::ready(Reached {
+                incoming: refused(),
+                outgoing: refused(),
+                trouble: None,
+            }));
         };
         let (sender, receiver) = async_channel::bounded(1);
         seams.runtime.spawn(async move {
             let found = postio_session::reachability::test_over_tls(&account, &seams.secrets).await;
-            let _ = sender.send(found.into_results()).await;
+            let trouble = found.trouble();
+            let (incoming, outgoing) = found.into_results();
+            let _ = sender
+                .send(Reached {
+                    incoming,
+                    outgoing,
+                    trouble,
+                })
+                .await;
         });
         Box::pin(async move {
             receiver.recv().await.unwrap_or_else(|_| {
                 let died = || Err("the test did not finish".to_owned());
-                (died(), died())
+                Reached {
+                    incoming: died(),
+                    outgoing: died(),
+                    trouble: None,
+                }
             })
         })
     }
