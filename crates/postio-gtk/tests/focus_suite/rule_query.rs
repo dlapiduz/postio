@@ -225,6 +225,20 @@ pub fn digest_mail_like_this_present_with_a_message_says_so_with_no_model() {
             "the control is missing with a message given: {:?}",
             dialog.texts()
         );
+        // The preview answers first: its line and the model's share the
+        // dialog's one sentence, and a failed preview would write over the
+        // model's.
+        assert!(
+            crate::settle_until(async || {
+                dialog
+                    .texts()
+                    .iter()
+                    .any(|text| text.starts_with("Would have caught"))
+            })
+            .await,
+            "the preview never answered: {:?}",
+            dialog.texts()
+        );
         dialog.like_this();
         assert!(
             crate::settle_until(async || {

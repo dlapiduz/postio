@@ -63,6 +63,12 @@ impl Fixture {
     pub async fn empty() -> Fixture {
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("a connection");
+        // The search index is part of opening a store
+        // (`postio_session::ensure_search_index`); without it every search
+        // a case reaches -- a rule's preview -- fails.
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the search index");
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         test_support::mailbox(&connection, &account, "Archive").await;
         test_support::mailbox(&connection, &account, "Trash").await;
