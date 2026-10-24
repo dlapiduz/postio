@@ -34,6 +34,8 @@ use crate::list::Feed;
 /// The body's page for the rows, and for the Files tab's grid.
 const ROWS: &str = "rows";
 const FILES: &str = "files";
+/// The body's page for the People tab's list.
+const PEOPLE: &str = "people";
 
 /// What a list position shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +165,7 @@ pub struct ResultsPane {
     /// The rows, or the Files tab's grid in their place.
     body: gtk::Stack,
     files: Rc<crate::results_files::FilesGrid>,
+    people: Rc<crate::results_files::PeopleList>,
     quick_look: Rc<crate::results_files::QuickLookPanel>,
     hints: gtk::Box,
     footer: gtk::Label,
@@ -273,11 +276,13 @@ impl ResultsPane {
         let act: Rc<dyn Fn(CommandId)> = Rc::new(act);
         let files = crate::results_files::FilesGrid::new(feed.clone(), Rc::clone(&act));
         let quick_look = crate::results_files::QuickLookPanel::new(Rc::clone(&act));
+        let people = crate::results_files::PeopleList::new(feed.clone(), Rc::clone(&act));
         let body = gtk::Stack::new();
         body.set_transition_type(gtk::StackTransitionType::None);
         body.set_vexpand(true);
         body.add_named(&scrolled, Some(ROWS));
         body.add_named(files.widget(), Some(FILES));
+        body.add_named(people.widget(), Some(PEOPLE));
         let over = gtk::Overlay::new();
         over.set_child(Some(&body));
         over.add_overlay(quick_look.widget());
@@ -308,6 +313,7 @@ impl ResultsPane {
             list,
             body,
             files,
+            people,
             quick_look,
             hints,
             footer,
@@ -418,10 +424,18 @@ impl ResultsPane {
             (Some(all), true) => self.footer.set_text(&format!("{} {}", all.key, all.label)),
             _ => self.footer.set_text(&view.footer),
         }
+        let people = view
+            .tabs
+            .iter()
+            .any(|tab| tab.selected && tab.tab == postio_search::results::ResultsTab::People);
         match &view.files {
             Some(header) => {
                 self.files.show(header, view.rows);
                 self.body.set_visible_child_name(FILES);
+            }
+            None if people => {
+                self.people.show(view.rows);
+                self.body.set_visible_child_name(PEOPLE);
             }
             None => self.body.set_visible_child_name(ROWS),
         }
@@ -448,6 +462,10 @@ impl ResultsPane {
             self.files.refresh();
             return;
         }
+        if self.showing_people() {
+            self.people.refresh();
+            return;
+        }
         {
             let mut asked = self.asked.borrow_mut();
             for position in first..first.saturating_add(count) {
@@ -462,6 +480,12 @@ impl ResultsPane {
         if self.showing_files() {
             self.cursor.set(Some(position));
             self.files.refresh();
+            return;
+        }
+        if self.showing_people() {
+            self.cursor.set(Some(position));
+            self.people.refresh();
+            self.people.reveal(position);
             return;
         }
         let was = self.cursor.replace(Some(position));
@@ -566,6 +590,16 @@ impl ResultsPane {
             self.popover.rehang(button.upcast_ref());
         }
         self.filter_buttons.replace(drawn);
+    }
+
+    /// Whether the People tab's list is in the rows' place.
+    fn showing_people(&self) -> bool {
+        self.body.visible_child_name().as_deref() == Some(PEOPLE)
+    }
+
+    /// The People tab's list.
+    pub fn people(&self) -> &crate::results_files::PeopleList {
+        &self.people
     }
 
     /// Whether the Files tab's grid is in the rows' place.
@@ -969,6 +1003,10 @@ impl ResultsPane {
     pub fn focus(&self) {
         if self.showing_files() {
             self.files.focus();
+            return;
+        }
+        if self.showing_people() {
+            self.people.focus();
             return;
         }
         self.list.grab_focus();

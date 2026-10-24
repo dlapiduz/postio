@@ -267,3 +267,39 @@ pub fn a_drag_across_the_timeline_narrows_the_dates() {
         );
     });
 }
+
+/// The People tab lists who the results are from and to; Return on one
+/// searches their mail: a `from:` chip, and the Conversations tab again.
+pub fn return_on_a_person_searches_from_them() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.click_tab("People")).await,
+            "no People tab"
+        );
+        assert!(
+            crate::settle_until(async || {
+                let mut names = results.people().names();
+                names.sort();
+                names == ["Ada Moreno", "Grace Ho", "Tomas Ruiz"]
+            })
+            .await,
+            "not the three senders: {:?}",
+            results.people().names()
+        );
+        window.press_command(postio_core::CommandId::OpenMessage);
+        assert!(
+            crate::settle_until(async || results
+                .chips()
+                .iter()
+                .any(|chip| chip.starts_with("from:")))
+            .await,
+            "Return searched nobody: {:?}",
+            results.chips()
+        );
+    });
+}
