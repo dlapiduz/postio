@@ -809,7 +809,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "hashify",
- "mail-builder",
+ "mail-builder 1.0.0",
  "mail-parser",
 ]
 
@@ -1680,6 +1680,16 @@ name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
+
+[[package]]
+name = "encodify"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e95d6e27686e1d6991a3077f4dbec9d33d18903466d234165ad86cd08c3ebc79"
+dependencies = [
+ "memchr",
+ "simdutf8",
+]
 
 [[package]]
 name = "encoding_rs"
@@ -3685,6 +3695,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccbc27cb02a58a311a404769a22f5abf63fe3173b290d80be7c534f9c7023151"
 
 [[package]]
+name = "mail-builder"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8bca634885db8e836b80700a73661de20ffd93cb5787729afc31575545e2aed"
+dependencies = [
+ "encodify",
+]
+
+[[package]]
 name = "mail-parser"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5145,7 +5164,7 @@ name = "postio-model"
 version = "0.4.2"
 dependencies = [
  "chrono",
- "mail-builder",
+ "mail-builder 2.0.0",
  "mail-parser",
  "postio-model",
  "postio-workspace-hack",

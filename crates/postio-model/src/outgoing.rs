@@ -1224,4 +1224,26 @@ mod tests {
         assert!(parsed.in_reply_to.is_none());
         assert!(parsed.references.is_empty());
     }
+
+    /// A control character in an address cannot start a header line. With
+    /// `mail-builder` 1.0 the address was written raw between `<` and `>`,
+    /// so a CR LF in one injected a `Bcc:` field into the bytes that go to
+    /// every recipient; 2.0 drops control characters when it writes one.
+    #[test]
+    fn a_control_character_in_an_address_cannot_inject_a_header() {
+        let ada = identity("ada@example.com");
+        let mut draft = draft();
+        draft.to = vec![EmailAddress::new(
+            Some("Eve"),
+            "eve@example.org>\r\nBcc: evil@example.org\r\nX: <y",
+        )];
+
+        let built = build(&draft, &ada, &[], None, None);
+        let text = String::from_utf8_lossy(&built.raw);
+        let head = text.split("\r\n\r\n").next().expect("a header block");
+        assert!(
+            !head.lines().any(|line| line.starts_with("Bcc:")),
+            "an address started a header line:\n{head}"
+        );
+    }
 }
