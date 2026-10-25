@@ -991,43 +991,38 @@ mod tests {
     /// The message's MIME tree as nested content types, e.g.
     /// `multipart/mixed[multipart/alternative[text/plain, text/calendar], ...]`.
     fn tree(raw: &[u8]) -> String {
-        use mail_parser::{MessageParser, MimeHeaders};
+        use mail_parser::{MessageParser, MessagePart};
 
-        fn render(message: &mail_parser::Message<'_>, id: u32) -> String {
-            let part = message.part(id).expect("a part the tree names");
+        fn render(part: MessagePart<'_>) -> String {
             let kind = part.content_type().map_or_else(
                 || "text/plain".to_owned(),
                 |kind| format!("{}/{}", kind.ctype(), kind.subtype().unwrap_or_default()),
             );
-            match part.sub_parts() {
-                Some(children) => format!(
+            if part.is_multipart() {
+                format!(
                     "{kind}[{}]",
-                    children
-                        .iter()
-                        .map(|child| render(message, *child))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                None => kind,
+                    part.children().map(render).collect::<Vec<_>>().join(", ")
+                )
+            } else {
+                kind
             }
         }
 
         let message = MessageParser::default()
             .parse(raw)
             .expect("the built bytes parse");
-        render(&message, 0)
+        render(message.root_part())
     }
 
     /// The first part whose content type is `text/calendar`.
     fn calendar_part_of(raw: &[u8]) -> (String, Option<String>, Vec<u8>) {
-        use mail_parser::{MessageParser, MimeHeaders};
+        use mail_parser::MessageParser;
 
         let message = MessageParser::default()
             .parse(raw)
             .expect("the built bytes parse");
         let part = message
-            .parts
-            .iter()
+            .parts()
             .find(|part| {
                 part.content_type().is_some_and(|kind| {
                     kind.ctype() == "text" && kind.subtype() == Some("calendar")
@@ -1038,7 +1033,7 @@ mod tests {
         (
             kind.attribute("method").unwrap_or_default().to_owned(),
             kind.attribute("charset").map(str::to_owned),
-            part.contents().to_vec(),
+            part.decoded().to_vec(),
         )
     }
 

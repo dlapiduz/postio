@@ -57,6 +57,7 @@ libc = { version = "0.2" }
 litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
+mail-parser = { version = "0.11" }
 memchr = { version = "2" }
 minimal-lexical = { version = "0.2", default-features = false, features = ["std"] }
 nom = { version = "7", default-features = false, features = ["std"] }
@@ -156,6 +157,7 @@ libc = { version = "0.2" }
 litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
+mail-parser = { version = "0.11" }
 memchr = { version = "2" }
 minimal-lexical = { version = "0.2", default-features = false, features = ["std"] }
 nom = { version = "7", default-features = false, features = ["std"] }

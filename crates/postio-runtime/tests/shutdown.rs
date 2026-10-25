@@ -112,16 +112,28 @@ async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 
+    let fetched_before = backend.body_fetches().len();
     let stopping = Instant::now();
     engine.stop();
     let took = stopping.elapsed();
+    let fetched_after = backend.body_fetches().len() - fetched_before;
 
-    // Well inside the 5 s grace: the loop notices the closed channel between
-    // bodies and the in-flight fetch is cancelled, so what remains is the
-    // tail of one call, not the rest of the queue.
+    // The loop notices the closed channel between bodies, so nothing new
+    // starts after the stop: at most the calls already on the wire land
+    // (the mock logs a body once its latency is paid, and the backfill
+    // overlaps its fetches). A loop deaf to the close keeps starting them,
+    // a round every 150 ms, until the grace runs out. Counted in calls, not
+    // seconds: a loaded runner stretched a correct stop past a 2 s bound
+    // (2.25 s, green alone), while the calls a deaf loop makes cannot hide.
+    let on_the_wire = backend.peak_in_flight();
     assert!(
-        took < Duration::from_secs(2),
-        "Engine::stop() took {took:?}; the backfill did not hear the shutdown"
+        fetched_after <= on_the_wire,
+        "the backfill fetched {fetched_after} bodies after Engine::stop(), more than the \
+         {on_the_wire} that can be on the wire at once; it did not hear the shutdown"
+    );
+    assert!(
+        took < Duration::from_secs(5),
+        "Engine::stop() took {took:?}, the whole grace; the backfill did not hear the shutdown"
     );
     let log = captured.text();
     assert!(
