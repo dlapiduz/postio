@@ -57,6 +57,7 @@ libc = { version = "0.2" }
 litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
+mail-parser = { version = "0.11" }
 memchr = { version = "2" }
 minimal-lexical = { version = "0.2", default-features = false, features = ["std"] }
 nom = { version = "7", default-features = false, features = ["std"] }
@@ -156,6 +157,7 @@ libc = { version = "0.2" }
 litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
+mail-parser = { version = "0.11" }
 memchr = { version = "2" }
 minimal-lexical = { version = "0.2", default-features = false, features = ["std"] }
 nom = { version = "7", default-features = false, features = ["std"] }
@@ -219,7 +221,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
-simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 toml = { version = "1" }
 
@@ -230,7 +231,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
-simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 toml = { version = "1" }
 
@@ -241,7 +241,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
-simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 toml = { version = "1" }
 
@@ -252,7 +251,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
-simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 toml = { version = "1" }
 
@@ -265,7 +263,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
-simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 
 [target.aarch64-apple-darwin.build-dependencies]
@@ -277,7 +274,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
-simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 
 ### END HAKARI SECTION
