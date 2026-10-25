@@ -255,6 +255,40 @@ impl Dropdown {
             .collect()
     }
 
+    /// The highlighted row, as the view drew it.
+    pub fn highlighted_row(&self) -> Option<DropdownRow> {
+        let token = self.highlighted()?;
+        self.view
+            .borrow()
+            .as_ref()?
+            .sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .find(|row| row.token == token)
+            .cloned()
+    }
+
+    /// Put the arrows on the first hit, as stepping to it would; whether
+    /// there was one.
+    pub fn to_first_hit(&self) -> bool {
+        let token = self.view.borrow().as_ref().and_then(|view| {
+            view.sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .find(|row| row.kind == DropdownRowKind::Hit)
+                .map(|row| row.token)
+        });
+        let Some(row) = token
+            .and_then(|token| self.index_of(token))
+            .and_then(|at| self.list.row_at_index(at as i32))
+        else {
+            return false;
+        };
+        self.list.select_row(Some(&row));
+        reveal(&self.list, &row);
+        true
+    }
+
     /// The section titles, in order.
     pub fn titles(&self) -> Vec<String> {
         collect(&self.list, "focus-dropdown-title")

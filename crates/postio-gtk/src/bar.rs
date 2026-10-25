@@ -597,6 +597,12 @@ impl Bar {
         }
     }
 
+    /// Spec 010's dropdown: the arrows to its first hit, as a person steps
+    /// to it; whether there was one. Return then opens it.
+    pub fn to_first_hit(&self) -> bool {
+        self.dropping.get() && self.dropdown.to_first_hit()
+    }
+
     /// Run the highlighted row, as Return does.
     pub fn run_search_row(&self) {
         self.run_selected();
@@ -698,6 +704,22 @@ impl Bar {
     /// The text is the row's own labels, as a person reads it ("Sorted by
     /// relevance"), and a message's subject.
     pub fn highlighted(&self) -> Option<(&'static str, Option<MessageId>, String)> {
+        // Spec 010's dropdown: its row's kind and words. A hit names no
+        // message here; the controller holds which one it opens.
+        if self.dropping.get() {
+            let row = self.dropdown.highlighted_row()?;
+            let kind = match row.kind {
+                postio_focus::DropdownRowKind::Hit => "message",
+                postio_focus::DropdownRowKind::ShowAll => "show_all",
+                postio_focus::DropdownRowKind::Recent => "recent",
+                postio_focus::DropdownRowKind::Person => "person",
+                postio_focus::DropdownRowKind::Folder => "folder",
+                postio_focus::DropdownRowKind::Label => "label",
+                _ => "row",
+            };
+            let text = row.title.iter().map(|run| run.text.as_str()).collect();
+            return Some((kind, None, text));
+        }
         let selected = self.list.selected_row()?;
         let index = usize::try_from(selected.index()).ok()?;
         let line = self.lines.borrow().get(index)?.clone();

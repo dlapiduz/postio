@@ -45,7 +45,7 @@ async fn open_a_hit(
         "the search found nothing: {:?}",
         bar.texts()
     );
-    bar.run_search();
+    assert!(bar.to_first_hit(), "no hit to step to");
     let chord: postio_ui::keymap::Chord = "Return".parse().expect("a chord");
     postio_widgets::storyboard::deliver::press(window.upcast_ref(), &chord)
         .expect("a deliverable chord");

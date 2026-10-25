@@ -1272,7 +1272,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::NextMatch,
-        title: "Next match",
+        title: "Next match in Quick Look",
         default_binding: "]",
         alternate_bindings: &[],
         contexts: Context::Results.as_set(),
@@ -1282,7 +1282,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::PrevMatch,
-        title: "Previous match",
+        title: "Previous match in Quick Look",
         default_binding: "[",
         alternate_bindings: &[],
         contexts: Context::Results.as_set(),
