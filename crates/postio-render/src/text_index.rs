@@ -197,7 +197,6 @@ impl Builder<'_> {
         let mut boxes: Vec<(usize, NodeId)> = data
             .layout
             .inline_boxes()
-            .iter()
             .map(|b| (b.index, NodeId::from_u64(b.id)))
             .collect();
         boxes.sort_by_key(|(index, _)| *index);
@@ -286,7 +285,7 @@ impl Builder<'_> {
                 }
                 let share = consumed..consumed + run.glyphs().count();
                 consumed = share.end;
-                let metrics = run.run().metrics();
+                let metrics = run.run().font_metrics();
                 // Blitz shapes text at the device scale (times the zoom);
                 // the index is in CSS pixels.
                 let k = f64::from(self.doc.viewport().scale());

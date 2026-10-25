@@ -1,0 +1,27 @@
+Line height `normal` is 1.2 times the font size
+
+0.3.0-beta.4 resolves `line-height: normal` through parley's `NORMAL`,
+which is the font's own ascent, descent and line gap. Mail is designed
+against the browser references in
+crates/postio-test-support/data/reference/, where `normal` came out at
+the 1.2 that beta.2 used, and with the font metrics every line is
+shorter: a table of three rows in the shipping-notice fixture lost 3px a
+row, its page 17px, and fidelity::designed_mail_matches_its_references
+failed on height. Keeping 1.2 keeps every reader layout where it was;
+the font-metric line height is for a later change that re-blesses the
+references on purpose.
+
+Tested by crates/postio-render/tests/render_suite/fidelity.rs.
+
+diff -ruN blitz-dom/src/stylo_to_parley.rs blitz-dom/src/stylo_to_parley.rs
+--- blitz-dom/src/stylo_to_parley.rs
++++ blitz-dom/src/stylo_to_parley.rs
+@@ -406,7 +406,7 @@
+     // Convert font size and line height
+     let font_size = font_styles.font_size.used_size.0.px();
+     let line_height = match font_styles.line_height {
+-        stylo::LineHeight::Normal => parley::LineHeight::NORMAL,
++        stylo::LineHeight::Normal => parley::LineHeight::FontSizeRelative(1.2),
+         stylo::LineHeight::Number(num) => parley::LineHeight::FontSizeRelative(num.0),
+         stylo::LineHeight::Length(value) => parley::LineHeight::Absolute(value.0.px()),
+     };

@@ -19,13 +19,13 @@ test-hooks = []
 # path. `scripts/checks/check-renderer-is-memory-safe.py` holds the graph to
 # that. `blitz-dom` and `blitz-paint` build from `vendor/`, with Postio's
 # patch queue (research R1).
-blitz-dom = { version = "=0.3.0-beta.2", default-features = false, features = ["floats", "svg"] }
-blitz-html = { version = "=0.3.0-beta.2", default-features = false }
-blitz-paint = { version = "=0.3.0-beta.2", default-features = false, features = ["svg"] }
-blitz-traits = { version = "=0.3.0-beta.2", default-features = false }
-anyrender = "=0.13.0"
-anyrender_vello_cpu = "=0.17.0"
-parley = { version = "0.11", default-features = false, features = ["std"] }
+blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["floats", "svg"] }
+blitz-html = { version = "=0.3.0-beta.4", default-features = false }
+blitz-paint = { version = "=0.3.0-beta.4", default-features = false, features = ["svg"] }
+blitz-traits = { version = "=0.3.0-beta.4", default-features = false }
+anyrender = "=0.14.0"
+anyrender_vello_cpu = "=0.18.0"
+parley = { version = "0.12", default-features = false, features = ["std"] }
 # Fonts are discovered by fontdb, which is pure Rust (research R3), and
 # memory-mapped through it; skrifa reads their character maps.
 fontdb = "0.24"
@@ -42,7 +42,7 @@ usvg = "=0.48"
 postio-body = { workspace = true }
 url = { workspace = true }
 # Computed styles, read for the text index (display, visibility, colour).
-style = { package = "stylo", version = "0.20" }
+style = { package = "stylo", version = "0.22" }
 # Find folds diacritics: decompose, then drop the marks.
 unicode-normalization = "0.1"
 # RenderedDocument crosses from the render thread to the UI thread (R7).

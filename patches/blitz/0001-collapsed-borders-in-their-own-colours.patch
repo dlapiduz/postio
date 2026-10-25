@@ -1,0 +1,109 @@
+Collapsed table borders: each edge in its own colour
+
+Upstream issue DioxusLabs/blitz#504, open with no fix as of 0.3.0-beta.2;
+0.3.0-beta.4 lays out a `none` or `hidden` edge as zero width, which this
+patch used to do too, and drops that half. What it still lacks: the
+painter draws all four edges in `border-top-color` and returns early on
+the top edge's style or colour. Each edge is now drawn in its own colour
+and skipped when its style draws nothing or its colour is transparent;
+the gutters between rows take the bottom (else top) edge's colour, and
+the gutters between columns the right (else left).
+
+Tested by crates/postio-render/tests/render_suite/engine_patches.rs.
+
+diff -ruN blitz-paint/src/render/border.rs blitz-paint/src/render/border.rs
+--- blitz-paint/src/render/border.rs
++++ blitz-paint/src/render/border.rs
+@@ -530,24 +530,32 @@
+         let cols = PhysicalTracks::from_tracks(&grid_info.columns);
+         let rows = PhysicalTracks::from_tracks(&grid_info.rows);
+ 
+-        // TODO: support different colors for different borders
++        // Each edge in its own colour: the release drew all four in
++        // `border-top-color`. An edge whose style is `none` or `hidden`
++        // (laid out as zero width), or whose colour is transparent, is not
++        // drawn. Border widths are not adjusted for border-style in computed
++        // styles, which is why the style is read here.
+         let current_color = self.style.clone_color();
+-        let border_color = border_style
+-            .border_top_color
+-            .resolve_to_absolute(&current_color)
+-            .as_srgb_color();
++        let edge = |style: BorderStyle, color: &style::values::computed::Color| {
++            let color = color.resolve_to_absolute(&current_color).as_srgb_color();
++            (!style.none_or_hidden() && color != Color::TRANSPARENT).then_some(color)
++        };
++        let top_color = edge(border_style.border_top_style, &border_style.border_top_color);
++        let right_color = edge(
++            border_style.border_right_style,
++            &border_style.border_right_color,
++        );
++        let bottom_color = edge(
++            border_style.border_bottom_style,
++            &border_style.border_bottom_color,
++        );
++        let left_color = edge(
++            border_style.border_left_style,
++            &border_style.border_left_color,
++        );
++        let horizontal_gutter = bottom_color.or(top_color);
++        let vertical_gutter = right_color.or(left_color);
+ 
+-        // No need to draw transparent borders (as they won't be visible anyway)
+-        if border_color == Color::TRANSPARENT {
+-            return;
+-        }
+-
+-        // Border widths are not adjusted for border-style in computed styles,
+-        // so a border with `none`/`hidden` style must be treated as zero-width.
+-        if border_style.border_top_style.none_or_hidden() {
+-            return;
+-        }
+-
+         // The borders are laid out as the gutters between the tracks, and as the border
+         // of the table around them. Track positions are relative to the table's border box.
+         let border_width = table.style.gap.map(|gap| gap.into_raw().value() as f64);
+@@ -556,34 +564,35 @@
+         let top = rows.origin() as f64 - border_width.height;
+         let bottom = (rows.origin() + rows.span()) as f64 + border_width.height;
+ 
+-        let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64| {
++        let mut fill = |color: Option<Color>, x0: f64, y0: f64, x1: f64, y1: f64| {
++            let Some(color) = color else { return };
+             let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
+-            scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
++            scene.fill(Fill::NonZero, self.transform, color, None, &shape);
+         };
+ 
+         // Horizontal borders: the outer edges, then the gutters between adjacent row tracks.
+         // The vertical borders are drawn between them so that no corner is painted twice.
+         if outer_border_style.border_top_style != BorderStyle::Hidden {
+-            fill(left, top, right, top + border_width.height);
++            fill(top_color, left, top, right, top + border_width.height);
+         }
+         if outer_border_style.border_bottom_style != BorderStyle::Hidden {
+-            fill(left, bottom - border_width.height, right, bottom);
++            fill(bottom_color, left, bottom - border_width.height, right, bottom);
+         }
+         for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
+-            fill(left, prev.end as f64, right, next.start as f64);
++            fill(horizontal_gutter, left, prev.end as f64, right, next.start as f64);
+         }
+ 
+         // Vertical borders, one segment per row
+         for row in rows.iter() {
+             let (y0, y1) = (row.start as f64, row.end as f64);
+             if outer_border_style.border_left_style != BorderStyle::Hidden {
+-                fill(left, y0, left + border_width.width, y1);
++                fill(left_color, left, y0, left + border_width.width, y1);
+             }
+             if outer_border_style.border_right_style != BorderStyle::Hidden {
+-                fill(right - border_width.width, y0, right, y1);
++                fill(right_color, right - border_width.width, y0, right, y1);
+             }
+             for (prev, next) in cols.iter().zip(cols.iter().skip(1)) {
+-                fill(prev.end as f64, y0, next.start as f64, y1);
++                fill(vertical_gutter, prev.end as f64, y0, next.start as f64, y1);
+             }
+         }
+     }

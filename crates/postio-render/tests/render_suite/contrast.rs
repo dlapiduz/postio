@@ -9,30 +9,62 @@ use postio_model::test_corpus;
 use postio_render::theme::{self, Rgb};
 use postio_render::{Presentation, Raster, Theme};
 
-/// The ground behind a cluster: the commonest colour in a band just above
-/// and below its box, leaving out its own ink -- glyph edges, an underline
-/// -- which is anything close to its colour.
-fn ground_behind(raster: &Raster, rect: postio_render::Rect, scale: f64, ink: Rgb) -> Option<Rgb> {
+/// The commonest colour in one row of pixels across `x0..x1`, leaving out
+/// anything close to `ink`.
+fn commonest(raster: &Raster, y: i64, x0: i64, x1: i64, ink: Rgb) -> Option<([u8; 3], usize)> {
     let (w, h) = (raster.width as i64, raster.height as i64);
+    if !(0..h).contains(&y) {
+        return None;
+    }
     let mut counts = std::collections::HashMap::<[u8; 3], usize>::new();
-    let (x0, x1) = ((rect.x0 * scale) as i64, (rect.x1 * scale) as i64);
-    for y in [(rect.y0 * scale) as i64 - 2, (rect.y1 * scale) as i64 + 1] {
-        if !(0..h).contains(&y) {
+    for x in x0.max(0)..x1.min(w) {
+        let i = ((y * w + x) * 4) as usize;
+        let px = [raster.rgba[i], raster.rgba[i + 1], raster.rgba[i + 2]];
+        if theme::contrast(Rgb::from_u8(px[0], px[1], px[2]), ink) < 1.5 {
             continue;
         }
-        for x in x0.max(0)..x1.min(w) {
-            let i = ((y * w + x) * 4) as usize;
-            let px = [raster.rgba[i], raster.rgba[i + 1], raster.rgba[i + 2]];
-            if theme::contrast(Rgb::from_u8(px[0], px[1], px[2]), ink) < 1.5 {
-                continue;
-            }
-            *counts.entry(px).or_default() += 1;
-        }
+        *counts.entry(px).or_default() += 1;
     }
-    counts
-        .into_iter()
-        .max_by_key(|(_, n)| *n)
-        .map(|([r, g, b], _)| Rgb::from_u8(r, g, b))
+    counts.into_iter().max_by_key(|(px, n)| (*n, *px))
+}
+
+/// Whether `px` is `ink` anti-aliased over `ground`: on the line between
+/// them, give or take rounding.
+fn is_fringe(px: [u8; 3], ink: Rgb, ground: [u8; 3]) -> bool {
+    let ink = [ink.r, ink.g, ink.b].map(|c| (c * 255.0).round());
+    let (px, ground) = (px.map(f64::from), ground.map(f64::from));
+    let axis = (0..3)
+        .max_by(|&a, &b| {
+            (ink[a] - ground[a])
+                .abs()
+                .total_cmp(&(ink[b] - ground[b]).abs())
+        })
+        .unwrap_or(0);
+    if (ink[axis] - ground[axis]).abs() < 1.0 {
+        return false;
+    }
+    let t = (px[axis] - ground[axis]) / (ink[axis] - ground[axis]);
+    (0.0..=1.0).contains(&t)
+        && (0..3).all(|c| (px[c] - (ground[c] + t * (ink[c] - ground[c]))).abs() <= 6.0)
+}
+
+/// The ground behind a cluster: the commonest colour in a band just above
+/// and below its box, leaving out its own ink -- glyph edges, an underline
+/// -- which is anything close to its colour. A row below the box that is
+/// only the anti-aliased fringe of an underline over the row above is the
+/// underline, not a second ground: where a link's underline falls against
+/// the box moves with the font's metrics, and the ground must not.
+fn ground_behind(raster: &Raster, rect: postio_render::Rect, scale: f64, ink: Rgb) -> Option<Rgb> {
+    let (x0, x1) = ((rect.x0 * scale) as i64, (rect.x1 * scale) as i64);
+    let above = commonest(raster, (rect.y0 * scale) as i64 - 2, x0, x1, ink);
+    let below = commonest(raster, (rect.y1 * scale) as i64 + 1, x0, x1, ink);
+    let [r, g, b] = match (above, below) {
+        (Some((a, _)), Some((b, _))) if is_fringe(b, ink, a) => a,
+        (Some(a), Some(b)) => std::cmp::max_by_key(a, b, |(px, n)| (*n, *px)).0,
+        (Some((px, _)), None) | (None, Some((px, _))) => px,
+        (None, None) => return None,
+    };
+    Some(Rgb::from_u8(r, g, b))
 }
 
 /// Every cluster below the floor in `theme`, as `(text, ratio)` -- in the
