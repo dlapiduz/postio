@@ -162,6 +162,7 @@ mod tests {
             || rule.starts_with(".focus-results-row.focus-results-cursor ")
             || rule.starts_with(".focus-file-card.focus-file-focused ")
             || rule.starts_with(".focus-quicklook-card.focus-quicklook-current ")
+            || rule.starts_with("button.focus-nothing-row.focus-nothing-focused ")
             || rule.starts_with(".focus-digest-summary-statement.focus-digest-summary-focused ")
             || rule.contains(".focus-marker")
             || rule.contains(".focus-has-action:checked")
