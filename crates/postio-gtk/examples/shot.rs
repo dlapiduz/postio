@@ -251,7 +251,6 @@ fn render(args: &[String]) -> Result<String, String> {
         adw::ColorScheme::ForceLight
     });
 
-    postio_gtk::list::feed::stage_results_view(request.screen.starts_with('s'));
     // Screen 33 is before there is a store at all: the page a store no
     // migration reaches leaves the window on (T215, T216).
     if request.screen == "33" {
