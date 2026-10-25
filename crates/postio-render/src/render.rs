@@ -276,7 +276,10 @@ fn lay_out(
         base_url: Some(BASE_URL.to_owned()),
         font_ctx: Some(fonts.context()),
         net_provider: Some(Arc::clone(&request.resources) as _),
-        ua_stylesheets: Some(sheets),
+        ua_stylesheets: sheets
+            .iter()
+            .map(|css| blitz_dom::UserAgentStylesheet::parse(css))
+            .collect(),
         ..Default::default()
     };
     let mut doc = blitz_html::HtmlDocument::from_html(&request.document, config).into_inner();

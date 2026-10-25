@@ -15,7 +15,7 @@ repository.workspace = true
 ammonia = "4.1.7"
 # Already in the tree: `ammonia` parses `style` attributes with it, so the
 # sender-CSS work shares one parser rather than adding a second. See #1326.
-cssparser = "0.37"
+cssparser = "0.38"
 html5ever = "0.39.0"
 # Sanitised HTML to Markdown, for the terminal's reader (docs/archive/specs/005-tui-frontend
 # research R5; spike T005 found it keeps every safety promise over the corpus).

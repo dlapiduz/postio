@@ -1005,15 +1005,15 @@ fn is_multipart_type(part: &MessagePart<'_>) -> bool {
 ///
 /// `mail_parser` cannot split such an entity into children — there is no
 /// boundary left to split on — so it leaves the whole thing as one part typed
-/// `multipart/*`, holding the entity's own content as [`PartType::Text`] or
-/// [`PartType::Binary`] rather than [`PartType::Multipart`]'s list of
+/// `multipart/*`, holding the entity's own content as [`PartKind::Text`] or
+/// [`PartKind::Binary`] rather than [`PartKind::Multipart`]'s list of
 /// children. That shape can only be the message's own root: an ordinary
-/// multipart's root part is always `Multipart`, holding its children's ids —
-/// so `source.parts.first()` is the one part this can ever be true of.
+/// multipart's root part is always `Multipart`, holding its children —
+/// so the root part is the one part this can ever be true of.
 ///
 /// No charset decoding to do here beyond what `mail_parser` already gives:
 /// RFC 2046 defines no `charset` parameter for a multipart type — it belongs
-/// to `text/*` — so a [`PartType::Binary`] root decodes as UTF-8 with
+/// to `text/*` — so a [`PartKind::Binary`] root decodes as UTF-8 with
 /// replacement, the same default `mail_parser` itself falls back to for a
 /// `text/plain` part with none declared.
 fn multipart_boundary_fallback(source: &MpMessage<'_>) -> Option<String> {
