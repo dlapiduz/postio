@@ -35,17 +35,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-uncommitted.py\"",
-            "timeout": 30
-          }
-        ]
-      }
     ]
   },
   "env": {

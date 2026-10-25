@@ -73,12 +73,3 @@ jobs:
         # Child modules, target/, vendor/, the shared checkout and a file
         # that does not parse yet are all left as they were.
         run: python3 .claude/hooks/test-format-rust.py
-
-  stop-uncommitted:
-    name: Stop with loose work
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Prove a stop is held once, and only for the session's own tree
-        run: python3 .claude/hooks/test-stop-uncommitted.py
