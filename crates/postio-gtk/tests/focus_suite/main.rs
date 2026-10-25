@@ -494,6 +494,10 @@ const CASES: &[(&str, fn())] = &[
         results::return_on_a_person_searches_from_them as fn(),
     ),
     (
+        "results::nothing_found_offers_a_looser_search_that_finds_some",
+        results::nothing_found_offers_a_looser_search_that_finds_some as fn(),
+    ),
+    (
         "results::show_all_opens_the_results_and_back_returns_to_the_inbox",
         results::show_all_opens_the_results_and_back_returns_to_the_inbox as fn(),
     ),

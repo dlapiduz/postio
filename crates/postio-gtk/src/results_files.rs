@@ -426,6 +426,165 @@ impl PeopleList {
     }
 }
 
+/// The page a search that found nothing shows in the rows' place (design
+/// §3.10, screen 13): never a dead end. Each looser search that finds
+/// something is a row, numbered with the key that runs it; the focused one
+/// carries the ring, since Return runs it.
+pub struct NoResultsPage {
+    root: gtk::Box,
+    title: gtk::Label,
+    body: gtk::Label,
+    ways: gtk::Box,
+    counting: gtk::Label,
+    searched: gtk::Label,
+    act: Rc<dyn Fn(CommandId)>,
+}
+
+/// The command that runs looser search `number`, from 1.
+fn relaxation_command(number: u32) -> Option<CommandId> {
+    match number {
+        1 => Some(CommandId::PickRelaxation1),
+        2 => Some(CommandId::PickRelaxation2),
+        3 => Some(CommandId::PickRelaxation3),
+        4 => Some(CommandId::PickRelaxation4),
+        _ => None,
+    }
+}
+
+impl NoResultsPage {
+    /// An empty page; `act` runs a looser search's command on a click.
+    pub fn new(act: Rc<dyn Fn(CommandId)>) -> Rc<Self> {
+        let title = gtk::Label::new(None);
+        title.add_css_class("focus-nothing-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        let body = gtk::Label::new(None);
+        body.add_css_class("dim-label");
+        body.add_css_class("focus-nothing-body");
+        body.set_xalign(0.0);
+        body.set_wrap(true);
+        let ways = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        ways.add_css_class("focus-nothing-ways");
+        let counting = gtk::Label::new(None);
+        counting.add_css_class("dim-label");
+        counting.set_xalign(0.0);
+        let searched = gtk::Label::new(None);
+        searched.add_css_class("dim-label");
+        searched.add_css_class("focus-nothing-searched");
+        searched.set_xalign(0.0);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, S2);
+        root.add_css_class("focus-nothing");
+        root.set_halign(gtk::Align::Center);
+        root.set_valign(gtk::Align::Start);
+        root.set_width_request(640);
+        root.append(&title);
+        root.append(&body);
+        root.append(&ways);
+        root.append(&counting);
+        root.append(&searched);
+        Rc::new(NoResultsPage {
+            root,
+            title,
+            body,
+            ways,
+            counting,
+            searched,
+            act,
+        })
+    }
+
+    /// What the results pane lays out.
+    pub fn widget(&self) -> &gtk::Box {
+        &self.root
+    }
+
+    /// Draw `view`.
+    pub fn show(&self, view: &postio_focus::NoResultsView) {
+        self.title.set_text(&view.title);
+        self.body.set_text(&view.body);
+        self.body.set_visible(!view.body.is_empty());
+        while let Some(child) = self.ways.first_child() {
+            self.ways.remove(&child);
+        }
+        for way in &view.relaxations {
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+            if let Some(key) = &way.key {
+                line.append(&keyhint::cap(key));
+            }
+            let words = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            words.set_hexpand(true);
+            let label = gtk::Label::new(Some(&way.label));
+            label.set_xalign(0.0);
+            label.add_css_class("focus-nothing-way");
+            words.append(&label);
+            let query = gtk::Label::new(Some(&way.query));
+            query.set_xalign(0.0);
+            query.add_css_class("focus-nothing-query");
+            query.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            words.append(&query);
+            line.append(&words);
+            let count = gtk::Label::new(Some(&way.count));
+            count.add_css_class("dim-label");
+            line.append(&count);
+            let button = gtk::Button::new();
+            button.set_child(Some(&line));
+            button.add_css_class("flat");
+            button.add_css_class("focus-nothing-row");
+            if way.focused {
+                button.add_css_class("focus-nothing-focused");
+            }
+            button.set_focus_on_click(false);
+            if let Some(command) = relaxation_command(way.number) {
+                let act = Rc::clone(&self.act);
+                button.connect_clicked(move |_| act(command));
+            }
+            self.ways.append(&button);
+        }
+        self.counting.set_visible(view.counting.is_some());
+        self.counting
+            .set_text(view.counting.as_deref().unwrap_or_default());
+        self.searched.set_text(&view.searched);
+    }
+
+    /// The looser searches' words, and which is focused: what a test reads.
+    pub fn ways(&self) -> Vec<(String, bool)> {
+        let mut ways = Vec::new();
+        let mut child = self.ways.first_child();
+        while let Some(button) = child {
+            let label = labels_of(&button)
+                .into_iter()
+                .find(|label| label.has_css_class("focus-nothing-way"))
+                .map(|label| label.text().to_string())
+                .unwrap_or_default();
+            ways.push((label, button.has_css_class("focus-nothing-focused")));
+            child = button.next_sibling();
+        }
+        ways
+    }
+
+    /// The page's title.
+    pub fn title(&self) -> String {
+        self.title.text().to_string()
+    }
+}
+
+/// Every label under `root`.
+fn labels_of(root: &gtk::Widget) -> Vec<gtk::Label> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(widget) = stack.pop() {
+        if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
+            found.push(label);
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            stack.push(next.clone());
+            child = next.next_sibling();
+        }
+    }
+    found
+}
+
 /// Quick Look over the results.
 pub struct QuickLookPanel {
     root: gtk::Box,

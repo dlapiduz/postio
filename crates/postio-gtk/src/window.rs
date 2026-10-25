@@ -2194,6 +2194,11 @@ impl FocusWindow {
                 }
             }
             Intent::FileCopy(copy) => self.file_copy(copy.as_ref()),
+            Intent::Relaxations(view) => {
+                if let Some(results) = self.results() {
+                    results.show_relaxations(view.as_deref());
+                }
+            }
             Intent::Place { name } => self.show_place(name),
             Intent::OpenPlaces => self.open_places(),
             Intent::PlacesChanged => {

@@ -512,7 +512,15 @@ turns on (T176).
     a third page of the results' body beside the rows and the Files grid,
     read by position as they are; Return and a double-click search `from:`
     the person through the controller.
-- [ ] T175 No results and the relaxations (`Relaxations`).
+- [x] T175 No results and the relaxations (`Relaxations`).
+  - *As built:* `NoResultsPage` in `crates/postio-gtk/src/results_files.rs`,
+    a page of the results' body in the rows' place: the title and its
+    sentence, a row a looser search with its key, words, query and count,
+    and what was searched. A click runs its `PickRelaxation` command. The
+    focused looser search carries the cursor's ring, since Return runs it;
+    the query field's own ring stays neutral, so one ring marks where the
+    keyboard is (FR-091). The screen 02 ghost after the caret is still not
+    drawn; it is T176's, with the typing states' storyboards.
 - [ ] T176 Turn `results_view` on for Freedesktop; offer the Apple-only
   commands on Linux (`registry::offered_on`) with Linux keys where the ⌘
   chords do not carry over; regenerate `docs/keybindings.md`; play

@@ -36,6 +36,8 @@ const ROWS: &str = "rows";
 const FILES: &str = "files";
 /// The body's page for the People tab's list.
 const PEOPLE: &str = "people";
+/// The body's page for a search that found nothing.
+const NOTHING: &str = "nothing";
 
 /// What a list position shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +168,9 @@ pub struct ResultsPane {
     body: gtk::Stack,
     files: Rc<crate::results_files::FilesGrid>,
     people: Rc<crate::results_files::PeopleList>,
+    nothing: Rc<crate::results_files::NoResultsPage>,
+    /// The search found nothing: the page in the rows' place.
+    found_nothing: Cell<bool>,
     quick_look: Rc<crate::results_files::QuickLookPanel>,
     hints: gtk::Box,
     footer: gtk::Label,
@@ -277,12 +282,19 @@ impl ResultsPane {
         let files = crate::results_files::FilesGrid::new(feed.clone(), Rc::clone(&act));
         let quick_look = crate::results_files::QuickLookPanel::new(Rc::clone(&act));
         let people = crate::results_files::PeopleList::new(feed.clone(), Rc::clone(&act));
+        let nothing = crate::results_files::NoResultsPage::new(Rc::clone(&act));
+        let nothing_scroller = gtk::ScrolledWindow::builder()
+            .child(nothing.widget())
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .build();
         let body = gtk::Stack::new();
         body.set_transition_type(gtk::StackTransitionType::None);
         body.set_vexpand(true);
         body.add_named(&scrolled, Some(ROWS));
         body.add_named(files.widget(), Some(FILES));
         body.add_named(people.widget(), Some(PEOPLE));
+        body.add_named(&nothing_scroller, Some(NOTHING));
         let over = gtk::Overlay::new();
         over.set_child(Some(&body));
         over.add_overlay(quick_look.widget());
@@ -314,6 +326,8 @@ impl ResultsPane {
             body,
             files,
             people,
+            nothing,
+            found_nothing: Cell::new(false),
             quick_look,
             hints,
             footer,
@@ -437,6 +451,7 @@ impl ResultsPane {
                 self.people.show(view.rows);
                 self.body.set_visible_child_name(PEOPLE);
             }
+            None if self.found_nothing.get() => self.body.set_visible_child_name(NOTHING),
             None => self.body.set_visible_child_name(ROWS),
         }
         let groups_changed = self
@@ -590,6 +605,36 @@ impl ResultsPane {
             self.popover.rehang(button.upcast_ref());
         }
         self.filter_buttons.replace(drawn);
+    }
+
+    /// Draw the page a search that found nothing shows, or take it away:
+    /// `Intent::Relaxations`.
+    pub fn show_relaxations(&self, view: Option<&postio_focus::NoResultsView>) {
+        match view {
+            Some(view) => {
+                self.nothing.show(view);
+                self.found_nothing.set(true);
+                if !self.showing_files() && !self.showing_people() {
+                    self.body.set_visible_child_name(NOTHING);
+                }
+            }
+            None => {
+                self.found_nothing.set(false);
+                if self.body.visible_child_name().as_deref() == Some(NOTHING) {
+                    self.body.set_visible_child_name(ROWS);
+                }
+            }
+        }
+    }
+
+    /// The no-results page.
+    pub fn nothing(&self) -> &crate::results_files::NoResultsPage {
+        &self.nothing
+    }
+
+    /// Whether the no-results page is in the rows' place.
+    pub fn showing_nothing(&self) -> bool {
+        self.body.visible_child_name().as_deref() == Some(NOTHING)
     }
 
     /// Whether the People tab's list is in the rows' place.
