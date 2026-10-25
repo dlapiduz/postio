@@ -185,7 +185,7 @@ pub(crate) fn text_runs(doc: &BaseDocument, id: NodeId, out: &mut Vec<(NodeId, R
                 if run.advance() <= 0.0 {
                     continue;
                 }
-                let metrics = run.run().metrics();
+                let metrics = run.run().font_metrics();
                 // Blitz shapes text at the device scale; the snapshot is in
                 // CSS pixels.
                 let k = f64::from(doc.viewport().scale());
