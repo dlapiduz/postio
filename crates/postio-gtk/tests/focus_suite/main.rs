@@ -94,6 +94,7 @@ mod reload;
 mod remind_on_send;
 mod remote_images;
 mod results;
+mod results_files;
 mod row_menu;
 mod rows;
 mod rule_query;
@@ -475,6 +476,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "results::a_drag_across_the_timeline_narrows_the_dates",
         results::a_drag_across_the_timeline_narrows_the_dates as fn(),
+    ),
+    (
+        "results_files::the_files_tab_saves_a_file_where_the_person_says",
+        results_files::the_files_tab_saves_a_file_where_the_person_says as fn(),
+    ),
+    (
+        "results_files::space_on_a_file_opens_it_in_the_desktop_app",
+        results_files::space_on_a_file_opens_it_in_the_desktop_app as fn(),
+    ),
+    (
+        "results_files::quick_look_shows_a_conversation_s_matches",
+        results_files::quick_look_shows_a_conversation_s_matches as fn(),
+    ),
+    (
+        "results::return_on_a_person_searches_from_them",
+        results::return_on_a_person_searches_from_them as fn(),
     ),
     (
         "results::show_all_opens_the_results_and_back_returns_to_the_inbox",

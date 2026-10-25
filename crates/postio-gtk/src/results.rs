@@ -31,6 +31,12 @@ use postio_widgets::widgets::space::{S1, S2, S3};
 
 use crate::list::Feed;
 
+/// The body's page for the rows, and for the Files tab's grid.
+const ROWS: &str = "rows";
+const FILES: &str = "files";
+/// The body's page for the People tab's list.
+const PEOPLE: &str = "people";
+
 /// What a list position shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Item {
@@ -156,6 +162,11 @@ pub struct ResultsPane {
     popover: Rc<crate::search_popover::FilterPopover>,
     items: ResultsItems,
     list: gtk::ListView,
+    /// The rows, or the Files tab's grid in their place.
+    body: gtk::Stack,
+    files: Rc<crate::results_files::FilesGrid>,
+    people: Rc<crate::results_files::PeopleList>,
+    quick_look: Rc<crate::results_files::QuickLookPanel>,
     hints: gtk::Box,
     footer: gtk::Label,
     view: RefCell<Option<ResultsView>>,
@@ -262,7 +273,20 @@ impl ResultsPane {
         root.append(&query);
         root.append(&buttons);
         root.append(&timeline_line);
-        root.append(&scrolled);
+        let act: Rc<dyn Fn(CommandId)> = Rc::new(act);
+        let files = crate::results_files::FilesGrid::new(feed.clone(), Rc::clone(&act));
+        let quick_look = crate::results_files::QuickLookPanel::new(Rc::clone(&act));
+        let people = crate::results_files::PeopleList::new(feed.clone(), Rc::clone(&act));
+        let body = gtk::Stack::new();
+        body.set_transition_type(gtk::StackTransitionType::None);
+        body.set_vexpand(true);
+        body.add_named(&scrolled, Some(ROWS));
+        body.add_named(files.widget(), Some(FILES));
+        body.add_named(people.widget(), Some(PEOPLE));
+        let over = gtk::Overlay::new();
+        over.set_child(Some(&body));
+        over.add_overlay(quick_look.widget());
+        root.append(&over);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(&foot);
 
@@ -273,7 +297,7 @@ impl ResultsPane {
         let pane = Rc::new(ResultsPane {
             root,
             feed,
-            act: Rc::new(act),
+            act,
             count_line,
             sub_line,
             tabs,
@@ -287,6 +311,10 @@ impl ResultsPane {
             popover,
             items,
             list,
+            body,
+            files,
+            people,
+            quick_look,
             hints,
             footer,
             view: RefCell::default(),
@@ -396,6 +424,21 @@ impl ResultsPane {
             (Some(all), true) => self.footer.set_text(&format!("{} {}", all.key, all.label)),
             _ => self.footer.set_text(&view.footer),
         }
+        let people = view
+            .tabs
+            .iter()
+            .any(|tab| tab.selected && tab.tab == postio_search::results::ResultsTab::People);
+        match &view.files {
+            Some(header) => {
+                self.files.show(header, view.rows);
+                self.body.set_visible_child_name(FILES);
+            }
+            None if people => {
+                self.people.show(view.rows);
+                self.body.set_visible_child_name(PEOPLE);
+            }
+            None => self.body.set_visible_child_name(ROWS),
+        }
         let groups_changed = self
             .view
             .borrow()
@@ -415,6 +458,14 @@ impl ResultsPane {
 
     /// The results `first..first + count` landed or changed.
     pub fn rows_changed(&self, first: u64, count: u64) {
+        if self.showing_files() {
+            self.files.refresh();
+            return;
+        }
+        if self.showing_people() {
+            self.people.refresh();
+            return;
+        }
         {
             let mut asked = self.asked.borrow_mut();
             for position in first..first.saturating_add(count) {
@@ -426,6 +477,17 @@ impl ResultsPane {
 
     /// The focus ring is on the result at `position` now.
     pub fn show_cursor(&self, position: u64) {
+        if self.showing_files() {
+            self.cursor.set(Some(position));
+            self.files.refresh();
+            return;
+        }
+        if self.showing_people() {
+            self.cursor.set(Some(position));
+            self.people.refresh();
+            self.people.reveal(position);
+            return;
+        }
         let was = self.cursor.replace(Some(position));
         if let Some(was) = was {
             self.items.rows_changed(was, 1);
@@ -528,6 +590,40 @@ impl ResultsPane {
             self.popover.rehang(button.upcast_ref());
         }
         self.filter_buttons.replace(drawn);
+    }
+
+    /// Whether the People tab's list is in the rows' place.
+    fn showing_people(&self) -> bool {
+        self.body.visible_child_name().as_deref() == Some(PEOPLE)
+    }
+
+    /// The People tab's list.
+    pub fn people(&self) -> &crate::results_files::PeopleList {
+        &self.people
+    }
+
+    /// Whether the Files tab's grid is in the rows' place.
+    fn showing_files(&self) -> bool {
+        self.body.visible_child_name().as_deref() == Some(FILES)
+    }
+
+    /// Draw Quick Look over the results, or close it: `Intent::QuickLook`.
+    pub fn show_quick_look(
+        &self,
+        view: Option<&postio_focus::QuickLookView>,
+        commands: &[CommandId],
+    ) {
+        self.quick_look.show(view, commands);
+    }
+
+    /// The Files tab's grid.
+    pub fn files(&self) -> &crate::results_files::FilesGrid {
+        &self.files
+    }
+
+    /// Quick Look.
+    pub fn quick_look(&self) -> &crate::results_files::QuickLookPanel {
+        &self.quick_look
     }
 
     /// Draw the open filter popover, hung from its button, or close it:
@@ -850,6 +946,25 @@ impl ResultsPane {
         false
     }
 
+    /// Click the tab whose label starts with `text`, as a person does.
+    pub fn click_tab(&self, text: &str) -> bool {
+        let mut child = self.tabs.first_child();
+        while let Some(widget) = child {
+            if let Some(button) = widget.downcast_ref::<gtk::Button>()
+                && button
+                    .child()
+                    .and_then(|said| said.first_child())
+                    .and_downcast::<gtk::Label>()
+                    .is_some_and(|label| label.text().starts_with(text))
+            {
+                button.emit_clicked();
+                return true;
+            }
+            child = widget.next_sibling();
+        }
+        false
+    }
+
     /// Click the filter button whose label starts with `text`.
     pub fn click_filter(&self, text: &str) -> bool {
         let mut child = self.buttons.first_child();
@@ -886,6 +1001,14 @@ impl ResultsPane {
 
     /// Take the keyboard: the list, which hears the window's keys.
     pub fn focus(&self) {
+        if self.showing_files() {
+            self.files.focus();
+            return;
+        }
+        if self.showing_people() {
+            self.people.focus();
+            return;
+        }
         self.list.grab_focus();
     }
 }

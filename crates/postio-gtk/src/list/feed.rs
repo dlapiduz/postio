@@ -163,6 +163,18 @@ impl Feed {
         self.inner.focus.borrow().result_row(position)
     }
 
+    /// The People tab's row at `position`, drawn; `None` past the last, or
+    /// before the rows are read.
+    pub fn result_person(&self, position: u64) -> Option<postio_focus::PersonRow> {
+        self.inner.focus.borrow().result_person(position)
+    }
+
+    /// The Files tab's card at `position`, drawn; `None` past the last, or
+    /// before the cards are read.
+    pub fn result_file(&self, position: u64) -> Option<postio_focus::FileCard> {
+        self.inner.focus.borrow().result_file(position)
+    }
+
     /// The results view wants the row at `position`, which
     /// [`result_row`](Self::result_row) could not give: its page is read,
     /// and `Intent::ResultsPage` says when it lands.
@@ -240,6 +252,12 @@ impl Feed {
     /// The surface on top of the list, by the controller's stack.
     pub fn top_surface(&self) -> Option<postio_focus::SurfaceKind> {
         self.inner.focus.borrow().top_surface()
+    }
+
+    /// Whether the controller answers `id` itself over what is on screen:
+    /// while a search's results are up, their keys and the verbs on a row.
+    pub fn answers(&self, id: CommandId) -> bool {
+        self.inner.focus.borrow().answers(id)
     }
 
     /// Who runs `id` with the surfaces now over the list.

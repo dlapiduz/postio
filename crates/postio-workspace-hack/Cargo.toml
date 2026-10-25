@@ -264,6 +264,7 @@ libc = { version = "0.2", default-features = false, features = ["extra_traits"] 
 mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFAttributedString", "CFCGTypes", "CFCalendar", "CFCharacterSet", "CFData", "CFDate", "CFDictionary", "CFError", "CFFileSecurity", "CFLocale", "CFMachPort", "CFMessagePort", "CFRunLoop", "CFSet", "CFStream", "CFString", "CFURL", "CFUUID", "objc2", "std"] }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
@@ -276,6 +277,7 @@ libc = { version = "0.2", default-features = false, features = ["extra_traits"] 
 mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFAttributedString", "CFCGTypes", "CFCalendar", "CFCharacterSet", "CFData", "CFDate", "CFDictionary", "CFError", "CFFileSecurity", "CFLocale", "CFMachPort", "CFMessagePort", "CFRunLoop", "CFSet", "CFStream", "CFString", "CFURL", "CFUUID", "objc2", "std"] }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }

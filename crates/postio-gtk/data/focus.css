@@ -1352,6 +1352,152 @@ button.focus-popover-preset.focus-popover-preset-selected {
   background-color: var(--postio-selected-bg);
 }
 
+/* ── The Files tab and Quick Look (spec 010 screens 10, 11) ──────────── */
+/* A card a file: its type over a quiet preview, the name with the find
+   highlight, who and when, the matching line, and the message it came in.
+   The ring is the cursor's (FR-091). Quick Look is a panel over the
+   results: the hit's subject and sender, then a card a match, the current
+   one ringed. */
+.focus-files-head {
+  padding: var(--postio-space-3) var(--postio-space-4) var(--postio-space-2);
+}
+
+.focus-files-title {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-files-note {
+  font-size: var(--postio-text-label);
+}
+
+.focus-files-grid {
+  background: none;
+  padding: 0 var(--postio-space-3);
+}
+
+.focus-files-grid > child {
+  padding: var(--postio-space-2);
+}
+
+.focus-file-card {
+  padding: var(--postio-space-2);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-raised-bg);
+}
+
+.focus-file-card.focus-file-focused {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+.focus-file-preview {
+  min-height: 96px;
+  padding: var(--postio-space-2);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+}
+
+.focus-file-kind {
+  padding: 0 var(--postio-space-1);
+  border-radius: var(--postio-radius-sm);
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-micro);
+  font-weight: bold;
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-file-line {
+  min-height: 6px;
+  margin-top: var(--postio-space-1);
+  border-radius: 2px;
+  background-color: var(--postio-hairline);
+}
+
+.focus-file-line.focus-file-line-marked {
+  background-color: rgba(255, 204, 0, 0.38);
+}
+
+.focus-file-name {
+  font-weight: 600;
+}
+
+.focus-file-meta,
+.focus-file-subject,
+.focus-file-match {
+  font-size: var(--postio-text-label);
+}
+
+.focus-quicklook {
+  margin: var(--postio-space-6);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-lg);
+  /* Opaque: the raised tint is see-through, and the rows showed through. */
+  background-color: var(--postio-surface);
+  box-shadow: var(--postio-shadow-lg);
+}
+
+.focus-quicklook-head {
+  min-height: 44px;
+  padding: 0 var(--postio-space-3);
+}
+
+.focus-quicklook-title {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-quicklook-body {
+  padding: var(--postio-space-3) var(--postio-space-4) var(--postio-space-4);
+}
+
+.focus-quicklook-subject {
+  font-size: var(--postio-text-title);
+  font-weight: bold;
+}
+
+.focus-quicklook-matches {
+  font-size: var(--postio-text-label);
+}
+
+.focus-quicklook-card {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+}
+
+.focus-quicklook-card.focus-quicklook-current {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+.focus-quicklook-where {
+  min-width: 140px;
+}
+
+.focus-quicklook-place {
+  font-weight: 600;
+  font-size: var(--postio-text-label);
+}
+
+/* ── The People tab (spec 010 §3.11) ─────────────────────────────────── */
+/* A result row's rhythm: 58 tall, the hairline, the cursor's ring; the
+   avatar, the name over the address, the count, the newest date. */
+.focus-people-avatar {
+  min-width: 32px;
+  min-height: 32px;
+  font-size: var(--postio-text-meta);
+}
+
+.focus-people-address,
+.focus-people-messages {
+  font-size: var(--postio-text-label);
+}
+
 /* ── The folders popover (screen 10) ─────────────────────────────────── */
 /* A popover is a surface of its own and does not inherit the window's
    face: without this every name in it was set in the fallback mono (C25:

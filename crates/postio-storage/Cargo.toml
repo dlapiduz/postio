@@ -60,7 +60,7 @@ tempfile = { workspace = true, optional = true }
 # which `deny.toml` already allows.
 # 0.13 rather than newest: the engine's fts (tantivy) is on 0.13, and one
 # version means one wrapper over the single zstd-sys both share.
-zstd = "0.13"
+zstd = "0.14"
 thiserror = { workspace = true }
 tracing = { workspace = true }
 postio-workspace-hack.workspace = true
