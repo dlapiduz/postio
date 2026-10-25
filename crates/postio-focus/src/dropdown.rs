@@ -501,10 +501,13 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
         .collect();
     let highlight = recents.first().map(|row| row.token);
     if !recents.is_empty() {
+        // "forgets one" only with the key that does it: unbound, the note
+        // would promise what no key keeps.
+        let forget = postio_ui::hints::key(parts.keymap, CommandId::ForgetRecent);
         sections.push(DropdownSection {
             title: words::RECENT.to_owned(),
-            note: Some(words::FORGETS_ONE.to_owned()),
-            note_key: postio_ui::hints::key(parts.keymap, CommandId::ForgetRecent),
+            note: forget.is_some().then(|| words::FORGETS_ONE.to_owned()),
+            note_key: forget,
             rows: recents,
             pills: Vec::new(),
         });
@@ -1164,6 +1167,7 @@ pub(crate) fn plain(parts: PlainParts<'_>) -> DropdownView {
             landed.total,
             landed.elapsed,
             landed.capped,
+            parts.keymap,
         ));
     }
     DropdownView {

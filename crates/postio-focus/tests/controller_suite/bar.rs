@@ -3014,19 +3014,15 @@ mod dropdown {
     }
 
     #[test]
-    fn the_gtk_bar_asks_nothing_of_the_dropdown() {
+    fn linux_has_the_dropdown_and_its_show_all() {
+        // Spec 010 T176: GTK draws the dropdown and the results view, so
+        // Linux runs with them as the Mac does.
         let rows = List::of(1);
         let mut focus = FocusController::new(Policy::for_platform(Platform::Freedesktop));
-        assert!(!focus.policy().caps.results_view);
-        let effects = run(&mut focus, CommandId::Search, &rows);
-        assert_eq!(asked(&effects), [Request::Places]);
-        let effects = typed(&mut focus, "atlas budget", &rows);
-        assert!(
-            asked(&effects)
-                .iter()
-                .all(|r| matches!(r, Request::Search { .. }))
-        );
-        assert!(!focus.answers(CommandId::ShowAllResults));
+        assert!(focus.policy().caps.results_view);
+        run(&mut focus, CommandId::Search, &rows);
+        typed(&mut focus, "atlas budget", &rows);
+        assert!(focus.answers(CommandId::ShowAllResults));
     }
 }
 

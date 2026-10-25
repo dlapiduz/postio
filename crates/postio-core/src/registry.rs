@@ -3262,27 +3262,12 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             // repair, and recolouring there would break the contrast floor;
             // the maintainer chose to leave it out (2026-10-01, #1705).
             | (ActionId::Builtin(C::DarkenMessage), Platform::Apple)
-            // The search dropdown is the Mac's until Linux adopts it
-            // (spec 010 D23, D25).
-            | (ActionId::Builtin(C::ShowAllResults), Platform::Freedesktop)
+            // Forgetting a recent search is `alt+BackSpace`, the Mac's key
+            // (spec 010 D23), which on Linux is the terminal's back-to-words:
+            // the terminal resolves Linux's keymap, so the two would be one
+            // key. Linux has the rest of search (T176); this waits for a
+            // key of its own.
             | (ActionId::Builtin(C::ForgetRecent), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ExcludeSuggestion), Platform::Freedesktop)
-            // And so is the results view (spec 010 D17, D25).
-            | (ActionId::Builtin(C::HistoryBack), Platform::Freedesktop)
-            | (ActionId::Builtin(C::HistoryForward), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ResultsConversations), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ResultsFiles), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ResultsPeople), Platform::Freedesktop)
-            | (ActionId::Builtin(C::StepRangeBack), Platform::Freedesktop)
-            | (ActionId::Builtin(C::StepRangeForward), Platform::Freedesktop)
-            | (ActionId::Builtin(C::QuickLook), Platform::Freedesktop)
-            | (ActionId::Builtin(C::NextMatch), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PrevMatch), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PickRelaxation1), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PickRelaxation2), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PickRelaxation3), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PickRelaxation4), Platform::Freedesktop)
-            | (ActionId::Builtin(C::SaveFile), Platform::Freedesktop)
             // Syncing with an address book is the Mac's: Linux has Contacts
             // (specs/011-focus-contacts S13) and leaves sync out.
             | (ActionId::Builtin(C::ContactsSync), Platform::Freedesktop)
@@ -3360,35 +3345,15 @@ mod tests {
         CommandId::NextScope,
     ];
 
-    /// What only the Mac draws, until Linux adopts it: the search dropdown
-    /// and results view (spec 010 D23, D25), and syncing with an address
-    /// book (specs/011-focus-contacts S12).
-    const NOT_ON_LINUX_YET: [CommandId; 19] = [
-        CommandId::ShowAllResults,
-        CommandId::ForgetRecent,
-        CommandId::ExcludeSuggestion,
-        CommandId::HistoryBack,
-        CommandId::HistoryForward,
-        CommandId::ResultsConversations,
-        CommandId::ResultsFiles,
-        CommandId::ResultsPeople,
-        CommandId::StepRangeBack,
-        CommandId::StepRangeForward,
-        CommandId::QuickLook,
-        CommandId::NextMatch,
-        CommandId::PrevMatch,
-        CommandId::PickRelaxation1,
-        CommandId::PickRelaxation2,
-        CommandId::PickRelaxation3,
-        CommandId::PickRelaxation4,
-        CommandId::SaveFile,
-        CommandId::ContactsSync,
-    ];
+    /// What only the Mac has, until Linux does: forgetting a recent search,
+    /// whose key Linux's terminal holds (spec 010 T176), and syncing with an
+    /// address book (specs/011-focus-contacts S12).
+    const NOT_ON_LINUX_YET: [CommandId; 2] = [CommandId::ForgetRecent, CommandId::ContactsSync];
 
     #[test]
     fn every_command_is_offered_on_freedesktop() {
         // GTK draws every surface these commands name, so nothing is scoped
-        // away there but the Mac's dropdown -- this is the half that guards
+        // away there but address-book sync -- this is the half that guards
         // the GTK build against a Mac decision leaking into it.
         let scoped: Vec<CommandId> = CommandId::ALL
             .iter()

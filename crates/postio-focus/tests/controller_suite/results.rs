@@ -5,7 +5,7 @@
 //! controller holds, which asks the engine for its pages and their
 //! passages, groups them into Top hits and months, edits its query term by
 //! term, and gives way to the inbox on Esc's last rung. The Mac draws what
-//! it is told; GTK never enters it (`results_view` off).
+//! it is told, and so does GTK (spec 010 T176).
 
 use crate::search_support::*;
 use postio_config::paths::Platform;
@@ -496,9 +496,11 @@ fn an_answer_for_a_query_since_edited_is_dropped() {
 }
 
 #[test]
-fn gtk_never_enters_the_results() {
+fn without_the_results_view_show_all_enters_nothing() {
     let rows = List::of(3);
-    let mut focus = FocusController::new(Policy::for_platform(Platform::Freedesktop));
+    let mut policy = Policy::for_platform(Platform::Freedesktop);
+    policy.caps.results_view = false;
+    let mut focus = FocusController::new(policy);
     let effects = show_all(&mut focus, "atlas budget", &rows);
     assert!(results_view(&effects).is_none());
     assert!(!focus.in_results());

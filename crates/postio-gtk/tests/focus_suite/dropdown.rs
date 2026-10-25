@@ -5,7 +5,7 @@
 //! controller's, asserted in `postio-focus`. These cases ask what is GTK's
 //! own: that a view is drawn as it says, that the arrows keep their place
 //! across a redraw, and that a run or a pill says its token back. The last
-//! drives the window, with spec 010's search staged on.
+//! drives the window.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -259,7 +259,7 @@ pub fn a_pill_runs_its_token() {
     });
 }
 
-/// With spec 010's search staged on, `/` opens the dropdown in the bar's
+/// `/` opens the dropdown in the bar's
 /// panel: empty, it offers the cheat sheet; typing a word in a message's
 /// subject lists that message under Top hits with the word found, and
 /// Show all is where Return goes.
@@ -268,7 +268,6 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
         if !support::display() {
             return;
         }
-        postio_gtk::list::feed::stage_results_view(true);
         let fixture = Fixture::empty().await;
         fixture
             .file(
@@ -282,7 +281,6 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
             .file(("Tomas Ruiz", "tomas@example.com"), "Lunch", "Noon?", 10)
             .await;
         let (window, _client) = fixture.open().await;
-        postio_gtk::list::feed::stage_results_view(false);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 2).await,
             "the inbox never reached the screen"

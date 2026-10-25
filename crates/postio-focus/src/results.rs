@@ -1165,6 +1165,7 @@ impl Results {
                 frame.messages_searched,
                 frame.corpus_complete,
                 frame.contents_complete,
+                keymap,
             ),
         })
     }
@@ -1918,7 +1919,10 @@ impl Results {
                 .flatten(),
             files: (self.tab == ResultsTab::Files).then(|| FilesHeader {
                 title: words::FILES_TITLE.to_owned(),
-                note: words::files_note(frame.is_none_or(|frame| frame.contents_complete)),
+                note: words::files_note(
+                    frame.is_none_or(|frame| frame.contents_complete),
+                    with.keymap,
+                ),
             }),
         }
     }
@@ -3619,7 +3623,7 @@ impl FocusController {
                     results.copy = None;
                 }
                 vec![Step::Show(Intent::Toast {
-                    text: words::FILE_NOT_HERE.to_owned(),
+                    text: words::file_not_here(self.bar.keymap()),
                     kind: crate::ToastKind::Notice,
                 })]
             }

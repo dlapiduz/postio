@@ -25,6 +25,10 @@
 //! The Gmail keymap (docs/PRODUCT.md §8, the maintainer's decision of
 //! 2026-10-14) is the second: every row it changed is a default moved to
 //! Gmail's key for the command, or off a key Gmail's took.
+//!
+//! Linux's adoption of spec 010's search (T176) is the third: its rows were
+//! empty while the commands were the Mac's, and each took the Mac's key with
+//! Ctrl for ⌘. `forget_recent` stays empty: its key is the terminal's.
 
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;

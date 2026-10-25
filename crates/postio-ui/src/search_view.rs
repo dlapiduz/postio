@@ -1068,9 +1068,9 @@ pub fn quick_look_walk(keymap: &Keymap) -> Option<Hint> {
 
 /// The header's buttons, each with its key: Open, Archive, Close.
 pub fn quick_look_actions(keymap: &Keymap) -> Vec<Hint> {
-    QUICK_LOOK_ACTIONS
+    quick_look_buttons(|id| keymap.binding(id).map(str::to_owned))
         .into_iter()
-        .filter_map(|(id, label)| hints::hint(keymap, id, label))
+        .map(|(_, hint)| hint)
         .collect()
 }
 
@@ -1078,10 +1078,28 @@ pub fn quick_look_actions(keymap: &Keymap) -> Vec<Hint> {
 /// a button left out for want of a key leaves its command out too, so a
 /// frontend never runs one button's command from another.
 pub fn quick_look_commands(keymap: &Keymap) -> Vec<CommandId> {
+    quick_look_buttons(|id| keymap.binding(id).map(str::to_owned))
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Quick Look's buttons with a key, each with what it runs: the one list
+/// both of the above read, so they cannot fall out of step.
+fn quick_look_buttons(key: impl Fn(CommandId) -> Option<String>) -> Vec<(CommandId, Hint)> {
     QUICK_LOOK_ACTIONS
         .into_iter()
-        .filter(|(id, _)| keymap.binding(*id).is_some())
-        .map(|(id, _)| id)
+        .filter_map(|(id, label)| {
+            key(id).map(|key| {
+                (
+                    id,
+                    Hint {
+                        key,
+                        label: label.to_owned(),
+                    },
+                )
+            })
+        })
         .collect()
 }
 
@@ -1364,7 +1382,12 @@ pub fn relaxation_count(n: u64, capped: bool) -> String {
 /// attachment contents" only when every attachment on this Mac has been
 /// read (US6 scenario 2) -- never a claim the index cannot back. Searching
 /// the server is not offered (S4).
-pub fn searched(messages: u64, corpus_complete: bool, contents_complete: bool) -> String {
+pub fn searched(
+    messages: u64,
+    corpus_complete: bool,
+    contents_complete: bool,
+    keymap: &Keymap,
+) -> String {
     let what = match (messages, corpus_complete) {
         (1, true) => "the 1 message".to_owned(),
         (1, false) => "1 message".to_owned(),
@@ -1381,7 +1404,8 @@ pub fn searched(messages: u64, corpus_complete: bool, contents_complete: bool) -
     } else {
         " Some are still being indexed."
     };
-    format!("Searched {what} on this Mac{contents}.{rest}")
+    let machine = this_machine(keymap);
+    format!("Searched {what} on {machine}{contents}.{rest}")
 }
 
 /// The footer's right while nothing matches (screen 13): "Searched
@@ -1453,11 +1477,12 @@ pub const FILES_TITLE: &str = "Files whose name or contents match";
 /// the indexer is still reading files on this Mac -- that it is not done,
 /// so a file not found yet is not taken for one that does not say it.
 /// iWork documents and the text in images are not read (step 9 note).
-pub fn files_note(contents_complete: bool) -> String {
+pub fn files_note(contents_complete: bool, keymap: &Keymap) -> String {
+    let machine = this_machine(keymap);
     if contents_complete {
-        "contents are indexed on this Mac for PDF, Office documents and text".to_owned()
+        format!("contents are indexed on {machine} for PDF, Office documents and text")
     } else {
-        "still reading the contents of files on this Mac: some may not be found yet".to_owned()
+        format!("still reading the contents of files on {machine}: some may not be found yet")
     }
 }
 
@@ -1548,8 +1573,12 @@ pub fn file_accessible(name: &str, kind: &str, meta: &str, line: &str, subject: 
 
 /// A file whose bytes are not on this Mac cannot be previewed or saved
 /// from here: nothing is fetched to do it (FR-050).
-pub const FILE_NOT_HERE: &str =
-    "That file isn\u{2019}t on this Mac yet: open its message to download it";
+pub fn file_not_here(keymap: &Keymap) -> String {
+    format!(
+        "That file isn\u{2019}t on {} yet: open its message to download it",
+        this_machine(keymap)
+    )
+}
 
 /// The results' tabs' commands, in their order: ⌘1–3 (§3.2).
 const RESULTS_TABS: [CommandId; 3] = [
@@ -1686,11 +1715,22 @@ pub fn origin_line(words: &str) -> String {
 
 /// The plain-English footer's right side: "parsed on this Mac · 3 matches ·
 /// 21 ms" -- nothing left the machine to understand it.
-pub fn parsed_footer(total: u64, elapsed: Duration, capped: bool) -> String {
+pub fn parsed_footer(total: u64, elapsed: Duration, capped: bool, keymap: &Keymap) -> String {
     format!(
-        "parsed on this Mac \u{b7} {}",
+        "parsed on {} \u{b7} {}",
+        this_machine(keymap),
         footer_count(total, elapsed, capped)
     )
+}
+
+/// Where search runs, as the platform says it: "this Mac" on the Mac,
+/// "this computer" elsewhere. Every word of search that promises nothing
+/// left the machine names it so.
+pub fn this_machine(keymap: &Keymap) -> &'static str {
+    match keymap.platform() {
+        Some(postio_config::paths::Platform::Apple) => "this Mac",
+        _ => "this computer",
+    }
 }
 
 /// The plain-English results' note: the month the dates name, when they
@@ -1807,22 +1847,48 @@ mod tests {
     }
 
     // US9, design §3.11: a People row's words and its footer.
+    /// The Mac's keymap: what the words that name the machine say there.
+    fn mac_keymap() -> Keymap {
+        postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        )
+    }
+
     #[test]
-    fn quick_look_s_buttons_run_what_they_say_with_a_key_unbound() {
-        // Linux binds no Quick Look key yet (D25): its button is left out,
-        // and the buttons after it must not shift onto the wrong command.
-        let keymap = postio_core::Keymap::resolve_on(
+    fn search_names_the_machine_it_ran_on() {
+        let linux = postio_core::Keymap::resolve_on(
             &postio_config::KeyBindings::default(),
             postio_config::paths::Platform::Freedesktop,
         );
-        let labels: Vec<String> = quick_look_actions(&keymap)
-            .into_iter()
-            .map(|hint| hint.label)
-            .collect();
-        assert_eq!(labels, ["Open", "Archive"]);
         assert_eq!(
-            quick_look_commands(&keymap),
-            [CommandId::OpenMessage, CommandId::Archive]
+            searched(2, true, false, &linux),
+            "Searched all 2 messages on this computer."
+        );
+        assert!(files_note(true, &linux).contains("on this computer"));
+        assert!(file_not_here(&linux).contains("on this computer"));
+        assert!(
+            parsed_footer(1, Duration::from_millis(3), false, &linux)
+                .starts_with("parsed on this computer")
+        );
+        assert!(searched(2, true, false, &mac_keymap()).contains("on this Mac"));
+    }
+
+    #[test]
+    fn quick_look_s_buttons_run_what_they_say_with_a_key_unbound() {
+        // Archive's key cleared: its button is left out, and Close after
+        // it must not shift onto Archive's command.
+        let buttons = quick_look_buttons(|id| (id != CommandId::Archive).then(|| "k".to_owned()));
+        let said: Vec<(CommandId, &str)> = buttons
+            .iter()
+            .map(|(id, hint)| (*id, hint.label.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (CommandId::OpenMessage, "Open"),
+                (CommandId::QuickLook, "Close")
+            ]
         );
     }
 
@@ -2909,33 +2975,37 @@ mod tests {
             "in \u{2018}Re: Atlas Q3 budget\u{2019}"
         );
         assert_eq!(FILES_TITLE, "Files whose name or contents match");
-        assert!(files_note(true).starts_with("contents are indexed on this Mac"));
-        assert!(files_note(false).contains("still reading"));
+        let mac = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
+        assert!(files_note(true, &mac).starts_with("contents are indexed on this Mac"));
+        assert!(files_note(false, &mac).contains("still reading"));
     }
 
     #[test]
     fn searched_claims_attachment_contents_only_once_they_are_read() {
         assert_eq!(
-            searched(18_204, true, true),
+            searched(18_204, true, true, &mac_keymap()),
             "Searched all 18,204 messages on this Mac, including attachment contents."
         );
         assert_eq!(
-            searched(18_204, true, false),
+            searched(18_204, true, false, &mac_keymap()),
             "Searched all 18,204 messages on this Mac.",
             "US6 scenario 2: contents not yet extracted"
         );
         assert_eq!(
-            searched(18_204, false, false),
+            searched(18_204, false, false, &mac_keymap()),
             "Searched 18,204 messages on this Mac. Some are still being indexed.",
             "bodies still backfilling: not \u{201c}all\u{201d}"
         );
         assert_eq!(
-            searched(1, true, false),
+            searched(1, true, false, &mac_keymap()),
             "Searched the 1 message on this Mac."
         );
         for each in [
-            searched(18_204, true, true),
-            searched(18_204, false, true),
+            searched(18_204, true, true, &mac_keymap()),
+            searched(18_204, false, true, &mac_keymap()),
             searched_footer(18_204, Duration::from_millis(41)),
         ] {
             assert!(
@@ -2991,7 +3061,7 @@ mod tests {
             "mailing list \u{b7} atlas-planning.example.org"
         );
         assert_eq!(
-            parsed_footer(3, Duration::from_millis(21), false),
+            parsed_footer(3, Duration::from_millis(21), false, &mac_keymap()),
             "parsed on this Mac \u{b7} 3 matches \u{b7} 21 ms"
         );
         let day = |m, d| chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap();

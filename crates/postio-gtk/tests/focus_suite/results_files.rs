@@ -4,7 +4,7 @@
 //!
 //! What a file search finds and which card has the ring are the
 //! controller's, asserted in `postio-focus`. These cases drive the window
-//! as a person does, with spec 010's search staged on.
+//! as a person does.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -13,21 +13,19 @@ use postio_core::CommandId;
 
 use crate::support::{self, Fixture};
 
-/// A window over a report with its PDF kept and one other message, the
-/// search staged on, and "report"'s results open.
+/// A window over a report with its PDF kept and one other message, and
+/// "report"'s results open.
 async fn report_results() -> (
     postio_gtk::window::FocusWindow,
     Fixture,
     Rc<postio_gtk::results::ResultsPane>,
 ) {
-    postio_gtk::list::feed::stage_results_view(true);
     let fixture = Fixture::empty().await;
     fixture.file_with_kept_attachment("Quarterly report").await;
     fixture
         .file(("Tomas Ruiz", "tomas@example.com"), "Lunch", "Noon?", 10)
         .await;
     let (window, _client) = fixture.open().await;
-    postio_gtk::list::feed::stage_results_view(false);
     assert!(
         crate::settle_until(async || support::subjects(&window).len() == 2).await,
         "the inbox never reached the screen"

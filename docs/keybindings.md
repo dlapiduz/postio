@@ -96,6 +96,23 @@ command from inside a text field.
 | `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search |  | `back_to_words` |
+| `ctrl+Return` | Show all results | Search (not the terminal) |  | `show_all_results` |
+| `alt+Return` | Exclude suggestion | Search (not the terminal) |  | `exclude_suggestion` |
+| `ctrl+bracketleft` | Back | List (not the terminal) |  | `history_back` |
+| `ctrl+bracketright` | Forward | List (not the terminal) |  | `history_forward` |
+| `ctrl+1` | Show conversations |  (not the terminal) |  | `results_conversations` |
+| `ctrl+2` | Show files |  (not the terminal) |  | `results_files` |
+| `ctrl+3` | Show people |  (not the terminal) |  | `results_people` |
+| `alt+Left` | Earlier month |  (not the terminal) |  | `step_range_back` |
+| `alt+Right` | Later month |  (not the terminal) |  | `step_range_forward` |
+| `space` | Quick Look |  (not the terminal) |  | `quick_look` |
+| `]` | Next match |  (not the terminal) |  | `next_match` |
+| `[` | Previous match |  (not the terminal) |  | `prev_match` |
+| `1` | Run looser search 1 |  (not the terminal) |  | `pick_relaxation_1` |
+| `2` | Run looser search 2 |  (not the terminal) |  | `pick_relaxation_2` |
+| `3` | Run looser search 3 |  (not the terminal) |  | `pick_relaxation_3` |
+| `4` | Run looser search 4 |  (not the terminal) |  | `pick_relaxation_4` |
+| `ctrl+Down` | Save file |  (not the terminal) |  | `save_file` |
 | `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
 | `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |

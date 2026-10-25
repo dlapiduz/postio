@@ -1675,8 +1675,12 @@ impl FocusWindow {
         // A stall after this is blamed on it (`postio_widgets::jank`).
         postio_widgets::jank::note_action(id);
         // A search's results are the controller's to drive: their keys --
-        // Quick Look, Save file, the tabs -- and the verbs on a result.
-        if self.results().is_some()
+        // Quick Look, Save file, the tabs -- and the verbs on a result. So
+        // is the search history, from the inbox too: forward reopens the
+        // results Back left.
+        let searching = self.results().is_some()
+            || matches!(id, CommandId::HistoryBack | CommandId::HistoryForward);
+        if searching
             && let Some(pane) = self.pane()
             && pane.feed().answers(id)
         {
