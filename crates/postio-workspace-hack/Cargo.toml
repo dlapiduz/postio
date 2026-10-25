@@ -20,7 +20,7 @@ aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 arrayvec = { version = "0.7" }
 base64-2b5c6dc72f624058 = { package = "base64", version = "0.23" }
 base64-3c51e837cfc5589a = { package = "base64", version = "0.22" }
-bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
+bitflags = { version = "2", default-features = false, features = ["std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
 bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
 cbc = { version = "0.1", features = ["zeroize"] }
@@ -32,7 +32,7 @@ crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
 crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom"] }
 crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
-cssparser = { version = "0.37", features = ["serde"] }
+cssparser = { version = "0.38", features = ["serde"] }
 derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
 digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", features = ["use_std"] }
@@ -66,7 +66,7 @@ num-traits = { version = "0.2", features = ["i128"] }
 once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 percent-encoding = { version = "2" }
-phf_shared = { version = "0.13" }
+phf_shared = { version = "0.14" }
 pimalaya-stream = { version = "0.3" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
@@ -84,7 +84,7 @@ serde_json = { version = "1", features = ["alloc"] }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
 stable_deref_trait = { version = "1" }
-string_cache = { version = "0.9" }
+string_cache = { version = "0.11" }
 strum = { version = "0.28", features = ["derive"] }
 subtle = { version = "2" }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
@@ -117,7 +117,7 @@ aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 arrayvec = { version = "0.7" }
 base64-2b5c6dc72f624058 = { package = "base64", version = "0.23" }
 base64-3c51e837cfc5589a = { package = "base64", version = "0.22" }
-bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
+bitflags = { version = "2", default-features = false, features = ["std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
 bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
 cbc = { version = "0.1", features = ["zeroize"] }
@@ -130,7 +130,7 @@ crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
 crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom"] }
 crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
-cssparser = { version = "0.37", features = ["serde"] }
+cssparser = { version = "0.38", features = ["serde"] }
 derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
 derive_more-impl = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
 digest = { version = "0.10", features = ["mac", "std"] }
@@ -165,7 +165,7 @@ num-traits = { version = "0.2", features = ["i128"] }
 once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 percent-encoding = { version = "2" }
-phf_shared = { version = "0.13" }
+phf_shared = { version = "0.14" }
 pimalaya-stream = { version = "0.3" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
@@ -183,7 +183,7 @@ serde_json = { version = "1", features = ["alloc"] }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
 stable_deref_trait = { version = "1" }
-string_cache = { version = "0.9" }
+string_cache = { version = "0.11" }
 strum = { version = "0.28", features = ["derive"] }
 subtle = { version = "2" }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
