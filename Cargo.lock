@@ -5676,7 +5676,6 @@ dependencies = [
  "serde_json",
  "serde_spanned",
  "simd-adler32",
- "simdutf8",
  "smallvec",
  "stable_deref_trait",
  "string_cache 0.11.0",
