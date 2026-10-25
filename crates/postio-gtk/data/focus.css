@@ -1498,6 +1498,46 @@ button.focus-popover-preset.focus-popover-preset-selected {
   font-size: var(--postio-text-label);
 }
 
+/* ── Nothing found (spec 010 §3.10, screen 13) ───────────────────────── */
+/* Never a dead end: what found nothing, then the looser searches that find
+   something, the focused one ringed as the cursor is, since Return runs it.
+   The query field's own ring stays neutral: one ring where the keyboard is. */
+.focus-nothing {
+  margin-top: var(--postio-space-6);
+}
+
+.focus-nothing-title {
+  font-size: var(--postio-text-title);
+  font-weight: bold;
+}
+
+button.focus-nothing-row {
+  min-height: 52px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+  border-radius: 0;
+}
+
+button.focus-nothing-row.focus-nothing-focused {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+.focus-nothing-way {
+  font-weight: 600;
+}
+
+.focus-nothing-query {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.focus-nothing-searched {
+  margin-top: var(--postio-space-3);
+  font-size: var(--postio-text-label);
+}
+
 /* ── The folders popover (screen 10) ─────────────────────────────────── */
 /* A popover is a surface of its own and does not inherit the window's
    face: without this every name in it was set in the fallback mono (C25:

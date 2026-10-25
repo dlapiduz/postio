@@ -303,3 +303,44 @@ pub fn return_on_a_person_searches_from_them() {
         );
     });
 }
+
+/// A filter that leaves nothing puts the no-results page in the rows'
+/// place, with a looser search that finds something; running it takes
+/// the filter off and brings the results back.
+pub fn nothing_found_offers_a_looser_search_that_finds_some() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.click_filter("Attachment")).await,
+            "no Attachment button"
+        );
+        assert!(
+            crate::settle_until(
+                async || results.showing_nothing() && !results.nothing().ways().is_empty()
+            )
+            .await,
+            "no page offering a way out: {:?}",
+            results.nothing().ways()
+        );
+        assert!(
+            !results.nothing().title().is_empty(),
+            "the page says nothing"
+        );
+        window.press_command(postio_core::CommandId::PickRelaxation1);
+        assert!(
+            crate::settle_until(async || !results.showing_nothing() && results.chips().is_empty())
+                .await,
+            "the looser search did not bring the results back: {:?}",
+            results.chips()
+        );
+        assert!(
+            crate::settle_until(async || results.subjects().len() >= 3).await,
+            "the budgets are not back: {:?}",
+            results.subjects()
+        );
+    });
+}
