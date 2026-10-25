@@ -1181,7 +1181,9 @@ static SPECS: &[CommandSpec] = &[
     // None is offered on Linux until it adopts the results view (D25).
     CommandSpec {
         id: CommandId::HistoryBack,
-        title: "Back",
+        // Not the bare word: "Back" is Escape's and "Forward" a message's,
+        // and the palette and the key map list all four by title.
+        title: "Back in search history",
         default_binding: "mod+bracketleft",
         alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Results]),
@@ -1191,7 +1193,9 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::HistoryForward,
-        title: "Forward",
+        // Not the bare word: "Back" is Escape's and "Forward" a message's,
+        // and the palette and the key map list all four by title.
+        title: "Forward in search history",
         default_binding: "mod+bracketright",
         alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Results]),

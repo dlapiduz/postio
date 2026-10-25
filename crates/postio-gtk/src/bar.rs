@@ -671,6 +671,10 @@ impl Bar {
 
     /// The subjects of the messages listed, top to bottom.
     pub fn result_subjects(&self) -> Vec<String> {
+        // Spec 010's dropdown lists a search's top hits in the lines' place.
+        if self.dropping.get() {
+            return self.dropdown.hit_subjects();
+        }
         self.lines
             .borrow()
             .iter()

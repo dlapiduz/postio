@@ -98,8 +98,8 @@ command from inside a text field.
 | `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search |  | `back_to_words` |
 | `ctrl+Return` | Show all results | Search (not the terminal) |  | `show_all_results` |
 | `alt+Return` | Exclude suggestion | Search (not the terminal) |  | `exclude_suggestion` |
-| `ctrl+bracketleft` | Back | List (not the terminal) |  | `history_back` |
-| `ctrl+bracketright` | Forward | List (not the terminal) |  | `history_forward` |
+| `ctrl+bracketleft` | Back in search history | List (not the terminal) |  | `history_back` |
+| `ctrl+bracketright` | Forward in search history | List (not the terminal) |  | `history_forward` |
 | `ctrl+1` | Show conversations |  (not the terminal) |  | `results_conversations` |
 | `ctrl+2` | Show files |  (not the terminal) |  | `results_files` |
 | `ctrl+3` | Show people |  (not the terminal) |  | `results_people` |

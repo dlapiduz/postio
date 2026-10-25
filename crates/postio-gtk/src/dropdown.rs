@@ -234,6 +234,27 @@ impl Dropdown {
         texts
     }
 
+    /// The subjects of the hits drawn, top to bottom: each hit's title is
+    /// "Sender · Subject", or the subject alone when it has no sender.
+    pub fn hit_subjects(&self) -> Vec<String> {
+        let view = self.view.borrow();
+        let Some(view) = view.as_ref() else {
+            return Vec::new();
+        };
+        view.sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .filter(|row| row.kind == DropdownRowKind::Hit)
+            .map(|row| {
+                let title: String = row.title.iter().map(|run| run.text.as_str()).collect();
+                match title.split_once(" \u{b7} ") {
+                    Some((_, subject)) => subject.to_owned(),
+                    None => title,
+                }
+            })
+            .collect()
+    }
+
     /// The section titles, in order.
     pub fn titles(&self) -> Vec<String> {
         collect(&self.list, "focus-dropdown-title")
