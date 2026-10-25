@@ -341,7 +341,7 @@ impl Message {
                     ColorScheme::Light
                 },
             )),
-            ua_stylesheets: Some(vec![HEAD_IS_NOT_CONTENT.to_owned()]),
+            ua_stylesheets: vec![blitz_dom::UserAgentStylesheet::parse(HEAD_IS_NOT_CONTENT)],
             // A base a relative URL can resolve against. Without one, Blitz
             // resolves against a `data:` URL, which cannot be a base, and
             // panics on the first `<img src="x">` (the evaluation's G3). Under
@@ -705,7 +705,7 @@ fn walk(doc: &BaseDocument, id: NodeId, out: &mut Vec<Run>) {
                 if run.advance() <= 0.0 {
                     continue;
                 }
-                let metrics = run.run().metrics();
+                let metrics = run.run().font_metrics();
                 out.push(Run {
                     node: span,
                     rect: [

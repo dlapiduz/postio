@@ -23,12 +23,18 @@ corpus newsletter in the app-colours column, tests/treatment.rs.
 diff -ruN blitz-dom/src/layout/construct.rs blitz-dom/src/layout/construct.rs
 --- blitz-dom/src/layout/construct.rs
 +++ blitz-dom/src/layout/construct.rs
-@@ -130,57 +130,65 @@
+@@ -133,55 +133,63 @@
      }
  
      fn create_anonymous_block(&mut self, container_node_id: NodeId, doc: &mut BaseDocument) {
 -        use style::selector_parser::PseudoElement;
--
++        let node_id = create_anonymous_box(doc, container_node_id);
++        self.children.push(node_id);
++        self.anonymous_block_id = Some(node_id);
++        self.anonymous_blocks.push(node_id);
++    }
++}
+ 
 -        const NAME: QualName = QualName {
 -            prefix: None,
 -            ns: ns!(html),
@@ -38,7 +44,12 @@ diff -ruN blitz-dom/src/layout/construct.rs blitz-dom/src/layout/construct.rs
 -            NAME,
 -            Vec::new(),
 -        ))));
--
++/// A new anonymous block box whose style inherits from `container_node_id`'s,
++/// parented to it but not among its children: the caller decides whose
++/// layout child it is and who deallocates it.
++pub(crate) fn create_anonymous_box(doc: &mut BaseDocument, container_node_id: NodeId) -> NodeId {
++    use style::selector_parser::PseudoElement;
+ 
 -        // Set style data
 -        let parent_style = doc.nodes[container_node_id].primary_styles().unwrap();
 -        let read_guard = doc.guard.read();
@@ -53,38 +64,6 @@ diff -ruN blitz-dom/src/layout/construct.rs blitz-dom/src/layout/construct.rs
 -            ..Default::default()
 -        };
 -        drop(parent_style);
--
--        stylo_element_data.styles.primary = Some(style);
--        stylo_element_data.set_restyled();
--
--        *doc.nodes[node_id]
--            .stylo_element_data_mut()
--            .ensure_init_mut() = stylo_element_data;
--
--        if doc.nodes[container_node_id]
--            .flags
--            .contains(NodeFlags::IS_IN_DOCUMENT)
--        {
--            doc.nodes[node_id].flags.insert(NodeFlags::IS_IN_DOCUMENT);
--        }
--        doc.nodes[node_id].parent = Some(container_node_id);
--        doc.nodes[node_id]
--            .layout_parent
--            .set(Some(container_node_id));
--
-+        let node_id = create_anonymous_box(doc, container_node_id);
-         self.children.push(node_id);
-         self.anonymous_block_id = Some(node_id);
-         self.anonymous_blocks.push(node_id);
-     }
- }
- 
-+/// A new anonymous block box whose style inherits from `container_node_id`'s,
-+/// parented to it but not among its children: the caller decides whose
-+/// layout child it is and who deallocates it.
-+pub(crate) fn create_anonymous_box(doc: &mut BaseDocument, container_node_id: NodeId) -> NodeId {
-+    use style::selector_parser::PseudoElement;
-+
 +    const NAME: QualName = QualName {
 +        prefix: None,
 +        ns: ns!(html),
@@ -94,7 +73,9 @@ diff -ruN blitz-dom/src/layout/construct.rs blitz-dom/src/layout/construct.rs
 +        NAME,
 +        Vec::new(),
 +    ))));
-+
+ 
+-        stylo_element_data.styles.primary = Some(style);
+-        stylo_element_data.set_restyled();
 +    // Set style data
 +    let parent_style = doc.nodes[container_node_id].primary_styles().unwrap();
 +    let read_guard = doc.guard.read();
@@ -109,61 +90,75 @@ diff -ruN blitz-dom/src/layout/construct.rs blitz-dom/src/layout/construct.rs
 +        ..Default::default()
 +    };
 +    drop(parent_style);
-+
+ 
+-        *doc.nodes[node_id]
+-            .stylo_element_data_mut()
+-            .ensure_init_mut() = stylo_element_data;
 +    stylo_element_data.styles.primary = Some(style);
 +    stylo_element_data.set_restyled();
-+
+ 
+-        if doc.nodes[container_node_id]
+-            .flags
+-            .contains(NodeFlags::IS_IN_DOCUMENT)
+-        {
+-            doc.nodes[node_id].flags.insert(NodeFlags::IS_IN_DOCUMENT);
+-        }
+-        doc.nodes[node_id].parent = Some(container_node_id);
+-        doc.nodes[node_id]
+-            .layout_parent
+-            .set(Some(container_node_id));
 +    *doc.nodes[node_id]
 +        .stylo_element_data_mut()
 +        .ensure_init_mut() = stylo_element_data;
-+
+ 
+-        self.children.push(node_id);
+-        self.anonymous_block_id = Some(node_id);
+-        self.anonymous_blocks.push(node_id);
 +    if doc.nodes[container_node_id]
 +        .flags
 +        .contains(NodeFlags::IS_IN_DOCUMENT)
 +    {
 +        doc.nodes[node_id].flags.insert(NodeFlags::IS_IN_DOCUMENT);
-+    }
+     }
 +    doc.nodes[node_id].parent = Some(container_node_id);
 +    doc.nodes[node_id]
 +        .layout_parent
 +        .set(Some(container_node_id));
 +
 +    node_id
-+}
-+
+ }
+ 
  fn push_children_and_pseudos(layout_children: &mut ThinVec<NodeId>, node: &Node) {
-     if let Some(before) = node.before() {
-         layout_children.push(before);
-@@ -573,7 +581,8 @@
+@@ -566,7 +574,7 @@
          }
  
          DisplayInside::Table => {
 -            let (table_context, tlayout_children) = build_table_context(doc, container_node_id);
-+            let (table_context, tlayout_children) =
-+                build_table_context(doc, container_node_id, &mut out.anonymous_blocks);
++            let (table_context, tlayout_children) = build_table_context(doc, container_node_id, &mut out.anonymous_blocks);
              #[allow(clippy::arc_with_non_send_sync)]
              let data = SpecialElementData::TableRoot(Arc::new(table_context));
              doc.nodes[container_node_id]
 diff -ruN blitz-dom/src/layout/table.rs blitz-dom/src/layout/table.rs
 --- blitz-dom/src/layout/table.rs
 +++ blitz-dom/src/layout/table.rs
-@@ -1,5 +1,6 @@
- use blitz_traits::node_id::NodeId;
- use std::{ops::Range, sync::Arc};
+@@ -15,6 +15,7 @@
+ use style::values::computed::{Length, LengthPercentage};
+ use style::values::generics::Optional;
+ use style::values::specified::box_::{DisplayInside, DisplayOutside};
 +use thin_vec::ThinVec;
- 
- use atomic_refcell::AtomicRefCell;
- use markup5ever::local_name;
-@@ -16,6 +17,7 @@
- 
+ use style::{
+     Atom, computed_values::border_collapse::T as BorderCollapse,
+     computed_values::table_layout::T as TableLayout, values::computed::BorderStyle,
+@@ -27,6 +28,7 @@
  use crate::BaseDocument;
+ use crate::layout::LayoutPassState;
  
 +use super::construct::create_anonymous_box;
  use super::damage::{CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC};
  use super::resolve_calc_value;
  
-@@ -72,6 +74,19 @@
-     style: taffy::Style<Atom>,
+@@ -199,9 +201,25 @@
+     dim.into()
  }
  
 +/// The anonymous cells a table's rows need (CSS 2.1 §17.2.1): each run of
@@ -179,13 +174,6 @@ diff -ruN blitz-dom/src/layout/table.rs blitz-dom/src/layout/table.rs
 +    open: Option<NodeId>,
 +}
 +
- #[derive(Debug, Clone)]
- pub struct TableRow {
-     // kind: TableItemKind,
-@@ -79,9 +94,12 @@
-     pub height: f32,
- }
- 
 +/// `anonymous_blocks` collects the anonymous cells made, for the table to
 +/// deallocate when it is next constructed.
  pub(crate) fn build_table_context(
@@ -194,43 +182,34 @@ diff -ruN blitz-dom/src/layout/table.rs blitz-dom/src/layout/table.rs
 +    anonymous_blocks: &mut ThinVec<NodeId>,
  ) -> (TableContext, Vec<NodeId>) {
      let mut cells: Vec<TableCell> = Vec::new();
-     let mut rows: Vec<TableRow> = Vec::new();
-@@ -119,6 +137,7 @@
- 
-     let mut column_sizes: Vec<taffy::TrackSizingFunction> = Vec::new();
+     let mut oof_children: Vec<(NodeId, taffy::Position)> = Vec::new();
+@@ -256,6 +274,7 @@
      let mut first_cell_border: Option<ServoArc<Border>> = None;
+     // Percentage widths set on first-row cells: (column index, percentage, padding + border)
+     let mut percent_columns: Vec<(u16, f32, f32)> = Vec::new();
 +    let mut anonymous = AnonymousCells::default();
-     for child_id in children.iter().copied() {
-         collect_table_cells(
-             doc,
-@@ -131,6 +150,8 @@
-             &mut rows,
-             &mut column_sizes,
-             &mut first_cell_border,
-+            &mut anonymous,
-+            anonymous_blocks,
-         );
+     let mut calc_values: Vec<LengthPercentage> = Vec::new();
+     // Header row groups are laid out before other rows, and footer row groups after
+     let row_group_order = |doc: &BaseDocument, child_id: NodeId| -> u8 {
+@@ -287,6 +306,8 @@
+                 &mut column_sizes,
+                 &mut first_cell_border,
+                 &mut percent_columns,
++                &mut anonymous,
++                anonymous_blocks,
+             );
+         }
      }
-     column_sizes.resize(col as usize, style_helpers::auto());
-@@ -200,7 +221,7 @@
- }
- 
- #[allow(clippy::too_many_arguments)]
--pub(crate) fn collect_table_cells(
-+fn collect_table_cells(
-     doc: &mut BaseDocument,
-     node_id: NodeId,
-     is_fixed: bool,
-@@ -211,6 +232,8 @@
-     rows: &mut Vec<TableRow>,
+@@ -525,6 +546,8 @@
      columns: &mut Vec<TrackSizingFunction>,
      first_cell_border: &mut Option<ServoArc<Border>>,
+     percent_columns: &mut Vec<(u16, f32, f32)>,
 +    anonymous: &mut AnonymousCells,
 +    anonymous_blocks: &mut ThinVec<NodeId>,
  ) {
      let node = &mut doc.nodes[node_id];
  
-@@ -229,6 +252,51 @@
+@@ -551,6 +574,55 @@
          return;
      }
  
@@ -254,9 +233,11 @@ diff -ruN blitz-dom/src/layout/table.rs blitz-dom/src/layout/table.rs
 +                anonymous_blocks.push(cell_id);
 +                anonymous.open = Some(cell_id);
 +                let mut style =
-+                    stylo_taffy::to_taffy_style(&doc.nodes[cell_id].primary_styles().unwrap());
++                    table_taffy_style(&doc.nodes[cell_id].primary_styles().unwrap(), wm);
 +                // One column, auto-placed in this row like any cell.
-+                if *row == 1 {
++                let col = cursor.next_free();
++                if *row == 1 && (col as usize) >= columns.len() {
++                    columns.resize(col as usize, style_helpers::auto());
 +                    columns.push(style_helpers::auto());
 +                }
 +                style.grid_column = taffy::Line {
@@ -269,9 +250,11 @@ diff -ruN blitz-dom/src/layout/table.rs blitz-dom/src/layout/table.rs
 +                };
 +                cells.push(TableCell {
 +                    node_id: cell_id,
++                    row: row.saturating_sub(1),
++                    column: col,
 +                    style,
 +                });
-+                *col += 1;
++                cursor.place(1, 1);
 +                cell_id
 +            }
 +        };
@@ -282,28 +265,28 @@ diff -ruN blitz-dom/src/layout/table.rs blitz-dom/src/layout/table.rs
      match display.inside() {
          DisplayInside::TableRowGroup
          | DisplayInside::TableHeaderGroup
-@@ -249,6 +317,8 @@
-                     rows,
+@@ -575,6 +647,8 @@
                      columns,
                      first_cell_border,
+                     percent_columns,
 +                    anonymous,
 +                    anonymous_blocks,
                  );
              }
              doc.nodes[node_id].children = children;
-@@ -262,6 +332,8 @@
-                 node_id,
-                 height: 0.0,
+@@ -599,6 +673,8 @@
+                 height,
+                 is_constrained: height.is_some(),
              });
 +            let outer_row = anonymous.row.replace(node_id);
 +            anonymous.open = None;
  
              let children = std::mem::take(&mut doc.nodes[node_id].children);
              for child_id in children.iter().copied() {
-@@ -276,11 +348,16 @@
-                     rows,
+@@ -616,11 +692,16 @@
                      columns,
                      first_cell_border,
+                     percent_columns,
 +                    anonymous,
 +                    anonymous_blocks,
                  );

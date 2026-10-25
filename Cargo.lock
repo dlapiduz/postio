@@ -131,7 +131,7 @@ version = "4.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f45dfa685e1ec33b1bf1a3b93b8047cbdbef41b6040deebbe6bea7720a45574"
 dependencies = [
- "cssparser 0.38.0",
+ "cssparser",
  "html5ever 0.40.1",
  "maplit",
  "url",
@@ -182,9 +182,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "anyrender"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e00e1af5c6ac9b1e8ed8e431529a1024b7386d5385dce2a83494da3d39a6bab5"
+checksum = "1755d0ef8e00e87b6b825dfbe5a35d34d3b302e97e80a48e93f9cd361fbada06"
 dependencies = [
  "kurbo",
  "peniko",
@@ -194,9 +194,9 @@ dependencies = [
 
 [[package]]
 name = "anyrender_svg"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9a06a9cab20563ae5b392239db09d42222820fd3706fe483db7d3cb25546c24"
+checksum = "39327debd1bdca190d086c107825a5dc4c665be31e99e5c0854345a050d08cad"
 dependencies = [
  "anyrender",
  "image",
@@ -207,9 +207,9 @@ dependencies = [
 
 [[package]]
 name = "anyrender_vello_cpu"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fb392bf738b1e50c50fc82824ff3f875f15632717ba732fe68e2fe6e1011e6c"
+checksum = "a09d9356dd2b2f032345711a350c0e2326a854cb5070f899265bc80fb33884b1"
 dependencies = [
  "anyrender",
  "bytemuck",
@@ -511,9 +511,6 @@ name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
-dependencies = [
- "serde_core",
-]
 
 [[package]]
 name = "bitpacking"
@@ -551,23 +548,26 @@ dependencies = [
 
 [[package]]
 name = "blitz-dom"
-version = "0.3.0-beta.2"
+version = "0.3.0-beta.4"
 dependencies = [
  "app_units",
  "atomic_refcell",
  "bitflags 2.13.2",
  "blitz-traits",
  "color",
- "cssparser 0.37.0",
+ "cssparser",
  "cursor-icon",
  "debug_timer",
  "euclid 0.22.14",
  "html-escape",
+ "icu_locale_core",
+ "icu_properties",
+ "icu_segmenter",
  "image",
  "keyboard-types",
  "kurbo",
  "linebender_resource_handle",
- "markup5ever 0.39.0",
+ "markup5ever 0.40.0",
  "objc2",
  "parley",
  "percent-encoding",
@@ -592,24 +592,25 @@ dependencies = [
 
 [[package]]
 name = "blitz-html"
-version = "0.3.0-beta.2"
+version = "0.3.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc7bf240a4022c6d5a167c22ec19c9d1b52cd2d74980feec493b2f08e670f0cd"
+checksum = "eddd638e05f3f3efb9f2d37f0406e7834ea023727e1678524488aa70eb639615"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
- "html5ever 0.39.0",
- "xml5ever 0.39.0",
+ "html5ever 0.40.1",
+ "xml5ever 0.40.0",
 ]
 
 [[package]]
 name = "blitz-paint"
-version = "0.3.0-beta.2"
+version = "0.3.0-beta.4"
 dependencies = [
  "anyrender",
  "anyrender_svg",
  "blitz-dom",
  "blitz-traits",
+ "bytemuck",
  "color",
  "euclid 0.22.14",
  "kurbo",
@@ -624,9 +625,9 @@ dependencies = [
 
 [[package]]
 name = "blitz-traits"
-version = "0.3.0-beta.2"
+version = "0.3.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ec23a2f409b9e92ba7c9c0d1df5992011e82bb1ba9d260c93bd28bc104ca4b5"
+checksum = "d339c3ff7fe8bed623e27695a4c15dd1ec8faa9bf9158b7475bf180280e4018c"
 dependencies = [
  "atomic_refcell",
  "bitflags 2.13.2",
@@ -1367,26 +1368,15 @@ dependencies = [
 
 [[package]]
 name = "cssparser"
-version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c9cdaae01d5ed7882b04d795e7f752f46ff52d2fa3b50a20d28c464510bba98"
-dependencies = [
- "cssparser-macros",
- "dtoa-short",
- "itoa",
- "phf 0.13.1",
- "serde",
- "smallvec",
-]
-
-[[package]]
-name = "cssparser"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11119743ad110e8c1bdccd930d7f5c30c99e5fc76a7b63ec9807e84eef0c5f59"
 dependencies = [
+ "cssparser-macros",
  "dtoa-short",
  "itoa",
+ "phf 0.14.0",
+ "serde",
  "smallvec",
 ]
 
@@ -1871,9 +1861,9 @@ dependencies = [
 
 [[package]]
 name = "fearless_simd"
-version = "0.4.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
+checksum = "f4beca3cb2444e3304ac30843cc091f44ed58932353cd492ce740067bfce6b12"
 
 [[package]]
 name = "field-offset"
@@ -1965,9 +1955,9 @@ dependencies = [
 
 [[package]]
 name = "fontique"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6688bc1294fe7117d788937b6c53480169b29c566954af490830d4c09da9516a"
+checksum = "bbf1df16263783918b7da396077521f92b729ef7c429444dfcf03581f1448b77"
 dependencies = [
  "hashbrown 0.17.1",
  "linebender_resource_handle",
@@ -2353,9 +2343,9 @@ dependencies = [
 
 [[package]]
 name = "glifo"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed4a1bb24121291d27230c1b1b44e07d6a9b28cefdb32fe1581dfb84e14f940a"
+checksum = "9f1218dedd5348c1b166ec3b8b3cbca49d2f527bd43b3fa072ea5123c523ed3f"
 dependencies = [
  "bytemuck",
  "foldhash 0.2.0",
@@ -3443,13 +3433,12 @@ dependencies = [
 
 [[package]]
 name = "keyboard-types"
-version = "0.7.0"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b750dcadc39a09dbadd74e118f6dd6598df77fa01df0cfcdc52c28dece74528a"
+checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
- "unicode-segmentation",
 ]
 
 [[package]]
@@ -4444,32 +4433,58 @@ name = "parlance"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73072a9470554c8e794778acece2312661218aaabb635600957d952cf01c716e"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "parley"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22d2ff88bd3f7d68d1d9b09c7e6209f9a8e8c05088295140a2bcf2e9b17038c5"
+checksum = "61bd0c0c1737f0b3d3726dc06b225083af213b61913e4fbae1670613a106c6ce"
+dependencies = [
+ "fontique",
+ "hashbrown 0.17.1",
+ "linebender_resource_handle",
+ "parlance",
+ "parley_engine",
+ "smallvec",
+]
+
+[[package]]
+name = "parley_data"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c43b63f808f6cc8f4a3b07de0d62a977bddd2e0bb5c232bd9e93ba8ef92e5e4b"
+dependencies = [
+ "icu_collections",
+ "icu_properties",
+]
+
+[[package]]
+name = "parley_emoji"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c4482d912d7671a7cd2089794f90ef3bb5f5f8c738230fb0fcd50fa020f0ed3"
+
+[[package]]
+name = "parley_engine"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74c0d373e462e504ad4436710a39f099e18e848e1ee711f70cd2dcd5a69b290"
 dependencies = [
  "fontique",
  "harfrust",
  "hashbrown 0.17.1",
+ "icu_locale_core",
  "icu_normalizer",
  "icu_properties",
  "icu_segmenter",
  "linebender_resource_handle",
  "parlance",
  "parley_data",
+ "parley_emoji",
  "skrifa",
-]
-
-[[package]]
-name = "parley_data"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1567535334d6ba2d3cde19221ba9a7bd0fabb3cbd99046ddfb10ae061cfcc889"
-dependencies = [
- "icu_properties",
 ]
 
 [[package]]
@@ -4550,7 +4565,7 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
 dependencies = [
- "phf_macros",
+ "phf_macros 0.13.1",
  "phf_shared 0.13.1",
  "serde",
 ]
@@ -4561,6 +4576,7 @@ version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "010378780309880b08997fae13be7834dba947d36393bd372f2b1556deb2a2f6"
 dependencies = [
+ "phf_macros 0.14.0",
  "phf_shared 0.14.0",
  "serde",
 ]
@@ -4613,6 +4629,19 @@ checksum = "812f032b54b1e759ccd5f8b6677695d5268c588701effba24601f6932f8269ef"
 dependencies = [
  "phf_generator 0.13.1",
  "phf_shared 0.13.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "phf_macros"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fa8d0ca26d424d27630da600c6624696e7dec8bf7b3b492b383c5dc49e5e085"
+dependencies = [
+ "phf_generator 0.14.0",
+ "phf_shared 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -4881,7 +4910,7 @@ name = "postio-body"
 version = "0.4.2"
 dependencies = [
  "ammonia",
- "cssparser 0.37.0",
+ "cssparser",
  "htmd",
  "html5ever 0.39.0",
  "markup5ever_rcdom 0.39.0+unofficial",
@@ -5567,7 +5596,7 @@ dependencies = [
  "crossbeam-utils",
  "crypto-common 0.1.7",
  "crypto-common 0.2.2",
- "cssparser 0.37.0",
+ "cssparser",
  "derive_more",
  "derive_more-impl",
  "digest 0.10.7",
@@ -5607,7 +5636,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "percent-encoding",
- "phf_shared 0.13.1",
+ "phf_shared 0.14.0",
  "pimalaya-stream",
  "potential_utf",
  "proc-macro2",
@@ -5628,7 +5657,7 @@ dependencies = [
  "simdutf8",
  "smallvec",
  "stable_deref_trait",
- "string_cache 0.9.0",
+ "string_cache 0.11.0",
  "strum 0.28.0",
  "subtle",
  "syn 2.0.119",
@@ -6404,17 +6433,15 @@ dependencies = [
 
 [[package]]
 name = "selectors"
-version = "0.40.0"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eeee001a77567bb05e71652718d3ff76d8697c151ac523e68e9513194eb2b75a"
+checksum = "8322aebea94a6cc288ff884e8a49bdbceef60206c400c6c46d22e62fc4fd91a6"
 dependencies = [
  "bitflags 2.13.2",
- "cssparser 0.37.0",
+ "cssparser",
  "derive_more",
  "log",
  "new_debug_unreachable",
- "phf 0.13.1",
- "phf_codegen 0.13.1",
  "precomputed-hash",
  "rustc-hash 2.1.3",
  "servo_arc",
@@ -6520,9 +6547,9 @@ dependencies = [
 
 [[package]]
 name = "servo_arc"
-version = "0.4.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
+checksum = "b4eceb519ec34d8290aaf6e46f435102f2bfa63f22b05a144fb16ab266d3b198"
 dependencies = [
  "serde",
  "stable_deref_trait",
@@ -6835,6 +6862,7 @@ dependencies = [
  "parking_lot",
  "phf_shared 0.14.0",
  "precomputed-hash",
+ "serde",
 ]
 
 [[package]]
@@ -6923,16 +6951,16 @@ dependencies = [
 
 [[package]]
 name = "stylo"
-version = "0.20.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebaeb0b51f5e574bf36606c4dc982430a20d7a17175bdc0deab4d43d2063040b"
+checksum = "7a255e46af2478628c48daab3774090caabd7812b1dd3ca98801c2b9c53491ed"
 dependencies = [
  "app_units",
  "arrayvec",
  "atomic_refcell",
  "bitflags 2.13.2",
  "byteorder",
- "cssparser 0.37.0",
+ "cssparser",
  "derive_more",
  "encoding_rs",
  "euclid 0.22.14",
@@ -6959,7 +6987,7 @@ dependencies = [
  "smallbitvec",
  "smallvec",
  "static_assertions",
- "string_cache 0.9.0",
+ "string_cache 0.11.0",
  "strum 0.28.0",
  "strum_macros 0.28.0",
  "stylo_atoms",
@@ -6975,24 +7003,24 @@ dependencies = [
  "url",
  "void",
  "walkdir",
- "web_atoms 0.2.6",
+ "web_atoms 0.3.0",
 ]
 
 [[package]]
 name = "stylo_atoms"
-version = "0.20.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d448de89b7d18169a160ca258d2ee63efe79bd6cb20360654101835e9b80e386"
+checksum = "ee1771588fd747ef16f8b1990061b6f37c7d3251a0f9b74f405a44c0c5fb8966"
 dependencies = [
- "string_cache 0.9.0",
- "string_cache_codegen 0.6.1",
+ "string_cache 0.11.0",
+ "string_cache_codegen 0.11.2",
 ]
 
 [[package]]
 name = "stylo_derive"
-version = "0.20.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cfdbf36a2d2db4fc75db0bfc1abd16e90971c360f00773cbd2501a5175dbec7"
+checksum = "4ee5c550c2e00a0b3c046bef84a9ee217e04e7c014142eeb96f9e48781c5cfd3"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -7003,9 +7031,9 @@ dependencies = [
 
 [[package]]
 name = "stylo_dom"
-version = "0.20.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346fde14a66fdc568ef79a8c81f8b6a35722a0906295bce2997df6c90c7b848f"
+checksum = "9febcb03f2b669ef06b3e8a5209e6280971ed55cecf83fbf3c0562fcf2aa2ec6"
 dependencies = [
  "bitflags 2.13.2",
  "stylo_malloc_size_of",
@@ -7013,37 +7041,39 @@ dependencies = [
 
 [[package]]
 name = "stylo_malloc_size_of"
-version = "0.20.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a1ee5ec323e0207ebaafff2210fec808214575d67cfe25e288d34a12010e2b3"
+checksum = "83ed69d55ee907599f093221004a28371925236f09f20961963020abf38bab6a"
 dependencies = [
  "app_units",
- "cssparser 0.37.0",
+ "cssparser",
  "euclid 0.22.14",
+ "parking_lot",
  "selectors",
  "servo_arc",
  "smallbitvec",
  "smallvec",
- "string_cache 0.9.0",
+ "string_cache 0.11.0",
  "thin-vec",
  "void",
 ]
 
 [[package]]
 name = "stylo_static_prefs"
-version = "0.20.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e017eb7fd506fa0fb0da653a6bc3793d9fc11edf92d4721c16b350432f8116f"
+checksum = "6767c48a1590461db79f8b434ccc5a2d65600a3b716751f7999b35ccead1e024"
 dependencies = [
  "toml",
 ]
 
 [[package]]
 name = "stylo_taffy"
-version = "0.3.0-beta.2"
+version = "0.3.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfac7e7262ee946db8937b127e07688880d7224e539e504ac2fe033f83f41323"
+checksum = "3d932deb3145f9e1c4159d09237f7999a29632fba9125896abb364dab080e0c0"
 dependencies = [
+ "bitflags 2.13.2",
  "stylo",
  "stylo_atoms",
  "taffy",
@@ -7051,13 +7081,13 @@ dependencies = [
 
 [[package]]
 name = "stylo_traits"
-version = "0.20.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00a8d2ca5b29c7f5dd94ec66fbb256b274b76ecaab164417c92ce9a4586c8259"
+checksum = "645d6bfe40eb6e86ebe9f2d2adadcbced41bfa96175de7cb13d4d178d27bc83d"
 dependencies = [
  "app_units",
  "bitflags 2.13.2",
- "cssparser 0.37.0",
+ "cssparser",
  "euclid 0.22.14",
  "malloc_size_of_derive",
  "selectors",
@@ -7165,11 +7195,10 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "639627c87f43b9181c811f40a6296409e093a17bc761214cba3c15df74f86b99"
+checksum = "3c8480887e8803986d96a7173729565520d4bbb721ad6b7ad6941a22897207aa"
 dependencies = [
- "arrayvec",
  "serde",
  "slotmap",
  "smallvec",
@@ -7488,23 +7517,23 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "to_shmem"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8c81cee0d28327337a94f3f32a1a77c03bbfd926510f3b42956f9d914e7810c"
+checksum = "bbf077da8dd01cc18453bd7d9bc3a945c262f5f344562e5f6deb3914b4dd6f14"
 dependencies = [
- "cssparser 0.37.0",
+ "cssparser",
  "servo_arc",
  "smallbitvec",
  "smallvec",
- "string_cache 0.9.0",
+ "string_cache 0.11.0",
  "thin-vec",
 ]
 
 [[package]]
 name = "to_shmem_derive"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ba1f5563024b63bb6acb4558452d9ba737518c1d11fcc1861febe98d1e31cf4"
+checksum = "0f8e91a023810fd2019648410d00eea13a71f21d849e71d6d9ed936fb8061174"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -8319,9 +8348,9 @@ dependencies = [
 
 [[package]]
 name = "vello_common"
-version = "0.1.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2e9aed918117e8152c9eddfd8362d73c465c23f26c44786aa331707b8a64fa2"
+checksum = "73c2fbe53548bcd25c8ff42f75a93770a8611a16b37bee56d7ef7b44e36027f1"
 dependencies = [
  "bytemuck",
  "fearless_simd",
@@ -8335,9 +8364,9 @@ dependencies = [
 
 [[package]]
 name = "vello_cpu"
-version = "0.1.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac7349e1f55f6b801c7c277958df4ea53e7f20f21e8014910ad888b2ecda93ea"
+checksum = "ed1fec424fbba6acf6cbc78bb526447eb77590d95f40419d598870fe37535212"
 dependencies = [
  "bytemuck",
  "glifo",
@@ -8983,6 +9012,16 @@ checksum = "5ab627f34ff61b80d756180d556f9c68801d836d271b3b8c094504ceca69d221"
 dependencies = [
  "log",
  "markup5ever 0.39.0",
+]
+
+[[package]]
+name = "xml5ever"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73290529dc9bc6c6155bf77fdd70ce0061f98ad387586aa3104cddab29206961"
+dependencies = [
+ "log",
+ "markup5ever 0.40.0",
 ]
 
 [[package]]

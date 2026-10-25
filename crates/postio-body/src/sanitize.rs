@@ -1260,7 +1260,7 @@ fn names_remote(value: &str) -> bool {
     {
         return true;
     }
-    fn walk(parser: &mut cssparser::Parser<'_, '_>) -> bool {
+    fn walk(parser: &mut cssparser::Parser<'_>) -> bool {
         use cssparser::Token;
         while let Ok(token) = parser.next_including_whitespace_and_comments().cloned() {
             match token {
@@ -1273,7 +1273,7 @@ fn names_remote(value: &str) -> bool {
                 | Token::CurlyBracketBlock => {
                     let inner = parser
                         .parse_nested_block(|nested| {
-                            Ok::<_, cssparser::ParseError<'_, ()>>(walk(nested))
+                            Ok::<_, cssparser::ParseError<()>>(walk(nested))
                         })
                         .unwrap_or(false);
                     if inner {
@@ -1285,8 +1285,7 @@ fn names_remote(value: &str) -> bool {
         }
         false
     }
-    let mut input = cssparser::ParserInput::new(value);
-    walk(&mut cssparser::Parser::new(&mut input))
+    walk(&mut cssparser::Parser::new(value))
 }
 
 /// Split on `;`, except inside `url(...)` or a quoted string.

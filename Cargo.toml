@@ -328,7 +328,7 @@ turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "e0188
 turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "e01888d239f0bb81351c0902f89978c1ac2b00d5" }
 turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "e01888d239f0bb81351c0902f89978c1ac2b00d5" }
 
-# Blitz 0.3.0-beta.2 with Postio's patch queue applied (`patches/blitz/`,
+# Blitz 0.3.0-beta.4 with Postio's patch queue applied (`patches/blitz/`,
 # checked by `scripts/blitz-patches.sh verify`): the reading renderer's
 # engine, carried in-tree so a patch is reviewed as a diff in the same pull
 # request that needs it, and dropped when upstream takes it.

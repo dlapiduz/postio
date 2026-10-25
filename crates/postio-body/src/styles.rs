@@ -19,7 +19,7 @@
 //! WebKitGTK and WKWebView, and could not be tested without a display on
 //! either.
 
-use cssparser::{Delimiter, ParseError, Parser, ParserInput, Token, serialize_identifier};
+use cssparser::{Delimiter, ParseError, Parser, Token, serialize_identifier};
 
 use crate::sanitize::{REFUSED_AT_RULES, Refused, RemoteImages, Tally, contain_declarations};
 
@@ -51,8 +51,7 @@ pub(crate) fn scope_into(
     tally: &Tally,
 ) -> String {
     let mut out = String::new();
-    let mut input = ParserInput::new(css);
-    let mut parser = Parser::new(&mut input);
+    let mut parser = Parser::new(css);
     let scope = Scope { prefix, id_prefix };
     write_rules(&mut parser, &scope, remote, tally, &mut out);
     out
@@ -68,7 +67,7 @@ struct Scope<'a> {
 /// Every rule at one nesting level: the top of the sheet, or the inside of a
 /// `@media`.
 fn write_rules(
-    parser: &mut Parser<'_, '_>,
+    parser: &mut Parser<'_>,
     prefix: &Scope<'_>,
     remote: RemoteImages,
     tally: &Tally,
@@ -107,7 +106,7 @@ fn write_rules(
 /// Returns whether the sheet can continue: a rule with no block at all is the
 /// end of the input, and looping on it would not terminate.
 fn write_qualified_rule(
-    parser: &mut Parser<'_, '_>,
+    parser: &mut Parser<'_>,
     prefix: Option<&Scope<'_>>,
     remote: RemoteImages,
     tally: &Tally,
@@ -144,7 +143,7 @@ fn write_qualified_rule(
 }
 
 fn write_at_rule(
-    parser: &mut Parser<'_, '_>,
+    parser: &mut Parser<'_>,
     name: &str,
     prefix: &Scope<'_>,
     remote: RemoteImages,
@@ -197,7 +196,7 @@ fn write_at_rule(
             }
             Nested::Refused => unreachable!("refused above"),
         }
-        Ok::<(), ParseError<'_, ()>>(())
+        Ok::<(), ParseError<()>>(())
     });
     if inner.trim().is_empty() {
         return;
@@ -231,8 +230,7 @@ enum Nested {
 /// `parse_until_before` knows where the function ends; a `split(',')` does
 /// not.
 fn scope_selectors(prelude: &str, prefix: &str) -> String {
-    let mut input = ParserInput::new(prelude);
-    let mut parser = Parser::new(&mut input);
+    let mut parser = Parser::new(prelude);
     let mut parts: Vec<String> = Vec::new();
     loop {
         parser.skip_whitespace();
@@ -303,14 +301,13 @@ fn strip_document_head(selector: &str) -> Option<&str> {
 /// attribute string (`[title="#1"]`) is not. Every other token is copied from
 /// the source unchanged.
 fn rename_ids(selectors: &str, id_prefix: &str) -> String {
-    let mut input = ParserInput::new(selectors);
-    let mut parser = Parser::new(&mut input);
+    let mut parser = Parser::new(selectors);
     let mut out = String::new();
     rename_ids_in(&mut parser, id_prefix, &mut out);
     out
 }
 
-fn rename_ids_in(parser: &mut Parser<'_, '_>, id_prefix: &str, out: &mut String) {
+fn rename_ids_in(parser: &mut Parser<'_>, id_prefix: &str, out: &mut String) {
     loop {
         let start = parser.position();
         let token = match parser.next_including_whitespace() {
@@ -331,7 +328,7 @@ fn rename_ids_in(parser: &mut Parser<'_, '_>, id_prefix: &str, out: &mut String)
                 };
                 let _ = parser.parse_nested_block(|nested| {
                     rename_ids_in(nested, id_prefix, out);
-                    Ok::<(), ParseError<'_, ()>>(())
+                    Ok::<(), ParseError<()>>(())
                 });
                 out.push(close);
             }
@@ -341,7 +338,7 @@ fn rename_ids_in(parser: &mut Parser<'_, '_>, id_prefix: &str, out: &mut String)
 }
 
 /// Read a delimited parser to its end and answer with the source text of it.
-fn slice_of_block<'i>(parser: &mut Parser<'i, '_>) -> Result<String, ParseError<'i, ()>> {
+fn slice_of_block<'i>(parser: &mut Parser<'i>) -> Result<String, ParseError<()>> {
     let start = parser.position();
     while parser.next().is_ok() {}
     Ok(parser.slice_from(start).to_owned())
@@ -349,7 +346,7 @@ fn slice_of_block<'i>(parser: &mut Parser<'i, '_>) -> Result<String, ParseError<
 
 /// Read a delimited parser to its end, for the source text `slice_from` will
 /// then be asked for.
-fn consume_all<'i>(parser: &mut Parser<'i, '_>) -> Result<(), ParseError<'i, ()>> {
+fn consume_all<'i>(parser: &mut Parser<'i>) -> Result<(), ParseError<()>> {
     while parser.next().is_ok() {}
     Ok(())
 }
