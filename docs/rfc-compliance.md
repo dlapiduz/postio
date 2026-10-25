@@ -196,9 +196,11 @@ not found twice:
 every other crate's view of a message comes through. Backed by
 `crates/postio-model/tests/rfc2045.rs`, one test per row.
 
-Parsing is `mail-parser` 0.11.8, which was the latest published version at the
-time of the review; the mapping into the domain model is Postio's. Where a row
-says the fix is upstream, that is why.
+Parsing is `mail-parser`, reviewed against 0.11.8 and moved to 1.0.0 on
+2026-10-24 (the mapping into the domain model is Postio's). Where a row says
+the fix is upstream, that is why; 1.0 closed the delimiter-placement gap
+([#899](https://github.com/dlapiduz/postio/issues/899)) and reads around a
+damaged base64 or quoted-printable body instead of handing it back encoded.
 
 ### Verdicts
 
@@ -208,10 +210,10 @@ says the fix is upstream, that is why.
 | **2045 §5.2** Default type | Absent `Content-Type` is `text/plain; charset=us-ascii` | **Compliant**, for the message and for a part inside a multipart alike. |
 | **2231** Parameter continuations | `name*0*=`/`name*1*=`, charset-tagged values | **Compliant.** Continuations reassemble and percent-decode against the declared charset; the corpus already carries the three spellings a non-ASCII filename arrives in. |
 | **2045 §6.7** quoted-printable | Soft line breaks, undecodable sequences | **Compliant.** A soft break joins with nothing between; `=ZZ` survives as itself, which is what "show what arrived" means. |
-| **2045 §6.8** base64 | Illegal characters, bad padding | **Compliant, with a named exception:** an undecodable payload degrades to its own raw text and sets `encoding_problems`. The degradation is right — raw text beats an empty body — but see the gap below on where that flag goes. |
+| **2045 §6.8** base64 | Illegal characters, bad padding | **Compliant, with a named exception:** a damaged payload (bytes outside the alphabet, a bad final quantum) is decoded around the damage, as a reader would, and sets `encoding_problems`. The degradation is right — the words arrive — but see the gap below on where that flag goes. |
 | **2045 §6.2, §6.8** `8bit` / `binary` | Not encoded | **Compliant.** Both arrive as their own bytes. |
 | **2045 §6.4** unknown `Content-Transfer-Encoding` | Treat as `application/octet-stream` | **Compliant, with a named exception:** shown verbatim as text instead, and **not** flagged. Recorded on [#901](https://github.com/dlapiduz/postio/issues/901) as the second half of that fix. |
-| **2046 §5.1.1** Delimiter placement | `CRLF "--" boundary` — the delimiter begins a line | **Gap — [#899](https://github.com/dlapiduz/postio/issues/899).** `--boundary` **anywhere on a line** ends the part, so a body quoting one mid-line is silently truncated. |
+| **2046 §5.1.1** Delimiter placement | `CRLF "--" boundary` — the delimiter begins a line | **Compliant** since `mail-parser` 1.0 ([#899](https://github.com/dlapiduz/postio/issues/899)). `--boundary` ends a part only at the start of a line, so a body quoting one mid-line is kept whole. |
 | **2046 §5.1.1** Unusable boundary | Missing or unrecognisable ⇒ treat the entity as `text/plain` | **Compliant.** All three spellings (absent, empty, never appears) fall back to the entity's own content as the text body; the container is never offered as an attachment. Was a gap ([#900](https://github.com/dlapiduz/postio/issues/900)). |
 | **2046 §5.1.1** Preamble and epilogue | Not part of any body | **Compliant.** `multipart-alternative.eml` carries both so it cannot regress unnoticed. |
 | **2046 §5.1** Transport padding | Whitespace after a delimiter is not part of it | **Compliant.** |
@@ -220,24 +222,16 @@ says the fix is upstream, that is why.
 
 ### The gaps
 
-Two, plus one closed one worth reading for what it explains about the others.
-
-**A `--boundary` mid-line truncates the body ([#899](https://github.com/dlapiduz/postio/issues/899)).**
-RFC 2046 puts the delimiter at the start of a line; the parser matches the
-two-dash sequence wherever it falls. `one\r\nnot --SEP here\r\ntwo` keeps
-`one\r\nnot `. Real boundaries are long random tokens, so this is not an
-everyday message — but the mail that embeds *another* message's delimiters is a
-bounce, a digest, a forwarded raw source, or mail about MIME, which is to say
-mail somebody is reading because something already went wrong. The fix is
-upstream in `mail-parser`; there is no newer version to move to.
+One.
 
 **`encoding_problems` is computed and read by nothing
 ([#901](https://github.com/dlapiduz/postio/issues/901)).** Two occurrences in
 the whole workspace — the field, and the line that sets it. `into_message` does
 not carry it, so there is no column, no event and no surface. It is the only
 signal Postio has that a message did not decode cleanly, and it is what every
-correct-but-lossy degradation above depends on: the base64 case hands a person
-`aGVsbG8g*d29ybGQ` with nothing to say those were meant to be words. Same
+correct-but-lossy degradation above depends on: a base64 body with a stray
+byte is read around it, and the person gets words with nothing to say a byte
+was skipped. Same
 failure the reading pane already learned once in #70 — *"nothing rendered"* and
 *"nothing was there"* look identical and are opposite facts. Same shape as
 #327, #416 and #421 one step down, and #421's own check cannot see it: that

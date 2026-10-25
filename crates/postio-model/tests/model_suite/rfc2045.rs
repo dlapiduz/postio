@@ -5,13 +5,14 @@
 //! rather than becoming a wrong sentence in a file nobody re-reads. Same
 //! arrangement as `rfc5322.rs`.
 //!
-//! **What is not here.** Two of the three gaps the audit found have no test
+//! **What is not here.** One of the three gaps the audit found has no test
 //! asserting the fix, because a test that asserts a bug is worthless and one
-//! that asserts the fix cannot pass before it: #899 (a `--boundary` mid-line
-//! truncates the body) and #901 (`encoding_problems` reaches nobody). Their
-//! *inputs* are here and in the corpus, so the case each fix has to handle is
-//! pinned even while the behaviour is wrong. #900 (an unusable boundary loses
-//! the body and offers the container as an attachment) is fixed below.
+//! that asserts the fix cannot pass before it: #901 (`encoding_problems`
+//! reaches nobody). Its *inputs* are here and in the corpus, so the case the
+//! fix has to handle is pinned even while the behaviour is wrong. #900 (an
+//! unusable boundary loses the body and offers the container as an
+//! attachment) and #899 (a `--boundary` mid-line truncates the body, fixed by
+//! `mail-parser` 1.0) are covered below.
 
 use postio_model::{mime, test_corpus};
 
@@ -71,6 +72,19 @@ Content-Type: multipart/mixed; boundary=\"--=_Part 1; x\"\r\n\r\n\
 }
 
 #[test]
+fn a_boundary_quoted_mid_line_does_not_end_the_part() {
+    // RFC 2046 §5.1.1: a delimiter begins a line. `mail-parser` 0.11 matched
+    // `--SEP` anywhere and kept `one\r\nnot `; 1.0 matches it at the start of
+    // a line only (#899). A bounce or a digest quoting another message's
+    // delimiter is the mail this protects.
+    let parsed = mime::parse(&multipart("one\r\nnot --SEP here\r\ntwo"));
+    assert_eq!(
+        parsed.body.text.as_deref(),
+        Some("one\r\nnot --SEP here\r\ntwo")
+    );
+}
+
+#[test]
 fn the_defaults_rfc2045_gives_are_filled_in() {
     // §5.2: no `Content-Type` means `text/plain; charset=us-ascii`, for the
     // message and for a part inside a multipart alike. A parser that treated
@@ -110,19 +124,20 @@ fn quoted_printable_soft_breaks_join_and_undecodable_sequences_survive() {
 }
 
 #[test]
-fn base64_that_will_not_decode_degrades_to_its_own_text_and_says_so() {
-    // The degradation is the right one -- raw text beats an empty body -- and
-    // the flag is the only thing that could tell a person the words they are
-    // reading are not the words that were sent. #901 is that the flag reaches
-    // nobody; this pins the half that works.
+fn base64_with_a_stray_byte_is_read_around_it_and_says_so() {
+    // `mail-parser` 1.0 skips a byte outside the alphabet and decodes the
+    // rest, so the words a sender meant arrive; 0.11 gave up on the part and
+    // showed the base64 itself. The flag is unchanged: the reader is still
+    // looking at a reading, not at what was sent (#901 is that the flag
+    // reaches nobody; this pins the half that works).
     let parsed = mime::parse(&single(
         "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64",
         b"aGVsbG8g*d29ybGQ\r\n",
     ));
-    assert_eq!(parsed.body.text.as_deref(), Some("aGVsbG8g*d29ybGQ\r\n"));
+    assert_eq!(parsed.body.text.as_deref(), Some("hello world"));
     assert!(
         parsed.encoding_problems,
-        "an undecodable payload must at least be flagged"
+        "a damaged payload must at least be flagged"
     );
 }
 

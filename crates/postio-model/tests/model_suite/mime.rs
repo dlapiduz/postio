@@ -1182,29 +1182,22 @@ fn a_malformed_multipart_does_not_panic_out_of_parse() {
     assert_eq!(headers_only.size, UNPARSEABLE_MULTIPART.len() as u64);
 }
 
-/// And the caller that needs to *know* can ask — `postio-sync`'s backfill logs
-/// the outcome rather than storing an empty body in silence.
+/// The reproducer parses under `mail-parser` 1.0, which fixed the assertion
+/// #277 found, so `try_parse` says `Ok` in every build. The `Err` path is
+/// covered where the seam is, by `containment` in `src/mime.rs`, with a
+/// closure that panics: no input in this repository makes the dependency
+/// unwind any more.
 ///
-/// **The signal is build-dependent, and this test says so rather than hiding
-/// it.** The site in `mail-parser` is a `debug_assert!`, so it unwinds under
-/// `cargo test` and `cargo fuzz` (both of which enable debug assertions) and
-/// compiles out of a release build, where the parser instead returns a thin
-/// message. A test asserting `Err` unconditionally would fail under
-/// `cargo test --release` for a reason that is not a regression.
+/// What *is* pinned here is that the fix recovers something rather than
+/// returning a thin message the reader would label "no text or HTML part":
+/// the nested `message/rfc822` parts are still offered.
 #[test]
-fn try_parse_reports_the_failure_rather_than_swallowing_it() {
-    if cfg!(debug_assertions) {
-        assert_eq!(
-            mime::try_parse(UNPARSEABLE_MULTIPART),
-            Err(mime::Unparseable),
-            "a message that cannot be parsed must say so"
-        );
-    } else {
-        assert!(
-            mime::try_parse(UNPARSEABLE_MULTIPART).is_ok(),
-            "with debug assertions off the parser returns rather than unwinding"
-        );
-    }
+fn the_reproducer_parses_and_recovers_its_parts() {
+    let parsed = mime::try_parse(UNPARSEABLE_MULTIPART).expect("1.0 no longer unwinds here");
+    assert!(
+        !parsed.parts.is_empty(),
+        "the nested messages were dropped: {parsed:?}"
+    );
 
     // The header block of the same bytes parses fine, and that is worth
     // pinning rather than glossing: `parse_headers` never walks the multipart
@@ -1325,4 +1318,197 @@ fn bytes_that_are_not_an_entity_at_all_decode_to_nothing() {
     // The same contract `parse` keeps: hostile input yields an answer, not a
     // panic and not a fragment stored as if it were a file.
     assert_eq!(postio_model::mime::decode_entity(b""), None);
+}
+
+// ---------------------------------------------------------------------------
+// mail-parser 1.0: what its reading changed, pinned (the commit body lists why
+// each is the more correct output)
+// ---------------------------------------------------------------------------
+
+/// A `multipart/mixed` whose second part is `part` (headers, blank line, body).
+fn mixed_with(part: &str) -> Vec<u8> {
+    format!(
+        "From: ada@example.com\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"m\"\r\n\r\n\
+--m\r\nContent-Type: text/plain\r\n\r\nbody\r\n--m\r\n{part}\r\n--m--\r\n"
+    )
+    .into_bytes()
+}
+
+/// An attachment is the sender's file, byte for byte. 0.11 converted a text
+/// attachment out of its declared charset into UTF-8, so the blob a person
+/// saved was not the file that was sent; the bytes are content-addressed, and
+/// two copies of a Latin-1 file must hash alike.
+#[test]
+fn a_text_attachment_keeps_the_senders_bytes_whatever_its_charset() {
+    let parsed = mime::parse(&mixed_with(
+        "Content-Type: text/plain; charset=iso-8859-1; name=\"n.txt\"\r\n\
+Content-Disposition: attachment; filename=\"n.txt\"\r\n\
+Content-Transfer-Encoding: quoted-printable\r\n\r\ncaf=E9",
+    ));
+    assert_eq!(parsed.parts.len(), 1);
+    assert_eq!(parsed.parts[0].content, b"caf\xe9");
+}
+
+/// The lazy payload path (`BODYSTRUCTURE` headers plus `BODY[n]`) must agree
+/// with the full parse above, or one file would have two blob ids.
+#[test]
+fn decode_entity_agrees_with_the_full_parse_on_a_text_payload() {
+    let decoded = mime::decode_entity(
+        b"Content-Type: text/plain; charset=iso-8859-1\r\n\
+Content-Transfer-Encoding: quoted-printable\r\n\r\ncaf=E9",
+    );
+    assert_eq!(decoded.as_deref(), Some(&b"caf\xe9"[..]));
+}
+
+/// A payload is a leaf. A whole multipart handed to `decode_entity` is not a
+/// file, and 1.0 would otherwise return its raw body.
+#[test]
+fn decode_entity_refuses_a_multipart() {
+    assert_eq!(
+        mime::decode_entity(&mixed_with("Content-Type: text/plain\r\n\r\nx")),
+        None
+    );
+}
+
+/// RFC 2231 §4.1: a character split across two continuation sections decodes
+/// as one character (0.11 gave U+FFFD twice), and an apostrophe in the value
+/// after the charset prefix stays in it (0.11 cut the value at it).
+#[test]
+fn rfc2231_sections_are_joined_before_they_are_converted() {
+    let pairs = |list: &[(&str, &str)]| -> Vec<(String, String)> {
+        list.iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    };
+    assert_eq!(
+        mime::parameter_value(
+            &pairs(&[("filename*0*", "utf-8''%E2%98"), ("filename*1*", "%95.txt")]),
+            "filename"
+        )
+        .as_deref(),
+        Some("\u{2615}.txt")
+    );
+    assert_eq!(
+        mime::parameter_value(&pairs(&[("filename*", "utf-8''O'Brien.txt")]), "filename")
+            .as_deref(),
+        Some("O'Brien.txt")
+    );
+}
+
+/// RFC 2047 §6.2: adjacent encoded words of one charset join before the
+/// conversion, so a character split across two words survives (0.11 gave two
+/// replacement characters).
+#[test]
+fn an_encoded_character_split_across_two_words_decodes() {
+    assert_eq!(
+        mime::decode_header_text(b"=?UTF-8?B?4pg=?= =?UTF-8?B?lQ==?="),
+        "\u{2615}"
+    );
+}
+
+/// Base64 whose last quantum is unpadded still decodes to the end; 0.11 dropped
+/// the final byte(s), so `hello world` arrived as `hello wor`.
+#[test]
+fn an_unpadded_base64_body_decodes_to_its_end() {
+    let parsed = mime::parse(
+        b"From: ada@example.com\r\nContent-Type: text/plain\r\n\
+Content-Transfer-Encoding: base64\r\n\r\naGVsbG8gd29ybGQ\r\n",
+    );
+    assert_eq!(parsed.body.text.as_deref(), Some("hello world"));
+}
+
+/// A truncated base64 attachment is offered as the bytes that did arrive.
+/// 0.11 turned the part into "text" and stored the base64 characters
+/// themselves as the file.
+#[test]
+fn a_damaged_base64_attachment_is_decoded_not_stored_as_its_own_text() {
+    let parsed = mime::parse(&mixed_with(
+        "Content-Type: application/octet-stream; name=\"g.bin\"\r\n\
+Content-Disposition: attachment\r\nContent-Transfer-Encoding: base64\r\n\r\nAA!!BB**CC",
+    ));
+    assert_eq!(parsed.parts.len(), 1);
+    assert_eq!(parsed.parts[0].content.len(), 4, "AABBCC is four bytes");
+    assert!(parsed.encoding_problems, "and the damage is still flagged");
+}
+
+/// RFC 8621 `parseStructure` (#67): a `text/html` alternative that carries a
+/// name is an attachment, and the plain text stands in as the HTML body. 0.11
+/// took it as the HTML body. Pinned because it is the one place the new
+/// reading shows a message differently without losing anything: the HTML is
+/// still offered, as a file.
+#[test]
+fn a_named_html_alternative_is_an_attachment() {
+    let parsed = mime::parse(
+        b"From: ada@example.com\r\nContent-Type: multipart/alternative; boundary=a\r\n\r\n\
+--a\r\nContent-Type: text/plain\r\n\r\nplain\r\n\
+--a\r\nContent-Type: text/html; name=x.html\r\n\r\n<p>h</p>\r\n--a--\r\n",
+    );
+    assert_eq!(parsed.body.text.as_deref(), Some("plain"));
+    assert_eq!(parsed.body.html, None);
+    assert_eq!(parsed.parts.len(), 1);
+    assert_eq!(parsed.parts[0].attachment.mime_type, "text/html");
+    assert_eq!(parsed.parts[0].content, b"<p>h</p>");
+}
+
+/// #70: in a `multipart/related`, a part after the first is inline even with
+/// neither a `Content-ID` nor a disposition; 0.11 called it an attachment.
+#[test]
+fn a_related_part_without_a_disposition_is_inline() {
+    let parsed = mime::parse(
+        b"From: ada@example.com\r\nContent-Type: multipart/related; boundary=r\r\n\r\n\
+--r\r\nContent-Type: text/html\r\n\r\n<p>x</p>\r\n\
+--r\r\nContent-Type: image/png\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw0K\r\n--r--\r\n",
+    );
+    assert_eq!(parsed.parts.len(), 1);
+    assert_eq!(parsed.parts[0].attachment.disposition, Disposition::Inline);
+}
+
+/// The inverse: a photo attached to a `multipart/mixed` with no disposition is
+/// an attachment. 0.11 called it inline because the RFC 8621 list happened to
+/// show it in the body.
+#[test]
+fn a_mixed_image_without_a_disposition_is_an_attachment() {
+    let parsed = mime::parse(&mixed_with(
+        "Content-Type: image/jpeg; name=\"p.jpg\"\r\nContent-Transfer-Encoding: base64\r\n\r\n/9j/4AAQ",
+    ));
+    assert_eq!(parsed.parts.len(), 1);
+    assert_eq!(
+        parsed.parts[0].attachment.disposition,
+        Disposition::Attachment
+    );
+}
+
+/// Header names are kept as the sender spelled them (0.11 normalised
+/// `List-Id` to `List-ID` and `Cc` to `Cc`); a name with a space in it is not
+/// the `From` it resembles, so a forged `Fr om:` cannot win over the real one
+/// (the same reading DKIM and DMARC verifiers take).
+#[test]
+fn header_names_keep_their_spelling_and_a_spaced_name_is_not_from() {
+    let parsed = mime::parse(
+        b"Fr om: evil@example.com\r\nFrom: ada@example.com\r\nlist-id: <l.example.com>\r\n\r\nx",
+    );
+    assert_eq!(addresses(&parsed.from), vec!["ada@example.com"]);
+    assert!(parsed.headers.iter().any(|header| header.name == "list-id"));
+    assert_eq!(parsed.list_id.as_deref(), Some("l.example.com"));
+}
+
+/// A header block with no body at all is a message with an empty text part, not
+/// one with a decode failure: 0.11 flagged `encoding_problems` and gave no body.
+#[test]
+fn a_message_that_is_only_headers_has_an_empty_body_and_no_caveat() {
+    let parsed = mime::parse(b"From: ada@example.com\r\nSubject: nothing\r\n");
+    assert_eq!(parsed.body.text.as_deref(), Some(""));
+    assert!(!parsed.encoding_problems);
+}
+
+/// A `+5` zone is +05:00 (0.11 read it as +02:00).
+#[test]
+fn a_one_digit_zone_offset_is_read_as_hours() {
+    let parsed =
+        mime::parse(b"From: ada@example.com\r\nDate: Mon, 5 Oct 2026 10:00:00 +5\r\n\r\nx");
+    assert_eq!(
+        parsed.date,
+        Utc.with_ymd_and_hms(2026, 10, 5, 5, 0, 0).single()
+    );
 }
