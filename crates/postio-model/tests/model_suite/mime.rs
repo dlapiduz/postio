@@ -1432,23 +1432,36 @@ Content-Disposition: attachment\r\nContent-Transfer-Encoding: base64\r\n\r\nAA!!
     assert!(parsed.encoding_problems, "and the damage is still flagged");
 }
 
-/// RFC 8621 `parseStructure` (#67): a `text/html` alternative that carries a
-/// name is an attachment, and the plain text stands in as the HTML body. 0.11
-/// took it as the HTML body. Pinned because it is the one place the new
-/// reading shows a message differently without losing anything: the HTML is
-/// still offered, as a file.
+/// A `text/html` alternative that carries a name is still the message's HTML
+/// body. RFC 8621 `parseStructure` (#67), which mail-parser 1.0 follows, files
+/// it as an attachment and lets the plain text stand in; the maintainer chose
+/// to show the HTML the sender wrote, as 0.11 did, and not to offer it a
+/// second time as a file.
 #[test]
-fn a_named_html_alternative_is_an_attachment() {
+fn a_named_html_alternative_is_the_html_body() {
     let parsed = mime::parse(
         b"From: ada@example.com\r\nContent-Type: multipart/alternative; boundary=a\r\n\r\n\
 --a\r\nContent-Type: text/plain\r\n\r\nplain\r\n\
 --a\r\nContent-Type: text/html; name=x.html\r\n\r\n<p>h</p>\r\n--a--\r\n",
     );
     assert_eq!(parsed.body.text.as_deref(), Some("plain"));
+    assert_eq!(parsed.body.html.as_deref(), Some("<p>h</p>"));
+    assert!(parsed.parts.is_empty(), "{:?}", parsed.parts);
+}
+
+/// The sender's own word still wins: an HTML alternative marked
+/// `Content-Disposition: attachment` is a file, not the body.
+#[test]
+fn an_html_alternative_disposed_as_an_attachment_stays_a_file() {
+    let parsed = mime::parse(
+        b"From: ada@example.com\r\nContent-Type: multipart/alternative; boundary=a\r\n\r\n\
+--a\r\nContent-Type: text/plain\r\n\r\nplain\r\n\
+--a\r\nContent-Type: text/html\r\nContent-Disposition: attachment; filename=x.html\r\n\r\n\
+<p>h</p>\r\n--a--\r\n",
+    );
     assert_eq!(parsed.body.html, None);
     assert_eq!(parsed.parts.len(), 1);
     assert_eq!(parsed.parts[0].attachment.mime_type, "text/html");
-    assert_eq!(parsed.parts[0].content, b"<p>h</p>");
 }
 
 /// #70: in a `multipart/related`, a part after the first is inline even with

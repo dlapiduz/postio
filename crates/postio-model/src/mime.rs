@@ -614,6 +614,7 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             .and_then(|content_type| content_type.attribute("format"))
             .is_some_and(|format| format.eq_ignore_ascii_case("flowed"))
     });
+    let named_html_alternative = named_html_alternative(&source);
     message.body = MessageBody {
         // RFC 2046 §5.1.1: a multipart whose boundary could not be used has
         // no parts to have found a text body among, and is read as this
@@ -627,6 +628,7 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         html: source
             .html_body()
             .find(|part| matches!(part.kind(), PartKind::Html))
+            .or(named_html_alternative)
             .and_then(|part| part.text())
             .map(std::borrow::Cow::into_owned),
     };
@@ -656,6 +658,11 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         // (#900).
         .filter(|part| matches!(part.role(), PartRole::Attachment | PartRole::MediaBody))
         .filter(|part| !is_multipart_type(part))
+        .filter(|part| {
+            named_html_alternative
+                .as_ref()
+                .is_none_or(|html| html.id() != part.id())
+        })
         .map(|part| parsed_part(&part, &paths))
         .collect();
     // Three ways a body can arrive as something other than what was sent, and
@@ -665,6 +672,33 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         transfer_encoding_problem(&source) || decoded_lossily(raw, &message.body);
 
     message
+}
+
+/// A `text/html` alternative the parser filed as an attachment only because
+/// it carries a name, when the message has no other HTML body.
+///
+/// RFC 8621 `parseStructure` treats a named HTML alternative as an
+/// attachment and lets the plain text stand in as the HTML body; Postio
+/// shows the HTML the sender wrote instead (the maintainer's call), and does
+/// not offer it again as a file. A part the sender disposed as an
+/// `attachment` stays one.
+fn named_html_alternative<'m>(source: &'m MpMessage<'m>) -> Option<MessagePart<'m>> {
+    if source
+        .html_body()
+        .any(|part| matches!(part.kind(), PartKind::Html))
+    {
+        return None;
+    }
+    source.parts().find(|part| {
+        part.is_content_type("text", "html")
+            && matches!(part.role(), PartRole::Attachment)
+            && part
+                .parent()
+                .is_some_and(|parent| parent.is_content_type("multipart", "alternative"))
+            && !part
+                .content_disposition()
+                .is_some_and(|disposition| disposition.is_attachment())
+    })
 }
 
 /// Whether any part's transfer encoding is one this parser cannot undo, or
