@@ -64,10 +64,13 @@ impl Fixture {
             .map(|part| (part.attachment.part_id.clone(), part.content.clone()))
             .collect();
         let body = parsed.body.clone();
+        // By the real clock: Focus reads only the last 30 days of what was
+        // filed (`focus::body`'s window), and a date fixed in September has
+        // aged out of it since.
         let mut message = parsed.into_message(
             self.account.id,
             self.inbox,
-            support::now() - Duration::minutes(minutes),
+            Utc::now() - Duration::minutes(minutes),
         );
         let connection = self.database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
