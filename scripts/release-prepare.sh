@@ -78,10 +78,12 @@ git add -A
 git commit -q -F - <<COMMIT
 chore(release): v${VERSION}
 
-The version, the AppStream changelog entry, the macOS bundle's version
-and the notes in ${NOTES}, moved together by scripts/release-prepare.sh.
-Merging this publishes v${VERSION}: release.yml releases whenever main
-names a version that has no tag yet.
+The version, the AppStream changelog entry, the macOS bundle's
+version and the release notes, moved together by
+scripts/release-prepare.sh. The notes are
+${NOTES}.
+Merging this publishes v${VERSION}: release.yml releases whenever
+main names a version that has no tag yet.
 COMMIT
 
 cat <<NEXT
