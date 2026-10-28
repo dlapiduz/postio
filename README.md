@@ -25,9 +25,9 @@ one — **frontends over one Rust engine**, not a toolkit ported. It works
 fully offline after its first sync, and never sends anything you did not ask
 it to.
 
-**Postio 0.4.0 is an alpha.** It is more complete than the number suggests,
+**Postio 0.5.0 is an alpha.** It is more complete than the number suggests,
 but it is early software: expect rough edges, read the
-[status](#whats-in-04-and-what-is-not) section before switching, and keep
+[status](#whats-in-05-and-what-is-not) section before switching, and keep
 your current client around until you trust it.
 
 - **Home page and tour:** <https://dlapiduz.github.io/postio/>
@@ -79,10 +79,9 @@ your current client around until you trust it.
 ## Install
 
 Postio runs on Linux under Wayland (GTK 4.20 and libadwaita 1.7 or newer;
-the maintainer's machine is Fedora 44), and on macOS 14 or newer. The Linux
-build is the complete one and has the three ways in below; the macOS build is
-[further down](#macos), is younger, and is honest about what it cannot do
-yet.
+the maintainer's machine is Fedora 44), and on macOS 14 or newer on Apple
+silicon. The Linux build has the three ways in below; the macOS build is
+[further down](#macos), and from 0.5.0 it is a download too.
 
 ### 1. The Flatpak bundle
 
@@ -155,6 +154,9 @@ same mail as the desktop app, one of them open at a time; see
 
 ### macOS
 
+![Postio on the Mac: the same inbox, as a native SwiftUI/AppKit window,
+with an invitation, questions and to-dos on their rows](site/assets/img/focus-macos.png)
+
 A native SwiftUI/AppKit application over the same engine, through a UniFFI
 boundary ([ADR 0019](docs/decisions/0019-macos-frontend.md)), on `main`
 since [#1306](https://github.com/dlapiduz/postio/pull/1306). CI builds the
@@ -165,8 +167,15 @@ began, which is what made this cheap: the two frontends share the store, the
 protocols, the search index, the keymap and every presentation decision that
 has no toolkit in it.
 
-Needs Xcode (Swift 6) and the pinned Rust toolchain. There is no bundle to
-download yet — it is built from the checkout:
+Every release from 0.5.0 publishes `postio-X.Y.Z-macos-arm64.zip` on the
+[Releases page](https://github.com/dlapiduz/postio/releases), with build
+provenance and an SBOM like the Linux bundle. It is ad-hoc signed and not
+notarized, so Gatekeeper refuses it on a double click: unzip it, move
+`Postio.app` to Applications, and open it once with right-click → Open.
+Apple silicon only.
+
+To build it from the checkout instead, you need Xcode (Swift 6) and the
+pinned Rust toolchain:
 
 ```bash
 scripts/macos-build.sh      # cargo, the bindings, then swift build
@@ -306,7 +315,7 @@ Every key, type and default is in [`docs/config.md`](docs/config.md).
 **No credential ever lives in `config.toml`**: an account in the file only
 references a keyring entry.
 
-## What's in 0.4 and what is not
+## What's in 0.5 and what is not
 
 **In:** several accounts with a unified inbox; IMAP + SMTP, Gmail and JMAP
 backends; password, app-specific password and OAuth 2 sign-in; folders,
@@ -316,14 +325,18 @@ compose, reply, reply-all, forward, drafts, scheduled send and an outbox
 that never sends twice; local full-text search with operators, saved
 searches and virtual folders; contacts and contact groups grown from your
 mail; notifications; vim-style keys, a command palette, every binding
-rebindable; background sync with IDLE, full offline use, and undo.
+rebindable; background sync with IDLE, full offline use, and undo. New in
+0.5: Postio Focus on both platforms — the one dense inbox with invitations,
+questions and to-dos called out on their rows, digests, and Filtered; the
+native macOS app, released; search with a dropdown, facets and a results
+view with Files and People tabs; Contacts on both platforms; and an MCP
+server that lets an agent you connect read and act on mail you share with it.
 
-**Not yet:** filters and rules (designed, not built); AI features (a
-founding idea, deliberately after the fundamentals); Microsoft Graph;
-PGP/S-MIME; phishing and link warnings; vCard import/export. The native macOS
-frontend is on `main` and every command in the registry reaches something on
-it, but it is built from the checkout, not packaged or released — see
-[macOS](#macos) for what it does. Windows is unscheduled.
+**Not yet:** general filters and rules beyond digests and Filtered; AI
+inside Postio itself (a local model you connect over MCP is the way in, and
+it is optional); Microsoft Graph; PGP/S-MIME; phishing and link warnings. The
+macOS app is unsigned by a Developer ID and not notarized — see
+[macOS](#macos). Windows is unscheduled.
 
 Postio is alpha software. Its test suite is large and its invariants are
 machine-checked, and you should still treat it as early: it has met few
