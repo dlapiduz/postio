@@ -426,6 +426,21 @@ fn the_release_checks_the_bundle_carries_postio() {
         !running.iter().any(|line| line.contains(gone)),
         "the `flatpak` job still looks for {gone}"
     );
+    // The same job builds the terminal bundle, which carries `postio-tui`
+    // and no desktop entry: v0.5.0's first run failed there, looking for
+    // the desktop app's binary in a bundle that never had it.
+    assert!(
+        running.iter().any(|line| line
+            .split_whitespace()
+            .any(|word| word == "files/bin/postio-tui")),
+        "the `flatpak` job never checks the terminal bundle for files/bin/postio-tui"
+    );
+    assert!(
+        running
+            .iter()
+            .any(|line| line.contains("dev.postio.PostioTui")),
+        "the `flatpak` job has no list of what dev.postio.PostioTui carries"
+    );
 }
 
 /// Every SVG the package installs says it is one where a format sniffer
