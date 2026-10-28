@@ -99,7 +99,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 # The compiler this workspace is actually built with, everywhere.
 #
