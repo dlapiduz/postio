@@ -631,6 +631,16 @@ pub async fn compose_demo(database: &Store, account: AccountId) {
         ("Graham Ellis", "graham@example.net"),
         ("Ada Moreno", "ada@example.com"),
     ] {
+        // The demo's mail may already have made them someone; a second
+        // person for the same address is refused.
+        if contacts
+            .by_address(address)
+            .await
+            .expect("a lookup")
+            .is_some()
+        {
+            continue;
+        }
         contacts
             .create(Some(name), &[EmailAddress::new(Some(name), address)])
             .await
@@ -1810,6 +1820,27 @@ pub fn marker(message: MessageId, ask: &Ask, today: DateTime<Utc>) -> Marker {
 
 #[cfg(test)]
 mod tests {
+    /// Screens 05 and 06 add their people over the demo store, which has
+    /// already met some of them as correspondents: adding a person someone
+    /// already owns is refused, so the screenshots panicked instead.
+    #[tokio::test]
+    async fn the_compose_people_join_a_demo_that_already_met_them() {
+        let (database, account) = super::demo().await;
+        super::compose_demo(&database, account).await;
+        let connection = database.connect().await.expect("a connection");
+        let contacts = postio_storage::repository::ContactRepository::new(&connection);
+        for address in ["grace@example.org", "graham@example.net", "ada@example.com"] {
+            assert!(
+                contacts
+                    .by_address(address)
+                    .await
+                    .expect("a lookup")
+                    .is_some(),
+                "{address} is nobody"
+            );
+        }
+    }
+
     /// The digest rule comes due on the day the seed delivers it, so the
     /// window's "came due today 16:00" and the rule's "Weekly, <day> 16:00"
     /// never contradict each other.
