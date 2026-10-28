@@ -147,6 +147,12 @@ def main() -> int:
             git(tree, "log", "--format=%s", "origin/main..HEAD") == "chore(release): v0.5.0",
             git(tree, "log", "--oneline", "origin/main..HEAD"),
         )
+        message = git(tree, "log", "-1", "--format=%B")
+        case(
+            "every line of the commit message fits in 72 columns, as .githooks/commit-msg requires",
+            all(len(line) <= 72 for line in message.splitlines()),
+            "\n".join(line for line in message.splitlines() if len(line) > 72),
+        )
         case("the tree is clean afterwards -- everything is in the commit", git(tree, "status", "--porcelain") == "", git(tree, "status", "--short"))
         cargo = (tree / "Cargo.toml").read_text(encoding="utf-8")
         case("the workspace version is bumped", 'version = "0.5.0"' in cargo, cargo)
