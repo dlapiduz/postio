@@ -2,21 +2,21 @@
 
 ## Is Postio ready to use as my daily mail client?
 
-Postio 0.4 is an alpha. It supports several IMAP, Gmail or JMAP accounts
+Postio 0.5 is an alpha. It supports several IMAP, Gmail or JMAP accounts
 with a password, an app-specific password or OAuth 2, and covers the
 everyday work — reading, searching, replying, filing, snoozing, undo — with
 full offline use. If that covers your setup it's usable today, but treat it
 as early software: keep your existing client around until you're confident
 in it, and expect to file the rough edges you find.
 
-## Why Linux only?
+## Which platforms does it run on?
 
-v1 targets GTK4/libadwaita on Linux because that's where the team could
-build something excellent fastest, not because other platforms are ruled
-out. The engine underneath the UI has no GTK in it and no database code in
-the view layer — that boundary is enforced automatically — and a native
-macOS frontend over the same engine already reads mail, searches and pages.
-It is built and tested but not yet released. Windows is not scheduled.
+Linux, as a GTK4/libadwaita app and a terminal app, and macOS 14 or newer on
+Apple silicon, as a native SwiftUI/AppKit app, released from 0.5.0. Both are
+frontends over one engine that has no GTK in it and no database code in the
+view layer — that boundary is enforced automatically. The Mac download is
+ad-hoc signed and not notarized, so it is opened once with right-click →
+Open. Windows is not scheduled.
 
 ## Does Postio support multiple accounts?
 

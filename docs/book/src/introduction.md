@@ -45,7 +45,7 @@ restored. And it captures a message into an Obsidian vault as a task or a
 note. A local model you run yourself can write digest summaries and spot
 questions and to-dos; without one, a built-in detector does the second.
 
-## What 0.4 does
+## What 0.5 does
 
 Several accounts with one unified inbox, over IMAP and SMTP, the Gmail API,
 or JMAP, signed in with a password, an app-specific password, or OAuth 2
@@ -57,17 +57,19 @@ full-text search with operators, pinned saved searches, and a suggestion
 when a query finds nothing. An address book with groups, grown from the
 people in your mail. Vim-style navigation and one command bar, every
 binding rebindable. Background sync with IDLE, full offline use, and
-undo.
+undo. Search with a dropdown, facets, and results with Files and People
+tabs. Contacts, on Linux and the Mac. An MCP server through which an agent
+you connect can read, and act on, the mail you share with it.
 
 ## What it deliberately doesn't do yet
 
-Postio 0.4 is an alpha. It runs on Linux (GTK4/libadwaita); a native macOS
-frontend over the same engine reads mail today but is not yet released.
-Filters and rules are designed and not built. Beyond the optional local
+Postio 0.5 is an alpha. It runs on Linux (GTK4/libadwaita) and, from 0.5,
+as a released native macOS app over the same engine. General filters and
+rules, beyond digests and Filtered, are designed and not built. Beyond the optional local
 model above there are no AI features — not because they aren't planned, but
 because shipping AI over a mediocre mail client would just produce a
 mediocre mail client with AI in it. Core mail, search, and the keyboard come
-first. PGP/S-MIME, phishing warnings and vCard import are also still to
+first. PGP/S-MIME and phishing warnings are also still to
 come, each with its own tracked issue.
 
 Ready to try it? See [Installing Postio](install.md).
