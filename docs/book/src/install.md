@@ -1,28 +1,37 @@
 # Installing Postio
 
-Postio is an alpha and, for now, Linux only: GTK4/libadwaita, Wayland
-first, X11 where it happens to work. It needs GTK 4.20 and libadwaita 1.7
-or newer — a current Fedora, or Ubuntu 26.04 and later.
+Postio is an alpha. On Linux it is a GTK4/libadwaita app, Wayland first,
+X11 where it happens to work, and needs GTK 4.20 and libadwaita 1.7 or newer
+— a current Fedora, or Ubuntu 26.04 and later. On a Mac it is a native app
+for Apple silicon and macOS 14 or newer ([macOS](#macos) below).
 
-There are three ways to get it: the prebuilt Flatpak bundle from a release,
-a build from source that installs like any other app, or a plain `cargo
-run` to try it without installing anything.
+On Linux there are three ways to get it: the prebuilt Flatpak bundle from a
+release, a build from source that installs like any other app, or a plain
+`cargo run` to try it without installing anything.
 
 ## The Flatpak bundle
 
-Every tagged release publishes a `.flatpak` bundle on the
+Every tagged release publishes `.flatpak` bundles on the
 [Releases page](https://github.com/dlapiduz/postio/releases), beside a
 signed build-provenance attestation and a software bill of materials.
-Download `postio-<version>-linux-x86_64.flatpak`, then:
+Releases are marked pre-release while Postio is an alpha, so they are not
+under "Latest"; the commands name the version.
 
 ```bash
-flatpak install --user ./postio-<version>-linux-x86_64.flatpak
+curl -LO https://github.com/dlapiduz/postio/releases/download/v0.5.0/postio-0.5.0-linux-x86_64.flatpak
+flatpak install --user ./postio-0.5.0-linux-x86_64.flatpak
 flatpak run dev.postio.Postio
 ```
 
 The bundle names Flathub as its runtime source, so `flatpak` offers to add
-Flathub and fetch the GNOME runtime if you don't have them yet. Postio then
-appears in your app grid like anything else.
+Flathub and fetch the GNOME 50 runtime if you don't have them yet. Postio
+then appears in your app grid like anything else. A later release installs
+over this one the same way, and `flatpak uninstall --user dev.postio.Postio`
+removes it; your mail stays in `~/.var/app/dev.postio.Postio` until you
+delete it.
+
+The terminal app is a bundle of its own, `postio-tui-<version>-linux-x86_64.flatpak`,
+run with `flatpak run dev.postio.PostioTui`.
 
 A mail client holds your credentials and your mail, so it is worth checking
 that a downloaded bundle was built by this project's release workflow from
@@ -42,14 +51,28 @@ materials beside it.
 
 ## macOS
 
-Each release has `postio-<version>-macos-arm64.zip`, for Apple Silicon Macs.
-Unzip it and move `Postio.app` to Applications.
+Each release has `postio-<version>-macos-arm64.zip`, for Apple silicon Macs
+on macOS 14 or newer:
 
-It isn't signed with an Apple Developer ID or notarized yet, so the first
-time you open it macOS says it can't check it for malicious software.
-Right-click (or Control-click) `Postio.app`, choose **Open**, and confirm.
-macOS remembers the choice after that. The same `gh attestation verify`
-command above works on the zip.
+```bash
+curl -LO https://github.com/dlapiduz/postio/releases/download/v0.5.0/postio-0.5.0-macos-arm64.zip
+ditto -x -k postio-0.5.0-macos-arm64.zip /Applications
+open /Applications/Postio.app
+```
+
+It isn't signed with an Apple Developer ID or notarized yet. Fetched with
+`curl` as above it opens straight away. Downloaded with a browser, macOS
+quarantines it, and the first open says it can't check it for malicious
+software: choose **Done**, open **System Settings → Privacy & Security**,
+find "Postio.app was blocked", and choose **Open Anyway**. On macOS 14,
+right-click the app and choose **Open** instead. macOS remembers the choice
+after that.
+
+Postio keeps account passwords and its store key in the login Keychain, and
+asks once for each; **Always Allow** keeps it from asking again. To upgrade,
+quit Postio and unzip the next release over it. The same checks work on the
+zip: `shasum -a 256 --check --ignore-missing SHA256SUMS`, and
+`gh attestation verify postio-<version>-macos-arm64.zip --repo dlapiduz/postio`.
 
 ## From source
 

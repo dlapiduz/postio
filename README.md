@@ -85,23 +85,43 @@ silicon. The Linux build has the three ways in below; the macOS build is
 
 ### 1. The Flatpak bundle
 
-Every tagged release publishes a prebuilt `.flatpak` bundle on the
-[Releases page](https://github.com/dlapiduz/postio/releases), with a signed
-build-provenance attestation and a software bill of materials beside it.
+Every tagged release publishes prebuilt `.flatpak` bundles on the
+[Releases page](https://github.com/dlapiduz/postio/releases): the desktop
+app, and the terminal app on its own. Releases are marked pre-release while
+Postio is an alpha, so they are not under "Latest"; the links below name the
+version.
 
 ```bash
-# Download postio-<version>-linux-x86_64.flatpak from the Releases page, then:
-flatpak install --user ./postio-<version>-linux-x86_64.flatpak
+curl -LO https://github.com/dlapiduz/postio/releases/download/v0.5.0/postio-0.5.0-linux-x86_64.flatpak
+flatpak install --user ./postio-0.5.0-linux-x86_64.flatpak
 flatpak run dev.postio.Postio
 ```
 
-The bundle names Flathub as its runtime source, so `flatpak` fetches the
-GNOME runtime on its own if you do not have it yet. A mail client holds your
-credentials and your mail, so it is worth checking that a downloaded bundle
-was built by this project's release workflow from the tagged commit:
+Postio then appears in your app grid like anything else. The bundle names
+Flathub as its runtime source, so `flatpak` offers to add Flathub and fetch
+the GNOME 50 runtime if you do not have them yet. A later release installs
+over this one the same way, and `flatpak uninstall --user dev.postio.Postio`
+removes it (your mail stays in `~/.var/app/dev.postio.Postio` until you
+delete it).
+
+The terminal app is its own bundle, over the freedesktop runtime:
 
 ```bash
-gh attestation verify postio-<version>-linux-x86_64.flatpak --repo dlapiduz/postio
+curl -LO https://github.com/dlapiduz/postio/releases/download/v0.5.0/postio-tui-0.5.0-linux-x86_64.flatpak
+flatpak install --user ./postio-tui-0.5.0-linux-x86_64.flatpak
+flatpak run dev.postio.PostioTui
+```
+
+A mail client holds your credentials and your mail, so it is worth checking
+that a download was built by this project's release workflow from the
+tagged commit, and has not changed since. Every release carries a
+`SHA256SUMS` file, and every download its own signed build-provenance
+attestation and software bill of materials:
+
+```bash
+curl -LO https://github.com/dlapiduz/postio/releases/download/v0.5.0/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify postio-0.5.0-linux-x86_64.flatpak --repo dlapiduz/postio
 ```
 
 Postio is not on Flathub yet; when it is, this section collapses to one
@@ -167,12 +187,33 @@ began, which is what made this cheap: the two frontends share the store, the
 protocols, the search index, the keymap and every presentation decision that
 has no toolkit in it.
 
-Every release from 0.5.0 publishes `postio-X.Y.Z-macos-arm64.zip` on the
-[Releases page](https://github.com/dlapiduz/postio/releases), with build
-provenance and an SBOM like the Linux bundle. It is ad-hoc signed and not
-notarized, so Gatekeeper refuses it on a double click: unzip it, move
-`Postio.app` to Applications, and open it once with right-click → Open.
-Apple silicon only.
+Every release from 0.5.0 publishes the Mac app as
+`postio-X.Y.Z-macos-arm64.zip` on the
+[Releases page](https://github.com/dlapiduz/postio/releases), for Apple
+silicon Macs on macOS 14 or newer:
+
+```bash
+curl -LO https://github.com/dlapiduz/postio/releases/download/v0.5.0/postio-0.5.0-macos-arm64.zip
+ditto -x -k postio-0.5.0-macos-arm64.zip /Applications
+open /Applications/Postio.app
+```
+
+The app is ad-hoc signed, not signed with an Apple Developer ID or
+notarized. Fetched with `curl` as above it opens straight away. Downloaded
+with a browser, macOS quarantines it and the first open says it cannot check
+it for malicious software: choose **Done**, then open **System Settings →
+Privacy & Security**, find "Postio.app was blocked", and choose **Open
+Anyway** (on macOS 14, right-click the app and choose **Open** instead).
+macOS remembers the choice. Postio keeps passwords and its store key in the
+login Keychain and asks once for each; **Always Allow** keeps it from asking
+again. To upgrade, quit Postio and unzip the next release over it.
+
+The same checks work on the zip:
+
+```bash
+shasum -a 256 --check --ignore-missing SHA256SUMS
+gh attestation verify postio-0.5.0-macos-arm64.zip --repo dlapiduz/postio
+```
 
 To build it from the checkout instead, you need Xcode (Swift 6) and the
 pinned Rust toolchain:
