@@ -274,19 +274,32 @@ jobs:
             --install-deps-from=flathub \
             --repo=repo build-dir "$MANIFEST"
 
-      # The bundle carries Postio, which is Focus (specs/007-postio-focus
-      # C27): its binary, its one desktop entry and its metainfo. A manifest
+      # Each bundle carries what its manifest installs, listed per bundle:
+      # Postio, which is Focus (specs/007-postio-focus C27), has its binary,
+      # its one desktop entry and its metainfo; the terminal bundle has
+      # postio-tui and no desktop entry. Both carry postio-mcp. A manifest
       # that stops installing one of them still builds, so look inside
       # before publishing rather than finding out from a user. `packaging.rs`
-      # in postio-gtk's tests holds this list to the manifest.
+      # in postio-gtk's tests holds these lists to the manifests.
       - name: Check the build carries the app
         run: |
-          for path in \
-            files/bin/postio \
-            files/bin/postio-mcp \
-            files/share/applications/dev.postio.Postio.desktop \
-            files/share/metainfo/dev.postio.Postio.metainfo.xml
-          do
+          case "$APP_ID" in
+            dev.postio.Postio)
+              paths="
+                files/bin/postio
+                files/bin/postio-mcp
+                files/share/applications/dev.postio.Postio.desktop
+                files/share/metainfo/dev.postio.Postio.metainfo.xml
+              " ;;
+            dev.postio.PostioTui)
+              paths="
+                files/bin/postio-tui
+                files/bin/postio-mcp
+              " ;;
+            *)
+              echo "::error::no list of what $APP_ID carries"; exit 1 ;;
+          esac
+          for path in $paths; do
             test -e "build-dir/$path" || { echo "::error::the build has no $path"; exit 1; }
           done
 
