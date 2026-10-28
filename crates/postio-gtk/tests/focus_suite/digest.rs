@@ -3,7 +3,7 @@
 //! archives all of it as one undo; `D` stops digesting a sender once
 //! confirmed.
 
-use chrono::Duration;
+use chrono::{Duration, Utc};
 use gtk::gdk;
 
 use crate::support::{self, Fixture};
@@ -280,6 +280,10 @@ pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
             return;
         }
         let fixture = Fixture::empty().await;
+        // Days before the real clock, which the preview's 90 days count back
+        // from: dated from the fixed `support::now()`, Issue 1 left the
+        // window on 27 October 2026.
+        let ago = |minutes: i64| (support::now() - Utc::now()).num_minutes() + minutes;
         for (subject, days) in [
             ("Issue 3", 3),
             ("Issue 2", 20),
@@ -291,7 +295,7 @@ pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
                     ("Ledger", "news@ledger.test"),
                     subject,
                     "Rates.",
-                    days * 24 * 60,
+                    ago(days * 24 * 60),
                 )
                 .await;
         }
