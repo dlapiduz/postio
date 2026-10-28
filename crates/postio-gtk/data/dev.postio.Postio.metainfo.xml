@@ -66,9 +66,9 @@
   <releases>
     <release version="0.5.0" date="2026-10-27" type="development">
       <description>
-        <p>Postio 0.5.0 is an alpha, and the first release with a Mac app to download. It is the release where Postio Focus — the one dense inbox, and the four things it does to mail — became the app on both platforms, over one engine.</p>
+        <p>Postio 0.5.0 is an alpha, and the first release with a Mac app to download. It is the release where the one dense inbox, and the four things it does to mail, became the app on both platforms, over one engine.</p>
         <ul>
-          <li>Postio Focus is the desktop app, on Linux and the Mac: one list of mail as it arrived; invitations, direct questions and to-dos called out on their rows with the sentence that raised them; digests on a cadence you choose; Filtered, with its reason on every row and one key to restore it, and now multi-select there as in any folder.</li>
+          <li>One inbox, on Linux and the Mac: one list of mail as it arrived; invitations, direct questions and to-dos called out on their rows with the sentence that raised them; digests on a cadence you choose; Filtered, with its reason on every row and one key to restore it, and now multi-select there as in any folder.</li>
           <li>The native macOS app is released: `postio-0.5.0-macos-arm64.zip`, Apple silicon, macOS 14 or newer. It is ad-hoc signed and not notarized, so open it once with right-click → Open.</li>
           <li>Search moves with you: a dropdown as you type, facets for sender, date and more, and a results view with Files and People tabs, Quick Look and save.</li>
           <li>Contacts, on both platforms: the people in your mail, editable, mergeable, with vCard import and export.</li>
