@@ -676,23 +676,15 @@ private struct SaveSearchButton: View {
     }
 }
 
-/// The sync label: a symbol and the controller's words ("Synced 16:09",
-/// "Syncing 12,408 of 18,204", "Offline", "Sync failed"), as
-/// `FocusSyncLabel` last said them. Nothing until it has said anything: the
-/// words are `postio_ui::focus_state::sync_label`'s, and a Swift copy of
-/// them is the drift the FFI event exists to end.
+/// The sync label, once the controller has said anything: the words are
+/// `postio_ui::focus_state::sync_label`'s, and a Swift copy of them is the
+/// drift the FFI event exists to end.
 private struct SyncLabelView: View {
     let engine: Engine
 
     var body: some View {
         if let label = engine.states.syncLabel {
-            HStack(spacing: 5) {
-                Image(systemName: label.symbol).font(.system(size: 11))
-                Text(label.text).font(.system(size: 12).monospacedDigit())
-            }
-            .foregroundStyle(label.isAlarming ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-            .fixedSize()
-            .accessibilityElement(children: .combine)
+            ToolbarSyncLabel(label: label)
         }
     }
 }
