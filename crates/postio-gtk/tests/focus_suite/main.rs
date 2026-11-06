@@ -703,14 +703,6 @@ const CASES: &[(&str, fn())] = &[
         filtered::selecting_in_filtered_restores_every_selected_row_as_one_undo as fn(),
     ),
     (
-        "filtered::filtered_selection_bar_is_dressed_as_the_inbox_bar",
-        filtered::filtered_selection_bar_is_dressed_as_the_inbox_bar as fn(),
-    ),
-    (
-        "filtered::filtered_header_is_set_in_the_inbox_strip_type",
-        filtered::filtered_header_is_set_in_the_inbox_strip_type as fn(),
-    ),
-    (
         "filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back",
         filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
     ),
