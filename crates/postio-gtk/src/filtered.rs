@@ -20,6 +20,9 @@ use postio_model::MessageId;
 use postio_ui::filtered;
 use postio_widgets::widgets::keyhint::{self, KeyLine};
 use postio_widgets::widgets::space::{S1, S3};
+use postio_widgets::widgets::{Kind, Size};
+
+use crate::bulk::Bulk;
 
 /// What a person asked of the view.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,10 +56,7 @@ pub struct FilteredView {
     /// The bar over the footer while anything is selected.
     /// What stands in place of the rows when the tab has none.
     empty: gtk::Label,
-    bar: gtk::Box,
-    bar_count: gtk::Label,
-    bar_verbs: gtk::Box,
-    bar_keys: KeyLine,
+    bar: Bulk,
     /// The keyboard and the selection: the list's rules over these rows
     /// (`postio_focus::RowPicker`), never a second set.
     picker: RefCell<RowPicker>,
@@ -86,7 +86,7 @@ impl FilteredView {
     /// The view, reading through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
         let back = gtk::Button::new();
-        back.add_css_class("flat");
+        postio_widgets::widgets::button::style(&back, Kind::Ghost, Size::Regular);
         back.add_css_class("focus-filtered-back");
         let back_row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         back_row.append(&gtk::Image::from_icon_name("go-previous-symbolic"));
@@ -103,7 +103,7 @@ impl FilteredView {
         // FR-118: filtering what is already in the inbox is a deliberate
         // command, and this is where filtering lives. It asks first.
         let sweep = gtk::Button::new();
-        sweep.add_css_class("flat");
+        postio_widgets::widgets::button::style(&sweep, Kind::Ghost, Size::Regular);
         sweep.add_css_class("focus-filtered-sweep");
         let sweep_words = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         sweep.set_child(Some(&sweep_words));
@@ -147,21 +147,11 @@ impl FilteredView {
         root.append(&tab_row);
         root.append(&scrolled);
         root.append(&empty);
-        // While anything is selected (screen 01's bar, over Filtered).
-        let bar = gtk::Box::new(gtk::Orientation::Horizontal, S3);
-        bar.add_css_class("focus-bulk-bar");
-        bar.add_css_class("focus-filtered-bar");
-        let bar_count = gtk::Label::new(None);
-        bar_count.add_css_class("focus-bulk-count");
-        let bar_verbs = gtk::Box::new(gtk::Orientation::Horizontal, S1);
-        let bar_keys = KeyLine::new("focus-bulk-keys");
-        bar_keys.widget().set_hexpand(true);
-        bar_keys.widget().set_halign(gtk::Align::End);
-        bar.append(&bar_count);
-        bar.append(&bar_verbs);
-        bar.append(bar_keys.widget());
-        bar.set_visible(false);
-        root.append(&bar);
+        // While anything is selected: screen 01's bar itself, with
+        // Filtered's verbs.
+        let bar = Bulk::with_verbs(filtered::BAR_VERBS, keymap);
+        bar.widget().add_css_class("focus-filtered-bar");
+        root.append(bar.widget());
         root.append(footer.widget());
 
         let view = Rc::new(FilteredView {
@@ -172,9 +162,6 @@ impl FilteredView {
             footer,
             empty,
             bar,
-            bar_count,
-            bar_verbs,
-            bar_keys,
             picker: RefCell::default(),
             sweep_words,
             keymap: RefCell::new(keymap.clone()),
@@ -190,6 +177,14 @@ impl FilteredView {
         });
         view.me.replace(Rc::downgrade(&view));
         let weak = Rc::downgrade(&view);
+        view.bar.connect_command({
+            let weak = weak.clone();
+            move |command| {
+                if let Some(view) = weak.upgrade() {
+                    view.emit(FilteredAction::Verb(command));
+                }
+            }
+        });
         back.connect_clicked({
             let weak = weak.clone();
             move |_| {
@@ -310,6 +305,7 @@ impl FilteredView {
     /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
+        self.bar.set_keymap(keymap);
         while let Some(child) = self.sweep_words.first_child() {
             self.sweep_words.remove(&child);
         }
@@ -543,37 +539,16 @@ impl FilteredView {
 
     fn show_bar(&self, selected: &[MessageId]) {
         if selected.is_empty() {
-            self.bar.set_visible(false);
+            self.bar.set_summary(None);
             return;
         }
-        let keymap = self.keymap.borrow().clone();
         let summary = postio_ui::selection::summary(
             &postio_core::state::Selection::These(selected.to_vec()),
             None,
             &[],
         );
-        self.bar_count.set_text(&summary.unwrap_or_default());
-        while let Some(child) = self.bar_verbs.first_child() {
-            self.bar_verbs.remove(&child);
-        }
-        for (command, label) in filtered::BAR_VERBS {
-            let button = gtk::Button::new();
-            button.add_css_class("flat");
-            button.set_child(Some(&keyhint::labelled(
-                label,
-                postio_ui::hints::key(&keymap, command).as_deref(),
-            )));
-            let weak = self.me.borrow().clone();
-            button.connect_clicked(move |_| {
-                if let Some(view) = weak.upgrade() {
-                    view.emit(FilteredAction::Verb(command));
-                }
-            });
-            self.bar_verbs.append(&button);
-        }
-        self.bar_keys.set(&filtered::bar_hints(&keymap));
-        self.bar.set_visible(true);
-        crate::a11y::teach_shortcuts(&self.bar);
+        self.bar.set_summary(Some(&summary.unwrap_or_default()));
+        crate::a11y::teach_shortcuts(self.bar.widget());
     }
 
     fn emit(&self, action: FilteredAction) {
@@ -688,7 +663,7 @@ impl FilteredView {
             words.append(&count);
             let tab = gtk::Button::new();
             tab.set_child(Some(&words));
-            tab.add_css_class("flat");
+            postio_widgets::widgets::button::style(&tab, Kind::Ghost, Size::Regular);
             tab.add_css_class("focus-filtered-tab");
             if index == self.tab.get() {
                 tab.add_css_class("focus-filtered-tab-on");

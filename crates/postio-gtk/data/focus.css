@@ -1866,9 +1866,23 @@ button.focus-compose-detach {
   border-bottom: 1px solid var(--postio-hairline);
 }
 
+/* The header and tabs are set as the inbox's strip: the title as its
+   place, the controls its ghost buttons in ink, the note as its counts,
+   and the sweep's words bold as the has-action toggle's. */
 .focus-filtered-title {
   font-weight: bold;
-  font-size: var(--postio-text-ui);
+  font-size: var(--postio-text-reading);
+}
+
+button.focus-filtered-back,
+button.focus-filtered-sweep,
+button.focus-filtered-tab {
+  color: var(--postio-ink);
+  padding: 0 var(--postio-space-2);
+}
+
+.focus-filtered-sweep label:not(.postio-keyhint) {
+  font-weight: bold;
 }
 
 .focus-filtered-subtitle {
@@ -1881,20 +1895,21 @@ button.focus-compose-detach {
   border-bottom: 1px solid var(--postio-hairline);
 }
 
-.focus-filtered-tab {
+button.focus-filtered-tab {
   min-height: 0;
   padding: var(--postio-space-1) var(--postio-space-3);
   border-radius: 999px;
   font-weight: normal;
 }
 
-.focus-filtered-tab-on {
+button.focus-filtered-tab.focus-filtered-tab-on {
   border: 1px solid var(--postio-hairline-strong);
   font-weight: bold;
 }
 
 .focus-filtered-note {
-  font-size: var(--postio-text-label);
+  color: var(--postio-dim);
+  font-size: var(--postio-text-ui);
 }
 
 .focus-filtered-list > row {

@@ -3,6 +3,7 @@
 //! reason; `R` restores the focused row, and `Ctrl+Z` takes that back.
 
 use gtk::gdk;
+use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
@@ -73,6 +74,7 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
         }
         let fixture = fixture().await;
         let (window, client) = fixture.open().await;
+        let strip = strip_type(&window);
         support::keys(&window, &["g", "f"]);
         assert!(
             crate::settle_until(async || {
@@ -96,6 +98,15 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
             said.iter().any(|line| line == "4") && said.iter().any(|line| line == "2")
         })
         .await;
+        // In the type of the strip it was opened from, once the tabs are
+        // drawn with their counts.
+        crate::settle_until(async || {
+            support::with_class(view.widget(), "focus-filtered-tab")
+                .iter()
+                .all(|tab| tab.width() > 0)
+        })
+        .await;
+        assert_header_in_strip_type(view.widget().upcast_ref::<gtk::Widget>(), &strip);
         let said = view.texts();
         for wanted in [
             "Filtered",
@@ -219,6 +230,9 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
         }
         let fixture = fixture().await;
         let (window, _client) = fixture.open().await;
+        // The inbox's bar is built hidden; its buttons are already dressed.
+        let inbox_mark_read = mark_read_in(&support::with_class(&window, "focus-bulk-bar"))
+            .expect("the inbox's bar has Mark read");
         support::keys(&window, &["g", "f"]);
         assert!(
             crate::settle_until(async || listed(&window).len() == 4).await,
@@ -233,6 +247,15 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
 
         support::press(&window, "x", gdk::ModifierType::empty());
         assert!(said("1 selected").await, "x: {:?}", view.texts());
+        // The bar is the inbox's: Mark read wears its button, label and keycap.
+        let mark_read = mark_read_in(&support::with_class(view.widget(), "focus-bulk-bar"))
+            .expect("the Filtered bar has Mark read");
+        assert!(mark_read.is_mapped(), "the Filtered bar is not on screen");
+        assert_eq!(
+            dress(&mark_read),
+            dress(&inbox_mark_read),
+            "the bar's Mark read"
+        );
         support::press(&window, "J", gdk::ModifierType::SHIFT_MASK);
         assert!(said("2 selected").await, "J: {:?}", view.texts());
         assert_eq!(view.selected().len(), 2);
@@ -289,6 +312,168 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
             listed(&window)
         );
     });
+}
+
+/// The inbox strip's type, read before leaving it: its place, its counts,
+/// its has-action toggle and that toggle's words.
+struct StripType {
+    place: (i32, gtk::pango::Weight),
+    counts: (i32, gtk::pango::Weight),
+    toggle: gtk::Widget,
+    toggle_words: (i32, gtk::pango::Weight),
+}
+
+fn one(root: &gtk::Widget, class: &str) -> gtk::Widget {
+    support::with_class(root, class)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("nothing wears {class}"))
+}
+
+fn strip_type(window: &postio_gtk::window::FocusWindow) -> StripType {
+    let strip = one(window.upcast_ref(), "focus-header-strip");
+    StripType {
+        place: font(&one(&strip, "focus-place-name")),
+        counts: font(&label_in(&one(&strip, "focus-counts"))),
+        toggle: one(&strip, "focus-has-action"),
+        toggle_words: font(&one(&strip, "focus-has-action-label")),
+    }
+}
+
+/// Filtered's header and tabs are set in the inbox strip's type: its title
+/// as the strip's place, its words as the strip's counts, its sweep as the
+/// has-action toggle, each control the strip's kind of button, and the tab
+/// on screen still bold in its outline.
+fn assert_header_in_strip_type(view: &gtk::Widget, strip: &StripType) {
+    assert_eq!(
+        font(&one(view, "focus-filtered-title")),
+        strip.place,
+        "the title"
+    );
+    let sweep = one(view, "focus-filtered-sweep");
+    assert_eq!(
+        font(&label_in(&sweep)),
+        strip.toggle_words,
+        "the sweep's words"
+    );
+    let back = one(view, "focus-filtered-back");
+    assert_eq!(font(&label_in(&back)).0, strip.counts.0, "Back's words");
+    assert_eq!(
+        font(&one(view, "focus-filtered-note")).0,
+        strip.counts.0,
+        "the note"
+    );
+    let tabs = support::with_class(view, "focus-filtered-tab");
+    assert_eq!(tabs.len(), 7, "the tabs");
+    for tab in &tabs {
+        for label in support::descendants(tab)
+            .iter()
+            .filter(|widget| widget.is::<gtk::Label>())
+        {
+            assert_eq!(font(label).0, strip.counts.0, "a tab's words");
+        }
+    }
+    let on = one(view, "focus-filtered-tab-on");
+    assert_eq!(
+        font(&label_in(&on)).1,
+        gtk::pango::Weight::Bold,
+        "the tab on screen"
+    );
+    let off = tabs
+        .iter()
+        .find(|tab| !tab.has_css_class("focus-filtered-tab-on"));
+    assert_ne!(
+        outline(&on),
+        outline(off.expect("a tab not on screen")),
+        "the tab on screen has no outline of its own"
+    );
+    for control in [&sweep, &back].into_iter().chain(&tabs) {
+        assert_eq!(
+            kind(control),
+            kind(&strip.toggle),
+            "{:?} is not the strip's kind of button",
+            control.css_classes()
+        );
+    }
+}
+
+/// The first label under `root`.
+fn label_in(root: &gtk::Widget) -> gtk::Widget {
+    support::descendants(root)
+        .into_iter()
+        .find(|widget| widget.is::<gtk::Label>())
+        .expect("a label")
+}
+
+/// The size and weight a label is drawn in.
+fn font(label: &gtk::Widget) -> (i32, gtk::pango::Weight) {
+    let font = label.pango_context().font_description().expect("a font");
+    (font.size(), font.weight())
+}
+
+/// The colour of a widget's top border, as drawn.
+fn outline(widget: &gtk::Widget) -> String {
+    let paintable = gtk::WidgetPaintable::new(Some(widget));
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(
+        &snapshot,
+        f64::from(widget.width()),
+        f64::from(widget.height()),
+    );
+    let node = snapshot.to_node().expect("something drawn");
+    let renderer = widget
+        .native()
+        .expect("a native")
+        .renderer()
+        .expect("a renderer");
+    let texture = renderer.render_texture(&node, None);
+    let (texture_width, texture_height) = (texture.width(), texture.height());
+    let stride = usize::try_from(texture_width * 4).expect("a width");
+    let mut pixels = vec![0u8; stride * usize::try_from(texture_height).expect("a height")];
+    texture.download(&mut pixels, stride);
+    // The middle of the top edge.
+    let at = usize::try_from(texture_width / 2 * 4).expect("a column");
+    format!("{:?}", &pixels[at..at + 4])
+}
+
+/// The shared button kind and size a button is dressed as.
+fn kind(button: &gtk::Widget) -> Vec<String> {
+    let mut classes: Vec<String> = button
+        .css_classes()
+        .iter()
+        .map(|class| class.to_string())
+        .filter(|class| class.starts_with("postio-button"))
+        .collect();
+    classes.sort();
+    classes
+}
+
+/// The button reading "Mark read" under any of `bars`.
+fn mark_read_in(bars: &[gtk::Widget]) -> Option<gtk::Widget> {
+    bars.iter().flat_map(support::descendants).find(|widget| {
+        widget.is::<gtk::Button>()
+            && support::descendants(widget).iter().any(|inner| {
+                inner
+                    .downcast_ref::<gtk::Label>()
+                    .is_some_and(|label| label.text() == "Mark read")
+            })
+    })
+}
+
+/// What a button is drawn from: each widget's type and classes, in order.
+fn dress(button: &gtk::Widget) -> Vec<(String, Vec<String>)> {
+    support::descendants(button)
+        .iter()
+        .map(|widget| {
+            let mut classes: Vec<String> = widget
+                .css_classes()
+                .iter()
+                .map(|class| class.to_string())
+                .collect();
+            classes.sort();
+            (widget.type_().name().to_owned(), classes)
+        })
+        .collect()
 }
 
 /// T126: the header strip says how many were filtered since local

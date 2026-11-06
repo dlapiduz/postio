@@ -547,10 +547,10 @@ impl FocusController {
             actions: words::BAR_VERBS
                 .iter()
                 .enumerate()
-                .map(|(index, (command, label))| FilteredBarAction {
-                    command: *command,
-                    label: (*label).to_owned(),
-                    key: hints::key(keymap, *command),
+                .map(|(index, verb)| FilteredBarAction {
+                    command: verb.command,
+                    label: verb.label.to_owned(),
+                    key: hints::key(keymap, verb.command),
                     primary: index == 0,
                 })
                 .collect(),
