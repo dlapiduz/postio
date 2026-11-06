@@ -24,6 +24,8 @@ These are the traps in this repository that are still live and that no check, ho
 
 **`has_focus()` is false on a focused widget in a headless window.** It requires an active toplevel, and a headless window never is one. Use `is_focus()`, `GtkWindowExt::focus`, or `state_flags().contains(gtk::StateFlags::FOCUSED)`.
 
+**A running Postio fails the desktop suite's activation cases.** The installed app owns `dev.postio.Postio` on your session bus, so a case's second `activate` goes to it and the case dies with no message. Quit Postio (and its Flatpak) before running `desktop::`; CI has none running.
+
 **To assert on pixels, count real frames, then wait until two renders agree.** `pump()` returns at once when nothing is pending, so it does not wait for anything. Treat stability as the precondition, never as the assertion. Before trusting "no change", push a loud CSS override to prove the harness can see one.
 
 **The test display lays nothing out for WebKit, which still renders the composer.** Assert on the cascade, such as `getComputedStyle(el).color` or DOM attributes. Never assert on geometry, and `getComputedStyle(el).width` counts as geometry. Reader layout belongs to `postio-render` and is asserted headlessly in its own tests (`notes/2026-09-27-the-reader-renders-without-a-display.md`).
