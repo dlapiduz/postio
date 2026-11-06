@@ -10,9 +10,22 @@
 //! filing pass that turns one into the other (T122) is the place that sees
 //! both and holds them equal. The `CHECK` is the backstop either way -- a
 //! reason outside it is refused, never stored.
+//!
+//! # The reason travels with the message (#2076)
+//!
+//! A decision is a row in this store, and another machine on the same
+//! account has its own store. So the filing pass also gives the message its
+//! reason's keyword ([`FilterReason::keyword`]), which the server keeps and
+//! every machine's sync reads back; [`FilterDecisionRepository::follow`]
+//! turns a keyword on a message in the Archive into a decision there. A
+//! restore takes the keyword off and the message out of the Archive, so the
+//! other machine's copy leaves its Filtered with the row the move removes.
+//! A backend with no keywords (Gmail's) drops it, and filtering stays as
+//! local as it was.
 
 use chrono::{DateTime, Utc};
 use postio_model::ids::MessageId;
+use postio_model::{Flag, FlagSet};
 
 use super::{from_millis, to_millis, unknown_enum};
 
@@ -22,7 +35,7 @@ use crate::store::Connection;
 use turso::Row;
 
 /// Why a message was filtered: the fixed vocabulary of FR-113.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FilterReason {
     /// Unsolicited mail.
     Spam,
@@ -56,6 +69,20 @@ impl FilterReason {
         Self::ALL.into_iter().find(|reason| reason.as_str() == name)
     }
 
+    /// The keyword a message filtered for this reason carries on the
+    /// server, `$PostioFiltered-notification`: what tells another machine
+    /// why the message is in the Archive.
+    pub fn keyword(self) -> Flag {
+        Flag::Keyword(format!("$PostioFiltered-{}", self.as_str()))
+    }
+
+    /// The reason whose keyword `flags` carry, if any.
+    pub fn in_flags(flags: &FlagSet) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|reason| flags.contains(&reason.keyword()))
+    }
+
     /// Every reason, in the order the Filtered view's tabs list them.
     pub const ALL: [FilterReason; 6] = [
         FilterReason::Spam,
@@ -74,7 +101,8 @@ pub enum FilterLayer {
     Header,
     /// The shipped automated-senders table.
     Senders,
-    /// The server's own verdict, `$Junk`.
+    /// The server's word: its own verdict, `$Junk`, or the reason's
+    /// keyword another machine's filing put on the message.
     Server,
     /// The person's own model (milestone 2).
     Model,
@@ -180,6 +208,36 @@ impl<'a> FilterDecisionRepository<'a> {
             read_decision,
         )
         .await
+    }
+
+    /// Records what another machine decided, as `flags` say it: a message in
+    /// the Archive carrying a reason's keyword is filtered for that reason,
+    /// as of when it arrived. Answers whether a decision was recorded.
+    ///
+    /// Only where this store has none -- a decision it already holds, or a
+    /// restore the person made here, is its own word -- and only in the
+    /// Archive, which is where filtered mail is: a keyword seen while the
+    /// message is still in an inbox is another machine's filing on its way,
+    /// and the copy that lands in the Archive is the one that gets it.
+    pub async fn follow(&self, message: MessageId, flags: &FlagSet) -> Result<bool> {
+        let Some(reason) = FilterReason::in_flags(flags) else {
+            return Ok(false);
+        };
+        let recorded = sql::execute(
+            self.connection,
+            "INSERT OR IGNORE INTO filter_decisions
+                    (message_id, reason, source, layer, decided_at)
+             SELECT m.id, ?2, NULL, ?3, m.received_at
+               FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id
+              WHERE m.id = ?1 AND b.role = 'archive'",
+            vec![
+                turso::Value::Integer(message.get()),
+                turso::Value::Text(reason.as_str().to_owned()),
+                turso::Value::Text(FilterLayer::Server.as_str().to_owned()),
+            ],
+        )
+        .await?;
+        Ok(recorded > 0)
     }
 
     /// Marks the decision on `message` restored at `at`, as `R` does, or

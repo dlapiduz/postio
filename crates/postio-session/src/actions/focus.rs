@@ -21,8 +21,8 @@ use postio_model::{
 };
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, DigestRepository, DraftRepository, FilterDecisionRepository, InviteState,
-    MailboxRepository, MarkerRepository, ReminderRepository, ThreadRepository,
+    AccountRepository, DigestRepository, DraftRepository, FilterDecisionRepository, FilterReason,
+    InviteState, MailboxRepository, MarkerRepository, ReminderRepository, ThreadRepository,
 };
 
 use super::{Actions, Aim, Applied, Destination, RSVP_WINDOW, mailbox_for, store_failure};
@@ -499,6 +499,10 @@ impl Actions {
             let transaction = connection.transaction().await.map_err(store_failure)?;
             {
                 let decisions = FilterDecisionRepository::new(&transaction);
+                // What the account's other machines are told (#2076): no
+                // reason on a restored message, and its own reason again
+                // on one filed back.
+                let mut marking: BTreeMap<Option<FilterReason>, Vec<&Message>> = BTreeMap::new();
                 for row in &rows {
                     if !decisions
                         .restore(row.id, restored.then_some(now))
@@ -507,11 +511,34 @@ impl Actions {
                     {
                         continue;
                     }
+                    let reason = if restored {
+                        None
+                    } else {
+                        decisions
+                            .get(row.id)
+                            .await
+                            .map_err(store_failure)?
+                            .map(|decision| decision.reason)
+                    };
+                    marking.entry(reason).or_default().push(row);
                     ids.push(row.id);
                     senders.extend(row.from.iter().map(EmailAddress::normalized));
                     if row.mailbox_id != destination {
                         moved.entry(row.mailbox_id).or_default().push(row.id);
                     }
+                }
+                // Before the move, which clears what the server knows the
+                // message by.
+                for (reason, rows) in &marking {
+                    postio_storage::actions::mark_filtered(
+                        &transaction,
+                        account,
+                        rows,
+                        *reason,
+                        now,
+                    )
+                    .await
+                    .map_err(store_failure)?;
                 }
                 if !moved.is_empty() {
                     postio_storage::actions::relocate(
@@ -696,6 +723,12 @@ impl Actions {
                         moved.entry(row.mailbox_id).or_default().push(row.id);
                     }
                 }
+                // Unmarked for the account's other machines too (#2076),
+                // before the move clears what the server knows it by.
+                let unmarked: Vec<&Message> = rows.iter().collect();
+                postio_storage::actions::mark_filtered(&transaction, account, &unmarked, None, now)
+                    .await
+                    .map_err(store_failure)?;
                 if !moved.is_empty() {
                     postio_storage::actions::relocate(
                         &transaction,

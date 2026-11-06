@@ -250,13 +250,21 @@ async fn a_filtered_arrival_is_archived_with_its_reason_and_the_move_queued() {
         .pending(world.account.id, chrono::Utc::now())
         .await
         .expect("a read");
-    assert_eq!(queued.len(), 1, "one operation for the server: {queued:?}");
+    let operations: Vec<Operation> = queued.into_iter().map(|queued| queued.operation).collect();
     assert_eq!(
-        queued[0].operation,
-        Operation::Move {
-            from: world.inbox.id,
-            to: archive.id
-        }
+        operations,
+        vec![
+            // #2076: the reason first, for the account's other machines,
+            // so the server moves a message that already says why.
+            Operation::SetFlags {
+                flags: [FilterReason::Notification.keyword()].into_iter().collect()
+            },
+            Operation::Move {
+                from: world.inbox.id,
+                to: archive.id
+            },
+        ],
+        "the reason, then the move, for the server"
     );
 }
 
@@ -278,7 +286,10 @@ async fn a_filtered_arrival_can_be_asked_for_once_its_move_has_drained() {
         .drain(&world.connection, world.account.id, chrono::Utc::now())
         .await
         .expect("drain");
-    assert_eq!(report.applied, 1, "the move reached the server: {report:?}");
+    assert_eq!(
+        report.applied, 2,
+        "the reason and the move reached the server: {report:?}"
+    );
     // What the engine does with the report: sync each folder it names.
     let mailboxes = postio_storage::repository::MailboxRepository::new(&world.connection);
     for mailbox in &report.needs_resync {
@@ -648,4 +659,130 @@ async fn a_reply_to_a_surfaced_reminder_settles_it() {
         reminders.surfaced().await.expect("a read").is_empty(),
         "and no longer surfaced"
     );
+}
+
+// --- Another machine on the same account (#2076) -----------------------------------
+
+/// A second store, for the same account: another machine, with its own
+/// inbox and archive, that has synced neither yet.
+async fn another_machine() -> (postio_storage::Store, Checkout, Mailbox, Mailbox) {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, INBOX).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
+    assert_eq!(archive.role, MailboxRole::Archive);
+    (database, connection, inbox, archive)
+}
+
+/// Sync each of `mailboxes` on `connection`, the way the other machine's
+/// engine would.
+async fn sync_each(world: &World, connection: &Checkout, mailboxes: &[&Mailbox]) {
+    for mailbox in mailboxes {
+        sync_mailbox(
+            connection,
+            &world.backend,
+            mailbox,
+            &CancelToken::new(),
+            |_| {},
+        )
+        .await
+        .expect("a sync");
+    }
+}
+
+/// What `connection`'s Filtered view lists: each subject, with its reason.
+async fn filtered_on(connection: &Connection) -> Vec<(String, FilterReason)> {
+    let decisions = FilterDecisionRepository::new(connection)
+        .filtered(None, 0, 50)
+        .await
+        .expect("a read");
+    let mut listed = Vec::new();
+    for decision in decisions {
+        let message = MessageRepository::new(connection)
+            .get(decision.message)
+            .await
+            .expect("a read")
+            .expect("the message");
+        listed.push((message.subject.unwrap_or_default(), decision.reason));
+    }
+    listed
+}
+
+/// Drain `world`'s queue to the server, as its engine does once online.
+async fn drain(world: &World) {
+    let report = Drainer::new(&world.backend)
+        .drain(&world.connection, world.account.id, chrono::Utc::now())
+        .await
+        .expect("drain");
+    assert!(
+        report.failed.is_empty(),
+        "nothing the server refused: {report:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_message_filtered_on_one_machine_is_filtered_on_another() {
+    // #2076: filing used to say why only in the store that filed, so the
+    // other machine saw an archived message and no reason. The reason now
+    // travels with the message, and the other machine's Filtered lists it.
+    let world = world(true).await;
+    world
+        .deliver(mail(1, "Forge <notifications@forge.example>", ""))
+        .await;
+    world.pass(&pass()).await;
+    drain(&world).await;
+
+    let (_database, other, inbox, archive) = another_machine().await;
+    sync_each(&world, &other, &[&inbox, &archive]).await;
+
+    assert_eq!(
+        filtered_on(&other).await,
+        vec![("Arrival 1".to_owned(), FilterReason::Notification)],
+        "the other machine lists it in Filtered, under its reason"
+    );
+}
+
+#[tokio::test]
+async fn mail_the_person_archived_by_hand_is_not_filtered_on_another_machine() {
+    // The reason travels only with what filing filed: a message archived
+    // by hand reaches the other machine's archive with nothing to say.
+    let world = world(true).await;
+    world.deliver(mail(1, "Ada <ada@example.org>", "")).await;
+    world
+        .pass(&FocusFiling::with_classifier(Arc::new(FilesNothing)))
+        .await;
+    let (id, _) = world.id_of("Arrival 1").await;
+    let row = MessageRepository::new(&world.connection)
+        .get(id)
+        .await
+        .expect("a read")
+        .expect("the message");
+    let archive = world.archive.as_ref().expect("an archive");
+    postio_storage::actions::relocate(
+        &world.connection,
+        world.account.id,
+        &[(world.inbox.id, vec![row.id])].into_iter().collect(),
+        archive.id,
+        postio_storage::actions::Relocation::Move,
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("archived");
+    drain(&world).await;
+
+    let (_database, other, inbox, other_archive) = another_machine().await;
+    sync_each(&world, &other, &[&inbox, &other_archive]).await;
+
+    assert_eq!(filtered_on(&other).await, Vec::new());
+}
+
+/// Files nothing.
+#[derive(Debug)]
+struct FilesNothing;
+
+impl Classifier for FilesNothing {
+    fn at_filing(&self, _: &FiledMessage<'_>, _: &dyn Facts) -> Outcome {
+        Outcome::default()
+    }
 }
