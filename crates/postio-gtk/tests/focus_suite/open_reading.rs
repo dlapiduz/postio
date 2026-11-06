@@ -42,6 +42,11 @@ pub(crate) fn scroller_of(widget: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow
         .expect("inside a scroller")
 }
 
+/// The widget the column scrolls: its coordinates are the column's.
+fn column_child(view: &impl IsA<gtk::Widget>) -> gtk::Widget {
+    scroller_of(view).child().expect("the column has a child")
+}
+
 /// A message with a long plain body.
 async fn long_message(fixture: &Fixture) {
     let (message, _) = fixture
@@ -636,5 +641,97 @@ pub fn opening_the_quoted_fold_grows_the_body_and_shows_the_quote() {
             !fold_line.is_visible(),
             "the fold line still offers the fold it just opened"
         );
+    });
+}
+
+/// Copying from the open message as a person does: drag across words of
+/// the body, then Ctrl+C, wherever the keyboard was left. What is on the
+/// clipboard is the words they dragged across.
+pub fn ctrl_c_copies_what_was_dragged_across_the_body() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Directions",
+                "Gate code",
+                10,
+            )
+            .await;
+        // Far enough down a long body that the column has to be scrolled
+        // to reach it: taking the selection must not move the page.
+        let body = format!(
+            "{}The gate code is 4417 and the door sticks. {}",
+            "A line long enough to scroll. ".repeat(300),
+            "A line long enough to scroll. ".repeat(300),
+        );
+        fixture.write_body(message, &body).await;
+        let window = opened(&fixture, 1).await;
+        let reading = window.reading().expect("open");
+        let view = reading.reader().view();
+        // A long body is laid out in passes: wait for the one that reaches
+        // the words.
+        assert!(
+            crate::settle_until(async || view
+                .document()
+                .is_some_and(|document| !document.text.find("4417").is_empty()))
+            .await,
+            "the body never laid out as far as the gate code"
+        );
+        let document = view.document().expect("a snapshot");
+        let code = document.text.find("4417")[0].clone();
+        let rect = document.text.rects(code)[0];
+        let column = scroller_of(view).vadjustment();
+        let from_top = view
+            .compute_point(&column_child(view), &gtk::graphene::Point::zero())
+            .map_or(0.0, |at| f64::from(at.y()));
+        column.set_value(from_top + rect.y0 - column.page_size() / 2.0);
+        // The page is where it rests, before anything is selected: two
+        // frames apart, the same.
+        let last = std::cell::Cell::new(column.value());
+        assert!(
+            crate::settle_until(async || {
+                crate::settle();
+                let now = column.value();
+                now == last.replace(now)
+            })
+            .await,
+            "the page never came to rest"
+        );
+        let settled = column.value();
+        // The words in the view's own coordinates: the document's, less
+        // whatever the view itself is scrolled by.
+        let scrolled = |adjustment: Option<gtk::Adjustment>| adjustment.map_or(0.0, |a| a.value());
+        let y = (rect.center().y - scrolled(view.vadjustment())) as f32;
+        let x = |at: f64| (at - scrolled(view.hadjustment())) as f32;
+        view.drag_select(
+            gtk::graphene::Point::new(x(rect.x0 + 0.5), y),
+            gtk::graphene::Point::new(x(rect.x1 - 0.5), y),
+        );
+        let selected = view.selection().expect("the drag selected something");
+        assert_eq!(document.text.slice(selected), "4417");
+
+        let clipboard = gtk::gdk::Display::default().expect("a display").clipboard();
+        clipboard.set_text("something else");
+        support::press(&window, "c", gtk::gdk::ModifierType::CONTROL_MASK);
+        let text = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let slot = text.clone();
+        clipboard.read_text_async(None::<&gtk::gio::Cancellable>, move |result| {
+            *slot.borrow_mut() = Some(result.ok().flatten().map(|s| s.to_string()));
+        });
+        assert!(crate::settle_until(async || text.borrow().is_some()).await);
+        assert_eq!(
+            text.borrow().clone().flatten().as_deref(),
+            Some("4417"),
+            "Ctrl+C did not copy the selection; the keyboard was on a {}",
+            gtk::prelude::GtkWindowExt::focus(&window)
+                .map(|widget| widget.type_().name().to_owned())
+                .unwrap_or_default()
+        );
+        crate::settle();
+        assert_eq!(column.value(), settled, "selecting moved the page");
     });
 }

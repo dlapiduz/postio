@@ -163,10 +163,34 @@ impl BodyView {
         }
     }
 
+    /// Hold `range` as the selection. A selection takes the keyboard, as a
+    /// text view's does: Ctrl+C is the view's own shortcut, and a drag
+    /// moves no focus by itself, so the key would otherwise go to wherever
+    /// the keyboard was left and copy nothing.
     pub(super) fn set_selection(&self, range: Option<std::ops::Range<usize>>) {
+        if range.is_some() && !self.is_focus() {
+            self.take_keyboard();
+        }
         self.imp().selection.replace(range);
         self.announce_selection();
         self.queue_draw();
+    }
+
+    /// Take the keyboard without moving the page. A view that flows in a
+    /// column sits in the column's viewport, which scrolls to whatever takes
+    /// focus: it would carry the words being selected away from the pointer.
+    fn take_keyboard(&self) {
+        let viewport = self
+            .ancestor(gtk::Viewport::static_type())
+            .and_downcast::<gtk::Viewport>();
+        let scrolled = viewport.as_ref().map(gtk::Viewport::is_scroll_to_focus);
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(false);
+        }
+        self.grab_focus();
+        if let (Some(viewport), Some(scrolled)) = (viewport, scrolled) {
+            viewport.set_scroll_to_focus(scrolled);
+        }
     }
 
     /// The selection as X11 and Wayland's primary selection.

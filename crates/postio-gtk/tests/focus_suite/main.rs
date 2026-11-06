@@ -1025,6 +1025,10 @@ const CASES: &[(&str, fn())] = &[
         open_message::a_draft_from_another_client_offers_no_reply as fn(),
     ),
     (
+        "open_reading::ctrl_c_copies_what_was_dragged_across_the_body",
+        open_reading::ctrl_c_copies_what_was_dragged_across_the_body as fn(),
+    ),
+    (
         "open_reading::the_open_message_is_one_scrolling_column",
         open_reading::the_open_message_is_one_scrolling_column as fn(),
     ),
