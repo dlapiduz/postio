@@ -409,6 +409,35 @@ impl<'a> OperationQueueRepository<'a> {
         .await
     }
 
+    /// Where `message` sat on the server before the first move or delete of
+    /// it queued after `after` and not yet settled: that row's source mailbox
+    /// and its snapshot, when it has both.
+    ///
+    /// For a flag change queued ahead of a move. The move's local half nulls
+    /// the live row's coordinates, and a flag row carries a snapshot but no
+    /// mailbox, so the move that follows it is what still names both -- and
+    /// the queue drains in order, so the message is still there when the flag
+    /// change runs.
+    pub async fn leaving_after(
+        &self,
+        message: MessageId,
+        after: OperationId,
+    ) -> Result<Option<(MailboxId, RemoteId)>> {
+        let found: Option<(i64, String)> = sql::first(
+            self.connection,
+            "SELECT mailbox_id, source_remote_id FROM operation_queue
+              WHERE target_kind = 'message' AND target_id = ?1 AND id > ?2
+                AND op_type IN ('move', 'delete')
+                AND state IN ('pending', 'in_flight')
+                AND mailbox_id IS NOT NULL AND source_remote_id IS NOT NULL
+              ORDER BY id LIMIT 1",
+            bind![message.get(), after.get()],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        Ok(found.map(|(mailbox, remote_id)| (MailboxId::new(mailbox), RemoteId::new(remote_id))))
+    }
+
     /// One row.
     pub async fn get(&self, id: OperationId) -> Result<Option<QueuedOperation>> {
         let mut statement = sql::statement(

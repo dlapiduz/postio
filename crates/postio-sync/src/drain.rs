@@ -671,12 +671,33 @@ impl<'a> Drainer<'a> {
             _ => None,
         };
 
+        // A flag change queued ahead of a move: the move's local half nulled
+        // the live row's coordinates, and the queue drains in order, so the
+        // message is still where the move found it, which the move's row
+        // remembers. Without this the change was settled as obsolete and
+        // never reached the server (#2076).
+        let left = match (&step.operation, step.target, &message) {
+            (
+                Operation::SetFlags { .. } | Operation::ClearFlags { .. },
+                OperationTarget::Message(id),
+                Some(message),
+            ) if message.server.remote_id.is_none() => {
+                OperationQueueRepository::new(connection)
+                    .leaving_after(id, step.head())
+                    .await?
+            }
+            _ => None,
+        };
+
         let (mailbox, destination) = match &step.operation {
             Operation::Move { from, to } => (*from, Some(*to)),
             Operation::Delete { from, trash } => (*from, Some(*trash)),
             Operation::Expunge { mailbox } | Operation::Purge { mailbox } => (*mailbox, None),
             Operation::SetFlags { .. } | Operation::ClearFlags { .. } => match &message {
-                Some(message) => (message.mailbox_id, None),
+                Some(message) => (
+                    left.as_ref().map_or(message.mailbox_id, |(from, _)| *from),
+                    None,
+                ),
                 None => {
                     return Ok(Resolved::Obsolete {
                         reason: "the message is no longer in the local store".to_owned(),
@@ -714,7 +735,7 @@ impl<'a> Drainer<'a> {
                             .await?
                             .and_then(|row| row.source_remote_id)
                     }
-                    _ => None,
+                    _ => left.map(|(_, remote_id)| remote_id),
                 };
                 match snapshot.or(message.server.remote_id.clone()) {
                     Some(remote_id) => vec![remote_id],
