@@ -20,6 +20,7 @@ use postio_model::MessageId;
 use postio_ui::filtered;
 use postio_widgets::widgets::keyhint::{self, KeyLine};
 use postio_widgets::widgets::space::{S1, S3};
+use postio_widgets::widgets::{Kind, Size};
 
 use crate::bulk::Bulk;
 
@@ -85,7 +86,7 @@ impl FilteredView {
     /// The view, reading through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
         let back = gtk::Button::new();
-        back.add_css_class("flat");
+        postio_widgets::widgets::button::style(&back, Kind::Ghost, Size::Regular);
         back.add_css_class("focus-filtered-back");
         let back_row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         back_row.append(&gtk::Image::from_icon_name("go-previous-symbolic"));
@@ -102,7 +103,7 @@ impl FilteredView {
         // FR-118: filtering what is already in the inbox is a deliberate
         // command, and this is where filtering lives. It asks first.
         let sweep = gtk::Button::new();
-        sweep.add_css_class("flat");
+        postio_widgets::widgets::button::style(&sweep, Kind::Ghost, Size::Regular);
         sweep.add_css_class("focus-filtered-sweep");
         let sweep_words = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         sweep.set_child(Some(&sweep_words));
@@ -662,7 +663,7 @@ impl FilteredView {
             words.append(&count);
             let tab = gtk::Button::new();
             tab.set_child(Some(&words));
-            tab.add_css_class("flat");
+            postio_widgets::widgets::button::style(&tab, Kind::Ghost, Size::Regular);
             tab.add_css_class("focus-filtered-tab");
             if index == self.tab.get() {
                 tab.add_css_class("focus-filtered-tab-on");

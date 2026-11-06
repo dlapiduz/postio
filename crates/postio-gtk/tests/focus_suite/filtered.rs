@@ -320,6 +320,144 @@ pub fn filtered_selection_bar_is_dressed_as_the_inbox_bar() {
     });
 }
 
+/// Filtered's header and tabs are set in the inbox strip's type: its title
+/// as the strip's place, its words as the strip's counts, its sweep as the
+/// has-action toggle, each control the strip's kind of button.
+pub fn filtered_header_is_set_in_the_inbox_strip_type() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = fixture().await;
+        let (window, _client) = fixture.open().await;
+        let one = |root: &gtk::Widget, class: &str| {
+            support::with_class(root, class)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| panic!("nothing wears {class}"))
+        };
+        let strip = one(window.upcast_ref(), "focus-header-strip");
+        let place = font(&one(&strip, "focus-place-name"));
+        let counts = font(&label_in(&one(&strip, "focus-counts")));
+        let toggle = one(&strip, "focus-has-action");
+        let toggle_words = font(&one(&strip, "focus-has-action-label"));
+
+        support::keys(&window, &["g", "f"]);
+        assert!(
+            crate::settle_until(async || listed(&window).len() == 4).await,
+            "Filtered never listed: {:?}",
+            listed(&window)
+        );
+        let view: gtk::Widget = window
+            .filtered()
+            .expect("the view")
+            .widget()
+            .clone()
+            .upcast();
+        assert_eq!(
+            font(&one(&view, "focus-filtered-title")),
+            place,
+            "the title"
+        );
+        let sweep = one(&view, "focus-filtered-sweep");
+        assert_eq!(font(&label_in(&sweep)), toggle_words, "the sweep's words");
+        let back = one(&view, "focus-filtered-back");
+        assert_eq!(font(&label_in(&back)).0, counts.0, "Back's words");
+        assert_eq!(
+            font(&one(&view, "focus-filtered-note")).0,
+            counts.0,
+            "the note"
+        );
+        let tabs = support::with_class(&view, "focus-filtered-tab");
+        assert_eq!(tabs.len(), 7, "the tabs");
+        for tab in &tabs {
+            for label in support::descendants(tab)
+                .iter()
+                .filter(|widget| widget.is::<gtk::Label>())
+            {
+                assert_eq!(font(label).0, counts.0, "a tab's words");
+            }
+        }
+        // The tab on screen still says so: bold, in its outline.
+        let on = one(&view, "focus-filtered-tab-on");
+        assert_eq!(
+            font(&label_in(&on)).1,
+            gtk::pango::Weight::Bold,
+            "the tab on screen"
+        );
+        let off = tabs
+            .iter()
+            .find(|tab| !tab.has_css_class("focus-filtered-tab-on"));
+        assert_ne!(
+            outline(&on),
+            outline(off.expect("a tab not on screen")),
+            "the tab on screen has no outline of its own"
+        );
+        for control in [&sweep, &back].into_iter().chain(&tabs) {
+            assert_eq!(
+                kind(control),
+                kind(&toggle),
+                "{:?} is not the strip's kind of button",
+                control.css_classes()
+            );
+        }
+    });
+}
+
+/// The first label under `root`.
+fn label_in(root: &gtk::Widget) -> gtk::Widget {
+    use gtk::prelude::*;
+    support::descendants(root)
+        .into_iter()
+        .find(|widget| widget.is::<gtk::Label>())
+        .expect("a label")
+}
+
+/// The size and weight a label is drawn in.
+fn font(label: &gtk::Widget) -> (i32, gtk::pango::Weight) {
+    use gtk::prelude::*;
+    let font = label.pango_context().font_description().expect("a font");
+    (font.size(), font.weight())
+}
+
+/// The colour of a widget's top border, as drawn.
+fn outline(widget: &gtk::Widget) -> String {
+    use gtk::prelude::*;
+    let width = widget.width();
+    let height = widget.height();
+    let paintable = gtk::WidgetPaintable::new(Some(widget));
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(&snapshot, f64::from(width), f64::from(height));
+    let node = snapshot.to_node().expect("something drawn");
+    let renderer = widget
+        .native()
+        .expect("a native")
+        .renderer()
+        .expect("a renderer");
+    let texture = renderer.render_texture(&node, None);
+    let (texture_width, texture_height) = (texture.width(), texture.height());
+    let stride = usize::try_from(texture_width * 4).expect("a width");
+    let mut pixels = vec![0u8; stride * usize::try_from(texture_height).expect("a height")];
+    texture.download(&mut pixels, stride);
+    // The middle of the top edge.
+    let at = usize::try_from(texture_width / 2 * 4).expect("a column");
+    format!("{:?}", &pixels[at..at + 4])
+}
+
+/// The shared button kind and size a button is dressed as.
+fn kind(button: &gtk::Widget) -> Vec<String> {
+    use gtk::prelude::*;
+    let mut classes: Vec<String> = button
+        .css_classes()
+        .iter()
+        .map(|class| class.to_string())
+        .filter(|class| class.starts_with("postio-button"))
+        .collect();
+    classes.sort();
+    classes
+}
+
 /// The button reading "Mark read" under any of `bars`.
 fn mark_read_in(bars: &[gtk::Widget]) -> Option<gtk::Widget> {
     use gtk::prelude::*;
