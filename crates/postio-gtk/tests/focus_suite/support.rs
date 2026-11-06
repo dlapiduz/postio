@@ -986,17 +986,46 @@ pub fn deliver_with(
     {
         chain.push(parent);
     }
-    let fire = |widget: &gtk::Widget, phase: gtk::PropagationPhase| -> bool {
-        let controllers = widget.observe_controllers();
-        (0..controllers.n_items()).any(|at| {
-            let Some(keys) = controllers
-                .item(at)
-                .and_downcast::<gtk::EventControllerKey>()
+    // A widget's own shortcuts (a `ShortcutController` of local scope, as
+    // the reader's Ctrl+C is) answer in their phase as its key controllers
+    // do: a key whose trigger is this keyval and these modifiers runs the
+    // shortcut's action on the widget.
+    let shortcut = |widget: &gtk::Widget, shortcuts: &gtk::ShortcutController| -> bool {
+        (0..shortcuts.n_items()).any(|at| {
+            let Some(shortcut) = shortcuts.item(at).and_downcast::<gtk::Shortcut>() else {
+                return false;
+            };
+            let Some(trigger) = shortcut
+                .trigger()
+                .and_then(|trigger| trigger.downcast::<gtk::KeyvalTrigger>().ok())
             else {
                 return false;
             };
-            keys.propagation_phase() == phase
-                && keys.emit_by_name::<bool>("key-pressed", &[&keyval, &0u32, &state])
+            trigger.keyval() == key
+                && trigger.modifiers() == state
+                && shortcut.action().is_some_and(|action| {
+                    action.activate(gtk::ShortcutActionFlags::empty(), widget, None)
+                })
+        })
+    };
+    let fire = |widget: &gtk::Widget, phase: gtk::PropagationPhase| -> bool {
+        let controllers = widget.observe_controllers();
+        (0..controllers.n_items()).any(|at| {
+            let Some(controller) = controllers.item(at).and_downcast::<gtk::EventController>()
+            else {
+                return false;
+            };
+            if controller.propagation_phase() != phase {
+                return false;
+            }
+            if let Some(keys) = controller.downcast_ref::<gtk::EventControllerKey>() {
+                return keys.emit_by_name::<bool>("key-pressed", &[&keyval, &0u32, &state]);
+            }
+            controller
+                .downcast_ref::<gtk::ShortcutController>()
+                .is_some_and(|shortcuts| {
+                    shortcuts.scope() == gtk::ShortcutScope::Local && shortcut(widget, shortcuts)
+                })
         })
     };
     let claimed = chain
