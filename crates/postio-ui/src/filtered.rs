@@ -6,6 +6,7 @@
 use chrono::NaiveDate;
 use postio_core::{CommandId, Keymap};
 
+use crate::focus_dialog::Verb;
 use crate::hints::{self, Hint};
 
 /// The view's title.
@@ -140,9 +141,17 @@ pub const EMPTY: &str = "Nothing is filtered here";
 /// the one a selection is usually for. Delete and Flag stay keys, as Delete
 /// is off the main list's bar (screen 01); Archive is not here at all,
 /// since Filtered mail is archived already.
-pub const BAR_VERBS: [(CommandId, &str); 2] = [
-    (CommandId::RestoreFiltered, "Restore"),
-    (CommandId::ToggleRead, "Mark read"),
+pub const BAR_VERBS: &[Verb] = &[
+    Verb {
+        command: CommandId::RestoreFiltered,
+        label: "Restore",
+        slug: "restore",
+    },
+    Verb {
+        command: CommandId::ToggleRead,
+        label: "Mark read",
+        slug: "read",
+    },
 ];
 
 /// The selection's own keys, on the right of its bar: "x toggle",

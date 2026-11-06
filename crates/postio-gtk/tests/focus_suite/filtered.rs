@@ -291,6 +291,65 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
     });
 }
 
+/// The bar over a selection in Filtered is the inbox's bar: a verb both
+/// carry ("Mark read") wears the same button, label and keycap.
+pub fn filtered_selection_bar_is_dressed_as_the_inbox_bar() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = fixture().await;
+        let (window, _client) = fixture.open().await;
+        // The inbox's bar is built hidden; its buttons are already dressed.
+        let inbox = mark_read_in(&support::with_class(&window, "focus-bulk-bar"))
+            .expect("the inbox's bar has Mark read");
+        support::keys(&window, &["g", "f"]);
+        assert!(
+            crate::settle_until(async || listed(&window).len() == 4).await,
+            "Filtered never listed: {:?}",
+            listed(&window)
+        );
+        let view = window.filtered().expect("the view");
+        support::press(&window, "x", gdk::ModifierType::empty());
+        assert!(crate::settle_until(async || view.has_selection()).await);
+        let filtered = mark_read_in(&support::with_class(view.widget(), "focus-bulk-bar"))
+            .expect("the Filtered bar has Mark read");
+        assert!(filtered.is_mapped(), "the Filtered bar is not on screen");
+        assert_eq!(dress(&filtered), dress(&inbox));
+    });
+}
+
+/// The button reading "Mark read" under any of `bars`.
+fn mark_read_in(bars: &[gtk::Widget]) -> Option<gtk::Widget> {
+    use gtk::prelude::*;
+    bars.iter().flat_map(support::descendants).find(|widget| {
+        widget.is::<gtk::Button>()
+            && support::descendants(widget).iter().any(|inner| {
+                inner
+                    .downcast_ref::<gtk::Label>()
+                    .is_some_and(|label| label.text() == "Mark read")
+            })
+    })
+}
+
+/// What a button is drawn from: each widget's type and classes, in order.
+fn dress(button: &gtk::Widget) -> Vec<(String, Vec<String>)> {
+    use gtk::prelude::*;
+    support::descendants(button)
+        .iter()
+        .map(|widget| {
+            let mut classes: Vec<String> = widget
+                .css_classes()
+                .iter()
+                .map(|class| class.to_string())
+                .collect();
+            classes.sort();
+            (widget.type_().name().to_owned(), classes)
+        })
+        .collect()
+}
+
 /// T126: the header strip says how many were filtered since local
 /// midnight, with `g f`, and pressing it opens Filtered; the folders
 /// popover lists Filtered with the same count.

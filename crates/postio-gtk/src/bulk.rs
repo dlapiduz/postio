@@ -11,11 +11,12 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 use postio_core::{CommandId, Keymap};
+use postio_ui::focus_dialog::Verb;
 use postio_ui::hints;
 use postio_widgets::widgets::{Action, ActionBar, KeyLine};
 
-/// What the bar offers: `postio_ui::focus_dialog::BULK`, each button named
-/// `focus-bulk-<slug>`.
+/// What the list's bar offers: `postio_ui::focus_dialog::BULK`, each button
+/// named `focus-bulk-<slug>`.
 fn actions() -> &'static [Action] {
     crate::verbs::actions("focus-bulk-", postio_ui::focus_dialog::BULK)
 }
@@ -29,11 +30,22 @@ pub struct Bulk {
 }
 
 impl Bulk {
-    /// The bar, hidden until something is selected, its keys from `keymap`.
+    /// The list's bar, hidden until something is selected, its keys from
+    /// `keymap`.
     pub fn new(keymap: &Keymap) -> Self {
+        Self::offering(actions(), keymap)
+    }
+
+    /// The same bar offering `verbs` instead, for another list of mail
+    /// (Filtered), so a selection looks the same wherever it is made.
+    pub fn with_verbs(verbs: &'static [Verb], keymap: &Keymap) -> Self {
+        Self::offering(crate::verbs::actions("focus-bulk-", verbs), keymap)
+    }
+
+    fn offering(offered: &'static [Action], keymap: &Keymap) -> Self {
         let count = gtk::Label::new(None);
         count.add_css_class("focus-bulk-count");
-        let actions = ActionBar::new(actions(), "focus-bulk-actions");
+        let actions = ActionBar::new(offered, "focus-bulk-actions");
         let keys = KeyLine::new("focus-bulk-keys");
         actions.append_trailing(keys.widget());
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
