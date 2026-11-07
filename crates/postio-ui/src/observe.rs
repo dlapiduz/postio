@@ -52,6 +52,8 @@ pub enum Region {
     Conversation,
     Composer,
     Search,
+    /// A search's results, in the list's place (spec 010 D17).
+    Results,
     Palette,
     Picker,
     Cheatsheet,

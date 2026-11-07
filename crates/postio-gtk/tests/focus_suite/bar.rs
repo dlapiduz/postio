@@ -650,15 +650,18 @@ pub fn a_result_gives_its_subject_room_before_its_first_line() {
             "typing searched nothing: {:?}",
             bar.result_subjects()
         );
-        let label = support::with_class(bar.dropdown().widget(), "focus-dropdown-row-title")
-            .into_iter()
-            .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
-            .find(|label| label.text().contains(subject))
-            .expect("the hit's title is a label");
+        // Found again each time: the passages landing draws the rows anew.
+        let label = || {
+            support::with_class(bar.dropdown().widget(), "focus-dropdown-row-title")
+                .into_iter()
+                .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+                .find(|label| label.text().contains(subject) && label.width() > 0)
+        };
         assert!(
-            crate::settle_until(async || label.width() > 0).await,
-            "the result was never laid out"
+            crate::settle_until(async || label().is_some()).await,
+            "the hit was never laid out"
         );
+        let label = label().expect("laid out");
         assert!(
             !label.layout().is_ellipsized(),
             "the subject was cut ({} px) while the first line kept its room",

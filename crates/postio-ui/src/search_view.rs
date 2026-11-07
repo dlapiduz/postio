@@ -1580,6 +1580,46 @@ pub fn file_not_here(keymap: &Keymap) -> String {
     format!("That file isn\u{2019}t on {here} yet: open its message to download it")
 }
 
+/// An arrow key on the Files tab's grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridArrow {
+    /// The card before.
+    Left,
+    /// The card after.
+    Right,
+    /// The card above.
+    Up,
+    /// The card below.
+    Down,
+}
+
+/// Where `arrow` takes the Files tab's ring from `ring` among `count` cards
+/// laid `columns` across; `None` when it goes nowhere. With no ring yet,
+/// the first card. Down from a row with a shorter row under it lands on
+/// that row's last card, as Finder's grid does (the Mac's
+/// `FilesGrid.target`, which this is).
+pub fn grid_step(ring: Option<u64>, arrow: GridArrow, count: u64, columns: u64) -> Option<u64> {
+    if count == 0 {
+        return None;
+    }
+    let columns = columns.max(1);
+    let Some(ring) = ring else {
+        return Some(0);
+    };
+    match arrow {
+        GridArrow::Left => ring.checked_sub(1),
+        GridArrow::Right => (ring + 1 < count).then_some(ring + 1),
+        GridArrow::Up => ring.checked_sub(columns),
+        GridArrow::Down => {
+            if ring + columns < count {
+                return Some(ring + columns);
+            }
+            let last = count - 1;
+            (last / columns > ring / columns).then_some(last)
+        }
+    }
+}
+
 /// The results' tabs' commands, in their order: ⌘1–3 (§3.2).
 const RESULTS_TABS: [CommandId; 3] = [
     CommandId::ResultsConversations,
@@ -2977,6 +3017,26 @@ mod tests {
         );
         assert!(files_note(&mac, true).starts_with("contents are indexed on this Mac"));
         assert!(files_note(&mac, false).contains("still reading"));
+    }
+
+    #[test]
+    fn the_arrows_walk_the_files_grid_as_finder_does() {
+        use GridArrow::{Down, Left, Right, Up};
+        // Six cards, four across: 0 1 2 3 / 4 5.
+        assert_eq!(grid_step(None, Right, 6, 4), Some(0), "no ring: the first");
+        assert_eq!(grid_step(Some(0), Right, 6, 4), Some(1));
+        assert_eq!(grid_step(Some(0), Left, 6, 4), None);
+        assert_eq!(grid_step(Some(5), Right, 6, 4), None);
+        assert_eq!(grid_step(Some(1), Down, 6, 4), Some(5));
+        assert_eq!(
+            grid_step(Some(3), Down, 6, 4),
+            Some(5),
+            "down onto a shorter row lands on its last card"
+        );
+        assert_eq!(grid_step(Some(5), Down, 6, 4), None, "the last row");
+        assert_eq!(grid_step(Some(5), Up, 6, 4), Some(1));
+        assert_eq!(grid_step(Some(2), Up, 6, 4), None);
+        assert_eq!(grid_step(None, Down, 0, 4), None, "no cards");
     }
 
     /// #1825: Linux's words call the machine "this computer", as the

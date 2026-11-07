@@ -195,6 +195,43 @@ impl FilesGrid {
         self.grid.grab_focus();
     }
 
+    /// An arrow on the grid: the ring goes where it takes it among the
+    /// cards as they are laid out now, from `ring`, and the controller is
+    /// told, as a click tells it (the Mac's grid does the same). Whether it
+    /// went anywhere.
+    pub fn step(&self, arrow: postio_ui::search_view::GridArrow, ring: Option<u64>) -> bool {
+        let count = u64::from(self.cards.n_items());
+        let Some(to) = postio_ui::search_view::grid_step(ring, arrow, count, self.columns()) else {
+            return false;
+        };
+        self.feed.input(Input::ResultsPoint(to));
+        self.grid.scroll_to(
+            u32::try_from(to).unwrap_or(u32::MAX),
+            gtk::ListScrollFlags::NONE,
+            None,
+        );
+        true
+    }
+
+    /// How many cards the grid lays across now: those in its first row.
+    /// The grid takes two to four by its width.
+    fn columns(&self) -> u64 {
+        let mut child = self.grid.first_child();
+        let row_of = |card: &gtk::Widget| card.compute_bounds(&self.grid).map(|at| at.y());
+        let Some(top) = child.as_ref().and_then(row_of) else {
+            return 1;
+        };
+        let mut across = 0;
+        while let Some(card) = child {
+            if row_of(&card) != Some(top) {
+                break;
+            }
+            across += 1;
+            child = card.next_sibling();
+        }
+        across.max(1)
+    }
+
     /// The cards' names, in order: what a test reads.
     pub fn names(&self) -> Vec<String> {
         (0..u64::from(self.cards.n_items()))

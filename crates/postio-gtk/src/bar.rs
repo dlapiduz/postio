@@ -85,7 +85,7 @@ pub struct Bar {
     saved_row: gtk::Box,
     /// Where the keyboard goes when the bar closes: the list, once the
     /// window says which widget that is.
-    home: RefCell<Option<gtk::Widget>>,
+    home: RefCell<Option<Rc<dyn Fn()>>>,
     /// Spec 009's blend of lines: the saved row, the echo, the heading,
     /// the lines and their footer.
     blend: gtk::Box,
@@ -352,9 +352,11 @@ impl Bar {
         self.show_saved();
     }
 
-    /// Hand the keyboard to `home` whenever the bar closes.
-    pub fn set_home(&self, home: gtk::Widget) {
-        self.home.replace(Some(home));
+    /// Hand the keyboard home whenever the bar closes: `home` puts it
+    /// there, wherever that is then -- the list, or a search's results in
+    /// its place.
+    pub fn set_home(&self, home: impl Fn() + 'static) {
+        self.home.replace(Some(Rc::new(home)));
     }
 
     /// Show the bar with `text` in its field and `select` of it selected:
@@ -391,10 +393,13 @@ impl Bar {
                 .focus()
                 .is_some_and(|focus| focus.is_ancestor(&self.root) || focus == self.root)
         {
-            // To the list when the window said where that is, to nothing
+            // Home when the window said where that is, to nothing
             // otherwise: a window's own keys are heard from either.
+            root.set_focus(None::<&gtk::Widget>);
             let home = self.home.borrow().clone();
-            root.set_focus(home.as_ref());
+            if let Some(home) = home {
+                home();
+            }
         }
         self.over.set_visible(false);
         self.show_field(true);

@@ -2956,3 +2956,29 @@ fn a_result_says_where_a_digest_holds_it_and_its_account() {
         Some("in:Inbox \u{b7} work@example.org")
     );
 }
+
+/// #1825 (files-tab on GTK): back from the Files tab and into a new
+/// search's results, nothing says the new results found nothing.
+#[test]
+fn a_new_search_after_history_back_from_files_is_not_found_nothing() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let effects = run(&mut focus, CommandId::ResultsFiles, &rows);
+    let _ = settle(&mut focus, effects, &rows);
+    let effects = run(&mut focus, CommandId::HistoryBack, &rows);
+    let _ = settle(&mut focus, effects, &rows);
+    assert!(!focus.in_results(), "back in the inbox");
+    let effects = search(&mut focus, "atlas", &rows);
+    let said: Vec<_> = shown(&effects)
+        .into_iter()
+        .filter_map(|intent| match intent {
+            Intent::Relaxations(view) => Some(view.is_some()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !said.contains(&true),
+        "a search that found something said it found nothing: {said:?}"
+    );
+}

@@ -638,7 +638,7 @@ impl ResultsPane {
     }
 
     /// Whether the People tab's list is in the rows' place.
-    fn showing_people(&self) -> bool {
+    pub fn showing_people(&self) -> bool {
         self.body.visible_child_name().as_deref() == Some(PEOPLE)
     }
 
@@ -648,7 +648,7 @@ impl ResultsPane {
     }
 
     /// Whether the Files tab's grid is in the rows' place.
-    fn showing_files(&self) -> bool {
+    pub fn showing_files(&self) -> bool {
         self.body.visible_child_name().as_deref() == Some(FILES)
     }
 
@@ -659,6 +659,25 @@ impl ResultsPane {
         commands: &[CommandId],
     ) {
         self.quick_look.show(view, commands);
+    }
+
+    /// An arrow while the Files tab is shown: the grid's, two ways, as on
+    /// the Mac; elsewhere the arrows are the list's keys. Whether it took
+    /// it.
+    pub fn grid_arrow(&self, key: gtk::gdk::Key) -> bool {
+        use postio_ui::search_view::GridArrow;
+        if !self.showing_files() {
+            return false;
+        }
+        let arrow = match key {
+            gtk::gdk::Key::Left => GridArrow::Left,
+            gtk::gdk::Key::Right => GridArrow::Right,
+            gtk::gdk::Key::Up => GridArrow::Up,
+            gtk::gdk::Key::Down => GridArrow::Down,
+            _ => return false,
+        };
+        self.files.step(arrow, self.cursor.get());
+        true
     }
 
     /// The Files tab's grid.

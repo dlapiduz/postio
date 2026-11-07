@@ -502,6 +502,18 @@ const CASES: &[(&str, fn())] = &[
         results::nothing_found_offers_a_looser_search_that_finds_some as fn(),
     ),
     (
+        "results::a_search_after_one_that_found_nothing_shows_its_rows",
+        results::a_search_after_one_that_found_nothing_shows_its_rows as fn(),
+    ),
+    (
+        "results::the_tabs_go_by_their_keys",
+        results::the_tabs_go_by_their_keys as fn(),
+    ),
+    (
+        "results::escape_closes_a_dropdown_over_the_results_then_leaves_them",
+        results::escape_closes_a_dropdown_over_the_results_then_leaves_them as fn(),
+    ),
+    (
         "results::show_all_opens_the_results_and_back_returns_to_the_inbox",
         results::show_all_opens_the_results_and_back_returns_to_the_inbox as fn(),
     ),

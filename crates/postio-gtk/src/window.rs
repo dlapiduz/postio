@@ -858,6 +858,17 @@ impl FocusWindow {
         let Some(chord) = postio_widgets::keys::chord(key, state) else {
             return glib::Propagation::Proceed;
         };
+        // The Files tab's arrows walk its grid two ways (spec 010 FR-031),
+        // where elsewhere in the results they are the list's `Down`, `Up`
+        // and `Right` to open.
+        if state.is_empty()
+            && self.top_surface().is_none()
+            && self
+                .results()
+                .is_some_and(|results| results.grid_arrow(key))
+        {
+            return glib::Propagation::Stop;
+        }
         if self.imp().resolver.borrow().is_none() {
             return self.key_before_mail(&chord);
         }
@@ -1997,6 +2008,13 @@ impl FocusWindow {
     /// it: the cursor is the row that is drawn, and a row that also held
     /// GTK's focus would be a second ring.
     pub fn focus_list(&self) {
+        // A search's results stand in the list's place while they are up:
+        // the inbox's list behind them is not shown, and a keyboard left
+        // on it reaches nothing.
+        if let Some(results) = self.results() {
+            results.focus();
+            return;
+        }
         if let Some(pane) = self.pane() {
             gtk::prelude::GtkWindowExt::set_focus(self, Some(pane.view()));
         }
@@ -2683,8 +2701,13 @@ impl FocusWindow {
             let feed = feed.clone();
             move || feed.bar_tab()
         });
-        // Closing it hands the keyboard to the list.
-        bar.set_home(pane.view().clone().upcast());
+        // Closing it hands the keyboard home: to the list, or to a
+        // search's results while they stand in its place.
+        bar.set_home(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.focus_list()
+        ));
         // In place (spec C24): the bar's input is drawn over the top bar's
         // own field and its results hang below, so the bar lies over the
         // whole window rather than over the list.
@@ -3836,6 +3859,12 @@ impl FocusWindow {
         if imp.body.visible_child_name().as_deref() == Some(RESULTS) {
             imp.body.set_visible_child_name(MAIL);
             self.focus_list();
+        }
+        // The page is kept for the next search, and nothing of this one's
+        // may show in it: the controller says "found nothing" of the
+        // results it holds, and once they are left it holds none.
+        if let Some(results) = imp.results.borrow().as_ref() {
+            results.show_relaxations(None);
         }
     }
 
@@ -5764,6 +5793,11 @@ impl FocusWindow {
             Region::Reader
         } else if digest.is_some() {
             Region::Dialog
+        } else if self.results().is_some() && self.key_context() == KeyContext::Results {
+            // A search's results in the list's place, nothing over them:
+            // the window's controller hands their keys to the controller
+            // (`act`), wherever in the pane the focus sits.
+            Region::Results
         } else if focus.is_none() {
             // Focus leaves the keyboard on the window itself when nothing
             // is focused (a closed bar hands focus back to nothing, by

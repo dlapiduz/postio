@@ -104,6 +104,17 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
             "the bar stayed up"
         );
 
+        // A storyboard says where the keyboard is as a region: the
+        // results', which the Mac's storyboards check for (#1825).
+        assert!(
+            crate::settle_until(async || {
+                window.observe().keyboard.region == postio_ui::observe::Region::Results
+            })
+            .await,
+            "the keyboard is in {:?}, not the results",
+            window.observe().keyboard.region
+        );
+
         let first = results.cursor();
         assert!(first.is_some(), "no ring on the results");
         support::press(&window, "j", gtk::gdk::ModifierType::empty());
@@ -338,6 +349,148 @@ pub fn nothing_found_offers_a_looser_search_that_finds_some() {
             crate::settle_until(async || results.subjects().len() >= 3).await,
             "the budgets are not back: {:?}",
             results.subjects()
+        );
+    });
+}
+
+/// Spec 010 R10 (#1825): Ctrl+1-3 pick the results' tabs from the keyboard,
+/// and the keys go on reaching the results on each.
+pub fn the_tabs_go_by_their_keys() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
+        // Back to the inbox and into the results again first: the second
+        // time is where the keyboard was left on a page no longer shown.
+        assert!(
+            support::deliver_with(&window, "bracketleft", ctrl),
+            "History back was dropped"
+        );
+        assert!(
+            crate::settle_until(async || window.results().is_none()).await,
+            "History back did not go back to the inbox"
+        );
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew again"
+        );
+        assert!(
+            support::deliver_with(&window, "2", ctrl),
+            "Ctrl+2 was dropped"
+        );
+        assert!(
+            crate::settle_until(async || results.showing_files()).await,
+            "Ctrl+2 did not show the Files tab"
+        );
+        assert!(
+            support::deliver_with(&window, "3", ctrl),
+            "Ctrl+3 was dropped"
+        );
+        assert!(
+            crate::settle_until(async || results.showing_people()).await,
+            "Ctrl+3 did not show the People tab"
+        );
+        assert!(
+            support::deliver_with(&window, "1", ctrl),
+            "Ctrl+1 was dropped"
+        );
+        assert!(
+            crate::settle_until(async || !results.showing_people() && !results.showing_files())
+                .await,
+            "Ctrl+1 did not go back to the conversations"
+        );
+        assert!(
+            support::deliver(&window, "j"),
+            "the conversations' keys were dropped after the tabs"
+        );
+    });
+}
+
+/// Spec 010 (results-esc-ladder, #1825): `/` over the results opens the
+/// dropdown; Escape closes it and the results have the keyboard again;
+/// the next Escape leaves them for the inbox.
+pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let _results = show_all(&window).await;
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        assert!(
+            bar.is_open(),
+            "/ did not open the dropdown over the results"
+        );
+        assert!(
+            support::deliver(&window, "Escape"),
+            "the first Escape was dropped"
+        );
+        assert!(!bar.is_open(), "Escape left the dropdown up");
+        assert!(
+            window.results().is_some(),
+            "the first Escape left the results"
+        );
+        assert_eq!(
+            window.observe().keyboard.region,
+            postio_ui::observe::Region::Results,
+            "the keyboard is not back on the results"
+        );
+        assert!(
+            crate::settle_until(async || window.observe().keyboard.reachable).await,
+            "the keyboard went to the inbox behind the results: {}",
+            window.observe().keyboard.widget
+        );
+        assert!(
+            support::deliver(&window, "Escape"),
+            "the second Escape was dropped"
+        );
+        assert!(
+            crate::settle_until(async || window.results().is_none()).await,
+            "the second Escape did not leave the results"
+        );
+    });
+}
+
+/// #1825: a search that found nothing, left, and then one that finds
+/// something: its rows are shown, not the first one's "Nothing matches".
+pub fn a_search_after_one_that_found_nothing_shows_its_rows() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("zebra");
+        crate::settle();
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.results().is_some_and(|r| r.showing_nothing()))
+                .await,
+            "zebra did not say it found nothing"
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.results().is_none()).await,
+            "Escape did not leave the results"
+        );
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || !results.subjects().is_empty()).await,
+            "budget found nothing"
+        );
+        assert!(
+            !results.showing_nothing(),
+            "the last search's \"Nothing matches\" is shown over budget's rows"
         );
     });
 }
