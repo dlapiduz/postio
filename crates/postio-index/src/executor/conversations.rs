@@ -115,6 +115,54 @@ impl ConversationRequest<'_> {
     }
 }
 
+/// A forgiving query whose exact match holds fewer conversations than this
+/// is widened to the words near its own (ADR 0037, as amended): a page of
+/// the results view. It is the query's alone, never the page asked for, so
+/// the dropdown's "Show all N" and the results' count are of one list.
+const FORGIVE_BELOW: usize = 50;
+
+/// The request's match, walked: its words exactly, or -- for a forgiving
+/// query whose exact match holds fewer than [`FORGIVE_BELOW`]
+/// conversations -- each word read as any of the words near it, with the
+/// conversations the exact match held. The same for the search, its Files
+/// tab and its People tab, so their counts are of one match.
+async fn walked(
+    connection: &Connection,
+    request: &ConversationRequest<'_>,
+) -> Result<(Fold, Option<std::collections::HashSet<ConversationKey>>)> {
+    let search = request.as_search();
+    let exact = walk(connection, &Plan::build_sets(&search)).await?;
+    if !request.query.is_forgiving() {
+        return Ok((exact, None));
+    }
+    let held = exact.conversations();
+    if held.len() >= FORGIVE_BELOW {
+        return Ok((exact, None));
+    }
+    let words = super::near_words(connection, &search).await?;
+    if words.is_empty() {
+        return Ok((exact, None));
+    }
+    let near = walk(connection, &Plan::build_sets_near(&search, &words)).await?;
+    Ok((
+        near,
+        Some(
+            held.into_iter()
+                .map(|conversation| conversation.key)
+                .collect(),
+        ),
+    ))
+}
+
+/// `plan`'s match, walked by its sets when it has any.
+async fn walk(connection: &Connection, plan: &Plan) -> Result<Fold> {
+    if plan.sets.is_empty() {
+        Fold::walk(connection, plan).await
+    } else {
+        Fold::walk_sets(connection, plan).await
+    }
+}
+
 /// Searches as conversations: one page of hits, the total, and the facets.
 ///
 /// `now` is the ranking's clock, as in [`search`](super::search).
@@ -124,15 +172,21 @@ pub async fn search_conversations(
     now: DateTime<Utc>,
 ) -> Result<ConversationResults> {
     let start = Instant::now();
-    let plan = Plan::build_sets(&request.as_search());
-    let fold = if plan.sets.is_empty() {
-        Fold::walk(connection, &plan).await?
-    } else {
-        Fold::walk_sets(connection, &plan).await?
-    };
+    let (fold, exact) = walked(connection, request).await?;
     let conversations = fold.conversations();
+    // What the words found exactly comes before what only their near words
+    // found (ADR 0037, as amended): `true` for every conversation, unless
+    // the search was widened.
+    let exact: Vec<bool> = conversations
+        .iter()
+        .map(|conversation| {
+            exact
+                .as_ref()
+                .is_none_or(|keys| keys.contains(&conversation.key))
+        })
+        .collect();
 
-    let order = order(&fold, &conversations, request.order, now);
+    let order = order(&fold, &conversations, &exact, request.order, now);
     let offset = (request.offset as usize).min(order.len());
     let end = offset
         .saturating_add(request.limit as usize)
@@ -150,7 +204,7 @@ pub async fn search_conversations(
     wanted.sort_unstable();
     wanted.dedup();
     let rows = hydrate(connection, request.account, &wanted).await?;
-    let order = order.rank(&fold, &conversations, &rows, request.query, now);
+    let order = order.rank(&fold, &conversations, &exact, &rows, request.query, now);
     let page: Vec<usize> = order[offset..end].to_vec();
 
     // Where in which attachment, for the shown rows an attachment's text
@@ -220,12 +274,7 @@ pub(super) async fn carriers(
     connection: &Connection,
     request: &ConversationRequest<'_>,
 ) -> Result<Vec<Carrier>> {
-    let plan = Plan::build_sets(&request.as_search());
-    let fold = if plan.sets.is_empty() {
-        Fold::walk(connection, &plan).await?
-    } else {
-        Fold::walk_sets(connection, &plan).await?
-    };
+    let (fold, _) = walked(connection, request).await?;
     Ok(fold
         .found
         .iter()
@@ -257,12 +306,7 @@ pub(super) async fn correspondents(
     connection: &Connection,
     request: &ConversationRequest<'_>,
 ) -> Result<Vec<Correspondent>> {
-    let plan = Plan::build_sets(&request.as_search());
-    let fold = if plan.sets.is_empty() {
-        Fold::walk(connection, &plan).await?
-    } else {
-        Fold::walk_sets(connection, &plan).await?
-    };
+    let (fold, _) = walked(connection, request).await?;
     let mut people: HashMap<i64, Correspondent> = HashMap::new();
     for found in &fold.found {
         let mut met = |address: i64, from: bool| {
@@ -937,12 +981,13 @@ impl Order {
         self.ranked.len()
     }
 
-    /// The final order: the pool by [`relevance_keys`], then the rest as
-    /// they were.
+    /// The final order: the pool by [`relevance_keys`], what the words
+    /// found exactly first, then the rest as they were.
     fn rank(
         self,
         fold: &Fold,
         conversations: &[Conversation],
+        exact: &[bool],
         rows: &HashMap<i64, Hydrated>,
         query: &ParsedQuery,
         now: DateTime<Utc>,
@@ -962,7 +1007,9 @@ impl Order {
             let more = conversations[*b_at]
                 .matches
                 .cmp(&conversations[*a_at].matches);
-            a.order(b, more)
+            exact[*b_at]
+                .cmp(&exact[*a_at])
+                .then_with(|| a.order(b, more))
         });
         let mut order: Vec<usize> = keyed.into_iter().map(|(_, at)| at).collect();
         order.extend(self.ranked.into_iter().skip(self.pool.len()));
@@ -974,6 +1021,7 @@ impl Order {
 fn order(
     fold: &Fold,
     conversations: &[Conversation],
+    exact: &[bool],
     order: ConversationOrder,
     now: DateTime<Utc>,
 ) -> Order {
@@ -997,8 +1045,9 @@ fn order(
                 .map(|at| pool_key(best(at), now))
                 .collect();
             ranked.sort_by(|a, b| {
-                keys[*a]
-                    .total_cmp(&keys[*b])
+                exact[*b]
+                    .cmp(&exact[*a])
+                    .then(keys[*a].total_cmp(&keys[*b]))
                     .then(conversations[*b].newest.cmp(&conversations[*a].newest))
                     .then(best(*b).id.cmp(&best(*a).id))
             });

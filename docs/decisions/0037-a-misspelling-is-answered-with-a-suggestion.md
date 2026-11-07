@@ -107,3 +107,10 @@ in full: what widens is one way of *asking*, which no rule can take.
   in a query of bare words, so it cannot be combined with an AND or a phrase.
 - A quoted word or phrase is still exactly itself, which is the way out of
   the forgiving reading, as it was of the offer.
+- The conversation search (spec 010's dropdown and results) forgives the
+  same way, with one difference: it widens when the exact match holds fewer
+  than a results page of conversations (`FORGIVE_BELOW`, 50), whatever page
+  was asked for. A dropdown that asks for four and the results that ask for
+  fifty must count one list, or "Show all 12" would open 9. What the words
+  found exactly ranks before what only their near words found, and the
+  Files and People tabs walk the same widened match.

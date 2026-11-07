@@ -2285,6 +2285,113 @@ async fn a_forgiving_search_finds_a_misspelling_in_a_body() {
     );
 }
 
+/// `text` searched as conversations (spec 010), forgiving or not, `limit`
+/// of them from `offset`.
+async fn conversed(
+    database: &postio_storage::Store,
+    account: &postio_model::Account,
+    text: &str,
+    forgiving: bool,
+    order: postio_search::results::ConversationOrder,
+    (offset, limit): (u32, u32),
+) -> postio_search::results::ConversationResults {
+    let connection = database.connect().await.expect("checkout");
+    let mut query = parse(text, at(12).date_naive());
+    if forgiving {
+        query = query.forgiving();
+    }
+    postio_index::executor::search_conversations(
+        &connection,
+        &postio_index::executor::ConversationRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            order,
+            offset,
+            limit,
+            today: at(12).date_naive(),
+        },
+        at(12),
+    )
+    .await
+    .expect("search")
+}
+
+fn bests(results: &postio_search::results::ConversationResults) -> Vec<postio_model::MessageId> {
+    results.hits.iter().map(|hit| hit.best).collect()
+}
+
+/// ADR 0037 as amended, for the dropdown and the results (#1825): the
+/// conversation search forgives as the bar's did -- the word first, then
+/// the words near it -- and its count is the list it gives.
+#[tokio::test]
+async fn a_forgiving_conversation_search_finds_a_plural_after_the_word() {
+    use postio_search::results::ConversationOrder::BestMatch;
+    let (database, account, made) = forgiving_world().await;
+    let found = conversed(&database, &account, "ticket", true, BestMatch, (0, 10)).await;
+    assert_eq!(
+        bests(&found),
+        vec![id(&made, "ticket"), id(&made, "tickets")],
+        "the exact word first, then the plural"
+    );
+    assert_eq!(found.total, 2, "the count is the list's");
+    let exact = conversed(&database, &account, "ticket", false, BestMatch, (0, 10)).await;
+    assert_eq!(
+        bests(&exact),
+        vec![id(&made, "ticket")],
+        "a query nobody asked to forgive is exactly its words"
+    );
+}
+
+#[tokio::test]
+async fn a_forgiving_conversation_search_finds_a_misspelling_and_quoted_is_exact() {
+    use postio_search::results::ConversationOrder::BestMatch;
+    let (database, account, made) = forgiving_world().await;
+    let found = conversed(
+        &database,
+        &account,
+        "southwset flight",
+        true,
+        BestMatch,
+        (0, 4),
+    )
+    .await;
+    assert_eq!(bests(&found), vec![id(&made, "southwest")]);
+    assert_eq!(found.total, 1);
+    let quoted = conversed(
+        &database,
+        &account,
+        "\"southwset\"",
+        true,
+        BestMatch,
+        (0, 4),
+    )
+    .await;
+    assert!(
+        quoted.hits.is_empty() && quoted.total == 0,
+        "a quoted word is exactly itself: {:?}",
+        bests(&quoted)
+    );
+}
+
+#[tokio::test]
+async fn a_forgiving_conversation_search_pages_as_one_list() {
+    use postio_search::results::ConversationOrder::{BestMatch, Newest};
+    let (database, account, made) = forgiving_world().await;
+    let second = conversed(&database, &account, "ticket", true, BestMatch, (1, 1)).await;
+    assert_eq!(
+        bests(&second),
+        vec![id(&made, "tickets")],
+        "the second of the one list: the near word after the exact one"
+    );
+    assert_eq!(second.total, 2);
+    let newest = conversed(&database, &account, "ticket", true, Newest, (0, 10)).await;
+    assert_eq!(
+        bests(&newest),
+        vec![id(&made, "ticket"), id(&made, "tickets")],
+        "newest first is plain date order, near words and all"
+    );
+}
+
 /// A mailbox where a misspelling's neighbours are mostly the wrong word:
 /// sixty trips beside one girl scout troop, every one saying "your" and
 /// "or" -- the word a disjunction becomes if it is lowercased.

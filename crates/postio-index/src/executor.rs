@@ -1332,6 +1332,15 @@ impl Plan {
         Self::build_with(request, near, false)
     }
 
+    /// [`build_sets`](Self::build_sets) with each word `near` names read as
+    /// any of its words: the conversation search's forgiving pass.
+    fn build_sets_near(
+        request: &SearchRequest<'_>,
+        near: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Self {
+        Self::build_with(request, near, true)
+    }
+
     fn build_with(
         request: &SearchRequest<'_>,
         near: &std::collections::HashMap<String, Vec<String>>,
