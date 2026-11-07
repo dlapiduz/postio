@@ -254,6 +254,56 @@ async fn a_queue_of_offline_actions_applies_in_order() {
 }
 
 #[tokio::test]
+async fn a_flag_set_before_an_archive_reaches_the_server_with_the_message() {
+    // The same work through the verbs the app runs, which move the row as
+    // well as queueing the move: the archive clears the row's server
+    // coordinates before anything drains, so a flag change queued ahead of
+    // it has to address the message where it was when it was queued. It
+    // used to be settled as obsolete, and the read never reached the server.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let local = local(&connection).await;
+    let backend = server().await;
+    let row = MessageRepository::new(&connection)
+        .get(local.message)
+        .await
+        .expect("a read")
+        .expect("the message");
+
+    postio_storage::actions::set_flag(
+        &connection,
+        local.account,
+        &[&row],
+        &Flag::Seen,
+        true,
+        at(9),
+    )
+    .await
+    .expect("read");
+    postio_storage::actions::relocate(
+        &connection,
+        local.account,
+        &[(local.inbox, vec![local.message])].into_iter().collect(),
+        local.archive,
+        postio_storage::actions::Relocation::Move,
+        at(9),
+    )
+    .await
+    .expect("archived");
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, local.account, at(10))
+        .await
+        .expect("drain");
+
+    assert_eq!(report.applied, 2, "both reached the server: {report:?}");
+    let archived = server_flags(&backend, ARCHIVE, 1)
+        .await
+        .expect("the message, archived");
+    assert!(archived.is_seen(), "and it arrived read");
+}
+
+#[tokio::test]
 async fn redundant_work_never_reaches_the_server() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");

@@ -3580,6 +3580,30 @@ pub(crate) fn filed_where(
     })
 }
 
+/// The reason whose keyword the message with this subject carries: what
+/// tells the account's other machines it was filtered (#2076).
+pub(crate) fn marked_for(
+    world: &World,
+    subject: &str,
+) -> Option<postio_storage::repository::FilterReason> {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let id: i64 = postio_storage::sql::first(
+            &connection,
+            "SELECT id FROM messages WHERE subject = ?1",
+            [subject],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("a read")?;
+        let message = MessageRepository::new(&connection)
+            .get(MessageId::new(id))
+            .await
+            .expect("a read")?;
+        postio_storage::repository::FilterReason::in_flags(&message.flags)
+    })
+}
+
 #[test]
 fn focus_mode_files_a_notification_away_as_it_arrives() {
     // US9 scenario 1, end to end: Focus mode runs Focus's own filing pass,

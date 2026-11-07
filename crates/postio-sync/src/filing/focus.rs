@@ -16,7 +16,9 @@
 //!   (`postio_storage::actions::relocate`). An account with no Archive
 //!   folder keeps the mail in its inbox: filtered mail is archived mail,
 //!   and a decision on a message still in the inbox would say one thing
-//!   while the list said another.
+//!   while the list said another. The message also gets its reason's
+//!   keyword, queued before the move, so the account's other machines
+//!   list it in Filtered too (#2076, `FilterReason::keyword`).
 //!
 //! # What it costs
 //!
@@ -354,16 +356,23 @@ impl FocusFiling {
         }
         let mut leaving: BTreeMap<(AccountId, MailboxId), BTreeMap<MailboxId, Vec<MessageId>>> =
             BTreeMap::new();
+        let mut marking: BTreeMap<(AccountId, FilterReason), Vec<&postio_model::Message>> =
+            BTreeMap::new();
         for (message, reason, archive) in plan.filings {
+            let stored = stored_reason(reason.kind);
             FilterDecisionRepository::new(transaction)
                 .record(&FilterDecision {
                     message: message.id,
-                    reason: stored_reason(reason.kind),
+                    reason: stored,
                     source: reason.source.as_ref().map(|name| name.as_str().to_owned()),
                     layer: stored_layer(reason.layer),
                     decided_at: now,
                 })
                 .await?;
+            marking
+                .entry((message.account_id, stored))
+                .or_default()
+                .push(message);
             leaving
                 .entry((message.account_id, archive))
                 .or_default()
@@ -371,6 +380,12 @@ impl FocusFiling {
                 .or_default()
                 .push(message.id);
             effects.filtered.push(message.id);
+        }
+        // The reason on each message too, for the account's other machines
+        // (#2076): queued before the moves below, so the server moves
+        // messages that already say why.
+        for ((account, reason), messages) in &marking {
+            actions::mark_filtered(transaction, *account, messages, Some(*reason), now).await?;
         }
         for ((account, archive), by_source) in &leaving {
             actions::relocate(

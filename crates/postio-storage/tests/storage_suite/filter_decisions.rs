@@ -372,3 +372,92 @@ async fn a_filtered_message_deleted_leaves_filtered_and_its_count_until_it_comes
         (vec![made[1], made[0]], vec![made[1], made[0]], 2)
     );
 }
+
+// --- Another machine's decision, carried on the message (#2076) ----------------
+
+/// A message filed in `folder` of a fresh account, received at 8, carrying
+/// `reason`'s keyword.
+async fn marked(connection: &Connection, folder: &str, reason: FilterReason) -> MessageId {
+    let account = test_support::account(connection).await;
+    let mailbox = test_support::mailbox(connection, &account, folder).await;
+    let mut message = Message::new(account.id, mailbox.id, at(8));
+    message.flags = [reason.keyword()].into_iter().collect();
+    MessageRepository::new(connection)
+        .create(&mut message)
+        .await
+        .expect("a message")
+}
+
+#[tokio::test]
+async fn each_reason_has_its_own_keyword_and_flags_name_it_back() {
+    let mut seen = std::collections::BTreeSet::new();
+    for reason in FilterReason::ALL {
+        let keyword = reason.keyword();
+        assert!(
+            seen.insert(keyword.to_string()),
+            "{reason:?} shares a keyword"
+        );
+        let flags = [postio_model::Flag::Seen, keyword].into_iter().collect();
+        assert_eq!(FilterReason::in_flags(&flags), Some(reason));
+    }
+    assert_eq!(
+        FilterReason::in_flags(&[postio_model::Flag::Seen].into_iter().collect()),
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_marked_message_in_the_archive_is_filtered_as_of_its_arrival() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let message = marked(&connection, "Archive", FilterReason::Receipt).await;
+    let flags = [FilterReason::Receipt.keyword()].into_iter().collect();
+
+    let decisions = FilterDecisionRepository::new(&connection);
+    assert!(decisions.follow(message, &flags).await.expect("follow"));
+
+    assert_eq!(
+        decisions.get(message).await.expect("a read"),
+        Some(FilterDecision {
+            message,
+            reason: FilterReason::Receipt,
+            source: None,
+            layer: FilterLayer::Server,
+            decided_at: at(8),
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_marked_message_still_in_the_inbox_is_not_filtered_yet() {
+    // Another machine sets the keyword just before it moves the message:
+    // until the move lands, the message is in the inbox, and so is not
+    // filtered here.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let message = marked(&connection, "INBOX", FilterReason::Promotion).await;
+    let flags = [FilterReason::Promotion.keyword()].into_iter().collect();
+
+    let decisions = FilterDecisionRepository::new(&connection);
+    assert!(!decisions.follow(message, &flags).await.expect("follow"));
+    assert_eq!(decisions.get(message).await.expect("a read"), None);
+}
+
+#[tokio::test]
+async fn a_restore_made_here_outlasts_the_keyword_it_is_taking_off() {
+    // The person restored the message on this machine; the keyword's
+    // removal has not reached the server yet, so a sync still reports it.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let message = marked(&connection, "Archive", FilterReason::Social).await;
+    let flags = [FilterReason::Social.keyword()].into_iter().collect();
+    let decisions = FilterDecisionRepository::new(&connection);
+    decisions.follow(message, &flags).await.expect("follow");
+    decisions
+        .restore(message, Some(at(9)))
+        .await
+        .expect("restored");
+
+    assert!(!decisions.follow(message, &flags).await.expect("follow"));
+    assert_eq!(decisions.get(message).await.expect("a read"), None);
+}

@@ -1168,6 +1168,11 @@ fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both(
         "back in the inbox, and no longer filtered"
     );
     assert_eq!(
+        crate::tests::marked_for(&world, "Build passed"),
+        None,
+        "nor marked filtered for the account's other machines"
+    );
+    assert_eq!(
         engine(&world).filter.never,
         vec!["notifications@forge.example"],
         "its sender pinned"
@@ -1192,6 +1197,11 @@ fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both(
         crate::tests::filed_where(&world, "Build passed"),
         Some((postio_model::MailboxRole::Archive, Some(reason))),
         "back in Filtered, with its reason"
+    );
+    assert_eq!(
+        crate::tests::marked_for(&world, "Build passed"),
+        Some(reason),
+        "and marked with it again for the account's other machines"
     );
     assert!(engine(&world).filter.never.is_empty(), "and unpinned");
     let again = crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build fixed");
@@ -1260,6 +1270,11 @@ fn a_sweep_says_what_it_would_move_then_moves_exactly_that_as_one_undo() {
         let (role, reason) = crate::tests::filed_where(&world, subject).expect("still here");
         assert_eq!(role, archive, "{subject}");
         assert!(reason.is_some(), "{subject}: filed away with its reason");
+        assert_eq!(
+            crate::tests::marked_for(&world, subject),
+            reason,
+            "{subject}: marked with it for the account's other machines"
+        );
         moved += 1;
     }
     assert_eq!(moved, preview, "the sweep moved what the preview counted");
@@ -1282,6 +1297,11 @@ fn a_sweep_says_what_it_would_move_then_moves_exactly_that_as_one_undo() {
             crate::tests::filed_where(&world, subject),
             Some((inbox, None)),
             "{subject}: one undo put it back, unfiltered"
+        );
+        assert_eq!(
+            crate::tests::marked_for(&world, subject),
+            None,
+            "{subject}: and unmarked"
         );
     }
 }

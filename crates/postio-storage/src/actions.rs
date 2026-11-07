@@ -44,7 +44,8 @@ use postio_model::{
 
 use crate::Result;
 use crate::repository::{
-    FlagSource, MessageRepository, OperationQueueRepository, ThreadOrder, ThreadRepository,
+    FilterReason, FlagSource, MessageRepository, OperationQueueRepository, ThreadOrder,
+    ThreadRepository,
 };
 use crate::store::Connection;
 
@@ -113,6 +114,73 @@ pub async fn relocate(
         // account, on the first archive.
         queue.enqueue_many(account, ids, &operation, at).await?;
         messages.move_to(ids, destination).await?;
+    }
+    Ok(())
+}
+
+/// Give `rows` the keyword of `reason`, or with `None` take every reason's
+/// keyword off them, and queue the change for the server: how a filter
+/// decision reaches the account's other machines (#2076,
+/// [`FilterReason::keyword`]).
+///
+/// Call it before [`relocate`] moves the rows: the queue rows snapshot the
+/// server coordinate the move clears, and the server then moves messages
+/// that already carry their reason. One `enqueue_many` each way, whatever
+/// the number of rows, as [`relocate`] does, so the filing pass reads
+/// nothing more per arrival. A keyword is no flag a thread counts, so no
+/// thread is recomputed. `rows` are the caller's, as read; each must belong
+/// to `account`.
+pub async fn mark_filtered(
+    transaction: &Connection,
+    account: AccountId,
+    rows: &[&Message],
+    reason: Option<FilterReason>,
+    at: DateTime<Utc>,
+) -> Result<()> {
+    let wanted: Option<Flag> = reason.map(FilterReason::keyword);
+    let others: FlagSet = FilterReason::ALL
+        .into_iter()
+        .map(FilterReason::keyword)
+        .filter(|keyword| Some(keyword) != wanted.as_ref())
+        .collect();
+    let messages = MessageRepository::new(transaction);
+    let mut cleared = Vec::new();
+    let mut added = Vec::new();
+    for row in rows {
+        let mut flags = row.flags.clone();
+        let mut changed = false;
+        for keyword in others.iter() {
+            changed |= flags.remove(keyword);
+        }
+        if changed {
+            cleared.push(row.id);
+        }
+        if let Some(keyword) = &wanted
+            && flags.insert(keyword.clone())
+        {
+            added.push(row.id);
+            changed = true;
+        }
+        if changed {
+            messages
+                .set_flags(row.id, &flags, FlagSource::Local)
+                .await?;
+        }
+    }
+    let queue = OperationQueueRepository::new(transaction);
+    queue
+        .enqueue_many(
+            account,
+            &cleared,
+            &Operation::ClearFlags { flags: others },
+            at,
+        )
+        .await?;
+    if let Some(keyword) = wanted {
+        let flags = std::iter::once(keyword).collect();
+        queue
+            .enqueue_many(account, &added, &Operation::SetFlags { flags }, at)
+            .await?;
     }
     Ok(())
 }

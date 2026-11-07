@@ -993,6 +993,11 @@ impl<'a> MessageRepository<'a> {
                         report.inserted_ids.push(message.id);
                     }
                 }
+                // Another machine's filing, carried on the message (#2076).
+                // No statement unless the flags carry a reason's keyword.
+                super::FilterDecisionRepository::new(&transaction)
+                    .follow(message.id, &message.flags)
+                    .await?;
             }
 
             Ok(report)
@@ -1769,6 +1774,9 @@ impl<'a> MessageRepository<'a> {
                     continue;
                 }
                 messages.set_flags(*id, &merged, FlagSource::Server).await?;
+                super::FilterDecisionRepository::new(&transaction)
+                    .follow(*id, &merged)
+                    .await?;
                 changed.push(*id);
             }
             Ok(changed)
