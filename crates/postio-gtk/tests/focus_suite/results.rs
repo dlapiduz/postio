@@ -494,3 +494,50 @@ pub fn a_search_after_one_that_found_nothing_shows_its_rows() {
         );
     });
 }
+
+/// storyboards/flows/search-open-reply-back on spec 010 (#1825): a result
+/// opened from the results answers `r` with a reply quoting it, and Escape
+/// walks back out: the reply, the message, then the results.
+pub fn replying_to_a_result_and_escaping_back_to_the_results() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+            "Return did not open the result"
+        );
+        support::keys(&window, &["r"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "r opened no reply"
+        );
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_none()).await,
+            "Escape left the reply up"
+        );
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || window.reading().is_none_or(|r| !r.is_open())).await,
+            "the second Escape left the message open"
+        );
+        assert!(window.results().is_some(), "the results are gone");
+        assert!(
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable && seen.region == postio_ui::observe::Region::Results
+            })
+            .await,
+            "the keyboard is not back on the results: {}",
+            window.observe().keyboard.widget
+        );
+    });
+}

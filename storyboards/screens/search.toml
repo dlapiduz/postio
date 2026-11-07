@@ -1,4 +1,6 @@
-# The command bar after a search has run: the hits under the field (screen 07).
+# The search field, empty and after a word: spec 010's dropdown, which
+# replaced screen 07's bar on Linux (#1825; specs/007-postio-focus
+# screens.md, row 07; spec 010 screens 01 and 03).
 #
 # Focus's design references are never committed
 # (specs/007-postio-focus/screens.md records each one).
@@ -7,14 +9,11 @@ source = { kind = "design", ref = "focus 07" }
 
 [[step]]
 command = "search"
-check   = { app.focus.bar.hints = 3 }
-expect  = "The empty bar is not a blank band: under the saved searches it says what typing does -- search mail, `>` for commands, `@` for people -- in the rows' own style."
+check   = { keyboard.region = "search", app.focus.bar.typed = "" }
+expect  = "The empty dropdown is not a blank band: the recent searches with their counts, the saved searches as pills with their keys, and the cheat sheet of what can be typed, one example lowered live (spec 010 screen 01)."
 
 [[step]]
 type    = "harbour"
 settle  = { until = { app.focus.bar.messages = { changed = true } } }
-
-[[step]]
-key     = "Return"
-check   = { app.focus.bar.highlighted = "message" }
-expect  = "Return takes the highlight to the first hit, not to the sort row; each hit shows the message's first line."
+check   = { app.focus.bar.highlighted = "show_all" }
+expect  = "Up to four top hits, each “Sender · Subject” with the word in the find highlight, its passage, folder and date; Narrow to's pills with counts; and Show all, under the ring (spec 010 screen 03)."

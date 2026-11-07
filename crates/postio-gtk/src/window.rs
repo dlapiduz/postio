@@ -1687,7 +1687,10 @@ impl FocusWindow {
         postio_widgets::jank::note_action(id);
         // A search's results are the controller's to drive: their keys --
         // Quick Look, Save file, the tabs -- and the verbs on a result.
+        // Not a message open over them: its reply is the window's composer,
+        // as anywhere else.
         if self.results().is_some()
+            && self.top_surface().is_none()
             && let Some(pane) = self.pane()
             && pane.feed().answers(id)
         {
@@ -2041,13 +2044,22 @@ impl FocusWindow {
             #[weak(rename_to = window)]
             self,
             move || {
-                if window.keyboard_is_free()
-                    && let Some(pane) = window.pane()
-                {
-                    pane.focus_cursor();
+                if window.keyboard_is_free() {
+                    window.focus_cursor();
                 }
             }
         ));
+    }
+
+    /// The keyboard on the cursor's row: the list's, or a search's results'
+    /// while they stand in its place -- the inbox's row behind them is not
+    /// shown, and a keyboard left there reaches nothing.
+    pub fn focus_cursor(&self) {
+        if let Some(results) = self.results() {
+            results.focus();
+        } else if let Some(pane) = self.pane() {
+            pane.focus_cursor();
+        }
     }
 
     /// Whether nothing is holding the keyboard for itself: no dialog over

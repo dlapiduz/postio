@@ -281,11 +281,7 @@ impl ComposerHost for DialogHost {
                         under.grab_focus();
                     }
                 },
-                None => {
-                    if let Some(pane) = window.pane() {
-                        pane.focus_cursor();
-                    }
-                }
+                None => window.focus_cursor(),
             }
         }
     }

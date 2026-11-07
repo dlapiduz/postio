@@ -510,6 +510,10 @@ const CASES: &[(&str, fn())] = &[
         results::a_search_after_one_that_found_nothing_shows_its_rows as fn(),
     ),
     (
+        "results::replying_to_a_result_and_escaping_back_to_the_results",
+        results::replying_to_a_result_and_escaping_back_to_the_results as fn(),
+    ),
+    (
         "results::the_tabs_go_by_their_keys",
         results::the_tabs_go_by_their_keys as fn(),
     ),
