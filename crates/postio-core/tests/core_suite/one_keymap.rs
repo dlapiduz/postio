@@ -700,6 +700,9 @@ fn the_results_views_keys_resolve_on_both_platforms() {
         (CommandId::Delete, "BackSpace"),
         (CommandId::OpenMessage, "Return"),
         (CommandId::ToggleHasAction, "!"),
+        // ⌘Z after archiving results takes them back (US5).
+        (CommandId::Undo, "z"),
+        (CommandId::Undo, "cmd+z"),
         (CommandId::SaveSearch, "cmd+s"),
         (CommandId::ToggleResultOrder, "alt+o"),
         (CommandId::Search, "/"),

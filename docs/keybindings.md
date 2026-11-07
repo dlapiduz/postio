@@ -134,7 +134,7 @@ command from inside a text field.
 | `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |
 | `ctrl+shift+9` or `alt+9` | Quote block | Composer |  | `quote_block` |
-| `z` or `ctrl+z` | Undo | List, conversation, reader, account list, digest, Filtered view |  | `undo` |
+| `z` or `ctrl+z` | Undo | List, conversation, reader, account list, digest, Filtered view, search results |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, conversation, reader |  | `cheat_sheet` |
 | `ctrl+comma` or `alt+comma` | Settings | Everywhere |  | `settings` |
