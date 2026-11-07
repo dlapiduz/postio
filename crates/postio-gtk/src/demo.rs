@@ -97,6 +97,11 @@ pub fn start(
         &postio_storage::test_support::blob_keys(),
     )
     .map_err(|error| format!("no blob store: {error}"))?;
+    // The search seed's files have their bytes on this machine, so the
+    // attachment indexer the host starts reads them (spec 010 step 9), as
+    // the Mac's demo has them: its rows name the blobs a store under the
+    // test keys gives these bytes. Another seed names none of them.
+    postio_demo::store_search_blobs(&blobs).map_err(|error| format!("no search files: {error}"))?;
     let store = database.clone();
     let sink = std::rc::Rc::new(std::cell::RefCell::new(None));
     let host = postio_host::Host::start(database, blobs, {
