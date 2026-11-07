@@ -5,7 +5,7 @@
 //! controller holds, which asks the engine for its pages and their
 //! passages, groups them into Top hits and months, edits its query term by
 //! term, and gives way to the inbox on Esc's last rung. The Mac draws what
-//! it is told; GTK never enters it (`results_view` off).
+//! it is told, and so does GTK since it adopted it (#1825).
 
 use crate::search_support::*;
 use postio_config::paths::Platform;

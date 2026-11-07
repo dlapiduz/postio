@@ -60,9 +60,10 @@ impl Rows for List {
 
 const RECEIPTS: MailboxId = MailboxId::new(7);
 
-/// The Mac's controller as spec 009 built it: the bar's search half is the
-/// blend GTK draws (`results_view` off), which every test above the
-/// dropdown's section pins for GTK (spec 010 S2, D17).
+/// The controller as spec 009 built it: the bar's search half is the blend
+/// `results_view` off draws, which every test above the dropdown's section
+/// pins. Neither app runs it since Linux adopted spec 010 (#1825); it goes
+/// with #2079.
 fn mac() -> FocusController {
     let mut policy = Policy::for_platform(Platform::Apple);
     policy.caps.results_view = false;

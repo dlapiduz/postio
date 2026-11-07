@@ -521,15 +521,35 @@ turns on (T176).
     the query field's own ring stays neutral, so one ring marks where the
     keyboard is (FR-091). The screen 02 ghost after the caret is still not
     drawn; it is T176's, with the typing states' storyboards.
-- [ ] T176 Turn `results_view` on for Freedesktop; offer the Apple-only
+- [x] T176 Turn `results_view` on for Freedesktop; offer the Apple-only
   commands on Linux (`registry::offered_on`) with Linux keys where the ⌘
   chords do not carry over; regenerate `docs/keybindings.md`; play
   `storyboards/search/` on GTK and `/ux-review` them. Closes #1825 and
   #1790.
-  - Found at T173: `postio_ui::search_view::files_note` says "indexed on
-    this Mac" on Linux too; the words take the platform here, with the
-    rest of Linux's.
-
+  - *As built:* `results_view` and `people_search` are on for both
+    platforms, and `list::feed::stage_results_view` is gone. The Linux keys
+    are the Mac's with Ctrl for ⌘, but forget-recent: the terminal shares
+    Linux's keymap and reads `alt+BackSpace` as back to words, so Linux
+    forgets on `shift+Delete` (`registry::binding_offered_on`, which now
+    also keeps a default off a platform). Undo reaches the results.
+  - Found on the way, fixed for both apps: a hit says where a digest holds
+    it and, with several accounts, which account it is in
+    (`search_view::hit_place`, the session's `FacetNames::held`); the
+    conversation search forgives a misspelling (ADR 0037, below a results
+    page of exact conversations); the words name "this computer" on Linux.
+  - GTK, found by playing the storyboards: Ctrl+Return and History reached
+    no handler; the ring scrolled out of view; a result opened from the
+    results had no subject; a left search's "Nothing matches" showed in
+    the next; the Files tab's arrows were the list's (now
+    `search_view::grid_step`, the Mac's rule); several paths left the
+    keyboard on the inbox behind the results; `r` on a result opened no
+    reply. The ghost after the caret is drawn (`shot` s02). The
+    observation has a `results` region.
+  - The storyboards: the Mac's play on GTK too; the click-opened popovers
+    and the field's own Backspace are skipped there with the reason,
+    focus_suite covering them. GTK's spec 009 ones are re-expressed for
+    the dropdown, and `tab-enters-the-chips` retired with the chip editor.
+    The blend `results_view` off kept is dead now: #2079.
 ---
 
 ## Dependencies

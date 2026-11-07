@@ -886,7 +886,7 @@ async fn an_attachment_never_downloaded_leaves_the_contents_complete() {
 
 #[tokio::test]
 async fn gtk_search_does_not_reach_attachment_contents() {
-    // D11: the old path keeps its corpus until Linux adopts this search.
+    // D11: the old path, the terminal app's, keeps its corpus.
     let (_database, connection, account, inbox) = store().await;
     let (_, attachment) = mail_with_budget_sheet(&connection, &account, inbox).await;
     postio_index::index::index_attachment_text(&connection, attachment, &budget_sheet())
