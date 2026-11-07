@@ -1168,6 +1168,7 @@ impl Results {
             relaxations,
             counting: (!counted).then(|| words::COUNTING_RELAXATIONS.to_owned()),
             searched: words::searched(
+                keymap,
                 frame.messages_searched,
                 frame.corpus_complete,
                 frame.contents_complete,
@@ -1929,7 +1930,10 @@ impl Results {
                 .flatten(),
             files: (self.tab == ResultsTab::Files).then(|| FilesHeader {
                 title: words::FILES_TITLE.to_owned(),
-                note: words::files_note(frame.is_none_or(|frame| frame.contents_complete)),
+                note: words::files_note(
+                    with.keymap,
+                    frame.is_none_or(|frame| frame.contents_complete),
+                ),
             }),
         }
     }
@@ -3647,7 +3651,7 @@ impl FocusController {
                     results.copy = None;
                 }
                 vec![Step::Show(Intent::Toast {
-                    text: words::FILE_NOT_HERE.to_owned(),
+                    text: words::file_not_here(self.bar.keymap()),
                     kind: crate::ToastKind::Notice,
                 })]
             }

@@ -1202,6 +1202,7 @@ pub(crate) fn plain(parts: PlainParts<'_>) -> DropdownView {
             highlight = highlight.or(Some(landed.show_all));
         }
         count = Some(words::parsed_footer(
+            parts.keymap,
             landed.total,
             landed.elapsed,
             landed.capped,
