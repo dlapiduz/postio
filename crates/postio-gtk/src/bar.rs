@@ -52,6 +52,10 @@ pub struct Bar {
     /// The bar over its scrim: what the window lays over the list.
     over: gtk::Overlay,
     entry: gtk::Entry,
+    /// The rest of the best word, after the caret (screen 02).
+    ghost: gtk::Label,
+    /// "Tab completes", at the field's end while there is a ghost.
+    ghost_hint: gtk::Box,
     chips: gtk::Box,
     echo: gtk::Label,
     heading: gtk::Label,
@@ -116,7 +120,28 @@ impl Bar {
         input.add_css_class("focus-bar-input");
         input.append(&icon);
         input.append(&chips);
-        input.append(&entry);
+        // The ghost is laid over the entry, after what is typed, and takes
+        // no pointer: a click lands on the entry under it.
+        let ghost = gtk::Label::new(None);
+        ghost.add_css_class("focus-bar-ghost");
+        ghost.add_css_class("dim-label");
+        ghost.set_halign(gtk::Align::Start);
+        ghost.set_valign(gtk::Align::Center);
+        ghost.set_can_target(false);
+        ghost.set_visible(false);
+        let ghost_hint = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        ghost_hint.add_css_class("focus-bar-ghost-hint");
+        ghost_hint.set_halign(gtk::Align::End);
+        ghost_hint.set_margin_end(S2);
+        ghost_hint.set_valign(gtk::Align::Center);
+        ghost_hint.set_can_target(false);
+        ghost_hint.set_visible(false);
+        let field = gtk::Overlay::new();
+        field.set_hexpand(true);
+        field.set_child(Some(&entry));
+        field.add_overlay(&ghost);
+        field.add_overlay(&ghost_hint);
+        input.append(&field);
         if let Some(key) = postio_ui::hints::key(keymap, CommandId::Back) {
             input.append(&keyhint::cap(&key));
         }
@@ -188,6 +213,8 @@ impl Bar {
             root,
             over,
             entry,
+            ghost,
+            ghost_hint,
             chips,
             echo,
             heading,
@@ -249,6 +276,11 @@ impl Bar {
         bar.entry.connect_changed({
             let weak = weak.clone();
             move |entry| {
+                // A ghost belongs to the words it was drawn for: the next
+                // view draws the one for these.
+                if let Some(bar) = weak.upgrade() {
+                    bar.ghost.set_visible(false);
+                }
                 if let Some(bar) = weak.upgrade()
                     && !bar.quiet.get()
                 {
@@ -394,6 +426,7 @@ impl Bar {
     /// [`postio_focus::Intent::BarLines`].
     pub fn show(&self, view: &BarView) {
         self.drop_down(false);
+        self.show_ghost(None, None);
         let kept = self.highlighted_line();
         self.show_chips(&view.chips, view.editing);
         self.echo.set_visible(view.echo.is_some());
@@ -464,6 +497,75 @@ impl Bar {
     pub fn show_dropdown(&self, view: &postio_focus::DropdownView) {
         self.drop_down(true);
         self.dropdown.show(view);
+        self.show_ghost(view.ghost.as_deref(), view.ghost_hint.as_ref());
+    }
+
+    /// Draw `ghost` after the caret, and its hint at the field's end; or
+    /// neither. Placed once the entry has its size, at the end of what is
+    /// typed, measured in the entry's own font.
+    fn show_ghost(&self, ghost: Option<&str>, hint: Option<&postio_ui::hints::Hint>) {
+        while let Some(child) = self.ghost_hint.first_child() {
+            self.ghost_hint.remove(&child);
+        }
+        if let Some(hint) = hint.filter(|_| ghost.is_some()) {
+            self.ghost_hint.append(&keyhint::cap(&hint.key));
+            let words = gtk::Label::new(Some(&hint.label));
+            words.add_css_class("dim-label");
+            self.ghost_hint.append(&words);
+        }
+        self.ghost_hint
+            .set_visible(ghost.is_some() && self.ghost_hint.first_child().is_some());
+        self.ghost.set_text(ghost.unwrap_or_default());
+        self.ghost.set_visible(false);
+        if ghost.is_none() {
+            return;
+        }
+        let me = self.me.borrow().clone();
+        glib::idle_add_local_once(move || {
+            if let Some(bar) = me.upgrade() {
+                bar.place_ghost();
+            }
+        });
+    }
+
+    /// Put the ghost at the end of what is typed, when it fits beside it.
+    fn place_ghost(&self) {
+        if self.ghost.text().is_empty() {
+            return;
+        }
+        let Some(end) = self.typed_end() else {
+            return;
+        };
+        let room = self.ghost.parent().map_or(0, |field| field.width()) as f32 - end;
+        let (wide, _) = self.ghost.layout().pixel_size();
+        self.ghost.set_margin_start(end.round() as i32);
+        self.ghost.set_visible(wide as f32 <= room);
+    }
+
+    /// Where what is typed ends, from the left of the overlay the ghost is
+    /// laid in: its text's own start, and the typed words measured in its
+    /// font.
+    fn typed_end(&self) -> Option<f32> {
+        let text = self.entry.delegate()?;
+        let field = self.ghost.parent()?;
+        let start = text.compute_bounds(&field)?.x();
+        let (wide, _) = text
+            .create_pango_layout(Some(&self.entry.text()))
+            .pixel_size();
+        Some(start + wide as f32)
+    }
+
+    /// The ghost drawn after the caret, while it is.
+    pub fn ghost(&self) -> Option<String> {
+        (self.ghost.is_visible() && !self.ghost.text().is_empty())
+            .then(|| self.ghost.text().to_string())
+    }
+
+    /// Where the ghost starts and where what is typed ends, from the
+    /// field's left, for a test to hold one against the other.
+    pub fn ghost_at(&self) -> Option<(f32, f32)> {
+        let at = self.ghost.compute_bounds(&self.ghost.parent()?)?.x();
+        Some((at, self.typed_end()?))
     }
 
     /// The dropdown, for what a test reads of it.

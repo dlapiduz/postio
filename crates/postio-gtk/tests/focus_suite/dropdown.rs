@@ -5,7 +5,7 @@
 //! controller's, asserted in `postio-focus`. These cases ask what is GTK's
 //! own: that a view is drawn as it says, that the arrows keep their place
 //! across a redraw, and that a run or a pill says its token back. The last
-//! drives the window, with spec 010's search staged on.
+//! drives the window.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -326,6 +326,73 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
         assert!(
             !texts.iter().any(|text| text.contains("Lunch")),
             "a message without the word is listed: {texts:?}"
+        );
+    });
+}
+
+/// Screen 02 (spec 010 US7): a short prefix draws the rest of its best word
+/// after the caret in the field's lighter ink, "Tab completes" at the
+/// field's end; Tab takes it, and the ghost goes.
+pub fn a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers for atlas.",
+                5,
+            )
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("a");
+        crate::settle();
+        bar.set_text("at");
+        assert!(
+            crate::settle_until(async || bar.ghost().as_deref() == Some("las")).await,
+            "no ghost after \"at\": {:?} with {:?}",
+            bar.ghost(),
+            bar.dropdown().texts()
+        );
+        let after_the_caret = || {
+            bar.ghost_at().is_some_and(|(ghost, typed_end)| {
+                ghost >= typed_end - 1.0 && ghost <= typed_end + 8.0
+            })
+        };
+        assert!(
+            crate::settle_until(async || after_the_caret()).await,
+            "the ghost is not after the caret: {:?}",
+            bar.ghost_at()
+        );
+        assert!(
+            bar.texts().iter().any(|text| text == "completes"),
+            "no \"Tab completes\": {:?}",
+            bar.texts()
+        );
+        assert!(
+            support::deliver(&window, "Tab"),
+            "Tab reached the bar: {}",
+            support::focus_path(&window)
+        );
+        assert!(
+            crate::settle_until(async || bar.typed().trim_end() == "atlas").await,
+            "Tab did not take the ghost: {:?}",
+            bar.typed()
+        );
+        assert!(
+            crate::settle_until(async || bar.ghost().is_none()).await,
+            "the ghost stayed: {:?}",
+            bar.ghost()
         );
     });
 }

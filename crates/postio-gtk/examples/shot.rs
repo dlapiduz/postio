@@ -23,7 +23,7 @@
 //! | `04` | The to-do about the API draft, opened over screen 01 |
 //! | `07`, `08`, `09` | The command bar over screen 01: plain English, `in:Rec`, and `arch` |
 //! | `10` | The folders popover over screen 01 |
-//! | `s01`, `s03` | Spec 010's search dropdown over screen 01: empty, and `harbor` typed |
+//! | `s01`, `s02`, `s03` | Spec 010's search dropdown over screen 01: empty, `ha` typed with its ghost, and `harbor` typed |
 //! | `s06` | Spec 010's results for `harbor`, in the inbox's place |
 //! | `s08`, `s09` | The same with From ▾ open, and with Date ▾ open |
 //! | `s10`, `s11` | The same with Quick Look open, and on the Files tab |
@@ -158,6 +158,10 @@ const SCREENS: &[(&str, &str)] = &[
         "Settings: Contacts, the Suggestions switches (handoff 08, less sync)",
     ),
     ("s01", "spec 010's search dropdown, empty"),
+    (
+        "s02",
+        "spec 010's search dropdown, ha typed, with its ghost",
+    ),
     ("s03", "spec 010's search dropdown, harbor typed"),
     ("s06", "spec 010's results for harbor"),
     ("s08", "spec 010's results with From open"),
@@ -689,13 +693,22 @@ fn stage(
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(500));
         }
-        "s01" | "s03" => {
+        "s01" | "s02" | "s03" => {
             pick_three();
             window.act(CommandId::Search);
             let bar = window.bar().ok_or("no command bar")?;
             let dropdown = bar.dropdown();
             if !settle_until(|| !dropdown.titles().is_empty()) {
                 return Err("the dropdown never drew".into());
+            }
+            if screen == "s02" {
+                bar.set_text("h");
+                let typed = Instant::now();
+                settle_until(|| typed.elapsed() > Duration::from_millis(100));
+                bar.set_text("ha");
+                if !settle_until(|| bar.ghost().is_some()) {
+                    return Err("no ghost after ha".into());
+                }
             }
             if screen == "s03" {
                 bar.set_text("harbor");

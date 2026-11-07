@@ -812,6 +812,16 @@ button.focus-marker-dismiss:hover {
   font-size: var(--postio-text-reading);
 }
 
+/* Screen 02: the rest of the best word, after the caret, in the field's
+   own size so it lines up with what is typed; tertiary ink. */
+.focus-bar-ghost {
+  font-size: var(--postio-text-reading);
+}
+
+.focus-bar-ghost-hint label {
+  font-size: var(--postio-text-meta);
+}
+
 .focus-bar-chip {
   padding: 0 var(--postio-space-2);
   border: 1px solid var(--postio-hairline-strong);

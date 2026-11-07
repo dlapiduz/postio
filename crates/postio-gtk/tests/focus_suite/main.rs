@@ -446,6 +446,10 @@ const CASES: &[(&str, fn())] = &[
         compose_layout::the_dialog_follows_the_message_dialogs_size_rule as fn(),
     ),
     (
+        "dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it",
+        dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it as fn(),
+    ),
+    (
         "dropdown::the_words_state_draws_hits_pills_and_show_all",
         dropdown::the_words_state_draws_hits_pills_and_show_all as fn(),
     ),
