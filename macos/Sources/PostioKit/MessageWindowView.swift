@@ -124,7 +124,8 @@ public struct MessageStepperView: View {
                 .frame(width: Self.button.width, height: Self.button.height)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // Square: the group's outline rounds the pair's outer corners.
+        .buttonStyle(ChromeButtonStyle(radius: 0))
         .accessibilityLabel(label)
     }
 }
@@ -191,7 +192,7 @@ public struct MessageActionRow: View {
                     .frame(minWidth: 160, minHeight: 26)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ChromeButtonStyle())
             }
         }
         .padding(6)
@@ -220,7 +221,7 @@ public struct MessageVerbButton: View {
             .frame(height: MessageActionRow.buttonHeight)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ChromeButtonStyle())
         .accessibilityLabel(verb.cap.map { "\(verb.label), key \($0)" } ?? verb.label)
         // Where it is, for a picker to hang from (T092).
         .background(
