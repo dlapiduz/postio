@@ -223,6 +223,43 @@ impl Dropdown {
         }
     }
 
+    /// The subjects of the conversations listed, top to bottom: each
+    /// hit's title after its sender.
+    pub fn hit_subjects(&self) -> Vec<String> {
+        self.rows()
+            .filter(|row| row.kind == DropdownRowKind::Hit)
+            .map(|row| {
+                let title = runs_text(&row.title);
+                match title.split_once(" \u{b7} ") {
+                    Some((_, subject)) => subject.to_owned(),
+                    None => title,
+                }
+            })
+            .collect()
+    }
+
+    /// The row the arrows rest on: what it is, and its words as drawn.
+    pub fn highlighted_row(&self) -> Option<(DropdownRowKind, String)> {
+        let token = self.highlighted()?;
+        let row = self.rows().find(|row| row.token == token)?;
+        let said = self
+            .list
+            .selected_row()
+            .map(|selected| said(&selected))
+            .unwrap_or_default();
+        Some((row.kind, said))
+    }
+
+    /// Every row of the view drawn now, top to bottom.
+    fn rows(&self) -> impl Iterator<Item = DropdownRow> {
+        let view = self.view.borrow();
+        view.iter()
+            .flat_map(|view| view.sections.iter())
+            .flat_map(|section| section.rows.iter().cloned())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
     /// Every word drawn, top to bottom, a row or pill to an entry.
     pub fn texts(&self) -> Vec<String> {
         let mut texts = Vec::new();
@@ -762,6 +799,11 @@ fn descendants(root: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
 }
 
 /// The words a widget shows, its labels' texts joined by spaces.
+/// What `runs` say, styles left out.
+fn runs_text(runs: &[Run]) -> String {
+    runs.iter().map(|run| run.text.as_str()).collect()
+}
+
 fn said(widget: &impl IsA<gtk::Widget>) -> String {
     labels(widget)
         .into_iter()

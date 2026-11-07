@@ -53,27 +53,34 @@ pub fn every_key_the_key_map_shows_runs_its_command() {
         let (mut resolver, _) = postio_gtk::keys::resolver(Keymap::defaults());
         let mut checked = 0;
         for (title, keys) in &rows {
-            let spec = registry::all()
-                .find(|spec| spec.title == title)
-                .unwrap_or_else(|| panic!("{title:?} is not a registered title"));
-            let context = KEY_MAP_CONTEXTS
-                .iter()
-                .find(|context| spec.contexts.contains(**context))
-                .map(|context| KeyContext::from(*context))
-                .unwrap_or(KeyContext::Global);
+            // Two commands can share a title -- Back is Escape's way out
+            // and ⌘['s history -- so a row's key runs one of the commands of
+            // its title, in that command's own place.
+            let specs: Vec<_> = registry::all().filter(|spec| spec.title == title).collect();
+            assert!(!specs.is_empty(), "{title:?} is not a registered title");
             assert!(!keys.is_empty(), "{title} shows no key");
             for key in keys {
-                let mut outcome = Outcome::Unhandled;
-                for chord in key.split(' ') {
-                    let chord: Chord = chord
-                        .parse()
-                        .unwrap_or_else(|_| panic!("{title}: {key:?} is not a key"));
-                    outcome = resolver.press(&chord, context, false, Instant::now());
-                }
-                assert_eq!(
-                    outcome,
-                    Outcome::Command(spec.id.as_str().into()),
-                    "{title}: {key} in {context:?}"
+                let outcomes: Vec<(Outcome, Outcome)> = specs
+                    .iter()
+                    .map(|spec| {
+                        let context = KEY_MAP_CONTEXTS
+                            .iter()
+                            .find(|context| spec.contexts.contains(**context))
+                            .map(|context| KeyContext::from(*context))
+                            .unwrap_or(KeyContext::Global);
+                        let mut outcome = Outcome::Unhandled;
+                        for chord in key.split(' ') {
+                            let chord: Chord = chord
+                                .parse()
+                                .unwrap_or_else(|_| panic!("{title}: {key:?} is not a key"));
+                            outcome = resolver.press(&chord, context, false, Instant::now());
+                        }
+                        (outcome, Outcome::Command(spec.id.as_str().into()))
+                    })
+                    .collect();
+                assert!(
+                    outcomes.iter().any(|(got, wanted)| got == wanted),
+                    "{title}: {key} runs none of its title's commands: {outcomes:?}"
                 );
                 checked += 1;
             }

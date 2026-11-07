@@ -669,8 +669,12 @@ impl Bar {
             .collect()
     }
 
-    /// The subjects of the messages listed, top to bottom.
+    /// The subjects of the messages listed, top to bottom: the dropdown's
+    /// hits while it is the panel.
     pub fn result_subjects(&self) -> Vec<String> {
+        if self.dropping.get() {
+            return self.dropdown.hit_subjects();
+        }
         self.lines
             .borrow()
             .iter()
@@ -694,6 +698,24 @@ impl Bar {
     /// The text is the row's own labels, as a person reads it ("Sorted by
     /// relevance"), and a message's subject.
     pub fn highlighted(&self) -> Option<(&'static str, Option<MessageId>, String)> {
+        if self.dropping.get() {
+            use postio_focus::DropdownRowKind as Kind;
+            let (kind, text) = self.dropdown.highlighted_row()?;
+            let kind = match kind {
+                Kind::Recent => "recent",
+                Kind::Hit => "message",
+                Kind::ShowAll => "show_all",
+                Kind::CheatSheet | Kind::Example => "hint",
+                Kind::Word => "word",
+                Kind::Label => "label",
+                Kind::List => "list",
+                Kind::File => "file",
+                Kind::Person => "person",
+                Kind::Folder => "folder",
+                _ => "other",
+            };
+            return Some((kind, None, text));
+        }
         let selected = self.list.selected_row()?;
         let index = usize::try_from(selected.index()).ok()?;
         let line = self.lines.borrow().get(index)?.clone();

@@ -495,14 +495,16 @@ fn an_answer_for_a_query_since_edited_is_dropped() {
     );
 }
 
+/// #1825: Linux runs the same search, so GTK enters the results as the
+/// Mac does.
 #[test]
-fn gtk_never_enters_the_results() {
+fn linux_enters_the_results_as_the_mac_does() {
     let rows = List::of(3);
     let mut focus = FocusController::new(Policy::for_platform(Platform::Freedesktop));
     let effects = show_all(&mut focus, "atlas budget", &rows);
-    assert!(results_view(&effects).is_none());
-    assert!(!focus.in_results());
-    assert!(!focus.answers(CommandId::HistoryBack));
+    assert!(results_view(&effects).is_some());
+    assert!(focus.in_results());
+    assert!(focus.answers(CommandId::HistoryBack));
 }
 
 // Step 4: the filter popovers (US3, FR-027, design §3.6, screens 08 and 09).

@@ -794,6 +794,49 @@ pub fn press(window: &postio_gtk::window::FocusWindow, name: &str, state: gtk::g
     deliver_with(window, name, state);
 }
 
+/// `/`, `words` typed a letter at a time, and the dropdown's hit for
+/// `subject` opened as a person opens it (spec 010 US1): the arrows up to it
+/// from Show all, where the highlight starts, then Return. The bar, which
+/// opening the hit puts away.
+pub async fn open_hit(
+    window: &postio_gtk::window::FocusWindow,
+    words: &str,
+    subject: &str,
+) -> std::rc::Rc<postio_gtk::bar::Bar> {
+    press(window, "slash", gtk::gdk::ModifierType::empty());
+    let bar = window.bar().expect("/ opened the bar");
+    for end in 1..=words.chars().count() {
+        bar.set_text(&words.chars().take(end).collect::<String>());
+        crate::settle();
+    }
+    assert!(
+        crate::settle_until(async || bar.result_subjects().iter().any(|hit| hit == subject)).await,
+        "no hit for {subject:?} under {words:?}: {:?}",
+        bar.texts()
+    );
+    let on_it = || {
+        bar.highlighted()
+            .is_some_and(|(kind, _, text)| kind == "message" && text.contains(subject))
+    };
+    for _ in 0..8 {
+        if on_it() {
+            break;
+        }
+        press(window, "Up", gtk::gdk::ModifierType::empty());
+    }
+    assert!(
+        on_it(),
+        "the arrows never reached {subject:?}: {:?}",
+        bar.highlighted()
+    );
+    press(window, "Return", gtk::gdk::ModifierType::empty());
+    assert!(
+        crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+        "the hit never opened"
+    );
+    bar
+}
+
 /// Press each of `keys`, unmodified but for shift on a capital.
 pub fn keys(window: &postio_gtk::window::FocusWindow, keys: &[&str]) {
     for name in keys {

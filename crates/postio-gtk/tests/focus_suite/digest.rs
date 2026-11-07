@@ -573,7 +573,7 @@ pub fn held_mail_is_found_by_search_and_says_where_it_waits() {
         );
         support::press(&window, "slash", gdk::ModifierType::empty());
         let bar = window.bar().expect("the bar");
-        bar.set_text("from:news@ledger.test");
+        bar.set_text("weekly numbers");
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["The weekly numbers"]).await,
             "search did not find the held message: {:?}",

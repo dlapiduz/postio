@@ -893,9 +893,23 @@ impl ResultsPane {
         line
     }
 
-    /// Scroll the ring's row into view, moving the list no further. The
-    /// first row of a group brings its header with it.
+    /// Scroll the ring's row into view, moving the list no further, once
+    /// the redraws already said have been taken: the ring is drawn by
+    /// replacing its rows, and a `scroll_to` asked before a replacement of
+    /// the row it scrolls to was dropped, leaving the ring below the view
+    /// after a few `j`s.
     fn reveal_cursor(&self) {
+        let weak = self.me.borrow().clone();
+        glib::idle_add_local_once(move || {
+            if let Some(pane) = weak.upgrade() {
+                pane.reveal_cursor_now();
+            }
+        });
+    }
+
+    /// [`reveal_cursor`](Self::reveal_cursor), now. The first row of a
+    /// group brings its header with it.
+    fn reveal_cursor_now(&self) {
         let Some(at) = self
             .cursor
             .get()
@@ -934,6 +948,19 @@ impl ResultsPane {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// What the Sort button says: "Sort Best match".
+    pub fn sort_said(&self) -> String {
+        self.sort
+            .label()
+            .map(|label| label.to_string())
+            .unwrap_or_default()
+    }
+
+    /// The rows' list, for what a test measures of it.
+    pub fn list(&self) -> &gtk::ListView {
+        &self.list
     }
 
     /// The count line: "48 conversations".

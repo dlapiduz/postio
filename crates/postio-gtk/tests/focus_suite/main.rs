@@ -623,12 +623,8 @@ const CASES: &[(&str, fn())] = &[
         drafts::g_t_lists_drafts_and_enter_opens_one_to_edit as fn(),
     ),
     (
-        "bar::a_plain_word_searches_as_it_is_typed_under_the_search_row",
-        bar::a_plain_word_searches_as_it_is_typed_under_the_search_row as fn(),
-    ),
-    (
-        "bar::a_word_no_command_is_named_by_searches_first",
-        bar::a_word_no_command_is_named_by_searches_first as fn(),
+        "bar::a_word_lists_top_hits_and_return_shows_all",
+        bar::a_word_lists_top_hits_and_return_shows_all as fn(),
     ),
     (
         "bar::at_offers_correspondents",
@@ -828,12 +824,12 @@ const CASES: &[(&str, fn())] = &[
         bar::alt_2_runs_the_second_saved_search as fn(),
     ),
     (
-        "bar::the_arrows_scroll_the_results_to_the_highlighted_row",
-        bar::the_arrows_scroll_the_results_to_the_highlighted_row as fn(),
+        "bar::walking_the_results_keeps_the_ringed_row_in_view",
+        bar::walking_the_results_keeps_the_ringed_row_in_view as fn(),
     ),
     (
-        "bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query",
-        bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query as fn(),
+        "bar::plain_english_is_understood_tab_makes_chips_and_ctrl_s_saves",
+        bar::plain_english_is_understood_tab_makes_chips_and_ctrl_s_saves as fn(),
     ),
     (
         "bar::a_misspelled_word_finds_what_was_meant_and_quoted_is_exact",
@@ -844,8 +840,8 @@ const CASES: &[(&str, fn())] = &[
         bar::a_result_gives_its_subject_room_before_its_first_line as fn(),
     ),
     (
-        "bar::o_is_a_letter_and_the_order_row_switches_the_results",
-        bar::o_is_a_letter_and_the_order_row_switches_the_results as fn(),
+        "bar::o_is_a_letter_and_alt_o_switches_the_results_sort",
+        bar::o_is_a_letter_and_alt_o_switches_the_results_sort as fn(),
     ),
     (
         "state::a_failing_account_is_named_and_the_others_mail_stays_listed",
@@ -856,8 +852,8 @@ const CASES: &[(&str, fn())] = &[
         state::a_failing_banner_says_the_syncs_own_reason as fn(),
     ),
     (
-        "bar::in_rec_lists_receipts_newest_first",
-        bar::in_rec_lists_receipts_newest_first as fn(),
+        "bar::in_rec_offers_receipts_and_return_searches_it",
+        bar::in_rec_offers_receipts_and_return_searches_it as fn(),
     ),
     (
         "marker_card::the_highlight_starts_and_ends_on_the_sentences_own_words",

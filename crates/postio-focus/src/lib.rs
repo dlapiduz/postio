@@ -122,8 +122,8 @@ impl Policy {
             caps: Capabilities {
                 reading_pane: linux,
                 stacking: linux,
-                results_view: !linux,
-                people_search: !linux,
+                results_view: true,
+                people_search: true,
                 contacts_view: true,
             },
         }

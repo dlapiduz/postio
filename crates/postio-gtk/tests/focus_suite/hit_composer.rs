@@ -13,7 +13,7 @@ use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// Search "harbor", open the first hit and wait for it to be read.
+/// Search "harbor", open its hit and wait for it to be read.
 async fn open_a_hit(
     fixture: &Fixture,
 ) -> (
@@ -34,26 +34,7 @@ async fn open_a_hit(
         crate::settle_until(async || support::subjects(&window).len() == 1).await,
         "the inbox never reached the screen"
     );
-    support::press(&window, "slash", gtk::gdk::ModifierType::empty());
-    let bar = window.bar().expect("/ opened the bar");
-    for end in 1..="harbor".len() {
-        bar.set_text(&"harbor"[..end]);
-        crate::settle();
-    }
-    assert!(
-        crate::settle_until(async || !bar.result_subjects().is_empty()).await,
-        "the search found nothing: {:?}",
-        bar.texts()
-    );
-    bar.run_search();
-    let chord: postio_ui::keymap::Chord = "Return".parse().expect("a chord");
-    postio_widgets::storyboard::deliver::press(window.upcast_ref(), &chord)
-        .expect("a deliverable chord");
-    crate::settle();
-    assert!(
-        crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
-        "the hit never opened"
-    );
+    let bar = support::open_hit(&window, "harbor", "Harbor budget").await;
     assert!(!bar.is_open(), "opening a hit puts the bar away");
     (window, bar)
 }

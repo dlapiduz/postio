@@ -1724,7 +1724,7 @@ impl FocusWindow {
                 }
             }
             // The bar, its keys, the saved searches and the go-to keys are
-            // the controller's (spec 009 slice 8): it opens the bar, says
+            // the controller's (spec 009 slice 8, spec 010): it opens the bar, says
             // what it shows, and goes where a line or a key says. `/` is for
             // mail and `Ctrl K` for commands: one bar, opened two ways (C24).
             CommandId::SavedSearch1
@@ -1736,6 +1736,13 @@ impl FocusWindow {
             | CommandId::BackToWords
             | CommandId::SaveSearch
             | CommandId::ToggleResultOrder
+            // The dropdown's keys, and History back and forward, which
+            // reach the results from the inbox (spec 010 D17).
+            | CommandId::ShowAllResults
+            | CommandId::ForgetRecent
+            | CommandId::ExcludeSuggestion
+            | CommandId::HistoryBack
+            | CommandId::HistoryForward
             | CommandId::GoToFolders
             | CommandId::GoToInbox
             | CommandId::GoToFiltered

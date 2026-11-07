@@ -340,30 +340,29 @@ fn what_the_bar_searches_for_forgives_a_near_word() {
 }
 
 #[test]
-fn the_bar_searches_people_where_the_platform_has_adopted_them_and_words_where_it_has_not() {
-    // from: and to: that know people (specs/011-focus-contacts S4) are an
-    // option of the platform, off on Linux until it adopts Contacts.
+fn the_bar_searches_people_on_both_platforms() {
+    // from: and to: that know people (specs/011-focus-contacts S4), on the
+    // Mac and, since its search adopted the dropdown, on Linux (#1825).
     let rows = List::of(3);
-    let ask = |mut focus: FocusController| {
+    for platform in [Platform::Apple, Platform::Freedesktop] {
+        let mut focus = FocusController::new(Policy::for_platform(platform));
         let _ = bar_open(&mut focus, CommandId::Search, &rows);
-        let effects = typed(&mut focus, "from:lovelace", &rows);
-        asked(&effects)
+        let effects = typed(&mut focus, "from:lovelace atlas", &rows);
+        let aware: Vec<bool> = asked(&effects)
             .iter()
             .filter_map(|request| match request {
-                Request::Search { query, .. } => Some(query.is_contact_aware()),
+                Request::Search { query, .. } | Request::Conversations { query, .. } => {
+                    Some(query.is_contact_aware())
+                }
                 _ => None,
             })
-            .collect::<Vec<_>>()
-    };
-    let on_the_mac = ask(mac());
-    assert!(
-        !on_the_mac.is_empty() && on_the_mac.iter().all(|aware| *aware),
-        "{on_the_mac:?}"
-    );
-    let mut policy = Policy::for_platform(Platform::Freedesktop);
-    policy.caps.results_view = false;
-    let on_linux = ask(FocusController::new(policy));
-    assert!(on_linux.iter().all(|aware| !*aware), "{on_linux:?}");
+            .collect();
+        assert!(
+            !aware.is_empty() && aware.iter().all(|aware| *aware),
+            "{platform:?}: {:?}",
+            asked(&effects)
+        );
+    }
 }
 
 // -- What a row runs -------------------------------------------------------
@@ -3013,20 +3012,16 @@ mod dropdown {
         );
     }
 
+    /// #1825: GTK's bar is the Mac's dropdown: `/` asks for the recent
+    /// searches, and ⌘↩ (Ctrl+Return) is the bar's.
     #[test]
-    fn the_gtk_bar_asks_nothing_of_the_dropdown() {
+    fn the_gtk_bar_is_the_dropdown() {
         let rows = List::of(1);
         let mut focus = FocusController::new(Policy::for_platform(Platform::Freedesktop));
-        assert!(!focus.policy().caps.results_view);
         let effects = run(&mut focus, CommandId::Search, &rows);
-        assert_eq!(asked(&effects), [Request::Places]);
-        let effects = typed(&mut focus, "atlas budget", &rows);
-        assert!(
-            asked(&effects)
-                .iter()
-                .all(|r| matches!(r, Request::Search { .. }))
-        );
-        assert!(!focus.answers(CommandId::ShowAllResults));
+        assert!(asked(&effects).contains(&Request::RecentSearches));
+        let _ = typed(&mut focus, "atlas budget", &rows);
+        assert!(focus.answers(CommandId::ShowAllResults));
     }
 }
 

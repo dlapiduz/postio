@@ -9,10 +9,8 @@
 
 use crate::support::{self, Fixture};
 
-/// A window over three budget messages and one other, with the search
-/// staged on, its inbox drawn.
+/// A window over three budget messages and one other, its inbox drawn.
 async fn budgets() -> (postio_gtk::window::FocusWindow, Fixture) {
-    postio_gtk::list::feed::stage_results_view(true);
     let fixture = Fixture::empty().await;
     fixture
         .file(
@@ -42,7 +40,6 @@ async fn budgets() -> (postio_gtk::window::FocusWindow, Fixture) {
         .file(("Lin Park", "lin@example.com"), "Lunch", "Noon?", 10)
         .await;
     let (window, _client) = fixture.open().await;
-    postio_gtk::list::feed::stage_results_view(false);
     assert!(
         crate::settle_until(async || support::subjects(&window).len() == 4).await,
         "the inbox never reached the screen"
