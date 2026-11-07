@@ -2887,3 +2887,72 @@ fn i_in_the_results_asks_about_the_focused_results_sender_and_a_click_on_a_name_
         postio_ui::keymap::KeyContext::ContactPopover
     );
 }
+
+/// Spec 007 US10 scenario 7 and #1825: a result says where it is -- where
+/// a digest holds it, in place of its folder -- and, with several accounts,
+/// which one it is in.
+#[test]
+fn a_result_says_where_a_digest_holds_it_and_its_account() {
+    use postio_focus::{Input, PlacesRead, Reply};
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = run(&mut focus, CommandId::Search, &rows);
+    let (ticket, _) = asks(&effects)
+        .into_iter()
+        .find(|(_, request)| *request == Request::Places)
+        .expect("opening the bar reads the places");
+    let inbox = postio_model::MailboxId::new(1);
+    let _ = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::Places(Ok(PlacesRead {
+                folders: vec![(inbox, "Inbox".to_owned())],
+                owners: vec![(inbox, "work@example.org".to_owned())],
+                ..PlacesRead::default()
+            })),
+        ),
+        &rows,
+    );
+    let _ = focus.handle_on(
+        Input::Typed {
+            text: "atlas budget".to_owned(),
+        },
+        &rows,
+    );
+    let held = MessageId::new(1007);
+    let mut waiting = run(&mut focus, CommandId::ShowAllResults, &rows);
+    while !waiting.is_empty() {
+        let mut next = Vec::new();
+        for (ticket, request) in asks(&waiting) {
+            let Some(mut reply) = reply_to(&request) else {
+                continue;
+            };
+            if let Reply::ResultsPage {
+                answer: Ok(found), ..
+            } = &mut reply
+                && found.hits.iter().any(|hit| hit.best == held)
+            {
+                found.names.held = vec![(held, "Newsletters".to_owned(), false)];
+            }
+            next.extend(focus.handle_on(Input::Reply(ticket, reply), &rows));
+        }
+        waiting = next;
+    }
+    let drawn: Vec<postio_focus::ResultRow> =
+        (0..20).filter_map(|at| focus.result_row(at)).collect();
+    let place = |message: MessageId| {
+        drawn
+            .iter()
+            .find(|row| row.message == message)
+            .map(|row| row.folder.clone())
+    };
+    assert_eq!(
+        place(held).as_deref(),
+        Some("held \u{b7} Newsletters \u{b7} work@example.org"),
+        "{drawn:?}"
+    );
+    assert_eq!(
+        place(MessageId::new(1002)).as_deref(),
+        Some("in:Inbox \u{b7} work@example.org")
+    );
+}

@@ -1534,6 +1534,7 @@ mod dropdown {
                 labels: vec![(LabelId::new(3), "Atlas".to_owned())],
                 label_colors: Vec::new(),
                 folders: vec![(MailboxId::new(1), "Inbox".to_owned())],
+                held: Vec::new(),
             },
             elapsed: std::time::Duration::from_millis(38),
         }
@@ -1937,6 +1938,40 @@ mod dropdown {
     /// People tab leaves you out the same way.
     /// A capped search's facets are floors, so its Narrow to pills are too
     /// (D30).
+    /// Spec 007 US10 scenario 7 and #1825: a hit says where it is --
+    /// where a digest holds it, in place of its folder -- and, with several
+    /// accounts, which one it is in.
+    #[test]
+    fn a_hit_says_where_a_digest_holds_it_and_its_account() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let effects = run(&mut focus, CommandId::Search, &rows);
+        let (ticket, _) = asks(&effects)
+            .into_iter()
+            .find(|(_, request)| *request == Request::Places)
+            .expect("opening the bar reads the places");
+        let mut read = places();
+        read.owners = read
+            .folders
+            .iter()
+            .map(|(id, _)| (*id, "work@example.org".to_owned()))
+            .collect();
+        let _ = focus.handle_on(Input::Reply(ticket, Reply::Places(Ok(read))), &rows);
+        let mut found = atlas_budget();
+        let held = found.hits[0].best;
+        found.names.held = vec![(held, "Newsletters".to_owned(), false)];
+        let effects = searched(&mut focus, "atlas budget", found, &rows);
+        let hits = &dropdown(&effects).sections[0].rows;
+        assert_eq!(
+            hits[0].folder.as_deref(),
+            Some("held \u{b7} Newsletters \u{b7} work@example.org")
+        );
+        assert_eq!(
+            hits[1].folder.as_deref(),
+            Some("in:Inbox \u{b7} work@example.org")
+        );
+    }
+
     #[test]
     fn narrow_to_pills_over_a_capped_search_are_floors() {
         let rows = List::of(3);

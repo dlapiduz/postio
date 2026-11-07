@@ -4977,6 +4977,30 @@ fn the_plain_english_example_finds_adas_invoices_of_last_month() {
     );
 }
 
+/// Spec 007 US10 scenario 7 (#1825): a conversation search says which of
+/// its hits a digest holds, and for which rule, so the dropdown's and the
+/// results' rows say where they wait.
+#[test]
+fn a_conversation_search_says_which_of_its_hits_a_digest_holds() {
+    let seed = SearchSeed::new();
+    let results = seed.conversations("atlas budget");
+    assert!(results.names.held.is_empty(), "nothing is held yet");
+    let best = results.hits.first().expect("a hit").best;
+    seed.rt.block_on(async {
+        let connection = seed.database.connect().await.expect("a connection");
+        postio_storage::repository::DigestRepository::new(&connection)
+            .hold(best, "Newsletters", Utc::now())
+            .await
+            .expect("held");
+    });
+    let results = seed.conversations("atlas budget");
+    assert_eq!(
+        results.names.held,
+        [(best, "Newsletters".to_owned(), false)],
+        "the held hit, its rule, and not yet delivered"
+    );
+}
+
 #[test]
 fn focus_asks_the_host_for_conversations_then_their_passages() {
     let seed = SearchSeed::new();

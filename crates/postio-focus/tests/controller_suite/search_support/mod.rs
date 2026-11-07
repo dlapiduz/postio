@@ -452,6 +452,7 @@ pub fn page(
                 (MailboxId::new(1), "Inbox".to_owned()),
                 (MailboxId::new(2), "Archive".to_owned()),
             ],
+            held: Vec::new(),
         },
         elapsed: std::time::Duration::from_millis(41),
     }

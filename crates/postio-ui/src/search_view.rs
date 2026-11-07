@@ -206,6 +206,26 @@ pub fn in_folder(name: &str) -> String {
     }
 }
 
+/// Where a hit's row says it is, in its folder column: where a digest
+/// holds it, in place of its folder (`held`: the rule, and whether it has
+/// been delivered; spec 007 US10), else `in:` its folder; and after it,
+/// where there are several accounts, the one it is in (`account`), so the
+/// same message filed in two accounts does not read as one row twice.
+pub fn hit_place(
+    held: Option<(&str, bool)>,
+    folder: Option<&str>,
+    account: Option<&str>,
+) -> Option<String> {
+    let place = match held {
+        Some((rule, delivered)) => Some(crate::digest::held_place(rule, delivered)),
+        None => folder.map(in_folder),
+    };
+    match (place, account) {
+        (Some(place), Some(account)) => Some(format!("{place} \u{b7} {account}")),
+        (place, account) => place.or_else(|| account.map(str::to_owned)),
+    }
+}
+
 /// The arrows, as one hint: the panel's own walk, which the toolkit keeps
 /// (009 FR-004), not a command.
 fn arrows(label: &str) -> Hint {
@@ -2036,6 +2056,35 @@ mod tests {
         // Another year: the list's short form (`row::timestamp`), which
         // fits the 62-pt date column.
         assert_eq!(hit_date(at(2025, 12, 3), now), "3 Dec 25");
+    }
+
+    /// Spec 007 US10 scenario 7, and #1825: a hit says where it is --
+    /// where a digest holds it in place of its folder -- and, where there
+    /// are several accounts, which one, after it.
+    #[test]
+    fn a_hit_says_where_it_waits_and_in_which_account() {
+        assert_eq!(
+            hit_place(None, Some("INBOX"), None).as_deref(),
+            Some("in:Inbox")
+        );
+        assert_eq!(
+            hit_place(Some(("Newsletters", false)), Some("Inbox"), None).as_deref(),
+            Some("held \u{b7} Newsletters"),
+            "where it waits, in place of its folder"
+        );
+        assert_eq!(
+            hit_place(Some(("Newsletters", true)), Some("Inbox"), None).as_deref(),
+            Some("digest \u{b7} Newsletters")
+        );
+        assert_eq!(
+            hit_place(None, Some("Inbox"), Some("second@example.org")).as_deref(),
+            Some("in:Inbox \u{b7} second@example.org")
+        );
+        assert_eq!(
+            hit_place(None, None, Some("second@example.org")).as_deref(),
+            Some("second@example.org")
+        );
+        assert_eq!(hit_place(None, None, None), None);
     }
 
     #[test]

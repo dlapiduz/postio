@@ -308,7 +308,51 @@ pub(crate) struct Landed {
     pub(crate) total: u64,
     pub(crate) capped: bool,
     pub(crate) elapsed: std::time::Duration,
+    pub(crate) wheres: Wheres,
+}
+
+/// Where an answer's hits are, for their folder column.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Wheres {
+    /// Every folder's name.
     pub(crate) folders: Vec<(postio_model::MailboxId, String)>,
+    /// What a digest holds: [`postio_search::results::FacetNames::held`].
+    pub(crate) held: Vec<(postio_model::MessageId, String, bool)>,
+    /// Each folder's account, where there are several
+    /// ([`crate::PlacesRead::owners`]).
+    pub(crate) owners: Vec<(postio_model::MailboxId, String)>,
+}
+
+impl Wheres {
+    /// What the folder column says of the best message `message`, filed
+    /// in `mailbox` ([`words::hit_place`]).
+    pub(crate) fn place(
+        &self,
+        message: postio_model::MessageId,
+        mailbox: postio_model::MailboxId,
+    ) -> Option<String> {
+        let held = self
+            .held
+            .iter()
+            .find(|(held, _, _)| *held == message)
+            .map(|(_, rule, delivered)| (rule.as_str(), *delivered));
+        words::hit_place(
+            held,
+            named(&self.folders, mailbox),
+            named(&self.owners, mailbox),
+        )
+    }
+}
+
+/// `mailbox`'s entry in `names`.
+fn named(
+    names: &[(postio_model::MailboxId, String)],
+    mailbox: postio_model::MailboxId,
+) -> Option<&str> {
+    names
+        .iter()
+        .find(|(id, _)| *id == mailbox)
+        .map(|(_, name)| name.as_str())
 }
 
 /// The pills a search's facets offer: the top senders but you,
@@ -624,7 +668,7 @@ pub(crate) fn words(
             .map(|shown| {
                 hit_row(
                     shown,
-                    &landed.folders,
+                    &landed.wheres,
                     &|title| highlight::find(title, terms),
                     now,
                 )
@@ -680,10 +724,10 @@ pub(crate) fn words(
 }
 
 /// A conversation's row: "Sender · Subject" with `marks` highlighted, its
-/// passage, folder and date.
+/// passage, where it is and its date.
 pub(crate) fn hit_row(
     shown: &Shown,
-    folders: &[(postio_model::MailboxId, String)],
+    wheres: &Wheres,
     marks: &dyn Fn(&str) -> Vec<std::ops::Range<usize>>,
     now: DateTime<Local>,
 ) -> DropdownRow {
@@ -706,10 +750,7 @@ pub(crate) fn hit_row(
         kind: DropdownRowKind::Hit,
         title: marked(&title, &marks(&title)),
         detail,
-        folder: folders
-            .iter()
-            .find(|(id, _)| *id == hit.mailbox_id)
-            .map(|(_, name)| words::in_folder(name)),
+        folder: wheres.place(hit.best, hit.mailbox_id),
         right: Some(words::hit_date(hit.newest_match.with_timezone(&Local), now)),
         key: None,
         selectable: true,
@@ -1008,7 +1049,7 @@ pub(crate) fn prefix(parts: PrefixParts<'_>) -> DropdownView {
                 .map(|shown| {
                     hit_row(
                         shown,
-                        &landed.folders,
+                        &landed.wheres,
                         &|title| prefix_marks(title, parts.typed),
                         parts.now,
                     )
@@ -1052,7 +1093,7 @@ pub(crate) fn prefix(parts: PrefixParts<'_>) -> DropdownView {
 pub(crate) struct Latest {
     pub(crate) name: String,
     pub(crate) hits: Vec<Shown>,
-    pub(crate) folders: Vec<(postio_model::MailboxId, String)>,
+    pub(crate) wheres: Wheres,
 }
 
 /// What the operator dropdown is drawn from.
@@ -1098,7 +1139,7 @@ pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
             rows: latest
                 .hits
                 .iter()
-                .map(|shown| hit_row(shown, &latest.folders, &|_| Vec::new(), parts.now))
+                .map(|shown| hit_row(shown, &latest.wheres, &|_| Vec::new(), parts.now))
                 .collect(),
             pills: Vec::new(),
         });
@@ -1141,7 +1182,7 @@ pub(crate) fn plain(parts: PlainParts<'_>) -> DropdownView {
                 .map(|shown| {
                     hit_row(
                         shown,
-                        &landed.folders,
+                        &landed.wheres,
                         &|title| highlight::find(title, parts.terms),
                         parts.now,
                     )

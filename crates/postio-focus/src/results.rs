@@ -659,6 +659,8 @@ pub(crate) struct Words<'a> {
     pub(crate) now: DateTime<Local>,
     /// Every folder the places know, for a row's `in:`.
     pub(crate) folders: &'a [(MailboxId, String)],
+    /// Each folder's account, where there are several.
+    pub(crate) owners: &'a [(MailboxId, String)],
 }
 
 /// One group, as positions.
@@ -760,6 +762,9 @@ pub(crate) struct Results {
     /// button names its person while the next answer is on its way,
     /// rather than falling back to the address and back again.
     people: Vec<postio_model::EmailAddress>,
+    /// What a digest holds of the hits read, each page's
+    /// ([`FacetNames::held`]): where their rows say they wait.
+    held: Vec<(MessageId, String, bool)>,
     /// The search found nothing: its ways out (US6).
     none: Option<NoResults>,
     /// The Files tab's cards, once read for this query.
@@ -816,6 +821,7 @@ impl Results {
             undated: None,
             quick_look: None,
             people: Vec::new(),
+            held: Vec::new(),
             none: None,
             files: None,
             files_asked: false,
@@ -1376,6 +1382,11 @@ impl Results {
         let was_ready = self.ready();
         if self.frame.is_none() {
             self.frame = Some(Frame::of(&results));
+        }
+        for held in &results.names.held {
+            if !self.held.iter().any(|known| known.0 == held.0) {
+                self.held.push(held.clone());
+            }
         }
         for (_, person) in &results.names.people {
             if person.name.is_some()
@@ -2331,8 +2342,28 @@ impl Results {
                     .iter()
                     .find(|(id, _)| *id == hit.mailbox_id)
                     .map(|(_, name)| name.clone())
-            })
-            .unwrap_or_default();
+            });
+        let held = self
+            .held
+            .iter()
+            .find(|(message, _, _)| *message == hit.best)
+            .map(|(_, rule, delivered)| (rule.as_str(), *delivered));
+        let account = with
+            .owners
+            .iter()
+            .find(|(id, _)| *id == hit.mailbox_id)
+            .map(|(_, account)| account.as_str());
+        // Said as the row shows it, less the operator: "Inbox", or where
+        // it waits, and the account where there are several.
+        let spoken_place = [
+            held.map(|(rule, delivered)| postio_ui::digest::held_place(rule, delivered))
+                .or_else(|| folder_name.as_deref().map(words::folder_name)),
+            account.map(str::to_owned),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
         let date = words::hit_date(hit.newest_match.with_timezone(&Local), with.now);
         let passage_text: String = passage.iter().map(|run| run.text.as_str()).collect();
         let reason = top_hit
@@ -2349,7 +2380,7 @@ impl Results {
                 &subject,
                 &source_tag,
                 &passage_text,
-                &words::folder_name(&folder_name),
+                &spoken_place,
                 &date,
             ),
             unread: hit.unread,
@@ -2380,11 +2411,7 @@ impl Results {
             source_tag,
             source_is_file,
             passage,
-            folder: if folder_name.is_empty() {
-                String::new()
-            } else {
-                words::in_folder(&folder_name)
-            },
+            folder: words::hit_place(held, folder_name.as_deref(), account).unwrap_or_default(),
             date,
             checked: self.is_checked(hit.best),
         })
@@ -2777,6 +2804,7 @@ impl FocusController {
             keymap: self.bar.keymap(),
             now: self.bar.now(),
             folders: self.bar.folders(),
+            owners: self.bar.owners(),
         }
     }
 

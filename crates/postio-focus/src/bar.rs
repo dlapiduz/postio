@@ -408,6 +408,23 @@ impl Bar {
         &self.places.folders
     }
 
+    /// Each folder's account, where there are several.
+    pub(crate) fn owners(&self) -> &[(MailboxId, String)] {
+        &self.places.owners
+    }
+
+    /// Where an answer named by `names` has its hits: its folders, the
+    /// places', what a digest holds, and the accounts.
+    fn wheres(&self, names: postio_search::results::FacetNames) -> dropdown::Wheres {
+        let mut folders = names.folders;
+        folders.extend(self.places.folders.iter().cloned());
+        dropdown::Wheres {
+            folders,
+            held: names.held,
+            owners: self.places.owners.clone(),
+        }
+    }
+
     /// The name a person is known by, for any address they own.
     pub(crate) fn name_for(&self, address: &str) -> Option<String> {
         self.places
@@ -2100,8 +2117,7 @@ impl Bar {
             .map(|(pill, clause)| (self.token(), pill, clause))
             .collect();
         let show_all = self.token();
-        let mut folders = results.names.folders;
-        folders.extend(self.places.folders.iter().cloned());
+        let wheres = self.wheres(results.names);
         let landed = Landed {
             hits,
             pills,
@@ -2109,7 +2125,7 @@ impl Bar {
             total: results.total,
             capped: results.capped,
             elapsed: results.elapsed,
-            folders,
+            wheres,
         };
         let Some(drop) = self.drop.as_mut() else {
             return Vec::new();
@@ -2329,19 +2345,14 @@ impl Bar {
                 hit,
             })
             .collect();
-        let mut folders = results.names.folders;
-        folders.extend(self.places.folders.iter().cloned());
+        let wheres = self.wheres(results.names);
         let Some(drop) = self.drop.as_mut() else {
             return Vec::new();
         };
         if drop.state != DropdownState::Operator || drop.latest_asked.as_deref() != Some(address) {
             return Vec::new();
         }
-        drop.latest = Some(Latest {
-            name,
-            hits,
-            folders,
-        });
+        drop.latest = Some(Latest { name, hits, wheres });
         vec![self.draw(None)]
     }
 
