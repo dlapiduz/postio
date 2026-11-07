@@ -1127,7 +1127,7 @@ static SPECS: &[CommandSpec] = &[
         // A terminal delivers `ctrl+BackSpace` as plain backspace, so the
         // terminal's key is `alt+BackSpace`.
         alternate_bindings: &["alt+BackSpace"],
-        // In the Mac's results, where nothing matched, the same key clears
+        // In the results, where nothing matched, the same key clears
         // the filters and keeps the words (spec 010 D24): there are no
         // words to go back to, and a second command on the key would be
         // two meanings in one place.
@@ -1136,9 +1136,8 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
     },
-    // Spec 010: the Mac's search dropdown, drawn as pixels (so not the
-    // terminal's). Neither is offered on Linux until it adopts the dropdown
-    // (`offered_on`, D25).
+    // Spec 010: the search dropdown, drawn as pixels (so not the
+    // terminal's).
     CommandSpec {
         id: CommandId::ShowAllResults,
         title: "Show all results",
@@ -1153,9 +1152,11 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ForgetRecent,
         title: "Forget recent search",
-        // The design names the Mac's Option-Delete (D23).
+        // The design names the Mac's Option-Delete (D23). Linux's is the
+        // browsers' Shift+Delete: its `alt+BackSpace` is the terminal's
+        // back to words (`binding_offered_on`).
         default_binding: "alt+BackSpace",
-        alternate_bindings: &[],
+        alternate_bindings: &["shift+Delete"],
         contexts: Context::Search.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -1174,11 +1175,10 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
-    // Spec 010 step 3: the Mac's results view (R10), a mode of the main
-    // window with its own context. History moves between it and the inbox
-    // the way a browser's back and forward do -- from either, so the inbox
-    // names it too -- and ⌘1-3 pick its tabs.
-    // None is offered on Linux until it adopts the results view (D25).
+    // Spec 010 step 3: the results view (R10), a mode of the main window
+    // with its own context. History moves between it and the inbox the way
+    // a browser's back and forward do -- from either, so the inbox names it
+    // too -- and ⌘1-3 pick its tabs.
     CommandSpec {
         id: CommandId::HistoryBack,
         title: "Back",
@@ -1230,7 +1230,7 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_GRAPHICAL_MAIL,
     },
     // ⌥←/⌥→ step the timeline's range by a month (spec 010 FR-023): the
-    // results' own, and the Mac's until Linux adopts them (D25).
+    // results' own.
     CommandSpec {
         id: CommandId::StepRangeBack,
         title: "Earlier month",
@@ -1253,8 +1253,7 @@ static SPECS: &[CommandSpec] = &[
     },
     // Space looks inside a result without opening it, and ]/[ walk its
     // matches while it is open (spec 010 US4, FR-028, design §3.7): the
-    // results' own, and the Mac's until Linux adopts them (D25). The same
-    // brackets walk a thread's messages and a digest's references, each in
+    // results' own. The same brackets walk a thread's messages and a digest's references, each in
     // its own context.
     CommandSpec {
         id: CommandId::QuickLook,
@@ -1287,8 +1286,7 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_GRAPHICAL_MAIL,
     },
     // A search that found nothing offers up to four looser ones, numbered
-    // (spec 010 US6, FR-030, design §3.10): the results' own, and the
-    // Mac's until Linux adopts them (D25). The same digits pick a picker's
+    // (spec 010 US6, FR-030, design §3.10): the results' own. The same digits pick a picker's
     // options and Filtered's tabs, each in its own context.
     CommandSpec {
         id: CommandId::PickRelaxation1,
@@ -1332,7 +1330,7 @@ static SPECS: &[CommandSpec] = &[
     },
     // ⌘↓ saves the file under the ring on the Files tab (spec 010 FR-031,
     // design §3.8): Finder's "open" chord, for the file a card stands for.
-    // The results' own, and the Mac's until Linux adopts them (D25).
+    // The results' own.
     CommandSpec {
         id: CommandId::SaveFile,
         title: "Save file",
@@ -3262,35 +3260,14 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             // repair, and recolouring there would break the contrast floor;
             // the maintainer chose to leave it out (2026-10-01, #1705).
             | (ActionId::Builtin(C::DarkenMessage), Platform::Apple)
-            // The search dropdown is the Mac's until Linux adopts it
-            // (spec 010 D23, D25).
-            | (ActionId::Builtin(C::ShowAllResults), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ForgetRecent), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ExcludeSuggestion), Platform::Freedesktop)
-            // And so is the results view (spec 010 D17, D25).
-            | (ActionId::Builtin(C::HistoryBack), Platform::Freedesktop)
-            | (ActionId::Builtin(C::HistoryForward), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ResultsConversations), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ResultsFiles), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ResultsPeople), Platform::Freedesktop)
-            | (ActionId::Builtin(C::StepRangeBack), Platform::Freedesktop)
-            | (ActionId::Builtin(C::StepRangeForward), Platform::Freedesktop)
-            | (ActionId::Builtin(C::QuickLook), Platform::Freedesktop)
-            | (ActionId::Builtin(C::NextMatch), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PrevMatch), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PickRelaxation1), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PickRelaxation2), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PickRelaxation3), Platform::Freedesktop)
-            | (ActionId::Builtin(C::PickRelaxation4), Platform::Freedesktop)
-            | (ActionId::Builtin(C::SaveFile), Platform::Freedesktop)
             // Syncing with an address book is the Mac's: Linux has Contacts
             // (specs/011-focus-contacts S13) and leaves sync out.
             | (ActionId::Builtin(C::ContactsSync), Platform::Freedesktop)
     )
 }
 
-/// Whether `platform` lets `action` take its alternate `binding` (as the
-/// registry spells it, before `mod+` is expanded).
+/// Whether `platform` lets `action` take `binding`, its default or an
+/// alternate (as the registry spells it, before `mod+` is expanded).
 ///
 /// Two alternates are the desktop's and not the Mac's: `quit`'s `mod+w`, and
 /// `back_to_words`' `alt+BackSpace`, which the Mac's `forget_recent` takes.
@@ -3299,7 +3276,13 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
 /// compose window over the list most of all -- through Window › Close, and
 /// the key monitor sees a key before any menu does, so a ⌘W resolved to
 /// `quit` ended the app (specs/009-focus-macos T105).
-pub fn alternate_offered_on(action: ActionId, binding: &str, platform: Platform) -> bool {
+///
+/// And one default is the Mac's alone: `forget_recent`'s `alt+BackSpace`,
+/// since the terminal shares Linux's keymap and reads that key as back to
+/// words. Linux forgets on `shift+Delete` instead, the key a desktop
+/// browser drops a suggestion with (#1825); on the Mac that spelling would
+/// be Shift-Delete, which the design does not name.
+pub fn binding_offered_on(action: ActionId, binding: &str, platform: Platform) -> bool {
     !matches!(
         (action, binding, platform),
         (ActionId::Builtin(CommandId::Quit), "mod+w", Platform::Apple)
@@ -3308,6 +3291,16 @@ pub fn alternate_offered_on(action: ActionId, binding: &str, platform: Platform)
             | (
                 ActionId::Builtin(CommandId::BackToWords),
                 "alt+BackSpace",
+                Platform::Apple
+            )
+            | (
+                ActionId::Builtin(CommandId::ForgetRecent),
+                "alt+BackSpace",
+                Platform::Freedesktop
+            )
+            | (
+                ActionId::Builtin(CommandId::ForgetRecent),
+                "shift+Delete",
                 Platform::Apple
             )
     )
@@ -3360,35 +3353,14 @@ mod tests {
         CommandId::NextScope,
     ];
 
-    /// What only the Mac draws, until Linux adopts it: the search dropdown
-    /// and results view (spec 010 D23, D25), and syncing with an address
-    /// book (specs/011-focus-contacts S12).
-    const NOT_ON_LINUX_YET: [CommandId; 19] = [
-        CommandId::ShowAllResults,
-        CommandId::ForgetRecent,
-        CommandId::ExcludeSuggestion,
-        CommandId::HistoryBack,
-        CommandId::HistoryForward,
-        CommandId::ResultsConversations,
-        CommandId::ResultsFiles,
-        CommandId::ResultsPeople,
-        CommandId::StepRangeBack,
-        CommandId::StepRangeForward,
-        CommandId::QuickLook,
-        CommandId::NextMatch,
-        CommandId::PrevMatch,
-        CommandId::PickRelaxation1,
-        CommandId::PickRelaxation2,
-        CommandId::PickRelaxation3,
-        CommandId::PickRelaxation4,
-        CommandId::SaveFile,
-        CommandId::ContactsSync,
-    ];
+    /// What only the Mac has: syncing with an address book
+    /// (specs/011-focus-contacts S12).
+    const NOT_ON_LINUX: [CommandId; 1] = [CommandId::ContactsSync];
 
     #[test]
     fn every_command_is_offered_on_freedesktop() {
         // GTK draws every surface these commands name, so nothing is scoped
-        // away there but the Mac's dropdown -- this is the half that guards
+        // away there but the Mac's address-book sync -- this is the half that guards
         // the GTK build against a Mac decision leaking into it.
         let scoped: Vec<CommandId> = CommandId::ALL
             .iter()
@@ -3396,7 +3368,7 @@ mod tests {
             .filter(|id| !offered_on(ActionId::Builtin(*id), Platform::Freedesktop))
             .collect();
         assert_eq!(
-            scoped, NOT_ON_LINUX_YET,
+            scoped, NOT_ON_LINUX,
             "a command left Linux's menus without anyone deciding it"
         );
     }

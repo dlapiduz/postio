@@ -77,8 +77,8 @@ fn offered_on_the_mac(table: &str) -> String {
         .collect()
 }
 
-/// `table`'s rows for the commands Linux offers: the Mac's search dropdown
-/// is its own until Linux adopts it (spec 010 D25).
+/// `table`'s rows for the commands Linux offers: a command a platform has
+/// no surface for has no key there (`registry::offered_on`).
 fn offered_on_linux(table: &str) -> String {
     table
         .lines()
@@ -133,14 +133,20 @@ fn apple_gets_command_wherever_freedesktop_gets_control() {
     assert_ne!(linux, apple, "nothing was translated at all");
     // The one alternate the Mac keeps for itself: ⌘W closes the window in
     // front there, where GTK's one window closing is quitting
-    // (`registry::alternate_offered_on`, specs/009-focus-macos T105).
+    // (`registry::binding_offered_on`, specs/009-focus-macos T105).
     // The other: `alt+BackSpace` is the Mac's forget-recent, so Back to
-    // words keeps only `cmd+BackSpace` there (spec 010 D23).
+    // words keeps only `cmd+BackSpace` there (spec 010 D23), and Linux
+    // forgets on Shift+Delete instead (#1825), which the Mac spells
+    // `shift+BackSpace`.
     let linux = as_the_mac_spells_it(&offered_on_the_mac(&offered_on_linux(&linux)))
         .replace("quit\tcmd+q | cmd+w\n", "quit\tcmd+q\n")
         .replace(
             "back_to_words\tcmd+BackSpace | alt+BackSpace\n",
             "back_to_words\tcmd+BackSpace\n",
+        )
+        .replace(
+            "forget_recent\tshift+BackSpace\n",
+            "forget_recent\talt+BackSpace\n",
         );
     assert_eq!(
         linux,

@@ -1809,12 +1809,15 @@ mod tests {
     // US9, design §3.11: a People row's words and its footer.
     #[test]
     fn quick_look_s_buttons_run_what_they_say_with_a_key_unbound() {
-        // Linux binds no Quick Look key yet (D25): its button is left out,
-        // and the buttons after it must not shift onto the wrong command.
-        let keymap = postio_core::Keymap::resolve_on(
-            &postio_config::KeyBindings::default(),
-            postio_config::paths::Platform::Freedesktop,
-        );
+        // Space given to another command leaves Quick Look no key: its
+        // button is left out, and the buttons after it must not shift onto
+        // the wrong command.
+        let mut keys = postio_config::KeyBindings::default();
+        keys.overrides_mut()
+            .insert("next_match".to_owned(), "space".to_owned());
+        let keymap =
+            postio_core::Keymap::resolve_on(&keys, postio_config::paths::Platform::Freedesktop);
+        assert_eq!(keymap.binding(CommandId::QuickLook), None, "space is taken");
         let labels: Vec<String> = quick_look_actions(&keymap)
             .into_iter()
             .map(|hint| hint.label)

@@ -276,8 +276,8 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
     let mut resolver = resolver();
 
     for spec in postio_core::registry::all() {
-        // The resolver here is Linux's; the Mac's search dropdown has no
-        // keys on it yet (spec 010 D25).
+        // The resolver here is Linux's, which leaves out what only the Mac
+        // has.
         if !postio_core::registry::offered_on(spec.id.into(), Platform::Freedesktop) {
             continue;
         }
@@ -285,7 +285,15 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
             if !spec.available_in(*context) {
                 continue;
             }
-            for binding in spec.bindings() {
+            // Less a key Linux keeps for another command: its
+            // `alt+BackSpace` is back to words, not the Mac's forget-recent.
+            for binding in spec.bindings().filter(|binding| {
+                postio_core::registry::binding_offered_on(
+                    spec.id.into(),
+                    binding,
+                    Platform::Freedesktop,
+                )
+            }) {
                 let binding = &expand_mod(binding, Platform::Freedesktop);
                 let outcome = press(&mut resolver, binding, KeyContext::from(*context));
                 assert_eq!(

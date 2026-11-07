@@ -225,8 +225,8 @@ const CONTRACT: &[Row] = &[
         &[Context::Search, Context::Results],
     ),
     with("toggle_result_order", "alt+o", &[], All, &[Context::Search]),
-    // Spec 010: the Mac's search bar. `mod+Return` sends in the composer;
-    // here it opens the results. Neither is offered on Freedesktop yet (D25).
+    // Spec 010: the search dropdown. `mod+Return` sends in the composer;
+    // here it opens the results.
     with(
         "show_all_results",
         "mod+Return",
@@ -242,16 +242,17 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Search],
     ),
+    // The Mac's Option-Delete (D23); Linux's Shift+Delete, since its
+    // `alt+BackSpace` is the terminal's back-to-words (#1825).
     with(
         "forget_recent",
         "alt+BackSpace",
-        &[],
+        &["shift+Delete"],
         Graphical,
         &[Context::Search],
     ),
-    // Spec 010 step 3: the Mac's results view (R10). History and the tabs
-    // are its own; none is offered on Freedesktop until Linux adopts it
-    // (D25).
+    // Spec 010 step 3: the results view (R10). History and the tabs are
+    // its own.
     with(
         "history_back",
         "mod+bracketleft",
@@ -571,15 +572,12 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
                 continue;
             }
             let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
-            // Less an alternate the platform keeps for itself: ⌘W closes
-            // the window in front on the Mac (`alternate_offered_on`).
+            // Less a key the platform keeps for itself: ⌘W closes the window
+            // in front on the Mac (`binding_offered_on`).
             let expected: Vec<String> = spec
                 .bindings()
-                .enumerate()
-                .filter(|(at, binding)| {
-                    *at == 0 || registry::alternate_offered_on(spec.id.into(), binding, platform)
-                })
-                .map(|(_, binding)| expand_mod(binding, platform))
+                .filter(|binding| registry::binding_offered_on(spec.id.into(), binding, platform))
+                .map(|binding| expand_mod(binding, platform))
                 .collect();
             assert_eq!(
                 keymap.bindings(spec.id),
@@ -591,19 +589,18 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
             // BackSpace is the `Delete` it was written as (specs/009-focus-macos
             // M6). No registry default is a lone BackSpace, so that is
             // unambiguous; `mod+BackSpace` keeps its modifier and its key.
-            // Compared as the registry writes them, less an alternate some
+            // Compared as the registry writes them, less a key some
             // platform keeps for itself.
             let reserved: Vec<String> = spec
-                .alternate_bindings
-                .iter()
-                .filter(|alternate| {
+                .bindings()
+                .filter(|binding| {
                     [Platform::Freedesktop, Platform::Apple]
                         .iter()
                         .any(|platform| {
-                            !registry::alternate_offered_on(spec.id.into(), alternate, *platform)
+                            !registry::binding_offered_on(spec.id.into(), binding, *platform)
                         })
                 })
-                .map(|alternate| alternate.replace("mod+", "ctrl+"))
+                .map(|binding| binding.replace("mod+", "ctrl+"))
                 .collect();
             let as_written: Vec<String> = keymap
                 .bindings(spec.id)
@@ -628,37 +625,44 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
     }
 }
 
-/// Spec 010 D23 and D25: the Mac's search bar has two keys Linux does not
-/// adopt yet, and the one `alt+BackSpace` means a different command on each
-/// platform -- the terminal's alternate for `back_to_words` on Linux, the
-/// forgetting of a recent search on the Mac.
+/// Spec 010 D23 and #1825: the search bar's keys on both platforms, and
+/// the one `alt+BackSpace` that means a different command on each -- the
+/// terminal's alternate for `back_to_words` on Linux, the forgetting of a
+/// recent search on the Mac. Linux forgets on Shift+Delete, the key a
+/// desktop browser drops a suggestion with.
 #[test]
-fn the_search_bar_s_new_keys_resolve_on_the_mac_and_not_on_linux() {
+fn the_search_bar_s_keys_resolve_on_both_platforms() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
     let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
 
     assert_eq!(mac.bindings(CommandId::ShowAllResults), ["cmd+Return"]);
     assert_eq!(mac.bindings(CommandId::ForgetRecent), ["alt+BackSpace"]);
-    assert!(linux.bindings(CommandId::ShowAllResults).is_empty());
-    assert!(linux.bindings(CommandId::ForgetRecent).is_empty());
-    assert!(!linux.offers(CommandId::ShowAllResults));
-    assert!(!linux.offers(CommandId::ForgetRecent));
+    assert_eq!(linux.bindings(CommandId::ShowAllResults), ["ctrl+Return"]);
+    assert_eq!(linux.bindings(CommandId::ForgetRecent), ["shift+Delete"]);
+    assert_eq!(
+        linux.command_for(Context::Search, "shift+Delete"),
+        Some(postio_core::ActionId::Builtin(CommandId::ForgetRecent))
+    );
 
     assert_eq!(
         mac.bindings(CommandId::BackToWords),
         ["cmd+BackSpace"],
         "the terminal's alternate is not the Mac's: alt+BackSpace forgets a recent"
     );
-    assert_eq!(
-        linux.bindings(CommandId::BackToWords),
-        ["ctrl+BackSpace", "alt+BackSpace"]
-    );
+    let terminal = Keymap::for_terminal(&KeyBindings::default());
+    for keymap in [&linux, &terminal] {
+        assert_eq!(
+            keymap.bindings(CommandId::BackToWords),
+            ["ctrl+BackSpace", "alt+BackSpace"],
+            "a terminal delivers ctrl+BackSpace as plain backspace"
+        );
+    }
 }
 
-/// Spec 010 step 3 (R10, D25): the results view's own keys are the Mac's,
-/// and the list's verbs reach a result as they reach a row.
+/// Spec 010 step 3 (R10) and #1825: the results view's own keys, on both
+/// platforms, and the list's verbs reach a result as they reach a row.
 #[test]
-fn the_results_views_keys_resolve_on_the_mac_and_not_on_linux() {
+fn the_results_views_keys_resolve_on_both_platforms() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
     let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
 
@@ -670,9 +674,13 @@ fn the_results_views_keys_resolve_on_the_mac_and_not_on_linux() {
         (CommandId::ResultsPeople, "cmd+3"),
     ] {
         assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert_eq!(
+            linux.bindings(id),
+            [key.replace("cmd+", "ctrl+")],
+            "{id} on Linux"
+        );
         assert!(registry::get(id).available_in(Context::Results), "{id}");
-        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
-        assert!(!linux.offers(id), "{id} is offered on Linux");
+        assert!(linux.offers(id), "{id} is not offered on Linux");
     }
 
     // The list's verbs, by the key the Mac spells them with: a result is a
@@ -708,10 +716,10 @@ fn the_results_views_keys_resolve_on_the_mac_and_not_on_linux() {
     }
 }
 
-/// Spec 010 step 4 (FR-023, D25): ⌥←/⌥→ step the timeline's range by a
-/// month in the results, on the Mac, and are not offered on Linux yet.
+/// Spec 010 step 4 (FR-023) and #1825: ⌥←/⌥→ step the timeline's range by
+/// a month in the results, on both platforms.
 #[test]
-fn the_timeline_steps_on_alt_arrows_on_the_mac_and_not_on_linux() {
+fn the_timeline_steps_on_alt_arrows_on_both_platforms() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
     let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     for (id, key) in [
@@ -719,16 +727,15 @@ fn the_timeline_steps_on_alt_arrows_on_the_mac_and_not_on_linux() {
         (CommandId::StepRangeForward, "alt+Right"),
     ] {
         assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert_eq!(linux.bindings(id), [key], "{id} on Linux");
         assert!(registry::get(id).available_in(Context::Results), "{id}");
-        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
-        assert!(!linux.offers(id), "{id} is offered on Linux");
     }
 }
 
-/// Spec 010 step 5 (FR-028, D25): Space opens Quick Look on a result and
-/// ]/[ walk its matches, in the results, on the Mac; not on Linux yet.
+/// Spec 010 step 5 (FR-028) and #1825: Space opens Quick Look on a result
+/// and ]/[ walk its matches, in the results, on both platforms.
 #[test]
-fn quick_look_is_space_and_its_matches_are_brackets_on_the_mac() {
+fn quick_look_is_space_and_its_matches_are_brackets() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
     let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     for (id, key) in [
@@ -742,16 +749,21 @@ fn quick_look_is_space_and_its_matches_are_brackets_on_the_mac() {
             Some(postio_core::ActionId::Builtin(id)),
             "{key}"
         );
-        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
-        assert!(!linux.offers(id), "{id} is offered on Linux");
+        for keymap in [&mac, &linux] {
+            assert_eq!(
+                keymap.command_for(Context::Results, key),
+                Some(postio_core::ActionId::Builtin(id)),
+                "{key}"
+            );
+        }
+        assert_eq!(linux.bindings(id), [key], "{id} on Linux");
     }
 }
 
-/// Spec 010 step 7 (FR-030, D24, D25): 1-4 pick a looser search and ⌘⌫
-/// clears the filters, in the results, on the Mac; the numbers are not
-/// Linux's yet.
+/// Spec 010 step 7 (FR-030, D24) and #1825: 1-4 pick a looser search and
+/// ⌘⌫ (Ctrl+BackSpace on Linux) clears the filters, in the results.
 #[test]
-fn relaxations_are_numbers_and_back_to_words_reaches_the_results_on_the_mac() {
+fn relaxations_are_numbers_and_back_to_words_reaches_the_results() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
     let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     for (id, key) in [
@@ -766,20 +778,24 @@ fn relaxations_are_numbers_and_back_to_words_reaches_the_results_on_the_mac() {
             Some(postio_core::ActionId::Builtin(id)),
             "{key}"
         );
-        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
-        assert!(!linux.offers(id), "{id} is offered on Linux");
+        assert_eq!(linux.bindings(id), [key], "{id} on Linux");
     }
     assert_eq!(
         mac.command_for(Context::Results, "cmd+BackSpace"),
         Some(postio_core::ActionId::Builtin(CommandId::BackToWords)),
         "D24: ⌘⌫ in the results"
     );
+    assert_eq!(
+        linux.command_for(Context::Results, "ctrl+BackSpace"),
+        Some(postio_core::ActionId::Builtin(CommandId::BackToWords)),
+        "D24 on Linux"
+    );
 }
 
-/// Spec 010 step 8 (US7, D25): ⌥↩ excludes the dropdown's focused person,
-/// label or folder on the Mac; Linux has no dropdown yet.
+/// Spec 010 step 8 (US7) and #1825: ⌥↩ (Alt+Return) excludes the
+/// dropdown's focused person, label or folder.
 #[test]
-fn exclude_suggestion_is_option_return_on_the_mac() {
+fn exclude_suggestion_is_option_return() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
     let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     assert_eq!(mac.bindings(CommandId::ExcludeSuggestion), ["alt+Return"]);
@@ -787,14 +803,16 @@ fn exclude_suggestion_is_option_return_on_the_mac() {
         mac.command_for(Context::Search, "alt+Return"),
         Some(postio_core::ActionId::Builtin(CommandId::ExcludeSuggestion))
     );
-    assert!(linux.bindings(CommandId::ExcludeSuggestion).is_empty());
-    assert!(!linux.offers(CommandId::ExcludeSuggestion));
+    assert_eq!(
+        linux.command_for(Context::Search, "alt+Return"),
+        Some(postio_core::ActionId::Builtin(CommandId::ExcludeSuggestion))
+    );
 }
 
-/// Spec 010 step 9 (FR-031, D25): ⌘↓ saves the file on the Files tab, on
-/// the Mac; not on Linux yet.
+/// Spec 010 step 9 (FR-031) and #1825: ⌘↓ (Ctrl+Down on Linux) saves the
+/// file on the Files tab.
 #[test]
-fn saving_a_file_is_command_down_on_the_mac() {
+fn saving_a_file_is_command_down() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
     let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     assert_eq!(mac.bindings(CommandId::SaveFile), ["cmd+Down"]);
@@ -802,6 +820,8 @@ fn saving_a_file_is_command_down_on_the_mac() {
         mac.command_for(Context::Results, "cmd+Down"),
         Some(postio_core::ActionId::Builtin(CommandId::SaveFile))
     );
-    assert!(linux.bindings(CommandId::SaveFile).is_empty());
-    assert!(!linux.offers(CommandId::SaveFile));
+    assert_eq!(
+        linux.command_for(Context::Results, "ctrl+Down"),
+        Some(postio_core::ActionId::Builtin(CommandId::SaveFile))
+    );
 }

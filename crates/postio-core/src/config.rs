@@ -188,8 +188,12 @@ impl Keymap {
             if keymap.binding(spec.id).is_some() || !registry::offered_on(spec.id, platform) {
                 continue;
             }
+            // Nor does a default the platform keeps for another command:
+            // Linux's `alt+BackSpace` is the terminal's back to words, not
+            // the Mac's forget-recent (`registry::binding_offered_on`).
             let Some(default) = spec
                 .default_binding
+                .filter(|binding| registry::binding_offered_on(spec.id, binding, platform))
                 .map(|binding| keys::expand_mod(binding, platform))
             else {
                 continue;
@@ -217,7 +221,7 @@ impl Keymap {
                 continue;
             }
             for alternate in spec.alternate_bindings {
-                if !registry::alternate_offered_on(spec.id, alternate, platform) {
+                if !registry::binding_offered_on(spec.id, alternate, platform) {
                     continue;
                 }
                 let alternate = keys::expand_mod(alternate, platform);
@@ -590,9 +594,22 @@ mod tests {
                 // `a_command_the_platform_does_not_offer_has_no_key_there`.
                 continue;
             }
+            // The first key the platform lets it take: its default, but for
+            // a default kept for another command there
+            // (`registry::binding_offered_on`).
+            let first = spec
+                .bindings()
+                .find(|binding| {
+                    registry::binding_offered_on(
+                        ActionId::Builtin(spec.id),
+                        binding,
+                        Platform::host(),
+                    )
+                })
+                .map(|binding| keys::expand_mod(binding, Platform::host()));
             assert_eq!(
                 keymap.binding(spec.id),
-                Some(keys::expand_mod(spec.default_binding, Platform::host()).as_str()),
+                first.as_deref(),
                 "`{}` did not keep its default",
                 spec.id
             );
