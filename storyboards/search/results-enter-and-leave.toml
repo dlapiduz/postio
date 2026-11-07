@@ -10,7 +10,7 @@
 # until Linux adopts the results view (S2, D17), and the Mac runner is out
 # of scope (009 FR-063). Written before the results view was built, so it
 # is the acceptance its review is held to.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US2" }
 seed   = "search"
 design = "06-results"

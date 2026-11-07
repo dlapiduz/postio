@@ -6,7 +6,7 @@
 # down and sends the keyboard home; the Mac does not echo the close back.
 #
 # The Mac's own: see dropdown-opens-empty.toml.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US1" }
 seed   = "search"
 

@@ -20,7 +20,7 @@
 #
 # The controller's half is postio-focus tests/controller_suite/results.rs (no_results_*);
 # the counts are the host's (focus_asks_the_host_for_the_ways_out_of_no_results).
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US6" }
 seed   = "search"
 design = "13-no-results"

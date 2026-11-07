@@ -15,7 +15,7 @@
 # the reason; the controller's half is proven by postio-focus
 # tests/controller_suite/results.rs (checking_a_person_previews_live_and_esc_restores_the_
 # query_exactly, return_keeps_the_previewed_query).
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US3" }
 seed   = "search"
 design = "08-filter-from"
@@ -68,3 +68,25 @@ skip = { reason = "A click on the From button: the format has no pointer input; 
 
 [app.macos.step.reopen-from]
 skip = { reason = "A click on the From button: the format has no pointer input; filmed by hand until it does" }
+
+# Linux's From button is pressed by a click too; with no pointer in the
+# format nothing opens the popover, and the keys after it would reach the
+# results. GTK's focus_suite clicks it (results::from_checks_a_person_and_
+# return_keeps_the_chip, results::a_click_away_from_a_popover_keeps_nothing).
+[app.focus.step.open-from]
+skip = { reason = "A click on From: the format has no pointer input" }
+
+[app.focus.step.check-ada]
+skip = { reason = "Space in the From popover a click opened" }
+
+[app.focus.step.7]
+skip = { reason = "Escape from the From popover a click opened" }
+
+[app.focus.step.reopen-from]
+skip = { reason = "A click on From: the format has no pointer input" }
+
+[app.focus.step.9]
+skip = { reason = "Space in the From popover a click opened" }
+
+[app.focus.step.10]
+skip = { reason = "Return in the From popover a click opened" }

@@ -6,9 +6,9 @@
 # search replaced the list's rows and Escape brought the folder back with the
 # cursor on row 0.
 #
-# Re-expressed for Focus (T265), where it holds: its bar never replaces the
-# list's rows, so the cursor is where the person left it. Two `j` put it
-# on index 2.
+# Re-expressed for Focus (T265), where it holds: its search's dropdown
+# (spec 010) never replaces the list's rows, so the cursor is where the
+# person left it. Two `j` put it on index 2.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1744" }
 proof  = "pinned"
@@ -29,8 +29,8 @@ check   = { keyboard.region = "search" }
 
 [[step]]
 type    = "tide"
-check   = { rows.count = { unchanged = true }, app.focus.bar.highlighted = "search" }
-expect  = "The search row is the one under the cursor: Return searches for the word, whatever commands its letters scatter through."
+check   = { rows.count = { unchanged = true }, app.focus.bar.highlighted = "show_all" }
+expect  = "The dropdown lists the word's top hits over a list it does not narrow, and Show all is the row under the ring: Return opens the results, whatever commands the word's letters scatter through."
 
 [[step]]
 command = "back"

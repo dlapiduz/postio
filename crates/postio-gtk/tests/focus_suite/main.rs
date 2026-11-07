@@ -446,6 +446,10 @@ const CASES: &[(&str, fn())] = &[
         compose_layout::the_dialog_follows_the_message_dialogs_size_rule as fn(),
     ),
     (
+        "dropdown::backspace_on_an_empty_value_takes_the_operator_away",
+        dropdown::backspace_on_an_empty_value_takes_the_operator_away as fn(),
+    ),
+    (
         "dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it",
         dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it as fn(),
     ),

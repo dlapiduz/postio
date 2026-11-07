@@ -13,7 +13,7 @@
 #
 # The controller's half is postio-focus tests/controller_suite/results.rs (quick_look_*);
 # the passages are postio-session's conversation_matches.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US4" }
 seed   = "search"
 design = "10-quick-look"

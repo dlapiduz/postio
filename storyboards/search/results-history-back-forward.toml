@@ -5,7 +5,7 @@
 # the checked ones. A new search after going back drops what was ahead.
 #
 # The Mac's own: see results-enter-and-leave.toml.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US2" }
 seed   = "search"
 

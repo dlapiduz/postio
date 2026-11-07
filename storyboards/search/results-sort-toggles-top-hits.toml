@@ -5,7 +5,7 @@
 # Newest has only the month groups, newest first.
 #
 # The Mac's own: see results-enter-and-leave.toml.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US2" }
 seed   = "search"
 design = "06-results"

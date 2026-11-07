@@ -13,7 +13,7 @@
 # (constitution III): the tiles are `natural::lower_with_origins`' query.
 #
 # The controller's half is postio-focus tests/controller_suite/bar.rs (plain_english_*).
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US7" }
 seed   = "search"
 design = "05-typing-plain-english"

@@ -396,3 +396,44 @@ pub fn a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it() {
         );
     });
 }
+
+/// Spec 010 US7 (from-people-autocomplete's Backspace, which the format can
+/// press only with real input): the field's own Backspace on `from:`'s
+/// empty value takes its colon, and the operator goes whole: the field is
+/// empty, and so is the dropdown.
+pub fn backspace_on_an_empty_value_takes_the_operator_away() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 5)
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || support::subjects(&window).len() == 1).await);
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("from:");
+        crate::settle();
+        // What GTK's Backspace does in the field: the colon before the
+        // caret goes.
+        let field = bar
+            .input()
+            .downcast::<gtk::Editable>()
+            .expect("the field is editable");
+        field.delete_text(4, 5);
+        assert!(
+            crate::settle_until(async || bar.typed().trim().is_empty()).await,
+            "the operator stayed: {:?}",
+            bar.typed()
+        );
+        assert!(
+            crate::settle_until(async || bar.dropdown().titles().contains(&"Search by".to_owned()))
+                .await,
+            "the dropdown is not the empty state: {:?}",
+            bar.dropdown().titles()
+        );
+    });
+}

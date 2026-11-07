@@ -10,7 +10,7 @@
 # The click on Date is skipped with the reason: the format has no pointer
 # input. The controller's half is postio-focus tests/controller_suite/results.rs
 # (the_date_popover_turns_words_into_dates_and_its_presets_carry_counts).
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US3" }
 seed   = "search"
 design = "09-filter-date"
@@ -44,3 +44,15 @@ expect  = "Return applies it: an “after:” chip in the field, the Date button
 
 [app.macos.step.open-date]
 skip = { reason = "A click on the Date button: the format has no pointer input; filmed by hand until it does" }
+
+# Linux's Date button is pressed by a click too; with no pointer in the
+# format nothing opens the popover, and what is typed after has nowhere to
+# go. The popovers are GTK's focus_suite results cases', clicked there.
+[app.focus.step.open-date]
+skip = { reason = "A click on Date: the format has no pointer input" }
+
+[app.focus.step.6]
+skip = { reason = "Typed into the Date popover a click opened" }
+
+[app.focus.step.7]
+skip = { reason = "Return in the Date popover a click opened" }

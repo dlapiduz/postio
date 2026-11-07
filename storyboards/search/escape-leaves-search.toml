@@ -3,11 +3,10 @@
 # The defect: once a search had run, Escape did nothing, and the window
 # stayed stuck on the hits. The folder's own rows must be what is left.
 #
-# Re-expressed for Focus (T265): Focus's command bar does not narrow the
-# inbox behind it. Typing lists the matches in the bar under the search row,
-# which stays above them; Return takes the highlight to the first hit, the
-# bar keeping the keyboard, and Escape closes the bar over an inbox that
-# never changed.
+# Re-expressed for Focus (T265), and again for spec 010's search (#1825):
+# the dropdown never narrows the inbox behind it; Return runs the search
+# into the results in the inbox's place, and Escape gives the inbox back,
+# every row there.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1474" }
 proof  = "pinned"
@@ -19,15 +18,15 @@ check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing
 [[step]]
 type    = "harbour"
 settle  = { until = { app.focus.bar.messages = { changed = true } } }
-check   = { keyboard.region = "search", rows.count = { same_as = 0 }, app.focus.bar.highlighted = "search", app.focus.bar.messages = { changed = true } }
-expect  = "The matches are listed as the word is typed, headed by their count, with the search row still above them; the inbox behind it is not narrowed."
+check   = { keyboard.region = "search", rows.count = { same_as = 0 }, app.focus.bar.highlighted = "show_all" }
+expect  = "The top hits are listed as the word is typed, with Show all under the ring; the inbox behind is not narrowed."
 
 [[step]]
 key     = "Return"
-check   = { keyboard.region = "search", keyboard.typing = true, overlay.kind = "finder", app.focus.bar.highlighted = "message" }
-expect  = "Return takes the highlight to the first match; the keyboard stays in the bar."
+check   = { keyboard.region = "results", overlay.kind = "none" }
+expect  = "Return runs the search: its results stand in the inbox's place, the keyboard on them."
 
 [[step]]
 command = "back"
 check   = { keyboard.region = "list", overlay.kind = "none", view = "list", rows.count = { same_as = 0 } }
-expect  = "The bar is gone and the list is the Inbox, every row there; nothing of the search is left."
+expect  = "Escape leaves the results: the list is the Inbox, every row there; nothing of the search is left."

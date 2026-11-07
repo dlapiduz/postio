@@ -3,10 +3,10 @@
 # The defect: the results header showed a "Relevance" chip whose chevron did
 # nothing, and there was no key. `toggle_result_order` is the keyboard path.
 #
-# Re-expressed for Focus (T265): the bar lists its order as a row ("Sorted
-# by relevance"); running that row, or `alt+o`, switches it. `O` is a letter
-# in the box whatever is highlighted, so a name like O'Brien can be typed. The order
-# row is what is read back.
+# Re-expressed for Focus (T265), and again for spec 010's search (#1825):
+# the order is the results' Sort, and `alt+o` switches it between best
+# match and newest. `O` is a letter in the field whatever is highlighted,
+# so a name like O'Brien can be typed; the query is what is read back.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#499" }
 proof  = "pinned"
@@ -20,28 +20,25 @@ settle  = { until = { app.focus.bar.messages = { changed = true } } }
 
 [[step]]
 key     = "Return"
-check   = { keyboard.region = "search", app.focus.bar.highlighted = "message" }
-
-[[step]]
-id      = "relevance"
-key     = "Up"
-check   = { app.focus.bar.highlighted = "order" }
+check   = { keyboard.region = "results" }
+expect  = "The results for the word, the Sort button reading “Best match”."
 
 [[step]]
 command = "toggle_result_order"
-settle  = { until = { app.focus.bar.highlighted_text = "Sorted by date switch to relevance alt+o" } }
-check   = { keyboard.region = "search", app.focus.bar.highlighted = "order", app.focus.bar.highlighted_text = "Sorted by date switch to relevance alt+o", app.focus.bar.messages = { same_as = "relevance" } }
-expect  = "alt+o switches the results to newest first while the query has the keyboard, and the order row says so."
+check   = { keyboard.region = "results" }
+expect  = "alt+o switches the results to newest first: the Sort button reads “Newest”, Top hits is gone and the months run newest first."
 
 [[step]]
-key     = "Return"
-settle  = { until = { app.focus.bar.highlighted_text = "Sorted by relevance switch to date alt+o" } }
-check   = { app.focus.bar.highlighted = "order", app.focus.bar.highlighted_text = "Sorted by relevance switch to date alt+o" }
-expect  = "Running the order row switches it back."
+command = "toggle_result_order"
+check   = { keyboard.region = "results" }
+expect  = "alt+o again switches them back to best match, Top hits first."
 
 [[step]]
-key     = "Return"
+command = "search"
+check   = { keyboard.region = "search", keyboard.typing = true }
+expect  = "/ opens the dropdown over the results to edit the query."
+
 [[step]]
 type    = "O"
-check   = { keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = "harbourO" }
-expect  = "A capital O is typed into the query, with results on screen; the key is not taken from the box."
+check   = { keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = { changed = true } }
+expect  = "A capital O is typed into the query; the key is not taken from the field."

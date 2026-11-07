@@ -2843,6 +2843,17 @@ mod dropdown {
             "{effects:?}"
         );
         assert_eq!(dropdown(&effects).state, DropdownState::Words);
+        // The operator alone in the field goes the same way: to nothing.
+        let _ = typed(&mut focus, "from:", &rows);
+        let effects = typed(&mut focus, "from", &rows);
+        assert!(
+            shown(&effects).contains(&Intent::OpenBar {
+                mode: BarMode::Search,
+                text: String::new(),
+                select: None,
+            }),
+            "{effects:?}"
+        );
         // A value typed and taken back is only a value taken back.
         let _ = typed(&mut focus, "from:a", &rows);
         let effects = typed(&mut focus, "from:", &rows);

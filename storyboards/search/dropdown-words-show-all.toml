@@ -9,8 +9,8 @@
 # one (D8): the controller drops it by its stamp, and the driver aborts
 # the superseded read.
 #
-# The Mac's own: see dropdown-opens-empty.toml.
-apps   = ["macos"]
+# Show all, ⌘↩, is results-enter-and-leave.toml's.
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US1" }
 seed   = "search"
 design = "03-typing-words"
@@ -28,11 +28,11 @@ check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing
 expect  = "Top hits lists up to four messages, “Sender · Subject” with the matched words in the find highlight, a passage, `in:` folder and date. Narrow to shows up to four pills (top senders, has: attachment, the top label) with counts. “Show all 48 results” is the last row and has the focus ring. The footer reads “48 matches · N ms” with the real time."
 
 [[step]]
-command = "show_all_results"
-check   = { overlay.kind = "finder", keyboard.region = "search" }
-expect  = "⌘↩ runs the query as a search: it joins Recent. Until the results view arrives (step 3) the panel stays, with the focus on the first top hit."
+key     = "Up"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "↑ takes the focus ring from Show all to the last top hit; the field keeps the keyboard."
 
 [[step]]
 key     = "Return"
-check   = { overlay.kind = "message" }
-expect  = "↩ on a top hit opens that message in its window."
+check   = { keyboard.region = "reader" }
+expect  = "↩ on a top hit opens that message (on the Mac in its window, on Linux in its dialog over the list); the panel is gone."
