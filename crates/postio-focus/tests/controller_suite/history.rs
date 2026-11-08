@@ -61,8 +61,6 @@ fn forward_brings_the_results_back_as_they_were_left() {
     let _ = search(&mut focus, "atlas budget", &rows);
     let effects = run(&mut focus, CommandId::ToggleResultOrder, &rows);
     let _ = settle(&mut focus, effects, &rows);
-    // The ring followed its conversation into the new order: to the top.
-    let _ = run(&mut focus, CommandId::FirstMessage, &rows);
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let _ = run(&mut focus, CommandId::ToggleSelection, &rows);

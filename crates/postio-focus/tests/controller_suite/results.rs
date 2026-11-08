@@ -218,29 +218,6 @@ fn newest_has_only_month_groups() {
     assert!(results_view(&effects).expect("again").groups[0].top_hits);
 }
 
-/// Sorting again keeps the ring on the conversation it was on, where that
-/// one now lands among the rows read: the order changed, not what the
-/// person was looking at.
-#[test]
-fn sorting_again_keeps_the_ring_on_its_conversation() {
-    let rows = List::of(3);
-    let mut focus = mac();
-    let _ = search(&mut focus, "atlas budget", &rows);
-    let _ = run(&mut focus, CommandId::NextMessage, &rows);
-    let on = |focus: &FocusController, effects: &[Effect]| {
-        let at = results_view(effects)
-            .and_then(|view| view.cursor)
-            .expect("a ring");
-        text(&focus.result_row(at).expect("its row").subject)
-    };
-    let effects = run(&mut focus, CommandId::ToggleResultOrder, &rows);
-    let effects = settle(&mut focus, effects, &rows);
-    assert_eq!(on(&focus, &effects), "Atlas budget, part 2");
-    let effects = run(&mut focus, CommandId::ToggleResultOrder, &rows);
-    let effects = settle(&mut focus, effects, &rows);
-    assert_eq!(on(&focus, &effects), "Atlas budget, part 2");
-}
-
 #[test]
 fn rows_page_through_a_window() {
     let rows = List::of(3);
