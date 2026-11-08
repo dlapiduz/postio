@@ -933,6 +933,9 @@ impl ResultsPane {
             ""
         }));
         gutter.add_css_class("focus-results-gutter");
+        if row.unread && !row.checked {
+            gutter.add_css_class("focus-results-dot");
+        }
         line.append(&gutter);
 
         let sender = gtk::Box::new(gtk::Orientation::Vertical, 0);

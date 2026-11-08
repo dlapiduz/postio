@@ -161,6 +161,38 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
     });
 }
 
+/// An unread result has the inbox's unread dot: the system's accent, not
+/// a grey of its own -- one state, drawn one way in both lists.
+pub fn an_unread_result_has_the_inboxs_accent_dot() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        let dots = || {
+            support::with_class(results.list(), "focus-results-gutter")
+                .into_iter()
+                .filter(|gutter| {
+                    gutter
+                        .downcast_ref::<gtk::Label>()
+                        .is_some_and(|label| label.text() == "\u{25cf}")
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            crate::settle_until(async || !dots().is_empty()).await,
+            "no unread result drew a dot"
+        );
+        let manager = adw::StyleManager::default();
+        let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
+        for dot in dots() {
+            assert_eq!(dot.color(), accent, "the unread dot is not the accent");
+        }
+    });
+}
+
 /// A toggle filter button adds its term as a chip, and the chip's ✕ takes
 /// it out again.
 pub fn a_toggle_filter_adds_its_chip_and_the_chip_removes_it() {

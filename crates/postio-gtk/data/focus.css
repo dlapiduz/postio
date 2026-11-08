@@ -1234,6 +1234,11 @@ button.focus-results-filter.focus-results-filter-applied {
   color: var(--postio-ink-secondary);
 }
 
+/* Unread: the inbox row's accent dot (FR-091's unread mark). */
+.focus-results-gutter.focus-results-dot {
+  color: var(--postio-accent);
+}
+
 .focus-results-sender {
   min-width: 176px;
 }
