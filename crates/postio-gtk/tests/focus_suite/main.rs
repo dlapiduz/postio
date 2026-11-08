@@ -546,6 +546,10 @@ const CASES: &[(&str, fn())] = &[
         results::an_unread_result_has_the_inboxs_accent_dot as fn(),
     ),
     (
+        "results::quick_look_stays_put_while_j_walks",
+        results::quick_look_stays_put_while_j_walks as fn(),
+    ),
+    (
         "results::a_toggle_filter_adds_its_chip_and_the_chip_removes_it",
         results::a_toggle_filter_adds_its_chip_and_the_chip_removes_it as fn(),
     ),

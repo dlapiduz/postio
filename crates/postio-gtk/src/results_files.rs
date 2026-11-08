@@ -676,8 +676,7 @@ impl QuickLookPanel {
         let scrolled = gtk::ScrolledWindow::builder()
             .child(&cards)
             .hscrollbar_policy(gtk::PolicyType::Never)
-            .propagate_natural_height(true)
-            .max_content_height(420)
+            .vexpand(true)
             .build();
         let body = gtk::Box::new(gtk::Orientation::Vertical, S2);
         body.add_css_class("focus-quicklook-body");
@@ -688,7 +687,10 @@ impl QuickLookPanel {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("focus-quicklook");
         root.set_halign(gtk::Align::Center);
-        root.set_valign(gtk::Align::Center);
+        // The rows' whole height, within its margins, whatever it holds: as
+        // the Mac's fixed frame, its edges stay put while j and k walk
+        // results of more or fewer matches.
+        root.set_valign(gtk::Align::Fill);
         root.set_width_request(720);
         root.append(&head);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));

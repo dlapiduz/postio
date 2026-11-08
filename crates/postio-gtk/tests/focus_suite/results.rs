@@ -161,6 +161,87 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
     });
 }
 
+/// Quick Look stays where it is while j walks the results under it,
+/// whatever the next one holds -- here a subject that takes two lines:
+/// its edges are the rows', not its words'.
+pub fn quick_look_stays_put_while_j_walks() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Q3 budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        fixture
+            .file(
+                ("Tomas Ruiz", "tomas@example.com"),
+                "Travel budget for the spring offsite, with the train times, the hotel \
+                 rooms, the dinners, the shared taxis between the station and the venue \
+                 on both days, and who pays for which of them",
+                "Trains.",
+                30,
+            )
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "no ring on the results"
+        );
+        window.press_command(postio_core::CommandId::QuickLook);
+        let panel = results.quick_look();
+        let frame = || {
+            panel
+                .widget()
+                .compute_bounds(&window)
+                .filter(|bounds| bounds.height() > 10.0)
+        };
+        let said = || support::texts(panel.widget());
+        assert!(
+            crate::settle_until(async || panel.is_open() && frame().is_some()).await,
+            "Quick Look did not open"
+        );
+        crate::settle();
+        let before = frame();
+        // Its edges are the rows' own, inside its margins: the same place
+        // for one match as for a page of them.
+        let rows = results
+            .list()
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|rows| rows.compute_bounds(&window))
+            .expect("the rows have a place");
+        let panel_at = before.expect("the panel has a place");
+        let above = panel_at.y() - rows.y();
+        let below = rows.y() + rows.height() - (panel_at.y() + panel_at.height());
+        assert!(
+            (0.0..=40.0).contains(&above) && (0.0..=40.0).contains(&below),
+            "the panel does not fill the rows' place: {above} above, {below} below"
+        );
+        let first = said();
+        for _ in 0..3 {
+            let was = said();
+            window.press_command(postio_core::CommandId::NextMessage);
+            assert!(
+                crate::settle_until(async || said() != was).await,
+                "j did not move Quick Look on from {first:?}"
+            );
+            crate::settle();
+            assert_eq!(frame(), before, "the panel moved: {:?}", said());
+        }
+    });
+}
+
 /// An unread result has the inbox's unread dot: the system's accent, not
 /// a grey of its own -- one state, drawn one way in both lists.
 pub fn an_unread_result_has_the_inboxs_accent_dot() {
