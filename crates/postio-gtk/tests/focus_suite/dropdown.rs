@@ -297,6 +297,22 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
             dropdown.widget().is_mapped(),
             "the dropdown is not on screen"
         );
+        // Spec 010 US1: the field grows to the panel's width, says what it
+        // searches, and leaves the inbox behind it undimmed.
+        let field = bar.input().downcast::<gtk::Entry>().expect("an entry");
+        assert_eq!(
+            field.placeholder_text().as_deref(),
+            Some(postio_ui::search_view::PLACEHOLDER)
+        );
+        assert!(
+            !bar.dims_the_list(),
+            "the inbox is dimmed behind the dropdown"
+        );
+        assert!(
+            crate::settle_until(async || field.width() > 700).await,
+            "the field did not grow: {} px",
+            field.width()
+        );
 
         bar.set_text("budget");
         assert!(

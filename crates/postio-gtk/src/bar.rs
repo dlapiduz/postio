@@ -30,6 +30,9 @@ const WIDTH: i32 = 860;
 /// The top bar's field, which the bar's input takes the place of.
 const FIELD_WIDTH: i32 = 480;
 
+/// What the field says while it is spec 009's: commands and correspondents.
+const BLEND_PLACEHOLDER: &str = "Search mail, go to a folder, or run a command";
+
 /// What a person did in the bar, for the controller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarInput {
@@ -51,6 +54,10 @@ pub struct Bar {
     root: gtk::Box,
     /// The bar over its scrim: what the window lays over the list.
     over: gtk::Overlay,
+    /// The input line: the field's width, the top bar's or the dropdown's.
+    input: gtk::Box,
+    /// What dims the list behind spec 009's lines.
+    scrim: gtk::Box,
     entry: gtk::Entry,
     /// The rest of the best word, after the caret (screen 02).
     ghost: gtk::Label,
@@ -114,7 +121,7 @@ impl Bar {
         let entry = gtk::Entry::new();
         entry.set_hexpand(true);
         entry.set_has_frame(false);
-        entry.set_placeholder_text(Some("Search mail, go to a folder, or run a command"));
+        entry.set_placeholder_text(Some(BLEND_PLACEHOLDER));
         entry.add_css_class("focus-bar-entry");
         let input = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         input.add_css_class("focus-bar-input");
@@ -212,6 +219,8 @@ impl Bar {
         let bar = Rc::new(Bar {
             root,
             over,
+            input: input.clone(),
+            scrim: scrim.clone(),
             entry,
             ghost,
             ghost_hint,
@@ -585,6 +594,26 @@ impl Bar {
         self.dropping.set(dropping);
         self.dropdown.widget().set_visible(dropping);
         self.blend.set_visible(!dropping);
+        // Spec 010 US1: the dropdown's field grows to the panel's width
+        // and says what it searches, over an inbox it does not dim; the
+        // commands and correspondents keep spec 009's (C24).
+        self.input
+            .set_width_request(if dropping { WIDTH } else { FIELD_WIDTH });
+        self.entry.set_placeholder_text(Some(if dropping {
+            postio_ui::search_view::PLACEHOLDER
+        } else {
+            BLEND_PLACEHOLDER
+        }));
+        if dropping {
+            self.scrim.add_css_class("focus-bar-scrim-clear");
+        } else {
+            self.scrim.remove_css_class("focus-bar-scrim-clear");
+        }
+    }
+
+    /// Whether the list behind the bar is dimmed.
+    pub fn dims_the_list(&self) -> bool {
+        self.over.is_visible() && !self.scrim.has_css_class("focus-bar-scrim-clear")
     }
 
     fn show_chips(&self, chips: &[String], editing: Option<u32>) {
