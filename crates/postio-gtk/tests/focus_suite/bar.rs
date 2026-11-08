@@ -784,13 +784,16 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
         );
         let results = window.results().expect("the results");
         // Every row, in the results' own order: Top hits, then each of them
-        // again under its month. The walk is the rows, as drawn.
+        // again under its month. The walk is each conversation once, where
+        // it first comes.
         assert!(
             crate::settle_until(async || results.subjects().len() == 4).await,
             "the results found {:?}",
             results.subjects()
         );
-        let hits = results.subjects();
+        let mut hits = results.subjects();
+        let mut seen = std::collections::HashSet::new();
+        hits.retain(|subject| seen.insert(subject.clone()));
         chain(&window, "Return");
         assert!(
             crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,

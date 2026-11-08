@@ -2982,3 +2982,31 @@ fn a_new_search_after_history_back_from_files_is_not_found_nothing() {
         "a search that found something said it found nothing: {said:?}"
     );
 }
+
+/// #1825 (the reviewer's "Result 1 of 7" over four conversations): a
+/// result opened from the results walks each conversation once, though
+/// Top hits draws its own again under their months.
+#[test]
+fn a_result_walks_each_conversation_once() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let conversations = focus.result_count();
+    let drawn: Vec<MessageId> = (0..conversations)
+        .filter_map(|at| focus.result_row(at))
+        .map(|row| row.message)
+        .collect();
+    let mut once = drawn.clone();
+    once.sort();
+    once.dedup();
+    assert!(
+        once.len() < drawn.len(),
+        "Top hits are drawn twice here: {drawn:?}"
+    );
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    let total = shown(&effects).iter().find_map(|intent| match intent {
+        Intent::OpenMessage { total, .. } => Some(*total),
+        _ => None,
+    });
+    assert_eq!(total, Some(once.len() as u32), "{:?}", shown(&effects));
+}

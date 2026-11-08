@@ -544,6 +544,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
         })
         .collect();
     let highlight = recents.first().map(|row| row.token);
+    let any_recent = !recents.is_empty();
     if !recents.is_empty() {
         sections.push(DropdownSection {
             title: words::RECENT.to_owned(),
@@ -633,7 +634,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
         sections,
         highlight,
         select: None,
-        hints: words::empty_hints(parts.keymap),
+        hints: words::empty_hints(parts.keymap, any_recent),
         count: parts.messages.map(words::local_index),
     }
 }

@@ -1317,15 +1317,19 @@ impl Results {
         })
     }
 
-    /// The rows read, in order, each with its conversation: what `j` and
+    /// The conversations read, in the rows' order, each once: what `j` and
     /// `k` walk in a message a result opened.
     pub(crate) fn walk(&self) -> Vec<(MessageId, Option<ThreadId>)> {
         let top = self.top_len() as usize;
+        // Top hits are drawn again under their months: walked once, where
+        // they come first, so "Result n of m" counts conversations.
+        let mut walked = std::collections::HashSet::new();
         self.top
             .iter()
             .flatten()
             .take(top)
             .chain(self.pages.values().flatten())
+            .filter(|hit| walked.insert(hit.key))
             .map(|hit| (hit.best, thread_of(hit)))
             .collect()
     }

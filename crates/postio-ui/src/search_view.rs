@@ -237,16 +237,17 @@ fn arrows(label: &str) -> Hint {
 }
 
 /// The empty dropdown's footer (screen 01): move, run a recent search
-/// again, the saved searches' keys, and `>` for commands.
-pub fn empty_hints(keymap: &Keymap) -> Vec<Hint> {
-    let mut hints = vec![
-        arrows("move"),
-        hints::fixed(
+/// again while there are `recents`, the saved searches' keys, and `>` for
+/// commands.
+pub fn empty_hints(keymap: &Keymap, recents: bool) -> Vec<Hint> {
+    let mut hints = vec![arrows("move")];
+    if recents {
+        hints.push(hints::fixed(
             "Return",
             "run again",
             "Return runs the highlighted row: the field's own key, not a command",
-        ),
-    ];
+        ));
+    }
     // ⌥1 to ⌥4 as one cap, when the four keys are one modifier and the digits.
     hints.extend(hints::run(
         keymap,
@@ -273,14 +274,15 @@ pub fn local_index(messages: u64) -> String {
     format!("local index \u{b7} {} {noun}", grouped(messages))
 }
 
-/// The words dropdown's footer (screen 03): move, open the highlighted
-/// message, all results, and Tab for the first filter.
+/// The words dropdown's footer (screen 03): move, open the highlighted row
+/// -- a message, or all the results -- all results, and Tab for the first
+/// filter.
 pub fn words_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut hints = vec![
         arrows("move"),
         hints::fixed(
             "Return",
-            "open message",
+            "open",
             "Return runs the highlighted row: the field's own key, not a command",
         ),
     ];
@@ -2154,7 +2156,7 @@ mod tests {
             &postio_config::KeyBindings::default(),
             postio_config::paths::Platform::Apple,
         );
-        let hints = empty_hints(&keymap);
+        let hints = empty_hints(&keymap, true);
         let said: Vec<(&str, &str)> = hints
             .iter()
             .map(|hint| (hint.key.as_str(), hint.label.as_str()))
@@ -2167,6 +2169,12 @@ mod tests {
                 ("alt+1\u{2013}4", "saved"),
                 (">", "commands"),
             ]
+        );
+        // With no recent search, there is nothing to run again (#1825).
+        assert!(
+            !empty_hints(&keymap, false)
+                .iter()
+                .any(|hint| hint.label == "run again")
         );
     }
 
@@ -2212,7 +2220,7 @@ mod tests {
             said,
             [
                 ("Up Down".to_owned(), "move".to_owned()),
-                ("Return".to_owned(), "open message".to_owned()),
+                ("Return".to_owned(), "open".to_owned()),
                 (show_all, "all results".to_owned()),
                 ("Tab".to_owned(), "add first filter".to_owned()),
             ]
