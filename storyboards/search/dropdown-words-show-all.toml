@@ -25,7 +25,7 @@ check   = { overlay.kind = "finder", keyboard.region = "search" }
 [[step]]
 type    = "atlas budget"
 check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
-expect  = "Top hits lists up to four messages, “Sender · Subject” with the matched words in the find highlight, a passage, `in:` folder and date. Narrow to shows up to four pills (top senders, has: attachment, the top label) with counts. “Show all 48 results” is the last row and has the focus ring. The footer reads “48 matches · N ms” with the real time."
+expect  = "Top hits lists up to four messages, “Sender · Subject” with the matched words in the find highlight, a passage, `in:` folder and date. Narrow to shows up to four pills (top senders, has: attachment, the top label) with counts. “Show all N results”, N the count the Recent row gave “atlas budget”, is the last row and has the focus ring. The footer reads “N matches · … ms” with the same N and the real time."
 
 [[step]]
 key     = "Up"

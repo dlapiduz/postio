@@ -5040,6 +5040,7 @@ dependencies = [
  "postio-classify",
  "postio-index",
  "postio-model",
+ "postio-search",
  "postio-storage",
  "postio-workspace-hack",
  "serde_json",
