@@ -2366,6 +2366,42 @@ mod dropdown {
         }));
     }
 
+    /// Words that find nothing are no dead end (US6): the panel says
+    /// nothing matches, as the results' page would, and its one row is
+    /// the way there, to the looser searches, focused for Return.
+    #[test]
+    fn words_that_find_nothing_say_so_and_lead_to_looser_searches() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let nothing = ConversationResults {
+            hits: Vec::new(),
+            total: 0,
+            files: 0,
+            people: 0,
+            facets: SearchFacets::default(),
+            ..atlas_budget()
+        };
+        let effects = searched(&mut focus, "atlas has:attachment", nothing, &rows);
+        let view = dropdown(&effects);
+        let [section] = view.sections.as_slice() else {
+            panic!("not one section: {view:?}");
+        };
+        let [row] = section.rows.as_slice() else {
+            panic!("not one row: {section:?}");
+        };
+        assert_eq!(row.kind, DropdownRowKind::ShowAll);
+        assert_eq!(text(&row.title), "Nothing matches both filters");
+        assert_eq!(text(&row.detail), "Return offers looser searches");
+        assert_eq!(
+            row.key.as_deref(),
+            focus.keymap().binding(CommandId::ShowAllResults)
+        );
+        assert_eq!(view.highlight, Some(row.token));
+        let effects = focus.handle_on(Input::BarRun(row.token), &rows);
+        assert!(focus.in_results(), "{effects:?}");
+    }
+
     #[test]
     fn a_recent_search_run_puts_its_query_in_the_field() {
         let rows = List::of(1);

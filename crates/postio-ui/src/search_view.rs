@@ -155,6 +155,9 @@ pub const TOP_HITS_NOTE: &str = "ranked by sender, recency and where the words m
 pub const NARROW_TO: &str = "Narrow to";
 /// What the Show all row says after its count.
 pub const SHOW_ALL_DETAIL: &str = "in the main window, with filters, a timeline and Quick Look";
+/// What the dropdown's one row says under [`nothing_matches`] when the
+/// words find nothing (US6): Return opens the no-results page.
+pub const NOTHING_DETAIL: &str = "Return offers looser searches";
 
 /// How many conversations a recent search found: "48 results", or
 /// "5,000+ results" when that search stopped at its walk's cap (D30).

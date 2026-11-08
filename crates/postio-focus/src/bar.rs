@@ -1942,9 +1942,13 @@ impl Bar {
         };
         let now = self.now();
         let mut view = match drop.state {
-            DropdownState::Words => {
-                dropdown::words(drop.landed.as_ref(), &drop.terms, &self.keymap, now)
-            }
+            DropdownState::Words => dropdown::words(
+                drop.landed.as_ref(),
+                &drop.terms,
+                drop.query.as_ref(),
+                &self.keymap,
+                now,
+            ),
             DropdownState::Prefix => dropdown::prefix(dropdown::PrefixParts {
                 typed: &drop.value,
                 ghost: drop.ghost.clone(),

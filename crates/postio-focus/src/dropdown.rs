@@ -644,6 +644,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
 pub(crate) fn words(
     landed: Option<&Landed>,
     terms: &[String],
+    query: Option<&postio_search::ParsedQuery>,
     keymap: &Keymap,
     now: DateTime<Local>,
 ) -> DropdownView {
@@ -705,6 +706,17 @@ pub(crate) fn words(
     }
     if landed.total > 0 {
         sections.push(show_all_section(landed, None, keymap));
+    } else {
+        // No dead end (US6): the way to the looser searches the results'
+        // no-results page offers, in its words.
+        let terms = query.map_or(1, |query| {
+            query.filters().count() + query.text_terms().count()
+        });
+        let mut section = show_all_section(landed, None, keymap);
+        let row = &mut section.rows[0];
+        row.title = vec![Run::styled(words::nothing_matches(terms), RunStyle::Strong)];
+        row.detail = vec![Run::plain(words::NOTHING_DETAIL)];
+        sections.push(section);
     }
     DropdownView {
         state: DropdownState::Words,
@@ -713,7 +725,7 @@ pub(crate) fn words(
         operator: None,
         understood: Vec::new(),
         sections,
-        highlight: (landed.total > 0).then_some(landed.show_all),
+        highlight: Some(landed.show_all),
         select: None,
         hints: words::words_hints(keymap),
         count: Some(words::footer_count(
