@@ -2253,6 +2253,15 @@ mod dropdown {
         assert!(asked(&effects).contains(&Request::ForgetSearch {
             query: "has:attachment in:Receipts after:2026-09-01".to_owned()
         }));
+        // The arrows stay where they were, on the row that took its place,
+        // so a second press forgets the next one down.
+        let view = dropdown(&effects);
+        assert_eq!(view.select, Some(view.sections[0].rows[1].token));
+        assert_eq!(text(&view.sections[0].rows[1].title), "harbor");
+        // Forgetting the last, they rest on the one above.
+        let effects = run(&mut focus, CommandId::ForgetRecent, &rows);
+        let view = dropdown(&effects);
+        assert_eq!(view.select, Some(view.sections[0].rows[0].token));
         // Unmoved, the key forgets the row focused by default: the newest.
         let mut fresh = mac_search();
         let effects = opened(&mut fresh, &rows);
