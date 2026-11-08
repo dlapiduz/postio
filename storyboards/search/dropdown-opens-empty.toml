@@ -34,7 +34,7 @@ check   = { overlay.kind = "finder", keyboard.region = "search" }
 expect  = "↓ moves the focus ring to the second recent search; headers and the cheat sheet are never focused."
 
 [[step]]
-key     = "alt+BackSpace"
+command = "forget_recent"
 check   = { overlay.kind = "finder", keyboard.region = "search" }
 expect  = "⌥⌫ forgets the focused recent search: it is gone from Recent, the third moves up, and the focus stays on the row now in its place."
 

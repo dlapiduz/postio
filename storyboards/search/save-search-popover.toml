@@ -10,6 +10,9 @@
 #
 # The controller's half is postio-focus tests/controller_suite/results.rs (save_*); what
 # reaches config.toml is ffi_suite saved_search.
+#
+# Its dates are the runner's: the clock is frozen on 2 June 2026, and the
+# search seed's mail is dated back from it.
 apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US5" }
 seed   = "search"
@@ -22,7 +25,7 @@ wait    = { until = { cursor.index = 0 } }
 command = "search"
 
 [[step]]
-type    = "atlas budget from:ada@example.com after:2026-07-01"
+type    = "atlas budget from:ada@example.com after:2026-03-07"
 
 [[step]]
 command = "show_all_results"
@@ -31,7 +34,7 @@ check   = { keyboard.region = "results" }
 [[step]]
 id      = "popover"
 command = "save_search"
-expect  = "⌘S opens the Save popover under Save search: “Save as a saved search”, Name “Atlas budget from Ada” with the field focused, the chips “from:Ada Moreno”, “after:2026-07-01” and “atlas budget”, Pin on with “Appears at the top of search as ⌥…”, Notify off, Keep the date rolling off with “Off: always since 1 July. On: always the last … days”, then Cancel and Save ↩."
+expect  = "⌘S opens the Save popover under Save search: “Save as a saved search”, Name “Atlas budget from Ada” with the field focused, the chips “from:Ada Moreno”, “after:2026-03-07” and “atlas budget”, Pin on with “Appears at the top of search as ⌥…”, Notify off, Keep the date rolling off with “Off: always since 7 March. On: always the last … days”, then Cancel and Save ↩."
 
 [[step]]
 key     = "Return"

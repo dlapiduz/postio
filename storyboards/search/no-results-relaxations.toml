@@ -16,10 +16,13 @@
 # ⌥↩”) is out of scope (S4) and never offered.
 #
 # The query is the seed's analogue of screen 13's: Ada's mail with an
-# attachment before August whose subject says “budget” -- there is none.
+# attachment before 7 April whose subject says “budget” -- there is none.
 #
 # The controller's half is postio-focus tests/controller_suite/results.rs (no_results_*);
 # the counts are the host's (focus_asks_the_host_for_the_ways_out_of_no_results).
+#
+# Its dates are the runner's: the clock is frozen on 2 June 2026, and the
+# search seed's mail is dated back from it.
 apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US6" }
 seed   = "search"
@@ -32,13 +35,13 @@ wait    = { until = { cursor.index = 0 } }
 command = "search"
 
 [[step]]
-type    = "from:ada@example.com has:attachment before:2026-08-01 subject:budget"
+type    = "from:ada@example.com has:attachment before:2026-04-07 subject:budget"
 
 [[step]]
 id      = "none"
 command = "show_all_results"
 check   = { keyboard.region = "results" }
-expect  = "No rows and no timeline. Centred under the filter bar: “Nothing matches all four filters” in large bold type, then “Each line below loosens one filter and shows how many conversations you would get. Pick one, or press its number.” A rounded list follows, one row per looser search, each with its number in a small key cap, the change in words (“Remove “before August””, “Remove “has attachment””) over the query it would run in a monospaced line, and “N conversations” in bold on the right; the most fruitful first, the first row ringed. Under it “Searched all … messages on this Mac.” and no offer to search a server. The field's chips stay, the before: chip ringed, and its hint reads “⌘⌫ clears filters”. The footer says “1–2 loosen a filter · ⌘⌫ clear filters” on the left and “Searched … messages · … ms” on the right."
+expect  = "No rows and no timeline. Centred under the filter bar: “Nothing matches all four filters” in large bold type, then “Each line below loosens one filter and shows how many conversations you would get. Pick one, or press its number.” A rounded list follows, one row per looser search, each with its number in a small key cap, the change in words (“Remove “before 7 April””, “Remove “has attachment””) over the query it would run in a monospaced line, and “N conversations” in bold on the right; the most fruitful first, the first row ringed. Under it “Searched all … messages on this Mac.” and no offer to search a server. The field's chips stay, the before: chip ringed, and its hint reads “⌘⌫ clears filters”. The footer says “1–2 loosen a filter · ⌘⌫ clear filters” on the left and “Searched … messages · … ms” on the right."
 
 [[step]]
 command = "pick_relaxation_2"
@@ -54,7 +57,7 @@ expect  = "⌘[ goes back to the inbox: picking a looser search edits the query 
 command = "search"
 
 [[step]]
-type    = "notes from:ada@example.com has:attachment before:2026-08-01"
+type    = "notes from:ada@example.com has:attachment before:2026-04-07"
 
 [[step]]
 command = "show_all_results"

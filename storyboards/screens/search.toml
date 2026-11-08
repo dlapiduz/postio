@@ -10,10 +10,10 @@ source = { kind = "design", ref = "focus 07" }
 [[step]]
 command = "search"
 check   = { keyboard.region = "search", app.focus.bar.typed = "" }
-expect  = "The empty dropdown is not a blank band: the recent searches with their counts, the saved searches as pills with their keys, and the cheat sheet of what can be typed, one example lowered live (spec 010 screen 01)."
+expect  = "The empty dropdown is not a blank band: the saved searches as pills with their keys, and the cheat sheet of what can be typed, one example lowered live (spec 010 screen 01); the recent searches with their counts lead it once there are any, and this store has none yet, so the footer offers nothing to run again."
 
 [[step]]
 type    = "harbour"
 settle  = { until = { app.focus.bar.messages = { changed = true } } }
 check   = { app.focus.bar.highlighted = "show_all" }
-expect  = "Up to four top hits, each “Sender · Subject” with the word in the find highlight, its passage, folder and date; Narrow to's pills with counts; and Show all, under the ring (spec 010 screen 03)."
+expect  = "Up to four top hits, each “Sender · Subject” with the word in the find highlight, then its passage where the word was found in the body, its folder and date; Narrow to's pills with counts; and Show all, under the ring (spec 010 screen 03). The footer's Return says “open”: here it opens all the results."
