@@ -161,6 +161,9 @@ pub struct ResultsPane {
     save_popover: Rc<crate::save_popover::SavePopover>,
     chips: gtk::Box,
     query_hint: gtk::Box,
+    /// The query, drawn in the top bar's field while the results are up
+    /// ([`crate::chrome::Chrome::show_query`]).
+    query: gtk::Box,
     buttons: gtk::Box,
     /// The filter buttons drawn, by kind: what a popover hangs from.
     filter_buttons: RefCell<Vec<(FilterKind, gtk::Button)>>,
@@ -284,7 +287,6 @@ impl ResultsPane {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("focus-results");
         root.append(&head);
-        root.append(&query);
         root.append(&buttons);
         root.append(&timeline_line);
         let act: Rc<dyn Fn(CommandId)> = Rc::new(act);
@@ -332,6 +334,7 @@ impl ResultsPane {
             save_popover,
             chips,
             query_hint,
+            query: query.clone(),
             buttons,
             filter_buttons: RefCell::default(),
             timeline,
@@ -441,6 +444,11 @@ impl ResultsPane {
     /// The page the window puts in the inbox's place.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
+    }
+
+    /// The query's field: its chips and words, and what `/` does.
+    pub fn query_field(&self) -> &gtk::Box {
+        &self.query
     }
 
     /// Draw the frame: the controller's `Intent::ShowResults`.
@@ -1051,6 +1059,13 @@ impl ResultsPane {
                 .scroll_to(header, gtk::ListScrollFlags::NONE, None);
         }
         self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+        // The list places a row it has not drawn by an estimate of the
+        // rows' heights, which a 72 row after 40 ones outruns: once it is
+        // drawn, the ringed row is brought the rest of the way in.
+        self.list.add_tick_callback(|list, _| {
+            nudge_into_view(list);
+            glib::ControlFlow::Break
+        });
     }
 
     /// The subjects of the rows read so far, in order: what a test reads.
@@ -1228,6 +1243,38 @@ impl ResultsPane {
                 self.list.grab_focus();
             }
         }
+    }
+}
+
+/// Scroll `list` by what its ringed row still lies outside its scroller.
+fn nudge_into_view(list: &gtk::ListView) {
+    let Some(scroller) = list
+        .ancestor(gtk::ScrolledWindow::static_type())
+        .and_downcast::<gtk::ScrolledWindow>()
+    else {
+        return;
+    };
+    let mut stack = vec![list.clone().upcast::<gtk::Widget>()];
+    let ringed = std::iter::from_fn(|| {
+        let widget = stack.pop()?;
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+        Some(widget)
+    })
+    .find(|widget| widget.has_css_class("focus-results-cursor"));
+    let Some(bounds) = ringed.and_then(|ringed| ringed.compute_bounds(&scroller)) else {
+        return;
+    };
+    let height = scroller.height() as f32;
+    let adjustment = scroller.vadjustment();
+    let below = bounds.y() + bounds.height() - height;
+    if bounds.y() < 0.0 {
+        adjustment.set_value(adjustment.value() + f64::from(bounds.y()));
+    } else if below > 0.0 {
+        adjustment.set_value(adjustment.value() + f64::from(below));
     }
 }
 

@@ -103,6 +103,25 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
             !window.bar().is_some_and(|bar| bar.is_open()),
             "the bar stayed up"
         );
+        // One field: the top bar's holds the query, where `/` opens it,
+        // and the command field's prompt is not drawn beside it.
+        let chrome = window.chrome().expect("the top bar");
+        let said = support::texts(chrome.center());
+        assert!(
+            said.iter().any(|line| line == "budget")
+                && said.iter().any(|line| line.contains("to edit"))
+                && !said
+                    .iter()
+                    .any(|line| line == postio_ui::focus_row::COMMAND_PROMPT),
+            "the top bar's field says {said:?}"
+        );
+        assert!(
+            !support::texts(results.widget())
+                .iter()
+                .any(|line| line.contains("to edit")),
+            "a second field under the top bar: {:?}",
+            support::texts(results.widget())
+        );
 
         // A storyboard says where the keyboard is as a region: the
         // results', which the Mac's storyboards check for (#1825).
@@ -132,6 +151,12 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
             support::subjects(&window).len(),
             4,
             "the inbox is not whole"
+        );
+        assert!(
+            support::texts(chrome.center())
+                .iter()
+                .any(|line| line == postio_ui::focus_row::COMMAND_PROMPT),
+            "the command field is not back"
         );
     });
 }

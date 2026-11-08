@@ -612,6 +612,7 @@ pub fn the_bar_opens_in_the_top_bars_field() {
         }
         let window = three_and_open().await;
         let field = support::only(&window, "focus-command-field");
+        let center = window.chrome().expect("the top bar").center().clone();
         let before = field
             .compute_bounds(&window)
             .expect("the field has a place in the window");
@@ -644,7 +645,7 @@ pub fn the_bar_opens_in_the_top_bars_field() {
             "the results are not below the field: {results:?} under {before:?}"
         );
         assert!(
-            !field.is_mapped() || field.opacity() < 0.1,
+            !field.is_mapped() || center.opacity() < 0.1,
             "the field's own prompt still shows under the bar's input"
         );
     });

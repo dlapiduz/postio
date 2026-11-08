@@ -2734,7 +2734,7 @@ impl FocusWindow {
         // own field and its results hang below, so the bar lies over the
         // whole window rather than over the list.
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
-            bar.set_field(chrome.field().clone().upcast());
+            bar.set_field(chrome.center().clone().upcast());
         }
         imp.stage.add_overlay(bar.widget());
         list_or_empty.set_vexpand(true);
@@ -3871,6 +3871,9 @@ impl FocusWindow {
         view.show(frame);
         if imp.body.visible_child_name().as_deref() != Some(RESULTS) {
             imp.body.set_visible_child_name(RESULTS);
+            if let Some(chrome) = imp.chrome.borrow().as_ref() {
+                chrome.show_query(Some(view.query_field().upcast_ref()));
+            }
             view.focus();
         }
     }
@@ -3881,6 +3884,9 @@ impl FocusWindow {
         if imp.body.visible_child_name().as_deref() == Some(RESULTS) {
             imp.body.set_visible_child_name(MAIL);
             self.focus_list();
+        }
+        if let Some(chrome) = imp.chrome.borrow().as_ref() {
+            chrome.show_query(None);
         }
         // The page is kept for the next search, and nothing of this one's
         // may show in it: the controller says "found nothing" of the
