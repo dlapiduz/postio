@@ -742,6 +742,9 @@ pub(crate) struct Results {
     asked: BTreeSet<u32>,
     /// The row with the focus ring; restored rows wait for the frame.
     pub(crate) cursor: Option<u64>,
+    /// The conversation the ring was on when the results were asked
+    /// again in another order: it takes the ring back once they land.
+    follow: Option<postio_search::results::ConversationKey>,
     /// Checked rows, by their best message and its conversation -- or,
     /// with `all`, the rows taken back out of the whole.
     pub(crate) checked: Vec<(MessageId, Option<ThreadId>)>,
@@ -814,6 +817,7 @@ impl Results {
             pages: BTreeMap::new(),
             asked: BTreeSet::new(),
             cursor: None,
+            follow: None,
             checked: Vec::new(),
             all: false,
             remembered: false,
@@ -1384,6 +1388,33 @@ impl Results {
         hit.from.as_ref().map(|from| from.address.clone())
     }
 
+    /// The first row read that draws the conversation `key`.
+    fn position_of_key(&self, key: postio_search::results::ConversationKey) -> Option<u64> {
+        let top = self.top_len();
+        if let Some(at) = self
+            .top
+            .iter()
+            .flatten()
+            .take(top as usize)
+            .position(|hit| hit.key == key)
+        {
+            return Some(at as u64);
+        }
+        self.pages.iter().find_map(|(page, hits)| {
+            let at = hits.iter().position(|hit| hit.key == key)?;
+            Some(top + u64::from(*page) * u64::from(PAGE) + at as u64)
+        })
+    }
+
+    /// The conversation under the ring, to follow into another order.
+    pub(crate) fn follow_cursor(&mut self) {
+        self.follow = self
+            .cursor
+            .and_then(|at| self.hit_at(at))
+            .map(|(hit, _, _)| hit.key);
+        self.cursor = None;
+    }
+
     pub(crate) fn cursor_message(&self) -> Option<(MessageId, Option<ThreadId>)> {
         let (hit, _, _) = self.hit_at(self.cursor?)?;
         Some((hit.best, thread_of(hit)))
@@ -1491,8 +1522,10 @@ impl Results {
                 landed.nothing = true;
             }
             let rows = self.rows();
+            let followed = self.follow.take().and_then(|key| self.position_of_key(key));
             self.cursor = match self.cursor {
                 Some(cursor) if rows > 0 => Some(cursor.min(rows - 1)),
+                _ if followed.is_some() => followed,
                 _ if rows > 0 => Some(0),
                 _ => None,
             };
@@ -3718,8 +3751,8 @@ impl FocusController {
         if results.order == order {
             return Vec::new();
         }
+        results.follow_cursor();
         results.order = order;
-        results.cursor = None;
         let asks = results.again(stamp);
         let mut steps = self.close_quick_look();
         steps.extend(asks);
