@@ -476,6 +476,11 @@ pub fn nothing_found_offers_a_looser_search_that_finds_some() {
             !results.nothing().title().is_empty(),
             "the page says nothing"
         );
+        // Nothing found has no months to chart (§3.10).
+        assert!(
+            !gtk::prelude::WidgetExt::is_mapped(results.timeline().widget()),
+            "the timeline stayed over the page"
+        );
         window.press_command(postio_core::CommandId::PickRelaxation1);
         assert!(
             crate::settle_until(async || !results.showing_nothing() && results.chips().is_empty())
@@ -487,6 +492,10 @@ pub fn nothing_found_offers_a_looser_search_that_finds_some() {
             crate::settle_until(async || results.subjects().len() >= 3).await,
             "the budgets are not back: {:?}",
             results.subjects()
+        );
+        assert!(
+            gtk::prelude::WidgetExt::is_mapped(results.timeline().widget()),
+            "the timeline did not come back with them"
         );
     });
 }

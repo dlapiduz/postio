@@ -692,6 +692,8 @@ fn leading(row: &DropdownRow) -> gtk::Widget {
         DropdownRowKind::Person => {
             let initials = gtk::Label::new(Some(row.initials.as_deref().unwrap_or("?")));
             initials.add_css_class("focus-dropdown-avatar");
+            // A circle, not the row's height.
+            initials.set_valign(gtk::Align::Center);
             initials.set_accessible_role(gtk::AccessibleRole::Presentation);
             initials.upcast()
         }

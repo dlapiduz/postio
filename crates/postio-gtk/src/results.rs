@@ -164,6 +164,8 @@ pub struct ResultsPane {
     /// The query, drawn in the top bar's field while the results are up
     /// ([`crate::chrome::Chrome::show_query`]).
     query: gtk::Box,
+    /// The timeline and its hint.
+    timeline_line: gtk::Box,
     buttons: gtk::Box,
     /// The filter buttons drawn, by kind: what a popover hangs from.
     filter_buttons: RefCell<Vec<(FilterKind, gtk::Button)>>,
@@ -335,6 +337,7 @@ impl ResultsPane {
             chips,
             query_hint,
             query: query.clone(),
+            timeline_line: timeline_line.clone(),
             buttons,
             filter_buttons: RefCell::default(),
             timeline,
@@ -698,6 +701,8 @@ impl ResultsPane {
             .and_then(|root| root.focus())
             .is_some_and(|focus| focus.is_ancestor(&self.body));
         self.body.set_visible_child_name(page);
+        // Nothing found has no months to chart (§3.10).
+        self.timeline_line.set_visible(page != NOTHING);
         if had {
             self.focus();
         }
