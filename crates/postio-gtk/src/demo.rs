@@ -117,6 +117,11 @@ pub fn start(
     window.set_default_size(size.0, size.1);
     window.present();
     let session = crate::startup::adopt_at(&window, host, &config, Some(config_path));
+    // The store's upkeep, which sync would start: the demo dials nothing,
+    // but its mail is indexed as the running app's is -- the search seed's
+    // attachments read, so a word inside a workbook is found, as the Mac's
+    // demo finds it. None of it reaches the network.
+    session.host().start_idle_passes();
     Ok(Started {
         window,
         session,
