@@ -2007,9 +2007,9 @@ impl FocusWindow {
     /// place is chosen and after an overlay goes, the window's real focus is
     /// the list view -- not the top bar's Compose button, nor the header's
     /// place button, where Space or Return would press a control instead of
-    /// acting on the row under the cursor. The view itself, not a row of
-    /// it: the cursor is the row that is drawn, and a row that also held
-    /// GTK's focus would be a second ring.
+    /// acting on the row under the cursor. On the cursor's row: the cursor
+    /// is the row that is drawn, and GTK's focus left on another row would
+    /// be a second ring.
     pub fn focus_list(&self) {
         // A search's results stand in the list's place while they are up:
         // the inbox's list behind them is not shown, and a keyboard left
@@ -2018,8 +2018,12 @@ impl FocusWindow {
             results.focus();
             return;
         }
+        // The view takes it on its cursor's row: given to the view alone,
+        // GTK puts it on whichever row it last had, and a row other than
+        // the cursor's is a second place the keyboard seems to be.
         if let Some(pane) = self.pane() {
             gtk::prelude::GtkWindowExt::set_focus(self, Some(pane.view()));
+            pane.focus_cursor();
         }
     }
 
@@ -2248,6 +2252,12 @@ impl FocusWindow {
             }
             Intent::ShowFiltered => self.show_filtered(),
             Intent::SaveSearch(save) => self.save_search(save),
+            // The Save popover over the results (spec 010 §3.9).
+            Intent::SavePopover(view) => {
+                if let Some(results) = self.results() {
+                    results.show_save(view.as_deref());
+                }
+            }
             // A command the controller does not answer itself, run from the
             // bar: the host's verbs, Compose, Settings.
             Intent::Run(id) => self.act(*id),

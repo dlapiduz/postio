@@ -1175,6 +1175,16 @@ button.focus-results-filter.focus-results-filter-applied {
   transition: none;
 }
 
+/* The ring the controller puts on a result is where the keyboard is; the
+   row GTK focuses is that same row, and draws no second ring. */
+.focus-results-list > row:focus-visible {
+  outline: none;
+}
+
+.focus-results-selected {
+  font-weight: bold;
+}
+
 .focus-results-header {
   min-height: 32px;
   padding: 0 var(--postio-space-4);
@@ -1324,6 +1334,40 @@ button.focus-results-filter.focus-results-filter-applied {
 
 .focus-popover {
   min-width: 320px;
+}
+
+/* The Save popover (spec 010 §3.9, screen 12). */
+.focus-save-popover > contents {
+  padding: var(--postio-space-3);
+  font-family: var(--postio-font-body);
+}
+
+.focus-save {
+  min-width: 340px;
+}
+
+.focus-save-chips > flowboxchild {
+  padding: 0;
+}
+
+.focus-save-title {
+  font-weight: bold;
+}
+
+.focus-save-chip {
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-md);
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+}
+
+.focus-save-switch-note label {
+  font-size: var(--postio-text-meta);
+}
+
+.focus-save-button label {
+  font-weight: bold;
 }
 
 .focus-popover-rows > row {

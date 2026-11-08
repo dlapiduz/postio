@@ -246,6 +246,11 @@ impl Feed {
         self.inner.focus.borrow().route(id)
     }
 
+    /// The key `id` runs on now, as a keycap spells it.
+    pub fn key(&self, id: CommandId) -> Option<String> {
+        postio_ui::hints::key(self.inner.focus.borrow().keymap(), id)
+    }
+
     /// The key context in force: the top surface's, or the list's.
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
         self.inner.focus.borrow().key_context()

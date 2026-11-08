@@ -437,3 +437,44 @@ pub fn backspace_on_an_empty_value_takes_the_operator_away() {
         );
     });
 }
+
+/// Escape from the dropdown puts the keyboard back on the row it left:
+/// GTK's focus on the cursor's row, so the keyboard's outline and the
+/// cursor's ring are one (storyboards' dropdown-esc-returns-to-row, #1825).
+pub fn escape_gives_the_keyboard_back_to_the_cursor_row() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        support::keys(&window, &["j"]);
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        assert!(
+            crate::settle_until(async || !bar.dropdown().titles().is_empty()).await,
+            "the dropdown never drew"
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(!bar.is_open(), "Escape left the bar up");
+        let pane = window.pane().expect("the inbox");
+        // GTK's own focus is on the item holding the second row on screen,
+        // the cursor's.
+        let on_the_cursor_row = || {
+            let focus = gtk::prelude::GtkWindowExt::focus(&window);
+            let rows = pane.rows_on_screen();
+            rows.get(1)
+                .and_then(|row| row.parent())
+                .is_some_and(|item| Some(item) == focus)
+        };
+        assert_eq!(
+            pane.cursor().selected(),
+            1,
+            "j put the cursor on the second row"
+        );
+        assert!(
+            crate::settle_until(async || on_the_cursor_row()).await,
+            "the keyboard is not on the cursor's row: {}",
+            support::focus_path(&window)
+        );
+    });
+}

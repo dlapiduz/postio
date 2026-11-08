@@ -450,6 +450,10 @@ const CASES: &[(&str, fn())] = &[
         dropdown::backspace_on_an_empty_value_takes_the_operator_away as fn(),
     ),
     (
+        "dropdown::escape_gives_the_keyboard_back_to_the_cursor_row",
+        dropdown::escape_gives_the_keyboard_back_to_the_cursor_row as fn(),
+    ),
+    (
         "dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it",
         dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it as fn(),
     ),
@@ -512,6 +516,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "results::replying_to_a_result_and_escaping_back_to_the_results",
         results::replying_to_a_result_and_escaping_back_to_the_results as fn(),
+    ),
+    (
+        "results::checking_results_says_how_many_are_selected",
+        results::checking_results_says_how_many_are_selected as fn(),
+    ),
+    (
+        "results::clearing_the_filters_keeps_the_keyboard_on_the_results",
+        results::clearing_the_filters_keeps_the_keyboard_on_the_results as fn(),
+    ),
+    (
+        "results::ctrl_s_opens_the_save_popover_and_return_saves",
+        results::ctrl_s_opens_the_save_popover_and_return_saves as fn(),
     ),
     (
         "results::the_tabs_go_by_their_keys",

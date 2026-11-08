@@ -3,7 +3,7 @@
 //!
 //! What matches, how it is grouped and ordered, and where the ring goes
 //! are the controller's, asserted in `postio-focus`. These cases drive the
-//! window as a person does, with spec 010's search staged on: Show all
+//! window as a person does: Show all
 //! opens the results, the keys walk them, a filter button edits the query,
 //! and Back brings the inbox back.
 
@@ -538,6 +538,182 @@ pub fn replying_to_a_result_and_escaping_back_to_the_results() {
             .await,
             "the keyboard is not back on the results: {}",
             window.observe().keyboard.widget
+        );
+        // On the ringed result itself, not on a group's heading: one ring.
+        let on_the_ring = || {
+            use gtk::prelude::WidgetExt;
+            gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| {
+                std::iter::successors(Some(focus.clone()), |widget| widget.first_child())
+                    .any(|widget| widget.has_css_class("focus-results-cursor"))
+            })
+        };
+        assert!(
+            crate::settle_until(async || on_the_ring()).await,
+            "the keyboard is not on the ringed result: {}",
+            support::focus_path(&window)
+        );
+    });
+}
+
+/// Spec 010 US5 (§3.5): checking results turns the footer into the bulk
+/// bar, which says how many the next verb will reach.
+pub fn checking_results_says_how_many_are_selected() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        let said = || support::texts(results.widget());
+        support::keys(&window, &["x"]);
+        assert!(
+            crate::settle_until(async || said().iter().any(|text| text == "1 selected")).await,
+            "the bulk bar does not count one: {:?}",
+            said()
+        );
+        support::keys(&window, &["j", "x"]);
+        assert!(
+            crate::settle_until(async || said().iter().any(|text| text == "2 selected")).await,
+            "the bulk bar does not count two: {:?}",
+            said()
+        );
+    });
+}
+
+/// Spec 010 D24 (#1825): Ctrl+Backspace on the no-results page clears the
+/// filters, and the keyboard is on the results that come back -- not left
+/// on the page that went, nor handed to the top bar.
+pub fn clearing_the_filters_keeps_the_keyboard_on_the_results() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.click_filter("Attachment")).await,
+            "no Attachment button"
+        );
+        assert!(
+            crate::settle_until(async || results.showing_nothing()).await,
+            "nothing matched, and the page did not say so"
+        );
+        results.focus();
+        support::press(&window, "BackSpace", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || !results.showing_nothing() && results.chips().is_empty())
+                .await,
+            "Ctrl+Backspace did not clear the filters: {:?}",
+            results.chips()
+        );
+        assert!(
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable && seen.region == postio_ui::observe::Region::Results
+            })
+            .await,
+            "the keyboard is not on the results: {}",
+            support::focus_path(&window)
+        );
+    });
+}
+
+/// Spec 010 US5 (§3.9, screen 12): Ctrl+S over the results opens the Save
+/// popover -- a name made from the query, its terms, Pin on -- with the
+/// keyboard in its Name field; Return saves it to `config.toml`, pinned,
+/// and the popover goes.
+pub fn ctrl_s_opens_the_save_popover_and_return_saves() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Q3 budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        fixture
+            .file(
+                ("Tomas Ruiz", "tomas@example.com"),
+                "Travel budget",
+                "Trains.",
+                30,
+            )
+            .await;
+        fixture
+            .file(("Lin Park", "lin@example.com"), "Lunch", "Noon?", 10)
+            .await;
+        fixture.index().await;
+        let directory = tempfile::tempdir().expect("a config directory");
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, "# Mine.\n").expect("a config");
+        let config = postio_config::Config::load_from_path(&path).expect("it reads");
+        let window = postio_gtk::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_gtk::startup::adopt_at(
+            &window,
+            fixture.host(),
+            &config,
+            Some(&path),
+        ));
+        support::keep(directory);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "the inbox never reached the screen"
+        );
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        support::press(&window, "s", gtk::gdk::ModifierType::CONTROL_MASK);
+        let save = results.save_popover();
+        assert!(
+            crate::settle_until(async || save.is_open()).await,
+            "Ctrl+S opened no Save popover"
+        );
+        assert!(!save.name().is_empty(), "no name is offered");
+        assert!(
+            save.texts()
+                .iter()
+                .any(|text| text == "Save as a saved search"),
+            "{:?}",
+            save.texts()
+        );
+        assert!(
+            save.texts().iter().any(|text| text == "budget"),
+            "the query's terms are not shown: {:?}",
+            save.texts()
+        );
+        assert!(
+            save.name_has_keyboard(),
+            "the Name field does not have the keyboard"
+        );
+        assert!(
+            save.key(gtk::gdk::Key::Return),
+            "Return was not the popover's"
+        );
+        assert!(
+            crate::settle_until(async || {
+                std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("query = \"budget\"")
+            })
+            .await,
+            "Return saved nothing:\n{}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+        assert!(
+            crate::settle_until(async || !save.is_open()).await,
+            "the popover stayed up after saving"
         );
     });
 }

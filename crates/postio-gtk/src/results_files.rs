@@ -535,6 +535,14 @@ impl NoResultsPage {
         &self.root
     }
 
+    /// Take the keyboard: the page itself, while it stands in the rows'
+    /// place, so what is pressed reaches the results' keys -- the numbers
+    /// that pick a looser search, Ctrl+Backspace.
+    pub fn focus(&self) {
+        self.root.set_focusable(true);
+        self.root.grab_focus();
+    }
+
     /// Draw `view`.
     pub fn show(&self, view: &postio_focus::NoResultsView) {
         self.title.set_text(&view.title);

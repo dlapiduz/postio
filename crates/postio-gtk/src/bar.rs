@@ -388,19 +388,12 @@ impl Bar {
         }
         // The keyboard leaves the entry with the bar: left in a hidden
         // entry, every single-letter key after it would be taken for typing.
-        if let Some(root) = self.entry.root()
-            && root
-                .focus()
+        // Asked now, and handed over once the bar is down: what hiding it
+        // does to the focus is then done, and cannot move it on again.
+        let had_keyboard = self.entry.root().filter(|root| {
+            root.focus()
                 .is_some_and(|focus| focus.is_ancestor(&self.root) || focus == self.root)
-        {
-            // Home when the window said where that is, to nothing
-            // otherwise: a window's own keys are heard from either.
-            root.set_focus(None::<&gtk::Widget>);
-            let home = self.home.borrow().clone();
-            if let Some(home) = home {
-                home();
-            }
-        }
+        });
         self.over.set_visible(false);
         self.show_field(true);
         self.quiet.set(true);
@@ -411,6 +404,15 @@ impl Bar {
         self.lines.borrow_mut().clear();
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
+        }
+        // Home when the window said where that is, to nothing otherwise: a
+        // window's own keys are heard from either.
+        if let Some(root) = had_keyboard {
+            let home = self.home.borrow().clone();
+            match home {
+                Some(home) => home(),
+                None => root.set_focus(None::<&gtk::Widget>),
+            }
         }
     }
 
