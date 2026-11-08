@@ -445,8 +445,12 @@ pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
             "the keyboard is not back on the results"
         );
         assert!(
-            crate::settle_until(async || window.observe().keyboard.reachable).await,
-            "the keyboard went to the inbox behind the results: {}",
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable && seen.widget.contains("GtkListView")
+            })
+            .await,
+            "the keyboard did not come back to the results' list: {}",
             window.observe().keyboard.widget
         );
         assert!(
