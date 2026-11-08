@@ -403,6 +403,20 @@ impl ResultsPane {
                 }
             }
         });
+        // The keyboard goes back to the results when the Save popover
+        // goes, not to the button it hung from -- once GTK has handed it to
+        // that button, which it does after `closed`.
+        self.save_popover.connect_closed({
+            let weak = weak.clone();
+            move || {
+                let weak = weak.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(pane) = weak.upgrade() {
+                        pane.focus();
+                    }
+                });
+            }
+        });
         self.save_button.connect_clicked({
             let weak = weak.clone();
             move |_| {
@@ -1204,7 +1218,12 @@ impl ResultsPane {
             .get()
             .and_then(|position| self.items.position_of(position))
         {
-            Some(at) => self.list.scroll_to(at, gtk::ListScrollFlags::FOCUS, None),
+            // The list takes the keyboard first: scrolling to an item
+            // focuses it only while the keyboard is already within.
+            Some(at) => {
+                self.list.grab_focus();
+                self.list.scroll_to(at, gtk::ListScrollFlags::FOCUS, None);
+            }
             None => {
                 self.list.grab_focus();
             }

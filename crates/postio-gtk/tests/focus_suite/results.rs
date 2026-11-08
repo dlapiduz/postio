@@ -715,5 +715,16 @@ pub fn ctrl_s_opens_the_save_popover_and_return_saves() {
             crate::settle_until(async || !save.is_open()).await,
             "the popover stayed up after saving"
         );
+        assert!(
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable
+                    && seen.region == postio_ui::observe::Region::Results
+                    && seen.widget.contains("GtkListView")
+            })
+            .await,
+            "the keyboard did not come back to the results: {}",
+            window.observe().keyboard.widget
+        );
     });
 }

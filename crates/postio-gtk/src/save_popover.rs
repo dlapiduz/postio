@@ -240,6 +240,13 @@ impl SavePopover {
         });
     }
 
+    /// Run `closed` whenever it goes, however it went: GTK hands the
+    /// keyboard back to the button it hangs from, which is not where it
+    /// was.
+    pub fn connect_closed(&self, closed: impl Fn() + 'static) {
+        self.popover.connect_closed(move |_| closed());
+    }
+
     /// Whether it is up.
     pub fn is_open(&self) -> bool {
         self.popover.is_visible()
