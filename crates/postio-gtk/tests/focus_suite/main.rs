@@ -667,6 +667,10 @@ const CASES: &[(&str, fn())] = &[
         bar::a_word_lists_top_hits_and_return_shows_all as fn(),
     ),
     (
+        "bar::the_dropdown_opens_on_the_newest_recent_search",
+        bar::the_dropdown_opens_on_the_newest_recent_search as fn(),
+    ),
+    (
         "bar::at_offers_correspondents",
         bar::at_offers_correspondents as fn(),
     ),

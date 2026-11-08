@@ -290,6 +290,77 @@ pub fn a_word_lists_top_hits_and_return_shows_all() {
     });
 }
 
+/// The dropdown opens on its default row, the newest recent search,
+/// wherever the arrows were when it last closed: Return runs again what
+/// was just searched.
+pub fn the_dropdown_opens_on_the_newest_recent_search() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Archive plan",
+                "Boxes for the move.",
+                5,
+            )
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        for words in ["archive", "plan"] {
+            let bar = open_bar(&window);
+            type_in(&bar, words).await;
+            assert!(
+                crate::settle_until(async || bar.result_subjects() == ["Archive plan"]).await,
+                "{words:?} found nothing: {:?}",
+                bar.texts()
+            );
+            support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+            assert!(
+                crate::settle_until(async || window.results().is_some()).await,
+                "Return did not open the results"
+            );
+            support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+            assert!(
+                crate::settle_until(async || window.results().is_none()).await,
+                "Escape did not leave the results"
+            );
+        }
+        let newest = |bar: &postio_gtk::bar::Bar| {
+            bar.highlighted()
+                .is_some_and(|(_, _, text)| text.starts_with("plan"))
+        };
+        let bar = open_bar(&window);
+        assert!(
+            crate::settle_until(async || newest(&bar)).await,
+            "the newest is not the default: {:?} of {:?}",
+            bar.highlighted(),
+            bar.texts()
+        );
+        support::press(&window, "Down", gtk::gdk::ModifierType::empty());
+        assert!(
+            bar.highlighted()
+                .is_some_and(|(_, _, text)| text.starts_with("archive")),
+            "Down did not move: {:?}",
+            bar.highlighted()
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(!bar.is_open(), "Escape closed the bar");
+        let bar = open_bar(&window);
+        assert!(
+            crate::settle_until(async || newest(&bar)).await,
+            "it opened where it closed: {:?}",
+            bar.highlighted()
+        );
+    });
+}
+
 /// `@` offers the correspondents the address book holds, and choosing one
 /// puts their `with:` search in the box: mail involving any of the person's
 /// addresses, as specs/005-contacts/contracts/query-with.md has the finder do.

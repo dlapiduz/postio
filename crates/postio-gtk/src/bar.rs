@@ -410,6 +410,7 @@ impl Bar {
         self.quiet.set(false);
         self.view.replace(BarView::default());
         self.drop_down(false);
+        self.dropdown.clear();
         self.lines.borrow_mut().clear();
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);

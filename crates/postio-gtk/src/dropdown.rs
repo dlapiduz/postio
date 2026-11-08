@@ -10,10 +10,11 @@
 //! the count on its right.
 //!
 //! The arrows' highlight is the toolkit's selection, kept by token: a
-//! redraw (the passages landing) leaves it where it was, a run's `select`
-//! moves it, and otherwise the view's default `highlight` takes it. Where
-//! it rests is said back through [`Dropdown::connect_highlighted`], so the
-//! controller's forget and exclude keys act on the row a person sees.
+//! redraw (the passages landing) leaves it where a person moved it, a
+//! run's `select` moves it, and otherwise the view's default `highlight`
+//! takes it. Where it rests is said back through
+//! [`Dropdown::connect_highlighted`], so the controller's forget and
+//! exclude keys act on the row a person sees.
 //!
 //! Matched words get the find highlight (FR-005), never the accent.
 
@@ -56,6 +57,10 @@ pub struct Dropdown {
     view: RefCell<Option<DropdownView>>,
     /// Set while a redraw moves the selection, so it is not said back.
     quiet: Cell<bool>,
+    /// The highlight is where a person or a run put it, not the view's
+    /// default: a redraw keeps it there. A default is taken again from
+    /// each view, as rows arrive above it.
+    placed: Cell<bool>,
     run: RefCell<Option<TokenHandler>>,
     highlighted: RefCell<Option<TokenHandler>>,
     /// This dropdown, weakly: what a pill's click comes back to.
@@ -104,6 +109,7 @@ impl Dropdown {
             tokens: RefCell::default(),
             view: RefCell::default(),
             quiet: Cell::new(false),
+            placed: Cell::new(false),
             run: RefCell::default(),
             highlighted: RefCell::default(),
             me: RefCell::default(),
@@ -125,6 +131,7 @@ impl Dropdown {
                 && !dropdown.quiet.get()
                 && let Some(token) = row.and_then(|row| dropdown.token_at(row.index()))
             {
+                dropdown.placed.set(true);
                 let handler = dropdown.highlighted.borrow().clone();
                 if let Some(handler) = handler {
                     handler(token);
@@ -164,12 +171,13 @@ impl Dropdown {
         self.tokens.replace(tokens);
         self.show_footer(view);
         self.view.replace(Some(view.clone()));
-        // A run's `select` wins; else the row the arrows rested on, while
-        // it is still drawn; else the view's default.
-        let at = view
-            .select
-            .filter(|token| self.index_of(*token).is_some())
-            .or(kept.filter(|token| self.index_of(*token).is_some()))
+        // A run's `select` wins; else the row a person moved the arrows
+        // to, while it is still drawn; else the view's default.
+        let select = view.select.filter(|token| self.index_of(*token).is_some());
+        let kept = kept.filter(|token| self.placed.get() && self.index_of(*token).is_some());
+        self.placed.set(select.is_some() || kept.is_some());
+        let at = select
+            .or(kept)
             .or(view.highlight)
             .and_then(|token| self.index_of(token));
         self.quiet.set(true);
@@ -178,6 +186,20 @@ impl Dropdown {
             None => self.list.unselect_all(),
         }
         self.quiet.set(false);
+    }
+
+    /// Forget what was drawn and where the arrows rested: the next
+    /// opening starts on its view's default.
+    pub fn clear(&self) {
+        self.placed.set(false);
+        self.quiet.set(true);
+        self.list.unselect_all();
+        self.quiet.set(false);
+        while let Some(child) = self.list.first_child() {
+            self.list.remove(&child);
+        }
+        self.tokens.borrow_mut().clear();
+        self.view.replace(None);
     }
 
     /// The token of the row the arrows rest on.
