@@ -41,7 +41,13 @@ key     = "Return"
 check   = { keyboard.region = "results" }
 expect  = "Return saves it: the popover goes, a toast says it was saved, and the results are as they were."
 
+# From the results / edits their query (FR-021), so the empty dropdown is
+# reached from the inbox.
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list" }
+
 [[step]]
 command = "search"
 check   = { overlay.kind = "finder", keyboard.region = "search" }
-expect  = "The empty dropdown lists the new saved search among Saved searches, last, with its count and its ⌥ number."
+expect  = "From the inbox, the empty dropdown lists the new saved search among Saved searches, last, with its count and its ⌥ number."

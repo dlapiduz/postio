@@ -9,6 +9,9 @@ source = { kind = "design", ref = "focus 07" }
 
 [[step]]
 command = "search"
+# The saved searches' counts are read after the panel opens: watched for,
+# so the frame is the panel with them.
+settle  = { watch_ms = 600 }
 check   = { keyboard.region = "search", app.focus.bar.typed = "" }
 expect  = "The empty dropdown is not a blank band: the saved searches as pills with their keys, and the cheat sheet of what can be typed, one example lowered live (spec 010 screen 01); the recent searches with their counts lead it once there are any, and this store has none yet, so the footer offers nothing to run again."
 
