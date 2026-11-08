@@ -1413,7 +1413,9 @@ fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
     // At once, from what the row knows; its conversation's matches asked.
     let view = looked(&effects);
     assert_eq!(view.title, "Quick Look");
-    assert_eq!(view.position, "1 of 123");
+    // Each conversation counted once, as the reader counts: the top hits
+    // are not counted again under their months.
+    assert_eq!(view.position, "1 of 120");
     assert_eq!(text(&view.subject), "Atlas budget, part 7");
     assert_eq!(lit(&view.subject), ["Atlas", "budget"]);
     assert!(text(&view.sender).starts_with("Tom\u{e1}s Reyes tomas@example.com"));
@@ -1494,7 +1496,7 @@ fn j_and_k_move_the_results_and_quick_look_follows_in_place() {
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
     let view = looked(&effects);
-    assert_eq!(view.position, "2 of 123");
+    assert_eq!(view.position, "2 of 120");
     assert_eq!(text(&view.subject), "Atlas budget, part 2");
     assert_eq!(
         matches_asked(&effects),
@@ -1506,7 +1508,31 @@ fn j_and_k_move_the_results_and_quick_look_follows_in_place() {
     assert_eq!(looked(&effects).cards.len(), 3);
 
     let effects = run(&mut focus, CommandId::PrevMessage, &rows);
-    assert_eq!(looked(&effects).position, "1 of 123");
+    assert_eq!(looked(&effects).position, "1 of 120");
+
+    // Past the top hits, under the months: each a number the top hits
+    // did not take, or the top hit's own when it is drawn again.
+    let mut said = Vec::new();
+    for _ in 0..6 {
+        let effects = run(&mut focus, CommandId::NextMessage, &rows);
+        let view = looked(&effects);
+        said.push((view.position, text(&view.subject)));
+    }
+    let said: Vec<(&str, &str)> = said
+        .iter()
+        .map(|(at, subject)| (at.as_str(), subject.as_str()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("2 of 120", "Atlas budget, part 2"),
+            ("3 of 120", "Atlas budget, part 30"),
+            ("4 of 120", "Atlas budget, part 0"),
+            ("5 of 120", "Atlas budget, part 1"),
+            ("2 of 120", "Atlas budget, part 2"),
+            ("6 of 120", "Atlas budget, part 3"),
+        ]
+    );
 }
 
 #[test]
@@ -1583,7 +1609,7 @@ fn archive_moves_quick_look_to_the_next_result_and_closes_after_the_last() {
         asked(&effects)
     );
     assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
-    assert_eq!(looked(&effects).position, "2 of 123");
+    assert_eq!(looked(&effects).position, "2 of 120");
 
     // ⌘Z takes it back, as it does anywhere; Quick Look stays.
     let effects = run(&mut focus, CommandId::Undo, &rows);
@@ -1597,7 +1623,7 @@ fn archive_moves_quick_look_to_the_next_result_and_closes_after_the_last() {
     let wanted = focus.results_wanted(last);
     let _ = settle(&mut focus, wanted, &rows);
     let effects = run(&mut focus, CommandId::QuickLook, &rows);
-    assert_eq!(looked(&effects).position, "123 of 123");
+    assert_eq!(looked(&effects).position, "120 of 120");
     let effects = run(&mut focus, CommandId::Archive, &rows);
     assert_eq!(quick_look_view(&effects), Some(None));
     assert!(focus.in_results());

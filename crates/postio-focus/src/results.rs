@@ -1334,6 +1334,49 @@ impl Results {
             .collect()
     }
 
+    /// Where the result at `position` comes in [`Results::walk`], and of
+    /// how many: the conversation's number, as "Result n of m" counts
+    /// it, each top hit once. A row under the months comes after the top
+    /// hits, less those drawn again above it -- the ones read so far,
+    /// since the pages between may not be.
+    fn walked_number(&self, position: u64) -> (u64, u64) {
+        let of = match (&self.frame, self.tab) {
+            (Some(frame), ResultsTab::Conversations) => frame.total,
+            _ => return (position, self.rows()),
+        };
+        let top = self.top_len();
+        if position < top {
+            return (position, of);
+        }
+        let at = position - top;
+        let tops: Vec<_> = self
+            .top
+            .iter()
+            .flatten()
+            .take(top as usize)
+            .map(|hit| hit.key)
+            .collect();
+        // A top hit drawn again under its month is still that one.
+        if let Some((hit, _, _)) = self.hit_at(position)
+            && let Some(first) = tops.iter().position(|key| *key == hit.key)
+        {
+            return (first as u64, of);
+        }
+        let again = self
+            .pages
+            .iter()
+            .flat_map(|(page, hits)| {
+                let first = u64::from(*page) * u64::from(PAGE);
+                hits.iter()
+                    .enumerate()
+                    .map(move |(i, hit)| (first + i as u64, hit))
+            })
+            .filter(|(row, hit)| *row <= at && tops.contains(&hit.key))
+            .count() as u64;
+        let number = (top + at).saturating_sub(again);
+        (number.min(of.saturating_sub(1)), of)
+    }
+
     /// The message under the focus ring, once its row is read.
     /// The address of the sender of the result under the focus ring.
     pub(crate) fn cursor_sender(&self) -> Option<String> {
@@ -2570,7 +2613,10 @@ impl Results {
             .collect();
         Some(QuickLookView {
             title: words::QUICK_LOOK.to_owned(),
-            position: words::quick_look_position(look.position, self.rows()),
+            position: {
+                let (at, of) = self.walked_number(look.position);
+                words::quick_look_position(at, of)
+            },
             walk: words::quick_look_walk(with.keymap),
             actions: words::quick_look_actions(with.keymap),
             subject: dropdown::marked(
