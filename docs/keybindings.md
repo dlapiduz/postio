@@ -97,7 +97,7 @@ command from inside a text field.
 | `ctrl+s` | Save search as folder | Search, search results |  | `save_search` |
 | `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search, search results |  | `back_to_words` |
 | `ctrl+Return` | Show all results | Search (not the terminal) |  | `show_all_results` |
-| `shift+Delete` | Forget recent search | Search (not the terminal) |  | `forget_recent` |
+| `alt+Delete` | Forget recent search | Search (not the terminal) |  | `forget_recent` |
 | `alt+Return` | Exclude suggestion | Search (not the terminal) |  | `exclude_suggestion` |
 | `ctrl+bracketleft` | Back | List, search results (not the terminal) |  | `history_back` |
 | `ctrl+bracketright` | Forward | List, search results (not the terminal) |  | `history_forward` |

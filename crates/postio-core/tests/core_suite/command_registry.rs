@@ -938,12 +938,12 @@ fn the_search_bar_s_commands_are_offered_on_both_platforms() {
     ));
     assert!(offered(
         CommandId::ForgetRecent,
-        "shift+Delete",
+        "alt+Delete",
         Platform::Freedesktop
     ));
     assert!(!offered(
         CommandId::ForgetRecent,
-        "shift+Delete",
+        "alt+Delete",
         Platform::Apple
     ));
 }

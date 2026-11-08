@@ -359,3 +359,32 @@ fn an_unusable_override_leaves_the_command_its_default() {
         "a broken binding must not cost the command its key"
     );
 }
+
+/// #1825: the search dropdown's own chords reach their commands from inside
+/// its field, where a person is typing -- which takes a chord that holds
+/// Ctrl, Alt or Super. Linux's forget-recent was first `shift+Delete`, a
+/// key the field kept for itself.
+#[test]
+fn the_dropdowns_keys_reach_their_commands_while_typing() {
+    let mut resolver = resolver();
+    let now = std::time::Instant::now();
+    for id in [
+        CommandId::ShowAllResults,
+        CommandId::ForgetRecent,
+        CommandId::ExcludeSuggestion,
+    ] {
+        let keymap =
+            postio_core::Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+        let key = keymap.binding(id).expect("bound on Linux").to_owned();
+        let binding: Binding = key.parse().expect("a binding");
+        let mut outcome = Outcome::Unhandled;
+        for chord in binding.chords() {
+            outcome = resolver.press(chord, KeyContext::Search, true, now);
+        }
+        assert_eq!(
+            outcome,
+            Outcome::Command(id.as_str().to_owned()),
+            "`{key}` does not reach `{id}` from the search field"
+        );
+    }
+}

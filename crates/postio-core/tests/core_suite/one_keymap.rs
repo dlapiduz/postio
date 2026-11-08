@@ -242,12 +242,12 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Search],
     ),
-    // The Mac's Option-Delete (D23); Linux's Shift+Delete, since its
+    // The Mac's Option-Delete (D23); Linux's Alt+Delete, since its
     // `alt+BackSpace` is the terminal's back-to-words (#1825).
     with(
         "forget_recent",
         "alt+BackSpace",
-        &["shift+Delete"],
+        &["alt+Delete"],
         Graphical,
         &[Context::Search],
     ),
@@ -628,8 +628,8 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
 /// Spec 010 D23 and #1825: the search bar's keys on both platforms, and
 /// the one `alt+BackSpace` that means a different command on each -- the
 /// terminal's alternate for `back_to_words` on Linux, the forgetting of a
-/// recent search on the Mac. Linux forgets on Shift+Delete, the key a
-/// desktop browser drops a suggestion with.
+/// recent search on the Mac. Linux forgets on Alt+Delete, which holds Alt
+/// as a key pressed in the field must.
 #[test]
 fn the_search_bar_s_keys_resolve_on_both_platforms() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
@@ -638,9 +638,9 @@ fn the_search_bar_s_keys_resolve_on_both_platforms() {
     assert_eq!(mac.bindings(CommandId::ShowAllResults), ["cmd+Return"]);
     assert_eq!(mac.bindings(CommandId::ForgetRecent), ["alt+BackSpace"]);
     assert_eq!(linux.bindings(CommandId::ShowAllResults), ["ctrl+Return"]);
-    assert_eq!(linux.bindings(CommandId::ForgetRecent), ["shift+Delete"]);
+    assert_eq!(linux.bindings(CommandId::ForgetRecent), ["alt+Delete"]);
     assert_eq!(
-        linux.command_for(Context::Search, "shift+Delete"),
+        linux.command_for(Context::Search, "alt+Delete"),
         Some(postio_core::ActionId::Builtin(CommandId::ForgetRecent))
     );
 

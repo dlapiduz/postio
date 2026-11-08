@@ -1152,11 +1152,12 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ForgetRecent,
         title: "Forget recent search",
-        // The design names the Mac's Option-Delete (D23). Linux's is the
-        // browsers' Shift+Delete: its `alt+BackSpace` is the terminal's
-        // back to words (`binding_offered_on`).
+        // The design names the Mac's Option-Delete (D23). Linux's is
+        // Alt+Delete beside it: its `alt+BackSpace` is the terminal's back
+        // to words (`binding_offered_on`), and a key pressed in the field
+        // reaches a command only holding Ctrl, Alt or Super.
         default_binding: "alt+BackSpace",
-        alternate_bindings: &["shift+Delete"],
+        alternate_bindings: &["alt+Delete"],
         contexts: Context::Search.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -3283,9 +3284,9 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
 ///
 /// And one default is the Mac's alone: `forget_recent`'s `alt+BackSpace`,
 /// since the terminal shares Linux's keymap and reads that key as back to
-/// words. Linux forgets on `shift+Delete` instead, the key a desktop
-/// browser drops a suggestion with (#1825); on the Mac that spelling would
-/// be Shift-Delete, which the design does not name.
+/// words. Linux forgets on `alt+Delete` instead (#1825), which holds Alt
+/// as a key pressed in the field must; on the Mac that spelling would be
+/// Option-Delete again, which the design names once.
 pub fn binding_offered_on(action: ActionId, binding: &str, platform: Platform) -> bool {
     !matches!(
         (action, binding, platform),
@@ -3304,7 +3305,7 @@ pub fn binding_offered_on(action: ActionId, binding: &str, platform: Platform) -
             )
             | (
                 ActionId::Builtin(CommandId::ForgetRecent),
-                "shift+Delete",
+                "alt+Delete",
                 Platform::Apple
             )
     )

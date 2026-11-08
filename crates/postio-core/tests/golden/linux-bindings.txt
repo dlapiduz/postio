@@ -50,7 +50,7 @@ search	/ | alt+ctrl+f
 save_search	ctrl+s
 back_to_words	ctrl+BackSpace | alt+BackSpace
 show_all_results	ctrl+Return
-forget_recent	shift+Delete
+forget_recent	alt+Delete
 exclude_suggestion	alt+Return
 history_back	ctrl+bracketleft
 history_forward	ctrl+bracketright

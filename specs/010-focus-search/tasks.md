@@ -530,7 +530,7 @@ turns on (T176).
     platforms, and `list::feed::stage_results_view` is gone. The Linux keys
     are the Mac's with Ctrl for ⌘, but forget-recent: the terminal shares
     Linux's keymap and reads `alt+BackSpace` as back to words, so Linux
-    forgets on `shift+Delete` (`registry::binding_offered_on`, which now
+    forgets on `alt+Delete` (`registry::binding_offered_on`, which now
     also keeps a default off a platform). Undo reaches the results.
   - Found on the way, fixed for both apps: a hit says where a digest holds
     it and, with several accounts, which account it is in

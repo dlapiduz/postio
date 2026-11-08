@@ -136,17 +136,13 @@ fn apple_gets_command_wherever_freedesktop_gets_control() {
     // (`registry::binding_offered_on`, specs/009-focus-macos T105).
     // The other: `alt+BackSpace` is the Mac's forget-recent, so Back to
     // words keeps only `cmd+BackSpace` there (spec 010 D23), and Linux
-    // forgets on Shift+Delete instead (#1825), which the Mac spells
-    // `shift+BackSpace`.
+    // forgets on Alt+Delete instead (#1825), which the Mac spells as its
+    // own `alt+BackSpace`.
     let linux = as_the_mac_spells_it(&offered_on_the_mac(&offered_on_linux(&linux)))
         .replace("quit\tcmd+q | cmd+w\n", "quit\tcmd+q\n")
         .replace(
             "back_to_words\tcmd+BackSpace | alt+BackSpace\n",
             "back_to_words\tcmd+BackSpace\n",
-        )
-        .replace(
-            "forget_recent\tshift+BackSpace\n",
-            "forget_recent\talt+BackSpace\n",
         );
     assert_eq!(
         linux,
