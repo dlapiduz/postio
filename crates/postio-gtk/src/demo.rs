@@ -113,6 +113,25 @@ pub fn start(
     })
     .map_err(|error| format!("the host did not start: {error}"))?;
     let sink = sink.take().ok_or("the host kept its events to itself")?;
+    // Every body indexed before the first frame, as a running app's are
+    // once it has caught up: left to the idle pass below, a word in a body
+    // was found or not depending on how far the pass had got, and a count
+    // grew between two frames of one storyboard.
+    // On the host's own runtime, waited for here: the runner calls this
+    // from inside another, where a `block_on` may not run.
+    let (indexed, done) = std::sync::mpsc::channel();
+    host.runtime().spawn({
+        let store = store.clone();
+        async move {
+            let result = postio_session::index_local_bodies(&store)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = indexed.send(result);
+        }
+    });
+    done.recv()
+        .map_err(|_| "the demo's body index never answered".to_owned())?
+        .map_err(|error| format!("the demo's bodies were not indexed: {error}"))?;
     let window = FocusWindow::new(None);
     window.set_default_size(size.0, size.1);
     window.present();
