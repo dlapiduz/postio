@@ -558,6 +558,10 @@ const CASES: &[(&str, fn())] = &[
         bar::a_hit_steps_the_results_and_its_own_thread as fn(),
     ),
     (
+        "bar::a_hit_opened_from_the_results_says_where_it_is_in_its_thread",
+        bar::a_hit_opened_from_the_results_says_where_it_is_in_its_thread as fn(),
+    ),
+    (
         "bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search",
         bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search as fn(),
     ),

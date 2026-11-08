@@ -820,6 +820,54 @@ pub fn o_is_a_letter_and_alt_o_switches_the_results_sort() {
 
 /// A message opened from the results steps the results it came from: `j`
 /// and `k` walk them, "Result n of m" says where, `n` and `p` step the
+
+/// A result whose best match is not its conversation's newest message
+/// opens on that match, and says where it is in the thread rather than
+/// calling it the latest: the replies say "Re:", so the first message's
+/// subject is the best match for its words.
+pub fn a_hit_opened_from_the_results_says_where_it_is_in_its_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.thread_of("Harbor draft", 3, 20).await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        type_in(&bar, "harbor draft").await;
+        assert!(
+            crate::settle_until(async || !bar.result_subjects().is_empty()).await,
+            "the search found nothing"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.results().is_some()).await,
+            "Show all did not open the results"
+        );
+        let results = window.results().expect("the results");
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        chain(&window, "Return");
+        assert!(
+            crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+            "the result never opened"
+        );
+        let reading = window.reading().expect("the hit opened");
+        assert!(
+            crate::settle_until(async || reading.subtitle().ends_with("1 of 3 in the thread"))
+                .await,
+            "the first message is not said to be the first of three: {:?}",
+            reading.subtitle()
+        );
+    });
+}
 /// result's own thread, and Escape returns to the results.
 pub fn a_hit_steps_the_results_and_its_own_thread() {
     crate::gtk_case(async {

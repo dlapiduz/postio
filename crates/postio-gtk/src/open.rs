@@ -1342,6 +1342,7 @@ impl OpenMessage {
         let (messages, at) = (Rc::clone(&self.thread), Rc::clone(&self.at));
         let generation = Rc::clone(&self.generation);
         let asked = generation.get();
+        let weak = self.this.borrow().clone();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
@@ -1357,6 +1358,11 @@ impl OpenMessage {
                     .unwrap_or(ids.len().saturating_sub(1)),
             );
             messages.replace(ids);
+            // Where it is in the thread is known now: a search's best match
+            // need not be the latest.
+            if let Some(page) = weak.upgrade() {
+                page.show_position(false);
+            }
         });
     }
 
