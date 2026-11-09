@@ -242,6 +242,11 @@ fail-fast = false
 #
 # It stays generous because this box is often compiling four branches at once
 # while it runs.
+# As `profile.ci-storyboards`: the generated pass's 270 windows (#1825).
+[[profile.nightly.overrides]]
+filter = 'test(/^every_command::/)'
+slow-timeout = { period = "120s", terminate-after = 10 }
+
 [[profile.nightly.overrides]]
 filter = 'binary(cache_pressure)'
 slow-timeout = { period = "120s", terminate-after = 10 }
@@ -341,6 +346,13 @@ threads-required = "num-test-threads"
 slow-timeout = { period = "120s", terminate-after = 6 }
 default-filter = 'binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))'
 fail-fast = false
+
+# The generated pass opens a fresh window for every command in every context
+# -- some 270 of them since Linux took spec 010's search keys (#1825) -- and
+# took 709 s on a workstation, against this profile's twelve minutes. Twenty.
+[[profile.ci-storyboards.overrides]]
+filter = 'test(/^every_command::/)'
+slow-timeout = { period = "120s", terminate-after = 10 }
 
 # One coverage profile per case, for scripts/test-coverage-sets.py (spec 012,
 # US2). Inherits the default profile, so its default-filter keeps the
