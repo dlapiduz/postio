@@ -1071,21 +1071,40 @@ impl ResultsPane {
         let header_above = at
             .checked_sub(1)
             .filter(|above| matches!(self.items.item_at(*above), Some(Item::Header(_))));
-        if let Some(header) = header_above {
+        // The first row of the list shows the list from its top: the first
+        // group's heading -- "Top hits", which says why its rows come again
+        // below -- is never left just above the view.
+        let from_the_top = header_above == Some(0);
+        if from_the_top {
+            to_the_top(&self.list);
+        } else if let Some(header) = header_above {
             self.list
                 .scroll_to(header, gtk::ListScrollFlags::NONE, None);
         }
-        self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+        if !from_the_top {
+            self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+        }
         // The list places a row it has not drawn by an estimate of the
         // rows' heights, which a 72 row after 40 ones outruns: once it is
         // drawn, the ringed row is brought the rest of the way in.
         let frames = std::cell::Cell::new(0);
+        let settled = std::cell::Cell::new(0);
         self.list.add_tick_callback(move |list, _| {
             frames.set(frames.get() + 1);
-            // Until it is wholly in view, for up to a second of frames: a row
+            // Until it is wholly in view, for some four seconds of frames: a row
             // drawn late moves the ones below it again, and a slow machine
             // draws late.
-            if nudge_into_view(list) || frames.get() >= 60 {
+            if from_the_top {
+                to_the_top(list);
+            }
+            // In view for three frames running: one frame's bounds can be
+            // from before a layout that moves the row again.
+            if nudge_into_view(list) {
+                settled.set(settled.get() + 1);
+            } else {
+                settled.set(0);
+            }
+            if settled.get() >= 3 || frames.get() >= 240 {
                 return glib::ControlFlow::Break;
             }
             // The list's own estimate may end short of the row, where no
@@ -1274,6 +1293,16 @@ impl ResultsPane {
     }
 }
 
+/// Scroll `list`'s scroller to its very top.
+fn to_the_top(list: &gtk::ListView) {
+    if let Some(scroller) = list
+        .ancestor(gtk::ScrolledWindow::static_type())
+        .and_downcast::<gtk::ScrolledWindow>()
+    {
+        scroller.vadjustment().set_value(0.0);
+    }
+}
+
 /// Scroll `list` by what its ringed row still lies outside its scroller:
 /// whether it was already wholly in view.
 fn nudge_into_view(list: &gtk::ListView) -> bool {
@@ -1293,7 +1322,7 @@ fn nudge_into_view(list: &gtk::ListView) -> bool {
         }
         Some(widget)
     })
-    .find(|widget| widget.has_css_class("focus-results-cursor"));
+    .find(|widget| widget.is_mapped() && widget.has_css_class("focus-results-cursor"));
     let Some(bounds) = ringed.and_then(|ringed| ringed.compute_bounds(&scroller)) else {
         return false;
     };

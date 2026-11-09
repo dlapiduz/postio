@@ -242,6 +242,62 @@ pub fn quick_look_stays_put_while_j_walks() {
     });
 }
 
+/// The results open at their top: the first group's heading, "Top hits",
+/// over the ringed first row -- the heading that says why those rows come
+/// again under their months -- and back there after a sort.
+pub fn the_results_open_on_their_first_heading() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        for n in 0..25 {
+            fixture
+                .file(
+                    ("Ada Moreno", "ada@example.com"),
+                    &format!("Budget notes {n}"),
+                    "Who spends what.",
+                    n + 1,
+                )
+                .await;
+        }
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() >= 10).await,
+            "the inbox never reached the screen"
+        );
+        let results = show_all(&window).await;
+        let list = results.list().clone();
+        let scroller = list
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_downcast::<gtk::ScrolledWindow>()
+            .expect("the results scroll");
+        let at_the_top = || {
+            results.cursor() == Some(0)
+                && scroller.vadjustment().value() < 0.5
+                && support::with_class(&list, "focus-results-header")
+                    .into_iter()
+                    .filter_map(|header| header.compute_bounds(&scroller))
+                    .any(|bounds| bounds.y().abs() < 0.5)
+        };
+        assert!(
+            crate::settle_until(async || at_the_top()).await,
+            "the results did not open on their first heading: scrolled {}",
+            scroller.vadjustment().value()
+        );
+        for _ in 0..2 {
+            window.press_command(postio_core::CommandId::ToggleResultOrder);
+            crate::settle();
+        }
+        assert!(
+            crate::settle_until(async || at_the_top()).await,
+            "a sort did not come back to the first heading: scrolled {}",
+            scroller.vadjustment().value()
+        );
+    });
+}
+
 /// An unread result has the inbox's unread dot: the system's accent, not
 /// a grey of its own -- one state, drawn one way in both lists.
 pub fn an_unread_result_has_the_inboxs_accent_dot() {

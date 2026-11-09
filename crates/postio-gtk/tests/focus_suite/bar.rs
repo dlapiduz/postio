@@ -322,8 +322,12 @@ pub fn the_dropdown_opens_on_the_newest_recent_search() {
                 bar.texts()
             );
             support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+            // Remembered once its results land: left before then, it is not.
             assert!(
-                crate::settle_until(async || window.results().is_some()).await,
+                crate::settle_until(async || window
+                    .results()
+                    .is_some_and(|results| results.cursor().is_some()))
+                .await,
                 "Return did not open the results"
             );
             support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
