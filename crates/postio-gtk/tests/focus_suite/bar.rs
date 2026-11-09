@@ -818,9 +818,6 @@ pub fn o_is_a_letter_and_alt_o_switches_the_results_sort() {
     });
 }
 
-/// A message opened from the results steps the results it came from: `j`
-/// and `k` walk them, "Result n of m" says where, `n` and `p` step the
-
 /// A result whose best match is not its conversation's newest message
 /// opens on that match, and says where it is in the thread rather than
 /// calling it the latest: the replies say "Re:", so the first message's
@@ -868,6 +865,9 @@ pub fn a_hit_opened_from_the_results_says_where_it_is_in_its_thread() {
         );
     });
 }
+
+/// A message opened from the results steps the results it came from: `j`
+/// and `k` walk them, "Result n of m" says where, `n` and `p` step the
 /// result's own thread, and Escape returns to the results.
 pub fn a_hit_steps_the_results_and_its_own_thread() {
     crate::gtk_case(async {
