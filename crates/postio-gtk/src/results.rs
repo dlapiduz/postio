@@ -1070,9 +1070,16 @@ impl ResultsPane {
         // The list places a row it has not drawn by an estimate of the
         // rows' heights, which a 72 row after 40 ones outruns: once it is
         // drawn, the ringed row is brought the rest of the way in.
-        self.list.add_tick_callback(|list, _| {
-            nudge_into_view(list);
-            glib::ControlFlow::Break
+        let frames = std::cell::Cell::new(0);
+        self.list.add_tick_callback(move |list, _| {
+            frames.set(frames.get() + 1);
+            // Until it is wholly in view, for a few frames: a row drawn late
+            // moves the ones below it again.
+            if nudge_into_view(list) || frames.get() >= 6 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
         });
     }
 
@@ -1254,13 +1261,14 @@ impl ResultsPane {
     }
 }
 
-/// Scroll `list` by what its ringed row still lies outside its scroller.
-fn nudge_into_view(list: &gtk::ListView) {
+/// Scroll `list` by what its ringed row still lies outside its scroller:
+/// whether it was already wholly in view.
+fn nudge_into_view(list: &gtk::ListView) -> bool {
     let Some(scroller) = list
         .ancestor(gtk::ScrolledWindow::static_type())
         .and_downcast::<gtk::ScrolledWindow>()
     else {
-        return;
+        return true;
     };
     let mut stack = vec![list.clone().upcast::<gtk::Widget>()];
     let ringed = std::iter::from_fn(|| {
@@ -1274,15 +1282,19 @@ fn nudge_into_view(list: &gtk::ListView) {
     })
     .find(|widget| widget.has_css_class("focus-results-cursor"));
     let Some(bounds) = ringed.and_then(|ringed| ringed.compute_bounds(&scroller)) else {
-        return;
+        return false;
     };
     let height = scroller.height() as f32;
     let adjustment = scroller.vadjustment();
     let below = bounds.y() + bounds.height() - height;
-    if bounds.y() < 0.0 {
+    if bounds.y() < -0.5 {
         adjustment.set_value(adjustment.value() + f64::from(bounds.y()));
-    } else if below > 0.0 {
+        false
+    } else if below > 0.5 {
         adjustment.set_value(adjustment.value() + f64::from(below));
+        false
+    } else {
+        true
     }
 }
 
