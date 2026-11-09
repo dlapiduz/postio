@@ -549,6 +549,15 @@ impl ResultsPane {
             }
         }
         self.items.rows_changed(first, count);
+        // A row still being read is drawn empty; the rows landing now grow
+        // into their height and push the ring down, out of view.
+        if self
+            .cursor
+            .get()
+            .is_some_and(|cursor| first <= cursor.saturating_add(1))
+        {
+            self.reveal_cursor();
+        }
     }
 
     /// The focus ring is on the result at `position` now.
@@ -1073,13 +1082,17 @@ impl ResultsPane {
         let frames = std::cell::Cell::new(0);
         self.list.add_tick_callback(move |list, _| {
             frames.set(frames.get() + 1);
-            // Until it is wholly in view, for a few frames: a row drawn late
-            // moves the ones below it again.
-            if nudge_into_view(list) || frames.get() >= 6 {
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
+            // Until it is wholly in view, for up to a second of frames: a row
+            // drawn late moves the ones below it again, and a slow machine
+            // draws late.
+            if nudge_into_view(list) || frames.get() >= 60 {
+                return glib::ControlFlow::Break;
             }
+            // The list's own estimate may end short of the row, where no
+            // nudge can scroll: asked again, it measures with the rows it
+            // has drawn since.
+            list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+            glib::ControlFlow::Continue
         });
     }
 
