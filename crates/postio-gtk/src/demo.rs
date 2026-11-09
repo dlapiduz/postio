@@ -103,6 +103,7 @@ pub fn start(
     // test keys gives these bytes. Another seed names none of them.
     postio_demo::store_search_blobs(&blobs).map_err(|error| format!("no search files: {error}"))?;
     let store = database.clone();
+    let files = blobs.clone();
     let sink = std::rc::Rc::new(std::cell::RefCell::new(None));
     let host = postio_host::Host::start(database, blobs, {
         let sink = std::rc::Rc::clone(&sink);
@@ -113,34 +114,35 @@ pub fn start(
     })
     .map_err(|error| format!("the host did not start: {error}"))?;
     let sink = sink.take().ok_or("the host kept its events to itself")?;
-    // Every body indexed before the first frame, as a running app's are
-    // once it has caught up: left to the idle pass below, a word in a body
-    // was found or not depending on how far the pass had got, and a count
-    // grew between two frames of one storyboard.
+    // Every body and every file on this machine indexed before the first
+    // frame, as a running app's are once it has caught up -- the search
+    // seed's workbooks read, so a word inside one is found, as the Mac's
+    // demo finds it. Left to the store's idle passes, a word was found or
+    // not by how far they had got, a count grew between two frames of one
+    // storyboard, and passes started for every window of a run piled up
+    // in its one process.
     // On the host's own runtime, waited for here: the runner calls this
     // from inside another, where a `block_on` may not run.
     let (indexed, done) = std::sync::mpsc::channel();
     host.runtime().spawn({
         let store = store.clone();
         async move {
-            let result = postio_session::index_local_bodies(&store)
-                .await
-                .map_err(|error| error.to_string());
+            let result = async {
+                postio_session::index_local_bodies(&store).await?;
+                postio_session::index_local_attachments(&store, &files).await
+            }
+            .await
+            .map_err(|error| error.to_string());
             let _ = indexed.send(result);
         }
     });
     done.recv()
-        .map_err(|_| "the demo's body index never answered".to_owned())?
-        .map_err(|error| format!("the demo's bodies were not indexed: {error}"))?;
+        .map_err(|_| "the demo's index never answered".to_owned())?
+        .map_err(|error| format!("the demo's mail was not indexed: {error}"))?;
     let window = FocusWindow::new(None);
     window.set_default_size(size.0, size.1);
     window.present();
     let session = crate::startup::adopt_at(&window, host, &config, Some(config_path));
-    // The store's upkeep, which sync would start: the demo dials nothing,
-    // but its mail is indexed as the running app's is -- the search seed's
-    // attachments read, so a word inside a workbook is found, as the Mac's
-    // demo finds it. None of it reaches the network.
-    session.host().start_idle_passes();
     Ok(Started {
         window,
         session,
