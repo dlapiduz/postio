@@ -237,7 +237,7 @@ fn bindings_do_not_collide_within_a_context() {
     for context in Context::ALL {
         let mut seen: BTreeMap<(bool, &str), CommandId> = BTreeMap::new();
         for spec in registry::for_context(*context) {
-            for (at, binding) in spec.bindings().enumerate() {
+            for binding in spec.bindings() {
                 for platform in [Platform::Freedesktop, Platform::Apple] {
                     let action = postio_core::ActionId::Builtin(spec.id);
                     if !registry::offered_on(action, platform)
