@@ -33,7 +33,7 @@ expect  = "The second result is focused and checked."
 [[step]]
 command = "toggle_result_order"
 check   = { keyboard.region = "results" }
-expect  = "Sort reads “Newest”; the Top hits group is gone."
+expect  = "Sort reads “Newest”; the Top hits group is gone. The ring is on the first row of the new order, the newest; the checked conversation stays checked wherever it now is, and the bar still says “1 selected”."
 
 [[step]]
 command = "history_back"
@@ -43,7 +43,7 @@ expect  = "⌘[ goes back to the inbox, on the row it had. Nothing was closed on
 [[step]]
 command = "history_forward"
 check   = { keyboard.region = "results" }
-expect  = "⌘] brings the results back as they were: “atlas budget”, Conversations, Sort “Newest”, the focus on the row it was on and that row still checked."
+expect  = "⌘] brings the results back as they were left: “atlas budget”, Conversations, Sort “Newest”, the ring on the row it was on (the first) and the checked conversation still checked, “1 selected”."
 
 [[step]]
 command = "history_back"
