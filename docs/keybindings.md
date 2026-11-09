@@ -99,8 +99,8 @@ command from inside a text field.
 | `ctrl+Return` | Show all results | Search (not the terminal) |  | `show_all_results` |
 | `alt+Delete` | Forget recent search | Search (not the terminal) |  | `forget_recent` |
 | `alt+Return` | Exclude suggestion | Search (not the terminal) |  | `exclude_suggestion` |
-| `ctrl+bracketleft` | Back | List, search results (not the terminal) |  | `history_back` |
-| `ctrl+bracketright` | Forward | List, search results (not the terminal) |  | `history_forward` |
+| `ctrl+bracketleft` | Back in history | List, search results (not the terminal) |  | `history_back` |
+| `ctrl+bracketright` | Forward in history | List, search results (not the terminal) |  | `history_forward` |
 | `ctrl+1` | Show conversations | Search results (not the terminal) |  | `results_conversations` |
 | `ctrl+2` | Show files | Search results (not the terminal) |  | `results_files` |
 | `ctrl+3` | Show people | Search results (not the terminal) |  | `results_people` |

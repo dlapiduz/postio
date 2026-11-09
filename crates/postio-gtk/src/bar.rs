@@ -108,7 +108,15 @@ impl Bar {
     pub fn controls() -> Vec<CommandId> {
         SAVED
             .into_iter()
-            .chain([CommandId::OpenMessage, CommandId::ToggleResultOrder])
+            .chain([
+                CommandId::OpenMessage,
+                CommandId::ToggleResultOrder,
+                // The dropdown's own: its Show all row, and the keys its
+                // Recent and People rows name.
+                CommandId::ShowAllResults,
+                CommandId::ForgetRecent,
+                CommandId::ExcludeSuggestion,
+            ])
             .collect()
     }
 

@@ -1182,7 +1182,7 @@ static SPECS: &[CommandSpec] = &[
     // too -- and ⌘1-3 pick its tabs.
     CommandSpec {
         id: CommandId::HistoryBack,
-        title: "Back",
+        title: "Back in history",
         default_binding: "mod+bracketleft",
         alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Results]),
@@ -1192,7 +1192,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::HistoryForward,
-        title: "Forward",
+        title: "Forward in history",
         default_binding: "mod+bracketright",
         alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Results]),

@@ -1696,6 +1696,14 @@ impl FocusWindow {
         {
             return self.run_in_controller(id);
         }
+        // A key that means something only among results -- Quick Look, a
+        // looser search, a step of the dates -- is the controller's too,
+        // which does nothing with it while no results are up.
+        if postio_core::registry::get(id).contexts
+            == postio_core::ContextSet::of(postio_core::Context::Results)
+        {
+            return self.run_in_controller(id);
+        }
         // The rules list takes the list's keys for its own rows; a verb on
         // mail has nothing under it there.
         if self.rules().is_some() && self.rules_act(id) {
@@ -1757,6 +1765,9 @@ impl FocusWindow {
             | CommandId::ExcludeSuggestion
             | CommandId::HistoryBack
             | CommandId::HistoryForward
+            | CommandId::ResultsConversations
+            | CommandId::ResultsFiles
+            | CommandId::ResultsPeople
             | CommandId::GoToFolders
             | CommandId::GoToInbox
             | CommandId::GoToFiltered
