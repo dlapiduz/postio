@@ -205,7 +205,7 @@ pub fn quick_look_stays_put_while_j_walks() {
             panel
                 .widget()
                 .compute_bounds(&window)
-                .filter(|bounds| bounds.height() > 10.0)
+                .filter(|bounds| bounds.height() > 10.0 && bounds.width() > 10.0)
         };
         let said = || support::texts(panel.widget());
         assert!(
@@ -268,8 +268,17 @@ pub fn an_unread_result_has_the_inboxs_accent_dot() {
         );
         let manager = adw::StyleManager::default();
         let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
+        // Channel by channel, clamped: a theme may hand the accent over
+        // with a channel past the gamut's edge, which is drawn as its edge.
+        let channels = |colour: gtk::gdk::RGBA| {
+            [colour.red(), colour.green(), colour.blue(), colour.alpha()].map(|c| c.clamp(0.0, 1.0))
+        };
         for dot in dots() {
-            assert_eq!(dot.color(), accent, "the unread dot is not the accent");
+            let (drawn, wanted) = (channels(dot.color()), channels(accent));
+            assert!(
+                drawn.iter().zip(wanted).all(|(a, b)| (a - b).abs() < 0.01),
+                "the unread dot is not the accent: {drawn:?} for {wanted:?}"
+            );
         }
     });
 }

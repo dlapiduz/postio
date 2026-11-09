@@ -632,6 +632,8 @@ fn labels_of(root: &gtk::Widget) -> Vec<gtk::Label> {
 
 /// Quick Look over the results.
 pub struct QuickLookPanel {
+    /// Holds the panel to its width, whatever its words would ask for.
+    clamp: adw::Clamp,
     root: gtk::Box,
     title: gtk::Label,
     position: gtk::Label,
@@ -664,9 +666,14 @@ impl QuickLookPanel {
         subject.add_css_class("focus-quicklook-subject");
         subject.set_xalign(0.0);
         subject.set_wrap(true);
+        // Wrapped within the panel's width rather than widening it: a
+        // wrapping label asks for its whole line unless told less.
+        subject.set_max_width_chars(1);
+        subject.set_hexpand(true);
         let sender = gtk::Label::new(None);
         sender.add_css_class("focus-quicklook-sender");
         sender.set_xalign(0.0);
+        sender.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let matches_line = gtk::Label::new(None);
         matches_line.add_css_class("dim-label");
         matches_line.add_css_class("focus-quicklook-matches");
@@ -697,7 +704,17 @@ impl QuickLookPanel {
         root.append(&body);
         root.set_visible(false);
         root.set_accessible_role(gtk::AccessibleRole::Dialog);
+        // A long subject or passage asks for its whole line; the clamp
+        // holds the panel to its width and the words wrap within it.
+        let clamp = adw::Clamp::builder()
+            .maximum_size(720)
+            .tightening_threshold(720)
+            .child(&root)
+            .build();
+        clamp.set_halign(gtk::Align::Center);
+        clamp.set_valign(gtk::Align::Fill);
         let panel = Rc::new(QuickLookPanel {
+            clamp,
             root,
             title,
             position,
@@ -714,7 +731,12 @@ impl QuickLookPanel {
     }
 
     /// What the results pane lays over its rows.
-    pub fn widget(&self) -> &gtk::Box {
+    pub fn widget(&self) -> &adw::Clamp {
+        &self.clamp
+    }
+
+    /// The panel itself, inside its clamp.
+    pub fn panel(&self) -> &gtk::Box {
         &self.root
     }
 
