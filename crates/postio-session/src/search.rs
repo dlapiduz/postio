@@ -383,7 +383,7 @@ pub async fn matching(
 }
 
 /// The names behind `results`' ids: one read per kind -- people, labels,
-/// folders -- however many there are.
+/// folders, and which hits a digest holds -- however many there are.
 ///
 /// A person's name is one their mail carried; the address row keeps only
 /// the address.
@@ -478,12 +478,17 @@ async fn names(
         |row| Ok((MailboxId::new(row.int(0)?), row.text(1)?)),
     )
     .await?;
+    let best: Vec<MessageId> = results.hits.iter().map(|hit| hit.best).collect();
+    let held = postio_storage::repository::DigestRepository::new(connection)
+        .held(&best)
+        .await?;
     Ok(FacetNames {
         people,
         own,
         labels,
         label_colors,
         folders,
+        held,
     })
 }
 

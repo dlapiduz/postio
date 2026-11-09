@@ -5,7 +5,7 @@
 //! controller holds, which asks the engine for its pages and their
 //! passages, groups them into Top hits and months, edits its query term by
 //! term, and gives way to the inbox on Esc's last rung. The Mac draws what
-//! it is told; GTK never enters it (`results_view` off).
+//! it is told, and so does GTK since it adopted it (#1825).
 
 use crate::search_support::*;
 use postio_config::paths::Platform;
@@ -495,14 +495,16 @@ fn an_answer_for_a_query_since_edited_is_dropped() {
     );
 }
 
+/// #1825: Linux runs the same search, so GTK enters the results as the
+/// Mac does.
 #[test]
-fn gtk_never_enters_the_results() {
+fn linux_enters_the_results_as_the_mac_does() {
     let rows = List::of(3);
     let mut focus = FocusController::new(Policy::for_platform(Platform::Freedesktop));
     let effects = show_all(&mut focus, "atlas budget", &rows);
-    assert!(results_view(&effects).is_none());
-    assert!(!focus.in_results());
-    assert!(!focus.answers(CommandId::HistoryBack));
+    assert!(results_view(&effects).is_some());
+    assert!(focus.in_results());
+    assert!(focus.answers(CommandId::HistoryBack));
 }
 
 // Step 4: the filter popovers (US3, FR-027, design §3.6, screens 08 and 09).
@@ -1411,7 +1413,9 @@ fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
     // At once, from what the row knows; its conversation's matches asked.
     let view = looked(&effects);
     assert_eq!(view.title, "Quick Look");
-    assert_eq!(view.position, "1 of 123");
+    // Each conversation counted once, as the reader counts: the top hits
+    // are not counted again under their months.
+    assert_eq!(view.position, "1 of 120");
     assert_eq!(text(&view.subject), "Atlas budget, part 7");
     assert_eq!(lit(&view.subject), ["Atlas", "budget"]);
     assert!(text(&view.sender).starts_with("Tom\u{e1}s Reyes tomas@example.com"));
@@ -1492,7 +1496,7 @@ fn j_and_k_move_the_results_and_quick_look_follows_in_place() {
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
     let view = looked(&effects);
-    assert_eq!(view.position, "2 of 123");
+    assert_eq!(view.position, "2 of 120");
     assert_eq!(text(&view.subject), "Atlas budget, part 2");
     assert_eq!(
         matches_asked(&effects),
@@ -1504,7 +1508,31 @@ fn j_and_k_move_the_results_and_quick_look_follows_in_place() {
     assert_eq!(looked(&effects).cards.len(), 3);
 
     let effects = run(&mut focus, CommandId::PrevMessage, &rows);
-    assert_eq!(looked(&effects).position, "1 of 123");
+    assert_eq!(looked(&effects).position, "1 of 120");
+
+    // Past the top hits, under the months: each a number the top hits
+    // did not take, or the top hit's own when it is drawn again.
+    let mut said = Vec::new();
+    for _ in 0..6 {
+        let effects = run(&mut focus, CommandId::NextMessage, &rows);
+        let view = looked(&effects);
+        said.push((view.position, text(&view.subject)));
+    }
+    let said: Vec<(&str, &str)> = said
+        .iter()
+        .map(|(at, subject)| (at.as_str(), subject.as_str()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("2 of 120", "Atlas budget, part 2"),
+            ("3 of 120", "Atlas budget, part 30"),
+            ("4 of 120", "Atlas budget, part 0"),
+            ("5 of 120", "Atlas budget, part 1"),
+            ("2 of 120", "Atlas budget, part 2"),
+            ("6 of 120", "Atlas budget, part 3"),
+        ]
+    );
 }
 
 #[test]
@@ -1581,7 +1609,7 @@ fn archive_moves_quick_look_to_the_next_result_and_closes_after_the_last() {
         asked(&effects)
     );
     assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
-    assert_eq!(looked(&effects).position, "2 of 123");
+    assert_eq!(looked(&effects).position, "2 of 120");
 
     // ⌘Z takes it back, as it does anywhere; Quick Look stays.
     let effects = run(&mut focus, CommandId::Undo, &rows);
@@ -1595,7 +1623,7 @@ fn archive_moves_quick_look_to_the_next_result_and_closes_after_the_last() {
     let wanted = focus.results_wanted(last);
     let _ = settle(&mut focus, wanted, &rows);
     let effects = run(&mut focus, CommandId::QuickLook, &rows);
-    assert_eq!(looked(&effects).position, "123 of 123");
+    assert_eq!(looked(&effects).position, "120 of 120");
     let effects = run(&mut focus, CommandId::Archive, &rows);
     assert_eq!(quick_look_view(&effects), Some(None));
     assert!(focus.in_results());
@@ -2884,4 +2912,127 @@ fn i_in_the_results_asks_about_the_focused_results_sender_and_a_click_on_a_name_
         focus.key_context(),
         postio_ui::keymap::KeyContext::ContactPopover
     );
+}
+
+/// Spec 007 US10 scenario 7 and #1825: a result says where it is -- where
+/// a digest holds it, in place of its folder -- and, with several accounts,
+/// which one it is in.
+#[test]
+fn a_result_says_where_a_digest_holds_it_and_its_account() {
+    use postio_focus::{Input, PlacesRead, Reply};
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = run(&mut focus, CommandId::Search, &rows);
+    let (ticket, _) = asks(&effects)
+        .into_iter()
+        .find(|(_, request)| *request == Request::Places)
+        .expect("opening the bar reads the places");
+    let inbox = postio_model::MailboxId::new(1);
+    let _ = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::Places(Ok(PlacesRead {
+                folders: vec![(inbox, "Inbox".to_owned())],
+                owners: vec![(inbox, "work@example.org".to_owned())],
+                ..PlacesRead::default()
+            })),
+        ),
+        &rows,
+    );
+    let _ = focus.handle_on(
+        Input::Typed {
+            text: "atlas budget".to_owned(),
+        },
+        &rows,
+    );
+    let held = MessageId::new(1007);
+    let mut waiting = run(&mut focus, CommandId::ShowAllResults, &rows);
+    while !waiting.is_empty() {
+        let mut next = Vec::new();
+        for (ticket, request) in asks(&waiting) {
+            let Some(mut reply) = reply_to(&request) else {
+                continue;
+            };
+            if let Reply::ResultsPage {
+                answer: Ok(found), ..
+            } = &mut reply
+                && found.hits.iter().any(|hit| hit.best == held)
+            {
+                found.names.held = vec![(held, "Newsletters".to_owned(), false)];
+            }
+            next.extend(focus.handle_on(Input::Reply(ticket, reply), &rows));
+        }
+        waiting = next;
+    }
+    let drawn: Vec<postio_focus::ResultRow> =
+        (0..20).filter_map(|at| focus.result_row(at)).collect();
+    let place = |message: MessageId| {
+        drawn
+            .iter()
+            .find(|row| row.message == message)
+            .map(|row| row.folder.clone())
+    };
+    assert_eq!(
+        place(held).as_deref(),
+        Some("held \u{b7} Newsletters \u{b7} work@example.org"),
+        "{drawn:?}"
+    );
+    assert_eq!(
+        place(MessageId::new(1002)).as_deref(),
+        Some("in:Inbox \u{b7} work@example.org")
+    );
+}
+
+/// #1825 (files-tab on GTK): back from the Files tab and into a new
+/// search's results, nothing says the new results found nothing.
+#[test]
+fn a_new_search_after_history_back_from_files_is_not_found_nothing() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let effects = run(&mut focus, CommandId::ResultsFiles, &rows);
+    let _ = settle(&mut focus, effects, &rows);
+    let effects = run(&mut focus, CommandId::HistoryBack, &rows);
+    let _ = settle(&mut focus, effects, &rows);
+    assert!(!focus.in_results(), "back in the inbox");
+    let effects = search(&mut focus, "atlas", &rows);
+    let said: Vec<_> = shown(&effects)
+        .into_iter()
+        .filter_map(|intent| match intent {
+            Intent::Relaxations(view) => Some(view.is_some()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !said.contains(&true),
+        "a search that found something said it found nothing: {said:?}"
+    );
+}
+
+/// #1825 (the reviewer's "Result 1 of 7" over four conversations): a
+/// result opened from the results walks each conversation once, though
+/// Top hits draws its own again under their months.
+#[test]
+fn a_result_walks_each_conversation_once() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let conversations = focus.result_count();
+    let drawn: Vec<MessageId> = (0..conversations)
+        .filter_map(|at| focus.result_row(at))
+        .map(|row| row.message)
+        .collect();
+    let mut once = drawn.clone();
+    once.sort();
+    once.dedup();
+    assert!(
+        once.len() < drawn.len(),
+        "Top hits are drawn twice here: {drawn:?}"
+    );
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    let total = shown(&effects).iter().find_map(|intent| match intent {
+        Intent::OpenMessage { total, .. } => Some(*total),
+        _ => None,
+    });
+    assert_eq!(total, Some(once.len() as u32), "{:?}", shown(&effects));
 }

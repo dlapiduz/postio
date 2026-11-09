@@ -10,7 +10,9 @@
 //! `every_command` and `a11y_sweep`.
 
 use postio_config::paths::Platform;
-use postio_core::{ActionId, CommandId, CommandSpec, Frontend, Keymap, registry};
+use postio_core::{
+    ActionId, CommandId, CommandSpec, Context, ContextSet, Frontend, Keymap, registry,
+};
 
 use crate::support;
 
@@ -97,6 +99,16 @@ const NOT_YET: &[&str] = &[
     // The Contacts view's own (specs/011-focus-contacts S13): each has its
     // key, and most have a control in the view, its card, its form, its sheet
     // or the popover over it -- but the command bar lists what the list
+    // Spec 010's dropdown keys (#1825): each acts on the dropdown's row
+    // under the arrows -- Show all, a recent search, a person -- so the
+    // dropdown is their control and the command bar has no row for them.
+    "show_all_results",
+    "forget_recent",
+    "exclude_suggestion",
+    // History moves by its keys alone (and the Mac's swipe), with no button
+    // (spec 010 FR-020).
+    "history_back",
+    "history_forward",
     // reaches, and these are reached from the view, as the pickers' are.
     "contact_popover",
     "contact_open_card",
@@ -156,10 +168,15 @@ pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
             if keymap.binding(id).is_none() {
                 lacks.push("key");
             }
-            if !bar.contains(&id) {
+            // The results' own keys (spec 010, #1825) are reached from the
+            // results, whose controls draw them -- tabs, Quick Look, the
+            // looser searches -- and the command bar lists what the list
+            // reaches: a key is what they owe here.
+            let results_only = spec.contexts == ContextSet::of(Context::Results);
+            if !results_only && !bar.contains(&id) {
                 lacks.push("command-bar row");
             }
-            if !controls.contains(&id) {
+            if !results_only && !controls.contains(&id) {
                 lacks.push("control");
             }
             let listed = NOT_YET.contains(&id.as_str());

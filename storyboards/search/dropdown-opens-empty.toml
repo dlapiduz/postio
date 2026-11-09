@@ -10,7 +10,7 @@
 # blend until Linux adopts the dropdown (S2, D17), and the Mac runner is
 # out of scope (009 FR-063). Written before the dropdown was built, so it
 # is the acceptance its review is held to.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US1" }
 seed   = "search"
 design = "01-typing-empty"
@@ -34,7 +34,7 @@ check   = { overlay.kind = "finder", keyboard.region = "search" }
 expect  = "↓ moves the focus ring to the second recent search; headers and the cheat sheet are never focused."
 
 [[step]]
-key     = "alt+BackSpace"
+command = "forget_recent"
 check   = { overlay.kind = "finder", keyboard.region = "search" }
 expect  = "⌥⌫ forgets the focused recent search: it is gone from Recent, the third moves up, and the focus stays on the row now in its place."
 

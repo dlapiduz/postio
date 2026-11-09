@@ -100,13 +100,13 @@ pub struct Capabilities {
     /// Mac's windows replace each other (spec 009 M4).
     pub stacking: bool,
     /// Search has its two layers: the dropdown, and the results view it
-    /// opens (spec 010 D17). The Mac has them; GTK's bar keeps spec 009's
-    /// blend until Linux adopts them (S2).
+    /// opens (spec 010 D17). Both platforms have them since Linux adopted
+    /// them (#1825); spec 009's blend it switched off goes with #2079.
     pub results_view: bool,
     /// `from:` and `to:` know people: a word that names a contact finds
     /// mail from every address they own, `from:@Group` every member
-    /// (specs/011-focus-contacts S4). The Mac has it; Linux keeps the words
-    /// in the header until its search adopts the bar (S2).
+    /// (specs/011-focus-contacts S4). Both platforms have it since Linux's
+    /// search adopted spec 010's (#1825).
     pub people_search: bool,
     /// The Contacts view, a mode of the main window (specs/011-focus-contacts
     /// S7). Both platforms have it (Linux's came at S13).
@@ -122,8 +122,8 @@ impl Policy {
             caps: Capabilities {
                 reading_pane: linux,
                 stacking: linux,
-                results_view: !linux,
-                people_search: !linux,
+                results_view: true,
+                people_search: true,
                 contacts_view: true,
             },
         }

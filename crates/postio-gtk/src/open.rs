@@ -1114,7 +1114,8 @@ impl OpenMessage {
     }
 
     /// The hit's own conversation: how many messages it has, and the list
-    /// `p` and `n` step through, once the store has said.
+    /// `p` and `n` step through, once the store has said -- and its subject,
+    /// when what opened it did not know it.
     fn read_hit_thread(&self, message: MessageId) {
         use postio_model::listing::MailStore as _;
         let client = self.client.clone();
@@ -1134,6 +1135,15 @@ impl OpenMessage {
                 return;
             }
             let Some(page) = weak.upgrade() else { return };
+            // Whatever opened it said its subject, when it knew it: the
+            // results view's rows are no list's, so a result opened from
+            // there is titled by the message itself.
+            if page.subject.text().is_empty()
+                && let Some(subject) = row.subject.as_deref()
+            {
+                page.title.set_text(subject);
+                page.subject.set_text(subject);
+            }
             page.messages.set(row.thread_count.max(1));
             page.show_position(true);
             if let (Some(thread), true) = (row.thread, row.thread_count > 1) {
@@ -1332,6 +1342,7 @@ impl OpenMessage {
         let (messages, at) = (Rc::clone(&self.thread), Rc::clone(&self.at));
         let generation = Rc::clone(&self.generation);
         let asked = generation.get();
+        let weak = self.this.borrow().clone();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
@@ -1347,6 +1358,11 @@ impl OpenMessage {
                     .unwrap_or(ids.len().saturating_sub(1)),
             );
             messages.replace(ids);
+            // Where it is in the thread is known now: a search's best match
+            // need not be the latest.
+            if let Some(page) = weak.upgrade() {
+                page.show_position(false);
+            }
         });
     }
 

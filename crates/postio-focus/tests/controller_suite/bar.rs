@@ -60,9 +60,10 @@ impl Rows for List {
 
 const RECEIPTS: MailboxId = MailboxId::new(7);
 
-/// The Mac's controller as spec 009 built it: the bar's search half is the
-/// blend GTK draws (`results_view` off), which every test above the
-/// dropdown's section pins for GTK (spec 010 S2, D17).
+/// The controller as spec 009 built it: the bar's search half is the blend
+/// `results_view` off draws, which every test above the dropdown's section
+/// pins. Neither app runs it since Linux adopted spec 010 (#1825); it goes
+/// with #2079.
 fn mac() -> FocusController {
     let mut policy = Policy::for_platform(Platform::Apple);
     policy.caps.results_view = false;
@@ -340,30 +341,29 @@ fn what_the_bar_searches_for_forgives_a_near_word() {
 }
 
 #[test]
-fn the_bar_searches_people_where_the_platform_has_adopted_them_and_words_where_it_has_not() {
-    // from: and to: that know people (specs/011-focus-contacts S4) are an
-    // option of the platform, off on Linux until it adopts Contacts.
+fn the_bar_searches_people_on_both_platforms() {
+    // from: and to: that know people (specs/011-focus-contacts S4), on the
+    // Mac and, since its search adopted the dropdown, on Linux (#1825).
     let rows = List::of(3);
-    let ask = |mut focus: FocusController| {
+    for platform in [Platform::Apple, Platform::Freedesktop] {
+        let mut focus = FocusController::new(Policy::for_platform(platform));
         let _ = bar_open(&mut focus, CommandId::Search, &rows);
-        let effects = typed(&mut focus, "from:lovelace", &rows);
-        asked(&effects)
+        let effects = typed(&mut focus, "from:lovelace atlas", &rows);
+        let aware: Vec<bool> = asked(&effects)
             .iter()
             .filter_map(|request| match request {
-                Request::Search { query, .. } => Some(query.is_contact_aware()),
+                Request::Search { query, .. } | Request::Conversations { query, .. } => {
+                    Some(query.is_contact_aware())
+                }
                 _ => None,
             })
-            .collect::<Vec<_>>()
-    };
-    let on_the_mac = ask(mac());
-    assert!(
-        !on_the_mac.is_empty() && on_the_mac.iter().all(|aware| *aware),
-        "{on_the_mac:?}"
-    );
-    let mut policy = Policy::for_platform(Platform::Freedesktop);
-    policy.caps.results_view = false;
-    let on_linux = ask(FocusController::new(policy));
-    assert!(on_linux.iter().all(|aware| !*aware), "{on_linux:?}");
+            .collect();
+        assert!(
+            !aware.is_empty() && aware.iter().all(|aware| *aware),
+            "{platform:?}: {:?}",
+            asked(&effects)
+        );
+    }
 }
 
 // -- What a row runs -------------------------------------------------------
@@ -1535,6 +1535,7 @@ mod dropdown {
                 labels: vec![(LabelId::new(3), "Atlas".to_owned())],
                 label_colors: Vec::new(),
                 folders: vec![(MailboxId::new(1), "Inbox".to_owned())],
+                held: Vec::new(),
             },
             elapsed: std::time::Duration::from_millis(38),
         }
@@ -1938,6 +1939,40 @@ mod dropdown {
     /// People tab leaves you out the same way.
     /// A capped search's facets are floors, so its Narrow to pills are too
     /// (D30).
+    /// Spec 007 US10 scenario 7 and #1825: a hit says where it is --
+    /// where a digest holds it, in place of its folder -- and, with several
+    /// accounts, which one it is in.
+    #[test]
+    fn a_hit_says_where_a_digest_holds_it_and_its_account() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let effects = run(&mut focus, CommandId::Search, &rows);
+        let (ticket, _) = asks(&effects)
+            .into_iter()
+            .find(|(_, request)| *request == Request::Places)
+            .expect("opening the bar reads the places");
+        let mut read = places();
+        read.owners = read
+            .folders
+            .iter()
+            .map(|(id, _)| (*id, "work@example.org".to_owned()))
+            .collect();
+        let _ = focus.handle_on(Input::Reply(ticket, Reply::Places(Ok(read))), &rows);
+        let mut found = atlas_budget();
+        let held = found.hits[0].best;
+        found.names.held = vec![(held, "Newsletters".to_owned(), false)];
+        let effects = searched(&mut focus, "atlas budget", found, &rows);
+        let hits = &dropdown(&effects).sections[0].rows;
+        assert_eq!(
+            hits[0].folder.as_deref(),
+            Some("held \u{b7} Newsletters \u{b7} work@example.org")
+        );
+        assert_eq!(
+            hits[1].folder.as_deref(),
+            Some("in:Inbox \u{b7} work@example.org")
+        );
+    }
+
     #[test]
     fn narrow_to_pills_over_a_capped_search_are_floors() {
         let rows = List::of(3);
@@ -2218,6 +2253,15 @@ mod dropdown {
         assert!(asked(&effects).contains(&Request::ForgetSearch {
             query: "has:attachment in:Receipts after:2026-09-01".to_owned()
         }));
+        // The arrows stay where they were, on the row that took its place,
+        // so a second press forgets the next one down.
+        let view = dropdown(&effects);
+        assert_eq!(view.select, Some(view.sections[0].rows[1].token));
+        assert_eq!(text(&view.sections[0].rows[1].title), "harbor");
+        // Forgetting the last, they rest on the one above.
+        let effects = run(&mut focus, CommandId::ForgetRecent, &rows);
+        let view = dropdown(&effects);
+        assert_eq!(view.select, Some(view.sections[0].rows[0].token));
         // Unmoved, the key forgets the row focused by default: the newest.
         let mut fresh = mac_search();
         let effects = opened(&mut fresh, &rows);
@@ -2320,6 +2364,42 @@ mod dropdown {
             hits: 48,
             capped: false,
         }));
+    }
+
+    /// Words that find nothing are no dead end (US6): the panel says
+    /// nothing matches, as the results' page would, and its one row is
+    /// the way there, to the looser searches, focused for Return.
+    #[test]
+    fn words_that_find_nothing_say_so_and_lead_to_looser_searches() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let nothing = ConversationResults {
+            hits: Vec::new(),
+            total: 0,
+            files: 0,
+            people: 0,
+            facets: SearchFacets::default(),
+            ..atlas_budget()
+        };
+        let effects = searched(&mut focus, "atlas has:attachment", nothing, &rows);
+        let view = dropdown(&effects);
+        let [section] = view.sections.as_slice() else {
+            panic!("not one section: {view:?}");
+        };
+        let [row] = section.rows.as_slice() else {
+            panic!("not one row: {section:?}");
+        };
+        assert_eq!(row.kind, DropdownRowKind::ShowAll);
+        assert_eq!(text(&row.title), "Nothing matches both filters");
+        assert_eq!(text(&row.detail), "Return offers looser searches");
+        assert_eq!(
+            row.key.as_deref(),
+            focus.keymap().binding(CommandId::ShowAllResults)
+        );
+        assert_eq!(view.highlight, Some(row.token));
+        let effects = focus.handle_on(Input::BarRun(row.token), &rows);
+        assert!(focus.in_results(), "{effects:?}");
     }
 
     #[test]
@@ -2809,6 +2889,17 @@ mod dropdown {
             "{effects:?}"
         );
         assert_eq!(dropdown(&effects).state, DropdownState::Words);
+        // The operator alone in the field goes the same way: to nothing.
+        let _ = typed(&mut focus, "from:", &rows);
+        let effects = typed(&mut focus, "from", &rows);
+        assert!(
+            shown(&effects).contains(&Intent::OpenBar {
+                mode: BarMode::Search,
+                text: String::new(),
+                select: None,
+            }),
+            "{effects:?}"
+        );
         // A value typed and taken back is only a value taken back.
         let _ = typed(&mut focus, "from:a", &rows);
         let effects = typed(&mut focus, "from:", &rows);
@@ -3013,20 +3104,16 @@ mod dropdown {
         );
     }
 
+    /// #1825: GTK's bar is the Mac's dropdown: `/` asks for the recent
+    /// searches, and ⌘↩ (Ctrl+Return) is the bar's.
     #[test]
-    fn the_gtk_bar_asks_nothing_of_the_dropdown() {
+    fn the_gtk_bar_is_the_dropdown() {
         let rows = List::of(1);
         let mut focus = FocusController::new(Policy::for_platform(Platform::Freedesktop));
-        assert!(!focus.policy().caps.results_view);
         let effects = run(&mut focus, CommandId::Search, &rows);
-        assert_eq!(asked(&effects), [Request::Places]);
-        let effects = typed(&mut focus, "atlas budget", &rows);
-        assert!(
-            asked(&effects)
-                .iter()
-                .all(|r| matches!(r, Request::Search { .. }))
-        );
-        assert!(!focus.answers(CommandId::ShowAllResults));
+        assert!(asked(&effects).contains(&Request::RecentSearches));
+        let _ = typed(&mut focus, "atlas budget", &rows);
+        assert!(focus.answers(CommandId::ShowAllResults));
     }
 }
 

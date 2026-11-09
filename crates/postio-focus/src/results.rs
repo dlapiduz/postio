@@ -659,6 +659,8 @@ pub(crate) struct Words<'a> {
     pub(crate) now: DateTime<Local>,
     /// Every folder the places know, for a row's `in:`.
     pub(crate) folders: &'a [(MailboxId, String)],
+    /// Each folder's account, where there are several.
+    pub(crate) owners: &'a [(MailboxId, String)],
 }
 
 /// One group, as positions.
@@ -760,6 +762,9 @@ pub(crate) struct Results {
     /// button names its person while the next answer is on its way,
     /// rather than falling back to the address and back again.
     people: Vec<postio_model::EmailAddress>,
+    /// What a digest holds of the hits read, each page's
+    /// ([`FacetNames::held`]): where their rows say they wait.
+    held: Vec<(MessageId, String, bool)>,
     /// The search found nothing: its ways out (US6).
     none: Option<NoResults>,
     /// The Files tab's cards, once read for this query.
@@ -816,6 +821,7 @@ impl Results {
             undated: None,
             quick_look: None,
             people: Vec::new(),
+            held: Vec::new(),
             none: None,
             files: None,
             files_asked: false,
@@ -1162,6 +1168,7 @@ impl Results {
             relaxations,
             counting: (!counted).then(|| words::COUNTING_RELAXATIONS.to_owned()),
             searched: words::searched(
+                keymap,
                 frame.messages_searched,
                 frame.corpus_complete,
                 frame.contents_complete,
@@ -1310,17 +1317,64 @@ impl Results {
         })
     }
 
-    /// The rows read, in order, each with its conversation: what `j` and
+    /// The conversations read, in the rows' order, each once: what `j` and
     /// `k` walk in a message a result opened.
     pub(crate) fn walk(&self) -> Vec<(MessageId, Option<ThreadId>)> {
         let top = self.top_len() as usize;
+        // Top hits are drawn again under their months: walked once, where
+        // they come first, so "Result n of m" counts conversations.
+        let mut walked = std::collections::HashSet::new();
         self.top
             .iter()
             .flatten()
             .take(top)
             .chain(self.pages.values().flatten())
+            .filter(|hit| walked.insert(hit.key))
             .map(|hit| (hit.best, thread_of(hit)))
             .collect()
+    }
+
+    /// Where the result at `position` comes in [`Results::walk`], and of
+    /// how many: the conversation's number, as "Result n of m" counts
+    /// it, each top hit once. A row under the months comes after the top
+    /// hits, less those drawn again above it -- the ones read so far,
+    /// since the pages between may not be.
+    fn walked_number(&self, position: u64) -> (u64, u64) {
+        let of = match (&self.frame, self.tab) {
+            (Some(frame), ResultsTab::Conversations) => frame.total,
+            _ => return (position, self.rows()),
+        };
+        let top = self.top_len();
+        if position < top {
+            return (position, of);
+        }
+        let at = position - top;
+        let tops: Vec<_> = self
+            .top
+            .iter()
+            .flatten()
+            .take(top as usize)
+            .map(|hit| hit.key)
+            .collect();
+        // A top hit drawn again under its month is still that one.
+        if let Some((hit, _, _)) = self.hit_at(position)
+            && let Some(first) = tops.iter().position(|key| *key == hit.key)
+        {
+            return (first as u64, of);
+        }
+        let again = self
+            .pages
+            .iter()
+            .flat_map(|(page, hits)| {
+                let first = u64::from(*page) * u64::from(PAGE);
+                hits.iter()
+                    .enumerate()
+                    .map(move |(i, hit)| (first + i as u64, hit))
+            })
+            .filter(|(row, hit)| *row <= at && tops.contains(&hit.key))
+            .count() as u64;
+        let number = (top + at).saturating_sub(again);
+        (number.min(of.saturating_sub(1)), of)
     }
 
     /// The message under the focus ring, once its row is read.
@@ -1376,6 +1430,11 @@ impl Results {
         let was_ready = self.ready();
         if self.frame.is_none() {
             self.frame = Some(Frame::of(&results));
+        }
+        for held in &results.names.held {
+            if !self.held.iter().any(|known| known.0 == held.0) {
+                self.held.push(held.clone());
+            }
         }
         for (_, person) in &results.names.people {
             if person.name.is_some()
@@ -1918,7 +1977,10 @@ impl Results {
                 .flatten(),
             files: (self.tab == ResultsTab::Files).then(|| FilesHeader {
                 title: words::FILES_TITLE.to_owned(),
-                note: words::files_note(frame.is_none_or(|frame| frame.contents_complete)),
+                note: words::files_note(
+                    with.keymap,
+                    frame.is_none_or(|frame| frame.contents_complete),
+                ),
             }),
         }
     }
@@ -2331,8 +2393,28 @@ impl Results {
                     .iter()
                     .find(|(id, _)| *id == hit.mailbox_id)
                     .map(|(_, name)| name.clone())
-            })
-            .unwrap_or_default();
+            });
+        let held = self
+            .held
+            .iter()
+            .find(|(message, _, _)| *message == hit.best)
+            .map(|(_, rule, delivered)| (rule.as_str(), *delivered));
+        let account = with
+            .owners
+            .iter()
+            .find(|(id, _)| *id == hit.mailbox_id)
+            .map(|(_, account)| account.as_str());
+        // Said as the row shows it, less the operator: "Inbox", or where
+        // it waits, and the account where there are several.
+        let spoken_place = [
+            held.map(|(rule, delivered)| postio_ui::digest::held_place(rule, delivered))
+                .or_else(|| folder_name.as_deref().map(words::folder_name)),
+            account.map(str::to_owned),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
         let date = words::hit_date(hit.newest_match.with_timezone(&Local), with.now);
         let passage_text: String = passage.iter().map(|run| run.text.as_str()).collect();
         let reason = top_hit
@@ -2349,7 +2431,7 @@ impl Results {
                 &subject,
                 &source_tag,
                 &passage_text,
-                &words::folder_name(&folder_name),
+                &spoken_place,
                 &date,
             ),
             unread: hit.unread,
@@ -2380,11 +2462,7 @@ impl Results {
             source_tag,
             source_is_file,
             passage,
-            folder: if folder_name.is_empty() {
-                String::new()
-            } else {
-                words::in_folder(&folder_name)
-            },
+            folder: words::hit_place(held, folder_name.as_deref(), account).unwrap_or_default(),
             date,
             checked: self.is_checked(hit.best),
         })
@@ -2535,7 +2613,10 @@ impl Results {
             .collect();
         Some(QuickLookView {
             title: words::QUICK_LOOK.to_owned(),
-            position: words::quick_look_position(look.position, self.rows()),
+            position: {
+                let (at, of) = self.walked_number(look.position);
+                words::quick_look_position(at, of)
+            },
             walk: words::quick_look_walk(with.keymap),
             actions: words::quick_look_actions(with.keymap),
             subject: dropdown::marked(
@@ -2777,6 +2858,7 @@ impl FocusController {
             keymap: self.bar.keymap(),
             now: self.bar.now(),
             folders: self.bar.folders(),
+            owners: self.bar.owners(),
         }
     }
 
@@ -3619,7 +3701,7 @@ impl FocusController {
                     results.copy = None;
                 }
                 vec![Step::Show(Intent::Toast {
-                    text: words::FILE_NOT_HERE.to_owned(),
+                    text: words::file_not_here(self.bar.keymap()),
                     kind: crate::ToastKind::Notice,
                 })]
             }

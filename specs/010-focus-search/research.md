@@ -213,9 +213,8 @@ Look), `ExcludeSuggestion` (`alt+Return`, Search), `ForgetRecent`
 (`alt+BackSpace`, Search, D23), `StepRangeBack`/`Forward` (`alt+Left`/`Right`,
 Results), `PickRelaxation1`–`4` (`1`–`4`, Results), `SaveFile` (`mod+Down`,
 Files). A new `Context::Results` that the list's verbs also name. All are
-`offered_on(.., Freedesktop) = false` until Linux adopts (D25), so
-`docs/keybindings.md`'s Linux rows do not change; its regeneration test
-runs. `SaveSearch` gains the Results context.
+`offered_on(.., Freedesktop) = false` until Linux adopted them (D25,
+#1825); they are offered on both platforms now. `SaveSearch` gains the Results context.
 
 ## R11. Where Swift draws what
 

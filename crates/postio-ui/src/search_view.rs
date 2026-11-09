@@ -155,6 +155,9 @@ pub const TOP_HITS_NOTE: &str = "ranked by sender, recency and where the words m
 pub const NARROW_TO: &str = "Narrow to";
 /// What the Show all row says after its count.
 pub const SHOW_ALL_DETAIL: &str = "in the main window, with filters, a timeline and Quick Look";
+/// What the dropdown's one row says under [`nothing_matches`] when the
+/// words find nothing (US6): Return opens the no-results page.
+pub const NOTHING_DETAIL: &str = "Return offers looser searches";
 
 /// How many conversations a recent search found: "48 results", or
 /// "5,000+ results" when that search stopped at its walk's cap (D30).
@@ -206,6 +209,26 @@ pub fn in_folder(name: &str) -> String {
     }
 }
 
+/// Where a hit's row says it is, in its folder column: where a digest
+/// holds it, in place of its folder (`held`: the rule, and whether it has
+/// been delivered; spec 007 US10), else `in:` its folder; and after it,
+/// where there are several accounts, the one it is in (`account`), so the
+/// same message filed in two accounts does not read as one row twice.
+pub fn hit_place(
+    held: Option<(&str, bool)>,
+    folder: Option<&str>,
+    account: Option<&str>,
+) -> Option<String> {
+    let place = match held {
+        Some((rule, delivered)) => Some(crate::digest::held_place(rule, delivered)),
+        None => folder.map(in_folder),
+    };
+    match (place, account) {
+        (Some(place), Some(account)) => Some(format!("{place} \u{b7} {account}")),
+        (place, account) => place.or_else(|| account.map(str::to_owned)),
+    }
+}
+
 /// The arrows, as one hint: the panel's own walk, which the toolkit keeps
 /// (009 FR-004), not a command.
 fn arrows(label: &str) -> Hint {
@@ -217,16 +240,17 @@ fn arrows(label: &str) -> Hint {
 }
 
 /// The empty dropdown's footer (screen 01): move, run a recent search
-/// again, the saved searches' keys, and `>` for commands.
-pub fn empty_hints(keymap: &Keymap) -> Vec<Hint> {
-    let mut hints = vec![
-        arrows("move"),
-        hints::fixed(
+/// again while there are `recents`, the saved searches' keys, and `>` for
+/// commands.
+pub fn empty_hints(keymap: &Keymap, recents: bool) -> Vec<Hint> {
+    let mut hints = vec![arrows("move")];
+    if recents {
+        hints.push(hints::fixed(
             "Return",
             "run again",
             "Return runs the highlighted row: the field's own key, not a command",
-        ),
-    ];
+        ));
+    }
     // ⌥1 to ⌥4 as one cap, when the four keys are one modifier and the digits.
     hints.extend(hints::run(
         keymap,
@@ -253,14 +277,15 @@ pub fn local_index(messages: u64) -> String {
     format!("local index \u{b7} {} {noun}", grouped(messages))
 }
 
-/// The words dropdown's footer (screen 03): move, open the highlighted
-/// message, all results, and Tab for the first filter.
+/// The words dropdown's footer (screen 03): move, open the highlighted row
+/// -- a message, or all the results -- all results, and Tab for the first
+/// filter.
 pub fn words_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut hints = vec![
         arrows("move"),
         hints::fixed(
             "Return",
-            "open message",
+            "open",
             "Return runs the highlighted row: the field's own key, not a command",
         ),
     ];
@@ -1364,7 +1389,12 @@ pub fn relaxation_count(n: u64, capped: bool) -> String {
 /// attachment contents" only when every attachment on this Mac has been
 /// read (US6 scenario 2) -- never a claim the index cannot back. Searching
 /// the server is not offered (S4).
-pub fn searched(messages: u64, corpus_complete: bool, contents_complete: bool) -> String {
+pub fn searched(
+    keymap: &Keymap,
+    messages: u64,
+    corpus_complete: bool,
+    contents_complete: bool,
+) -> String {
     let what = match (messages, corpus_complete) {
         (1, true) => "the 1 message".to_owned(),
         (1, false) => "1 message".to_owned(),
@@ -1381,7 +1411,8 @@ pub fn searched(messages: u64, corpus_complete: bool, contents_complete: bool) -
     } else {
         " Some are still being indexed."
     };
-    format!("Searched {what} on this Mac{contents}.{rest}")
+    let here = crate::contacts_view::this_computer(keymap);
+    format!("Searched {what} on {here}{contents}.{rest}")
 }
 
 /// The footer's right while nothing matches (screen 13): "Searched
@@ -1453,11 +1484,12 @@ pub const FILES_TITLE: &str = "Files whose name or contents match";
 /// the indexer is still reading files on this Mac -- that it is not done,
 /// so a file not found yet is not taken for one that does not say it.
 /// iWork documents and the text in images are not read (step 9 note).
-pub fn files_note(contents_complete: bool) -> String {
+pub fn files_note(keymap: &Keymap, contents_complete: bool) -> String {
+    let here = crate::contacts_view::this_computer(keymap);
     if contents_complete {
-        "contents are indexed on this Mac for PDF, Office documents and text".to_owned()
+        format!("contents are indexed on {here} for PDF, Office documents and text")
     } else {
-        "still reading the contents of files on this Mac: some may not be found yet".to_owned()
+        format!("still reading the contents of files on {here}: some may not be found yet")
     }
 }
 
@@ -1548,8 +1580,50 @@ pub fn file_accessible(name: &str, kind: &str, meta: &str, line: &str, subject: 
 
 /// A file whose bytes are not on this Mac cannot be previewed or saved
 /// from here: nothing is fetched to do it (FR-050).
-pub const FILE_NOT_HERE: &str =
-    "That file isn\u{2019}t on this Mac yet: open its message to download it";
+pub fn file_not_here(keymap: &Keymap) -> String {
+    let here = crate::contacts_view::this_computer(keymap);
+    format!("That file isn\u{2019}t on {here} yet: open its message to download it")
+}
+
+/// An arrow key on the Files tab's grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridArrow {
+    /// The card before.
+    Left,
+    /// The card after.
+    Right,
+    /// The card above.
+    Up,
+    /// The card below.
+    Down,
+}
+
+/// Where `arrow` takes the Files tab's ring from `ring` among `count` cards
+/// laid `columns` across; `None` when it goes nowhere. With no ring yet,
+/// the first card. Down from a row with a shorter row under it lands on
+/// that row's last card, as Finder's grid does (the Mac's
+/// `FilesGrid.target`, which this is).
+pub fn grid_step(ring: Option<u64>, arrow: GridArrow, count: u64, columns: u64) -> Option<u64> {
+    if count == 0 {
+        return None;
+    }
+    let columns = columns.max(1);
+    let Some(ring) = ring else {
+        return Some(0);
+    };
+    match arrow {
+        GridArrow::Left => ring.checked_sub(1),
+        GridArrow::Right => (ring + 1 < count).then_some(ring + 1),
+        GridArrow::Up => ring.checked_sub(columns),
+        GridArrow::Down => {
+            if ring + columns < count {
+                return Some(ring + columns);
+            }
+            let last = count - 1;
+            (last / columns > ring / columns).then_some(last)
+        }
+    }
+}
 
 /// The results' tabs' commands, in their order: ⌘1–3 (§3.2).
 const RESULTS_TABS: [CommandId; 3] = [
@@ -1686,9 +1760,10 @@ pub fn origin_line(words: &str) -> String {
 
 /// The plain-English footer's right side: "parsed on this Mac · 3 matches ·
 /// 21 ms" -- nothing left the machine to understand it.
-pub fn parsed_footer(total: u64, elapsed: Duration, capped: bool) -> String {
+pub fn parsed_footer(keymap: &Keymap, total: u64, elapsed: Duration, capped: bool) -> String {
     format!(
-        "parsed on this Mac \u{b7} {}",
+        "parsed on {} \u{b7} {}",
+        crate::contacts_view::this_computer(keymap),
         footer_count(total, elapsed, capped)
     )
 }
@@ -1809,12 +1884,15 @@ mod tests {
     // US9, design §3.11: a People row's words and its footer.
     #[test]
     fn quick_look_s_buttons_run_what_they_say_with_a_key_unbound() {
-        // Linux binds no Quick Look key yet (D25): its button is left out,
-        // and the buttons after it must not shift onto the wrong command.
-        let keymap = postio_core::Keymap::resolve_on(
-            &postio_config::KeyBindings::default(),
-            postio_config::paths::Platform::Freedesktop,
-        );
+        // Space given to another command leaves Quick Look no key: its
+        // button is left out, and the buttons after it must not shift onto
+        // the wrong command.
+        let mut keys = postio_config::KeyBindings::default();
+        keys.overrides_mut()
+            .insert("next_match".to_owned(), "space".to_owned());
+        let keymap =
+            postio_core::Keymap::resolve_on(&keys, postio_config::paths::Platform::Freedesktop);
+        assert_eq!(keymap.binding(CommandId::QuickLook), None, "space is taken");
         let labels: Vec<String> = quick_look_actions(&keymap)
             .into_iter()
             .map(|hint| hint.label)
@@ -2035,6 +2113,35 @@ mod tests {
         assert_eq!(hit_date(at(2025, 12, 3), now), "3 Dec 25");
     }
 
+    /// Spec 007 US10 scenario 7, and #1825: a hit says where it is --
+    /// where a digest holds it in place of its folder -- and, where there
+    /// are several accounts, which one, after it.
+    #[test]
+    fn a_hit_says_where_it_waits_and_in_which_account() {
+        assert_eq!(
+            hit_place(None, Some("INBOX"), None).as_deref(),
+            Some("in:Inbox")
+        );
+        assert_eq!(
+            hit_place(Some(("Newsletters", false)), Some("Inbox"), None).as_deref(),
+            Some("held \u{b7} Newsletters"),
+            "where it waits, in place of its folder"
+        );
+        assert_eq!(
+            hit_place(Some(("Newsletters", true)), Some("Inbox"), None).as_deref(),
+            Some("digest \u{b7} Newsletters")
+        );
+        assert_eq!(
+            hit_place(None, Some("Inbox"), Some("second@example.org")).as_deref(),
+            Some("in:Inbox \u{b7} second@example.org")
+        );
+        assert_eq!(
+            hit_place(None, None, Some("second@example.org")).as_deref(),
+            Some("second@example.org")
+        );
+        assert_eq!(hit_place(None, None, None), None);
+    }
+
     #[test]
     fn a_hits_folder_is_written_as_its_operator() {
         assert_eq!(in_folder("Inbox"), "in:Inbox");
@@ -2052,7 +2159,7 @@ mod tests {
             &postio_config::KeyBindings::default(),
             postio_config::paths::Platform::Apple,
         );
-        let hints = empty_hints(&keymap);
+        let hints = empty_hints(&keymap, true);
         let said: Vec<(&str, &str)> = hints
             .iter()
             .map(|hint| (hint.key.as_str(), hint.label.as_str()))
@@ -2065,6 +2172,12 @@ mod tests {
                 ("alt+1\u{2013}4", "saved"),
                 (">", "commands"),
             ]
+        );
+        // With no recent search, there is nothing to run again (#1825).
+        assert!(
+            !empty_hints(&keymap, false)
+                .iter()
+                .any(|hint| hint.label == "run again")
         );
     }
 
@@ -2110,7 +2223,7 @@ mod tests {
             said,
             [
                 ("Up Down".to_owned(), "move".to_owned()),
-                ("Return".to_owned(), "open message".to_owned()),
+                ("Return".to_owned(), "open".to_owned()),
                 (show_all, "all results".to_owned()),
                 ("Tab".to_owned(), "add first filter".to_owned()),
             ]
@@ -2909,33 +3022,88 @@ mod tests {
             "in \u{2018}Re: Atlas Q3 budget\u{2019}"
         );
         assert_eq!(FILES_TITLE, "Files whose name or contents match");
-        assert!(files_note(true).starts_with("contents are indexed on this Mac"));
-        assert!(files_note(false).contains("still reading"));
+        let mac = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
+        assert!(files_note(&mac, true).starts_with("contents are indexed on this Mac"));
+        assert!(files_note(&mac, false).contains("still reading"));
+    }
+
+    #[test]
+    fn the_arrows_walk_the_files_grid_as_finder_does() {
+        use GridArrow::{Down, Left, Right, Up};
+        // Six cards, four across: 0 1 2 3 / 4 5.
+        assert_eq!(grid_step(None, Right, 6, 4), Some(0), "no ring: the first");
+        assert_eq!(grid_step(Some(0), Right, 6, 4), Some(1));
+        assert_eq!(grid_step(Some(0), Left, 6, 4), None);
+        assert_eq!(grid_step(Some(5), Right, 6, 4), None);
+        assert_eq!(grid_step(Some(1), Down, 6, 4), Some(5));
+        assert_eq!(
+            grid_step(Some(3), Down, 6, 4),
+            Some(5),
+            "down onto a shorter row lands on its last card"
+        );
+        assert_eq!(grid_step(Some(5), Down, 6, 4), None, "the last row");
+        assert_eq!(grid_step(Some(5), Up, 6, 4), Some(1));
+        assert_eq!(grid_step(Some(2), Up, 6, 4), None);
+        assert_eq!(grid_step(None, Down, 0, 4), None, "no cards");
+    }
+
+    /// #1825: Linux's words call the machine "this computer", as the
+    /// contacts' do; the Mac's say "this Mac".
+    #[test]
+    fn the_words_name_the_machine_they_run_on() {
+        let on = |platform| {
+            postio_core::Keymap::resolve_on(&postio_config::KeyBindings::default(), platform)
+        };
+        let mac = on(postio_config::paths::Platform::Apple);
+        let linux = on(postio_config::paths::Platform::Freedesktop);
+        assert_eq!(
+            searched(&linux, 3, true, false),
+            "Searched all 3 messages on this computer."
+        );
+        assert_eq!(
+            searched(&mac, 3, true, false),
+            "Searched all 3 messages on this Mac."
+        );
+        assert!(files_note(&linux, true).contains("indexed on this computer"));
+        assert!(files_note(&linux, false).contains("files on this computer"));
+        assert!(file_not_here(&linux).contains("isn\u{2019}t on this computer"));
+        assert!(file_not_here(&mac).contains("isn\u{2019}t on this Mac"));
+        assert!(
+            parsed_footer(&linux, 3, Duration::from_millis(21), false)
+                .starts_with("parsed on this computer")
+        );
     }
 
     #[test]
     fn searched_claims_attachment_contents_only_once_they_are_read() {
+        let mac = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
         assert_eq!(
-            searched(18_204, true, true),
+            searched(&mac, 18_204, true, true),
             "Searched all 18,204 messages on this Mac, including attachment contents."
         );
         assert_eq!(
-            searched(18_204, true, false),
+            searched(&mac, 18_204, true, false),
             "Searched all 18,204 messages on this Mac.",
             "US6 scenario 2: contents not yet extracted"
         );
         assert_eq!(
-            searched(18_204, false, false),
+            searched(&mac, 18_204, false, false),
             "Searched 18,204 messages on this Mac. Some are still being indexed.",
             "bodies still backfilling: not \u{201c}all\u{201d}"
         );
         assert_eq!(
-            searched(1, true, false),
+            searched(&mac, 1, true, false),
             "Searched the 1 message on this Mac."
         );
         for each in [
-            searched(18_204, true, true),
-            searched(18_204, false, true),
+            searched(&mac, 18_204, true, true),
+            searched(&mac, 18_204, false, true),
             searched_footer(18_204, Duration::from_millis(41)),
         ] {
             assert!(
@@ -2991,7 +3159,15 @@ mod tests {
             "mailing list \u{b7} atlas-planning.example.org"
         );
         assert_eq!(
-            parsed_footer(3, Duration::from_millis(21), false),
+            parsed_footer(
+                &postio_core::Keymap::resolve_on(
+                    &postio_config::KeyBindings::default(),
+                    postio_config::paths::Platform::Apple,
+                ),
+                3,
+                Duration::from_millis(21),
+                false
+            ),
             "parsed on this Mac \u{b7} 3 matches \u{b7} 21 ms"
         );
         let day = |m, d| chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap();

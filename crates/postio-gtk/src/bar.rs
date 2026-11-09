@@ -30,6 +30,9 @@ const WIDTH: i32 = 860;
 /// The top bar's field, which the bar's input takes the place of.
 const FIELD_WIDTH: i32 = 480;
 
+/// What the field says while it is spec 009's: commands and correspondents.
+const BLEND_PLACEHOLDER: &str = "Search mail, go to a folder, or run a command";
+
 /// What a person did in the bar, for the controller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarInput {
@@ -51,7 +54,15 @@ pub struct Bar {
     root: gtk::Box,
     /// The bar over its scrim: what the window lays over the list.
     over: gtk::Overlay,
+    /// The input line: the field's width, the top bar's or the dropdown's.
+    input: gtk::Box,
+    /// What dims the list behind spec 009's lines.
+    scrim: gtk::Box,
     entry: gtk::Entry,
+    /// The rest of the best word, after the caret (screen 02).
+    ghost: gtk::Label,
+    /// "Tab completes", at the field's end while there is a ghost.
+    ghost_hint: gtk::Box,
     chips: gtk::Box,
     echo: gtk::Label,
     heading: gtk::Label,
@@ -81,7 +92,7 @@ pub struct Bar {
     saved_row: gtk::Box,
     /// Where the keyboard goes when the bar closes: the list, once the
     /// window says which widget that is.
-    home: RefCell<Option<gtk::Widget>>,
+    home: RefCell<Option<Rc<dyn Fn()>>>,
     /// Spec 009's blend of lines: the saved row, the echo, the heading,
     /// the lines and their footer.
     blend: gtk::Box,
@@ -97,7 +108,15 @@ impl Bar {
     pub fn controls() -> Vec<CommandId> {
         SAVED
             .into_iter()
-            .chain([CommandId::OpenMessage, CommandId::ToggleResultOrder])
+            .chain([
+                CommandId::OpenMessage,
+                CommandId::ToggleResultOrder,
+                // The dropdown's own: its Show all row, and the keys its
+                // Recent and People rows name.
+                CommandId::ShowAllResults,
+                CommandId::ForgetRecent,
+                CommandId::ExcludeSuggestion,
+            ])
             .collect()
     }
 
@@ -110,13 +129,34 @@ impl Bar {
         let entry = gtk::Entry::new();
         entry.set_hexpand(true);
         entry.set_has_frame(false);
-        entry.set_placeholder_text(Some("Search mail, go to a folder, or run a command"));
+        entry.set_placeholder_text(Some(BLEND_PLACEHOLDER));
         entry.add_css_class("focus-bar-entry");
         let input = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         input.add_css_class("focus-bar-input");
         input.append(&icon);
         input.append(&chips);
-        input.append(&entry);
+        // The ghost is laid over the entry, after what is typed, and takes
+        // no pointer: a click lands on the entry under it.
+        let ghost = gtk::Label::new(None);
+        ghost.add_css_class("focus-bar-ghost");
+        ghost.add_css_class("dim-label");
+        ghost.set_halign(gtk::Align::Start);
+        ghost.set_valign(gtk::Align::Center);
+        ghost.set_can_target(false);
+        ghost.set_visible(false);
+        let ghost_hint = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        ghost_hint.add_css_class("focus-bar-ghost-hint");
+        ghost_hint.set_halign(gtk::Align::End);
+        ghost_hint.set_margin_end(S2);
+        ghost_hint.set_valign(gtk::Align::Center);
+        ghost_hint.set_can_target(false);
+        ghost_hint.set_visible(false);
+        let field = gtk::Overlay::new();
+        field.set_hexpand(true);
+        field.set_child(Some(&entry));
+        field.add_overlay(&ghost);
+        field.add_overlay(&ghost_hint);
+        input.append(&field);
         if let Some(key) = postio_ui::hints::key(keymap, CommandId::Back) {
             input.append(&keyhint::cap(&key));
         }
@@ -187,7 +227,11 @@ impl Bar {
         let bar = Rc::new(Bar {
             root,
             over,
+            input: input.clone(),
+            scrim: scrim.clone(),
             entry,
+            ghost,
+            ghost_hint,
             chips,
             echo,
             heading,
@@ -249,6 +293,11 @@ impl Bar {
         bar.entry.connect_changed({
             let weak = weak.clone();
             move |entry| {
+                // A ghost belongs to the words it was drawn for: the next
+                // view draws the one for these.
+                if let Some(bar) = weak.upgrade() {
+                    bar.ghost.set_visible(false);
+                }
                 if let Some(bar) = weak.upgrade()
                     && !bar.quiet.get()
                 {
@@ -320,9 +369,11 @@ impl Bar {
         self.show_saved();
     }
 
-    /// Hand the keyboard to `home` whenever the bar closes.
-    pub fn set_home(&self, home: gtk::Widget) {
-        self.home.replace(Some(home));
+    /// Hand the keyboard home whenever the bar closes: `home` puts it
+    /// there, wherever that is then -- the list, or a search's results in
+    /// its place.
+    pub fn set_home(&self, home: impl Fn() + 'static) {
+        self.home.replace(Some(Rc::new(home)));
     }
 
     /// Show the bar with `text` in its field and `select` of it selected:
@@ -354,16 +405,12 @@ impl Bar {
         }
         // The keyboard leaves the entry with the bar: left in a hidden
         // entry, every single-letter key after it would be taken for typing.
-        if let Some(root) = self.entry.root()
-            && root
-                .focus()
+        // Asked now, and handed over once the bar is down: what hiding it
+        // does to the focus is then done, and cannot move it on again.
+        let had_keyboard = self.entry.root().filter(|root| {
+            root.focus()
                 .is_some_and(|focus| focus.is_ancestor(&self.root) || focus == self.root)
-        {
-            // To the list when the window said where that is, to nothing
-            // otherwise: a window's own keys are heard from either.
-            let home = self.home.borrow().clone();
-            root.set_focus(home.as_ref());
-        }
+        });
         self.over.set_visible(false);
         self.show_field(true);
         self.quiet.set(true);
@@ -371,9 +418,19 @@ impl Bar {
         self.quiet.set(false);
         self.view.replace(BarView::default());
         self.drop_down(false);
+        self.dropdown.clear();
         self.lines.borrow_mut().clear();
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
+        }
+        // Home when the window said where that is, to nothing otherwise: a
+        // window's own keys are heard from either.
+        if let Some(root) = had_keyboard {
+            let home = self.home.borrow().clone();
+            match home {
+                Some(home) => home(),
+                None => root.set_focus(None::<&gtk::Widget>),
+            }
         }
     }
 
@@ -394,6 +451,7 @@ impl Bar {
     /// [`postio_focus::Intent::BarLines`].
     pub fn show(&self, view: &BarView) {
         self.drop_down(false);
+        self.show_ghost(None, None);
         let kept = self.highlighted_line();
         self.show_chips(&view.chips, view.editing);
         self.echo.set_visible(view.echo.is_some());
@@ -464,6 +522,75 @@ impl Bar {
     pub fn show_dropdown(&self, view: &postio_focus::DropdownView) {
         self.drop_down(true);
         self.dropdown.show(view);
+        self.show_ghost(view.ghost.as_deref(), view.ghost_hint.as_ref());
+    }
+
+    /// Draw `ghost` after the caret, and its hint at the field's end; or
+    /// neither. Placed once the entry has its size, at the end of what is
+    /// typed, measured in the entry's own font.
+    fn show_ghost(&self, ghost: Option<&str>, hint: Option<&postio_ui::hints::Hint>) {
+        while let Some(child) = self.ghost_hint.first_child() {
+            self.ghost_hint.remove(&child);
+        }
+        if let Some(hint) = hint.filter(|_| ghost.is_some()) {
+            self.ghost_hint.append(&keyhint::cap(&hint.key));
+            let words = gtk::Label::new(Some(&hint.label));
+            words.add_css_class("dim-label");
+            self.ghost_hint.append(&words);
+        }
+        self.ghost_hint
+            .set_visible(ghost.is_some() && self.ghost_hint.first_child().is_some());
+        self.ghost.set_text(ghost.unwrap_or_default());
+        self.ghost.set_visible(false);
+        if ghost.is_none() {
+            return;
+        }
+        let me = self.me.borrow().clone();
+        glib::idle_add_local_once(move || {
+            if let Some(bar) = me.upgrade() {
+                bar.place_ghost();
+            }
+        });
+    }
+
+    /// Put the ghost at the end of what is typed, when it fits beside it.
+    fn place_ghost(&self) {
+        if self.ghost.text().is_empty() {
+            return;
+        }
+        let Some(end) = self.typed_end() else {
+            return;
+        };
+        let room = self.ghost.parent().map_or(0, |field| field.width()) as f32 - end;
+        let (wide, _) = self.ghost.layout().pixel_size();
+        self.ghost.set_margin_start(end.round() as i32);
+        self.ghost.set_visible(wide as f32 <= room);
+    }
+
+    /// Where what is typed ends, from the left of the overlay the ghost is
+    /// laid in: its text's own start, and the typed words measured in its
+    /// font.
+    fn typed_end(&self) -> Option<f32> {
+        let text = self.entry.delegate()?;
+        let field = self.ghost.parent()?;
+        let start = text.compute_bounds(&field)?.x();
+        let (wide, _) = text
+            .create_pango_layout(Some(&self.entry.text()))
+            .pixel_size();
+        Some(start + wide as f32)
+    }
+
+    /// The ghost drawn after the caret, while it is.
+    pub fn ghost(&self) -> Option<String> {
+        (self.ghost.is_visible() && !self.ghost.text().is_empty())
+            .then(|| self.ghost.text().to_string())
+    }
+
+    /// Where the ghost starts and where what is typed ends, from the
+    /// field's left, for a test to hold one against the other.
+    pub fn ghost_at(&self) -> Option<(f32, f32)> {
+        let at = self.ghost.compute_bounds(&self.ghost.parent()?)?.x();
+        Some((at, self.typed_end()?))
     }
 
     /// The dropdown, for what a test reads of it.
@@ -476,6 +603,26 @@ impl Bar {
         self.dropping.set(dropping);
         self.dropdown.widget().set_visible(dropping);
         self.blend.set_visible(!dropping);
+        // Spec 010 US1: the dropdown's field grows to the panel's width
+        // and says what it searches, over an inbox it does not dim; the
+        // commands and correspondents keep spec 009's (C24).
+        self.input
+            .set_width_request(if dropping { WIDTH } else { FIELD_WIDTH });
+        self.entry.set_placeholder_text(Some(if dropping {
+            postio_ui::search_view::PLACEHOLDER
+        } else {
+            BLEND_PLACEHOLDER
+        }));
+        if dropping {
+            self.scrim.add_css_class("focus-bar-scrim-clear");
+        } else {
+            self.scrim.remove_css_class("focus-bar-scrim-clear");
+        }
+    }
+
+    /// Whether the list behind the bar is dimmed.
+    pub fn dims_the_list(&self) -> bool {
+        self.over.is_visible() && !self.scrim.has_css_class("focus-bar-scrim-clear")
     }
 
     fn show_chips(&self, chips: &[String], editing: Option<u32>) {
@@ -669,8 +816,12 @@ impl Bar {
             .collect()
     }
 
-    /// The subjects of the messages listed, top to bottom.
+    /// The subjects of the messages listed, top to bottom: the dropdown's
+    /// hits while it is the panel.
     pub fn result_subjects(&self) -> Vec<String> {
+        if self.dropping.get() {
+            return self.dropdown.hit_subjects();
+        }
         self.lines
             .borrow()
             .iter()
@@ -694,6 +845,24 @@ impl Bar {
     /// The text is the row's own labels, as a person reads it ("Sorted by
     /// relevance"), and a message's subject.
     pub fn highlighted(&self) -> Option<(&'static str, Option<MessageId>, String)> {
+        if self.dropping.get() {
+            use postio_focus::DropdownRowKind as Kind;
+            let (kind, text) = self.dropdown.highlighted_row()?;
+            let kind = match kind {
+                Kind::Recent => "recent",
+                Kind::Hit => "message",
+                Kind::ShowAll => "show_all",
+                Kind::CheatSheet | Kind::Example => "hint",
+                Kind::Word => "word",
+                Kind::Label => "label",
+                Kind::List => "list",
+                Kind::File => "file",
+                Kind::Person => "person",
+                Kind::Folder => "folder",
+                _ => "other",
+            };
+            return Some((kind, None, text));
+        }
         let selected = self.list.selected_row()?;
         let index = usize::try_from(selected.index()).ok()?;
         let line = self.lines.borrow().get(index)?.clone();

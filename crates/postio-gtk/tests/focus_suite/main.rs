@@ -446,6 +446,18 @@ const CASES: &[(&str, fn())] = &[
         compose_layout::the_dialog_follows_the_message_dialogs_size_rule as fn(),
     ),
     (
+        "dropdown::backspace_on_an_empty_value_takes_the_operator_away",
+        dropdown::backspace_on_an_empty_value_takes_the_operator_away as fn(),
+    ),
+    (
+        "dropdown::escape_gives_the_keyboard_back_to_the_cursor_row",
+        dropdown::escape_gives_the_keyboard_back_to_the_cursor_row as fn(),
+    ),
+    (
+        "dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it",
+        dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it as fn(),
+    ),
+    (
         "dropdown::the_words_state_draws_hits_pills_and_show_all",
         dropdown::the_words_state_draws_hits_pills_and_show_all as fn(),
     ),
@@ -498,8 +510,48 @@ const CASES: &[(&str, fn())] = &[
         results::nothing_found_offers_a_looser_search_that_finds_some as fn(),
     ),
     (
+        "results::a_search_after_one_that_found_nothing_shows_its_rows",
+        results::a_search_after_one_that_found_nothing_shows_its_rows as fn(),
+    ),
+    (
+        "results::replying_to_a_result_and_escaping_back_to_the_results",
+        results::replying_to_a_result_and_escaping_back_to_the_results as fn(),
+    ),
+    (
+        "results::checking_results_says_how_many_are_selected",
+        results::checking_results_says_how_many_are_selected as fn(),
+    ),
+    (
+        "results::clearing_the_filters_keeps_the_keyboard_on_the_results",
+        results::clearing_the_filters_keeps_the_keyboard_on_the_results as fn(),
+    ),
+    (
+        "results::ctrl_s_opens_the_save_popover_and_return_saves",
+        results::ctrl_s_opens_the_save_popover_and_return_saves as fn(),
+    ),
+    (
+        "results::the_tabs_go_by_their_keys",
+        results::the_tabs_go_by_their_keys as fn(),
+    ),
+    (
+        "results::escape_closes_a_dropdown_over_the_results_then_leaves_them",
+        results::escape_closes_a_dropdown_over_the_results_then_leaves_them as fn(),
+    ),
+    (
         "results::show_all_opens_the_results_and_back_returns_to_the_inbox",
         results::show_all_opens_the_results_and_back_returns_to_the_inbox as fn(),
+    ),
+    (
+        "results::an_unread_result_has_the_inboxs_accent_dot",
+        results::an_unread_result_has_the_inboxs_accent_dot as fn(),
+    ),
+    (
+        "results::the_results_open_on_their_first_heading",
+        results::the_results_open_on_their_first_heading as fn(),
+    ),
+    (
+        "results::quick_look_stays_put_while_j_walks",
+        results::quick_look_stays_put_while_j_walks as fn(),
     ),
     (
         "results::a_toggle_filter_adds_its_chip_and_the_chip_removes_it",
@@ -508,6 +560,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "bar::a_hit_steps_the_results_and_its_own_thread",
         bar::a_hit_steps_the_results_and_its_own_thread as fn(),
+    ),
+    (
+        "bar::a_hit_opened_from_the_results_says_where_it_is_in_its_thread",
+        bar::a_hit_opened_from_the_results_says_where_it_is_in_its_thread as fn(),
     ),
     (
         "bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search",
@@ -623,12 +679,12 @@ const CASES: &[(&str, fn())] = &[
         drafts::g_t_lists_drafts_and_enter_opens_one_to_edit as fn(),
     ),
     (
-        "bar::a_plain_word_searches_as_it_is_typed_under_the_search_row",
-        bar::a_plain_word_searches_as_it_is_typed_under_the_search_row as fn(),
+        "bar::a_word_lists_top_hits_and_return_shows_all",
+        bar::a_word_lists_top_hits_and_return_shows_all as fn(),
     ),
     (
-        "bar::a_word_no_command_is_named_by_searches_first",
-        bar::a_word_no_command_is_named_by_searches_first as fn(),
+        "bar::the_dropdown_opens_on_the_newest_recent_search",
+        bar::the_dropdown_opens_on_the_newest_recent_search as fn(),
     ),
     (
         "bar::at_offers_correspondents",
@@ -828,12 +884,12 @@ const CASES: &[(&str, fn())] = &[
         bar::alt_2_runs_the_second_saved_search as fn(),
     ),
     (
-        "bar::the_arrows_scroll_the_results_to_the_highlighted_row",
-        bar::the_arrows_scroll_the_results_to_the_highlighted_row as fn(),
+        "bar::walking_the_results_keeps_the_ringed_row_in_view",
+        bar::walking_the_results_keeps_the_ringed_row_in_view as fn(),
     ),
     (
-        "bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query",
-        bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query as fn(),
+        "bar::plain_english_is_understood_tab_makes_chips_and_ctrl_s_saves",
+        bar::plain_english_is_understood_tab_makes_chips_and_ctrl_s_saves as fn(),
     ),
     (
         "bar::a_misspelled_word_finds_what_was_meant_and_quoted_is_exact",
@@ -844,8 +900,8 @@ const CASES: &[(&str, fn())] = &[
         bar::a_result_gives_its_subject_room_before_its_first_line as fn(),
     ),
     (
-        "bar::o_is_a_letter_and_the_order_row_switches_the_results",
-        bar::o_is_a_letter_and_the_order_row_switches_the_results as fn(),
+        "bar::o_is_a_letter_and_alt_o_switches_the_results_sort",
+        bar::o_is_a_letter_and_alt_o_switches_the_results_sort as fn(),
     ),
     (
         "state::a_failing_account_is_named_and_the_others_mail_stays_listed",
@@ -856,8 +912,8 @@ const CASES: &[(&str, fn())] = &[
         state::a_failing_banner_says_the_syncs_own_reason as fn(),
     ),
     (
-        "bar::in_rec_lists_receipts_newest_first",
-        bar::in_rec_lists_receipts_newest_first as fn(),
+        "bar::in_rec_offers_receipts_and_return_searches_it",
+        bar::in_rec_offers_receipts_and_return_searches_it as fn(),
     ),
     (
         "marker_card::the_highlight_starts_and_ends_on_the_sentences_own_words",

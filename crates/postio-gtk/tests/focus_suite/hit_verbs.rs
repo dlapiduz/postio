@@ -6,7 +6,6 @@
 //! and pressed `e` means the message they are reading. The store is what is
 //! asserted on: which message moved, and which did not.
 
-use gtk::prelude::*;
 use postio_model::{Flag, MailboxId, MailboxRole, MessageId};
 use postio_storage::repository::{MailboxRepository, MessageRepository};
 
@@ -52,27 +51,7 @@ async fn open_a_hit_away_from_the_cursor() -> Hit {
         Some(cursor),
         "the cursor starts on the newest row"
     );
-    support::press(&window, "slash", gtk::gdk::ModifierType::empty());
-    let bar = window.bar().expect("/ opened the bar");
-    for end in 1..="harbor".len() {
-        bar.set_text(&"harbor"[..end]);
-        crate::settle();
-    }
-    assert!(
-        crate::settle_until(async || !bar.result_subjects().is_empty()).await,
-        "the search found nothing: {:?}",
-        bar.texts()
-    );
-    assert_eq!(bar.result_subjects(), ["Harbor budget"]);
-    bar.run_search();
-    let chord: postio_ui::keymap::Chord = "Return".parse().expect("a chord");
-    postio_widgets::storyboard::deliver::press(window.upcast_ref(), &chord)
-        .expect("a deliverable chord");
-    crate::settle();
-    assert!(
-        crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
-        "the hit never opened"
-    );
+    let _ = support::open_hit(&window, "harbor", "Harbor budget").await;
     assert_eq!(
         window.reading().map(|r| r.title()).as_deref(),
         Some("Harbor budget"),

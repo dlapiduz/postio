@@ -9,7 +9,7 @@
 //! rank. Every name is invented, every address is on `example.com`, and
 //! the generator is deterministic: the same store every run.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use postio_model::{
     AccountId, Attachment, EmailAddress, Flag, FlagSet, Label, LabelId, MailboxId, Message,
     MessageId, RfcMessageId,
@@ -776,20 +776,61 @@ pub async fn search_demo() -> (Store, AccountId) {
         .await
         .expect("commit the bodies");
     // Screen 01's recent searches: run yesterday, on the weekday before,
-    // and the week before that, with the counts their footers said.
+    // and the week before that, each with what it finds here -- a recent
+    // search says the count it runs to.
     let searches = postio_storage::searches::SearchRepository::new(&connection);
-    for (query, hits, days) in [
-        ("has:attachment in:Receipts after:2026-09-01", 19, 9),
-        ("from:ada invoice", 6, 5),
-        ("atlas budget", 48, 1),
-    ] {
+    for (query, days) in recent_searches(today.date_naive()) {
+        let found = found(&connection, &query, today).await;
         searches
-            .remember(query, hits, false, today - Duration::days(days))
+            .remember(&query, found.0, found.1, today - Duration::days(days))
             .await
             .expect("a recent search");
     }
     drop(connection);
     (database, account.id)
+}
+
+/// Screen 01's recent searches and how many days ago each ran: the
+/// Receipts one since the first of the month before last.
+fn recent_searches(today: chrono::NaiveDate) -> [(String, i64); 3] {
+    let since = today
+        .with_day(1)
+        .and_then(|first| first.checked_sub_months(chrono::Months::new(2)))
+        .unwrap_or(today);
+    [
+        (
+            format!(
+                "has:attachment in:Receipts after:{}",
+                since.format("%Y-%m-%d")
+            ),
+            9,
+        ),
+        ("from:ada invoice".to_owned(), 5),
+        ("atlas budget".to_owned(), 1),
+    ]
+}
+
+/// How many conversations `query` finds, and whether that is a floor: as
+/// the results count it, from the words lowered as the bar lowers them.
+async fn found(connection: &Connection, query: &str, now: DateTime<Utc>) -> (u64, bool) {
+    let parsed = postio_search::natural::lower(query, now.date_naive(), &|_| None)
+        .forgiving()
+        .contact_aware();
+    let results = postio_index::executor::search_conversations(
+        connection,
+        &postio_index::executor::ConversationRequest {
+            account: postio_model::AccountScope::Unified,
+            query: &parsed,
+            order: postio_search::results::ConversationOrder::BestMatch,
+            offset: 0,
+            limit: 0,
+            today: now.date_naive(),
+        },
+        now,
+    )
+    .await
+    .expect("a recent search runs");
+    (results.total, results.capped)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -920,5 +961,29 @@ async fn file_thread(
             .insert(&marker(last, ask, today))
             .await
             .expect("a marker");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every recent search in the seed says the count it runs to, and finds
+    /// something: a recent row promising 48 that opens on 27 is a lie the
+    /// review caught.
+    #[tokio::test]
+    async fn the_recent_searches_say_what_they_find() {
+        let (store, _) = search_demo().await;
+        let connection = store.connect().await.expect("a connection");
+        let recent = postio_storage::searches::SearchRepository::new(&connection)
+            .recent()
+            .await
+            .expect("the recent searches");
+        assert_eq!(recent.len(), 3);
+        for search in recent {
+            let (total, _) = found(&connection, &search.query, today()).await;
+            assert!(total > 0, "{:?} finds nothing", search.query);
+            assert_eq!(search.hits, total, "{:?}", search.query);
+        }
     }
 }

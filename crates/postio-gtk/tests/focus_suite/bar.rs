@@ -22,9 +22,10 @@ async fn type_in(bar: &postio_gtk::bar::Bar, text: &str) {
     }
 }
 
-/// US4 scenario 4: `in:Rec` offers Receipts, and its conversations are
-/// listed newest first, with the folder's count.
-pub fn in_rec_lists_receipts_newest_first() {
+/// Spec 010 US7: `in:Rec` lists the folders it could mean, Receipts with
+/// its count; Return makes its chip, and the dropdown's hits are Receipts'
+/// mail.
+pub fn in_rec_offers_receipts_and_return_searches_it() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -37,6 +38,7 @@ pub fn in_rec_lists_receipts_newest_first() {
         fixture.file_in(receipts, "Train ticket", 300).await;
         fixture.file_in(receipts, "Coffee beans", 30).await;
         fixture.file_in(receipts, "Bookshop order", 90).await;
+        fixture.index().await;
         let (window, _client) = fixture.open().await;
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 1).await,
@@ -46,18 +48,28 @@ pub fn in_rec_lists_receipts_newest_first() {
         type_in(&bar, "in:Rec").await;
         assert!(
             crate::settle_until(async || {
-                bar.heading() == "Receipts \u{b7} folder \u{b7} 3 conversations \u{b7} newest first"
+                bar.highlighted()
+                    .is_some_and(|(kind, _, text)| kind == "folder" && text.starts_with("Receipts"))
             })
             .await,
-            "no Receipts heading: {:?}",
-            bar.heading()
+            "Receipts is not offered: {:?} of {:?}",
+            bar.highlighted(),
+            bar.dropdown().texts()
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || bar.typed().trim_end() == "in:Receipts").await,
+            "Return did not make the chip: {:?}",
+            bar.typed()
         );
         assert!(
             crate::settle_until(async || {
-                bar.result_subjects() == ["Coffee beans", "Bookshop order", "Train ticket"]
+                let mut hits = bar.result_subjects();
+                hits.sort();
+                hits == ["Bookshop order", "Coffee beans", "Train ticket"]
             })
             .await,
-            "not Receipts, newest first: {:?}",
+            "not Receipts' mail: {:?}",
             bar.result_subjects()
         );
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
@@ -110,19 +122,25 @@ pub fn alt_2_runs_the_second_saved_search() {
             "the second saved search's results are not shown: {:?}",
             bar.result_subjects()
         );
-        let said = bar.texts();
+        // The empty field lists the saved searches as pills, each with its
+        // key; a click on one runs it, as its key does.
+        bar.set_text("");
         assert!(
-            said.contains(&"From Ada".to_owned()) && said.contains(&"alt+2".to_owned()),
-            "the saved row names it with its key: {said:?}"
+            crate::settle_until(async || {
+                bar.dropdown()
+                    .pills()
+                    .iter()
+                    .any(|pill| pill.contains("From Ada") && pill.contains("alt+2"))
+            })
+            .await,
+            "the saved pill does not name it with its key: {:?}",
+            bar.dropdown().pills()
         );
-        // Each pill is the control for its search: a click on the first
-        // runs it, as Alt+1 does.
-        let pills = support::with_class(bar.widget(), "focus-bar-saved-pill");
-        let first = pills
-            .first()
-            .and_then(|pill| pill.downcast_ref::<gtk::Button>())
-            .expect("a pill that can be pressed");
-        support::click(&window, first, 1);
+        let first = bar.dropdown().pills().first().cloned().expect("a pill");
+        assert!(
+            bar.dropdown().click_pill(&first),
+            "{first:?} could not be pressed"
+        );
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["Train ticket"]).await,
             "pressing the first pill did not run it: {:?}",
@@ -180,7 +198,7 @@ pub fn offline_search_answers_locally_one_request_a_keystroke() {
         // Opening reads where the bar can go; typing is what is counted.
         assert!(crate::settle_until(async || bar.places_known()).await);
         let before = client.counts().snapshot();
-        type_in(&bar, "from:ada").await;
+        type_in(&bar, "budget").await;
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["Budget"]).await,
             "offline, the local index did not answer: {:?}",
@@ -192,25 +210,36 @@ pub fn offline_search_answers_locally_one_request_a_keystroke() {
             .map(|(family, count)| (*family, count - before.get(family).copied().unwrap_or(0)))
             .filter(|(_, count)| *count > 0)
             .collect();
-        // A keystroke that makes a search is one search, as it is typed,
-        // and nothing else is asked: not every keystroke makes one -- a
-        // single letter is in most of a mailbox and is not a search yet
-        // (`ParsedQuery::is_searchable`), and the controller's bar asks for
-        // what its words are (spec 009 slice 8) -- and with no digest rule
-        // nothing is asked about held mail.
-        assert_eq!(
-            asked,
-            [("SearchHits", 5)],
-            "one search a keystroke that makes one, and nothing else asked for"
+        // A keystroke that makes a search is one conversation search, as it
+        // is typed: not every keystroke makes one -- a single letter is in
+        // most of a mailbox and is not a search yet
+        // (`ParsedQuery::is_searchable`). One to three letters also ask what
+        // they could become (spec 010 US7), and the hits that land ask for
+        // their passages. With no digest rule nothing is asked about held
+        // mail, and nothing else is asked at all.
+        let count = |family: &str| {
+            asked
+                .iter()
+                .find(|(asked, _)| *asked == family)
+                .map_or(0, |(_, count)| *count)
+        };
+        assert_eq!(count("Conversations"), 5, "{asked:?}");
+        assert_eq!(count("Suggest"), 3, "{asked:?}");
+        assert!((1..=5).contains(&count("Passages")), "{asked:?}");
+        assert!(
+            asked
+                .iter()
+                .all(|(family, _)| ["Conversations", "Suggest", "Passages"].contains(family)),
+            "something else was asked: {asked:?}"
         );
     });
 }
 
-/// Screen 09, 07 (d): a plain word is answered with the commands and
-/// places it names, the one search row, and the results of the search as it
-/// is typed -- under the search row, which stays. Return on the row takes
-/// the keyboard to the first hit. Each hit shows the message's first line.
-pub fn a_plain_word_searches_as_it_is_typed_under_the_search_row() {
+/// Spec 010 US1: a word lists its top hits under the field, each with its
+/// folder; Show all is what the highlight starts on, so Return opens the
+/// results. A word in the search's field is never a command: the commands
+/// are `>`'s and Ctrl+K's.
+pub fn a_word_lists_top_hits_and_return_shows_all() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -231,72 +260,106 @@ pub fn a_plain_word_searches_as_it_is_typed_under_the_search_row() {
             "the inbox never reached the screen"
         );
         let bar = open_bar(&window);
-        type_in(&bar, "arch").await;
+        type_in(&bar, "archive").await;
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["Archive plan"]).await,
             "typing searched nothing: {:?}",
-            bar.result_subjects()
+            bar.texts()
         );
         let said = bar.texts();
         assert!(
-            said.iter().any(|line| line == "Archive"),
-            "the command: {said:?}"
-        );
-        let search = said
-            .iter()
-            .position(|line| line.starts_with("Search mail for"))
-            .expect("the search row stays");
-        let heading = said
-            .iter()
-            .position(|line| line.starts_with("Conversations"))
-            .expect("the results' heading");
-        assert!(
-            search < heading,
-            "the search row is above the results: {said:?}"
+            said.iter().any(|line| line == "in:Inbox"),
+            "the hit names its folder: {said:?}"
         );
         assert!(
-            said.iter().any(|line| line == "Boxes for the move."),
-            "a hit shows the message's first line: {said:?}"
+            !said.iter().any(|line| line == "Archive"),
+            "a word listed a command: {said:?}"
         );
-        // A plain word is what the entry already shows; it is not a chip.
-        assert!(
-            bar.chips().is_empty(),
-            "a plain word chipped: {:?}",
-            bar.chips()
-        );
-        // The command named by what was typed is under the cursor; Return
-        // on the search row hands the keyboard to the first hit.
-        assert_eq!(bar.highlighted().map(|(kind, _, _)| kind), Some("command"));
-        bar.run_search();
         assert_eq!(
             bar.highlighted().map(|(kind, _, _)| kind),
-            Some("message"),
-            "Return on the search row did not reach the first hit"
+            Some("show_all"),
+            "{:?}",
+            bar.highlighted()
         );
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.results().is_some()).await,
+            "Return did not open the results"
+        );
+        assert!(!bar.is_open(), "the bar stayed up over the results");
     });
 }
 
-/// A word no command is named by, which one command merely contains the
-/// letters of in order, is a search: the search row is what Return runs.
-pub fn a_word_no_command_is_named_by_searches_first() {
+/// The dropdown opens on its default row, the newest recent search,
+/// wherever the arrows were when it last closed: Return runs again what
+/// was just searched.
+pub fn the_dropdown_opens_on_the_newest_recent_search() {
     crate::gtk_case(async {
         if !support::display() {
             return;
         }
         let fixture = Fixture::empty().await;
         fixture
-            .file(("Ada Moreno", "ada@example.com"), "Tide tables", "x", 5)
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Archive plan",
+                "Boxes for the move.",
+                5,
+            )
             .await;
         fixture.index().await;
         let (window, _client) = fixture.open().await;
-        assert!(crate::settle_until(async || support::subjects(&window).len() == 1).await);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        for words in ["archive", "plan"] {
+            let bar = open_bar(&window);
+            type_in(&bar, words).await;
+            assert!(
+                crate::settle_until(async || bar.result_subjects() == ["Archive plan"]).await,
+                "{words:?} found nothing: {:?}",
+                bar.texts()
+            );
+            support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+            // Remembered once its results land: left before then, it is not.
+            assert!(
+                crate::settle_until(async || window
+                    .results()
+                    .is_some_and(|results| results.cursor().is_some()))
+                .await,
+                "Return did not open the results"
+            );
+            support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+            assert!(
+                crate::settle_until(async || window.results().is_none()).await,
+                "Escape did not leave the results"
+            );
+        }
+        let newest = |bar: &postio_gtk::bar::Bar| {
+            bar.highlighted()
+                .is_some_and(|(_, _, text)| text.starts_with("plan"))
+        };
         let bar = open_bar(&window);
-        type_in(&bar, "tide").await;
-        crate::settle();
-        assert_eq!(
-            bar.highlighted().map(|(kind, _, _)| kind),
-            Some("search"),
-            "Return would run {:?}",
+        assert!(
+            crate::settle_until(async || newest(&bar)).await,
+            "the newest is not the default: {:?} of {:?}",
+            bar.highlighted(),
+            bar.texts()
+        );
+        support::press(&window, "Down", gtk::gdk::ModifierType::empty());
+        assert!(
+            bar.highlighted()
+                .is_some_and(|(_, _, text)| text.starts_with("archive")),
+            "Down did not move: {:?}",
+            bar.highlighted()
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(!bar.is_open(), "Escape closed the bar");
+        let bar = open_bar(&window);
+        assert!(
+            crate::settle_until(async || newest(&bar)).await,
+            "it opened where it closed: {:?}",
             bar.highlighted()
         );
     });
@@ -362,11 +425,11 @@ pub fn a_result_names_its_account_when_there_are_two() {
     });
 }
 
-/// T086, US4: `Tab` steps from the words into the chips they were lowered
-/// to, and on from chip to chip, the echo naming the one being edited;
-/// `Ctrl+Backspace` goes back to the plain words; `Ctrl+S` saves the query
-/// to `config.toml`, pinned, and the saved row shows it.
-pub fn tab_steps_into_the_chips_and_ctrl_s_saves_the_query() {
+/// Spec 010 US7: plain English is shown as what it was understood as, a
+/// tile a term; `Ctrl+Backspace` keeps the words as words; `Tab` makes the
+/// tiles chips in the field; `Ctrl+S` saves the query to `config.toml`,
+/// pinned, and the empty field's pills show it with its key.
+pub fn plain_english_is_understood_tab_makes_chips_and_ctrl_s_saves() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -403,54 +466,49 @@ pub fn tab_steps_into_the_chips_and_ctrl_s_saves_the_query() {
         assert!(crate::settle_until(async || bar.places_known()).await);
         let words = "invoices from Ada";
         bar.set_text(words);
+        let understood = || bar.dropdown().understood();
         assert!(
-            crate::settle_until(async || bar.chips() == ["invoices", "from:ada"]).await,
-            "the words were not lowered: {:?}",
-            bar.chips()
-        );
-
-        assert!(
-            support::deliver(&window, "Tab"),
-            "Tab reached the bar: {}",
-            support::focus_path(&window)
-        );
-        assert_eq!(
-            bar.typed(),
-            "invoices from:ada",
-            "the entry holds the chips"
-        );
-        assert!(
-            bar.texts()
-                .iter()
-                .any(|text| text.contains("editing invoices")),
-            "the echo names the chip: {:?}",
-            bar.texts()
-        );
-        assert!(
-            support::deliver(&window, "Tab"),
-            "Tab reached the bar: {}",
-            support::focus_path(&window)
-        );
-        assert!(
-            bar.texts()
-                .iter()
-                .any(|text| text.contains("editing from:")),
-            "Tab moved on to the next chip: {:?}",
-            bar.texts()
+            crate::settle_until(async || understood().iter().any(|tile| tile.contains("from:")))
+                .await,
+            "the words were not understood: {:?}",
+            understood()
         );
 
         support::press(&window, "BackSpace", gtk::gdk::ModifierType::CONTROL_MASK);
-        assert_eq!(bar.typed(), words, "Ctrl+Backspace went back to the words");
+        assert!(
+            crate::settle_until(async || understood().is_empty()).await,
+            "Ctrl+Backspace kept the tiles: {:?}",
+            understood()
+        );
+        assert_eq!(bar.typed(), words, "the field keeps the words");
+
+        bar.set_text(&format!("{words} "));
+        assert!(
+            crate::settle_until(async || !understood().is_empty()).await,
+            "understood again: {:?}",
+            understood()
+        );
+        assert!(
+            support::deliver(&window, "Tab"),
+            "Tab reached the bar: {}",
+            support::focus_path(&window)
+        );
+        assert!(
+            crate::settle_until(async || bar.typed().starts_with("invoices from:")).await,
+            "Tab did not make chips: {:?}",
+            bar.typed()
+        );
+        let query = bar.typed().trim().to_owned();
 
         support::press(&window, "s", gtk::gdk::ModifierType::CONTROL_MASK);
         assert!(
             crate::settle_until(async || {
                 std::fs::read_to_string(&path)
                     .unwrap_or_default()
-                    .contains("query = \"invoices from:ada\"")
+                    .contains(&format!("query = \"{query}\""))
             })
             .await,
-            "Ctrl+S saved no query:\n{}",
+            "Ctrl+S saved no {query:?}:\n{}",
             std::fs::read_to_string(&path).unwrap_or_default()
         );
         assert!(
@@ -459,10 +517,17 @@ pub fn tab_steps_into_the_chips_and_ctrl_s_saves_the_query() {
                 .contains("# Mine."),
             "the rest of the file is kept"
         );
+        bar.set_text("");
         assert!(
-            crate::settle_until(async || bar.texts().iter().any(|text| text == "alt+1")).await,
-            "the saved row does not show it: {:?}",
-            bar.texts()
+            crate::settle_until(async || {
+                bar.dropdown()
+                    .pills()
+                    .iter()
+                    .any(|pill| pill.contains("alt+1"))
+            })
+            .await,
+            "the saved pill does not show it: {:?}",
+            bar.dropdown().pills()
         );
     });
 }
@@ -527,11 +592,16 @@ pub fn ctrl_k_opens_the_bar_for_commands_and_slash_for_search() {
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         assert!(bar.is_open(), "/ opened no bar");
         assert_eq!(bar.typed(), "", "/ opens the bar for search, not commands");
-        type_in(&bar, "arch").await;
-        let said = bar.texts();
+        type_in(&bar, "archive").await;
         assert!(
-            said.iter().any(|line| line.starts_with("Search mail for")),
-            "the search row: {said:?}"
+            crate::settle_until(async || bar.result_subjects() == ["Archive plan"]).await,
+            "/ did not search: {:?}",
+            bar.texts()
+        );
+        assert!(
+            !bar.texts().iter().any(|line| line == "Commands"),
+            "commands under a search: {:?}",
+            bar.texts()
         );
     });
 }
@@ -546,6 +616,7 @@ pub fn the_bar_opens_in_the_top_bars_field() {
         }
         let window = three_and_open().await;
         let field = support::only(&window, "focus-command-field");
+        let center = window.chrome().expect("the top bar").center().clone();
         let before = field
             .compute_bounds(&window)
             .expect("the field has a place in the window");
@@ -578,7 +649,7 @@ pub fn the_bar_opens_in_the_top_bars_field() {
             "the results are not below the field: {results:?} under {before:?}"
         );
         assert!(
-            !field.is_mapped() || field.opacity() < 0.1,
+            !field.is_mapped() || center.opacity() < 0.1,
             "the field's own prompt still shows under the bar's input"
         );
     });
@@ -614,13 +685,6 @@ pub fn a_misspelled_word_finds_what_was_meant_and_quoted_is_exact() {
             "the word that was meant was not found: {:?}",
             bar.result_subjects()
         );
-        assert!(
-            bar.texts()
-                .iter()
-                .any(|line| line == "Search mail for \u{201c}qarterly\u{201d}"),
-            "the search row names the words typed: {:?}",
-            bar.texts()
-        );
 
         bar.set_text("\"qarterly\"");
         assert!(
@@ -631,8 +695,8 @@ pub fn a_misspelled_word_finds_what_was_meant_and_quoted_is_exact() {
     });
 }
 
-/// gtk-design: in a result the first line gives way before the subject.
-/// A subject of ordinary length, under a long first line, is drawn whole at
+/// gtk-design: in a hit the passage gives way before the subject. A
+/// subject of ordinary length, beside a long passage, is drawn whole at
 /// 1280 px.
 pub fn a_result_gives_its_subject_room_before_its_first_line() {
     crate::gtk_case(async {
@@ -645,7 +709,7 @@ pub fn a_result_gives_its_subject_room_before_its_first_line() {
             .file(
                 ("Ada Moreno", "ada@example.com"),
                 subject,
-                "The proposal below changes how the tide gate interlock is armed during maintenance windows and why.",
+                "The harbour proposal below changes how the tide gate interlock is armed during maintenance windows and why.",
                 5,
             )
             .await;
@@ -662,13 +726,18 @@ pub fn a_result_gives_its_subject_room_before_its_first_line() {
             "typing searched nothing: {:?}",
             bar.result_subjects()
         );
-        let label = support::only(bar.widget(), "focus-bar-subject")
-            .downcast::<gtk::Label>()
-            .expect("the subject is a label");
+        // Found again each time: the passages landing draws the rows anew.
+        let label = || {
+            support::with_class(bar.dropdown().widget(), "focus-dropdown-row-title")
+                .into_iter()
+                .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+                .find(|label| label.text().contains(subject) && label.width() > 0)
+        };
         assert!(
-            crate::settle_until(async || label.width() > 0).await,
-            "the result was never laid out"
+            crate::settle_until(async || label().is_some()).await,
+            "the hit was never laid out"
         );
+        let label = label().expect("laid out");
         assert!(
             !label.layout().is_ellipsized(),
             "the subject was cut ({} px) while the first line kept its room",
@@ -677,33 +746,15 @@ pub fn a_result_gives_its_subject_room_before_its_first_line() {
     });
 }
 
-/// `O` is a letter in the box, whatever is highlighted; the order row is
-/// what switches the results between relevance and date, with a click or
-/// Return, and a row says the same to a mouse.
-pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
+/// `O` is a letter in the field, whatever is highlighted; `alt+o` is the
+/// results' Sort, between best match and newest, and the button says which.
+pub fn o_is_a_letter_and_alt_o_switches_the_results_sort() {
     crate::gtk_case(async {
         if !support::display() {
             return;
         }
         let fixture = Fixture::empty().await;
-        // The ranker's two properties (postio-ffi `disagreeing`): twenty
-        // messages that do not match, and hours rather than days between
-        // the two that do.
-        for at in 0..20 {
-            fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    &format!("Entirely unrelated {at}"),
-                    "Nothing here.",
-                    2000 + at,
-                )
-                .await;
-        }
-        // The older one's subject says the word and the newer one's only
-        // its body: a subject that says all of the query outranks a passing
-        // mention, while two that both say it are as good as each other and
-        // the newer leads -- so this pair is what disagrees with date order.
-        let (dense, _) = fixture
+        fixture
             .file(
                 ("Ada Moreno", "ada@example.com"),
                 "Quarterly report",
@@ -711,10 +762,7 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
                 600,
             )
             .await;
-        fixture
-            .write_searchable_body(dense, "report report report report report")
-            .await;
-        let (glancing, _) = fixture
+        let (notes, _) = fixture
             .file(
                 ("Ada Moreno", "ada@example.com"),
                 "Notes",
@@ -723,76 +771,108 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
             )
             .await;
         fixture
-            .write_searchable_body(glancing, "One report among other things entirely")
+            .write_searchable_body(notes, "One report among other things")
             .await;
         fixture.index().await;
         let (window, _client) = fixture.open().await;
-        // The list has landed. `subjects` is the rows on screen, fewer than
-        // the twenty-two filed, so waiting for twenty sat out the deadline.
         assert!(
-            crate::settle_until(async || !support::subjects(&window).is_empty()).await,
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
             "the inbox never listed its mail"
         );
         let bar = open_bar(&window);
         type_in(&bar, "report").await;
-        let relevance = vec!["Quarterly report".to_owned(), "Notes".to_owned()];
-        let by_date = vec!["Notes".to_owned(), "Quarterly report".to_owned()];
         assert!(
             crate::settle_until(async || bar.result_subjects().len() == 2).await,
-            "no results: {:?}",
-            bar.result_subjects()
+            "no hits: {:?}",
+            bar.texts()
         );
-        assert_eq!(
-            bar.result_subjects(),
-            relevance,
-            "relevance puts the denser match first"
-        );
-        // Typing wins, with a result chosen or not: `O` is a letter.
-        support::press(&window, "Down", gtk::gdk::ModifierType::empty());
+        // Typing wins, with a hit highlighted or not: `O` is a letter.
+        support::press(&window, "Up", gtk::gdk::ModifierType::empty());
         assert!(
             !support::deliver(&window, "O"),
-            "O was claimed from the box"
+            "O was claimed from the field"
         );
-        assert_eq!(
-            bar.result_subjects(),
-            relevance,
-            "a typed O reordered the rows"
+        bar.set_text("report");
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.results().is_some()).await,
+            "Ctrl+Return did not open the results"
         );
-        // `alt+o` switches it while the query has the keyboard.
+        let results = window.results().expect("the results");
+        let best = results.sort_said();
+        assert!(best.contains("Best match"), "{best:?}");
         assert!(
             support::deliver_with(&window, "o", gtk::gdk::ModifierType::ALT_MASK),
             "alt+o was not taken"
         );
         assert!(
-            crate::settle_until(async || bar.result_subjects() == by_date).await,
-            "alt+o did not reorder: {:?}",
-            bar.result_subjects()
-        );
-        assert_eq!(bar.typed(), "report", "alt+o typed nothing");
-        // The row says the key.
-        assert!(
-            bar.texts().iter().any(|line| line == "alt+o"),
-            "the order row shows no key: {:?}",
-            bar.texts()
+            crate::settle_until(async || results.sort_said().contains("Newest")).await,
+            "alt+o did not switch the sort: {:?}",
+            results.sort_said()
         );
         assert!(
-            bar.texts().iter().any(|line| line == "Sorted by date"),
-            "the bar does not say its order: {:?}",
-            bar.texts()
+            support::deliver_with(&window, "o", gtk::gdk::ModifierType::ALT_MASK),
+            "alt+o was not taken again"
         );
-        support::click_row_saying(&window, bar.widget(), "Sorted by date");
         assert!(
-            crate::settle_until(async || bar.result_subjects() == relevance).await,
-            "the order row did not switch back: {:?}",
-            bar.result_subjects()
+            crate::settle_until(async || results.sort_said() == best).await,
+            "alt+o did not switch back: {:?}",
+            results.sort_said()
         );
     });
 }
 
-/// A message opened from search steps the results it came from: `j` and `k`
-/// walk the bar's hits, "Result n of m" says where, `[` and `]` step the
-/// hit's own thread, and Escape returns to the results with the bar as it
-/// was.
+/// A result whose best match is not its conversation's newest message
+/// opens on that match, and says where it is in the thread rather than
+/// calling it the latest: the replies say "Re:", so the first message's
+/// subject is the best match for its words.
+pub fn a_hit_opened_from_the_results_says_where_it_is_in_its_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.thread_of("Harbor draft", 3, 20).await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        type_in(&bar, "harbor draft").await;
+        assert!(
+            crate::settle_until(async || !bar.result_subjects().is_empty()).await,
+            "the search found nothing"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.results().is_some()).await,
+            "Show all did not open the results"
+        );
+        let results = window.results().expect("the results");
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        chain(&window, "Return");
+        assert!(
+            crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+            "the result never opened"
+        );
+        let reading = window.reading().expect("the hit opened");
+        assert!(
+            crate::settle_until(async || reading.subtitle().ends_with("1 of 3 in the thread"))
+                .await,
+            "the first message is not said to be the first of three: {:?}",
+            reading.subtitle()
+        );
+    });
+}
+
+/// A message opened from the results steps the results it came from: `j`
+/// and `k` walk them, "Result n of m" says where, `n` and `p` step the
+/// result's own thread, and Escape returns to the results.
 pub fn a_hit_steps_the_results_and_its_own_thread() {
     crate::gtk_case(async {
         if !support::display() {
@@ -821,23 +901,32 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
             "the search found {:?}",
             bar.result_subjects()
         );
-        let hits = bar.result_subjects();
-        bar.run_search();
-        assert_eq!(
-            bar.highlighted().map(|(kind, _, _)| kind),
-            Some("message"),
-            "{:?}",
-            bar.texts()
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.results().is_some()).await,
+            "Show all did not open the results"
         );
+        let results = window.results().expect("the results");
+        // Every row, in the results' own order: Top hits, then each of them
+        // again under its month. The walk is each conversation once, where
+        // it first comes.
+        assert!(
+            crate::settle_until(async || results.subjects().len() == 4).await,
+            "the results found {:?}",
+            results.subjects()
+        );
+        let mut hits = results.subjects();
+        let mut seen = std::collections::HashSet::new();
+        hits.retain(|subject| seen.insert(subject.clone()));
         chain(&window, "Return");
         assert!(
             crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
-            "the hit never opened"
+            "the result never opened"
         );
         let reading = window.reading().expect("the hit opened");
         assert!(
             crate::settle_until(async || reading.is_open() && reading.title() == hits[0]).await,
-            "the first hit did not open: {:?}",
+            "the first hit did not open: {:?} of {hits:?}",
             reading.title()
         );
         assert!(
@@ -915,12 +1004,11 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
         chain(&window, "Escape");
         assert!(
             crate::settle_until(async || {
-                window.bar().is_some_and(|bar| bar.is_open())
-                    && bar.result_subjects().len() == hits.len()
+                window.reading().is_none_or(|reading| !reading.is_open())
+                    && window.results().is_some()
             })
             .await,
-            "the results did not come back: {:?}",
-            window.bar().map(|bar| bar.result_subjects())
+            "the results did not come back"
         );
     });
 }
@@ -940,10 +1028,10 @@ fn chain(window: &postio_gtk::window::FocusWindow, key: &str) {
     crate::settle();
 }
 
-/// Walking the results with the arrows keeps the highlighted row in view:
-/// the highlight went below the bottom of the results and the list stayed
-/// where it was, so the row Return would open could not be seen.
-pub fn the_arrows_scroll_the_results_to_the_highlighted_row() {
+/// Walking the results with the keys keeps the ringed row in view: the
+/// ring went below the bottom of the list and the list stayed where it was,
+/// so the row Return would open could not be seen.
+pub fn walking_the_results_keeps_the_ringed_row_in_view() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -964,52 +1052,64 @@ pub fn the_arrows_scroll_the_results_to_the_highlighted_row() {
         let bar = open_bar(&window);
         type_in(&bar, "standup").await;
         assert!(
-            crate::settle_until(async || bar.result_subjects().len() == 25).await,
-            "standup did not list the 25: {:?}",
-            bar.result_subjects()
+            crate::settle_until(async || !bar.result_subjects().is_empty()).await,
+            "standup found nothing: {:?}",
+            bar.texts()
         );
-        let list = support::with_class(bar.widget(), "focus-bar-results")
-            .into_iter()
-            .next()
-            .and_downcast::<gtk::ListBox>()
-            .expect("the results list");
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.results().is_some()).await,
+            "Show all did not open the results"
+        );
+        let results = window.results().expect("the results");
+        let list = results.list().clone();
         let scroller = list
             .ancestor(gtk::ScrolledWindow::static_type())
             .and_downcast::<gtk::ScrolledWindow>()
             .expect("the results scroll");
         assert!(
-            crate::settle_until(async || scroller.height() > 0).await,
-            "the results never took a height"
-        );
-        assert!(
-            crate::settle_until(async || list.height() > scroller.height() + 100).await,
-            "the results must overflow for this to mean anything: list {} in a scroller of {}",
-            list.height(),
+            crate::settle_until(async || {
+                scroller.height() > 0
+                    && scroller.vadjustment().upper() > f64::from(scroller.height()) + 100.0
+            })
+            .await,
+            "the results must overflow for this to mean anything: {} in a scroller of {}",
+            scroller.vadjustment().upper(),
             scroller.height()
         );
-        // Whether the highlighted row lies wholly inside what the scroller
-        // shows.
+        // Whether the ringed row lies wholly inside what the scroller shows.
         let in_view = || {
-            let Some(row) = list.selected_row() else {
+            let Some(ringed) = support::with_class(&list, "focus-results-cursor")
+                .into_iter()
+                .next()
+            else {
                 return false;
             };
-            let Some(bounds) = row.compute_bounds(&scroller) else {
+            let Some(bounds) = ringed.compute_bounds(&scroller) else {
                 return false;
             };
             bounds.y() >= -0.5 && bounds.y() + bounds.height() <= scroller.height() as f32 + 0.5
         };
         for step in 1..=24 {
-            bar.press(gtk::gdk::Key::Down, gtk::gdk::ModifierType::empty());
+            chain(&window, "j");
             assert!(
                 crate::settle_until(async || in_view()).await,
-                "after {step} presses of Down the highlighted row is out of view"
+                "after {step} presses of j the ringed row is out of view: {:?} of {} rows, ringed at {:?} in a scroller {} high at {}",
+                results.cursor(),
+                results.subjects().len(),
+                support::with_class(&list, "focus-results-cursor")
+                    .iter()
+                    .map(|ringed| ringed.compute_bounds(&scroller))
+                    .collect::<Vec<_>>(),
+                scroller.height(),
+                scroller.vadjustment().value()
             );
         }
         for step in 1..=24 {
-            bar.press(gtk::gdk::Key::Up, gtk::gdk::ModifierType::empty());
+            chain(&window, "k");
             assert!(
                 crate::settle_until(async || in_view()).await,
-                "after {step} presses of Up the highlighted row is out of view"
+                "after {step} presses of k the ringed row is out of view"
             );
         }
     });

@@ -105,10 +105,10 @@ add to it rather than trusting the eye.
 
 **One list, no folder sidebar.** The window is a 46 px top bar (Compose,
 the command bar's field, the sync label, the main menu, the close button),
-a 36 px header strip ("Inbox ▾" `g o`, the counts, the "Has action" toggle
+a 36 px header strip ("Inbox ▾" `g l`, the counts, the "Has action" toggle
 `!`, the filtered and digest-rule counts), one banner slot, then the list
 under day headings, and a bulk bar while anything is selected. The folders
-popover (`g o`) and `in:` in the command bar are how a person gets anywhere
+popover (`g l`) and `in:` in the command bar are how a person gets anywhere
 but the inbox.
 
 **Rows are one `snapshot()` each, at two heights fixed by kind**: 40 px for

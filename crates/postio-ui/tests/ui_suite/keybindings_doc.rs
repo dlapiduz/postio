@@ -44,15 +44,7 @@ fn where_available(contexts: ContextSet) -> String {
     }
     let names: Vec<&str> = contexts
         .iter()
-        // This file documents Linux, which has no results view until it
-        // adopts it (spec 010 D17, D25): the list's verbs reach a result
-        // on the Mac, and say nothing new here.
-        .filter(|context| {
-            !matches!(
-                context,
-                Context::Results | Context::Contacts | Context::ContactPopover
-            )
-        })
+        .filter(|context| !matches!(context, Context::Contacts | Context::ContactPopover))
         .map(|context| match context {
             Context::List => "list",
             Context::Conversation => "conversation",
@@ -155,16 +147,20 @@ fn render() -> String {
     );
 
     for spec in registry::all() {
-        // This file documents Linux, and the Mac's search dropdown is its
-        // own until Linux adopts it (spec 010 D25).
+        // This file documents Linux, which leaves out what only the Mac has.
         if !registry::offered_on(spec.id.into(), Platform::Freedesktop) {
             continue;
         }
         // Expanded first: the registry stores `mod+k`, the reader presses
         // Ctrl+K. This file documents Linux, so it renders the freedesktop
         // spelling and reads exactly as it did before #669.
+        // Less a key Linux keeps for another command: its `alt+BackSpace`
+        // is the terminal's back to words, not the Mac's forget-recent.
         let bindings = spec
             .bindings()
+            .filter(|binding| {
+                registry::binding_offered_on(spec.id.into(), binding, Platform::Freedesktop)
+            })
             .map(|binding| postio_config::keys::expand_mod(binding, Platform::Freedesktop))
             .map(|binding| keys(&binding))
             .collect::<Vec<_>>()

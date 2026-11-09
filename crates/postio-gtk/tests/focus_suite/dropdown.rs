@@ -5,7 +5,7 @@
 //! controller's, asserted in `postio-focus`. These cases ask what is GTK's
 //! own: that a view is drawn as it says, that the arrows keep their place
 //! across a redraw, and that a run or a pill says its token back. The last
-//! drives the window, with spec 010's search staged on.
+//! drives the window.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -259,7 +259,7 @@ pub fn a_pill_runs_its_token() {
     });
 }
 
-/// With spec 010's search staged on, `/` opens the dropdown in the bar's
+/// `/` opens the dropdown in the bar's
 /// panel: empty, it offers the cheat sheet; typing a word in a message's
 /// subject lists that message under Top hits with the word found, and
 /// Show all is where Return goes.
@@ -268,7 +268,6 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
         if !support::display() {
             return;
         }
-        postio_gtk::list::feed::stage_results_view(true);
         let fixture = Fixture::empty().await;
         fixture
             .file(
@@ -282,7 +281,6 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
             .file(("Tomas Ruiz", "tomas@example.com"), "Lunch", "Noon?", 10)
             .await;
         let (window, _client) = fixture.open().await;
-        postio_gtk::list::feed::stage_results_view(false);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 2).await,
             "the inbox never reached the screen"
@@ -298,6 +296,22 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
         assert!(
             dropdown.widget().is_mapped(),
             "the dropdown is not on screen"
+        );
+        // Spec 010 US1: the field grows to the panel's width, says what it
+        // searches, and leaves the inbox behind it undimmed.
+        let field = bar.input().downcast::<gtk::Entry>().expect("an entry");
+        assert_eq!(
+            field.placeholder_text().as_deref(),
+            Some(postio_ui::search_view::PLACEHOLDER)
+        );
+        assert!(
+            !bar.dims_the_list(),
+            "the inbox is dimmed behind the dropdown"
+        );
+        assert!(
+            crate::settle_until(async || field.width() > 700).await,
+            "the field did not grow: {} px",
+            field.width()
         );
 
         bar.set_text("budget");
@@ -328,6 +342,155 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
         assert!(
             !texts.iter().any(|text| text.contains("Lunch")),
             "a message without the word is listed: {texts:?}"
+        );
+    });
+}
+
+/// Screen 02 (spec 010 US7): a short prefix draws the rest of its best word
+/// after the caret in the field's lighter ink, "Tab completes" at the
+/// field's end; Tab takes it, and the ghost goes.
+pub fn a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers for atlas.",
+                5,
+            )
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("a");
+        crate::settle();
+        bar.set_text("at");
+        assert!(
+            crate::settle_until(async || bar.ghost().as_deref() == Some("las")).await,
+            "no ghost after \"at\": {:?} with {:?}",
+            bar.ghost(),
+            bar.dropdown().texts()
+        );
+        let after_the_caret = || {
+            bar.ghost_at().is_some_and(|(ghost, typed_end)| {
+                ghost >= typed_end - 1.0 && ghost <= typed_end + 8.0
+            })
+        };
+        assert!(
+            crate::settle_until(async || after_the_caret()).await,
+            "the ghost is not after the caret: {:?}",
+            bar.ghost_at()
+        );
+        assert!(
+            bar.texts().iter().any(|text| text == "completes"),
+            "no \"Tab completes\": {:?}",
+            bar.texts()
+        );
+        assert!(
+            support::deliver(&window, "Tab"),
+            "Tab reached the bar: {}",
+            support::focus_path(&window)
+        );
+        assert!(
+            crate::settle_until(async || bar.typed().trim_end() == "atlas").await,
+            "Tab did not take the ghost: {:?}",
+            bar.typed()
+        );
+        assert!(
+            crate::settle_until(async || bar.ghost().is_none()).await,
+            "the ghost stayed: {:?}",
+            bar.ghost()
+        );
+    });
+}
+
+/// Spec 010 US7 (from-people-autocomplete's Backspace, which the format can
+/// press only with real input): the field's own Backspace on `from:`'s
+/// empty value takes its colon, and the operator goes whole: the field is
+/// empty, and so is the dropdown.
+pub fn backspace_on_an_empty_value_takes_the_operator_away() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 5)
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || support::subjects(&window).len() == 1).await);
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("from:");
+        crate::settle();
+        // What GTK's Backspace does in the field: the colon before the
+        // caret goes.
+        let field = bar
+            .input()
+            .downcast::<gtk::Editable>()
+            .expect("the field is editable");
+        field.delete_text(4, 5);
+        assert!(
+            crate::settle_until(async || bar.typed().trim().is_empty()).await,
+            "the operator stayed: {:?}",
+            bar.typed()
+        );
+        assert!(
+            crate::settle_until(async || bar.dropdown().titles().contains(&"Search by".to_owned()))
+                .await,
+            "the dropdown is not the empty state: {:?}",
+            bar.dropdown().titles()
+        );
+    });
+}
+
+/// Escape from the dropdown puts the keyboard back on the row it left:
+/// GTK's focus on the cursor's row, so the keyboard's outline and the
+/// cursor's ring are one (storyboards' dropdown-esc-returns-to-row, #1825).
+pub fn escape_gives_the_keyboard_back_to_the_cursor_row() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        support::keys(&window, &["j"]);
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        assert!(
+            crate::settle_until(async || !bar.dropdown().titles().is_empty()).await,
+            "the dropdown never drew"
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(!bar.is_open(), "Escape left the bar up");
+        let pane = window.pane().expect("the inbox");
+        // GTK's own focus is on the item holding the second row on screen,
+        // the cursor's.
+        let on_the_cursor_row = || {
+            let focus = gtk::prelude::GtkWindowExt::focus(&window);
+            let rows = pane.rows_on_screen();
+            rows.get(1)
+                .and_then(|row| row.parent())
+                .is_some_and(|item| Some(item) == focus)
+        };
+        assert_eq!(
+            pane.cursor().selected(),
+            1,
+            "j put the cursor on the second row"
+        );
+        assert!(
+            crate::settle_until(async || on_the_cursor_row()).await,
+            "the keyboard is not on the cursor's row: {}",
+            support::focus_path(&window)
         );
     });
 }

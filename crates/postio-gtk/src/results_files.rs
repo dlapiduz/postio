@@ -195,6 +195,43 @@ impl FilesGrid {
         self.grid.grab_focus();
     }
 
+    /// An arrow on the grid: the ring goes where it takes it among the
+    /// cards as they are laid out now, from `ring`, and the controller is
+    /// told, as a click tells it (the Mac's grid does the same). Whether it
+    /// went anywhere.
+    pub fn step(&self, arrow: postio_ui::search_view::GridArrow, ring: Option<u64>) -> bool {
+        let count = u64::from(self.cards.n_items());
+        let Some(to) = postio_ui::search_view::grid_step(ring, arrow, count, self.columns()) else {
+            return false;
+        };
+        self.feed.input(Input::ResultsPoint(to));
+        self.grid.scroll_to(
+            u32::try_from(to).unwrap_or(u32::MAX),
+            gtk::ListScrollFlags::NONE,
+            None,
+        );
+        true
+    }
+
+    /// How many cards the grid lays across now: those in its first row.
+    /// The grid takes two to four by its width.
+    fn columns(&self) -> u64 {
+        let mut child = self.grid.first_child();
+        let row_of = |card: &gtk::Widget| card.compute_bounds(&self.grid).map(|at| at.y());
+        let Some(top) = child.as_ref().and_then(row_of) else {
+            return 1;
+        };
+        let mut across = 0;
+        while let Some(card) = child {
+            if row_of(&card) != Some(top) {
+                break;
+            }
+            across += 1;
+            child = card.next_sibling();
+        }
+        across.max(1)
+    }
+
     /// The cards' names, in order: what a test reads.
     pub fn names(&self) -> Vec<String> {
         (0..u64::from(self.cards.n_items()))
@@ -498,6 +535,14 @@ impl NoResultsPage {
         &self.root
     }
 
+    /// Take the keyboard: the page itself, while it stands in the rows'
+    /// place, so what is pressed reaches the results' keys -- the numbers
+    /// that pick a looser search, Ctrl+Backspace.
+    pub fn focus(&self) {
+        self.root.set_focusable(true);
+        self.root.grab_focus();
+    }
+
     /// Draw `view`.
     pub fn show(&self, view: &postio_focus::NoResultsView) {
         self.title.set_text(&view.title);
@@ -587,6 +632,8 @@ fn labels_of(root: &gtk::Widget) -> Vec<gtk::Label> {
 
 /// Quick Look over the results.
 pub struct QuickLookPanel {
+    /// Holds the panel to its width, whatever its words would ask for.
+    clamp: adw::Clamp,
     root: gtk::Box,
     title: gtk::Label,
     position: gtk::Label,
@@ -619,9 +666,14 @@ impl QuickLookPanel {
         subject.add_css_class("focus-quicklook-subject");
         subject.set_xalign(0.0);
         subject.set_wrap(true);
+        // Wrapped within the panel's width rather than widening it: a
+        // wrapping label asks for its whole line unless told less.
+        subject.set_max_width_chars(1);
+        subject.set_hexpand(true);
         let sender = gtk::Label::new(None);
         sender.add_css_class("focus-quicklook-sender");
         sender.set_xalign(0.0);
+        sender.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let matches_line = gtk::Label::new(None);
         matches_line.add_css_class("dim-label");
         matches_line.add_css_class("focus-quicklook-matches");
@@ -631,8 +683,7 @@ impl QuickLookPanel {
         let scrolled = gtk::ScrolledWindow::builder()
             .child(&cards)
             .hscrollbar_policy(gtk::PolicyType::Never)
-            .propagate_natural_height(true)
-            .max_content_height(420)
+            .vexpand(true)
             .build();
         let body = gtk::Box::new(gtk::Orientation::Vertical, S2);
         body.add_css_class("focus-quicklook-body");
@@ -643,14 +694,27 @@ impl QuickLookPanel {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("focus-quicklook");
         root.set_halign(gtk::Align::Center);
-        root.set_valign(gtk::Align::Center);
+        // The rows' whole height, within its margins, whatever it holds: as
+        // the Mac's fixed frame, its edges stay put while j and k walk
+        // results of more or fewer matches.
+        root.set_valign(gtk::Align::Fill);
         root.set_width_request(720);
         root.append(&head);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(&body);
         root.set_visible(false);
         root.set_accessible_role(gtk::AccessibleRole::Dialog);
+        // A long subject or passage asks for its whole line; the clamp
+        // holds the panel to its width and the words wrap within it.
+        let clamp = adw::Clamp::builder()
+            .maximum_size(720)
+            .tightening_threshold(720)
+            .child(&root)
+            .build();
+        clamp.set_halign(gtk::Align::Center);
+        clamp.set_valign(gtk::Align::Fill);
         let panel = Rc::new(QuickLookPanel {
+            clamp,
             root,
             title,
             position,
@@ -667,7 +731,12 @@ impl QuickLookPanel {
     }
 
     /// What the results pane lays over its rows.
-    pub fn widget(&self) -> &gtk::Box {
+    pub fn widget(&self) -> &adw::Clamp {
+        &self.clamp
+    }
+
+    /// The panel itself, inside its clamp.
+    pub fn panel(&self) -> &gtk::Box {
         &self.root
     }
 

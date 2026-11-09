@@ -7,7 +7,7 @@
 # macos/Tests/PostioKitTests/TimelineTests.swift and the months it becomes
 # by postio-focus tests/controller_suite/results.rs. The keys are the keyboard's way to the
 # same range, and they are pressed here.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US3" }
 seed   = "search"
 
@@ -42,3 +42,15 @@ expect  = "⌥→ moves it back: July – September again. The hint on the right
 
 [app.macos.step.drag]
 skip = { reason = "A drag across the timeline's bars: the format has no pointer input; filmed by hand until it does" }
+
+# The drag is a pointer gesture on Linux too, and the steps after it
+# step the band it made; GTK's focus_suite drags the chart
+# (results::a_drag_across_the_timeline_narrows_the_dates).
+[app.focus.step.drag]
+skip = { reason = "A drag across the timeline's bars: the format has no pointer input" }
+
+[app.focus.step.6]
+skip = { reason = "Steps the band the drag made" }
+
+[app.focus.step.7]
+skip = { reason = "Steps the band the drag made" }

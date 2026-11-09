@@ -145,6 +145,9 @@ mod tests {
     /// Focus draws that as the ring, never as a fill -- in the inbox, and in
     /// the full views drawn in Filtered's frame (Filtered, the rules list).
     ///
+    /// An unread result's dot is the inbox row's: its snapshot draws the
+    /// accent dot, and a result is the same conversation in another list.
+    ///
     /// And one more that paints nothing of Focus's: the open message's
     /// accent probe, an invisible widget whose colour is read to hand a body
     /// in app colours its link colour -- links in the accent are the
@@ -160,6 +163,7 @@ mod tests {
             || rule.starts_with(".focus-filtered-list > row:selected ")
             || rule.starts_with(".focus-contacts-list > row:selected ")
             || rule.starts_with(".focus-results-row.focus-results-cursor ")
+            || rule == ".focus-results-gutter.focus-results-dot { color }"
             || rule.starts_with(".focus-file-card.focus-file-focused ")
             || rule.starts_with(".focus-quicklook-card.focus-quicklook-current ")
             || rule.starts_with("button.focus-nothing-row.focus-nothing-focused ")

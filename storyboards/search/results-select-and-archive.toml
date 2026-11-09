@@ -13,7 +13,7 @@
 # The controller's half is postio-focus tests/controller_suite/results.rs (select_*,
 # bulk_*); the predicate's resolution is postio-host's
 # an_archive_aimed_at_a_query_*.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US5" }
 seed   = "search"
 design = "12-select-and-save"

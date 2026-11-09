@@ -10,7 +10,10 @@
 #
 # The controller's half is postio-focus tests/controller_suite/results.rs (save_*); what
 # reaches config.toml is ffi_suite saved_search.
-apps   = ["macos"]
+#
+# Its dates are the runner's: the clock is frozen on 2 June 2026, and the
+# search seed's mail is dated back from it.
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US5" }
 seed   = "search"
 design = "12-select-and-save"
@@ -22,7 +25,7 @@ wait    = { until = { cursor.index = 0 } }
 command = "search"
 
 [[step]]
-type    = "atlas budget from:ada@example.com after:2026-07-01"
+type    = "atlas budget from:ada@example.com after:2026-03-07"
 
 [[step]]
 command = "show_all_results"
@@ -31,14 +34,20 @@ check   = { keyboard.region = "results" }
 [[step]]
 id      = "popover"
 command = "save_search"
-expect  = "⌘S opens the Save popover under Save search: “Save as a saved search”, Name “Atlas budget from Ada” with the field focused, the chips “from:Ada Moreno”, “after:2026-07-01” and “atlas budget”, Pin on with “Appears at the top of search as ⌥…”, Notify off, Keep the date rolling off with “Off: always since 1 July. On: always the last … days”, then Cancel and Save ↩."
+expect  = "⌘S opens the Save popover under Save search: “Save as a saved search”, Name “Atlas budget from Ada” with the field focused, the chips “from:Ada Moreno”, “after:2026-03-07” and “atlas budget”, Pin on with “Appears at the top of search as ⌥…”, Notify off, Keep the date rolling off with “Off: always since 7 March. On: always the last … days”, then Cancel and Save ↩."
 
 [[step]]
 key     = "Return"
 check   = { keyboard.region = "results" }
 expect  = "Return saves it: the popover goes, a toast says it was saved, and the results are as they were."
 
+# From the results / edits their query (FR-021), so the empty dropdown is
+# reached from the inbox.
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list" }
+
 [[step]]
 command = "search"
 check   = { overlay.kind = "finder", keyboard.region = "search" }
-expect  = "The empty dropdown lists the new saved search among Saved searches, last, with its count and its ⌥ number."
+expect  = "From the inbox, the empty dropdown lists the new saved search among Saved searches, last, with its count and its ⌥ number."

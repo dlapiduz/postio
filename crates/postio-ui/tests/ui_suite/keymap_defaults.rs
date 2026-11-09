@@ -276,8 +276,8 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
     let mut resolver = resolver();
 
     for spec in postio_core::registry::all() {
-        // The resolver here is Linux's; the Mac's search dropdown has no
-        // keys on it yet (spec 010 D25).
+        // The resolver here is Linux's, which leaves out what only the Mac
+        // has.
         if !postio_core::registry::offered_on(spec.id.into(), Platform::Freedesktop) {
             continue;
         }
@@ -285,7 +285,15 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
             if !spec.available_in(*context) {
                 continue;
             }
-            for binding in spec.bindings() {
+            // Less a key Linux keeps for another command: its
+            // `alt+BackSpace` is back to words, not the Mac's forget-recent.
+            for binding in spec.bindings().filter(|binding| {
+                postio_core::registry::binding_offered_on(
+                    spec.id.into(),
+                    binding,
+                    Platform::Freedesktop,
+                )
+            }) {
                 let binding = &expand_mod(binding, Platform::Freedesktop);
                 let outcome = press(&mut resolver, binding, KeyContext::from(*context));
                 assert_eq!(
@@ -350,4 +358,33 @@ fn an_unusable_override_leaves_the_command_its_default() {
         Outcome::Command("archive".to_owned()),
         "a broken binding must not cost the command its key"
     );
+}
+
+/// #1825: the search dropdown's own chords reach their commands from inside
+/// its field, where a person is typing -- which takes a chord that holds
+/// Ctrl, Alt or Super. Linux's forget-recent was first `shift+Delete`, a
+/// key the field kept for itself.
+#[test]
+fn the_dropdowns_keys_reach_their_commands_while_typing() {
+    let mut resolver = resolver();
+    let now = std::time::Instant::now();
+    for id in [
+        CommandId::ShowAllResults,
+        CommandId::ForgetRecent,
+        CommandId::ExcludeSuggestion,
+    ] {
+        let keymap =
+            postio_core::Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+        let key = keymap.binding(id).expect("bound on Linux").to_owned();
+        let binding: Binding = key.parse().expect("a binding");
+        let mut outcome = Outcome::Unhandled;
+        for chord in binding.chords() {
+            outcome = resolver.press(chord, KeyContext::Search, true, now);
+        }
+        assert_eq!(
+            outcome,
+            Outcome::Command(id.as_str().to_owned()),
+            "`{key}` does not reach `{id}` from the search field"
+        );
+    }
 }

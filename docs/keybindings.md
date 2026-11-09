@@ -45,18 +45,18 @@ command from inside a text field.
 
 | Keys | Command | Where | Undo | Id |
 |---|---|---|---|---|
-| `j` or `Down` | Next message | List, conversation, reader, search, digest, Filtered view |  | `next_message` |
-| `k` or `Up` | Previous message | List, conversation, reader, search, digest, Filtered view |  | `prev_message` |
-| `g g` | First message | List, conversation, reader, search |  | `first_message` |
-| `G` | Last message | List, conversation, reader, search |  | `last_message` |
-| `Return` or `o` or `Right` | Open message | List, conversation, search, digest, Filtered view |  | `open_message` |
-| `x` | Toggle selection | List, conversation, reader, search, Filtered view |  | `toggle_selection` |
+| `j` or `Down` | Next message | List, conversation, reader, search, digest, Filtered view, search results |  | `next_message` |
+| `k` or `Up` | Previous message | List, conversation, reader, search, digest, Filtered view, search results |  | `prev_message` |
+| `g g` | First message | List, conversation, reader, search, search results |  | `first_message` |
+| `G` | Last message | List, conversation, reader, search, search results |  | `last_message` |
+| `Return` or `o` or `Right` | Open message | List, conversation, search, digest, Filtered view, search results |  | `open_message` |
+| `x` | Toggle selection | List, conversation, reader, search, Filtered view, search results |  | `toggle_selection` |
 | `J` or `shift+Down` | Extend selection down | List, reader, search, Filtered view |  | `extend_selection_down` |
 | `K` or `shift+Up` | Extend selection up | List, reader, search, Filtered view |  | `extend_selection_up` |
-| `* a` or `ctrl+a` or `X` | Select all | List, conversation, reader, search, Filtered view |  | `select_all` |
+| `* a` or `ctrl+a` or `X` | Select all | List, conversation, reader, search, Filtered view, search results |  | `select_all` |
 | `Left` or `u` | Previous view | List, conversation, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
-| `alt+o` | Toggle result order | Search |  | `toggle_result_order` |
+| `alt+o` | Toggle result order | Search, search results |  | `toggle_result_order` |
 | `n` or `alt+Down` | Next message in conversation | Conversation, reader |  | `next_in_conversation` |
 | `p` or `alt+Up` | Previous message in conversation | Conversation, reader |  | `prev_in_conversation` |
 | `Z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
@@ -71,19 +71,19 @@ command from inside a text field.
 | `ctrl+minus` or `ctrl+KP_Subtract` | Zoom out | List, conversation, reader (not the terminal) |  | `zoom_out` |
 | `ctrl+0` or `ctrl+KP_0` | Actual size | List, conversation, reader (not the terminal) |  | `zoom_reset` |
 | `;` or `ctrl+shift+e` | Expand all | Conversation |  | `expand_all` |
-| `r` or `ctrl+r` | Reply | List, conversation, reader, composer |  | `reply` |
+| `r` or `ctrl+r` | Reply | List, conversation, reader, composer, search results |  | `reply` |
 | `a` or `ctrl+shift+r` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` or `ctrl+shift+f` | Forward | List, conversation, reader, composer |  | `forward` |
-| `e` or `ctrl+shift+a` | Archive | List, conversation, reader | Undoable | `archive` |
+| `e` or `ctrl+shift+a` | Archive | List, conversation, reader, search results | Undoable | `archive` |
 | `E` | Archive thread | List, conversation, reader, digest | Undoable | `archive_thread` |
-| `#` or `Delete` | Delete | List, conversation, reader, Filtered view | Undoable | `delete` |
-| `v` | Move to… | List, conversation, reader | Undoable | `move` |
+| `#` or `Delete` | Delete | List, conversation, reader, Filtered view, search results | Undoable | `delete` |
+| `v` | Move to… | List, conversation, reader, search results | Undoable | `move` |
 | `s` | Flag | List, conversation, reader, Filtered view | Undoable | `flag` |
-| `I` or `U` | Mark read or unread | List, conversation, reader, Filtered view | Undoable | `toggle_read` |
-| `b` | Snooze | List, conversation, reader | Undoable | `snooze` |
+| `I` or `U` | Mark read or unread | List, conversation, reader, Filtered view, search results | Undoable | `toggle_read` |
+| `b` | Snooze | List, conversation, reader, search results | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |
 | `h` or `ctrl+h` | Remind if no reply… | List, conversation, reader, composer | Undoable | `remind_if_no_reply` |
-| `l` | Add label… | List, conversation, reader | Undoable | `add_label` |
+| `l` | Add label… | List, conversation, reader, search results | Undoable | `add_label` |
 | `y` | Accept invitation | List, conversation, reader | Undo briefly | `accept_invite` |
 | `Y` | Decline invitation | List, conversation, reader | Undo briefly | `decline_invite` |
 | `d` | Digest rule… | List, conversation, reader, digest |  | `digest_rule` |
@@ -93,9 +93,27 @@ command from inside a text field.
 | `-` | Dismiss marker | List, conversation, reader | Undoable | `dismiss_marker` |
 | `.` | More actions | Reader |  | `more_actions` |
 | `F8` | Read beside the list or over it | List |  | `toggle_reading_pane` |
-| `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
-| `ctrl+s` | Save search as folder | Search |  | `save_search` |
-| `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search |  | `back_to_words` |
+| `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list, search results |  | `search` |
+| `ctrl+s` | Save search as folder | Search, search results |  | `save_search` |
+| `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search, search results |  | `back_to_words` |
+| `ctrl+Return` | Show all results | Search (not the terminal) |  | `show_all_results` |
+| `alt+Delete` | Forget recent search | Search (not the terminal) |  | `forget_recent` |
+| `alt+Return` | Exclude suggestion | Search (not the terminal) |  | `exclude_suggestion` |
+| `ctrl+bracketleft` | Back in history | List, search results (not the terminal) |  | `history_back` |
+| `ctrl+bracketright` | Forward in history | List, search results (not the terminal) |  | `history_forward` |
+| `ctrl+1` | Show conversations | Search results (not the terminal) |  | `results_conversations` |
+| `ctrl+2` | Show files | Search results (not the terminal) |  | `results_files` |
+| `ctrl+3` | Show people | Search results (not the terminal) |  | `results_people` |
+| `alt+Left` | Earlier month | Search results (not the terminal) |  | `step_range_back` |
+| `alt+Right` | Later month | Search results (not the terminal) |  | `step_range_forward` |
+| `space` | Quick Look | Search results (not the terminal) |  | `quick_look` |
+| `]` | Next match | Search results (not the terminal) |  | `next_match` |
+| `[` | Previous match | Search results (not the terminal) |  | `prev_match` |
+| `1` | Run looser search 1 | Search results (not the terminal) |  | `pick_relaxation_1` |
+| `2` | Run looser search 2 | Search results (not the terminal) |  | `pick_relaxation_2` |
+| `3` | Run looser search 3 | Search results (not the terminal) |  | `pick_relaxation_3` |
+| `4` | Run looser search 4 | Search results (not the terminal) |  | `pick_relaxation_4` |
+| `ctrl+Down` | Save file | Search results (not the terminal) |  | `save_file` |
 | `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
 | `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
@@ -116,7 +134,7 @@ command from inside a text field.
 | `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |
 | `ctrl+shift+9` or `alt+9` | Quote block | Composer |  | `quote_block` |
-| `z` or `ctrl+z` | Undo | List, conversation, reader, account list, digest, Filtered view |  | `undo` |
+| `z` or `ctrl+z` | Undo | List, conversation, reader, account list, digest, Filtered view, search results |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, conversation, reader |  | `cheat_sheet` |
 | `ctrl+comma` or `alt+comma` | Settings | Everywhere |  | `settings` |
@@ -143,7 +161,7 @@ command from inside a text field.
 | `alt+2` | Saved search 2 | List, conversation, reader, search, folder list |  | `saved_search_2` |
 | `alt+3` | Saved search 3 | List, conversation, reader, search, folder list |  | `saved_search_3` |
 | `alt+4` | Saved search 4 | List, conversation, reader, search, folder list |  | `saved_search_4` |
-| `!` | Show only what has an action | List |  | `toggle_has_action` |
+| `!` | Show only what has an action | List, search results |  | `toggle_has_action` |
 | `Return` | Enable or disable account | Account list |  | `toggle_account_enabled` |
 | `Delete` | Remove account | Account list | Undoable | `remove_account` |
 | `c` | Update account credential | Account list |  | `update_credential` |
@@ -180,7 +198,7 @@ command from inside a text field.
 | `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet |  | `capture_write` |
 | `L` | Digest mail like this | List |  | `digest_like_this` |
 | `g c` | Contacts | List, conversation, reader, search, folder list (not the terminal) |  | `open_contacts` |
-| `i` | Contact popover | List, conversation, reader (not the terminal) |  | `contact_popover` |
+| `i` | Contact popover | List, conversation, reader, search results (not the terminal) |  | `contact_popover` |
 | `ctrl+i` | Open card |  (not the terminal) |  | `contact_open_card` |
 | `ctrl+Return` | Add contact |  (not the terminal) | Undoable | `contact_add` |
 | `ctrl+BackSpace` | Ignore sender |  (not the terminal) | Undoable | `contact_ignore` |

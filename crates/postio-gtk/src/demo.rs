@@ -97,7 +97,13 @@ pub fn start(
         &postio_storage::test_support::blob_keys(),
     )
     .map_err(|error| format!("no blob store: {error}"))?;
+    // The search seed's files have their bytes on this machine, so the
+    // attachment indexer the host starts reads them (spec 010 step 9), as
+    // the Mac's demo has them: its rows name the blobs a store under the
+    // test keys gives these bytes. Another seed names none of them.
+    postio_demo::store_search_blobs(&blobs).map_err(|error| format!("no search files: {error}"))?;
     let store = database.clone();
+    let files = blobs.clone();
     let sink = std::rc::Rc::new(std::cell::RefCell::new(None));
     let host = postio_host::Host::start(database, blobs, {
         let sink = std::rc::Rc::clone(&sink);
@@ -108,6 +114,31 @@ pub fn start(
     })
     .map_err(|error| format!("the host did not start: {error}"))?;
     let sink = sink.take().ok_or("the host kept its events to itself")?;
+    // Every body and every file on this machine indexed before the first
+    // frame, as a running app's are once it has caught up -- the search
+    // seed's workbooks read, so a word inside one is found, as the Mac's
+    // demo finds it. Left to the store's idle passes, a word was found or
+    // not by how far they had got, a count grew between two frames of one
+    // storyboard, and passes started for every window of a run piled up
+    // in its one process.
+    // On the host's own runtime, waited for here: the runner calls this
+    // from inside another, where a `block_on` may not run.
+    let (indexed, done) = std::sync::mpsc::channel();
+    host.runtime().spawn({
+        let store = store.clone();
+        async move {
+            let result = async {
+                postio_session::index_local_bodies(&store).await?;
+                postio_session::index_local_attachments(&store, &files).await
+            }
+            .await
+            .map_err(|error| error.to_string());
+            let _ = indexed.send(result);
+        }
+    });
+    done.recv()
+        .map_err(|_| "the demo's index never answered".to_owned())?
+        .map_err(|error| format!("the demo's mail was not indexed: {error}"))?;
     let window = FocusWindow::new(None);
     window.set_default_size(size.0, size.1);
     window.present();

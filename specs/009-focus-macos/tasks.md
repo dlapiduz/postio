@@ -498,7 +498,7 @@ chips, open a result, go to `in:Receipts`, and pick a label from the popover.
 
 ### Mac: the bar and the folders popover
 
-- [x] T083 [P] [US5] Write storyboards `storyboards/search/slash-opens-search-cmd-k-opens-commands.toml` and `storyboards/search/tab-enters-the-chips.toml` (`apps = ["focus"]`). Run them on Linux
+- [x] T083 [P] [US5] Write storyboards `storyboards/search/slash-opens-search-cmd-k-opens-commands.toml` and `storyboards/search/tab-enters-the-chips.toml` (`apps = ["focus"]`; retired when GTK adopted spec 010's dropdown, whose Tab narrows and makes chips: `dropdown-tab-narrows`, `understood-as-tab-chips`, #1825). Run them on Linux
 
   *As built:* both lint clean. They are **not yet filmed**: this Mac cannot build GTK, so the Linux run is still owed. They check only fields GTK's runner observes today (`app.focus.bar.typed`, `.hints`, `.highlighted`, `keyboard.*`, `overlay.kind`, `cursor.index`); the chips themselves are the frame's to judge, because GTK has no `app.focus.bar.chips` field. Their `source` is `{ kind = "spec", ref = "specs/009-focus-macos US5" }`.
 - [x] T084 [US5] Write failing Swift tests in `macos/Tests/PostioKitTests/CommandBarModelTests.swift`: results from `BarText` intents become one-line rows with keycaps; typing forwards `Typed{Bar}` facts; Esc emits `CloseBar`

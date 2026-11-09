@@ -27,6 +27,14 @@ command = "digest_like_this"
 context = "list"
 reason  = "bound, and act() has no arm for it; Focus offers it as a button inside the rule dialog"
 [[gap]]
+command = "history_back"
+context = "list"
+reason  = "a fresh window has no history: nothing was visited before the inbox"
+[[gap]]
+command = "history_forward"
+context = "list"
+reason  = "a fresh window has no history: nothing lies ahead of the inbox"
+[[gap]]
 command = "find_in_message"
 context = "list"
 reason  = "acts in the open message only"
@@ -92,6 +100,18 @@ context = "list"
 reason  = "bound, and act() has no arm for it; Focus has no zoom"
 
 # -- search: `/` pressed: the bar open and empty, the keyboard in its field
+[[gap]]
+command = "show_all_results"
+context = "search"
+reason  = "nothing typed yet: there are no results to show all of"
+[[gap]]
+command = "forget_recent"
+context = "search"
+reason  = "the small seed has no recent searches to forget"
+[[gap]]
+command = "exclude_suggestion"
+context = "search"
+reason  = "it excludes the person the arrows rest on, and the empty dropdown lists no people"
 [[gap]]
 command = "back_to_words"
 context = "search"

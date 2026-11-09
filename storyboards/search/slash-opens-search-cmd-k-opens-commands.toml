@@ -21,8 +21,8 @@ check   = { cursor.index = 1 }
 
 [[step]]
 command = "search"
-check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = "", app.focus.bar.hints = 3 }
-expect  = "`/` opens the bar on an empty field: the saved searches, then three lines saying what typing does (search mail, `>` for commands, `@` for people). Nothing is typed for the person."
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = "" }
+expect  = "`/` opens the search's dropdown on an empty field (spec 010, screen 01): the recent searches, the saved searches as pills, and the cheat sheet of what can be typed. Nothing is typed for the person."
 
 [[step]]
 command = "back"

@@ -40,6 +40,11 @@ pub struct Chrome {
     strip: gtk::Box,
     compose: gtk::Button,
     field: gtk::Button,
+    /// The top bar's middle: the command field, or a search's query while
+    /// its results stand in the inbox's place.
+    center: gtk::Stack,
+    /// Where the query is drawn in the middle.
+    query_slot: gtk::Box,
     close: gtk::Button,
     maximize: gtk::Button,
     field_keys: gtk::Box,
@@ -154,7 +159,19 @@ impl Chrome {
         let top = gtk::CenterBox::new();
         top.add_css_class("focus-top-bar");
         top.set_start_widget(Some(&compose));
-        top.set_center_widget(Some(&field));
+        // One field at a time (spec 010 FR-021): a search's query takes the
+        // command field's place, at its width, so `/` opens the bar over
+        // what it edits.
+        let query_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        query_slot.set_width_request(480);
+        query_slot.set_halign(gtk::Align::Center);
+        query_slot.set_valign(gtk::Align::Center);
+        let center = gtk::Stack::new();
+        center.set_hhomogeneous(false);
+        center.add_child(&field);
+        center.add_child(&query_slot);
+        center.set_visible_child(&field);
+        top.set_center_widget(Some(&center));
         top.set_end_widget(Some(&end));
 
         // The header strip: where the person is, the counts, the has-action
@@ -254,6 +271,8 @@ impl Chrome {
             strip,
             compose: compose.clone(),
             field: field.clone(),
+            center,
+            query_slot,
             close: close.clone(),
             maximize,
             field_keys,
@@ -320,6 +339,37 @@ impl Chrome {
     /// The command-bar field at the top bar's middle.
     pub fn field(&self) -> &gtk::Button {
         &self.field
+    }
+
+    /// The top bar's middle, whichever field it shows: what the bar opens
+    /// over.
+    pub fn center(&self) -> &gtk::Stack {
+        &self.center
+    }
+
+    /// Show `query` in the command field's place, or the command field
+    /// again.
+    pub fn show_query(&self, query: Option<&gtk::Widget>) {
+        match query {
+            Some(query) => {
+                if query.parent().as_ref() != Some(self.query_slot.upcast_ref()) {
+                    if let Some(parent) = query.parent() {
+                        if let Some(parent) = parent.downcast_ref::<gtk::Box>() {
+                            parent.remove(query);
+                        } else {
+                            query.unparent();
+                        }
+                    }
+                    while let Some(child) = self.query_slot.first_child() {
+                        self.query_slot.remove(&child);
+                    }
+                    query.set_hexpand(true);
+                    self.query_slot.append(query);
+                }
+                self.center.set_visible_child(&self.query_slot);
+            }
+            None => self.center.set_visible_child(&self.field),
+        }
     }
 
     /// The window's own close button, at the top bar's end.

@@ -426,7 +426,7 @@ pub fn offline_a_label_shows_at_once_and_queues_and_search_answers() {
         // `/` and a query: answered here, with the network gone.
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         let bar = window.bar().expect("/ opened the bar");
-        bar.set_text("from:lena");
+        bar.set_text("draft");
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["Draft"]).await,
             "offline, the bar found nothing: {:?}",
@@ -524,7 +524,7 @@ pub fn during_a_first_sync_what_has_arrived_opens_and_is_found() {
         // Search: the bar finds it.
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         let bar = window.bar().expect("/ opened the bar");
-        bar.set_text("from:lena");
+        bar.set_text("harbor");
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["Harbor draft"]).await,
             "during the first sync, the bar did not find what arrived: {:?}",

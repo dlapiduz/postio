@@ -23,8 +23,8 @@
 //! | `04` | The to-do about the API draft, opened over screen 01 |
 //! | `07`, `08`, `09` | The command bar over screen 01: plain English, `in:Rec`, and `arch` |
 //! | `10` | The folders popover over screen 01 |
-//! | `s01`, `s03` | Spec 010's search dropdown over screen 01, staged on: empty, and `harbor` typed |
-//! | `s06` | Spec 010's results for `harbor`, in the inbox's place (staged on) |
+//! | `s01`, `s02`, `s03` | Spec 010's search dropdown over screen 01: empty, `ha` typed with its ghost, and `harbor` typed |
+//! | `s06` | Spec 010's results for `harbor`, in the inbox's place |
 //! | `s08`, `s09` | The same with From ▾ open, and with Date ▾ open |
 //! | `s10`, `s11` | The same with Quick Look open, and on the Files tab |
 //! | `s12` | The same on the People tab |
@@ -157,17 +157,18 @@ const SCREENS: &[(&str, &str)] = &[
         "54",
         "Settings: Contacts, the Suggestions switches (handoff 08, less sync)",
     ),
-    ("s01", "spec 010's search dropdown, empty (staged on)"),
+    ("s01", "spec 010's search dropdown, empty"),
     (
-        "s03",
-        "spec 010's search dropdown, harbor typed (staged on)",
+        "s02",
+        "spec 010's search dropdown, ha typed, with its ghost",
     ),
-    ("s06", "spec 010's results for harbor (staged on)"),
-    ("s08", "spec 010's results with From open (staged on)"),
-    ("s09", "spec 010's results with Date open (staged on)"),
-    ("s10", "spec 010's results with Quick Look open (staged on)"),
-    ("s11", "spec 010's results on the Files tab (staged on)"),
-    ("s12", "spec 010's results on the People tab (staged on)"),
+    ("s03", "spec 010's search dropdown, harbor typed"),
+    ("s06", "spec 010's results for harbor"),
+    ("s08", "spec 010's results with From open"),
+    ("s09", "spec 010's results with Date open"),
+    ("s10", "spec 010's results with Quick Look open"),
+    ("s11", "spec 010's results on the Files tab"),
+    ("s12", "spec 010's results on the People tab"),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -254,9 +255,6 @@ fn render(args: &[String]) -> Result<String, String> {
         adw::ColorScheme::ForceLight
     });
 
-    // Spec 010's search is staged on for its screens until T176 turns it
-    // on for Linux.
-    postio_gtk::list::feed::stage_results_view(request.screen.starts_with('s'));
     // Screen 33 is before there is a store at all: the page a store no
     // migration reaches leaves the window on (T215, T216).
     if request.screen == "33" {
@@ -695,13 +693,22 @@ fn stage(
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(500));
         }
-        "s01" | "s03" => {
+        "s01" | "s02" | "s03" => {
             pick_three();
             window.act(CommandId::Search);
             let bar = window.bar().ok_or("no command bar")?;
             let dropdown = bar.dropdown();
             if !settle_until(|| !dropdown.titles().is_empty()) {
                 return Err("the dropdown never drew".into());
+            }
+            if screen == "s02" {
+                bar.set_text("h");
+                let typed = Instant::now();
+                settle_until(|| typed.elapsed() > Duration::from_millis(100));
+                bar.set_text("ha");
+                if !settle_until(|| bar.ghost().is_some()) {
+                    return Err("no ghost after ha".into());
+                }
             }
             if screen == "s03" {
                 bar.set_text("harbor");

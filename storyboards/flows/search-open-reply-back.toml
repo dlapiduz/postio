@@ -4,9 +4,11 @@
 # it, `r` to reply, and Escape walks back out: first the composer, then the
 # hit. Nothing should be lost on the way: the inbox is whole.
 #
-# Re-expressed for Focus (T265): its bar lists the hits under the field and
-# never narrows the inbox, so the inbox's rows are the same at the end as at
-# the start. In the classic app `e` was unbound on an open hit (#1750).
+# Re-expressed for Focus (T265), and again for spec 010's search (#1825):
+# Return runs the query into the results in the inbox's place, Return on
+# a result opens it over them, and Escape walks back out: the composer, the
+# hit, the results, then the inbox, whose rows are the same at the end as
+# at the start. In the classic app `e` was unbound on an open hit (#1750).
 apps   = ["focus"]
 source = { kind = "flow", ref = "ux-architect §4" }
 
@@ -19,19 +21,19 @@ id      = "found"
 type    = "harbour"
 settle  = { until = { app.focus.bar.messages = { changed = true } } }
 check   = { keyboard.region = "search", app.focus.bar.messages = { changed = true } }
-expect  = "The bar lists the mail that matches as the word is typed, under the Search mail for row."
+expect  = "The dropdown lists the top hits for the word as it is typed, Show all under the ring."
 
 [[step]]
-id      = "first-hit"
+id      = "results"
 key     = "Return"
-check   = { keyboard.region = "search", app.focus.bar.highlighted = "message" }
-expect  = "Return takes the highlight to the first hit."
+check   = { keyboard.region = "results", overlay.kind = "none" }
+expect  = "Return runs the search: its results in the inbox's place, the first ringed."
 
 [[step]]
 id      = "hit"
 key     = "Return"
 check   = { view = "reader", composer.open = false, reading.id = { changed = true } }
-expect  = "The hit is open over the list."
+expect  = "The ringed result is open over the results."
 
 [[step]]
 command = "reply"
@@ -45,10 +47,10 @@ expect  = "Escape leaves the composer and the hit is back, the keyboard on the m
 
 [[step]]
 command = "back"
-check   = { composer.open = false, overlay.kind = "finder", keyboard.region = "search", app.focus.bar.messages = { same_as = "found" }, app.focus.bar.highlighted = "message", app.focus.bar.highlighted_id = { same_as = "first-hit" } }
-expect  = "A second Escape leaves the hit for the results it was opened from, the words still typed and the highlight on the hit that was open."
+check   = { composer.open = false, overlay.kind = "none", keyboard.region = "results" }
+expect  = "A second Escape leaves the hit for the results it was opened from, the ring on the result that was open."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, overlay.kind = "none", view = "list", rows.count = { same_as = 0 } }
-expect  = "A third Escape leaves the search: the list is the whole Inbox, as it was."
+check   = { composer.open = false, overlay.kind = "none", view = "list", keyboard.region = "list", rows.count = { same_as = 0 } }
+expect  = "A third Escape leaves the results: the list is the whole Inbox, as it was."

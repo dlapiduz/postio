@@ -19,7 +19,7 @@
 # The engine's half is postio-index's attachment_text and conversations
 # suites and postio-session's attachment_index_pass; the controller's is
 # postio-focus tests/controller_suite/results.rs (files_*).
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US8" }
 seed   = "search"
 design = "11-files-tab"

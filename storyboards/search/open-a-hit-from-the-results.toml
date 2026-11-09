@@ -7,10 +7,11 @@
 # across both accounts, and Return on the first puts exactly that message in
 # the reader.
 #
-# Re-expressed for Focus (T265): the bar lists the hits under its field as
-# the word is typed; Return highlights the first, and a second Return opens it
-# over the list. The bar opens a hit itself, not through the list's cursor,
-# so it opens whatever row the cursor is on, or none.
+# Re-expressed for Focus (T265), and again for spec 010's search (#1825):
+# Return in the field opens the results in the inbox's place, listed
+# once each across both accounts; Return on the first opens exactly that
+# message over them, its header naming the account it is in; `j` steps
+# the results, not the list behind; Escape comes back to the results.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#961" }
 proof  = "pinned"
@@ -22,33 +23,31 @@ check   = { overlay.kind = "finder", keyboard.region = "search" }
 
 [[step]]
 type    = "harbour"
-settle  = { until = { app.focus.bar.messages = 8 } }
-check   = { app.focus.bar.messages = 8, app.focus.bar.heading = "Conversations · 8 matches" }
-expect  = "Eight hits from both accounts, each saying which account it is in."
-
-[[step]]
-id      = "hit"
-key     = "Return"
-check   = { app.focus.bar.highlighted = "message", app.focus.bar.highlighted_id = "57" }
-expect  = "The first hit, the Tide gate interlock proposal, is highlighted."
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
+expect  = "Top hits from both accounts, each saying which account it is in."
 
 [[step]]
 key     = "Return"
-check   = { view = "reader", keyboard.region = "reader", reading.id = "57", overlay.kind = "none", app.focus.reading.position = "Result 1 of 8 · thread of 8 · test@example.com" }
-expect  = "The reader shows the first hit, the Tide gate interlock proposal, over the list, and its header names the account it is in: with two accounts enabled, two copies of one conversation must not read alike."
+check   = { keyboard.region = "results", overlay.kind = "none" }
+expect  = "The results for harbour, from both accounts, each conversation once in its month, and each row naming the account it is in."
 
 [[step]]
 id      = "first"
+key     = "Return"
+check   = { view = "reader", keyboard.region = "reader", reading.id = "57" }
+expect  = "The reader shows the first result, the Tide gate interlock proposal, over the results, and its header names the account it is in: with two accounts enabled, two copies of one conversation must not read alike."
+
+[[step]]
 command = "next_message"
-check   = { view = "reader", reading.id = { changed = true }, keyboard.region = "reader", app.focus.reading.position = "Result 2 of 8 · thread of 8 · home@example.net" }
-expect  = "`j` steps to the next hit in the bar's order, not to the list's next row behind the dialog. This one is the same conversation in the other account, and the header says so."
+check   = { view = "reader", reading.id = { changed = true }, keyboard.region = "reader" }
+expect  = "`j` steps to the next result in the results' order, not to the list's next row behind them."
 
 [[step]]
 command = "prev_message"
 check   = { view = "reader", reading.id = "57" }
-expect  = "`k` steps back to the first hit."
+expect  = "`k` steps back to the first."
 
 [[step]]
 command = "back"
-check   = { view = "search", overlay.kind = "finder", app.focus.bar.messages = 8, app.focus.bar.highlighted = "message", app.focus.bar.highlighted_id = { same_as = "hit" } }
-expect  = "Escape returns to the results with the bar as it was, the highlight on the hit that was open and not back on the Search mail row."
+check   = { keyboard.region = "results", overlay.kind = "none" }
+expect  = "Escape closes the message and the results are as they were, the ring on the result that was open."

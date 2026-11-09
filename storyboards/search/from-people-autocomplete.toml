@@ -14,7 +14,7 @@
 #
 # The controller's half is postio-focus tests/controller_suite/bar.rs (operator_*); the
 # people's order is postio-index tests/index_suite/completions.rs.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US7" }
 seed   = "search"
 design = "04-typing-operator"
@@ -48,13 +48,19 @@ check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing
 expect  = "⌥↩ makes the exclusion: the field shows the chip `-from:` and that person's address, struck through, and the panel re-runs on it."
 
 [[step]]
+command = "back"
+check   = { overlay.kind = "none" }
+
+[[step]]
 command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
 
 [[step]]
 type    = "from:"
 check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
 
 [[step]]
+id      = "backspace"
 key     = "BackSpace"
 check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
 expect  = "Backspace on an empty value goes back to words: the operator is gone, the field is in the ordinary face, and the panel is the empty state."
@@ -72,3 +78,9 @@ expect  = "Return makes the chip `label:Atlas`, and the panel shows what it find
 [[step]]
 command = "back"
 check   = { overlay.kind = "none", keyboard.region = "list" }
+
+# The field's own Backspace is GTK's text binding, which the runner's
+# delivery cannot press; GTK's focus_suite takes the colon away as it does
+# (dropdown::backspace_on_an_empty_value_takes_the_operator_away).
+[app.focus.step.backspace]
+skip = { reason = "The field's own Backspace: GTK's text binding, which only real input presses" }

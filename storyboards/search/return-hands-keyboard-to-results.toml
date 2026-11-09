@@ -4,9 +4,10 @@
 # the same handoff flaking. Chain delivery passes the key through every
 # controller on the real focus chain, which is what that flake was about.
 #
-# Re-expressed for Focus (T265): the bar lists the hits under the field as
-# the word is typed; Return takes the highlight to the first, the field
-# keeping the keyboard, and the arrows walk the hits from there.
+# Re-expressed for Focus (T265), and again for spec 010's search (#1825):
+# the dropdown lists the top hits under the field as the word is typed,
+# with Show all under the ring; Return opens the results in the inbox's
+# place, the keyboard on them, and the arrows walk the results from there.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#693" }
 proof  = "pinned"
@@ -17,13 +18,14 @@ command = "search"
 [[step]]
 type    = "harbour"
 settle  = { until = { app.focus.bar.messages = { changed = true } } }
+check   = { keyboard.region = "search", app.focus.bar.highlighted = "show_all" }
 
 [[step]]
 key     = "Return"
-check   = { keyboard.region = "search", keyboard.typing = true, keyboard.reachable = true, overlay.kind = "finder", app.focus.bar.highlighted = "message" }
-expect  = "Return reaches the first hit, highlighted; the field keeps the keyboard and the query."
+check   = { keyboard.region = "results", keyboard.reachable = true, overlay.kind = "none" }
+expect  = "Return opens the results for the word, the first ringed; the keyboard is on them, not left in a field that has gone."
 
 [[step]]
 key     = "Down"
-check   = { keyboard.region = "search", keyboard.reachable = true, app.focus.bar.highlighted = "message" }
-expect  = "Down walks on to the next hit, with the query still in the field."
+check   = { keyboard.region = "results", keyboard.reachable = true }
+expect  = "Down walks the ring on to the next result."

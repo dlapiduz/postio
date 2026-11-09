@@ -858,6 +858,17 @@ impl FocusWindow {
         let Some(chord) = postio_widgets::keys::chord(key, state) else {
             return glib::Propagation::Proceed;
         };
+        // The Files tab's arrows walk its grid two ways (spec 010 FR-031),
+        // where elsewhere in the results they are the list's `Down`, `Up`
+        // and `Right` to open.
+        if state.is_empty()
+            && self.top_surface().is_none()
+            && self
+                .results()
+                .is_some_and(|results| results.grid_arrow(key))
+        {
+            return glib::Propagation::Stop;
+        }
         if self.imp().resolver.borrow().is_none() {
             return self.key_before_mail(&chord);
         }
@@ -1676,9 +1687,20 @@ impl FocusWindow {
         postio_widgets::jank::note_action(id);
         // A search's results are the controller's to drive: their keys --
         // Quick Look, Save file, the tabs -- and the verbs on a result.
+        // Not a message open over them: its reply is the window's composer,
+        // as anywhere else.
         if self.results().is_some()
+            && self.top_surface().is_none()
             && let Some(pane) = self.pane()
             && pane.feed().answers(id)
+        {
+            return self.run_in_controller(id);
+        }
+        // A key that means something only among results -- Quick Look, a
+        // looser search, a step of the dates -- is the controller's too,
+        // which does nothing with it while no results are up.
+        if postio_core::registry::get(id).contexts
+            == postio_core::ContextSet::of(postio_core::Context::Results)
         {
             return self.run_in_controller(id);
         }
@@ -1724,7 +1746,7 @@ impl FocusWindow {
                 }
             }
             // The bar, its keys, the saved searches and the go-to keys are
-            // the controller's (spec 009 slice 8): it opens the bar, says
+            // the controller's (spec 009 slice 8, spec 010): it opens the bar, says
             // what it shows, and goes where a line or a key says. `/` is for
             // mail and `Ctrl K` for commands: one bar, opened two ways (C24).
             CommandId::SavedSearch1
@@ -1736,6 +1758,16 @@ impl FocusWindow {
             | CommandId::BackToWords
             | CommandId::SaveSearch
             | CommandId::ToggleResultOrder
+            // The dropdown's keys, and History back and forward, which
+            // reach the results from the inbox (spec 010 D17).
+            | CommandId::ShowAllResults
+            | CommandId::ForgetRecent
+            | CommandId::ExcludeSuggestion
+            | CommandId::HistoryBack
+            | CommandId::HistoryForward
+            | CommandId::ResultsConversations
+            | CommandId::ResultsFiles
+            | CommandId::ResultsPeople
             | CommandId::GoToFolders
             | CommandId::GoToInbox
             | CommandId::GoToFiltered
@@ -1986,12 +2018,23 @@ impl FocusWindow {
     /// place is chosen and after an overlay goes, the window's real focus is
     /// the list view -- not the top bar's Compose button, nor the header's
     /// place button, where Space or Return would press a control instead of
-    /// acting on the row under the cursor. The view itself, not a row of
-    /// it: the cursor is the row that is drawn, and a row that also held
-    /// GTK's focus would be a second ring.
+    /// acting on the row under the cursor. On the cursor's row: the cursor
+    /// is the row that is drawn, and GTK's focus left on another row would
+    /// be a second ring.
     pub fn focus_list(&self) {
+        // A search's results stand in the list's place while they are up:
+        // the inbox's list behind them is not shown, and a keyboard left
+        // on it reaches nothing.
+        if let Some(results) = self.results() {
+            results.focus();
+            return;
+        }
+        // The view takes it on its cursor's row: given to the view alone,
+        // GTK puts it on whichever row it last had, and a row other than
+        // the cursor's is a second place the keyboard seems to be.
         if let Some(pane) = self.pane() {
             gtk::prelude::GtkWindowExt::set_focus(self, Some(pane.view()));
+            pane.focus_cursor();
         }
     }
 
@@ -2016,13 +2059,22 @@ impl FocusWindow {
             #[weak(rename_to = window)]
             self,
             move || {
-                if window.keyboard_is_free()
-                    && let Some(pane) = window.pane()
-                {
-                    pane.focus_cursor();
+                if window.keyboard_is_free() {
+                    window.focus_cursor();
                 }
             }
         ));
+    }
+
+    /// The keyboard on the cursor's row: the list's, or a search's results'
+    /// while they stand in its place -- the inbox's row behind them is not
+    /// shown, and a keyboard left there reaches nothing.
+    pub fn focus_cursor(&self) {
+        if let Some(results) = self.results() {
+            results.focus();
+        } else if let Some(pane) = self.pane() {
+            pane.focus_cursor();
+        }
     }
 
     /// Whether nothing is holding the keyboard for itself: no dialog over
@@ -2211,6 +2263,12 @@ impl FocusWindow {
             }
             Intent::ShowFiltered => self.show_filtered(),
             Intent::SaveSearch(save) => self.save_search(save),
+            // The Save popover over the results (spec 010 §3.9).
+            Intent::SavePopover(view) => {
+                if let Some(results) = self.results() {
+                    results.show_save(view.as_deref());
+                }
+            }
             // A command the controller does not answer itself, run from the
             // bar: the host's verbs, Compose, Settings.
             Intent::Run(id) => self.act(*id),
@@ -2676,13 +2734,18 @@ impl FocusWindow {
             let feed = feed.clone();
             move || feed.bar_tab()
         });
-        // Closing it hands the keyboard to the list.
-        bar.set_home(pane.view().clone().upcast());
+        // Closing it hands the keyboard home: to the list, or to a
+        // search's results while they stand in its place.
+        bar.set_home(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.focus_list()
+        ));
         // In place (spec C24): the bar's input is drawn over the top bar's
         // own field and its results hang below, so the bar lies over the
         // whole window rather than over the list.
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
-            bar.set_field(chrome.field().clone().upcast());
+            bar.set_field(chrome.center().clone().upcast());
         }
         imp.stage.add_overlay(bar.widget());
         list_or_empty.set_vexpand(true);
@@ -3819,6 +3882,9 @@ impl FocusWindow {
         view.show(frame);
         if imp.body.visible_child_name().as_deref() != Some(RESULTS) {
             imp.body.set_visible_child_name(RESULTS);
+            if let Some(chrome) = imp.chrome.borrow().as_ref() {
+                chrome.show_query(Some(view.query_field().upcast_ref()));
+            }
             view.focus();
         }
     }
@@ -3829,6 +3895,15 @@ impl FocusWindow {
         if imp.body.visible_child_name().as_deref() == Some(RESULTS) {
             imp.body.set_visible_child_name(MAIL);
             self.focus_list();
+        }
+        if let Some(chrome) = imp.chrome.borrow().as_ref() {
+            chrome.show_query(None);
+        }
+        // The page is kept for the next search, and nothing of this one's
+        // may show in it: the controller says "found nothing" of the
+        // results it holds, and once they are left it holds none.
+        if let Some(results) = imp.results.borrow().as_ref() {
+            results.show_relaxations(None);
         }
     }
 
@@ -5757,6 +5832,11 @@ impl FocusWindow {
             Region::Reader
         } else if digest.is_some() {
             Region::Dialog
+        } else if self.results().is_some() && self.key_context() == KeyContext::Results {
+            // A search's results in the list's place, nothing over them:
+            // the window's controller hands their keys to the controller
+            // (`act`), wherever in the pane the focus sits.
+            Region::Results
         } else if focus.is_none() {
             // Focus leaves the keyboard on the window itself when nothing
             // is focused (a closed bar hands focus back to nothing, by

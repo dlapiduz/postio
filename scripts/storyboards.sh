@@ -146,8 +146,12 @@ REVIEWED="crates/postio-gtk crates/postio-widgets crates/postio-ui"
 build_runner() {
     local dir="$1"
     echo "building the runner..." >&2
-    if ! (cd "$dir" && cargo build -q -p "$RUNNER_CRATE" --example storyboard --features demo) 2>&1 \
-        | tail -20 >&2; then
+    # The attachment text helper too: the app looks for it beside its
+    # executable, and a runner under examples/ has none beside it, so every
+    # PDF would be skipped and a word inside one found nowhere (#1824). The
+    # runner is told where it is instead.
+    if ! (cd "$dir" && cargo build -q -p "$RUNNER_CRATE" --example storyboard --features demo \
+        -p postio-session --bin postio-extract-helper) 2>&1 | tail -20 >&2; then
         echo "storyboards.sh: the runner did not build" >&2
         exit 2
     fi
@@ -155,6 +159,15 @@ build_runner() {
     bin="$(cd "$dir" && target_dir)/debug/examples/storyboard"
     [ -x "$bin" ] || { echo "storyboards.sh: no runner at $bin" >&2; exit 2; }
     echo "$bin"
+}
+
+# Name the attachment text helper built beside the runner `$1`: run in a
+# subshell, `build_runner` cannot export it.
+use_helper() {
+    local helper
+    helper="$(dirname "$(dirname "$1")")/postio-extract-helper"
+    [ -x "$helper" ] && export POSTIO_EXTRACT_HELPER="$helper"
+    return 0
 }
 
 # Every storyboard a run plays: not calibration, not gap lists -- or, with
@@ -238,6 +251,8 @@ run_command() {
     # landing can tell it is current (research R13).
     KEY=$(review_key 2>/dev/null | tail -1)
     bin=$(build_runner "$ROOT") || exit 2
+
+    use_helper "$bin"
     # The catalogue is split across runners side by side, each on a
     # headless compositor of its own (never the maintainer's display):
     # every storyboard settles by waiting, so one runner leaves most of the
@@ -365,6 +380,8 @@ base_command() {
     fi
     echo "the base is ${sha:0:12}."
     bin=$(build_runner "$tree") || exit 2
+
+    use_helper "$bin"
     headless "$bin" run "${files[@]}" --out "$cache" --commit "$sha" \
         ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}
     # A base run that fails is what a base run of a fixed defect does: it is
@@ -381,6 +398,8 @@ base_command() {
 coverage_command() {
     local bin
     bin=$(build_runner "$ROOT") || exit 2
+
+    use_helper "$bin"
     headless "$bin" every-command --out "$REVIEW/coverage" --gaps "$CATALOGUE/gaps/focus.toml"
 }
 
@@ -403,6 +422,8 @@ screens_command() {
     rm -rf "$out/runs"
     mkdir -p "$out/runs"
     bin=$(build_runner "$ROOT") || exit 2
+
+    use_helper "$bin"
     headless "$bin" run "${files[@]}" --out "$out/runs" --variants
     bin=$(tool)
     "$bin" sheet --runs "$out/runs" --catalogue "$CATALOGUE" --design-dir "$ROOT/Design/screens" \

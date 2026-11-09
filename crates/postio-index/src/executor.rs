@@ -1136,9 +1136,8 @@ const HITS_JOIN: &str = "FROM (
 
 /// [`HITS_JOIN`] with a third arm: what attachments say (spec 010 D11).
 ///
-/// The conversation search's own, and only its: GTK's [`search`] keeps
-/// [`HITS_JOIN`]'s corpus until Linux adopts this search, so the two are
-/// separate strings. **Keep the first two arms and the join in step with
+/// The conversation search's own, and only its: [`search`], the terminal
+/// app's, keeps [`HITS_JOIN`]'s corpus, so the two are separate strings. **Keep the first two arms and the join in step with
 /// [`HITS_JOIN`]**: a change to how a hit is joined to its messages there
 /// is owed here too.
 ///
@@ -1330,6 +1329,15 @@ impl Plan {
         near: &std::collections::HashMap<String, Vec<String>>,
     ) -> Self {
         Self::build_with(request, near, false)
+    }
+
+    /// [`build_sets`](Self::build_sets) with each word `near` names read as
+    /// any of its words: the conversation search's forgiving pass.
+    fn build_sets_near(
+        request: &SearchRequest<'_>,
+        near: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Self {
+        Self::build_with(request, near, true)
     }
 
     fn build_with(

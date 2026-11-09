@@ -13,7 +13,7 @@
 #
 # The controller's half is postio-focus tests/controller_suite/bar.rs (prefix_*); the
 # executor's is postio-index tests/index_suite/completions.rs.
-apps   = ["macos"]
+apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US7" }
 seed   = "search"
 design = "02-typing-prefix"

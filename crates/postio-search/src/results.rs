@@ -399,6 +399,10 @@ pub struct FacetNames {
     pub label_colors: Vec<(LabelId, String)>,
     /// Folders, by their names.
     pub folders: Vec<(MailboxId, String)>,
+    /// Which hits a digest holds -- each hit's best message, the rule
+    /// holding it, and whether it has been delivered -- so a row says where
+    /// it waits in place of its folder (spec 007 US10).
+    pub held: Vec<(MessageId, String, bool)>,
 }
 
 /// The results view's two orders.

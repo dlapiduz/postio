@@ -3,16 +3,14 @@
 //!
 //! What matches, how it is grouped and ordered, and where the ring goes
 //! are the controller's, asserted in `postio-focus`. These cases drive the
-//! window as a person does, with spec 010's search staged on: Show all
+//! window as a person does: Show all
 //! opens the results, the keys walk them, a filter button edits the query,
 //! and Back brings the inbox back.
 
 use crate::support::{self, Fixture};
 
-/// A window over three budget messages and one other, with the search
-/// staged on, its inbox drawn.
+/// A window over three budget messages and one other, its inbox drawn.
 async fn budgets() -> (postio_gtk::window::FocusWindow, Fixture) {
-    postio_gtk::list::feed::stage_results_view(true);
     let fixture = Fixture::empty().await;
     fixture
         .file(
@@ -42,7 +40,6 @@ async fn budgets() -> (postio_gtk::window::FocusWindow, Fixture) {
         .file(("Lin Park", "lin@example.com"), "Lunch", "Noon?", 10)
         .await;
     let (window, _client) = fixture.open().await;
-    postio_gtk::list::feed::stage_results_view(false);
     assert!(
         crate::settle_until(async || support::subjects(&window).len() == 4).await,
         "the inbox never reached the screen"
@@ -106,6 +103,36 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
             !window.bar().is_some_and(|bar| bar.is_open()),
             "the bar stayed up"
         );
+        // One field: the top bar's holds the query, where `/` opens it,
+        // and the command field's prompt is not drawn beside it.
+        let chrome = window.chrome().expect("the top bar");
+        let said = support::texts(chrome.center());
+        assert!(
+            said.iter().any(|line| line == "budget")
+                && said.iter().any(|line| line.contains("to edit"))
+                && !said
+                    .iter()
+                    .any(|line| line == postio_ui::focus_row::COMMAND_PROMPT),
+            "the top bar's field says {said:?}"
+        );
+        assert!(
+            !support::texts(results.widget())
+                .iter()
+                .any(|line| line.contains("to edit")),
+            "a second field under the top bar: {:?}",
+            support::texts(results.widget())
+        );
+
+        // A storyboard says where the keyboard is as a region: the
+        // results', which the Mac's storyboards check for (#1825).
+        assert!(
+            crate::settle_until(async || {
+                window.observe().keyboard.region == postio_ui::observe::Region::Results
+            })
+            .await,
+            "the keyboard is in {:?}, not the results",
+            window.observe().keyboard.region
+        );
 
         let first = results.cursor();
         assert!(first.is_some(), "no ring on the results");
@@ -125,6 +152,190 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
             4,
             "the inbox is not whole"
         );
+        assert!(
+            support::texts(chrome.center())
+                .iter()
+                .any(|line| line == postio_ui::focus_row::COMMAND_PROMPT),
+            "the command field is not back"
+        );
+    });
+}
+
+/// Quick Look stays where it is while j walks the results under it,
+/// whatever the next one holds -- here a subject that takes two lines:
+/// its edges are the rows', not its words'.
+pub fn quick_look_stays_put_while_j_walks() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Q3 budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        fixture
+            .file(
+                ("Tomas Ruiz", "tomas@example.com"),
+                "Travel budget for the spring offsite, with the train times, the hotel \
+                 rooms, the dinners, the shared taxis between the station and the venue \
+                 on both days, and who pays for which of them",
+                "Trains.",
+                30,
+            )
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "no ring on the results"
+        );
+        window.press_command(postio_core::CommandId::QuickLook);
+        let panel = results.quick_look();
+        let frame = || {
+            panel
+                .widget()
+                .compute_bounds(&window)
+                .filter(|bounds| bounds.height() > 10.0 && bounds.width() > 10.0)
+        };
+        let said = || support::texts(panel.widget());
+        assert!(
+            crate::settle_until(async || panel.is_open() && frame().is_some()).await,
+            "Quick Look did not open"
+        );
+        crate::settle();
+        let before = frame();
+        // Its edges are the rows' own, inside its margins: the same place
+        // for one match as for a page of them.
+        let rows = results
+            .list()
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|rows| rows.compute_bounds(&window))
+            .expect("the rows have a place");
+        let panel_at = before.expect("the panel has a place");
+        let above = panel_at.y() - rows.y();
+        let below = rows.y() + rows.height() - (panel_at.y() + panel_at.height());
+        assert!(
+            (0.0..=40.0).contains(&above) && (0.0..=40.0).contains(&below),
+            "the panel does not fill the rows' place: {above} above, {below} below"
+        );
+        let first = said();
+        for _ in 0..3 {
+            let was = said();
+            window.press_command(postio_core::CommandId::NextMessage);
+            assert!(
+                crate::settle_until(async || said() != was).await,
+                "j did not move Quick Look on from {first:?}"
+            );
+            crate::settle();
+            assert_eq!(frame(), before, "the panel moved: {:?}", said());
+        }
+    });
+}
+
+/// The results open at their top: the first group's heading, "Top hits",
+/// over the ringed first row -- the heading that says why those rows come
+/// again under their months -- and back there after a sort.
+pub fn the_results_open_on_their_first_heading() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        for n in 0..25 {
+            fixture
+                .file(
+                    ("Ada Moreno", "ada@example.com"),
+                    &format!("Budget notes {n}"),
+                    "Who spends what.",
+                    n + 1,
+                )
+                .await;
+        }
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() >= 10).await,
+            "the inbox never reached the screen"
+        );
+        let results = show_all(&window).await;
+        let list = results.list().clone();
+        let scroller = list
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_downcast::<gtk::ScrolledWindow>()
+            .expect("the results scroll");
+        let at_the_top = || {
+            results.cursor() == Some(0)
+                && scroller.vadjustment().value() < 0.5
+                && support::with_class(&list, "focus-results-header")
+                    .into_iter()
+                    .filter_map(|header| header.compute_bounds(&scroller))
+                    .any(|bounds| bounds.y().abs() < 0.5)
+        };
+        assert!(
+            crate::settle_until(async || at_the_top()).await,
+            "the results did not open on their first heading: scrolled {}",
+            scroller.vadjustment().value()
+        );
+        for _ in 0..2 {
+            window.press_command(postio_core::CommandId::ToggleResultOrder);
+            crate::settle();
+        }
+        assert!(
+            crate::settle_until(async || at_the_top()).await,
+            "a sort did not come back to the first heading: scrolled {}",
+            scroller.vadjustment().value()
+        );
+    });
+}
+
+/// An unread result has the inbox's unread dot: the system's accent, not
+/// a grey of its own -- one state, drawn one way in both lists.
+pub fn an_unread_result_has_the_inboxs_accent_dot() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        let dots = || {
+            support::with_class(results.list(), "focus-results-gutter")
+                .into_iter()
+                .filter(|gutter| {
+                    gutter
+                        .downcast_ref::<gtk::Label>()
+                        .is_some_and(|label| label.text() == "\u{25cf}")
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            crate::settle_until(async || !dots().is_empty()).await,
+            "no unread result drew a dot"
+        );
+        let manager = adw::StyleManager::default();
+        let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
+        // Channel by channel, clamped: a theme may hand the accent over
+        // with a channel past the gamut's edge, which is drawn as its edge.
+        let channels = |colour: gtk::gdk::RGBA| {
+            [colour.red(), colour.green(), colour.blue(), colour.alpha()].map(|c| c.clamp(0.0, 1.0))
+        };
+        for dot in dots() {
+            let (drawn, wanted) = (channels(dot.color()), channels(accent));
+            assert!(
+                drawn.iter().zip(wanted).all(|(a, b)| (a - b).abs() < 0.01),
+                "the unread dot is not the accent: {drawn:?} for {wanted:?}"
+            );
+        }
     });
 }
 
@@ -330,6 +541,11 @@ pub fn nothing_found_offers_a_looser_search_that_finds_some() {
             !results.nothing().title().is_empty(),
             "the page says nothing"
         );
+        // Nothing found has no months to chart (§3.10).
+        assert!(
+            !gtk::prelude::WidgetExt::is_mapped(results.timeline().widget()),
+            "the timeline stayed over the page"
+        );
         window.press_command(postio_core::CommandId::PickRelaxation1);
         assert!(
             crate::settle_until(async || !results.showing_nothing() && results.chips().is_empty())
@@ -341,6 +557,390 @@ pub fn nothing_found_offers_a_looser_search_that_finds_some() {
             crate::settle_until(async || results.subjects().len() >= 3).await,
             "the budgets are not back: {:?}",
             results.subjects()
+        );
+        assert!(
+            gtk::prelude::WidgetExt::is_mapped(results.timeline().widget()),
+            "the timeline did not come back with them"
+        );
+    });
+}
+
+/// Spec 010 R10 (#1825): Ctrl+1-3 pick the results' tabs from the keyboard,
+/// and the keys go on reaching the results on each.
+pub fn the_tabs_go_by_their_keys() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
+        // Back to the inbox and into the results again first: the second
+        // time is where the keyboard was left on a page no longer shown.
+        assert!(
+            support::deliver_with(&window, "bracketleft", ctrl),
+            "History back was dropped"
+        );
+        assert!(
+            crate::settle_until(async || window.results().is_none()).await,
+            "History back did not go back to the inbox"
+        );
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew again"
+        );
+        assert!(
+            support::deliver_with(&window, "2", ctrl),
+            "Ctrl+2 was dropped"
+        );
+        assert!(
+            crate::settle_until(async || results.showing_files()).await,
+            "Ctrl+2 did not show the Files tab"
+        );
+        assert!(
+            support::deliver_with(&window, "3", ctrl),
+            "Ctrl+3 was dropped"
+        );
+        assert!(
+            crate::settle_until(async || results.showing_people()).await,
+            "Ctrl+3 did not show the People tab"
+        );
+        assert!(
+            support::deliver_with(&window, "1", ctrl),
+            "Ctrl+1 was dropped"
+        );
+        assert!(
+            crate::settle_until(async || !results.showing_people() && !results.showing_files())
+                .await,
+            "Ctrl+1 did not go back to the conversations"
+        );
+        assert!(
+            support::deliver(&window, "j"),
+            "the conversations' keys were dropped after the tabs"
+        );
+    });
+}
+
+/// Spec 010 (results-esc-ladder, #1825): `/` over the results opens the
+/// dropdown; Escape closes it and the results have the keyboard again;
+/// the next Escape leaves them for the inbox.
+pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let _results = show_all(&window).await;
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        assert!(
+            bar.is_open(),
+            "/ did not open the dropdown over the results"
+        );
+        assert!(
+            support::deliver(&window, "Escape"),
+            "the first Escape was dropped"
+        );
+        assert!(!bar.is_open(), "Escape left the dropdown up");
+        assert!(
+            window.results().is_some(),
+            "the first Escape left the results"
+        );
+        assert_eq!(
+            window.observe().keyboard.region,
+            postio_ui::observe::Region::Results,
+            "the keyboard is not back on the results"
+        );
+        assert!(
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable && seen.widget.contains("GtkListView")
+            })
+            .await,
+            "the keyboard did not come back to the results' list: {}",
+            window.observe().keyboard.widget
+        );
+        assert!(
+            support::deliver(&window, "Escape"),
+            "the second Escape was dropped"
+        );
+        assert!(
+            crate::settle_until(async || window.results().is_none()).await,
+            "the second Escape did not leave the results"
+        );
+    });
+}
+
+/// #1825: a search that found nothing, left, and then one that finds
+/// something: its rows are shown, not the first one's "Nothing matches".
+pub fn a_search_after_one_that_found_nothing_shows_its_rows() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("zebra");
+        crate::settle();
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.results().is_some_and(|r| r.showing_nothing()))
+                .await,
+            "zebra did not say it found nothing"
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.results().is_none()).await,
+            "Escape did not leave the results"
+        );
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || !results.subjects().is_empty()).await,
+            "budget found nothing"
+        );
+        assert!(
+            !results.showing_nothing(),
+            "the last search's \"Nothing matches\" is shown over budget's rows"
+        );
+    });
+}
+
+/// storyboards/flows/search-open-reply-back on spec 010 (#1825): a result
+/// opened from the results answers `r` with a reply quoting it, and Escape
+/// walks back out: the reply, the message, then the results.
+pub fn replying_to_a_result_and_escaping_back_to_the_results() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+            "Return did not open the result"
+        );
+        support::keys(&window, &["r"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "r opened no reply"
+        );
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_none()).await,
+            "Escape left the reply up"
+        );
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || window.reading().is_none_or(|r| !r.is_open())).await,
+            "the second Escape left the message open"
+        );
+        assert!(window.results().is_some(), "the results are gone");
+        assert!(
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable && seen.region == postio_ui::observe::Region::Results
+            })
+            .await,
+            "the keyboard is not back on the results: {}",
+            window.observe().keyboard.widget
+        );
+        // On the ringed result itself, not on a group's heading: one ring.
+        let on_the_ring = || {
+            use gtk::prelude::WidgetExt;
+            gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| {
+                std::iter::successors(Some(focus.clone()), |widget| widget.first_child())
+                    .any(|widget| widget.has_css_class("focus-results-cursor"))
+            })
+        };
+        assert!(
+            crate::settle_until(async || on_the_ring()).await,
+            "the keyboard is not on the ringed result: {}",
+            support::focus_path(&window)
+        );
+    });
+}
+
+/// Spec 010 US5 (§3.5): checking results turns the footer into the bulk
+/// bar, which says how many the next verb will reach.
+pub fn checking_results_says_how_many_are_selected() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        let said = || support::texts(results.widget());
+        support::keys(&window, &["x"]);
+        assert!(
+            crate::settle_until(async || said().iter().any(|text| text == "1 selected")).await,
+            "the bulk bar does not count one: {:?}",
+            said()
+        );
+        support::keys(&window, &["j", "x"]);
+        assert!(
+            crate::settle_until(async || said().iter().any(|text| text == "2 selected")).await,
+            "the bulk bar does not count two: {:?}",
+            said()
+        );
+    });
+}
+
+/// Spec 010 D24 (#1825): Ctrl+Backspace on the no-results page clears the
+/// filters, and the keyboard is on the results that come back -- not left
+/// on the page that went, nor handed to the top bar.
+pub fn clearing_the_filters_keeps_the_keyboard_on_the_results() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.click_filter("Attachment")).await,
+            "no Attachment button"
+        );
+        assert!(
+            crate::settle_until(async || results.showing_nothing()).await,
+            "nothing matched, and the page did not say so"
+        );
+        results.focus();
+        support::press(&window, "BackSpace", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || !results.showing_nothing() && results.chips().is_empty())
+                .await,
+            "Ctrl+Backspace did not clear the filters: {:?}",
+            results.chips()
+        );
+        assert!(
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable && seen.region == postio_ui::observe::Region::Results
+            })
+            .await,
+            "the keyboard is not on the results: {}",
+            support::focus_path(&window)
+        );
+    });
+}
+
+/// Spec 010 US5 (§3.9, screen 12): Ctrl+S over the results opens the Save
+/// popover -- a name made from the query, its terms, Pin on -- with the
+/// keyboard in its Name field; Return saves it to `config.toml`, pinned,
+/// and the popover goes.
+pub fn ctrl_s_opens_the_save_popover_and_return_saves() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Q3 budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        fixture
+            .file(
+                ("Tomas Ruiz", "tomas@example.com"),
+                "Travel budget",
+                "Trains.",
+                30,
+            )
+            .await;
+        fixture
+            .file(("Lin Park", "lin@example.com"), "Lunch", "Noon?", 10)
+            .await;
+        fixture.index().await;
+        let directory = tempfile::tempdir().expect("a config directory");
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, "# Mine.\n").expect("a config");
+        let config = postio_config::Config::load_from_path(&path).expect("it reads");
+        let window = postio_gtk::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_gtk::startup::adopt_at(
+            &window,
+            fixture.host(),
+            &config,
+            Some(&path),
+        ));
+        support::keep(directory);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "the inbox never reached the screen"
+        );
+        let results = show_all(&window).await;
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        support::press(&window, "s", gtk::gdk::ModifierType::CONTROL_MASK);
+        let save = results.save_popover();
+        assert!(
+            crate::settle_until(async || save.is_open()).await,
+            "Ctrl+S opened no Save popover"
+        );
+        assert!(!save.name().is_empty(), "no name is offered");
+        assert!(
+            save.texts()
+                .iter()
+                .any(|text| text == "Save as a saved search"),
+            "{:?}",
+            save.texts()
+        );
+        assert!(
+            save.texts().iter().any(|text| text == "budget"),
+            "the query's terms are not shown: {:?}",
+            save.texts()
+        );
+        assert!(
+            save.name_has_keyboard(),
+            "the Name field does not have the keyboard"
+        );
+        assert!(
+            save.key(gtk::gdk::Key::Return),
+            "Return was not the popover's"
+        );
+        assert!(
+            crate::settle_until(async || {
+                std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("query = \"budget\"")
+            })
+            .await,
+            "Return saved nothing:\n{}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+        assert!(
+            crate::settle_until(async || !save.is_open()).await,
+            "the popover stayed up after saving"
+        );
+        assert!(
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable
+                    && seen.region == postio_ui::observe::Region::Results
+                    && seen.widget.contains("GtkListView")
+            })
+            .await,
+            "the keyboard did not come back to the results: {}",
+            window.observe().keyboard.widget
         );
     });
 }

@@ -767,6 +767,11 @@ button.focus-marker-dismiss:hover {
   background-color: color-mix(in srgb, black 16%, transparent);
 }
 
+/* Spec 010's dropdown leaves the inbox as it is (US1). */
+.focus-bar-scrim.focus-bar-scrim-clear {
+  background-color: transparent;
+}
+
 /* The bar opens in place (spec C24): its input is the top bar's field,
    drawn where the field is (7 px down a 46 px bar, 32 px tall, the same
    width), and the results hang below it as a panel of their own. */
@@ -810,6 +815,16 @@ button.focus-marker-dismiss:hover {
 .focus-bar-entry {
   background: none;
   font-size: var(--postio-text-reading);
+}
+
+/* Screen 02: the rest of the best word, after the caret, in the field's
+   own size so it lines up with what is typed; tertiary ink. */
+.focus-bar-ghost {
+  font-size: var(--postio-text-reading);
+}
+
+.focus-bar-ghost-hint label {
+  font-size: var(--postio-text-meta);
 }
 
 .focus-bar-chip {
@@ -1165,6 +1180,16 @@ button.focus-results-filter.focus-results-filter-applied {
   transition: none;
 }
 
+/* The ring the controller puts on a result is where the keyboard is; the
+   row GTK focuses is that same row, and draws no second ring. */
+.focus-results-list > row:focus-visible {
+  outline: none;
+}
+
+.focus-results-selected {
+  font-weight: bold;
+}
+
 .focus-results-header {
   min-height: 32px;
   padding: 0 var(--postio-space-4);
@@ -1207,6 +1232,11 @@ button.focus-results-filter.focus-results-filter-applied {
 .focus-results-gutter {
   min-width: 28px;
   color: var(--postio-ink-secondary);
+}
+
+/* Unread: the inbox row's accent dot (FR-091's unread mark). */
+.focus-results-gutter.focus-results-dot {
+  color: var(--postio-accent);
 }
 
 .focus-results-sender {
@@ -1314,6 +1344,40 @@ button.focus-results-filter.focus-results-filter-applied {
 
 .focus-popover {
   min-width: 320px;
+}
+
+/* The Save popover (spec 010 §3.9, screen 12). */
+.focus-save-popover > contents {
+  padding: var(--postio-space-3);
+  font-family: var(--postio-font-body);
+}
+
+.focus-save {
+  min-width: 340px;
+}
+
+.focus-save-chips > flowboxchild {
+  padding: 0;
+}
+
+.focus-save-title {
+  font-weight: bold;
+}
+
+.focus-save-chip {
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-md);
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+}
+
+.focus-save-switch-note label {
+  font-size: var(--postio-text-meta);
+}
+
+.focus-save-button label {
+  font-weight: bold;
 }
 
 .focus-popover-rows > row {

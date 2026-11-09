@@ -154,8 +154,18 @@ pub struct ResultsPane {
     sub_line: gtk::Label,
     tabs: gtk::Box,
     sort: gtk::Button,
+    /// "‹ Inbox", with Back's key.
+    back: gtk::Button,
+    /// "Save search", with its key: what the Save popover hangs from.
+    save_button: gtk::Button,
+    save_popover: Rc<crate::save_popover::SavePopover>,
     chips: gtk::Box,
     query_hint: gtk::Box,
+    /// The query, drawn in the top bar's field while the results are up
+    /// ([`crate::chrome::Chrome::show_query`]).
+    query: gtk::Box,
+    /// The timeline and its hint.
+    timeline_line: gtk::Box,
     buttons: gtk::Box,
     /// The filter buttons drawn, by kind: what a popover hangs from.
     filter_buttons: RefCell<Vec<(FilterKind, gtk::Button)>>,
@@ -220,6 +230,10 @@ impl ResultsPane {
         head.append(&titles);
         head.append(&tabs);
         head.append(&sort);
+        let save_button = gtk::Button::new();
+        save_button.add_css_class("focus-results-save");
+        save_button.set_focus_on_click(false);
+        head.append(&save_button);
 
         let chips = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         chips.add_css_class("focus-results-chips");
@@ -275,7 +289,6 @@ impl ResultsPane {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("focus-results");
         root.append(&head);
-        root.append(&query);
         root.append(&buttons);
         root.append(&timeline_line);
         let act: Rc<dyn Fn(CommandId)> = Rc::new(act);
@@ -306,6 +319,10 @@ impl ResultsPane {
         let popover = crate::search_popover::FilterPopover::new(move |input| {
             popover_feed.input(input);
         });
+        let save_feed = feed.clone();
+        let save_popover = crate::save_popover::SavePopover::new(move |input| {
+            save_feed.input(input);
+        });
         let pane = Rc::new(ResultsPane {
             root,
             feed,
@@ -314,8 +331,13 @@ impl ResultsPane {
             sub_line,
             tabs,
             sort,
+            back: back.clone(),
+            save_button,
+            save_popover,
             chips,
             query_hint,
+            query: query.clone(),
+            timeline_line: timeline_line.clone(),
             buttons,
             filter_buttons: RefCell::default(),
             timeline,
@@ -387,6 +409,28 @@ impl ResultsPane {
                 }
             }
         });
+        // The keyboard goes back to the results when the Save popover
+        // goes, not to the button it hung from -- once GTK has handed it to
+        // that button, which it does after `closed`.
+        self.save_popover.connect_closed({
+            let weak = weak.clone();
+            move || {
+                let weak = weak.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(pane) = weak.upgrade() {
+                        pane.focus();
+                    }
+                });
+            }
+        });
+        self.save_button.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(pane) = weak.upgrade() {
+                    (pane.act)(CommandId::SaveSearch);
+                }
+            }
+        });
         self.sort.connect_clicked(move |_| {
             let Some(pane) = weak.upgrade() else {
                 return;
@@ -405,8 +449,14 @@ impl ResultsPane {
         &self.root
     }
 
+    /// The query's field: its chips and words, and what `/` does.
+    pub fn query_field(&self) -> &gtk::Box {
+        &self.query
+    }
+
     /// Draw the frame: the controller's `Intent::ShowResults`.
     pub fn show(&self, view: &ResultsView) {
+        self.dress_head();
         self.count_line.set_text(&view.count_line);
         self.sub_line.set_text(&view.sub_line);
         self.sub_line.set_visible(!view.sub_line.is_empty());
@@ -431,8 +481,19 @@ impl ResultsPane {
         ));
         clear(&self.hints);
         let bulk = view.selected > 0;
-        for hint in if bulk { &view.bulk } else { &view.hints } {
-            self.hints.append(&hint_line(&hint.key, &hint.label));
+        if bulk {
+            // The bulk bar (§3.5): how many the next verb reaches, then each
+            // verb before its key, as the inbox's bulk bar says them.
+            let count = gtk::Label::new(Some(&words::checked_line(view.selected)));
+            count.add_css_class("focus-results-selected");
+            self.hints.append(&count);
+            for hint in &view.bulk {
+                self.hints.append(&verb_line(&hint.key, &hint.label));
+            }
+        } else {
+            for hint in &view.hints {
+                self.hints.append(&hint_line(&hint.key, &hint.label));
+            }
         }
         match (&view.select_all, bulk) {
             (Some(all), true) => self.footer.set_text(&format!("{} {}", all.key, all.label)),
@@ -445,14 +506,14 @@ impl ResultsPane {
         match &view.files {
             Some(header) => {
                 self.files.show(header, view.rows);
-                self.body.set_visible_child_name(FILES);
+                self.switch_body(FILES);
             }
             None if people => {
                 self.people.show(view.rows);
-                self.body.set_visible_child_name(PEOPLE);
+                self.switch_body(PEOPLE);
             }
-            None if self.found_nothing.get() => self.body.set_visible_child_name(NOTHING),
-            None => self.body.set_visible_child_name(ROWS),
+            None if self.found_nothing.get() => self.switch_body(NOTHING),
+            None => self.switch_body(ROWS),
         }
         let groups_changed = self
             .view
@@ -488,6 +549,15 @@ impl ResultsPane {
             }
         }
         self.items.rows_changed(first, count);
+        // A row still being read is drawn empty; the rows landing now grow
+        // into their height and push the ring down, out of view.
+        if self
+            .cursor
+            .get()
+            .is_some_and(|cursor| first <= cursor.saturating_add(1))
+        {
+            self.reveal_cursor();
+        }
     }
 
     /// The focus ring is on the result at `position` now.
@@ -615,16 +685,71 @@ impl ResultsPane {
                 self.nothing.show(view);
                 self.found_nothing.set(true);
                 if !self.showing_files() && !self.showing_people() {
-                    self.body.set_visible_child_name(NOTHING);
+                    self.switch_body(NOTHING);
                 }
             }
             None => {
                 self.found_nothing.set(false);
                 if self.body.visible_child_name().as_deref() == Some(NOTHING) {
-                    self.body.set_visible_child_name(ROWS);
+                    self.switch_body(ROWS);
                 }
             }
         }
+    }
+
+    /// Show the body's `page`, the keyboard going with it when it was on
+    /// the page that goes: a hidden page keeps no keyboard, and GTK would
+    /// hand it to the top bar's first button.
+    fn switch_body(&self, page: &str) {
+        if self.body.visible_child_name().as_deref() == Some(page) {
+            return;
+        }
+        let had = self
+            .root
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| focus.is_ancestor(&self.body));
+        self.body.set_visible_child_name(page);
+        // Nothing found has no months to chart (§3.10).
+        self.timeline_line.set_visible(page != NOTHING);
+        if had {
+            self.focus();
+        }
+    }
+
+    /// The head's two buttons with their keys, as the keymap says them now:
+    /// "‹ Inbox" with Back's, "Save search" with its own (§3.2).
+    fn dress_head(&self) {
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        line.append(&gtk::Image::from_icon_name("go-previous-symbolic"));
+        line.append(&gtk::Label::new(Some(words::BACK_TO_INBOX)));
+        if let Some(key) = self.feed.key(CommandId::Back) {
+            line.append(&keyhint::cap(&key));
+        }
+        self.back.set_child(Some(&line));
+        keyhint::dress(
+            &self.save_button,
+            words::SAVE_SEARCH,
+            self.feed.key(CommandId::SaveSearch).as_deref(),
+        );
+    }
+
+    /// Draw the Save popover from the Save search button, or take it down:
+    /// `Intent::SavePopover`.
+    pub fn show_save(&self, view: Option<&postio_focus::SaveView>) {
+        match view {
+            Some(view) => self.save_popover.show(
+                view,
+                &self.save_button,
+                self.feed.key(CommandId::Back).as_deref(),
+            ),
+            None => self.save_popover.close(),
+        }
+    }
+
+    /// The Save popover.
+    pub fn save_popover(&self) -> &crate::save_popover::SavePopover {
+        &self.save_popover
     }
 
     /// The no-results page.
@@ -638,7 +763,7 @@ impl ResultsPane {
     }
 
     /// Whether the People tab's list is in the rows' place.
-    fn showing_people(&self) -> bool {
+    pub fn showing_people(&self) -> bool {
         self.body.visible_child_name().as_deref() == Some(PEOPLE)
     }
 
@@ -648,7 +773,7 @@ impl ResultsPane {
     }
 
     /// Whether the Files tab's grid is in the rows' place.
-    fn showing_files(&self) -> bool {
+    pub fn showing_files(&self) -> bool {
         self.body.visible_child_name().as_deref() == Some(FILES)
     }
 
@@ -659,6 +784,25 @@ impl ResultsPane {
         commands: &[CommandId],
     ) {
         self.quick_look.show(view, commands);
+    }
+
+    /// An arrow while the Files tab is shown: the grid's, two ways, as on
+    /// the Mac; elsewhere the arrows are the list's keys. Whether it took
+    /// it.
+    pub fn grid_arrow(&self, key: gtk::gdk::Key) -> bool {
+        use postio_ui::search_view::GridArrow;
+        if !self.showing_files() {
+            return false;
+        }
+        let arrow = match key {
+            gtk::gdk::Key::Left => GridArrow::Left,
+            gtk::gdk::Key::Right => GridArrow::Right,
+            gtk::gdk::Key::Up => GridArrow::Up,
+            gtk::gdk::Key::Down => GridArrow::Down,
+            _ => return false,
+        };
+        self.files.step(arrow, self.cursor.get());
+        true
     }
 
     /// The Files tab's grid.
@@ -743,11 +887,15 @@ impl ResultsPane {
                 let view = self.view.borrow();
                 let group = view.as_ref()?.groups.get(index)?;
                 item.set_activatable(false);
+                // A heading is no place for the keyboard: it would wear a
+                // ring of its own beside the result's.
+                item.set_focusable(false);
                 item.set_accessible_label(&group.accessible);
                 Some(header(group).upcast())
             }
             Item::Row(position) => {
                 item.set_activatable(true);
+                item.set_focusable(true);
                 let Some(row) = self.feed.result_row(position) else {
                     self.ask(position);
                     let quiet = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -799,6 +947,9 @@ impl ResultsPane {
             ""
         }));
         gutter.add_css_class("focus-results-gutter");
+        if row.unread && !row.checked {
+            gutter.add_css_class("focus-results-dot");
+        }
         line.append(&gutter);
 
         let sender = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -893,9 +1044,23 @@ impl ResultsPane {
         line
     }
 
-    /// Scroll the ring's row into view, moving the list no further. The
-    /// first row of a group brings its header with it.
+    /// Scroll the ring's row into view, moving the list no further, once
+    /// the redraws already said have been taken: the ring is drawn by
+    /// replacing its rows, and a `scroll_to` asked before a replacement of
+    /// the row it scrolls to was dropped, leaving the ring below the view
+    /// after a few `j`s.
     fn reveal_cursor(&self) {
+        let weak = self.me.borrow().clone();
+        glib::idle_add_local_once(move || {
+            if let Some(pane) = weak.upgrade() {
+                pane.reveal_cursor_now();
+            }
+        });
+    }
+
+    /// [`reveal_cursor`](Self::reveal_cursor), now. The first row of a
+    /// group brings its header with it.
+    fn reveal_cursor_now(&self) {
         let Some(at) = self
             .cursor
             .get()
@@ -906,11 +1071,48 @@ impl ResultsPane {
         let header_above = at
             .checked_sub(1)
             .filter(|above| matches!(self.items.item_at(*above), Some(Item::Header(_))));
-        if let Some(header) = header_above {
+        // The first row of the list shows the list from its top: the first
+        // group's heading -- "Top hits", which says why its rows come again
+        // below -- is never left just above the view.
+        let from_the_top = header_above == Some(0);
+        if from_the_top {
+            to_the_top(&self.list);
+        } else if let Some(header) = header_above {
             self.list
                 .scroll_to(header, gtk::ListScrollFlags::NONE, None);
         }
-        self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+        if !from_the_top {
+            self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+        }
+        // The list places a row it has not drawn by an estimate of the
+        // rows' heights, which a 72 row after 40 ones outruns: once it is
+        // drawn, the ringed row is brought the rest of the way in.
+        let frames = std::cell::Cell::new(0);
+        let settled = std::cell::Cell::new(0);
+        self.list.add_tick_callback(move |list, _| {
+            frames.set(frames.get() + 1);
+            // Until it is wholly in view, for some four seconds of frames: a row
+            // drawn late moves the ones below it again, and a slow machine
+            // draws late.
+            if from_the_top {
+                to_the_top(list);
+            }
+            // In view for three frames running: one frame's bounds can be
+            // from before a layout that moves the row again.
+            if nudge_into_view(list) {
+                settled.set(settled.get() + 1);
+            } else {
+                settled.set(0);
+            }
+            if settled.get() >= 3 || frames.get() >= 240 {
+                return glib::ControlFlow::Break;
+            }
+            // The list's own estimate may end short of the row, where no
+            // nudge can scroll: asked again, it measures with the rows it
+            // has drawn since.
+            list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+            glib::ControlFlow::Continue
+        });
     }
 
     /// The subjects of the rows read so far, in order: what a test reads.
@@ -934,6 +1136,19 @@ impl ResultsPane {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// What the Sort button says: "Sort Best match".
+    pub fn sort_said(&self) -> String {
+        self.sort
+            .label()
+            .map(|label| label.to_string())
+            .unwrap_or_default()
+    }
+
+    /// The rows' list, for what a test measures of it.
+    pub fn list(&self) -> &gtk::ListView {
+        &self.list
     }
 
     /// The count line: "48 conversations".
@@ -1050,11 +1265,78 @@ impl ResultsPane {
             self.files.focus();
             return;
         }
+        if self.showing_nothing() {
+            self.nothing.focus();
+            return;
+        }
         if self.showing_people() {
             self.people.focus();
             return;
         }
-        self.list.grab_focus();
+        // On the ringed result, as the inbox's keyboard is on its cursor's
+        // row: the list's own focus would land on its first item.
+        match self
+            .cursor
+            .get()
+            .and_then(|position| self.items.position_of(position))
+        {
+            // The list takes the keyboard first: scrolling to an item
+            // focuses it only while the keyboard is already within.
+            Some(at) => {
+                self.list.grab_focus();
+                self.list.scroll_to(at, gtk::ListScrollFlags::FOCUS, None);
+            }
+            None => {
+                self.list.grab_focus();
+            }
+        }
+    }
+}
+
+/// Scroll `list`'s scroller to its very top.
+fn to_the_top(list: &gtk::ListView) {
+    if let Some(scroller) = list
+        .ancestor(gtk::ScrolledWindow::static_type())
+        .and_downcast::<gtk::ScrolledWindow>()
+    {
+        scroller.vadjustment().set_value(0.0);
+    }
+}
+
+/// Scroll `list` by what its ringed row still lies outside its scroller:
+/// whether it was already wholly in view.
+fn nudge_into_view(list: &gtk::ListView) -> bool {
+    let Some(scroller) = list
+        .ancestor(gtk::ScrolledWindow::static_type())
+        .and_downcast::<gtk::ScrolledWindow>()
+    else {
+        return true;
+    };
+    let mut stack = vec![list.clone().upcast::<gtk::Widget>()];
+    let ringed = std::iter::from_fn(|| {
+        let widget = stack.pop()?;
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+        Some(widget)
+    })
+    .find(|widget| widget.is_mapped() && widget.has_css_class("focus-results-cursor"));
+    let Some(bounds) = ringed.and_then(|ringed| ringed.compute_bounds(&scroller)) else {
+        return false;
+    };
+    let height = scroller.height() as f32;
+    let adjustment = scroller.vadjustment();
+    let below = bounds.y() + bounds.height() - height;
+    if bounds.y() < -0.5 {
+        adjustment.set_value(adjustment.value() + f64::from(bounds.y()));
+        false
+    } else if below > 0.5 {
+        adjustment.set_value(adjustment.value() + f64::from(below));
+        false
+    } else {
+        true
     }
 }
 
@@ -1087,6 +1369,16 @@ fn hint_line(key: &str, label: &str) -> gtk::Box {
     words.add_css_class("dim-label");
     words.set_single_line_mode(true);
     line.append(&words);
+    line
+}
+
+/// A verb on the bulk bar: its word, then its key.
+fn verb_line(key: &str, label: &str) -> gtk::Box {
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+    let words = gtk::Label::new(Some(label));
+    words.set_single_line_mode(true);
+    line.append(&words);
+    line.append(&keyhint::cap(key));
     line
 }
 

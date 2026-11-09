@@ -408,6 +408,23 @@ impl Bar {
         &self.places.folders
     }
 
+    /// Each folder's account, where there are several.
+    pub(crate) fn owners(&self) -> &[(MailboxId, String)] {
+        &self.places.owners
+    }
+
+    /// Where an answer named by `names` has its hits: its folders, the
+    /// places', what a digest holds, and the accounts.
+    fn wheres(&self, names: postio_search::results::FacetNames) -> dropdown::Wheres {
+        let mut folders = names.folders;
+        folders.extend(self.places.folders.iter().cloned());
+        dropdown::Wheres {
+            folders,
+            held: names.held,
+            owners: self.places.owners.clone(),
+        }
+    }
+
     /// The name a person is known by, for any address they own.
     pub(crate) fn name_for(&self, address: &str) -> Option<String> {
         self.places
@@ -1925,9 +1942,13 @@ impl Bar {
         };
         let now = self.now();
         let mut view = match drop.state {
-            DropdownState::Words => {
-                dropdown::words(drop.landed.as_ref(), &drop.terms, &self.keymap, now)
-            }
+            DropdownState::Words => dropdown::words(
+                drop.landed.as_ref(),
+                &drop.terms,
+                drop.query.as_ref(),
+                &self.keymap,
+                now,
+            ),
             DropdownState::Prefix => dropdown::prefix(dropdown::PrefixParts {
                 typed: &drop.value,
                 ghost: drop.ghost.clone(),
@@ -2100,8 +2121,7 @@ impl Bar {
             .map(|(pill, clause)| (self.token(), pill, clause))
             .collect();
         let show_all = self.token();
-        let mut folders = results.names.folders;
-        folders.extend(self.places.folders.iter().cloned());
+        let wheres = self.wheres(results.names);
         let landed = Landed {
             hits,
             pills,
@@ -2109,7 +2129,7 @@ impl Bar {
             total: results.total,
             capped: results.capped,
             elapsed: results.elapsed,
-            folders,
+            wheres,
         };
         let Some(drop) = self.drop.as_mut() else {
             return Vec::new();
@@ -2329,19 +2349,14 @@ impl Bar {
                 hit,
             })
             .collect();
-        let mut folders = results.names.folders;
-        folders.extend(self.places.folders.iter().cloned());
+        let wheres = self.wheres(results.names);
         let Some(drop) = self.drop.as_mut() else {
             return Vec::new();
         };
         if drop.state != DropdownState::Operator || drop.latest_asked.as_deref() != Some(address) {
             return Vec::new();
         }
-        drop.latest = Some(Latest {
-            name,
-            hits,
-            folders,
-        });
+        drop.latest = Some(Latest { name, hits, wheres });
         vec![self.draw(None)]
     }
 
@@ -2424,7 +2439,7 @@ impl Bar {
                 (token, recent)
             })
             .collect();
-        self.redraw_empty()
+        self.redraw_empty(None)
     }
 
     /// New mail arrived: the searches that notify are counted again while
@@ -2463,7 +2478,7 @@ impl Bar {
                         None => self.saved_counts.push(counted),
                     }
                 }
-                self.redraw_empty()
+                self.redraw_empty(None)
             }
             Err(error) => {
                 tracing::debug!(%error, "the saved searches could not be counted");
@@ -2472,10 +2487,12 @@ impl Bar {
         }
     }
 
-    fn redraw_empty(&self) -> Vec<Step> {
+    /// Draw the empty dropdown again, if it is up, the arrows moved to
+    /// `select`.
+    fn redraw_empty(&self, select: Option<u64>) -> Vec<Step> {
         match &self.drop {
             Some(drop) if self.is_open() && drop.state == DropdownState::Empty => {
-                vec![self.draw(None)]
+                vec![self.draw(select)]
             }
             _ => Vec::new(),
         }
@@ -2488,7 +2505,15 @@ impl Bar {
             return Vec::new();
         };
         let (_, recent) = self.recents.remove(at);
-        let mut steps = self.redraw_empty();
+        // The arrows stay in place, on the row that moved up into it, or
+        // the one above when it was the last.
+        let next = self
+            .recents
+            .get(at)
+            .or_else(|| at.checked_sub(1).and_then(|at| self.recents.get(at)))
+            .map(|(token, _)| *token);
+        self.highlighted = next;
+        let mut steps = self.redraw_empty(next);
         steps.push(Step::Ask(Request::ForgetSearch {
             query: recent.query,
         }));
