@@ -1071,6 +1071,36 @@ async fn people(connection: &Connection, query: &str) -> Vec<postio_search::sugg
 }
 
 #[tokio::test]
+async fn the_people_count_leaves_you_out_as_the_tab_does() {
+    // #2088: the tab strip's People count is the People tab's length --
+    // whoever the match is from or to, you not among them.
+    let (_database, connection, account, inbox) = store().await;
+    for (from, to, subject, ago) in [
+        ("ada", &["test"][..], "Atlas plan", Duration::days(5)),
+        ("test", &["ada"][..], "Re: Atlas plan", Duration::days(1)),
+    ] {
+        file(
+            &connection,
+            &account,
+            inbox,
+            Mail {
+                from,
+                to,
+                subject,
+                body: "notes",
+                ago,
+                ..Mail::default()
+            },
+        )
+        .await;
+    }
+    let results = conversations(&connection, "atlas", ConversationOrder::BestMatch, 0, 50).await;
+    let listed = people(&connection, "atlas").await;
+    assert_eq!(listed.len(), 1, "the tab lists Ada alone");
+    assert_eq!(results.people, 1, "the count says what the tab lists");
+}
+
+#[tokio::test]
 async fn the_people_tab_lists_who_the_matched_mail_is_from_and_to_but_you() {
     let (_database, connection, account, inbox) = store().await;
     let days = Duration::days;
