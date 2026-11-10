@@ -6,7 +6,7 @@
 # the reader showed the same buttons twice.
 #
 # Re-expressed for Focus (T265): the fourth row of the demo inbox is a
-# single message; `Return` opens it over the list, and its verbs are one row
+# single message (three Downs from the first); `Return` opens it over the list, and its verbs are one row
 # of buttons.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1173" }
@@ -21,13 +21,13 @@ command = "next_message"
 [[step]]
 command = "next_message"
 
-[[step]]
-command = "next_message"
-
+# The header says a single message's place and no thread: should the seed
+# move a thread under this row, the check fails rather than filming the
+# wrong case (#2087).
 [[step]]
 id      = "single"
 command = "open_message"
-check   = { view = "reader", reading.id = { changed = true } }
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.position = "Message 3 of 59" }
 expect  = "A single message is open. Its verbs are one row, with one Reply; nothing is drawn twice."
 
 [[step]]
