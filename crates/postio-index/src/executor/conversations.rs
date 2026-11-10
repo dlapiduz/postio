@@ -252,7 +252,7 @@ pub async fn search_conversations(
             .iter()
             .map(|conversation| conversation.files)
             .sum(),
-        people: people_in(&conversations),
+        people: people_in(&conversations, &searched.own),
         // Names are the session's to read, for the counts it keeps.
         names: FacetNames::default(),
         elapsed,
@@ -953,11 +953,12 @@ fn ranked<T>(counts: HashMap<i64, u64>, keep: Option<usize>, id: fn(i64) -> T) -
 }
 
 /// Everyone the matched messages are from or to: the People tab's count.
-fn people_in(conversations: &[Conversation]) -> u64 {
+fn people_in(conversations: &[Conversation], own: &[i64]) -> u64 {
     let mut everyone: Vec<i64> = conversations
         .iter()
         .flat_map(|conversation| conversation.senders.iter().chain(&conversation.recipients))
         .copied()
+        .filter(|id| !own.contains(id))
         .collect();
     everyone.sort_unstable();
     everyone.dedup();
@@ -1364,6 +1365,9 @@ struct Searched {
     bodies: bool,
     /// Every attachment on this machine has had its text read.
     contents: bool,
+    /// The person's own address ids: the People count leaves them out, as
+    /// the People tab does. Read in the same statement, not one more.
+    own: Vec<i64>,
 }
 
 /// How many messages the search looked through, whether every one of them
@@ -1395,22 +1399,30 @@ async fn searched(connection: &Connection, request: &ConversationRequest<'_>) ->
     if let Some(role) = scope_role(Scope::AllMail, names_a_folder(request.query)) {
         conditions.push(role.to_owned());
     }
-    let (total, owed, unread): (i64, i64, bool) = sql::one(
+    let (total, owed, unread, own): (i64, i64, bool, Option<String>) = sql::one(
         connection,
         &format!(
             "SELECT coalesce(sum(total_count), 0), coalesce(max({owed} > 0), 0),
-                    EXISTS (SELECT 1 FROM attachment_text_owed)
+                    EXISTS (SELECT 1 FROM attachment_text_owed),
+                    (SELECT group_concat(id) FROM addresses
+                      WHERE address_normalized IN ({own}))
                FROM mailboxes WHERE {}",
             conditions.join(" AND "),
-            owed = postio_storage::schema::BODIES_STILL_OWED
+            owed = postio_storage::schema::BODIES_STILL_OWED,
+            own = super::OWN_ADDRESSES,
         ),
         params,
-        |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
+        |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?, row.opt_text(3)?)),
     )
     .await?;
     Ok(Searched {
         messages: total.max(0) as u64,
         bodies: owed == 0,
         contents: !unread,
+        own: own
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|id| id.trim().parse().ok())
+            .collect(),
     })
 }
