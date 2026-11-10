@@ -1575,9 +1575,7 @@ impl Results {
         stamp: u64,
         answer: Result<Vec<(MessageId, Vec<Match>)>, String>,
     ) -> Option<(u64, u64)> {
-        // Before the frame, the rows' positions are not known yet: the
-        // frame, when it lands, has every row read again.
-        if stamp != self.stamp || !self.ready() {
+        if stamp != self.stamp {
             return None;
         }
         let found = match answer {
@@ -1587,6 +1585,10 @@ impl Results {
                 return None;
             }
         };
+        // Before the frame, the rows have no positions yet, but what was
+        // read is theirs: kept on the hits, and drawn when the frame, as it
+        // lands, has every row read again (#2089).
+        let ready = self.ready();
         let mut low = u64::MAX;
         let mut high = 0;
         for (message, matches) in found {
@@ -1598,6 +1600,9 @@ impl Results {
                 .filter(|hit| hit.best == message);
             for hit in hits {
                 hit.matches.clone_from(&matches);
+            }
+            if !ready {
+                continue;
             }
             if let Some(position) = self.position_of(message) {
                 low = low.min(position);
