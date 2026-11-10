@@ -2720,6 +2720,52 @@ mod dropdown {
     }
 
     #[test]
+    fn from_with_nobody_matching_says_so_and_drops_the_latest() {
+        // #2084: once the people for what is typed have been read and there
+        // are none, the section says nobody matches, the preview of a person
+        // no longer listed goes, and Return is not offered to add a chip.
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = typed(&mut focus, "from:", &rows);
+        let effects = suggested(&mut focus, &effects, people(), &rows);
+        let Request::LatestFrom { address, stamp } =
+            asked(&effects).into_iter().find(is_latest).expect("Ada's")
+        else {
+            unreachable!()
+        };
+        let mut hers = atlas_budget();
+        hers.hits.truncate(2);
+        let effects = answer(
+            &mut focus,
+            &effects,
+            is_latest,
+            |_| Reply::LatestFrom {
+                stamp,
+                address: address.clone(),
+                answer: Ok(Box::new(hers)),
+            },
+            &rows,
+        );
+        assert_eq!(dropdown(&effects).sections.len(), 2, "her latest is shown");
+
+        let effects = typed(&mut focus, "from:zzz", &rows);
+        let effects = suggested(&mut focus, &effects, Suggestions::default(), &rows);
+        let view = dropdown(&effects);
+        let [people] = view.sections.as_slice() else {
+            panic!("not the one section: {:?}", view.sections);
+        };
+        assert_eq!(people.title, "People matching \u{201c}zzz\u{201d}");
+        assert_eq!(people.note.as_deref(), Some("No one matches"));
+        assert!(people.rows.is_empty());
+        assert!(
+            !view.hints.iter().any(|hint| hint.label == "add as chip"),
+            "Return adds nothing: {:?}",
+            view.hints
+        );
+    }
+
+    #[test]
     fn from_lists_people_and_the_latest_from_the_highlighted_one() {
         let rows = List::of(1);
         let mut focus = mac_search();

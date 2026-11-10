@@ -1852,6 +1852,26 @@ pub fn operator_hints(keymap: &Keymap, keyword: &str) -> Vec<Hint> {
     hints
 }
 
+/// What the operator dropdown's section says when nobody matches what is
+/// typed (#2084), by what it lists.
+pub fn nobody_matches(noun: &str) -> &'static str {
+    match noun {
+        "Labels" => "No label matches",
+        "Folders" => "No folder matches",
+        _ => "No one matches",
+    }
+}
+
+/// The operator dropdown's footer when nothing matches: there is no row to
+/// add or exclude, so it teaches only the way back to words.
+pub fn operator_hints_for_nobody() -> Vec<Hint> {
+    vec![hints::fixed(
+        "BackSpace",
+        "back to words",
+        "Backspace on an empty value is the field's own key; the bar reads the text",
+    )]
+}
+
 /// The plain-English footer (screen 05): move, open, Tab makes chips, the
 /// words key keeps the sentence.
 pub fn plain_hints(keymap: &Keymap) -> Vec<Hint> {

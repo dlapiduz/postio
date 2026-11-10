@@ -1115,6 +1115,8 @@ pub(crate) struct OperatorParts<'a> {
     pub(crate) value: &'a str,
     pub(crate) offers: &'a [(u64, Offer)],
     pub(crate) latest: Option<&'a Latest>,
+    /// The suggestions for `value` landed: no rows is nobody.
+    pub(crate) answered: bool,
     pub(crate) keymap: &'a Keymap,
     pub(crate) now: DateTime<Local>,
 }
@@ -1137,6 +1139,13 @@ pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
         })
         .collect();
     let highlight = rows.first().map(|row| row.token);
+    // Read, and nobody: said, rather than a heading over nothing.
+    let nobody = parts.answered && rows.is_empty();
+    let note = if nobody {
+        Some(words::nobody_matches(noun).to_owned())
+    } else {
+        note
+    };
     let mut sections = vec![DropdownSection {
         title: words::matching(noun, parts.value),
         note,
@@ -1144,7 +1153,10 @@ pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
         rows,
         pills: Vec::new(),
     }];
-    if let Some(latest) = parts.latest.filter(|latest| !latest.hits.is_empty()) {
+    if let Some(latest) = parts
+        .latest
+        .filter(|latest| !nobody && !latest.hits.is_empty())
+    {
         sections.push(DropdownSection {
             title: words::latest_from(&latest.name),
             note: Some(words::LATEST_NOTE.to_owned()),
@@ -1166,7 +1178,11 @@ pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
         sections,
         highlight,
         select: None,
-        hints: words::operator_hints(parts.keymap, parts.keyword),
+        hints: if nobody {
+            words::operator_hints_for_nobody()
+        } else {
+            words::operator_hints(parts.keymap, parts.keyword)
+        },
         count: Some(words::operator_source(parts.keyword).to_owned()),
     }
 }
