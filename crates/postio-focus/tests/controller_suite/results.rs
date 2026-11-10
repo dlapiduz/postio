@@ -218,6 +218,61 @@ fn newest_has_only_month_groups() {
     assert!(results_view(&effects).expect("again").groups[0].top_hits);
 }
 
+/// A page that lands before the top hits, its passages with it, keeps
+/// those passages (#2089): until the top hits land the rows have no place
+/// yet, but what was read for them is theirs all the same.
+#[test]
+fn passages_that_land_before_the_top_hits_are_kept() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = show_all(&mut focus, "atlas budget", &rows);
+    let (top, months): (Vec<_>, Vec<_>) = asks(&effects).into_iter().partition(|(_, request)| {
+        matches!(
+            request,
+            Request::ResultsPage {
+                order: ConversationOrder::BestMatch,
+                ..
+            }
+        )
+    });
+    assert!(!top.is_empty() && !months.is_empty(), "{effects:?}");
+    // The months first, and their passages, before any top hit.
+    let mut early = Vec::new();
+    for (ticket, request) in months {
+        let reply = reply_to(&request).expect("a page");
+        early.extend(focus.handle_on(Input::Reply(ticket, reply), &rows));
+    }
+    for (ticket, request) in asks(&early) {
+        if matches!(request, Request::ResultsPassages { .. }) {
+            let reply = reply_to(&request).expect("passages");
+            let _ = focus.handle_on(Input::Reply(ticket, reply), &rows);
+        }
+    }
+    let mut late = Vec::new();
+    for (ticket, request) in top {
+        let reply = reply_to(&request).expect("the top hits");
+        late.extend(focus.handle_on(Input::Reply(ticket, reply), &rows));
+    }
+    let _ = settle(&mut focus, late, &rows);
+    // Every month row read, the top hits' own aside (their passages were
+    // asked again with them), has its passage.
+    let top_len = 3;
+    let tops: Vec<MessageId> = (0..top_len)
+        .filter_map(|at| focus.result_row(at).map(|row| row.message))
+        .collect();
+    let bare: Vec<u64> = (top_len..top_len + 10)
+        .filter(|at| {
+            focus
+                .result_row(*at)
+                .is_some_and(|row| !tops.contains(&row.message) && row.passage.is_empty())
+        })
+        .collect();
+    assert!(
+        bare.is_empty(),
+        "month rows without their passage: {bare:?}"
+    );
+}
+
 #[test]
 fn rows_page_through_a_window() {
     let rows = List::of(3);
