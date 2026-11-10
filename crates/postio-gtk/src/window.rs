@@ -1156,12 +1156,15 @@ impl FocusWindow {
     }
 
     /// Whether the list is where the keyboard is: false while the composer,
-    /// in the reading pane or a window of its own, or a dialog holds it.
+    /// in the reading pane or a window of its own, or a dialog holds it, and
+    /// while a field is being typed in -- the bar's, the dropdown's, a
+    /// popover's -- where one accent ring is the field's (#2081).
     fn list_holds_keyboard(&self) -> bool {
         self.visible_dialog().is_none()
             && !self
                 .compose()
                 .is_some_and(|compose| compose.is_showing() || compose.composer().is_detached())
+            && !self.is_typing()
     }
 
     /// Draw the cursor row quietly while the list does not hold the keyboard

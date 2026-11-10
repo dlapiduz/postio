@@ -109,6 +109,12 @@ button.focus-place {
   padding: 0 var(--postio-space-2);
 }
 
+/* The folders popover hangs from this button, so the keyboard in its field
+   is within the button too: one ring, the field's (#2081, FR-091). */
+button.focus-place:focus-within:not(:focus) {
+  outline-color: transparent;
+}
+
 .focus-place-name {
   font-weight: bold;
   font-size: var(--postio-text-reading);

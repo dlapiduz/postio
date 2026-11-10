@@ -71,6 +71,51 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
 
 /// The popover lists Flagged (`g s`) and Snoozed (`g b`) among the
 /// mailboxes, each with its key inside the row, and choosing one lists the
+
+/// While the folders popover has the keyboard, the list's cursor row
+/// keeps only its quiet mark: one accent ring on the screen, the field's
+/// (#2081, FR-091). It is the accent again once the popover goes.
+pub fn the_folders_popover_quiets_the_lists_ring() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
+            "the inbox never reached the screen"
+        );
+        let ring = || {
+            window
+                .observe()
+                .app
+                .get("focus.cursor.ring")
+                .and_then(|ring| ring.as_str().map(str::to_owned))
+        };
+        assert_eq!(
+            ring().as_deref(),
+            Some("accent"),
+            "the list has the keyboard"
+        );
+        support::keys(&window, &["g", "l"]);
+        assert!(window.places().is_some(), "g l opened the folders popover");
+        assert!(
+            crate::settle_until(async || ring().as_deref() == Some("quiet")).await,
+            "the list kept its ring under the popover: {:?}",
+            ring()
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || ring().as_deref() == Some("accent")).await,
+            "the ring did not come back: {:?}",
+            ring()
+        );
+    });
+}
 /// same cross-account view the key does.
 pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
     crate::gtk_case(async {

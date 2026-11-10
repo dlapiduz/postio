@@ -7,4 +7,4 @@ source = { kind = "design", ref = "focus 10" }
 
 [[step]]
 command = "go_to_folders"
-check   = { overlay.kind = "picker", overlay.mode = "places" }
+check   = { overlay.kind = "picker", overlay.mode = "places", app.focus.cursor.ring = "quiet" }
