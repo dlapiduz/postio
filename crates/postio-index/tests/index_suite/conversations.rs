@@ -1071,6 +1071,75 @@ async fn people(connection: &Connection, query: &str) -> Vec<postio_search::sugg
 }
 
 #[tokio::test]
+async fn words_in_the_senders_name_are_its_reason() {
+    // #2085: a hit found only by who sent it says so, as one found by its
+    // subject does.
+    let (_database, connection, account, inbox) = store().await;
+    let deal = file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            from: "harbour",
+            subject: "One weekend only",
+            body: "Everything half price.",
+            ago: Duration::days(2),
+            ..Mail::default()
+        },
+    )
+    .await;
+    let results = conversations(&connection, "harbour", ConversationOrder::BestMatch, 0, 10).await;
+    let found = hit(&results, ConversationKey::Lone(deal.id));
+    assert!(
+        found.reasons.contains(&RankReason::InSender),
+        "{:?}",
+        found.reasons
+    );
+}
+
+#[tokio::test]
+async fn a_subject_every_reply_repeats_is_one_match() {
+    // #2085: "N matches" is what Quick Look shows -- the messages whose own
+    // words or files matched, and the subject once -- not every "Re:" that
+    // carries the subject along.
+    let (_database, connection, account, inbox) = store().await;
+    let mut ids = Vec::new();
+    for (subject, body, ago) in [
+        ("Atlas kickoff", "Agenda attached.", Duration::days(5)),
+        ("Re: Atlas kickoff", "Sounds good.", Duration::days(4)),
+        ("Re: Atlas kickoff", "See you there.", Duration::days(3)),
+        (
+            "Re: Atlas kickoff",
+            "One more atlas note.",
+            Duration::days(2),
+        ),
+    ] {
+        let message = file(
+            &connection,
+            &account,
+            inbox,
+            Mail {
+                subject,
+                body,
+                ago,
+                ..Mail::default()
+            },
+        )
+        .await;
+        ids.push(message.id);
+    }
+    let conversation = thread(&connection, &account, &ids).await;
+    let results = conversations(&connection, "atlas", ConversationOrder::BestMatch, 0, 10).await;
+    let found = hit(&results, ConversationKey::Thread(conversation));
+    assert_eq!(
+        found.reasons.last(),
+        Some(&RankReason::Matches(2)),
+        "the subject once, and the one reply that says it: {:?}",
+        found.reasons
+    );
+}
+
+#[tokio::test]
 async fn the_people_count_leaves_you_out_as_the_tab_does() {
     // #2088: the tab strip's People count is the People tab's length --
     // whoever the match is from or to, you not among them.

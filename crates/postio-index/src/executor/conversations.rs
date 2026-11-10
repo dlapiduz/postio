@@ -800,6 +800,11 @@ struct Conversation {
     /// When its newest match arrived, in milliseconds.
     newest: i64,
     matches: u32,
+    /// What Quick Look counts as its matches: the messages whose own words
+    /// or files matched, and the subject or sender once for all the rest
+    /// (#2085). `matches` counts every matched message, for the order.
+    shown: u32,
+    by_metadata: bool,
     unread: bool,
     flagged: bool,
     answered: bool,
@@ -819,6 +824,8 @@ impl Conversation {
             best: first,
             newest: i64::MIN,
             matches: 0,
+            shown: 0,
+            by_metadata: false,
             unread: false,
             flagged: false,
             answered: false,
@@ -848,6 +855,11 @@ impl Conversation {
         }
         self.newest = self.newest.max(message.received_at);
         self.matches += 1;
+        if message.in_body || message.in_file {
+            self.shown += 1;
+        } else {
+            self.by_metadata = true;
+        }
         self.unread |= message.unread;
         self.flagged |= message.flagged;
         self.answered |= message.answered;
@@ -1207,6 +1219,8 @@ async fn hydrate(
 struct Terms {
     subject: Vec<String>,
     files: Vec<String>,
+    /// The words alone: a `from:` filter names a person, not words in a name.
+    sender: Vec<String>,
 }
 
 impl Terms {
@@ -1229,6 +1243,7 @@ impl Terms {
             terms
         };
         Self {
+            sender: words.clone(),
             subject: named(|filter| match filter {
                 Filter::Subject(value) => Some(value),
                 _ => None,
@@ -1323,11 +1338,21 @@ fn hit(
     if in_subject {
         reasons.push(RankReason::InSubject);
     }
+    // Found by who sent it: the words in the sender's name or address.
+    let in_sender = [row.from_name.as_deref(), row.from_address.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|said| !postio_search::highlight::find(said, &terms.sender).is_empty());
+    if in_sender {
+        reasons.push(RankReason::InSender);
+    }
     // A file found it, by its name or by what it says (research R3).
     if !named.is_empty() || !read.is_empty() {
         reasons.push(RankReason::InFileName);
     }
-    reasons.push(RankReason::Matches(conversation.matches));
+    reasons.push(RankReason::Matches(
+        conversation.shown + u32::from(conversation.by_metadata),
+    ));
 
     let (messages, unread, has_attachments) = match (conversation.key, row.thread) {
         (ConversationKey::Thread(_), Some(thread)) => thread,

@@ -300,6 +300,8 @@ pub enum RankReason {
     FrequentSender,
     /// The words are in the subject.
     InSubject,
+    /// The words are in the sender's name or address.
+    InSender,
     /// The words are in an attachment's name.
     InFileName,
     /// How many of its messages matched; always last.
