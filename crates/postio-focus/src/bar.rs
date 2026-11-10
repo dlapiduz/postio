@@ -301,6 +301,9 @@ struct Drop {
     /// What the sentence was understood as (`PlainEnglish`): its tiles,
     /// the lowered query as Tab writes it, and the results' note.
     tiles: Vec<UnderstoodTile>,
+    /// The suggestions for `value` have landed: an empty `offers` is then
+    /// nobody, not "not read yet" (`Operator`).
+    answered: bool,
     lowered: Option<String>,
     note: String,
 }
@@ -320,6 +323,7 @@ impl Drop {
             latest: None,
             latest_asked: None,
             tiles: Vec::new(),
+            answered: false,
             lowered: None,
             note: String::new(),
         }
@@ -1962,6 +1966,7 @@ impl Bar {
                 value: &drop.value,
                 offers: &drop.offers,
                 latest: drop.latest.as_ref(),
+                answered: drop.answered,
                 keymap: &self.keymap,
                 now,
             }),
@@ -2263,6 +2268,12 @@ impl Bar {
             })
             .filter(|_| state == DropdownState::Prefix);
         drop.offers = offers;
+        drop.answered = true;
+        // Nobody listed: the preview of whoever was focused goes with them.
+        if first_person.is_none() && state == DropdownState::Operator {
+            drop.latest = None;
+            drop.latest_asked = None;
+        }
         let mut steps = vec![self.draw(None)];
         // The arrows rest where they were if that row is still drawn, and on
         // the first person otherwise: whose latest is shown.
