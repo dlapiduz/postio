@@ -1032,10 +1032,10 @@ impl Actions {
         let destination = mailbox_for(connection, account, to).await?;
 
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
-        let moved_rows = conversations(
-            rows.iter()
-                .filter(|message| message.mailbox_id != destination),
-        );
+        // The toast counts the rows the person chose, those already there
+        // among them: three checked are "Archived 3", as the bar said "3
+        // selected", though one of them was filed before (#2086).
+        let chosen_rows = conversations(rows.iter());
         for message in &rows {
             // Already filed: not a failure, just nothing to do for this row.
             if message.mailbox_id == destination {
@@ -1078,7 +1078,7 @@ impl Actions {
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
         Ok(Applied {
-            rows: Some(moved_rows),
+            rows: Some(chosen_rows),
             lasts: None,
             surfaced: false,
             account,
@@ -3879,6 +3879,32 @@ mod tests {
         assert_eq!(
             completion(&events).await,
             Some(("Archived 1 message", true))
+        );
+    }
+
+    /// The toast counts what the person chose (#2086): three checked, one of
+    /// them in Archive already, is "Archived 3 messages", as the bar said
+    /// "3 selected" -- not the two that moved.
+    #[tokio::test]
+    async fn archiving_a_selection_counts_what_was_chosen() {
+        let world = world().await;
+        let mut messages: Vec<MessageId> = Vec::new();
+        for _ in 0..2 {
+            messages.push(world.message(world.inbox, &[]).await);
+        }
+        messages.push(world.message(world.archive, &[]).await);
+        world
+            .looking_at(world.inbox, &messages, Some(messages[0]))
+            .await;
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .await
+            .expect("archive");
+        assert_eq!(
+            completion(&world.drained().await).await,
+            Some(("Archived 3 messages", true)),
         );
     }
 
