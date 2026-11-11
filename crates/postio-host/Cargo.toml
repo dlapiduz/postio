@@ -13,6 +13,8 @@ workspace = true
 
 [dependencies]
 async-channel = { workspace = true }
+# The filing pass Focus wraps to end a snooze (spec 013 D3) is an async trait.
+async-trait = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 # Focus mode's body stage asks the classifier what a body says (spec 007):
 # the classifier sends nothing and reaches nothing, by its boundary rule.
@@ -55,7 +57,6 @@ postio-workspace-hack.workspace = true
 [dev-dependencies]
 # Its fake runtime: no host test opens a connection, loopback included.
 postio-ai = { workspace = true, features = ["test-support"] }
-async-trait = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 postio-smtp.workspace = true
 postio-account = { workspace = true, features = ["imap", "test-server"] }

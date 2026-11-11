@@ -1427,6 +1427,61 @@ async fn a_conversation_knows_its_newest_message_whether_the_person_wrote_in_it_
 }
 
 #[tokio::test]
+async fn unsnoozing_by_thread_wakes_that_conversations_sleepers_and_no_other() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let threads = ThreadRepository::new(&connection);
+    let messages = MessageRepository::new(&connection);
+    let ours = a_thread(&connection, account.id).await;
+    let other = a_thread(&connection, account.id).await;
+    let mine = message(&connection, account.id, inbox, "ada", 10).await;
+    let theirs = message(&connection, account.id, inbox, "grace", 20).await;
+    threads.add_message(ours.id, mine.id).await.expect("joined");
+    threads
+        .add_message(other.id, theirs.id)
+        .await
+        .expect("joined");
+    messages
+        .snooze(&[mine.id, theirs.id], at(1_000))
+        .await
+        .expect("snoozed");
+
+    assert_eq!(messages.unsnooze_threads(&[]).await.expect("a write"), 0);
+    assert_eq!(
+        messages
+            .unsnooze_threads(&[ours.id])
+            .await
+            .expect("a write"),
+        1
+    );
+    assert!(
+        threads
+            .snoozed_messages(ours.id)
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+    assert_eq!(
+        threads
+            .snoozed_messages(other.id)
+            .await
+            .expect("a read")
+            .len(),
+        1,
+        "another conversation's sleeper is left alone"
+    );
+    assert_eq!(
+        messages
+            .unsnooze_threads(&[ours.id])
+            .await
+            .expect("a write"),
+        0,
+        "nothing asleep, nothing to wake"
+    );
+}
+
+#[tokio::test]
 async fn a_conversation_with_no_copies_elsewhere_folds_into_itself() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");

@@ -134,7 +134,7 @@ and splice rules every frontend story draws through.
   - `ExpandThread`, `CollapseThread`, `FirstInConversation`, `LatestInConversation`, `FirstUnreadInConversation`, `ThreadOutline`, `ThreadMenu` (`alt+period`), `ReplyToLatest`, `MuteThread`, `SplitThread` (`alt+shift+s`), `MoveThisMessage`, `DeleteThisMessage`, `ForwardWhat1..3`, `ShowNewer` and `ExpandQuoted`;
   - `[`/`]` as defaults of `Prev`/`NextInConversation`;
   - delete `ArchiveThread` and its uses (`crates/postio-ui/src/focus_target.rs` `dispatch`, the TUI, GTK, `crates/postio-ffi/src/registry.rs`, `macos/Sources/PostioKit/Accessibility.swift`). Confirm that a `[keys] archive_thread` left in `config.toml` is warned about and ignored, not fatal; if it is fatal, make it a warning in the same commit.
-- [ ] T024 Write a failing host case (red: the snoozed thread stays hidden) beside the filing stage in `crates/postio-host/src/focus/`. A reply arriving in an archived thread puts it back in the inbox, and one arriving in a snoozed thread ends the snooze (`snoozed_until` cleared on its members). Neither copies labels to the new message. Then implement the snooze clearing in the filing stage (D3, FR-004, research R1).
+- [x] T024 Write a failing host case (red: the snoozed thread stays hidden) beside the filing stage in `crates/postio-host/src/focus/`. A reply arriving in an archived thread puts it back in the inbox, and one arriving in a snoozed thread ends the snooze (`snoozed_until` cleared on its members). Neither copies labels to the new message. Then implement the snooze clearing in the filing stage (D3, FR-004, research R1).
 
   Regenerate `docs/keybindings.md`.
 
