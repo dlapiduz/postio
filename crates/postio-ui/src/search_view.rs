@@ -309,6 +309,21 @@ pub fn words_hints(keymap: &Keymap) -> Vec<Hint> {
 use postio_search::query::{Filter, State};
 use postio_search::results::{Location, RankReason, Source};
 
+/// [`reason_line`] beside a row whose source tag already says where the
+/// words were: a subject the tag names is not said again as a reason
+/// (#2085), "subject" twice on one row.
+pub fn reason_beside(reasons: &[RankReason], sources: &[Source]) -> String {
+    let tagged_subject = sources
+        .iter()
+        .any(|source| matches!(source, Source::Subject));
+    let kept: Vec<RankReason> = reasons
+        .iter()
+        .filter(|reason| !(tagged_subject && matches!(reason, RankReason::InSubject)))
+        .cloned()
+        .collect();
+    reason_line(&kept)
+}
+
 /// Why a top hit ranked, as the line under its sender says it: two parts
 /// at most (D20). The strongest reason first, in D20's order, then how
 /// many of its messages matched when that is more than one ("you replied
@@ -322,6 +337,7 @@ pub fn reason_line(reasons: &[RankReason]) -> String {
             RankReason::Flagged => "you flagged",
             RankReason::FrequentSender => "frequent sender",
             RankReason::InSubject => "subject",
+            RankReason::InSender => "sender",
             RankReason::InFileName => "file name",
             RankReason::Matches(_) => return None,
         })
@@ -1116,6 +1132,23 @@ const QUICK_LOOK_ACTIONS: [(CommandId, &str); 3] = [
     (CommandId::Archive, "Archive"),
     (CommandId::QuickLook, "Close"),
 ];
+
+/// How many matches Quick Look's cards make, counted as a result's reason
+/// line counts them (#2085): each message whose own words, quote or files
+/// matched once, however many cards it has, and the subject once. `cards`
+/// are each card's message, `None` for the subject's.
+pub fn matches_of<T: PartialEq>(cards: impl IntoIterator<Item = Option<T>>) -> usize {
+    let mut messages: Vec<T> = Vec::new();
+    let mut subject = false;
+    for card in cards {
+        match card {
+            Some(message) if !messages.contains(&message) => messages.push(message),
+            Some(_) => {}
+            None => subject = true,
+        }
+    }
+    messages.len() + usize::from(subject)
+}
 
 /// How many matches the conversation holds: "4 matches in this
 /// conversation".
@@ -2929,6 +2962,24 @@ mod tests {
     }
 
     // Screen 13 (§3.10): the no-results page's words.
+    #[test]
+    fn a_reason_beside_a_subject_tag_does_not_say_subject_again() {
+        let reasons = [
+            RankReason::InSubject,
+            RankReason::InSender,
+            RankReason::Matches(1),
+        ];
+        assert_eq!(reason_beside(&reasons, &[Source::Subject]), "sender");
+        assert_eq!(reason_beside(&reasons, &[Source::Body]), "subject · sender");
+    }
+
+    #[test]
+    fn a_message_with_two_cards_is_one_match_and_the_subject_one_more() {
+        assert_eq!(matches_of([Some(1), Some(1), Some(2), None]), 3);
+        assert_eq!(matches_of([None::<u8>]), 1);
+        assert_eq!(matches_of(Vec::<Option<u8>>::new()), 0);
+    }
+
     #[test]
     fn nothing_matches_says_how_many_filters_found_nothing_together() {
         assert_eq!(nothing_matches(4), "Nothing matches all four filters");

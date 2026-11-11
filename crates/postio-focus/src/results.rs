@@ -2439,7 +2439,7 @@ impl Results {
         let date = words::hit_date(hit.newest_match.with_timezone(&Local), with.now);
         let passage_text: String = passage.iter().map(|run| run.text.as_str()).collect();
         let reason = top_hit
-            .then(|| words::reason_line(&hit.reasons))
+            .then(|| words::reason_beside(&hit.reasons, &sources))
             .filter(|line| !line.is_empty());
         Some(ResultRow {
             message: hit.best,
@@ -2645,7 +2645,9 @@ impl Results {
                 &postio_search::highlight::find(&subject, &self.terms),
             ),
             sender,
-            matches_line: words::matches_line(cards.len()),
+            matches_line: words::matches_line(words::matches_of(matches.iter().map(|each| {
+                (!matches!(each.found.source, Source::Subject)).then_some(each.message)
+            }))),
             matches_hint: words::matches_hint(with.keymap),
             current: (!cards.is_empty()).then(|| look.current.min(cards.len() - 1) as u32),
             cards,
