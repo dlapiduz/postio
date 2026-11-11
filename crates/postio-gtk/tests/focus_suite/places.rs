@@ -69,9 +69,6 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
     });
 }
 
-/// The popover lists Flagged (`g s`) and Snoozed (`g b`) among the
-/// mailboxes, each with its key inside the row, and choosing one lists the
-
 /// While the folders popover has the keyboard, the list's cursor row
 /// keeps only its quiet mark: one accent ring on the screen, the field's
 /// (#2081, FR-091). It is the accent again once the popover goes.
@@ -116,6 +113,9 @@ pub fn the_folders_popover_quiets_the_lists_ring() {
         );
     });
 }
+
+/// The popover lists Flagged (`g s`) and Snoozed (`g b`) among the
+/// mailboxes, each with its key inside the row, and choosing one lists the
 /// same cross-account view the key does.
 pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
     crate::gtk_case(async {
