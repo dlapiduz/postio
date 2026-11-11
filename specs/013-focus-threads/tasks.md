@@ -109,8 +109,8 @@ and splice rules every frontend story draws through.
   - the draft is found by `drafts.thread_id`;
   - **the statement count is equal at 2 and 500 members** (`postio_storage::test_support::counting`). Assert rows materialised and trigger firings at both sizes as well (constitution V).
 - [x] T014 Implement `ThreadRepository::members` and `ThreadMember`/`Line` in `crates/postio-storage/src/repository/threads.rs` (`Line::Own` from `own_line`, `Line::Quoted` for `''`, `Line::Preview` from `preview` cut at `quote::without_attribution`).
-- [ ] T015 Add `Req::Thread`/`Resp::Thread`, `ThreadView`, `ThreadDraft` and `Client::thread` in `crates/postio-client/src/protocol.rs` and `crates/postio-client/src/api.rs`, answered in `crates/postio-host/src/lib.rs`, with `Req::family()` naming it. Test in `crates/postio-ffi/tests/ffi_suite/focus_threads.rs` over `Seed::Threads`: Harbor's view has six members, message 4 has `answers = Some(0)`, and the draft is last (red first).
-- [ ] T016 Add `Event::ThreadChanged { thread, members_added }` in `crates/postio-core/src/event.rs`, emitted after a message is threaded on arrival (`crates/postio-sync/src/initial.rs`, `resync.rs`, `send.rs`). Test it in the host suite (red: no event).
+- [x] T015 Add `Req::Thread`/`Resp::Thread`, `ThreadView`, `ThreadDraft` and `Client::thread` in `crates/postio-client/src/protocol.rs` and `crates/postio-client/src/api.rs`, answered in `crates/postio-host/src/lib.rs`, with `Req::family()` naming it. Test in `crates/postio-ffi/tests/ffi_suite/focus_threads.rs` over `Seed::Threads`: Harbor's view has six members, message 4 has `answers = Some(0)`, and the draft is last (red first).
+- [x] T016 Add `Event::ThreadChanged { thread, members_added }` in `crates/postio-core/src/event.rs`, emitted after a message is threaded on arrival (`crates/postio-sync/src/initial.rs`, `resync.rs`, `send.rs`). Test it in the host suite (red: no event).
 
 ### Scope and splice (research R7, R9)
 

@@ -101,6 +101,8 @@ pub struct DrainSummary {
     pub uncertain: Vec<String>,
     /// Mailboxes whose local state is now known to disagree with the server.
     pub needs_resync: Vec<MailboxId>,
+    /// Which thread each Sent copy the drain filed joined.
+    pub thread_arrivals: postio_sync::threaded::ThreadArrivals,
 }
 
 impl DrainSummary {
@@ -2836,6 +2838,7 @@ async fn run_drain(parts: &EngineParts, store: &Store) -> Result<DrainSummary, S
             .map(|unresolved| unresolved.reason.clone())
             .collect(),
         needs_resync: report.needs_resync.clone(),
+        thread_arrivals: report.thread_arrivals.clone(),
     })
 }
 
@@ -3917,6 +3920,9 @@ async fn sync_pass(
     // `changed` that was not known before, so `changed == arrived.len()`
     // means nothing already on screen moved or changed under the user.
     let mut only_arrivals = false;
+    // Which thread each arrival joined, said once per thread after the pass
+    // commits (`Event::ThreadChanged`). Filled where `arrived` is.
+    let mut thread_arrivals = postio_sync::threaded::ThreadArrivals::default();
     let result = if synced_before {
         // Its arrivals go to the filing pass, when a host in Focus mode gave
         // this engine one; a first sync, below, never files (spec 007).
@@ -3930,8 +3936,10 @@ async fn sync_pass(
                 changed,
                 vanished,
                 filed_away,
+                thread_arrivals: joined,
             } = &outcome
             {
+                thread_arrivals = joined.clone();
                 // What Focus's filing pass filtered or held is not new mail
                 // anybody is told of (FR-153), and not in the inbox a view
                 // would splice it into: the view re-reads instead.
@@ -3958,6 +3966,7 @@ async fn sync_pass(
                     .copied()
                     .filter(|id| !report.filed_away.contains(id))
                     .collect();
+                thread_arrivals = report.thread_arrivals.clone();
             }
             summarise_resync(outcome)
         })
@@ -4025,6 +4034,16 @@ async fn sync_pass(
                 account: parts.account,
                 mailbox,
                 messages: arrived.clone(),
+            });
+        }
+        // After the pass's transactions have committed, one event per thread
+        // however many of its messages arrived. Filed-away arrivals count:
+        // the thread changed whether or not the inbox shows them.
+        for (thread, members_added) in thread_arrivals.into_threads() {
+            parts.events.emit(Event::ThreadChanged {
+                account: parts.account,
+                thread,
+                members_added,
             });
         }
     }
@@ -4401,6 +4420,15 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
                 events.emit(Event::MessageListChanged {
                     account,
                     mailbox: *mailbox,
+                });
+            }
+            // A Sent copy filed into a thread (a reply, usually): the thread
+            // an open window reads has a new member.
+            for (thread, members_added) in summary.thread_arrivals.clone().into_threads() {
+                events.emit(Event::ThreadChanged {
+                    account,
+                    thread,
+                    members_added,
                 });
             }
             // Never silently empty: an operation given up on is one the user

@@ -128,6 +128,6 @@ pub use subject::{is_reply, normalize_subject};
 pub use sweep::{ChangeFeed, FlagPass, SweepPolicy};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
 pub use thread::Thread;
-pub use thread_view::{Line, ThreadDraft, ThreadMember};
+pub use thread_view::{Line, ThreadDraft, ThreadMember, ThreadView};
 pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};
 pub use unsubscribe::UnsubscribeActivation;

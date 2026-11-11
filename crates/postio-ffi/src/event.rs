@@ -122,6 +122,17 @@ pub enum UiEvent {
         /// The newly delivered messages.
         messages: Vec<i64>,
     },
+    /// Messages joined a thread (spec 013): an open thread window or an
+    /// expansion reads its `ThreadView` again, and `members_added` drives the
+    /// new-reply banner. Once per thread per pass.
+    ThreadChanged {
+        /// The account the thread belongs to.
+        account: i64,
+        /// The thread.
+        thread: i64,
+        /// The messages that joined it.
+        members_added: Vec<i64>,
+    },
     /// The conversation asked for has been read and can now be drawn.
     ///
     /// Boundary-local: the reading pane's read is this frontend's, and the
@@ -716,6 +727,15 @@ impl From<postio_core::Event> for UiEvent {
                 mailbox: mailbox.into(),
                 messages: messages.into_iter().map(Into::into).collect(),
             },
+            Event::ThreadChanged {
+                account,
+                thread,
+                members_added,
+            } => UiEvent::ThreadChanged {
+                account: account.into(),
+                thread: thread.into(),
+                members_added: members_added.into_iter().map(Into::into).collect(),
+            },
             Event::ConnectionChanged { account, state } => UiEvent::ConnectionChanged {
                 account: account.into(),
                 state: state.into(),
@@ -917,19 +937,32 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_changing_crosses_with_the_messages_that_joined_it() {
+        assert_eq!(
+            UiEvent::from(postio_core::Event::ThreadChanged {
+                account: 1.into(),
+                thread: 2.into(),
+                members_added: vec![3.into(), 4.into()],
+            }),
+            UiEvent::ThreadChanged {
+                account: 1,
+                thread: 2,
+                members_added: vec![3, 4],
+            }
+        );
+    }
+
+    #[test]
     fn an_unmodelled_variant_keeps_its_name_and_loses_its_payload() {
         // Rule 3: the name crosses so the far side can log it; the payload
         // does not, because a subject line in a crash report is exactly the
         // thing the logging rules exist to prevent.
-        let event = postio_core::Event::ThreadChanged {
-            account: 1.into(),
-            thread: 2.into(),
-        };
+        let event = postio_core::Event::ComposerClosed { draft: 2.into() };
         let crossed = UiEvent::from(event);
         match crossed {
             UiEvent::Other { kind } => {
-                assert_eq!(kind, "ThreadChanged");
-                assert!(!kind.contains('1') && !kind.contains('2'));
+                assert_eq!(kind, "ComposerClosed");
+                assert!(!kind.contains('2'));
             }
             other => panic!("expected Other, got {other:?}"),
         }

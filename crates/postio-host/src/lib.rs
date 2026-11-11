@@ -1540,6 +1540,10 @@ impl Inner {
             },
             Req::Body(message) => self.body(message).await,
             Req::Conversation(thread) => self.conversation(thread).await,
+            Req::Thread(thread) => match threads::view(&self.wiring.database, thread).await {
+                Ok(view) => Resp::Thread(view.map(Box::new)),
+                Err(error) => Resp::Failed(error),
+            },
             Req::Unsubscribe(message) => self.unsubscribe(message).await,
             Req::ListMail(message) => self.list_mail(message).await,
             Req::Parts(message) => {
@@ -2474,6 +2478,7 @@ pub mod reading;
 pub mod search;
 pub mod settings;
 pub mod startup;
+pub mod threads;
 
 #[cfg(test)]
 mod model_tests;

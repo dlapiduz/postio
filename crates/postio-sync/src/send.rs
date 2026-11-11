@@ -365,18 +365,34 @@ pub(crate) async fn send(
     backend: &dyn MailBackend,
     smtp: &SmtpContext<'_>,
     resync: &mut BTreeSet<i64>,
+    threaded: &mut crate::threaded::ThreadArrivals,
     job: &SendJob,
 ) -> Outcome {
     // Local-first, like every other mutating verb (#942). The row is in Sent
     // before the socket is opened, so the message is somewhere the user can
     // see it for the whole time it is on its way rather than only afterwards.
     let filed = file_sent_locally(connection, smtp, job).await;
-    let outcome = submit(connection, backend, smtp, resync, job, filed.clone()).await;
+    let outcome = submit(
+        connection,
+        backend,
+        smtp,
+        resync,
+        threaded,
+        job,
+        filed.clone(),
+    )
+    .await;
     // `Failed` is the one outcome ADR 0021 lets us say "nothing was delivered"
     // about. A `Retry` is still in progress and an `Uncertain` may have gone,
     // and a Sent row is the honest thing to show for both.
     if matches!(outcome, Outcome::Failed { .. }) {
         unfile_sent_copy(connection, filed.as_ref()).await;
+    } else if let Some(sent) = &filed
+        && let Some(thread) = sent.thread_id
+    {
+        // The Sent copy joined a thread (usually the one being answered), and
+        // stays: the drain's report says so for the engine to emit.
+        threaded.add(thread, sent.id);
     }
     // Delivered: the people it went to are contacts now, the moment it is,
     // for every app, if the user asked for that.
@@ -394,6 +410,7 @@ async fn submit(
     backend: &dyn MailBackend,
     smtp: &SmtpContext<'_>,
     resync: &mut BTreeSet<i64>,
+    threaded: &mut crate::threaded::ThreadArrivals,
     job: &SendJob,
     filed: Option<Message>,
 ) -> Outcome {
@@ -497,7 +514,7 @@ async fn submit(
     let _ = mark(connection, job, DraftState::Sent).await;
 
     let _ = session.quit().await;
-    confirm_sent_copy(connection, backend, smtp, resync, job, filed).await;
+    confirm_sent_copy(connection, backend, smtp, resync, threaded, job, filed).await;
     Outcome::Applied
 }
 
@@ -825,6 +842,7 @@ async fn confirm_sent_copy(
     backend: &dyn MailBackend,
     smtp: &SmtpContext<'_>,
     resync: &mut BTreeSet<i64>,
+    threaded: &mut crate::threaded::ThreadArrivals,
     job: &SendJob,
     filed: Option<Message>,
 ) {
@@ -880,11 +898,12 @@ async fn confirm_sent_copy(
                 return;
             }
             record_correspondents(connection, job.account, message.id).await;
-            if let Ok(threaded) = ThreadingRepository::new(connection, job.account)
+            if let Ok(joined) = ThreadingRepository::new(connection, job.account)
                 .thread(&message)
                 .await
             {
-                message.thread_id = Some(threaded.thread_id);
+                message.thread_id = Some(joined.thread_id);
+                threaded.add(joined.thread_id, message.id);
             }
             label_the_conversation(connection, job, &message).await;
             remind_on_the_conversation(connection, job, &message).await;

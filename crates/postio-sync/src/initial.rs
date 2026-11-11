@@ -213,6 +213,9 @@ pub struct Report {
     pub updated: usize,
     /// Messages filed into a thread during this pass.
     pub threaded: usize,
+    /// Which thread each arrival joined, for `Event::ThreadChanged`. Kept
+    /// where `arrived` is: a [`Coverage::Everything`] pass only.
+    pub thread_arrivals: crate::threaded::ThreadArrivals,
 }
 
 /// Enumerates `mailbox`, newest `UID` first, writing headers as they land.
@@ -491,6 +494,7 @@ pub(crate) async fn enumerate(
         report.updated += batch.updated;
         report.threaded += batch.threaded;
         if coverage == Coverage::Everything {
+            report.thread_arrivals.extend(batch.thread_arrivals);
             report.arrived.extend(batch.arrived);
             report.filed_away.extend(batch.filed_away);
         }
@@ -789,7 +793,7 @@ async fn write_batch(
         let mailbox_id = mailbox.id;
         let role = mailbox.role;
         let known_uids = &known;
-        let ((upsert, written, effects), held) = write_unit(connection, || {
+        let ((upsert, written, effects, joined), held) = write_unit(connection, || {
             // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
             // outermost level, and for the reason #79 records: the first
             // statement inside is a read, and a deferred transaction that then
@@ -846,13 +850,23 @@ async fn write_batch(
                         crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed).await;
                 }
 
-                Ok::<_, SyncError>((upsert, written, effects))
+                // Who joined which thread, said after the commit (the engine
+                // emits `ThreadChanged` from the report, never from in here).
+                let mut joined = crate::threaded::ThreadArrivals::default();
+                for (message, thread) in written.iter().zip(&threads) {
+                    if upsert.inserted_ids.contains(&message.id) {
+                        joined.add(*thread, message.id);
+                    }
+                }
+
+                Ok::<_, SyncError>((upsert, written, effects, joined))
             })
         })
         .await?;
 
         report.inserted += upsert.inserted;
         report.arrived.extend(&upsert.inserted_ids);
+        report.thread_arrivals.extend(joined);
         report.filed_away.extend(effects.filtered);
         report.filed_away.extend(effects.held);
         report.updated += upsert.updated;

@@ -100,6 +100,7 @@ impl Req {
             Req::Accounts => "Accounts",
             Req::Body(_) => "Body",
             Req::Conversation(_) => "Conversation",
+            Req::Thread(_) => "Thread",
             Req::Unsubscribe(_) => "Unsubscribe",
             Req::ListMail(_) => "ListMail",
             Req::Parts(_) => "Parts",
@@ -327,6 +328,19 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// A thread's members in date order, its unsent reply and its labels, or
+    /// none when it is gone.
+    pub async fn thread(
+        &self,
+        thread: postio_model::ThreadId,
+    ) -> Result<Option<postio_model::ThreadView>, StoreError> {
+        self.read(Req::Thread(thread), "a thread", |answer| match answer {
+            Resp::Thread(view) => Some(view.map(|view| *view)),
+            _ => None,
+        })
         .await
     }
 

@@ -114,6 +114,9 @@ pub enum Req {
     Body(MessageId),
     /// A conversation's messages, oldest first, as list rows.
     Conversation(postio_model::ThreadId),
+    /// A thread's members with their lines, its unsent reply and its labels
+    /// (spec 013).
+    Thread(postio_model::ThreadId),
     /// Leave the list this message came from: record the activation, and
     /// answer the list's name. Only ever on a person's deliberate act.
     Unsubscribe(MessageId),
@@ -823,6 +826,9 @@ pub enum Resp {
     Count(u32),
     /// Rows.
     Rows(Vec<MessageSummary>),
+    /// A thread as a window or an expansion reads it, or none when it is
+    /// gone.
+    Thread(Option<Box<postio_model::ThreadView>>),
     /// Rows, in the scope's shape.
     ListRows(ListRows),
     /// Folders.
