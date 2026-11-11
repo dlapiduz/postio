@@ -35,6 +35,7 @@
 
 use markup5ever_rcdom::{Handle, NodeData};
 use postio_model::MessageBody;
+use postio_model::mime::preview;
 
 use crate::parse;
 use crate::quote::{self, Stretch};
@@ -55,6 +56,14 @@ pub fn own_text(body: &MessageBody) -> String {
         }
     }
     text.map(from_text).unwrap_or_default()
+}
+
+/// A message's own words as one line for a thread's child row (spec 013,
+/// research R5): [`own_text`] flattened and cut to [`PREVIEW_CHARS`] with the
+/// preview's ellipsis. Empty when the message says nothing of its own, which
+/// is how an all-quote reply is told from one whose body has not landed.
+pub fn own_line(body: &MessageBody) -> String {
+    preview(&own_text(body)).unwrap_or_default()
 }
 
 /// A plain part's own words: what it says before earlier mail begins, every
@@ -280,6 +289,7 @@ fn hides(style: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postio_model::mime::PREVIEW_CHARS;
 
     fn html(markup: &str) -> MessageBody {
         MessageBody {
@@ -293,6 +303,31 @@ mod tests {
             html: None,
             text: Some(plain.to_owned()),
         }
+    }
+
+    #[test]
+    fn a_top_posted_reply_gives_its_own_first_line() {
+        let line = own_line(&text(
+            "Looks good to me.\nShip it Friday.\n\nOn Mon, 21 Sep 2026, Ana wrote:\n> Here is the draft.\n> Thoughts?\n",
+        ));
+        assert_eq!(line, "Looks good to me. Ship it Friday.");
+    }
+
+    #[test]
+    fn an_all_quote_message_has_no_own_line() {
+        let line = own_line(&text(
+            "On Mon, Ana wrote:\n> Here is the draft.\n> Thoughts?\n",
+        ));
+        assert_eq!(line, "");
+    }
+
+    #[test]
+    fn a_long_line_is_cut_as_a_preview_is() {
+        let words = "word ".repeat(100);
+        let line = own_line(&text(&words));
+        assert_eq!(line.chars().count(), PREVIEW_CHARS);
+        assert!(line.ends_with('\u{2026}'), "{line}");
+        assert!(line.starts_with("word word"));
     }
 
     #[test]

@@ -2208,6 +2208,28 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
+    /// Records `message`'s own line: the sender's own words, cut to a line
+    /// (spec 013, research R5). `""` says the message is all quote.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NotFound`] if no such message.
+    pub async fn set_own_line(&self, id: MessageId, line: &str) -> Result<()> {
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE messages SET own_line = ?2 WHERE id = ?1",
+            bind![id.get(), line],
+        )
+        .await?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "message",
+                id: id.get(),
+            });
+        }
+        Ok(())
+    }
+
     /// Records where one payload part's bytes landed in the blob store.
     ///
     /// Keyed by the part's MIME path rather than its

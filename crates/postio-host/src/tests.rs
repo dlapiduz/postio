@@ -3912,6 +3912,52 @@ fn a_question_sent_to_the_user_is_marked_with_its_sentence_and_nothing_connects(
     assert!(egress(&world).is_empty(), "{:?}", egress(&world));
 }
 
+/// `messages.own_line` of `message`: `None` while NULL.
+fn own_line_of(world: &World, message: MessageId) -> Option<String> {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::sql::first(
+            &connection,
+            "SELECT own_line FROM messages WHERE id = ?1",
+            [message.get()],
+            |row| postio_storage::sql::RowExt::col::<Option<String>>(row, 0),
+        )
+        .await
+        .expect("a read")
+        .flatten()
+    })
+}
+
+#[test]
+fn a_body_that_lands_leaves_the_senders_own_line_for_a_thread_row() {
+    // Spec 013 R5: the body stage writes `messages.own_line` from the own
+    // words, so a child row draws without parsing anything. A reply that is
+    // all quote says so with the empty string, and a message whose body has
+    // not landed stays NULL.
+    let world = World::new();
+    let reply = letter_from_tove(
+        &world,
+        saturday_noon(),
+        "Looks good to me.\n\nOn Mon, Ana wrote:\n> Here is the draft.\n> Thoughts?\n",
+        |_| {},
+    );
+    let quoted = letter_from_tove(
+        &world,
+        saturday_noon(),
+        "On Mon, Ana wrote:\n> Here is the draft.\n",
+        |_| {},
+    );
+    assert_eq!(own_line_of(&world, reply), None, "NULL before the stage");
+
+    focus_caught_up(&world);
+
+    assert_eq!(
+        own_line_of(&world, reply).as_deref(),
+        Some("Looks good to me.")
+    );
+    assert_eq!(own_line_of(&world, quoted).as_deref(), Some(""));
+}
+
 #[test]
 fn a_to_do_with_a_deadline_is_marked_due_that_day() {
     // US12 scenario 2: sent on Saturday 26 September, "by Wednesday" is

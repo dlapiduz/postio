@@ -998,7 +998,8 @@ fn without_markdown_links(text: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// Flattens body text into a single-line snippet of at most [`PREVIEW_CHARS`].
-fn preview(text: &str) -> Option<String> {
+/// A message's own line (spec 013) is cut the same way.
+pub fn preview(text: &str) -> Option<String> {
     let text = without_tags(text);
     let text = without_markdown_links(text.as_ref());
     let text = text.as_ref();

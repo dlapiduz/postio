@@ -26,8 +26,11 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use postio_model::listing::{MarkerSummary, MarkerWhen};
+use postio_model::mime::preview;
+use postio_model::thread_view::before_attribution;
 use postio_model::{
-    AccountId, EmailAddress, LabelId, MailboxId, MessageId, Thread, ThreadId, normalize_subject,
+    AccountId, DraftId, EmailAddress, LabelId, Line, MailboxId, MessageId, RfcMessageId, Thread,
+    ThreadDraft, ThreadId, ThreadMember, normalize_subject,
 };
 
 use super::messages::{
@@ -2581,6 +2584,123 @@ impl<'a> ThreadRepository<'a> {
             |row| Ok(MessageId::new(row.col(0)?)),
         )
         .await
+    }
+
+    /// The members of a thread as a child row draws them, oldest first
+    /// (spec 013 R6): one statement, a seek on `idx_messages_thread` and a
+    /// primary-key seek per member for what a row needs, whatever the
+    /// thread's length.
+    ///
+    /// `line` is the sender's own words when the body stage has cut them,
+    /// [`Line::Quoted`] when they are empty, and the stored preview, cut where
+    /// an attribution begins, while no body is here. `answers` is resolved
+    /// here over the members' own `Message-ID`s, folded as
+    /// [`RfcMessageId::folded`] folds them, and is set only for a parent that
+    /// is not the member just before.
+    pub async fn members(&self, id: ThreadId) -> Result<Vec<ThreadMember>> {
+        let rows = sql::all(
+            self.connection,
+            &Self::explain_members(),
+            [id.get()],
+            |row| {
+                let listed = read_list_row(row)?;
+                let own_line: Option<String> = row.col(17)?;
+                let rfc: Option<String> = row.col(18)?;
+                let parent: Option<String> = row.col(19)?;
+                let line = match own_line {
+                    Some(line) if line.is_empty() => Line::Quoted,
+                    Some(line) => Line::Own(line),
+                    None => Line::Preview(
+                        before_attribution(listed.preview.as_deref().unwrap_or("")).to_owned(),
+                    ),
+                };
+                let member = ThreadMember {
+                    id: listed.id,
+                    from: listed.from,
+                    own: row.col(21)?,
+                    at: listed.received_at,
+                    seen: listed.seen,
+                    has_attachments: listed.has_attachments,
+                    line,
+                    answers: None,
+                    marker: row.col(20)?,
+                };
+                Ok((member, rfc, parent))
+            },
+        )
+        .await?;
+        let mut at: HashMap<String, usize> = HashMap::with_capacity(rows.len());
+        for (index, (_, rfc, _)) in rows.iter().enumerate() {
+            if let Some(rfc) = rfc {
+                at.entry(RfcMessageId::new(rfc).folded()).or_insert(index);
+            }
+        }
+        let parents: Vec<Option<usize>> = rows
+            .iter()
+            .map(|(_, _, parent)| {
+                parent
+                    .as_ref()
+                    .and_then(|parent| at.get(&RfcMessageId::new(parent).folded()).copied())
+            })
+            .collect();
+        Ok(rows
+            .into_iter()
+            .zip(parents)
+            .enumerate()
+            .map(|(index, ((mut member, _, _), parent))| {
+                member.answers = parent
+                    .filter(|&parent| parent != index && parent + 1 != index)
+                    .and_then(|parent| u32::try_from(parent).ok());
+                member
+            })
+            .collect())
+    }
+
+    /// The SQL [`Self::members`] runs.
+    pub fn explain_members() -> String {
+        format!(
+            "SELECT {LIST_COLUMNS}, messages.own_line, messages.rfc_message_id, messages.in_reply_to,
+                EXISTS (SELECT 1 FROM markers k
+                         WHERE k.message_id = messages.id AND k.dismissed_at IS NULL),
+                EXISTS (SELECT 1 FROM recipients r JOIN addresses a ON a.id = r.address_id
+                         WHERE r.message_id = messages.id AND r.kind = 'from'
+                           AND (a.address_normalized IN
+                                  (SELECT lower(i.address) FROM identities i
+                                    WHERE i.account_id = messages.account_id)
+                                OR a.address_normalized =
+                                  (SELECT lower(c.address) FROM accounts c
+                                    WHERE c.id = messages.account_id)))
+               FROM messages
+              WHERE messages.thread_id = ?1 AND messages.{MEMBER} AND messages.draft = 0
+              ORDER BY messages.received_at, messages.id"
+        )
+    }
+
+    /// The unsent reply in thread `id`, found by `drafts.thread_id`: its
+    /// newest, when it has more than one. One statement, a seek on
+    /// `idx_drafts_thread`.
+    pub async fn draft(&self, id: ThreadId) -> Result<Option<ThreadDraft>> {
+        sql::first(self.connection, Self::explain_draft(), [id.get()], |row| {
+            let text: Option<String> = row.col(1)?;
+            let html: Option<String> = row.col(2)?;
+            let words = text
+                .filter(|text| !text.trim().is_empty())
+                .or(html)
+                .unwrap_or_default();
+            Ok(ThreadDraft {
+                id: DraftId::new(row.col(0)?),
+                first_words: preview(&words).unwrap_or_default(),
+                updated_at: from_millis(row.col(3)?),
+            })
+        })
+        .await
+    }
+
+    /// The SQL [`Self::draft`] runs.
+    pub fn explain_draft() -> &'static str {
+        "SELECT id, body_text, body_html, updated_at FROM drafts
+          WHERE thread_id = ?1 AND state <> 'sent'
+          ORDER BY updated_at DESC, id DESC LIMIT 1"
     }
 
     /// Everyone who has written in each of `ids`, in first-seen order.

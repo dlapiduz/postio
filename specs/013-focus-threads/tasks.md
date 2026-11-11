@@ -93,22 +93,22 @@ and splice rules every frontend story draws through.
 
 ### Own line (research R5)
 
-- [ ] T009 [P] Write failing tests for `own_line(body)` in `crates/postio-body/src/own_text.rs` (red: no function):
+- [x] T009 [P] Write failing tests for `own_line(body)` in `crates/postio-body/src/own_text.rs` (red: no function):
   - a top-posted reply gives its first sentence;
   - an all-quote message gives `""`;
   - a long line is cut to `PREVIEW_CHARS` with an ellipsis.
-- [ ] T010 Implement `own_line` in `crates/postio-body/src/own_text.rs`.
-- [ ] T011 Write a failing host case: once a body lands, `messages.own_line` is set (red: the column does not exist). Use the body-stage test file beside `crates/postio-host/src/focus/rules.rs`.
-- [ ] T012 Add `messages.own_line` to the T008 migration and `MessageRepository::set_own_line` in `crates/postio-storage/src/repository/messages.rs`, and write it from the Focus body stage in `crates/postio-host/src/focus/`.
+- [x] T010 Implement `own_line` in `crates/postio-body/src/own_text.rs`.
+- [x] T011 Write a failing host case: once a body lands, `messages.own_line` is set (red: the column does not exist). Use the body-stage test file beside `crates/postio-host/src/focus/rules.rs`.
+- [x] T012 Add `messages.own_line` to the T008 migration and `MessageRepository::set_own_line` in `crates/postio-storage/src/repository/messages.rs`, and write it from the Focus body stage in `crates/postio-host/src/focus/`.
 
 ### The thread read (research R6, engine contract)
 
-- [ ] T013 Write failing storage tests in `crates/postio-storage/tests/storage_suite/threads.rs` (red: no `members`):
+- [x] T013 Write failing storage tests in `crates/postio-storage/tests/storage_suite/threads.rs` (red: no `members`):
   - `ThreadRepository::members` returns date order;
   - `answers` is set only when `In-Reply-To` names a member that is not the previous one;
   - the draft is found by `drafts.thread_id`;
   - **the statement count is equal at 2 and 500 members** (`postio_storage::test_support::counting`). Assert rows materialised and trigger firings at both sizes as well (constitution V).
-- [ ] T014 Implement `ThreadRepository::members` and `ThreadMember`/`Line` in `crates/postio-storage/src/repository/threads.rs` (`Line::Own` from `own_line`, `Line::Quoted` for `''`, `Line::Preview` from `preview` cut at `quote::without_attribution`).
+- [x] T014 Implement `ThreadRepository::members` and `ThreadMember`/`Line` in `crates/postio-storage/src/repository/threads.rs` (`Line::Own` from `own_line`, `Line::Quoted` for `''`, `Line::Preview` from `preview` cut at `quote::without_attribution`).
 - [ ] T015 Add `Req::Thread`/`Resp::Thread`, `ThreadView`, `ThreadDraft` and `Client::thread` in `crates/postio-client/src/protocol.rs` and `crates/postio-client/src/api.rs`, answered in `crates/postio-host/src/lib.rs`, with `Req::family()` naming it. Test in `crates/postio-ffi/tests/ffi_suite/focus_threads.rs` over `Seed::Threads`: Harbor's view has six members, message 4 has `answers = Some(0)`, and the draft is last (red first).
 - [ ] T016 Add `Event::ThreadChanged { thread, members_added }` in `crates/postio-core/src/event.rs`, emitted after a message is threaded on arrival (`crates/postio-sync/src/initial.rs`, `resync.rs`, `send.rs`). Test it in the host suite (red: no event).
 
