@@ -41,6 +41,7 @@ pub mod row_menu;
 pub mod rule_dialog;
 pub mod rules;
 pub mod save_popover;
+pub mod scope_footer;
 pub mod search_popover;
 pub mod settings;
 pub mod source;

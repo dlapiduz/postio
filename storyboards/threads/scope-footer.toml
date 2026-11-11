@@ -16,10 +16,9 @@
 # act on the thread. `r` there opens a reply that quotes message 4, not the
 # latest.
 #
-# The footer's words are asserted by the controller's cases
-# (postio-focus tests/controller_suite/threads.rs) and filmed here; no
-# check names them because the runners do not publish the footer, so the
-# reviewer reads it from the frames. Not yet run against either app.
+# The footer's title and note are published as `app.focus.footer.title` and
+# `app.focus.footer.note`; its keys are the controller's cases
+# (postio-focus tests/controller_suite/threads.rs) and filmed here.
 apps   = ["focus"]
 source = { kind = "spec", ref = "specs/013-focus-threads US2" }
 seed   = "threads"
@@ -28,7 +27,7 @@ design = "02-thread-expanded-in-place"
 [[step]]
 id      = "row"
 wait    = { until = { cursor.index = 0 } }
-check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", app.focus.cursor.kind = "row" }
+check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", app.focus.cursor.kind = "row", app.focus.footer.title = "Re: Harbor API draft v3 · 6 messages", app.focus.footer.note = { absent = true } }
 expect  = "The cursor is on the collapsed Harbor row. The footer under the list reads \"Harbor API draft v3 · 6 messages\" and offers reply to latest, forward latest and archive thread, each beside its key, with no sentence on the right."
 
 [[step]]
@@ -61,7 +60,7 @@ check   = { cursor.index = 3 }
 [[step]]
 id      = "child4"
 key     = "j"
-check   = { cursor.index = 4, view = "list", keyboard.region = "list", app.focus.cursor.kind = "child", app.focus.cursor.tag = "↳ to Ana" }
+check   = { cursor.index = 4, view = "list", keyboard.region = "list", app.focus.cursor.kind = "child", app.focus.cursor.tag = "↳ to Ana", app.focus.footer.title = "Message 4 of 6 · Ben Adeyemi", app.focus.footer.note = "Reply and forward act on this message; e, b, l, v act on the thread" }
 expect  = "The ring is on child 4. The footer now reads \"Message 4 of 6 · Ben Adeyemi\" with reply to this, forward this and archive thread beside their keys, and on the right: \"Reply and forward act on this message; \" followed by the archive, snooze, label and move keys as the keymap binds them, then \" act on the thread\". The keys are the registry's, not the design's a, s, l, m."
 
 [[step]]

@@ -146,6 +146,8 @@ mod imp {
         /// is applied (ADR 0045).
         pub picked: SelectionState,
         pub bulk: RefCell<Option<Rc<Bulk>>>,
+        /// The bar under the list that says what the keys act on.
+        pub scope_footer: RefCell<Option<Rc<crate::scope_footer::ScopeFooter>>>,
         /// The host's view of this window's aim: a whole-view selection is
         /// a predicate the host resolves, and it reads it from here.
         pub state: RefCell<Option<SharedState>>,
@@ -312,6 +314,7 @@ mod imp {
                 resolver: RefCell::default(),
                 picked: SelectionState::new(),
                 bulk: RefCell::default(),
+                scope_footer: RefCell::default(),
                 state: RefCell::default(),
                 accounts: RefCell::default(),
                 placing_cursor: Cell::default(),
@@ -2167,6 +2170,11 @@ impl FocusWindow {
                     pane.to_top();
                 }
             }
+            Intent::Footer(footer) => {
+                if let Some(bar) = self.imp().scope_footer.borrow().as_ref() {
+                    bar.set(footer);
+                }
+            }
             Intent::Counts(_) => self.show_counts(),
             Intent::Empty(page) => self.show_empty(page.as_ref()),
             Intent::Toast { text, kind } => self.show_toast(text, kind),
@@ -2825,6 +2833,9 @@ impl FocusWindow {
         // want the window's width, not the list's.
         imp.mail.append(bulk.widget());
         imp.bulk.replace(Some(Rc::clone(&bulk)));
+        let scope_footer = Rc::new(crate::scope_footer::ScopeFooter::new());
+        imp.mail.append(scope_footer.widget());
+        imp.scope_footer.replace(Some(scope_footer));
         // The accounts a whole-view selection spans.
         self.refresh_accounts(client.clone());
         pane.set_capture(imp.focus_config.borrow().vault.is_some());
@@ -2926,6 +2937,22 @@ impl FocusWindow {
             .reading()
             .filter(|reading| reading.is_open())
             .map(|reading| reading.shown());
+        if open.is_none()
+            && self.cursor_row().is_none()
+            && self.cursor_child().is_some()
+            && let Some(pane) = self.pane()
+            && let Some(MessageTarget::Messages(messages)) = pane
+                .feed()
+                .aim_for(CommandId::Reply)
+                .aims
+                .into_iter()
+                .next()
+            && let [message] = messages.as_slice()
+        {
+            // A child is a message of its own: a reply or a forward on it
+            // is about that message, not its thread's latest.
+            return Some(*message);
+        }
         postio_ui::focus_target::aimed_message(open, self.cursor_row().as_ref())
     }
 
@@ -6232,6 +6259,22 @@ impl FocusWindow {
             app.insert(
                 "focus.cursor.unread".to_owned(),
                 serde_json::json!(conversation.summary.unread_count),
+            );
+        }
+        // What the footer says: the scope of the keys under the list, or
+        // under Filtered's rows.
+        let footer = match self.filtered() {
+            Some(view) => Some(view.scope_footer().clone()),
+            None => self.imp().scope_footer.borrow().clone(),
+        };
+        if let Some(footer) = footer {
+            app.insert(
+                "focus.footer.title".to_owned(),
+                serde_json::json!(footer.title()),
+            );
+            app.insert(
+                "focus.footer.note".to_owned(),
+                serde_json::json!(footer.note()),
             );
         }
         // What the cursor is on: a row of the list, or one message of the

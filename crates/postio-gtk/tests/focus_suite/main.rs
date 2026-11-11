@@ -1683,6 +1683,10 @@ const CASES: &[(&str, fn())] = &[
         threads::filtered_opens_a_thread_in_place_and_restores_it_whole as fn(),
     ),
     (
+        "threads::the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it",
+        threads::the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it as fn(),
+    ),
+    (
         "cursor::j_and_k_move_only_the_cursor",
         cursor::j_and_k_move_only_the_cursor as fn(),
     ),

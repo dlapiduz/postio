@@ -77,6 +77,8 @@ pub struct FilteredView {
     tabs: gtk::Box,
     list: gtk::ListBox,
     footer: KeyLine,
+    /// What the keys act on from the focused row or child.
+    scope_footer: Rc<crate::scope_footer::ScopeFooter>,
     /// The bar over the footer while anything is selected.
     /// What stands in place of the rows when the tab has none.
     empty: gtk::Label,
@@ -178,6 +180,8 @@ impl FilteredView {
         let bar = Bulk::with_verbs(filtered::BAR_VERBS, keymap);
         bar.widget().add_css_class("focus-filtered-bar");
         root.append(bar.widget());
+        let scope_footer = Rc::new(crate::scope_footer::ScopeFooter::new());
+        root.append(scope_footer.widget());
         root.append(footer.widget());
 
         let view = Rc::new(FilteredView {
@@ -186,6 +190,7 @@ impl FilteredView {
             tabs,
             list,
             footer,
+            scope_footer,
             empty,
             bar,
             picker: RefCell::default(),
@@ -272,6 +277,7 @@ impl FilteredView {
                 if let Some(view) = weak.upgrade() {
                     let index = selected.and_then(|row| view.owner_of_row(row.index()));
                     view.picker.borrow_mut().focus(index.map(|at| at as u32));
+                    view.show_scope();
                 }
             }
         });
@@ -599,6 +605,67 @@ impl FilteredView {
             }
         }
         self.show_bar(&selected);
+    }
+
+    /// The footer's bar, for a test to read.
+    pub fn scope_footer(&self) -> &Rc<crate::scope_footer::ScopeFooter> {
+        &self.scope_footer
+    }
+
+    /// Say what the keys act on from the focused row or child, in the
+    /// words the list's footer uses (`postio_ui::scope::footer`).
+    fn show_scope(&self) {
+        use postio_ui::scope::{FooterAbout, ScopeFocus, footer};
+        let Some(selected) = self.list.selected_row() else {
+            self.scope_footer
+                .set(&postio_ui::scope::FooterView::default());
+            return;
+        };
+        let at = usize::try_from(selected.index()).ok();
+        let slot = at.and_then(|at| self.shown.borrow().get(at).copied());
+        let rows = self.rows.borrow();
+        let open = self.open.borrow();
+        let view = match slot {
+            Some(Slot::Row(index)) => rows.get(index).map(|row| {
+                let message = &row.message;
+                let thread = message.thread.unwrap_or(postio_model::ThreadId::new(0));
+                let count = message.thread_count.max(1) as usize;
+                footer(
+                    ScopeFocus::Row {
+                        thread,
+                        latest: message.id,
+                    },
+                    &FooterAbout {
+                        subject: message.subject.as_deref().unwrap_or_default(),
+                        count,
+                        index: count - 1,
+                        sender: "",
+                    },
+                    &self.keymap.borrow(),
+                )
+            }),
+            Some(Slot::Child(child)) => open.as_ref().and_then(|open| {
+                let row = rows.get(open.anchor)?;
+                let message = *open.members.get(child)?;
+                let sender = &open.children.get(child)?.sender;
+                footer(
+                    ScopeFocus::Child {
+                        thread: row.message.thread.unwrap_or(postio_model::ThreadId::new(0)),
+                        message,
+                    },
+                    &FooterAbout {
+                        subject: row.message.subject.as_deref().unwrap_or_default(),
+                        count: open.members.len(),
+                        index: child,
+                        sender,
+                    },
+                    &self.keymap.borrow(),
+                )
+                .into()
+            }),
+            _ => None,
+        };
+        self.scope_footer.set(&view.unwrap_or_default());
     }
 
     /// `Right`: open the focused row's thread under it, when it has more

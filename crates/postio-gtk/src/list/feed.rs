@@ -331,6 +331,11 @@ impl Feed {
         self.inner.focus.borrow().aim(&self.inner.list)
     }
 
+    /// Where `action` would go now.
+    pub fn aim_for(&self, action: CommandId) -> postio_focus::Aimed {
+        self.inner.focus.borrow().aim_for(&self.inner.list, action)
+    }
+
     /// Whether an undo is waiting for the rows it brings back to land.
     pub fn restoring(&self) -> bool {
         self.inner.focus.borrow().restoring()
