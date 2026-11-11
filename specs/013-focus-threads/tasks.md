@@ -131,7 +131,7 @@ and splice rules every frontend story draws through.
   - `archive_thread` gone;
   - no clash in any context.
 - [ ] T023 Add the commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`:
-  - `ExpandThread`, `CollapseThread`, `FirstInConversation`, `LatestInConversation`, `FirstUnreadInConversation`, `ThreadOutline`, `ThreadMenu`, `ReplyToLatest`, `MuteThread`, `SplitThread`, `MoveThisMessage`, `DeleteThisMessage`, `ForwardWhat1..3`, `ShowNewer` and `ExpandQuoted`;
+  - `ExpandThread`, `CollapseThread`, `FirstInConversation`, `LatestInConversation`, `FirstUnreadInConversation`, `ThreadOutline`, `ThreadMenu` (`alt+period`), `ReplyToLatest`, `MuteThread`, `SplitThread` (`alt+shift+s`), `MoveThisMessage`, `DeleteThisMessage`, `ForwardWhat1..3`, `ShowNewer` and `ExpandQuoted`;
   - `[`/`]` as defaults of `Prev`/`NextInConversation`;
   - delete `ArchiveThread` and its uses (`crates/postio-ui/src/focus_target.rs` `dispatch`, the TUI, GTK, `crates/postio-ffi/src/registry.rs`, `macos/Sources/PostioKit/Accessibility.swift`).
 
@@ -200,6 +200,7 @@ thread, and `z` brings it back.
 - [ ] T036 [P] [US2] Write the storyboard `storyboards/threads/scope-footer.*`, red on `main`.
 - [ ] T037 [US2] Emit `Intent::Footer(FooterView)` on every cursor move in `crates/postio-focus/src/verbs.rs` and `crates/postio-focus/src/cursor.rs`, from `scope::footer`. Resolve list verbs through `scope::target`.
 - [ ] T038 [US2] Mac footer in `macos/Sources/PostioKit/FocusSurfaceParts.swift` (keycap + label pairs, right-hand note). GTK footer in `crates/postio-gtk/src/chrome.rs`. Add a `focus_suite` case: `r` on a child opens a reply quoting that child.
+- [ ] T039a [US2] Write a failing host case (red: the snoozed thread stays hidden) beside the filing stage in `crates/postio-host/src/focus/`. A reply arriving in an archived thread puts it back in the inbox, and one arriving in a snoozed thread ends the snooze (`snoozed_until` cleared on its members). Neither copies labels to the new message. Then implement the snooze clearing in the filing stage (D3, FR-004, research R1).
 - [ ] T039 [US2] Write the undo guard test: a label added from a child applies to every member and one `z` removes it from all of them, in `crates/postio-focus/tests/controller_suite/threads.rs`. It should be green on arrival, since the write-through is today's (research R1).
 
 ---
@@ -274,7 +275,7 @@ and `}` shows it.
   - `split` moves message 4 and its replies, relinks claims and recomputes both aggregates in one transaction;
   - a later reply to message 4 joins the split thread.
 - [ ] T057 [US5] Add `thread_mutes` and `thread_splits` to the migration in `crates/postio-storage/src/schema.rs` (with a fingerprint), `mute`/`unmute`/`muted`/`split` in `crates/postio-storage/src/repository/threads.rs`, and split flags in `LoadedIndex` in `crates/postio-storage/src/repository/threading.rs`.
-- [ ] T058 [P] [US5] Write a failing host case (red: the reply lands in the inbox): a reply arriving in a muted thread is archived by the filing stage, `replies_since` becomes 1, it is searchable, and it is not a Filtered decision. Use the filing-stage tests in `crates/postio-host/src/focus/`.
+- [ ] T058 [P] [US5] Write a failing host case (red: the reply lands in the inbox): a reply arriving in a muted thread is archived by the filing stage, `replies_since` becomes 1, it is searchable, and it is not a Filtered decision. Also write the exemption case: a reply addressed to the person alone (only identity in To, no Cc) lands in the inbox and the thread stays muted (FR-012). Use the filing-stage tests in `crates/postio-host/src/focus/`.
 - [ ] T059 [US5] Add the mute check first in the filing stage in `crates/postio-host/src/focus/`, and `Req::{Mute, Unmute, Split, MutedOf}` in `crates/postio-client/src/{protocol,api}.rs`, answered in `crates/postio-host/src/lib.rs` (undoable mute). Add the `muted` field to list pages in `crates/postio-storage/src/repository/threads.rs` (`FocusListQuery`), with a count assertion of today's statements + 1.
 
 ### Menu and outline

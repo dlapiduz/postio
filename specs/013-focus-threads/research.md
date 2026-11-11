@@ -26,6 +26,13 @@ Focus rows do now. Nothing moves from messages to threads in the schema.
 Only the genuinely new per-thread state gets storage: mute and split (R3).
 Reminders stay as they are.
 
+**Clarified 2026-11-11 (D3, FR-004).** A reply arriving in an archived or
+snoozed thread that is not muted brings the thread back to the inbox and ends
+the snooze. That is the write-through's natural result for archive (the new
+message lands in the inbox). For snooze, the filing stage clears
+`snoozed_until` on the thread's other members when an unmuted reply arrives.
+Labels are not copied to the new message.
+
 **Rejected.** Columns on `threads` for snooze, labels and folder: they would
 duplicate what the server keeps on each message. Thread ids are also not
 stable across a rethread, so state keyed by them would be lost.
@@ -96,7 +103,10 @@ of the inbox into the Archive with a reason (`filter_decisions`) and a server
 keyword (#2076).
 
 **Decision.** The filing stage checks whether the message's thread is muted
-before it applies any other rule. If it is, the stage archives the message
+before it applies any other rule. A message addressed to the person alone
+(one of the account's identities is the only `To` address, and there is no
+`Cc`) is exempt and is filed as usual (clarified 2026-11-11, FR-012).
+Otherwise, if the thread is muted, the stage archives the message
 the same way any archive does: an ordinary move the server sees. It bumps
 `thread_mutes.replies_since` and emits the thread changed. That costs one
 indexed lookup per filed message, through `thread_links` on the message's
@@ -218,10 +228,10 @@ clash in its contexts:
 | `first_in_conversation` / `latest_in_conversation` | `{` / `}` | Reader |
 | `first_unread_in_conversation` | `g u` (Reader); `u` (Outline) | Reader, Outline |
 | `thread_outline` | `alt+t` | Reader, List |
-| `thread_menu` | none (the button), offered in the palette | Reader |
+| `thread_menu` | `alt+period` (clarified 2026-11-11) | Reader |
 | `reply_to_latest` | `alt+e` | List, Reader, Results, Composer (not the terminal) |
 | `mute_thread` | `m` | List, Reader, Results |
-| `split_thread` | none, menu only | Reader |
+| `split_thread` | `alt+shift+s` (clarified 2026-11-11) | Reader |
 | `move_this_message` / `delete_this_message` | `alt+v` / `alt+BackSpace` | Reader, and child rows in List and Results |
 | `forward_what_1..3` | `1` `2` `3` | Forward chooser |
 | `show_newer` / `expand_quoted` | `mod+shift+Down` / `mod+shift+q` | Composer |
