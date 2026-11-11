@@ -1154,8 +1154,9 @@ pub fn matches_of<T: PartialEq>(cards: impl IntoIterator<Item = Option<T>>) -> u
 /// (#2082): byte ranges into the typed text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldChip {
-    /// The whole term, `-from:ada` included.
+    /// Where the whole term starts, `-from:ada` included.
     pub start: usize,
+    /// Where it ends.
     pub end: usize,
     /// Where its operator ends, `-from:` drawn in mono.
     pub operator_end: usize,
