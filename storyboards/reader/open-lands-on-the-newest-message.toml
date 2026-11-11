@@ -1,4 +1,4 @@
-# Opening a conversation lands on its newest message (#1385, #1372).
+# Opening a conversation lands on the message worth reading (#1385, #1372).
 #
 # The defect: the conversation opened on its oldest message, so a person
 # arriving at a long thread read it from the top when what they came for was
@@ -8,6 +8,13 @@
 # Re-expressed for Focus (T265), where it holds: Focus's open message shows
 # one message, and Return on a thread shows its newest, message 7 of the
 # long-thread seed, and nothing moves once it has.
+#
+# Since spec 013 FR-013 the message is the first unread, else the first with
+# an open marker, else the newest. The seed's last two of seven messages are
+# unread, so Return lands on message 6, the first unread; the expectation is
+# that, not the seed's state changed, because opening at the first unread is
+# the product's rule. Return on a thread reads the thread first, so the step
+# settles on the reader.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1385" }
 proof  = "pinned"
@@ -19,10 +26,11 @@ command = "next_message"
 [[step]]
 id      = "open"
 command = "open_message"
-check   = { view = "reader", reading.id = "7" }
-expect  = "The conversation opens on its newest message, 7 of 7."
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", reading.id = "6" }
+expect  = "The conversation opens on its first unread message, 6 of 7 (FR-013)."
 
 [[step]]
 wait    = { ms = 600 }
-check   = { reading.id = "7", reading.scroll = { same_as = "open" } }
+check   = { reading.id = "6", reading.scroll = { same_as = "open" } }
 expect  = "Nothing moves on its own once the message has settled: no scroll, no jump to another message."

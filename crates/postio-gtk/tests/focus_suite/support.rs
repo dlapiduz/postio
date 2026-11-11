@@ -719,6 +719,50 @@ impl Fixture {
         ids
     }
 
+    /// A conversation of two about `subject`: Ada's message, then the
+    /// account's own reply to it, newest `minutes` ago. Answers both.
+    pub async fn thread_with_you(&self, subject: &str, minutes: i64) -> Vec<MessageId> {
+        let connection = self.database.connect().await.expect("a connection");
+        let first = postio_model::RfcMessageId::new(format!("<with-you.{subject}.1@example.test>"));
+        let mut ids = Vec::new();
+        for (n, from) in [
+            EmailAddress::new(Some("Ada Moreno"), "ada@example.com"),
+            self.account.address.clone(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = now() - Duration::minutes(minutes + 60 * (1 - n as i64));
+            let mut message = Message::new(self.account.id, self.inbox, at);
+            message.from = vec![from];
+            message.subject = Some(if n == 0 {
+                subject.to_owned()
+            } else {
+                format!("Re: {subject}")
+            });
+            message.preview = Some(format!("Message {}", n + 1));
+            if n == 0 {
+                message.rfc_message_id = Some(first.clone());
+            } else {
+                message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+                    "<with-you.{subject}.2@example.test>"
+                )));
+                message.in_reply_to = Some(first.clone());
+                message.references = vec![first.clone()];
+            }
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+            ThreadingRepository::new(&connection, self.account.id)
+                .thread(&message)
+                .await
+                .expect("threaded");
+            ids.push(message.id);
+        }
+        ids
+    }
+
     /// Mark every message of `thread` but the newest read, so the thread
     /// opens on its newest: a thread opens at its first unread message
     /// (spec 013 FR-013), and `thread_of` leaves every message unread.

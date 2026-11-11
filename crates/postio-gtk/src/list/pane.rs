@@ -10,7 +10,9 @@ use gtk::{glib, graphene};
 use super::feed::Feed;
 use super::heading::DayHeading;
 use super::model::RowObject;
-use super::row::{ActionHandler, Pick, PickHandler, RowWidget, SharedKeymap};
+use super::row::{
+    ActionHandler, ChevronHandler, Pick, PickHandler, RowWidget, SharedKeymap, SharedMe,
+};
 
 /// The list pane: what scrolls, what draws, and where its rows come from.
 #[derive(Clone)]
@@ -28,6 +30,10 @@ pub struct ListPane {
     on_pick: Rc<std::cell::RefCell<Option<PickHandler>>>,
     /// Whether a to-do's row offers Task: once a vault is configured.
     capture: Rc<Cell<bool>>,
+    /// What a click on a thread row's chevron runs, once the window says.
+    on_chevron: Rc<std::cell::RefCell<Option<ChevronHandler>>>,
+    /// Who "you" is, for the participants a thread row names.
+    me: SharedMe,
 }
 
 /// The selection a list's rows draw their boxes from.
@@ -41,6 +47,8 @@ impl ListPane {
         let on_action: Rc<std::cell::RefCell<Option<ActionHandler>>> = Rc::default();
         let on_pick: Rc<std::cell::RefCell<Option<PickHandler>>> = Rc::default();
         let capture: Rc<Cell<bool>> = Rc::default();
+        let on_chevron: Rc<std::cell::RefCell<Option<ChevronHandler>>> = Rc::default();
+        let me: SharedMe = Rc::default();
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup({
             let keymap = keymap.clone();
@@ -48,6 +56,8 @@ impl ListPane {
             let picked = picked.clone();
             let on_action = Rc::clone(&on_action);
             let on_pick = Rc::clone(&on_pick);
+            let on_chevron = Rc::clone(&on_chevron);
+            let me = Rc::clone(&me);
             move |_, item| {
                 let item = item
                     .downcast_ref::<gtk::ListItem>()
@@ -68,6 +78,14 @@ impl ListPane {
                     let handler = on_pick.borrow().clone();
                     if let Some(handler) = handler {
                         handler(item, pick);
+                    }
+                }));
+                row.set_identities(Rc::clone(&me));
+                let on_chevron = Rc::clone(&on_chevron);
+                row.set_on_chevron(Rc::new(move |item, expanded| {
+                    let handler = on_chevron.borrow().clone();
+                    if let Some(handler) = handler {
+                        handler(item, expanded);
                     }
                 }));
                 item.set_child(Some(&row));
@@ -134,6 +152,8 @@ impl ListPane {
             on_action,
             on_pick,
             capture,
+            on_chevron,
+            me,
         }
     }
 
@@ -152,6 +172,19 @@ impl ListPane {
         handler: impl Fn(&super::FocusRow, postio_core::CommandId) + 'static,
     ) {
         self.on_action.replace(Some(Rc::new(handler)));
+    }
+
+    /// Run `handler` when a thread row's chevron is clicked, with the row
+    /// and whether its thread is open.
+    pub fn connect_row_chevron(&self, handler: impl Fn(&super::FocusRow, bool) + 'static) {
+        self.on_chevron.replace(Some(Rc::new(handler)));
+    }
+
+    /// Who "you" is: the addresses a thread row's participants say as "you".
+    pub fn set_identities(&self, me: Vec<postio_model::EmailAddress>) {
+        if self.me.replace(me.clone()) != me {
+            self.redraw_rows();
+        }
     }
 
     /// Run `handler` when a Ctrl- or Shift-click picks a row (T198).

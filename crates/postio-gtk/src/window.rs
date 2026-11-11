@@ -1489,6 +1489,18 @@ impl FocusWindow {
                 .imp()
                 .accounts
                 .replace(enabled.iter().map(|account| account.id).collect());
+            // Who "you" is, for the participants a thread row names.
+            if let Some(pane) = window.pane() {
+                pane.set_identities(
+                    accounts
+                        .iter()
+                        .flat_map(|account| {
+                            std::iter::once(account.address.clone())
+                                .chain(account.identities.iter().map(|id| id.address.clone()))
+                        })
+                        .collect(),
+                );
+            }
             // What a select-all reaches.
             if let Some(pane) = window.pane() {
                 pane.feed().input(postio_focus::Input::Accounts(
@@ -2675,6 +2687,26 @@ impl FocusWindow {
             #[weak(rename_to = window)]
             self,
             move |row, pick| window.pick(row, pick)
+        ));
+        // A click on a thread row's chevron puts the cursor on the row and
+        // opens or folds it, as the Mac does: `Point`, then the command.
+        pane.connect_row_chevron(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |row, expanded| {
+                let Some(position) = window
+                    .pane()
+                    .and_then(|pane| pane.feed().shown().position_of(row.id()))
+                else {
+                    return;
+                };
+                window.point_cursor(position);
+                window.cursor_command(if expanded {
+                    CommandId::CollapseThread
+                } else {
+                    CommandId::ExpandThread
+                });
+            }
         ));
         // Double-click (GTK's `activate` on the list) opens the row, as Enter
         // does: the cursor goes to it and the one `OpenMessage` command runs.
@@ -4750,19 +4782,22 @@ impl FocusWindow {
             crate::motion::keep_to_budget(&reading.view());
             return;
         }
-        // A message of the open thread that is not its newest has no row of
-        // the list: it opens as a hit does, by its id.
+        // A message of a thread that is not its newest has no row of the
+        // list: it opens as a hit does, by its id, titled by the row the
+        // cursor is on, or by the open thread's row when it is on a child.
         if row.is_none()
             && let Some(pane) = self.pane()
-            && let Some(open) = pane.feed().shown().open_thread()
             && let Some(reading) = self.reading_dialog()
         {
-            let subject = pane
-                .feed()
-                .list()
-                .item(open.anchor)
-                .and_downcast::<RowObject>()
-                .and_then(|row| row.item())
+            let on_row = self.cursor_row().or_else(|| {
+                let open = pane.feed().shown().open_thread()?;
+                pane.feed()
+                    .list()
+                    .item(open.anchor)
+                    .and_downcast::<RowObject>()
+                    .and_then(|row| row.item())
+            });
+            let subject = on_row
                 .and_then(|row| {
                     row.as_conversation()
                         .and_then(|conversation| conversation.summary.subject.clone())

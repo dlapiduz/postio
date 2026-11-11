@@ -133,7 +133,7 @@ pub(super) const GUTTER_CENTRE: f32 = 30.0;
 /// selection box.
 /// Where a thread row's chevron sits: right of the unread dot, left of the
 /// sender.
-const CHEVRON_X: f32 = 38.0;
+pub const CHEVRON_X: f32 = 38.0;
 const GUTTER_HIT: f32 = 14.0;
 pub(super) const DOT: f32 = 7.0;
 /// An action's button on the second line, and the keycap in it.
@@ -161,6 +161,15 @@ pub enum Pick {
 /// Run when a modified click picks a row.
 pub type PickHandler = Rc<dyn Fn(&FocusRow, Pick)>;
 
+/// Run when a thread row's chevron is clicked: the row, and whether its
+/// thread is open now.
+pub type ChevronHandler = Rc<dyn Fn(&FocusRow, bool)>;
+
+/// The addresses that are "you", which a thread row's participants say as
+/// "you": the accounts' own and their identities'. The list shares one with
+/// every row.
+pub type SharedMe = Rc<RefCell<Vec<postio_model::EmailAddress>>>;
+
 mod imp {
     use super::*;
 
@@ -173,6 +182,8 @@ mod imp {
         pub picked: RefCell<Option<postio_ui::selection::SelectionState>>,
         pub on_action: RefCell<Option<ActionHandler>>,
         pub on_pick: RefCell<Option<PickHandler>>,
+        pub on_chevron: RefCell<Option<ChevronHandler>>,
+        pub me: RefCell<Option<SharedMe>>,
         /// Modifiers counted as held on top of the click's own event: the
         /// seam a headless test drives a Ctrl- or Shift-click through.
         pub held: std::cell::Cell<Option<gdk::ModifierType>>,
@@ -210,7 +221,7 @@ mod imp {
                 #[weak(rename_to = row)]
                 self.obj(),
                 move |gesture, _, x, y| {
-                    if row.press_at(x as f32, y as f32) {
+                    if row.press_at(x as f32, y as f32) || row.press_chevron(x as f32, y as f32) {
                         gesture.set_state(gtk::EventSequenceState::Claimed);
                         return;
                     }
@@ -300,6 +311,8 @@ pub(super) struct Palette {
     pub(super) raised: gdk::RGBA,
     pub(super) accent: gdk::RGBA,
     pub(super) accent_hue: f64,
+    /// The window's own ground: what text on an ink-filled shape is drawn in.
+    pub(super) ground: gdk::RGBA,
 }
 
 impl Palette {
@@ -319,6 +332,11 @@ impl Palette {
             raised: faded(0.06),
             accent,
             accent_hue: rgb(&accent).hue(),
+            #[allow(deprecated)]
+            ground: widget
+                .style_context()
+                .lookup_color("window_bg_color")
+                .unwrap_or(ink),
         }
     }
 }
@@ -396,6 +414,43 @@ impl RowWidget {
     pub fn set_cursor_here(&self, here: bool) {
         if self.imp().here.replace(here) != here {
             self.queue_draw();
+        }
+    }
+
+    /// Run `handler` when a thread row's chevron is pressed.
+    pub fn set_on_chevron(&self, handler: ChevronHandler) {
+        self.imp().on_chevron.replace(Some(handler));
+    }
+
+    /// Read "you" from `me`, which the list shares with every row.
+    pub fn set_identities(&self, me: SharedMe) {
+        self.imp().me.replace(Some(me));
+        self.queue_draw();
+    }
+
+    /// A press at `x`, `y` on a thread row's chevron: ask for it to open or
+    /// fold. Whether it hit.
+    fn press_chevron(&self, x: f32, y: f32) -> bool {
+        let Some(item) = self.item() else {
+            return false;
+        };
+        if item
+            .as_conversation()
+            .is_none_or(|row| row.summary.message_count < 2)
+            || !(CHEVRON_X - 6.0..=CHEVRON_X + ICON + 6.0).contains(&x)
+            || y < 0.0
+            || y > self.height() as f32
+        {
+            return false;
+        }
+        let handler = self.imp().on_chevron.borrow().clone();
+        let expanded = self.imp().expanded.get();
+        match handler {
+            Some(handler) => {
+                handler(&item, expanded);
+                true
+            }
+            None => false,
         }
     }
 
@@ -670,7 +725,13 @@ impl RowWidget {
             postio_ui::focus_row::ThreadRowView::new(
                 summary,
                 &row.labels,
-                &[],
+                &self
+                    .imp()
+                    .me
+                    .borrow()
+                    .as_ref()
+                    .map(|me| me.borrow().clone())
+                    .unwrap_or_default(),
                 self.imp().expanded.get(),
                 postio_ui::clock::now(),
             )
@@ -718,29 +779,6 @@ impl RowWidget {
             &palette.ink,
         );
         let mut trailing_texts = vec![time];
-        if let Some(count) = count_badge(summary.message_count) {
-            let badge = self.layout(&count, false, 0.8);
-            let (badge_width, badge_height) = badge.pixel_size();
-            let boxed = badge_width as f32 + 10.0;
-            trailing -= GAP + boxed;
-            let frame = graphene::Rect::new(
-                trailing,
-                middle - (badge_height as f32 + 4.0) / 2.0,
-                boxed,
-                badge_height as f32 + 4.0,
-            );
-            let outline = gtk::gsk::RoundedRect::from_rect(frame, 4.0);
-            snapshot.append_border(&outline, &[1.0; 4], &[palette.rule; 4]);
-            self.put(
-                snapshot,
-                &badge,
-                trailing + 5.0,
-                middle,
-                badge_width as f32,
-                &palette.dim,
-            );
-            trailing_texts.push(count);
-        }
         // A draft on its way or stopped says which (T239): dim while it is
         // on its way, in ink once it needs the person. A draft being
         // written says nothing more; its folder already says it.
@@ -797,18 +835,13 @@ impl RowWidget {
             ));
             snapshot.append_color(&palette.ink, &frame);
             snapshot.pop();
-            let on_ink = if palette.ink.red() > 0.5 {
-                gdk::RGBA::BLACK
-            } else {
-                gdk::RGBA::WHITE
-            };
             self.put(
                 snapshot,
                 &layout,
                 trailing + 7.0,
                 middle,
                 word_width as f32,
-                &on_ink,
+                &palette.ground,
             );
             trailing_texts.push(new);
         }
@@ -823,15 +856,46 @@ impl RowWidget {
         };
         let columns = postio_ui::focus_row::row_columns(width);
         let sender_layout = self.layout(&sender, bold, 1.0);
-        self.put(
+        let sender_room = columns.sender_width.min(end - columns.sender_x);
+        // The count of a thread sits right after who took part, in the
+        // participants' column (design SPEC 2, screen 01).
+        let count = count_badge(summary.message_count);
+        let badge = count.as_ref().map(|count| self.layout(count, false, 0.8));
+        let badge_box = badge.as_ref().map(|badge| {
+            let (width, height) = badge.pixel_size();
+            (width as f32, height as f32, width as f32 + 10.0)
+        });
+        let names_room = match badge_box {
+            Some((_, _, boxed)) => (sender_room - GAP - boxed).max(0.0),
+            None => sender_room,
+        };
+        let names_width = self.put(
             snapshot,
             &sender_layout,
             columns.sender_x,
             middle,
-            columns.sender_width.min(end - columns.sender_x),
+            names_room,
             &palette.ink,
         );
         drawn.texts.push(sender);
+        if let (Some(count), Some(badge), Some((badge_width, badge_height, boxed))) =
+            (count, badge.as_ref(), badge_box)
+        {
+            let x = columns.sender_x + names_width + GAP;
+            let frame = graphene::Rect::new(
+                x,
+                middle - (badge_height + 4.0) / 2.0,
+                boxed,
+                badge_height + 4.0,
+            );
+            snapshot.append_border(
+                &gtk::gsk::RoundedRect::from_rect(frame, 4.0),
+                &[1.0; 4],
+                &[palette.rule; 4],
+            );
+            self.put(snapshot, badge, x + 5.0, middle, badge_width, &palette.dim);
+            drawn.texts.push(count);
+        }
 
         let subject = summary.representative.subject.clone().unwrap_or_default();
         let subject_layout = self.layout(&subject, bold, 1.0);

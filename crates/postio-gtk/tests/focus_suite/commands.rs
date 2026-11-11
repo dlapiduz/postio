@@ -399,21 +399,21 @@ pub fn the_row_menu_flags_and_unflags() {
     });
 }
 
-/// `E`, Archive thread, archives the row's conversation: a Focus row is one,
-/// so it does what `e` does.
-pub fn capital_a_archives_the_conversation() {
+/// `e` on a thread row archives the row's whole conversation (spec 013: the
+/// thread row's verbs act on the thread, and `E`, Archive thread, is gone).
+pub fn e_archives_the_whole_conversation() {
     crate::gtk_case(async {
         if !support::display() {
             return;
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
-        support::keys(&window, &["E"]);
+        support::keys(&window, &["e"]);
         assert!(
             crate::settle_until(
                 async || support::subjects(&window) == ["Harbor draft", "Atlas budget"]
             )
             .await,
-            "`E` left the conversation in the inbox: {:?}",
+            "`e` left the conversation in the inbox: {:?}",
             support::subjects(&window)
         );
     });

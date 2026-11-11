@@ -167,3 +167,87 @@ pub fn return_on_a_child_opens_that_message() {
         assert_eq!(pane.cursor().n_items(), 6, "and the thread is still open");
     });
 }
+
+/// The first row's drawn words, once it is drawn.
+async fn first_row(pane: &postio_gtk::list::ListPane) -> Vec<String> {
+    assert!(
+        crate::settle_until(async || {
+            pane.rows_on_screen()
+                .first()
+                .is_some_and(|row| !row.drawn().texts.is_empty())
+        })
+        .await,
+        "the first row was never drawn"
+    );
+    pane.rows_on_screen()[0].drawn().texts
+}
+
+pub fn participants_say_you_for_the_account() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.thread_with_you("Plans", 10).await;
+        let (window, _client) = fixture.open().await;
+        let pane = window.pane().expect("the inbox");
+        assert!(
+            crate::settle_until(async || first_row(&pane).await[0] == "Ada, you").await,
+            "the participants never said \"you\": {:?}",
+            first_row(&pane).await
+        );
+    });
+}
+
+pub fn the_count_follows_the_participants() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, _window, _ids, pane) = harbor().await;
+        let texts = first_row(&pane).await;
+        assert_eq!(
+            texts.get(1).map(String::as_str),
+            Some("4"),
+            "the badge is drawn right after the participants, before the subject: {texts:?}"
+        );
+    });
+}
+
+pub fn clicking_the_chevron_opens_and_folds_a_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _ids, pane) = harbor().await;
+        let click = |window: &postio_gtk::window::FocusWindow| {
+            let row = pane.rows_on_screen()[0].clone();
+            // The chevron sits in the gutter between the unread dot and the names.
+            let x = 46.0;
+            support::click_in(window, &row, x, row.height() as f32 / 2.0, 1);
+        };
+        assert!(
+            crate::settle_until(
+                async || !pane.rows_on_screen().is_empty() && pane.rows_on_screen()[0].height() > 0
+            )
+            .await
+        );
+        click(&window);
+        assert!(
+            crate::settle_until(async || pane.cursor().n_items() == 6).await,
+            "a click on the chevron opened the thread: {} rows",
+            pane.cursor().n_items()
+        );
+        assert_eq!(pane.cursor().selected(), 0, "the cursor is on the row");
+        assert!(window.reading().is_none(), "and nothing was opened");
+        assert!(
+            crate::settle_until(async || pane.rows_on_screen()[0].is_expanded()).await,
+            "the row draws its chevron turned"
+        );
+        click(&window);
+        assert!(
+            crate::settle_until(async || pane.cursor().n_items() == 2).await,
+            "a second click folded it"
+        );
+    });
+}

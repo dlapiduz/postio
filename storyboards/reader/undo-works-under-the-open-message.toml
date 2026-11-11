@@ -24,14 +24,32 @@ command = "next_message"
 command = "next_message"
 [[step]]
 command = "next_message"
+# Return on a thread row opens its first unread message (spec 013 FR-013),
+# which is not the row's own message, so the verbs under it do not act on the
+# row. The conversation is opened on its newest message instead: expand it
+# and walk to its last child.
+[[step]]
+key     = "Right"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
 [[step]]
 command = "open_message"
 settle  = { until = { view = "reader" } }
 [[step]]
 command = "delete"
-check   = { view = "reader", rows.count = 59, notice.undo = true }
+check   = { view = "reader", rows.count = 60, notice.undo = true }
 
 [[step]]
 command = "undo"
-check   = { rows.count = 60, reading.id = "90", cursor.id = "90", view = "reader", app.focus.reading.position = "Message 4 of 59 · thread of 6" }
+check   = { rows.count = 61, reading.id = "90", cursor.id = "90", view = "reader", app.focus.reading.position = "Message 4 of 60 · thread of 6" }
 expect  = "Undo restores the conversation, as it does from the list, and takes the open message back to it: the cursor is on it, and the header's place is its own."
