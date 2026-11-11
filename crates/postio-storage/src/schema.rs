@@ -782,10 +782,12 @@ CREATE TABLE contact_sync_links (
     //
     // - `idx_threads_subject_recent`: the bounded subject fallback of
     //   research R2 (`last_at >= ? ORDER BY last_at DESC LIMIT 1`).
+    // - `messages.own_line`: the sender's own words, cut to a line (R5).
     Migration {
         from: stamp(0xf0d2_3b2a),
         to: FINGERPRINT,
         statements: r#"
+ALTER TABLE messages ADD COLUMN own_line TEXT;
 CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
 "#,
     },
@@ -1680,7 +1682,11 @@ CREATE TABLE messages (
     -- here yet, kept by the triggers in `footprint.sql` so an account's
     -- weight is a maintained row rather than a walk of its mail (#1508).
     attachment_bytes            INTEGER NOT NULL DEFAULT 0,
-    attachment_bytes_unfetched  INTEGER NOT NULL DEFAULT 0
+    attachment_bytes_unfetched  INTEGER NOT NULL DEFAULT 0,
+    -- The sender's own words, cut to a line: what a child row of a thread
+    -- shows (spec 013, research R5). NULL until the body is local; '' when
+    -- the message is all quote.
+    own_line                    TEXT
 );
 
 -- The body folded for the full-text index, one row per indexed message.

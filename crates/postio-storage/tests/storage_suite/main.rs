@@ -89,6 +89,7 @@ mod statement_cache;
 mod store_key;
 mod sync_state;
 mod sync_statement_bounds;
+mod thread_members;
 mod threading;
 mod threading_lookup_cost;
 mod threading_rules;
