@@ -489,10 +489,10 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::OpenMessage,
         title: "Open message",
         // `Return` is what config.toml documents, `o` is Gmail's open
-        // (docs/PRODUCT.md §8), and `Right` goes one level in the way `Left`
-        // comes back out.
+        // (docs/PRODUCT.md §8). `Right` is `expand_thread`'s in Focus's lists
+        // (specs/013-focus-threads D1).
         default_binding: "Return",
-        alternate_bindings: &["o", "Right"],
+        alternate_bindings: &["o"],
         // And a row of Focus's Filtered view or digest window.
         contexts: ctx(&[Context::List, Context::Conversation, Context::Search])
             .with(Context::Filtered)
@@ -572,10 +572,10 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::PrevView,
         title: "Previous view",
-        // `Left`, the way back out that `Right` goes in, and Gmail's `u`,
-        // back to the list (docs/PRODUCT.md §8). `h` is Focus's remind key.
-        default_binding: "Left",
-        alternate_bindings: &["u"],
+        // Gmail's `u`, back to the list (docs/PRODUCT.md §8). `h` is Focus's
+        // remind key, and `Left` is `collapse_thread`'s (specs/013-focus-threads D1).
+        default_binding: "u",
+        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -613,8 +613,11 @@ static SPECS: &[CommandSpec] = &[
         // conversations, and these walk the messages of the one that is
         // open -- in the macOS pane, and in Focus's reading dialog, which
         // steps through the thread. `J`/`K` extend the list's selection.
-        default_binding: "n",
-        alternate_bindings: &["alt+Down"],
+        //
+        // `]` and `[` are the defaults since the threads design
+        // (specs/013-focus-threads D1); `n`/`p` keep working.
+        default_binding: "]",
+        alternate_bindings: &["n", "alt+Down"],
         contexts: ctx(&[Context::Conversation, Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
@@ -623,8 +626,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::PrevInConversation,
         title: "Previous message in conversation",
-        default_binding: "p",
-        alternate_bindings: &["alt+Up"],
+        default_binding: "[",
+        alternate_bindings: &["p", "alt+Up"],
         contexts: ctx(&[Context::Conversation, Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
@@ -848,23 +851,14 @@ static SPECS: &[CommandSpec] = &[
         // Gmail's `e` (docs/PRODUCT.md §8).
         default_binding: "e",
         alternate_bindings: &["mod+shift+a"],
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
+        // In a digest it archives the whole digest: "archive everything this
+        // row stands for" (specs/007-postio-focus research R4). That was
+        // `archive_thread`'s second job, and the verb is the same one.
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Results)
+            .with(Context::Digest),
         // Sweeping a screenful out of the inbox is exactly the case docs/PRODUCT.md §16
         // wants a toast for.
-        destructive: true,
-        recovery: Recovery::Undo,
-        requires: MAIL,
-    },
-    CommandSpec {
-        id: CommandId::ArchiveThread,
-        title: "Archive thread",
-        // Shifted archive, for the whole conversation: the pair `e`/`E` is
-        // what `a`/`A` was before the Gmail keymap (docs/PRODUCT.md §8).
-        default_binding: "E",
-        alternate_bindings: &[],
-        // In a digest it archives the whole digest: "archive everything this
-        // row stands for" (specs/007-postio-focus research R4).
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
         destructive: true,
         recovery: Recovery::Undo,
         requires: MAIL,
@@ -1609,8 +1603,13 @@ static SPECS: &[CommandSpec] = &[
         title: "Edit in external editor",
         // `e` for editor, on the composer's `mod+shift+<letter>` shelf;
         // plain `mod+e` is Edit config everywhere.
+        // `alt+e` was its alternate until `reply_to_latest` took it in the
+        // same context (specs/013-focus-threads R10). The terminal still
+        // needs a key a legacy terminal delivers, which `ctrl+shift+e` is
+        // not (`terminal::legacy_deliverable`), so the alternate is
+        // `alt+shift+e`.
         default_binding: "mod+shift+e",
-        alternate_bindings: &["alt+e"],
+        alternate_bindings: &["alt+shift+e"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         // The body comes back as the editor saved it; the composer's own
@@ -2942,6 +2941,200 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    // Threads in Focus (specs/013-focus-threads). All drawn as pixels: the
+    // terminal app keeps its own thread view (D4), so it offers none of
+    // these and keeps the keys free.
+    CommandSpec {
+        id: CommandId::ExpandThread,
+        title: "Expand thread",
+        default_binding: "Right",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Results]).with(Context::Filtered),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::CollapseThread,
+        title: "Collapse thread",
+        default_binding: "Left",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Results]).with(Context::Filtered),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FirstInConversation,
+        title: "First message in conversation",
+        default_binding: "{",
+        alternate_bindings: &[],
+        contexts: Context::Reader.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::LatestInConversation,
+        title: "Latest message in conversation",
+        default_binding: "}",
+        alternate_bindings: &[],
+        contexts: Context::Reader.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FirstUnreadInConversation,
+        title: "First unread message in conversation",
+        default_binding: "g u",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Reader, Context::Outline]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::OutlineFirstUnread,
+        title: "First unread message",
+        default_binding: "u",
+        alternate_bindings: &[],
+        contexts: Context::Outline.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ThreadOutline,
+        title: "Thread outline",
+        default_binding: "alt+t",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Reader, Context::List]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ThreadMenu,
+        title: "Thread menu",
+        default_binding: "alt+period",
+        alternate_bindings: &[],
+        contexts: Context::Reader.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ReplyToLatest,
+        title: "Reply to latest message",
+        // Not the terminal: there `alt+e` is the composer's external editor.
+        default_binding: "alt+e",
+        alternate_bindings: &[],
+        contexts: ctx(&[
+            Context::List,
+            Context::Reader,
+            Context::Results,
+            Context::Composer,
+        ]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::MuteThread,
+        title: "Mute thread",
+        default_binding: "m",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Reader, Context::Results]),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::SplitThread,
+        title: "Split into its own thread",
+        default_binding: "alt+shift+s",
+        alternate_bindings: &[],
+        contexts: Context::Reader.as_set(),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::MoveThisMessage,
+        title: "Move this message",
+        default_binding: "alt+v",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Reader, Context::List, Context::Results]),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::DeleteThisMessage,
+        title: "Delete this message",
+        // The Mac's Option-Delete. Linux's is `alt+Delete`: its
+        // `alt+BackSpace` is the terminal's `back_to_words`, which the
+        // Results view shares (`binding_offered_on`).
+        default_binding: "alt+BackSpace",
+        alternate_bindings: &["alt+Delete"],
+        contexts: ctx(&[Context::Reader, Context::List, Context::Results]),
+        destructive: true,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ForwardWhat1,
+        title: "Forward this message",
+        default_binding: "1",
+        alternate_bindings: &[],
+        contexts: Context::ForwardChooser.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ForwardWhat2,
+        title: "Forward the whole thread",
+        default_binding: "2",
+        alternate_bindings: &[],
+        contexts: Context::ForwardChooser.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ForwardWhat3,
+        title: "Forward the attachments",
+        default_binding: "3",
+        alternate_bindings: &[],
+        contexts: Context::ForwardChooser.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ShowNewer,
+        title: "Show newer messages",
+        // The reply footer is drawn as pixels, so not the terminal's, whose
+        // composer has no `mod+shift+q` a legacy terminal could send either.
+        default_binding: "mod+shift+Down",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ExpandQuoted,
+        title: "Expand quoted text",
+        default_binding: "mod+shift+q",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
@@ -3361,6 +3554,17 @@ pub fn binding_offered_on(action: ActionId, binding: &str, platform: Platform) -
                 "alt+Delete",
                 Platform::Apple
             )
+            // The same split for `delete_this_message` (specs/013-focus-threads).
+            | (
+                ActionId::Builtin(CommandId::DeleteThisMessage),
+                "alt+BackSpace",
+                Platform::Freedesktop
+            )
+            | (
+                ActionId::Builtin(CommandId::DeleteThisMessage),
+                "alt+Delete",
+                Platform::Apple
+            )
     )
 }
 
@@ -3401,6 +3605,8 @@ pub fn spec(id: ActionId) -> Option<ActionSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Scope;
+    use postio_config::paths::Platform;
 
     // -- what a platform offers ------------------------------------------------
 
@@ -3627,7 +3833,7 @@ mod tests {
             Some(CommandId::Archive)
         );
         assert_eq!(
-            lookup_binding(Context::List, "Right").map(|spec| spec.id),
+            lookup_binding(Context::List, "o").map(|spec| spec.id),
             Some(CommandId::OpenMessage),
             "alternate bindings resolve too"
         );
@@ -3644,6 +3850,253 @@ mod tests {
         // three-pane app (specs/009-focus-macos R5).
         assert_eq!(lookup_binding(Context::Composer, "tab"), None);
         assert_eq!(lookup_binding(Context::Search, "tab"), None);
+    }
+
+    // -- threads in Focus (specs/013-focus-threads T022) -----------------------
+
+    /// One row of research R10's table: the id, its default and alternates,
+    /// and the contexts it is reachable in (and so no others).
+    type ThreadKey = (
+        &'static str,
+        &'static str,
+        &'static [&'static str],
+        &'static [Context],
+    );
+
+    const THREAD_KEYS: &[ThreadKey] = &[
+        (
+            "expand_thread",
+            "Right",
+            &[],
+            &[Context::List, Context::Results, Context::Filtered],
+        ),
+        (
+            "collapse_thread",
+            "Left",
+            &[],
+            &[Context::List, Context::Results, Context::Filtered],
+        ),
+        (
+            "next_in_conversation",
+            "]",
+            &["n", "alt+Down"],
+            &[Context::Conversation, Context::Reader],
+        ),
+        (
+            "prev_in_conversation",
+            "[",
+            &["p", "alt+Up"],
+            &[Context::Conversation, Context::Reader],
+        ),
+        ("first_in_conversation", "{", &[], &[Context::Reader]),
+        ("latest_in_conversation", "}", &[], &[Context::Reader]),
+        (
+            "first_unread_in_conversation",
+            "g u",
+            &[],
+            &[Context::Reader, Context::Outline],
+        ),
+        ("outline_first_unread", "u", &[], &[Context::Outline]),
+        (
+            "thread_outline",
+            "alt+t",
+            &[],
+            &[Context::Reader, Context::List],
+        ),
+        ("thread_menu", "alt+period", &[], &[Context::Reader]),
+        (
+            "reply_to_latest",
+            "alt+e",
+            &[],
+            &[
+                Context::List,
+                Context::Reader,
+                Context::Results,
+                Context::Composer,
+            ],
+        ),
+        (
+            "mute_thread",
+            "m",
+            &[],
+            &[Context::List, Context::Reader, Context::Results],
+        ),
+        ("split_thread", "alt+shift+s", &[], &[Context::Reader]),
+        (
+            "move_this_message",
+            "alt+v",
+            &[],
+            &[Context::Reader, Context::List, Context::Results],
+        ),
+        (
+            "delete_this_message",
+            "alt+BackSpace",
+            &["alt+Delete"],
+            &[Context::Reader, Context::List, Context::Results],
+        ),
+        ("forward_what_1", "1", &[], &[Context::ForwardChooser]),
+        ("forward_what_2", "2", &[], &[Context::ForwardChooser]),
+        ("forward_what_3", "3", &[], &[Context::ForwardChooser]),
+        ("show_newer", "mod+shift+Down", &[], &[Context::Composer]),
+        ("expand_quoted", "mod+shift+q", &[], &[Context::Composer]),
+    ];
+
+    #[test]
+    fn each_thread_command_has_its_key_and_its_contexts() {
+        let mut problems = Vec::new();
+        for (name, key, alternates, contexts) in THREAD_KEYS {
+            let Ok(id) = name.parse::<CommandId>() else {
+                problems.push(format!("`{name}` is not a command"));
+                continue;
+            };
+            let spec = get(id);
+            if spec.default_binding != *key {
+                problems.push(format!("`{name}` is on `{}`", spec.default_binding));
+            }
+            if spec.alternate_bindings != *alternates {
+                problems.push(format!("`{name}` alternates {:?}", spec.alternate_bindings));
+            }
+            for context in Context::ALL {
+                if spec.available_in(*context) != contexts.contains(context) {
+                    problems.push(format!(
+                        "`{name}` reachable in {context} is {}",
+                        !contexts.contains(context)
+                    ));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn right_and_left_expand_and_collapse_where_they_used_to_open_and_go_back() {
+        for context in [Context::List, Context::Results, Context::Filtered] {
+            assert_eq!(
+                lookup_binding(context, "Right").map(|spec| spec.id),
+                Some(CommandId::ExpandThread),
+                "Right in {context}"
+            );
+            assert_eq!(
+                lookup_binding(context, "Left").map(|spec| spec.id),
+                Some(CommandId::CollapseThread),
+                "Left in {context}"
+            );
+        }
+        // Return and `o` still open, and Escape and `u` still go back.
+        assert!(
+            !get(CommandId::OpenMessage)
+                .bindings()
+                .any(|key| key == "Right")
+        );
+        assert!(!get(CommandId::PrevView).bindings().any(|key| key == "Left"));
+        assert_eq!(
+            lookup_binding(Context::List, "Return").map(|spec| spec.id),
+            Some(CommandId::OpenMessage)
+        );
+        assert_eq!(
+            lookup_binding(Context::List, "o").map(|spec| spec.id),
+            Some(CommandId::OpenMessage)
+        );
+    }
+
+    #[test]
+    fn archive_thread_is_gone() {
+        assert!("archive_thread".parse::<CommandId>().is_err());
+    }
+
+    #[test]
+    fn no_two_commands_share_a_key_in_any_context() {
+        // Per app and platform, as the keymap resolves them: `alt+BackSpace`
+        // is one command on the Mac and another in a terminal, and only a
+        // resolved keymap knows which (`binding_offered_on`).
+        let mut problems = Vec::new();
+        for (frontend, platform) in [
+            (Frontend::Terminal, Platform::Freedesktop),
+            (Frontend::Focus, Platform::Freedesktop),
+            (Frontend::Focus, Platform::Apple),
+        ] {
+            let keymap =
+                crate::config::Keymap::resolve_on(&postio_config::KeyBindings::default(), platform);
+            let state = Availability {
+                frontend,
+                ..Availability::open(Scope::Account(postio_model::AccountId::new(1)))
+            };
+            for context in Context::ALL {
+                let mut seen: std::collections::BTreeMap<String, CommandId> =
+                    std::collections::BTreeMap::new();
+                for action in reachable_in(*context, state) {
+                    let Some(id) = action.id.builtin() else {
+                        continue;
+                    };
+                    for binding in keymap.bindings(id) {
+                        if let Some(other) = seen.insert(binding.clone(), id)
+                            && other != id
+                        {
+                            problems.push(format!(
+                                "{frontend:?} on {platform:?}, {context}: `{binding}` is both `{other}` and `{id}`"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn delete_this_message_leaves_alt_backspace_to_the_terminals_back_to_words() {
+        // `alt+BackSpace` is the terminal's `back_to_words` alternate, and
+        // the Results view shares it. The Mac's Option-Delete is the design's
+        // key; Linux's is `alt+Delete`, as `forget_recent`'s is (#1825).
+        let id = ActionId::Builtin(CommandId::DeleteThisMessage);
+        assert!(binding_offered_on(id, "alt+BackSpace", Platform::Apple));
+        assert!(!binding_offered_on(
+            id,
+            "alt+BackSpace",
+            Platform::Freedesktop
+        ));
+        assert!(binding_offered_on(id, "alt+Delete", Platform::Freedesktop));
+        assert!(!binding_offered_on(id, "alt+Delete", Platform::Apple));
+    }
+
+    #[test]
+    fn reply_to_latest_does_not_take_the_composers_external_editor_key() {
+        // `alt+e` was `edit_externally`'s alternate, and both reach the
+        // composer: the alternate goes, `mod+shift+e` stays.
+        assert_eq!(
+            lookup_binding(Context::Composer, "alt+e").map(|spec| spec.id),
+            Some(CommandId::ReplyToLatest)
+        );
+        assert_eq!(
+            get(CommandId::EditExternally).default_binding,
+            "mod+shift+e"
+        );
+        assert_eq!(
+            get(CommandId::EditExternally).alternate_bindings,
+            ["alt+shift+e"],
+            "the terminal's editor key must stay one a legacy terminal delivers"
+        );
+    }
+
+    #[test]
+    fn the_forward_chooser_and_the_outline_have_contexts_of_their_own() {
+        // The picker already owns `1`-`3` (`picker_choose_*`), so a chooser
+        // sharing its context would bind two commands to each digit.
+        for key in ["1", "2", "3"] {
+            assert_ne!(
+                lookup_binding(Context::ForwardChooser, key).map(|spec| spec.id),
+                lookup_binding(Context::Picker, key).map(|spec| spec.id),
+            );
+        }
+        // And `u` is `prev_view` in the reader, so the outline cannot share it.
+        assert_eq!(
+            lookup_binding(Context::Outline, "u").map(|spec| spec.id),
+            Some(CommandId::OutlineFirstUnread)
+        );
+        assert_eq!(
+            lookup_binding(Context::Reader, "u").map(|spec| spec.id),
+            Some(CommandId::PrevView)
+        );
     }
 
     #[test]

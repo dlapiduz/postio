@@ -366,11 +366,7 @@ impl DigestWindow {
     /// The commands the window has a control for: Close, Archive all, and
     /// the rule's edit.
     pub fn controls() -> Vec<CommandId> {
-        vec![
-            CommandId::Back,
-            CommandId::ArchiveThread,
-            CommandId::DigestRule,
-        ]
+        vec![CommandId::Back, CommandId::Archive, CommandId::DigestRule]
     }
 
     /// Run `handler` with what the person asks.
@@ -649,7 +645,7 @@ impl DigestWindow {
             .append(&gtk::Label::new(Some(&postio_ui::digest::archive_all(
                 digest.count,
             ))));
-        if let Some(key) = hints::key(&keymap, CommandId::ArchiveThread) {
+        if let Some(key) = hints::key(&keymap, CommandId::Archive) {
             self.archive_words.append(&keyhint::cap(&key));
         }
         while let Some(child) = self.rule_line.first_child() {

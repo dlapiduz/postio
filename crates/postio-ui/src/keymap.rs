@@ -567,6 +567,10 @@ pub enum KeyContext {
     Contacts,
     /// The contact popover (specs/011-focus-contacts S6).
     ContactPopover,
+    /// The thread outline (specs/013-focus-threads D5).
+    Outline,
+    /// The "Forward what?" chooser (specs/013-focus-threads D7).
+    ForwardChooser,
 }
 
 impl KeyContext {
@@ -625,6 +629,11 @@ impl KeyContext {
             // user cannot see.
             Self::Contacts => &[Self::Contacts, Self::Global],
             Self::ContactPopover => &[Self::ContactPopover, Self::Global],
+            // Over the reader, as a picker is over a row: `u` is `prev_view`
+            // in the reader and "first unread" here, and the digits are the
+            // chooser's, not `picker_choose_n`. Neither falls through.
+            Self::Outline => &[Self::Outline, Self::Global],
+            Self::ForwardChooser => &[Self::ForwardChooser, Self::Global],
         }
     }
 }
@@ -655,6 +664,8 @@ impl From<Context> for KeyContext {
             Context::Results => Self::Results,
             Context::Contacts => Self::Contacts,
             Context::ContactPopover => Self::ContactPopover,
+            Context::Outline => Self::Outline,
+            Context::ForwardChooser => Self::ForwardChooser,
         }
     }
 }

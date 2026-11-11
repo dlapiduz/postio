@@ -271,7 +271,6 @@ use postio_tui::test_support::{sample, screen};
 /// offered; this list only says which ones to press.
 const GMAIL: &[&str] = &[
     "archive",
-    "archive_thread",
     "reply",
     "reply_all",
     "forward",
@@ -482,12 +481,13 @@ fn u_and_left_go_back_from_the_open_message_to_the_list() {
 #[test]
 fn the_fold_key_names_the_keys_that_step_a_thread() {
     // `Z` on a message that is one of a thread says how to walk the thread.
-    // It must name Gmail's keys, not the retired `[` and `]`.
+    // It names the first keys the registry gives the walk: `]` and `[`
+    // since the threads design (specs/013-focus-threads D1), `n` and `p`
+    // being alternates.
     let mut app = in_reader();
     press_binding(&mut app, "Z", 0);
     let said = app.notice().unwrap_or_default().to_owned();
-    assert!(!said.contains('['), "{said}");
-    assert!(said.contains("; n and p step through"), "{said}");
+    assert!(said.contains("; ] and [ step through"), "{said}");
 }
 
 #[test]
@@ -620,14 +620,14 @@ fn the_verbs_filtered_and_the_rules_and_the_digest_offer_take_their_gmail_keys()
             }
         }
     }
-    // The digest: `E` archives the delivery, `M` unsubscribes from a row.
-    for binding in bindings_of("archive_thread") {
+    // The digest: `e` archives the delivery, `M` unsubscribes from a row.
+    for binding in bindings_of("archive") {
         for delivery in 0..how_many_deliveries(binding) {
             let (mut app, _) = sample::state("digest", 120, 30);
             let effects = press_binding(&mut app, binding, delivery);
             if !asks(&effects, "ArchiveDigest") {
                 failures.push(format!(
-                    "archive_thread: `{binding}` (delivery {delivery}) in a digest: {effects:?}"
+                    "archive: `{binding}` (delivery {delivery}) in a digest: {effects:?}"
                 ));
             }
         }

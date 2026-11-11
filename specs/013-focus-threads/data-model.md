@@ -213,10 +213,26 @@ children(view: &ThreadView, matches: &[ConversationMatch]) -> Vec<ResultChild>
 
 ## `postio-core`
 
-New `CommandId`s per research R10. `ArchiveThread` is removed.
-`Context::Outline` and `Context::ForwardChooser` are added, or the existing
-picker context is reused if its key scoping already fits (decided in the
-registry task).
+New `CommandId`s per research R10. `ArchiveThread` is removed: in a digest,
+`archive` (`e`) now archives the digest, and `Command::ArchiveDigest` answers
+`CommandId::Archive`.
+
+`Context::Outline` and `Context::ForwardChooser` are added (decided in T022).
+The picker cannot be reused: it already gives `1`-`4` to `picker_choose_n`, so
+`forward_what_1..3` in its context would bind each digit twice; and `u` is
+`prev_view` in the reader beneath the outline. Each is its own `KeyContext`
+and falls through to `Global` only, as the picker does. One command is added
+to R10's table, `outline_first_unread` (`u`, Outline only): a command has one
+set of bindings for all its contexts, so `first_unread_in_conversation` cannot
+carry `u` without taking it from `prev_view` in the reader.
+
+`edit_externally`'s `alt+e` alternate is replaced by `alt+shift+e`: `alt+e` is
+`reply_to_latest`'s, the keymap resolves without regard to the app, and
+`mod+shift+e` is not a key a legacy terminal delivers. `delete_this_message`
+is `alt+BackSpace` on the Mac and `alt+Delete` on Linux, as `forget_recent`
+is, because `alt+BackSpace` is `back_to_words`' terminal alternate in the
+Results view (`binding_offered_on`). Every new command requires Focus on a
+graphical frontend: the terminal app keeps its own thread view (D4).
 
 ## `postio-ffi`
 

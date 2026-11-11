@@ -1113,7 +1113,7 @@ mod tests {
         let drawn = screen(120, 36, &app);
         let row = drawn
             .lines()
-            .position(|line| line.contains("Archive thread"))
+            .position(|line| line.contains("Archive"))
             .unwrap();
         let at = hits.at(30, u16::try_from(row).unwrap()).expect("a row");
         assert!(matches!(at.target, Target::BarRow(_)), "{at:?}");

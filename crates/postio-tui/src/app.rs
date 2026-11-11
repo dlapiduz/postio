@@ -6267,7 +6267,7 @@ pub(crate) mod tests {
         let mut app = app((160, 40));
         addressed(&mut app, "Tide gate");
         let before = app.composer().unwrap().draft();
-        let effects = update(&mut app, key(KeyCode::Char('e'), KeyModifiers::ALT));
+        let effects = update(&mut app, key(KeyCode::Char('E'), KeyModifiers::ALT));
         let (generation, handed) = effects
             .iter()
             .find_map(|effect| match effect {

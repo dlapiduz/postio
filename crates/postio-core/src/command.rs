@@ -235,11 +235,6 @@ commands! {
         /// What to archive.
         target: MessageTarget = MessageTarget::Selection,
     } => "archive",
-    /// Archive a whole thread.
-    ArchiveThread {
-        /// The thread to archive; `None` means the focused message's thread.
-        thread: Option<ThreadId> = None,
-    } => "archive_thread",
     /// Move messages to the trash.
     Delete {
         /// What to delete.
@@ -902,6 +897,46 @@ commands! {
     /// Sync with the Mac's Contacts, as a dry run: turn it on, and see what
     /// would happen before anything does (specs/011-focus-contacts S12).
     ContactsSync => "contacts_sync",
+
+    // -- Threads in Focus (specs/013-focus-threads) -------------------------
+    /// Open the focused thread's row in place, to its messages (`Right`).
+    ExpandThread => "expand_thread",
+    /// Fold an expanded thread back to its row (`Left`).
+    CollapseThread => "collapse_thread",
+    /// Jump to the conversation's first message (`{`).
+    FirstInConversation => "first_in_conversation",
+    /// Jump to the conversation's latest message (`}`).
+    LatestInConversation => "latest_in_conversation",
+    /// Jump to the conversation's first unread message (`g u`).
+    FirstUnreadInConversation => "first_unread_in_conversation",
+    /// The outline's own `u`: the same jump, from inside the outline, where
+    /// `g u` would read as two keys of a list's type-ahead.
+    OutlineFirstUnread => "outline_first_unread",
+    /// Show the conversation's messages as an outline (`alt+t`).
+    ThreadOutline => "thread_outline",
+    /// Open the Thread menu (`alt+period`).
+    ThreadMenu => "thread_menu",
+    /// Reply to the thread's latest message, whatever message is shown.
+    ReplyToLatest => "reply_to_latest",
+    /// Stop a thread's new messages reaching the inbox, or start again.
+    MuteThread => "mute_thread",
+    /// Take the shown message out of its thread, into one of its own.
+    SplitThread => "split_thread",
+    /// Move the shown message alone, not its whole thread.
+    MoveThisMessage => "move_this_message",
+    /// Delete the shown message alone, not its whole thread.
+    DeleteThisMessage => "delete_this_message",
+    /// "Forward what?": this message.
+    ForwardWhat1 => "forward_what_1",
+    /// "Forward what?": the whole thread.
+    ForwardWhat2 => "forward_what_2",
+    /// "Forward what?": the attachments alone.
+    ForwardWhat3 => "forward_what_3",
+    /// Show newer messages of the thread than the one being replied to,
+    /// in the composer's footer.
+    ShowNewer => "show_newer",
+    /// Open the quoted text a reply folds away.
+    ExpandQuoted => "expand_quoted",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.
@@ -933,16 +968,16 @@ commands! {
     /// the digest window. Every message it holds is archived, and its row
     /// leaves the inbox.
     ///
-    /// The same verb as `A` everywhere else -- "archive everything this row
-    /// stands for" -- so [`Command::id`] answers
-    /// [`CommandId::ArchiveThread`], as [`Command::MarkReadOnDwell`] answers
-    /// `ToggleRead`'s: one row in the registry, one key.
+    /// The same verb as `e` everywhere else -- "archive everything this row
+    /// stands for" -- so [`Command::id`] answers [`CommandId::Archive`], as
+    /// [`Command::MarkReadOnDwell`] answers `ToggleRead`'s: one row in the
+    /// registry, one key.
     ArchiveDigest {
         /// Which delivery.
         delivery: postio_model::DeliveryId,
         /// `true` archives it; `false` is undo's way back.
         archived: bool,
-    } => ArchiveThread,
+    } => Archive,
     /// Undo's way back from a sweep: the messages return to their inboxes,
     /// and the decisions that filed them away go with the sweep that made
     /// them.
