@@ -961,3 +961,202 @@ fn a_label_added_from_a_child_aims_the_thread_and_one_undo_undoes_it() {
         "one undo is one command: {effects:?}"
     );
 }
+
+// ---- Spec 013 US3: walking a thread in the message window ----
+
+/// What the window was told, as one record.
+#[derive(Default, Debug)]
+struct Window {
+    shown: Option<MessageId>,
+    bar: Option<postio_ui::thread_bar::ThreadBarView>,
+    kicker: Option<String>,
+    banner: Option<Option<postio_ui::thread_bar::BannerView>>,
+    reply_to: Option<Option<String>>,
+}
+
+fn window_of(effects: &[Effect]) -> Window {
+    let mut window = Window::default();
+    for intent in shown(effects) {
+        match intent {
+            Intent::OpenMessage { message, .. } => window.shown = Some(message),
+            Intent::ThreadBar(bar) => window.bar = Some(bar),
+            Intent::Kicker(kicker) => window.kicker = Some(kicker),
+            Intent::OlderBanner(banner) => window.banner = Some(banner),
+            Intent::ReplyTo(reply_to) => window.reply_to = Some(reply_to),
+            _ => {}
+        }
+    }
+    window
+}
+
+/// The index of the ringed chip.
+fn ringed(bar: &postio_ui::thread_bar::ThreadBarView) -> Option<u32> {
+    bar.chips.iter().find_map(|chip| match chip {
+        postio_ui::thread_bar::Chip::Message { index, current, .. } if *current => Some(*index),
+        _ => None,
+    })
+}
+
+fn marked_read(effects: &[Effect]) -> Vec<MessageId> {
+    asked_requests(effects)
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::Post(postio_core::Command::MarkReadOnDwell { message }) => Some(message),
+            _ => None,
+        })
+        .collect()
+}
+
+fn asked_requests(effects: &[Effect]) -> Vec<Request> {
+    asks(effects)
+        .into_iter()
+        .map(|(_, request)| request)
+        .collect()
+}
+
+/// Harbor (row 0, six messages, the last two unread) opened with Return: the
+/// window is on message 4 (index 4), the first unread.
+fn window_on_harbor(unread: usize) -> (FocusController, List, Window) {
+    let rows = List::of(&[6, 4, 1, 3]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("opening a thread reads it");
+    let effects = answer(&mut focus, ticket, view(thread, 6, unread, false), &rows);
+    let window = window_of(&effects);
+    (focus, rows, window)
+}
+
+#[test]
+fn opening_a_thread_draws_the_bar_the_kicker_and_the_banner() {
+    let (_focus, _rows, window) = window_on_harbor(2);
+    assert_eq!(window.shown, Some(member_id(ThreadId::new(500), 4)));
+    let bar = window.bar.expect("the bar");
+    assert_eq!(bar.count_line, "6 \u{b7} 2 new");
+    assert_eq!(bar.chips.len(), 6);
+    assert_eq!(ringed(&bar), Some(4));
+    assert_eq!(
+        window.kicker.as_deref(),
+        Some("Message 5 of 6 \u{b7} ] newer \u{b7} [ older")
+    );
+    assert!(
+        matches!(window.banner, Some(Some(_))),
+        "message 5 of 6 is not the latest"
+    );
+    assert_eq!(window.reply_to, Some(None));
+}
+
+#[test]
+fn bracket_steps_older_and_newer_and_a_newer_unread_is_marked_read() {
+    let (mut focus, rows, _) = window_on_harbor(2);
+    let thread = ThreadId::new(500);
+    let effects = run(&mut focus, CommandId::PrevInConversation, &rows);
+    let window = window_of(&effects);
+    assert_eq!(window.shown, Some(member_id(thread, 3)), "[ is older");
+    assert_eq!(ringed(&window.bar.expect("bar")), Some(3));
+    assert_eq!(
+        window.kicker.as_deref().map(|k| &k[..14]),
+        Some("Message 4 of 6")
+    );
+    assert!(matches!(window.banner, Some(Some(_))));
+    assert!(marked_read(&effects).is_empty(), "message 4 was read");
+
+    let effects = run(&mut focus, CommandId::NextInConversation, &rows);
+    assert_eq!(window_of(&effects).shown, Some(member_id(thread, 4)));
+    assert_eq!(
+        marked_read(&effects),
+        vec![member_id(thread, 4)],
+        "showing an unread message marks it read (FR-017)"
+    );
+    let effects = run(&mut focus, CommandId::NextInConversation, &rows);
+    let window = window_of(&effects);
+    assert_eq!(window.shown, Some(member_id(thread, 5)));
+    assert_eq!(marked_read(&effects), vec![member_id(thread, 5)]);
+    assert_eq!(
+        window.bar.as_ref().map(|bar| bar.count_line.as_str()),
+        Some("6"),
+        "both unread are read now"
+    );
+    assert_eq!(window.banner, Some(None), "the latest has no banner");
+}
+
+#[test]
+fn newer_on_the_latest_does_nothing() {
+    let (mut focus, rows, _) = window_on_harbor(2);
+    let _ = run(&mut focus, CommandId::LatestInConversation, &rows);
+    let effects = run(&mut focus, CommandId::NextInConversation, &rows);
+    assert!(shown(&effects).is_empty(), "{effects:?}");
+    assert!(asks(&effects).is_empty(), "{effects:?}");
+}
+
+#[test]
+fn first_and_latest_go_to_the_ends() {
+    let (mut focus, rows, _) = window_on_harbor(2);
+    let thread = ThreadId::new(500);
+    let effects = run(&mut focus, CommandId::FirstInConversation, &rows);
+    let window = window_of(&effects);
+    assert_eq!(window.shown, Some(member_id(thread, 0)));
+    assert_eq!(ringed(&window.bar.expect("bar")), Some(0));
+    let effects = run(&mut focus, CommandId::LatestInConversation, &rows);
+    let window = window_of(&effects);
+    assert_eq!(window.shown, Some(member_id(thread, 5)));
+    assert_eq!(window.banner, Some(None));
+    assert_eq!(marked_read(&effects), vec![member_id(thread, 5)]);
+}
+
+#[test]
+fn g_u_goes_to_the_first_unread_and_stays_put_with_none() {
+    let (mut focus, rows, _) = window_on_harbor(2);
+    let thread = ThreadId::new(500);
+    let _ = run(&mut focus, CommandId::FirstInConversation, &rows);
+    let effects = run(&mut focus, CommandId::FirstUnreadInConversation, &rows);
+    assert_eq!(window_of(&effects).shown, Some(member_id(thread, 4)));
+
+    let (mut focus, rows, window) = window_on_harbor(0);
+    assert_eq!(
+        window.shown,
+        Some(member_id(thread, 5)),
+        "nothing unread opens on the latest"
+    );
+    let effects = run(&mut focus, CommandId::FirstUnreadInConversation, &rows);
+    assert!(shown(&effects).is_empty(), "stays put: {effects:?}");
+}
+
+#[test]
+fn j_in_the_window_still_opens_the_next_thread() {
+    let (mut focus, rows, _) = window_on_harbor(2);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(opened_message(&effects), Some(MessageId::new(101)));
+    let (_, thread) = read_asked(&effects).expect("the new window reads its thread");
+    assert_eq!(thread, ThreadId::new(501));
+}
+
+#[test]
+fn the_room_the_window_has_decides_how_many_chips_are_drawn() {
+    let (mut focus, rows, window) = window_on_harbor(2);
+    assert_eq!(window.bar.expect("bar").chips.len(), 6);
+    let effects = focus.handle_on(Input::BarRoom(4), &rows);
+    let bar = window_of(&effects).bar.expect("the bar is composed again");
+    assert!(
+        bar.chips.len() <= 5
+            && bar
+                .chips
+                .iter()
+                .any(|chip| matches!(chip, postio_ui::thread_bar::Chip::More { .. })),
+        "{bar:?}"
+    );
+    assert_eq!(ringed(&bar), Some(4), "the message on screen stays kept");
+    let effects = focus.handle_on(Input::BarRoom(8), &rows);
+    assert_eq!(window_of(&effects).bar.expect("bar").chips.len(), 6);
+}
+
+#[test]
+fn closing_the_window_forgets_the_walk() {
+    let (mut focus, rows, _) = window_on_harbor(2);
+    let _ = run(&mut focus, CommandId::Back, &rows);
+    let effects = focus.handle_on(Input::BarRoom(4), &rows);
+    assert!(shown(&effects).is_empty(), "no window, no bar: {effects:?}");
+}

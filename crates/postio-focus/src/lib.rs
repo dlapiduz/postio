@@ -44,6 +44,7 @@ mod states;
 mod surfaces;
 mod thread_expand;
 mod verbs;
+mod walk;
 
 pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRead};
 pub use capture::{CaptureProject, CaptureView};
@@ -186,6 +187,9 @@ pub enum Input {
     /// under a message it opened itself (a hit, a digest's email). Nothing
     /// happens with no message open, or when it shows the cursor's row.
     Follow,
+    /// The message window's width allows this many thread-bar chips (sent
+    /// when it opens and on resize): the bar is composed again.
+    BarRoom(u32),
     /// The bar's words, as they are now.
     Typed {
         /// The field's text.
@@ -611,6 +615,17 @@ pub enum Intent {
     CloseSurface(SurfaceKind),
     /// The open message does this.
     Reader(ReaderVerb),
+    /// Draw the message window's thread bar: the label column, the chips and
+    /// the Thread menu button. Said on every message the window shows, with
+    /// no chips for a thread of one (spec 013 US3).
+    ThreadBar(postio_ui::thread_bar::ThreadBarView),
+    /// Draw the kicker above the subject ("Message 4 of 6 · ] newer · [
+    /// older"); empty for a thread of one.
+    Kicker(String),
+    /// Draw the older-message banner, or take it away.
+    OlderBanner(Option<postio_ui::thread_bar::BannerView>),
+    /// Draw the sender block's Reply to row, or take it away.
+    ReplyTo(Option<String>),
     /// Nothing is over the list any more: the keyboard goes back to it, on
     /// the cursor's row.
     KeyboardHome,
@@ -1585,6 +1600,16 @@ pub struct FocusController {
     /// A thread row and the message opening it opened: the row is not
     /// opened again for showing a message other than its own.
     opened_from: Option<(MessageId, MessageId)>,
+    /// The thread of the message on screen, while a window is up (spec 013
+    /// US3).
+    walk: Option<walk::Walk>,
+    /// A window opened whose thread read has not come back.
+    walk_asked: Option<walk::Opening>,
+    /// The thread a read in hand gave to the message just opened, so its
+    /// walk begins without a second read.
+    walk_seed: Option<ThreadView>,
+    /// How many thread-bar chips the window has room for.
+    bar_room: u32,
 }
 
 impl FocusController {
@@ -1626,6 +1651,10 @@ impl FocusController {
             expansion: None,
             pending: None,
             opened_from: None,
+            walk: None,
+            walk_asked: None,
+            walk_seed: None,
+            bar_room: walk::DEFAULT_ROOM,
         }
     }
 
@@ -1672,6 +1701,9 @@ impl FocusController {
             let steps = self.hit_closed(rows);
             effects.extend(self.effects(steps));
         }
+        // A message put up in the window begins its thread's walk.
+        let steps = self.walk_after(&effects, rows);
+        effects.extend(self.effects(steps));
         // The composer gone however it went -- its window's close button,
         // another window in its place (M4) -- ends its composition, saved.
         let steps = self.composer_gone();
@@ -1751,6 +1783,10 @@ impl FocusController {
             Input::ReaderState { more_open, finding } => {
                 self.surfaces.reader_state(more_open, finding);
                 Vec::new()
+            }
+            Input::BarRoom(room) => {
+                let steps = self.bar_room(room);
+                self.effects(steps)
             }
             Input::Accounts(accounts) => {
                 self.compose.set_no_account(accounts.is_empty());
@@ -2406,6 +2442,9 @@ impl FocusController {
                 // close them does nothing (GTK's dialog close rule).
                 (self.surfaces.takes_keyboard() && keys::key_map_takes(id)).then(Vec::new)
             });
+        }
+        if let Some(steps) = self.walk_command(id) {
+            return Some(steps);
         }
         if let Some(steps) = self.surfaces.reader_key(id) {
             return Some(steps);

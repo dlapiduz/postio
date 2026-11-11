@@ -155,8 +155,19 @@ pub enum ReaderVerb {
     ViewSource,
     /// The More menu.
     ShowMore,
-    /// Step through the conversation, by this many messages.
+    /// Step through the conversation, by this many messages. The controller
+    /// walks a thread it holds itself and says what to show; this is said
+    /// only when it holds none.
     StepThread(i32),
+    /// Show the thread's first message (`{`), when the controller holds no
+    /// walk.
+    FirstInThread,
+    /// Show the thread's latest message (`}`), when the controller holds no
+    /// walk.
+    LatestInThread,
+    /// Show the thread's first unread message (`g u`), when the controller
+    /// holds no walk.
+    FirstUnread,
 }
 
 /// Which list the open message came from: what `j`/`k` in it walk, and
@@ -233,6 +244,13 @@ impl Surfaces {
 
     pub(crate) fn key_context(&self) -> KeyContext {
         self.top().map_or(KeyContext::List, SurfaceKind::context)
+    }
+
+    /// `message` is on screen now, in place of the one the window opened on:
+    /// a step through its thread.
+    pub(crate) fn show(&mut self, message: MessageId) {
+        self.reading = Some(message);
+        self.stepping = None;
     }
 
     /// The message on screen, when the open message is on top.
@@ -533,6 +551,9 @@ fn reader_verb(id: CommandId) -> Option<ReaderVerb> {
         CommandId::MoreActions => ReaderVerb::ShowMore,
         CommandId::NextInConversation => ReaderVerb::StepThread(1),
         CommandId::PrevInConversation => ReaderVerb::StepThread(-1),
+        CommandId::FirstInConversation => ReaderVerb::FirstInThread,
+        CommandId::LatestInConversation => ReaderVerb::LatestInThread,
+        CommandId::FirstUnreadInConversation => ReaderVerb::FirstUnread,
         _ => return None,
     })
 }
