@@ -27,10 +27,10 @@ command = "next_message"
 [[step]]
 command = "open_message"
 settle  = { until = { view = "reader" } }
-check   = { view = "reader", reading.id = "90", keyboard.region = "reader", rows.count = 60 }
+check   = { view = "reader", reading.id = "90", keyboard.region = "reader", rows.count = 61 }
 expect  = "The message is open, its action row showing Delete with the cap `#`, Gmail's key for it."
 
 [[step]]
 command = "delete"
-check   = { view = "reader", rows.count = 59, notice.undo = true, reading.id = { changed = true }, keyboard.reachable = true }
+check   = { view = "reader", rows.count = 60, notice.undo = true, reading.id = { changed = true }, keyboard.reachable = true }
 expect  = "Delete acts: the conversation is gone from the list, the toast offers Undo, and the dialog goes on to the message that took its place (T190)."

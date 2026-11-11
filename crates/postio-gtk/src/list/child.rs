@@ -11,7 +11,6 @@
 //! Like the thread row it is one `snapshot()`; it is the row widget in its
 //! child form, since a list view's rows are recycled between kinds.
 
-use gtk::gdk;
 use gtk::graphene;
 use gtk::pango;
 use gtk::prelude::*;
@@ -191,7 +190,7 @@ impl RowWidget {
             AVATAR_X + (AVATAR - initials_width as f32) / 2.0,
             middle,
             initials_width as f32,
-            &gdk::RGBA::WHITE,
+            &palette.ground,
         );
         let sender = self.child_layout(&child.sender, child.bold, child.draft, 1.0);
         self.put(

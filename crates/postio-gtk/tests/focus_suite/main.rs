@@ -1481,8 +1481,8 @@ const CASES: &[(&str, fn())] = &[
         commands::the_row_menu_flags_and_unflags as fn(),
     ),
     (
-        "commands::capital_a_archives_the_conversation",
-        commands::capital_a_archives_the_conversation as fn(),
+        "commands::e_archives_the_whole_conversation",
+        commands::e_archives_the_whole_conversation as fn(),
     ),
     (
         "commands::g_z_and_g_star_span_every_account",
@@ -1665,6 +1665,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "threads::return_on_a_child_opens_that_message",
         threads::return_on_a_child_opens_that_message as fn(),
+    ),
+    (
+        "threads::participants_say_you_for_the_account",
+        threads::participants_say_you_for_the_account as fn(),
+    ),
+    (
+        "threads::the_count_follows_the_participants",
+        threads::the_count_follows_the_participants as fn(),
+    ),
+    (
+        "threads::clicking_the_chevron_opens_and_folds_a_thread",
+        threads::clicking_the_chevron_opens_and_folds_a_thread as fn(),
     ),
     (
         "cursor::j_and_k_move_only_the_cursor",
