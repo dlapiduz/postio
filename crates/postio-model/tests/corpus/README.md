@@ -85,6 +85,7 @@ Fixtures are tagged, not filed — most carry several tags.
 | `malformed-structure` | broken or truncated MIME structure |
 | `missing-headers` | no `Message-ID`, no `Date`, no body |
 | `threading` | part of a conversation JWZ has to reassemble |
+| `threading-rules` | the threading rules proper (spec 013): forks, the 7-day subject window, own replies, a reply filed in another folder, list mail that groups by references and never by subject |
 | `broken-references` | absent, malformed or dangling `References` |
 | `mailing-list` | RFC 2369 list headers, `List-Id` |
 | `pgp` | `multipart/signed` and `multipart/encrypted` |
@@ -262,6 +263,30 @@ linked badly in three different real-world ways.
 | `list-thread-05-reply-no-references.eml` | child of 04 | `In-Reply-To` and **no** `References` at all. The most common way a real thread arrives half-linked; a pass that reads only `References` drops this message out of the tree. |
 | `list-thread-06-reply-subject-only.eml` | child of the thread | Neither `In-Reply-To` nor `References` — a gateway stripped both. Only subject normalization can attach it, which is precisely the JWZ subject-matching fallback. |
 | `list-thread-07-subject-change.eml` | child of 05 | Subject changed with `(was: ...)` and `References` truncated to the last two entries, so the root is reachable only transitively through the parent's own references. |
+
+### Threading rules (spec 013)
+
+Load them together with `by_category(Category::ThreadingRules)`. Every address is invented; the account's own address is `ada.norwood@example.com`.
+
+| File | Exercises |
+|---|---|
+| `thread-fork-1-root.eml` | Fork root. Both replies answer it. |
+| `thread-fork-2-reply-a.eml` | First reply to the root. |
+| `thread-fork-3-reply-b.eml` | Second reply to the root, sent from the account's own address: a sibling of 2, not a child. |
+| `thread-fork-4-reply-to-a.eml` | Reply to 2, with `References` root then 2: the fork is two deep on one side. |
+| `thread-archive-1-parent.eml` | Belongs in the **Inbox** for the test. The parent of the Archive pair. |
+| `thread-archive-2-reply.eml` | Belongs in **Archive** for the test. Its headers link it to the parent in the Inbox; the thread must hold both across folders. |
+| `thread-sent-1-received.eml` | Belongs in the Inbox. The message the account answers. |
+| `thread-sent-2-reply.eml` | Belongs in **Sent**. A reply from the account's own address, linked by `In-Reply-To` and `References`. |
+| `thread-hello-30d-1.eml` | "Re: Hello", no `In-Reply-To`/`References`. |
+| `thread-hello-30d-2.eml` | "Re: Hello" 30 days later, no references: unrelated, outside the subject window, must be its own thread. |
+| `thread-hello-3d-1.eml` | "Re: Hello", no references. |
+| `thread-hello-3d-2.eml` | "Re: Hello" 3 days later, no references: inside the 7-day window, joins the first. |
+| `thread-newsletter-1-issue.eml` | Weekly newsletter issue with a `List-Id`. |
+| `thread-newsletter-2-issue.eml` | The next issue a week later, same subject and `List-Id`: a list message must never group by subject. |
+| `thread-list-1-root.eml` | List discussion root with `List-Id`. |
+| `thread-list-2-reply.eml` | Reply with proper `In-Reply-To` and `References`. |
+| `thread-list-3-reply.eml` | Reply to 2 with the full `References` chain: list mail still threads by references. |
 
 ### Signed and encrypted
 

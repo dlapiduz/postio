@@ -61,7 +61,7 @@ uses.
   - A 23-message thread, a 41-message list thread, single messages, and the "rate limit headers" search fixtures for screens 06/07.
   - Invented names on `example.com`/`example.net` only.
   - Test in `crates/postio-demo/src/lib.rs`'s tests: the seed opens and its thread counts are as listed (red: no such seed).
-- [ ] T002 [P] Add threading fixtures with `/add-fixture` under `crates/postio-model/tests/corpus/`:
+- [x] T002 [P] Add threading fixtures with `/add-fixture` under `crates/postio-model/tests/corpus/`:
   - a fork;
   - a reply filed in Archive while its parent is in the inbox;
   - a sent reply;
@@ -71,7 +71,7 @@ uses.
   - a list discussion with references.
 
   Each gets its loader row, categories and README row.
-- [ ] T003 [P] Create `storyboards/threads/README.md` naming the paths this spec films (one per acceptance scenario that involves a key), in spec 008's format.
+- [x] T003 [P] Create `storyboards/threads/README.md` naming the paths this spec films (one per acceptance scenario that involves a key), in spec 008's format.
 - [ ] T004 Register `--seed threads` in `scripts/macos-shot.sh` and the GTK demo's seed parser (`crates/postio-gtk/src/demo.rs`), with `POSTIO_DEMO=threads` working on both.
 
 ---
