@@ -1561,7 +1561,7 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
     let connector = ScriptedConnector::new(accepting_script());
     let blobs = TempBlobs::new();
 
-    drain_one(
+    let report = drain_one(
         &connection,
         &backend,
         SmtpContext {
@@ -1610,6 +1610,14 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
         "the reply was filed outside the conversation it answers, so it reads \
          as a new thread and the person watching that conversation sees \
          nothing arrive"
+    );
+
+    // And the drain says so, for the engine to announce once it is done
+    // (spec 013 T016): the thread, and the reply that joined it.
+    assert_eq!(
+        report.thread_arrivals.into_threads().collect::<Vec<_>>(),
+        vec![(conversation, vec![reply.id])],
+        "the reply joined its thread and the report does not say so"
     );
 }
 

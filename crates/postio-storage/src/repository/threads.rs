@@ -2676,6 +2676,19 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
+    /// Thread `id`'s subject: `None` when there is no such thread, and
+    /// `Some(None)` when it has no subject. One statement, a rowid seek, with
+    /// none of [`Self::get`]'s reads of the members.
+    pub async fn subject(&self, id: ThreadId) -> Result<Option<Option<String>>> {
+        sql::first(
+            self.connection,
+            "SELECT subject FROM threads WHERE id = ?1",
+            [id.get()],
+            |row| row.col(0),
+        )
+        .await
+    }
+
     /// The unsent reply in thread `id`, found by `drafts.thread_id`: its
     /// newest, when it has more than one. One statement, a seek on
     /// `idx_drafts_thread`.

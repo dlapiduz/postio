@@ -9,7 +9,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::address::EmailAddress;
-use crate::ids::{DraftId, MessageId};
+use crate::ids::{DraftId, MessageId, ThreadId};
+use crate::label::Label;
 
 /// What a member's row says of the message, with no body fetched to say it
 /// (FR-028).
@@ -57,6 +58,25 @@ pub struct ThreadDraft {
     pub first_words: String,
     /// When it was last saved.
     pub updated_at: DateTime<Utc>,
+}
+
+/// A thread as a window or an expansion reads it (`Req::Thread`): its
+/// members in date order, the unsent reply after them, and its labels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadView {
+    /// The thread.
+    pub thread: ThreadId,
+    /// Its subject, when it has one.
+    pub subject: Option<String>,
+    /// Every member, oldest first.
+    pub members: Vec<ThreadMember>,
+    /// An unsent reply, shown after the members.
+    pub draft: Option<ThreadDraft>,
+    /// Replies since the thread was muted, when it is. Always `None` until
+    /// mute arrives (spec 013, US5).
+    pub muted: Option<u32>,
+    /// Every label any member carries, each once.
+    pub labels: Vec<Label>,
 }
 
 /// `preview` cut where an attribution line ("On Mon, Ana wrote:") begins.

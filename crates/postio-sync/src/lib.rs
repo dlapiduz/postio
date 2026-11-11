@@ -71,6 +71,7 @@ pub mod resync;
 pub mod retry;
 pub mod send;
 pub mod status;
+pub mod threaded;
 pub mod watch;
 
 pub use backfill::{

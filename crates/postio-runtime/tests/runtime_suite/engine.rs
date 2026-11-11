@@ -515,6 +515,113 @@ async fn a_resync_that_finds_new_mail_announces_it() {
     assert_eq!(arrived.1.len(), 1, "exactly the one message that arrived");
 }
 
+/// A reply to `server()`'s first message, `n` of them.
+fn reply_to_the_first(n: u32) -> Vec<u8> {
+    format!(
+        "From: Grace Hopper <grace@example.org>\r\n\
+         To: Ada Lovelace <ada@example.com>\r\n\
+         Subject: Re: body 1\r\n\
+         Message-ID: <reply-{n}@example.org>\r\n\
+         In-Reply-To: <body-1@example.com>\r\n\
+         References: <body-1@example.com>\r\n\
+         Date: Mon, 1 Jun 2026 10:0{n}:00 +0000\r\n\
+         \r\n\
+         Reply {n}.\r\n"
+    )
+    .into_bytes()
+}
+
+#[tokio::test]
+async fn replies_arriving_into_a_thread_are_announced_once_for_the_thread() {
+    // Spec 013 T016. An open thread window or expansion reads its view again
+    // on `ThreadChanged`, and the new-reply banner is driven by
+    // `members_added`. Two replies in one pass are one event, naming both; a
+    // first sync names none (its messages are history, not arrivals).
+    let database = test_support::memory().await;
+    let account =
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .await
+            .expect("the folder is created");
+        mailbox
+    };
+    let backend = Arc::new(server());
+    let (engine, events, _directory) = engine_over_arc(&database, account.id, backend.clone());
+
+    engine.sync(mailbox.id).await.expect("a first sync");
+    assert!(
+        !announced(&events)
+            .iter()
+            .any(|event| matches!(event, Event::ThreadChanged { .. })),
+        "a first sync's messages are not arrivals"
+    );
+
+    for n in 1..=2 {
+        backend
+            .append(
+                "INBOX",
+                &postio_account::backend::AppendMessage::new(reply_to_the_first(n)),
+            )
+            .await
+            .expect("the server takes delivery");
+    }
+    engine.sync(mailbox.id).await.expect("a resync");
+
+    let ids = |rfc: &str| {
+        let database = database.clone();
+        let rfc = postio_model::RfcMessageId::new(rfc);
+        let account = account.id;
+        async move {
+            let connection = database.connect().await.expect("a connection");
+            postio_storage::repository::MessageRepository::new(&connection)
+                .ids_by_rfc_message_id(account, &rfc)
+                .await
+                .expect("a read")
+        }
+    };
+    let first = ids("<body-1@example.com>").await[0];
+    let replies = [
+        ids("<reply-1@example.org>").await[0],
+        ids("<reply-2@example.org>").await[0],
+    ];
+    let thread = {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MessageRepository::new(&connection)
+            .get(first)
+            .await
+            .expect("a read")
+            .expect("the message")
+            .thread_id
+            .expect("it is threaded")
+    };
+
+    let changed: Vec<_> = announced(&events)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::ThreadChanged {
+                account: to,
+                thread,
+                mut members_added,
+            } => {
+                assert_eq!(to, account.id);
+                members_added.sort();
+                Some((thread, members_added))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        changed,
+        vec![(thread, replies.to_vec())],
+        "one event for the thread, naming both replies"
+    );
+}
+
 #[tokio::test]
 async fn a_modseq_less_resync_that_finds_new_mail_announces_it() {
     // #1704. A server with no MODSEQ (Gmail and JMAP, an IMAP server without

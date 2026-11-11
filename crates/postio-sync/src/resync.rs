@@ -149,6 +149,9 @@ pub enum Outcome {
         /// not in its inbox to splice in. Empty unless a host in Focus mode
         /// gave the pass one.
         filed_away: Vec<MessageId>,
+        /// Of `arrived`, the thread each joined: what `ThreadChanged` says.
+        /// Includes the filed-away ones, since the thread changed all the same.
+        thread_arrivals: crate::threaded::ThreadArrivals,
     },
 }
 
@@ -585,6 +588,7 @@ pub async fn resync_mailbox_with_policy(
                             vanished,
                             arrived: Vec::new(),
                             filed_away: Vec::new(),
+                            thread_arrivals: Default::default(),
                         });
                     }
                 }
@@ -601,6 +605,7 @@ pub async fn resync_mailbox_with_policy(
                     vanished: 0,
                     arrived: Vec::new(),
                     filed_away: Vec::new(),
+                    thread_arrivals: Default::default(),
                 });
             }
             Ok(Outcome::UpToDate)
@@ -747,6 +752,7 @@ async fn incremental(
 
     let mut arrived: Vec<MessageId> = Vec::new();
     let mut filed_away: Vec<MessageId> = Vec::new();
+    let mut thread_arrivals = crate::threaded::ThreadArrivals::default();
     if !changed.is_empty() {
         let batch: Vec<Message> = changed
             .into_iter()
@@ -785,7 +791,7 @@ async fn incremental(
             let role = mailbox.role;
             let account_ref = account.as_ref();
             let known_ref = &known_set;
-            let ((newly, effects), held) = initial::write_unit(connection, || {
+            let ((newly, effects, joined), held) = initial::write_unit(connection, || {
                 // IMMEDIATE for the reason `initial.rs` gives at its own
                 // transaction (#79): the first statement here is a SELECT,
                 // and a deferred transaction that has to promote a read lock
@@ -852,11 +858,20 @@ async fn incremental(
                             crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed)
                                 .await;
                     }
-                    Ok::<_, SyncError>((arrivals, effects))
+                    // Who joined which thread, for the event the engine emits
+                    // once this has committed.
+                    let mut joined = crate::threaded::ThreadArrivals::default();
+                    for (message, thread) in written.iter().zip(&threads) {
+                        if arrivals.contains(&message.id) {
+                            joined.add(*thread, message.id);
+                        }
+                    }
+                    Ok::<_, SyncError>((arrivals, effects, joined))
                 })
             })
             .await?;
             arrived.extend(newly);
+            thread_arrivals.extend(joined);
             filed_away.extend(effects.filtered);
             filed_away.extend(effects.held);
             initial::unit_wrote(slice.len(), held);
@@ -889,6 +904,7 @@ async fn incremental(
         vanished: vanished_count,
         arrived,
         filed_away,
+        thread_arrivals,
     })
 }
 

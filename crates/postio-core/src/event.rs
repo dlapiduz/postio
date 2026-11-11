@@ -131,11 +131,18 @@ pub enum Event {
         messages: Vec<MessageId>,
     },
     /// A thread gained, lost or re-linked messages after a threading pass.
+    ///
+    /// Emitted once per thread per pass, after the pass's transaction has
+    /// committed. An open window or expansion reads its `ThreadView` again;
+    /// `members_added` drives the new-reply banner (spec 013).
     ThreadChanged {
         /// The account the thread belongs to.
         account: AccountId,
         /// The affected thread.
         thread: ThreadId,
+        /// The messages that joined it, when they arrived: empty when the
+        /// thread changed some other way.
+        members_added: Vec<MessageId>,
     },
     /// A message body finished loading from the blob store or the server.
     BodyLoaded {
@@ -469,7 +476,11 @@ mod tests {
                 mailbox,
                 messages: vec![message],
             },
-            Event::ThreadChanged { account, thread },
+            Event::ThreadChanged {
+                account,
+                thread,
+                members_added: vec![message],
+            },
             Event::BodyLoaded { account, message },
             Event::BodyFailed { account, message },
             Event::BodyReachable { account, message },
