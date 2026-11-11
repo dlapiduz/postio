@@ -43,3 +43,4 @@ leaves this list. Traps worth knowing before you start are in
 - 2026-10-19 — [What five other mail clients know](2026-10-19-what-five-other-mail-clients-know.md)
 - 2026-10-20 — [What recording a contact costs a synced message](2026-10-20-what-recording-a-contact-costs-a-synced-message.md)
 - 2026-10-22 — [Mail retrieval paths: where a body fails to arrive](2026-10-22-mail-retrieval-paths.md)
+- 2026-11-11 — [Focus threads, steps 2–3: thread rows and expansion against screens 01, 02 and 11](2026-11-11-focus-threads-step-2-3.md)
