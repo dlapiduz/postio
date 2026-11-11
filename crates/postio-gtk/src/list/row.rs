@@ -34,6 +34,7 @@ use postio_ui::label_colour::{Rgb, label_colour};
 
 use super::model::RowObject;
 use postio_ui::focus_list::FocusRow;
+use postio_ui::thread_list::ChildRowView;
 
 /// What a row drew in its last snapshot: every text it laid out, in order,
 /// each label pill with its colour, and whether it was drawn bold. What a
@@ -105,9 +106,9 @@ pub const ONE_LINE: i32 = 40;
 pub const TWO_LINES: i32 = 72;
 
 /// The space the right edge keeps.
-const TRAILING: f32 = postio_ui::focus_row::ROW_TRAILING;
+pub(super) const TRAILING: f32 = postio_ui::focus_row::ROW_TRAILING;
 /// The gap between two things on the line.
-const GAP: f32 = postio_ui::focus_row::COLUMN_GAP;
+pub(super) const GAP: f32 = postio_ui::focus_row::COLUMN_GAP;
 
 /// Where the subject column starts in a row `width` pixels wide: the
 /// sender's column narrows in a list beside the reading pane (T232).
@@ -119,23 +120,26 @@ const PILL_HEIGHT: f32 = 20.0;
 const PILL_DOT: f32 = 6.0;
 const PILL_PAD: f32 = 7.0;
 /// The attachment mark's size.
-const ICON: f32 = 16.0;
+pub(super) const ICON: f32 = 16.0;
 /// Below this, a first line is not worth drawing: it would be a letter.
 const LEAST_FIRST_LINE: f32 = 40.0;
 /// Where a two-line row's lines sit (their centres), from screen 01.
 const FIRST_LINE: f32 = 22.0;
 const SECOND_LINE: f32 = 51.0;
 /// The unread dot in the gutter.
-const GUTTER_CENTRE: f32 = 30.0;
+pub(super) const GUTTER_CENTRE: f32 = 30.0;
 
 /// How far either side of the gutter's centre a press still hits the
 /// selection box.
+/// Where a thread row's chevron sits: right of the unread dot, left of the
+/// sender.
+const CHEVRON_X: f32 = 38.0;
 const GUTTER_HIT: f32 = 14.0;
-const DOT: f32 = 7.0;
+pub(super) const DOT: f32 = 7.0;
 /// An action's button on the second line, and the keycap in it.
 const ACTION_HEIGHT: f32 = 24.0;
 const ACTION_PAD: f32 = 9.0;
-const KEYCAP_PAD: f32 = 4.0;
+pub(super) const KEYCAP_PAD: f32 = 4.0;
 
 /// The keymap a list's rows read their keycaps from, shared by every row
 /// and replaced when `[keys]` changes.
@@ -173,6 +177,13 @@ mod imp {
         /// seam a headless test drives a Ctrl- or Shift-click through.
         pub held: std::cell::Cell<Option<gdk::ModifierType>>,
         pub capture: RefCell<Option<Rc<std::cell::Cell<bool>>>>,
+        /// What the row says while it is a child of the open thread, and
+        /// whether it is the last of them.
+        pub child: RefCell<Option<(ChildRowView, bool)>>,
+        /// The thread this row stands for is open under it.
+        pub expanded: std::cell::Cell<bool>,
+        /// The cursor is on this row.
+        pub here: std::cell::Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -282,17 +293,17 @@ impl Default for RowWidget {
 /// quieter steps libadwaita takes of it; and the accent, from
 /// `AdwStyleManager` -- for a marker, the one thing on a row FR-091 gives
 /// it -- whose hue the label colours keep away from.
-struct Palette {
-    ink: gdk::RGBA,
-    dim: gdk::RGBA,
-    rule: gdk::RGBA,
-    raised: gdk::RGBA,
-    accent: gdk::RGBA,
-    accent_hue: f64,
+pub(super) struct Palette {
+    pub(super) ink: gdk::RGBA,
+    pub(super) dim: gdk::RGBA,
+    pub(super) rule: gdk::RGBA,
+    pub(super) raised: gdk::RGBA,
+    pub(super) accent: gdk::RGBA,
+    pub(super) accent_hue: f64,
 }
 
 impl Palette {
-    fn of(widget: &RowWidget) -> Self {
+    pub(super) fn of(widget: &RowWidget) -> Self {
         let ink = widget.color();
         let faded = |by: f32| {
             let mut colour = ink;
@@ -321,7 +332,7 @@ fn rgb(colour: &gdk::RGBA) -> Rgb {
     )
 }
 
-fn rgba(colour: Rgb) -> gdk::RGBA {
+pub(super) fn rgba(colour: Rgb) -> gdk::RGBA {
     gdk::RGBA::new(
         f32::from(colour.r) / 255.0,
         f32::from(colour.g) / 255.0,
@@ -372,12 +383,43 @@ impl RowWidget {
             let widget = self.downgrade();
             move |row| {
                 if let Some(widget) = widget.upgrade() {
-                    widget.show(row.item());
+                    widget.show(row);
                 }
             }
         });
         self.imp().bound.replace(Some((row.clone(), handler)));
-        self.show(row.item());
+        self.show(row);
+    }
+
+    /// The cursor is on this row, or has left it: a child shows the keys
+    /// that act on it while it is.
+    pub fn set_cursor_here(&self, here: bool) {
+        if self.imp().here.replace(here) != here {
+            self.queue_draw();
+        }
+    }
+
+    /// Whether the cursor is on this row.
+    pub fn is_cursor_here(&self) -> bool {
+        self.imp().here.get()
+    }
+
+    /// What this row says while it is a child of the open thread.
+    pub fn child(&self) -> Option<ChildRowView> {
+        self.imp()
+            .child
+            .borrow()
+            .as_ref()
+            .map(|(view, _)| view.clone())
+    }
+
+    /// Whether the row's thread is open under it.
+    pub fn is_expanded(&self) -> bool {
+        self.imp().expanded.get()
+    }
+
+    pub(super) fn set_drawn(&self, drawn: Drawn) {
+        self.imp().drawn.replace(drawn);
     }
 
     /// Stop following the row this widget was showing.
@@ -390,6 +432,9 @@ impl RowWidget {
     /// What this row says, as a screen reader hears it and a test reads it:
     /// "Loading" while its page has not arrived.
     pub fn spoken(&self) -> String {
+        if let Some((child, _)) = self.imp().child.borrow().as_ref() {
+            return super::child::spoken(child);
+        }
         self.imp()
             .item
             .borrow()
@@ -499,9 +544,13 @@ impl RowWidget {
         self.imp().item.borrow().clone()
     }
 
-    fn show(&self, item: Option<FocusRow>) {
+    fn show(&self, row: &RowObject) {
         let height_before = self.height();
-        self.imp().item.replace(item);
+        self.imp()
+            .child
+            .replace(row.child_view().map(|view| (view, row.is_last_child())));
+        self.imp().expanded.set(row.is_expanded());
+        self.imp().item.replace(row.item());
         self.announce();
         if self.height() != height_before {
             self.queue_resize();
@@ -511,6 +560,9 @@ impl RowWidget {
 
     /// The row's height, fixed by its kind (FR-013).
     pub fn height(&self) -> i32 {
+        if self.imp().child.borrow().is_some() {
+            return self.scaled(super::child::CHILD_HEIGHT).round() as i32;
+        }
         match self.imp().item.borrow().as_ref() {
             Some(item) if item.two_lines() => self.scaled(TWO_LINES as f32).round() as i32,
             _ => self.one_line().round() as i32,
@@ -530,7 +582,7 @@ impl RowWidget {
         (dpi as f32 / 1024.0 / 96.0).max(1.0)
     }
 
-    fn scaled(&self, pixels: f32) -> f32 {
+    pub(super) fn scaled(&self, pixels: f32) -> f32 {
         pixels * self.text_scale()
     }
 
@@ -567,7 +619,7 @@ impl RowWidget {
 
     /// Draw `layout` at `x`, vertically centred on `middle`, within `room`
     /// pixels. Answers how wide it drew.
-    fn put(
+    pub(super) fn put(
         &self,
         snapshot: &gtk::Snapshot,
         layout: &pango::Layout,
@@ -586,6 +638,11 @@ impl RowWidget {
     }
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
+        let child = self.imp().child.borrow().clone();
+        if let Some((view, last)) = child {
+            self.draw_child(snapshot, &view, last);
+            return;
+        }
         let Some(item) = self.imp().item.borrow().clone() else {
             self.imp().drawn.replace(Drawn::default());
             self.draw_skeleton(snapshot);
@@ -607,6 +664,17 @@ impl RowWidget {
             self.one_line() / 2.0
         };
         let bold = summary.has_unread();
+        // A thread of two or more says who took part, what the newest said
+        // and how much of it is new; its chevron says whether it is open.
+        let thread = (summary.message_count > 1).then(|| {
+            postio_ui::focus_row::ThreadRowView::new(
+                summary,
+                &row.labels,
+                &[],
+                self.imp().expanded.get(),
+                postio_ui::clock::now(),
+            )
+        });
         let mut drawn = Drawn {
             bold,
             picked: self.is_picked(),
@@ -625,6 +693,14 @@ impl RowWidget {
             snapshot.append_color(&palette.accent, &dot);
             snapshot.pop();
             drawn.dot = true;
+        }
+
+        if let Some(chevron) = thread.as_ref().and_then(|thread| thread.chevron) {
+            let name = match chevron {
+                postio_ui::focus_row::Chevron::Collapsed => "pan-end-symbolic",
+                postio_ui::focus_row::Chevron::Expanded => "pan-down-symbolic",
+            };
+            self.draw_icon(snapshot, name, CHEVRON_X, middle - ICON / 2.0, &palette.dim);
         }
 
         // The trailing column first, from the right edge in, so the middle
@@ -702,10 +778,49 @@ impl RowWidget {
                 &palette.dim,
             );
         }
+        if let Some(new) = thread.as_ref().and_then(|thread| thread.new.clone()) {
+            let layout = self.layout(&new, true, 0.8);
+            let (word_width, word_height) = layout.pixel_size();
+            let boxed = word_width as f32 + 14.0;
+            trailing -= GAP + boxed;
+            let frame = graphene::Rect::new(
+                trailing,
+                middle - (word_height as f32 + 6.0) / 2.0,
+                boxed,
+                word_height as f32 + 6.0,
+            );
+            // Filled in the row's ink, not the accent (the accent is
+            // reserved): its words are in the ink's opposite.
+            snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(
+                frame,
+                (word_height as f32 + 6.0) / 2.0,
+            ));
+            snapshot.append_color(&palette.ink, &frame);
+            snapshot.pop();
+            let on_ink = if palette.ink.red() > 0.5 {
+                gdk::RGBA::BLACK
+            } else {
+                gdk::RGBA::WHITE
+            };
+            self.put(
+                snapshot,
+                &layout,
+                trailing + 7.0,
+                middle,
+                word_width as f32,
+                &on_ink,
+            );
+            trailing_texts.push(new);
+        }
         let end = trailing - GAP;
 
         // The sender, then the subject, each as it arrived.
-        let sender = postio_ui::focus_row::row_names(&summary.representative);
+        let sender = match thread.as_ref() {
+            Some(thread) if summary.representative.send_state.is_none() => {
+                thread.participants.clone()
+            }
+            _ => postio_ui::focus_row::row_names(&summary.representative),
+        };
         let columns = postio_ui::focus_row::row_columns(width);
         let sender_layout = self.layout(&sender, bold, 1.0);
         self.put(
@@ -759,7 +874,10 @@ impl RowWidget {
         }
 
         // The first line, dimmed, in whatever room is left.
-        if let Some(preview) = summary.representative.preview.as_deref()
+        let latest = thread.as_ref().map(|thread| thread.latest_line.as_str());
+        if let Some(preview) = latest
+            .filter(|line| !line.is_empty())
+            .or(summary.representative.preview.as_deref())
             && end - (x + GAP) >= LEAST_FIRST_LINE
         {
             let preview_layout = self.layout(preview, false, 1.0);
@@ -1091,7 +1209,14 @@ impl RowWidget {
         );
     }
 
-    fn draw_icon(&self, snapshot: &gtk::Snapshot, name: &str, x: f32, y: f32, colour: &gdk::RGBA) {
+    pub(super) fn draw_icon(
+        &self,
+        snapshot: &gtk::Snapshot,
+        name: &str,
+        x: f32,
+        y: f32,
+        colour: &gdk::RGBA,
+    ) {
         let theme = gtk::IconTheme::for_display(&self.display());
         let icon = theme.lookup_icon(
             name,

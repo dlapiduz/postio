@@ -719,6 +719,25 @@ impl Fixture {
         ids
     }
 
+    /// Mark every message of `thread` but the newest read, so the thread
+    /// opens on its newest: a thread opens at its first unread message
+    /// (spec 013 FR-013), and `thread_of` leaves every message unread.
+    pub async fn read_all_but_last(&self, thread: &[MessageId]) {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut seen = postio_model::FlagSet::new();
+        seen.insert(postio_model::Flag::Seen);
+        for message in &thread[..thread.len().saturating_sub(1)] {
+            MessageRepository::new(&connection)
+                .set_flags(
+                    *message,
+                    &seen,
+                    postio_storage::repository::FlagSource::Server,
+                )
+                .await
+                .expect("the earlier message is read");
+        }
+    }
+
     /// Store `text` as `message`'s body, fetched in full.
     pub async fn write_body(&self, message: MessageId, text: &str) {
         let connection = self.database.connect().await.expect("a connection");

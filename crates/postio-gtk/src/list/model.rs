@@ -18,6 +18,7 @@ use postio_ui::list::PAGE_SIZE;
 use postio_widgets::list_model::{ModelRow, Windowed, WindowedModel};
 
 use postio_ui::focus_list::{FocusRow, day_of};
+use postio_ui::thread_list::ChildRowView;
 
 mod imp {
     use super::*;
@@ -25,6 +26,13 @@ mod imp {
     #[derive(Default)]
     pub struct RowObject {
         pub item: RefCell<Option<FocusRow>>,
+        /// What this position says when it is a child of the expanded
+        /// thread rather than a row of the list (spec 013).
+        pub child: RefCell<Option<ChildRowView>>,
+        /// This child is the last of its thread: its line ends at its dot.
+        pub last: std::cell::Cell<bool>,
+        /// This row is the one whose children are drawn under it.
+        pub expanded: std::cell::Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -110,6 +118,51 @@ impl RowObject {
     /// What the row stands for, once its page has arrived.
     pub fn item(&self) -> Option<FocusRow> {
         self.imp().item.borrow().clone()
+    }
+
+    /// A position that is a child of the expanded thread: its words, and
+    /// whether it is the last of them.
+    pub fn child(view: ChildRowView, last: bool) -> Self {
+        let object: Self = glib::Object::new();
+        object.imp().child.replace(Some(view));
+        object.imp().last.set(last);
+        object
+    }
+
+    /// What the position says when it is a child of the expanded thread.
+    pub fn child_view(&self) -> Option<ChildRowView> {
+        self.imp().child.borrow().clone()
+    }
+
+    /// Whether a child is the last of its thread.
+    pub fn is_last_child(&self) -> bool {
+        self.imp().last.get()
+    }
+
+    /// Replace what a child says, keeping the object, and tell a bound
+    /// widget -- quietly when nothing changed.
+    pub fn set_child(&self, view: ChildRowView, last: bool) {
+        {
+            let mut held = self.imp().child.borrow_mut();
+            if held.as_ref() == Some(&view) && self.imp().last.get() == last {
+                return;
+            }
+            *held = Some(view);
+        }
+        self.imp().last.set(last);
+        self.emit_by_name::<()>("changed", &[]);
+    }
+
+    /// Whether this is the row whose thread is open under it.
+    pub fn is_expanded(&self) -> bool {
+        self.imp().expanded.get()
+    }
+
+    /// The row's thread is opened or folded: redraw its chevron.
+    pub fn set_expanded(&self, expanded: bool) {
+        if self.imp().expanded.replace(expanded) != expanded {
+            self.emit_by_name::<()>("changed", &[]);
+        }
     }
 
     /// The local day the row's mail arrived on, once its page has.

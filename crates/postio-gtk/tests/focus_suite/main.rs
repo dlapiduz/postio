@@ -118,6 +118,7 @@ mod storyboard_determinism;
 mod storyboards;
 mod support;
 mod surfaced;
+mod threads;
 mod treatments;
 mod undo;
 mod unsubscribe;
@@ -1648,6 +1649,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "rows::a_selected_digest_row_is_drawn_selected",
         rows::a_selected_digest_row_is_drawn_selected as fn(),
+    ),
+    (
+        "threads::right_opens_a_thread_in_place",
+        threads::right_opens_a_thread_in_place as fn(),
+    ),
+    (
+        "threads::j_walks_the_children_and_on_to_the_next_thread",
+        threads::j_walks_the_children_and_on_to_the_next_thread as fn(),
+    ),
+    (
+        "threads::left_folds_the_thread_from_a_child",
+        threads::left_folds_the_thread_from_a_child as fn(),
+    ),
+    (
+        "threads::return_on_a_child_opens_that_message",
+        threads::return_on_a_child_opens_that_message as fn(),
     ),
     (
         "cursor::j_and_k_move_only_the_cursor",

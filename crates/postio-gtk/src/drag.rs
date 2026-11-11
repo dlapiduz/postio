@@ -35,7 +35,7 @@ impl FocusWindow {
         let pane = self.pane()?;
         let row = pane
             .feed()
-            .list()
+            .shown()
             .item(position)
             .and_downcast::<crate::list::model::RowObject>()
             .and_then(|row| row.item())?;

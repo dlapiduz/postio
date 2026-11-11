@@ -167,7 +167,7 @@ shows its own text, and `Return` opens message 4.
   - the anchor leaving the list unsplices and moves the cursor down;
   - `ThreadChanged` while expanded keeps the focused child;
   - `Return` on a row opens `open_at` and on a child opens that child.
-- [ ] T027 [P] [US1] Write storyboards `storyboards/threads/expand-collapse.*` and `storyboards/threads/open-child.*`, red on `main`.
+- [x] T027 [P] [US1] Write storyboards `storyboards/threads/expand-collapse.*` and `storyboards/threads/open-child.*`, red on `main`.
 - [x] T028 [P] [US1] Write a test in `crates/postio-ffi/tests/ffi_suite/focus_threads.rs`: after `ExpandThread` on `Seed::Threads`, Swift receives `ChildRowFfi`s with own lines, the "↳ to Ana" tag and a draft row.
 
 ### Implementation
