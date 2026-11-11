@@ -152,7 +152,7 @@ shows its own text, and `Return` opens message 4.
 
 ### Tests (red first)
 
-- [ ] T025 [P] [US1] Write the words tests in `crates/postio-ui/src/focus_row.rs` (red: no functions):
+- [x] T025 [P] [US1] Write the words tests in `crates/postio-ui/src/focus_row.rs` (red: no functions):
   - `participants` ("Lena, Ben, Ana, you"; "+2"; a single message gives the full name);
   - `latest_line` ("Ben: Looks good…");
   - `new_badge` ("2 new");
@@ -172,9 +172,9 @@ shows its own text, and `Return` opens message 4.
 
 ### Implementation
 
-- [ ] T029 [US1] Implement the T025 functions in `crates/postio-ui/src/focus_row.rs`, and the thread row's `ThreadRowView` (participants, count, subject, labels, latest line, new, attachment, time, chevron).
+- [x] T029 [US1] Implement the T025 functions in `crates/postio-ui/src/focus_row.rs`, and the thread row's `ThreadRowView` (participants, count, subject, labels, latest line, new, attachment, time, chevron).
 - [ ] T030 [US1] Add `Expansion`, `Request::ReadThread`, `Input::ThreadRead`/`ThreadChanged`, and `Intent::Splice`/`Unsplice` to `crates/postio-focus/src/lib.rs`. Wire `perform` in `crates/postio-focus/src/perform.rs`. Make the cursor read through `Splice` in `crates/postio-focus/src/cursor.rs` (`Rows` positions become display positions). Add a count guard: a list page with the new row fields costs today's statements, rows and trigger firings (SC-003; mute's +1 is T061's).
-- [ ] T031 [US1] Add `ChildRowView` to `crates/postio-ui/src/thread_list.rs` (own line or "Quoted reply only", tag, attachment, time, draft styling, focused hint keys from `postio_ui::hints`).
+- [x] T031 [US1] Add `ChildRowView` to `crates/postio-ui/src/thread_list.rs` (own line or "Quoted reply only", tag, attachment, time, draft styling, focused hint keys from `postio_ui::hints`).
 - [ ] T032 [US1] FFI: `crates/postio-ffi/src/focus_threads.rs` (new; `ChildRowFfi`, `ThreadRowFfi`), splice events in `crates/postio-ffi/src/focus_list.rs`, and `ChevronClicked` input.
 - [ ] T033 [US1] Mac: thread row columns (34 gutter, 230 participants, flexible subject, badges, 58 time) and the chevron in `macos/Sources/PostioKit/FocusList.swift`. Add `macos/Sources/PostioKit/ChildRow.swift` (38 tall, tinted, 1.5 pt line, dot, 20 pt avatar). Do row insertion and removal in `macos/Sources/PostioAppKit/FocusListTable.swift`, with no animation under Reduce Motion. Swift test: focus stays on the row after expand and returns to it after collapse.
 - [ ] T034 [US1] GTK: the thread row and child row widgets, and the list model splice, in `crates/postio-gtk/src/list/` and `crates/postio-gtk/src/window.rs`, styled per `/gtk-design` with spec 007's metric roles. Add `crates/postio-gtk/tests/focus_suite/threads.rs` cases for expand, walk, collapse and open child, with real keys. No transition when animations are off (`gtk-enable-animations=false`). Extend the storyboard observation (`crates/postio-storyboard`, `app.focus.*`) with the focused row's kind (row/child), its tag and its line, so `storyboards/threads/expand-collapse` and `open-child` assert the child text and "↳ to Ana" rather than leaving them in prose, and add the missing "expanding another thread collapses the first" step. Run both storyboards red on `main` and green here, on Linux.
