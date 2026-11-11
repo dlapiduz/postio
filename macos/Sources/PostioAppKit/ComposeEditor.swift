@@ -39,11 +39,18 @@ public struct ComposeEditor: NSViewRepresentable {
     private let model: ComposeModel
     /// Raised each time the surface should take the keyboard.
     private let keyboard: Int
+    /// Shift+Tab: the web view keeps it for its own content, so the
+    /// composer is told and moves the keyboard to the field above (#2083).
+    private let backtab: () -> Void
 
-    public init(session: PostioSession, model: ComposeModel, keyboard: Int = 0) {
+    public init(
+        session: PostioSession, model: ComposeModel, keyboard: Int = 0,
+        backtab: @escaping () -> Void = {}
+    ) {
         self.session = session
         self.model = model
         self.keyboard = keyboard
+        self.backtab = backtab
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -72,6 +79,7 @@ public struct ComposeEditor: NSViewRepresentable {
         Self.answerSchemes(in: configuration, cid: coordinator.cid)
 
         let view = PastingWebView(frame: .zero, configuration: configuration)
+        view.onBacktab = backtab
         view.onPaste = { [weak coordinator] html in
             coordinator?.paste(html)
         }
@@ -90,6 +98,7 @@ public struct ComposeEditor: NSViewRepresentable {
 
     public func updateNSView(_ view: PastingWebView, context: Context) {
         context.coordinator.model = model
+        view.onBacktab = backtab
         context.coordinator.reseedIfNeeded(view)
         context.coordinator.applyPendingMark(in: view)
         context.coordinator.insertPendingPaste(in: view)
@@ -375,6 +384,19 @@ public final class PastingWebView: WKWebView {
     /// Called with a picture from the clipboard, as PNG bytes, when it
     /// carries neither HTML nor text (#1571).
     public var onPasteImage: ((Data) -> Void)?
+
+    /// Called for Shift+Tab, which is not the page's to use: the composer
+    /// moves the keyboard back to the subject (#2083).
+    public var onBacktab: (() -> Void)?
+
+    public override func keyDown(with event: NSEvent) {
+        // keyCode 48 is Tab on every Mac layout.
+        if event.keyCode == 48, event.modifierFlags.contains(.shift), let onBacktab {
+            onBacktab()
+            return
+        }
+        super.keyDown(with: event)
+    }
 
     /// `@objc` and not `override`: `WKWebView` implements `paste:` for the
     /// responder chain but does not expose it to Swift, so this is the same
