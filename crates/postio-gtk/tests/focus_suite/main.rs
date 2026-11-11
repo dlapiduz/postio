@@ -775,8 +775,8 @@ const CASES: &[(&str, fn())] = &[
         filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
     ),
     (
-        "digest::enter_opens_a_digest_and_shift_a_archives_all_of_it",
-        digest::enter_opens_a_digest_and_shift_a_archives_all_of_it as fn(),
+        "digest::enter_opens_a_digest_and_e_archives_all_of_it",
+        digest::enter_opens_a_digest_and_e_archives_all_of_it as fn(),
     ),
     (
         "digest::e_on_a_digests_row_archives_its_delivery_and_undo_brings_the_cursor_back",
