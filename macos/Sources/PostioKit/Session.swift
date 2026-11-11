@@ -123,6 +123,13 @@ public final class PostioSession {
         inner.focusPoint(position: row)
     }
 
+    /// A click on the chevron of the thread row at `position`: the cursor goes
+    /// there and the thread opens in place, or folds if it is the open one.
+    /// Answered with `FocusSplice` or `FocusUnsplice`.
+    public func focusChevronClicked(_ position: UInt32) {
+        inner.focusChevronClicked(position: position)
+    }
+
     /// A double-click on `position`: the cursor goes there and its message
     /// opens, as Return does. The controller decides both.
     public func focusActivate(_ position: Int) {

@@ -76,8 +76,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     // Threads in Focus (specs/013-focus-threads): the registry holds the
     // keys first (T022-T023); the tasks that build each surface delete its
     // line.
-    (CommandId::ExpandThread, "specs/013-focus-threads"),
-    (CommandId::CollapseThread, "specs/013-focus-threads"),
     (CommandId::FirstInConversation, "specs/013-focus-threads"),
     (CommandId::LatestInConversation, "specs/013-focus-threads"),
     (

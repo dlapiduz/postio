@@ -138,3 +138,170 @@ async fn reading_a_thread_costs_the_same_at_any_length() {
     );
     assert!(costs[0] <= 4, "the read took {} statements", costs[0]);
 }
+
+// -- What Swift receives when a thread opens (spec 013 T028) ----------------
+
+use postio_ffi::{FocusScopeFfi, Session, SessionOptions, UiEvent};
+
+use super::focus::heard;
+
+/// The inbox over the threads seed, landed, with Harbor's row found.
+async fn inbox_with_harbor() -> (Arc<Session>, u32) {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.open_focus(FocusScopeFfi::Inbox);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusListChanged { .. }
+        ))
+        .await,
+        "the inbox changes over"
+    );
+    let total = session.focus_row_count();
+    for position in 0..total {
+        while session.focus_row_at(position).is_none() {
+            assert!(
+                heard(&session, 10, |event| matches!(
+                    event,
+                    UiEvent::FocusPageReady { .. }
+                ))
+                .await,
+                "the page of row {position} lands"
+            );
+        }
+    }
+    let harbor = (0..total)
+        .find(|position| {
+            session
+                .focus_row_at(*position)
+                .is_some_and(|row| row.subject.to_lowercase().contains("harbor api draft v3"))
+        })
+        .expect("Harbor is in the inbox");
+    (session, harbor)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn expanding_a_thread_hands_swift_its_children_and_counts_them_in_the_cursor() {
+    let (session, harbor) = inbox_with_harbor().await;
+    let rows = session.focus_row_count();
+    session.focus_point(harbor);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position, .. } if *position == harbor
+        ))
+        .await,
+        "the cursor is on Harbor"
+    );
+
+    session.invoke("expand_thread");
+    let mut spliced = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusSplice { anchor, children } => {
+                spliced = Some((*anchor, children.clone()));
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "Swift is told to insert the children"
+    );
+    let (anchor, children) = spliced.expect("a splice");
+    assert_eq!(anchor, harbor, "after Harbor's row");
+    assert_eq!(children.len(), 7, "six messages and the unsent reply");
+    assert!(
+        children[..6]
+            .iter()
+            .all(|child| !child.draft && !child.line.is_empty()),
+        "every message has its own line: {children:?}"
+    );
+    assert_eq!(
+        children[3].tag.as_deref(),
+        Some("\u{21b3} to Ana"),
+        "message 4 answers Ana's"
+    );
+    let draft = &children[6];
+    assert!(draft.draft, "the draft is last");
+    assert!(draft.line.starts_with("Thanks both."), "{draft:?}");
+
+    assert_eq!(
+        session.focus_row_count(),
+        rows + 7,
+        "the table draws the children"
+    );
+    let child = session
+        .focus_row_at(harbor + 1)
+        .expect("a child sits right under the row");
+    assert_eq!(
+        child.child.as_ref().map(|c| c.line.clone()),
+        Some(children[0].line.clone())
+    );
+    assert_eq!(
+        session
+            .focus_row_at(harbor)
+            .and_then(|row| row.thread_row)
+            .and_then(|t| t.chevron),
+        Some(postio_ffi::ChevronFfi::Expanded)
+    );
+
+    // `j` walks into the children: the cursor's position counts them.
+    session.invoke("next_message");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position, .. } if *position == harbor + 1
+        ))
+        .await,
+        "the cursor steps onto the first child, display position {}",
+        harbor + 1
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chevron_click_opens_the_thread_and_the_next_one_folds_it_and_the_cursor_stays_on_the_row()
+ {
+    let (session, harbor) = inbox_with_harbor().await;
+    let rows = session.focus_row_count();
+
+    session.focus_chevron_clicked(harbor);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusSplice { anchor, .. } if *anchor == harbor
+        ))
+        .await,
+        "the chevron opens the thread"
+    );
+    session.invoke("next_message");
+    session.invoke("next_message");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position, .. } if *position == harbor + 2
+        ))
+        .await,
+        "the cursor walks the children"
+    );
+
+    session.invoke("collapse_thread");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusUnsplice { anchor } if *anchor == harbor
+        ))
+        .await,
+        "Left folds it"
+    );
+    assert_eq!(session.focus_row_count(), rows, "the children are gone");
+    assert_eq!(
+        session
+            .focus_row_at(harbor)
+            .and_then(|row| row.thread_row)
+            .and_then(|thread| thread.chevron),
+        Some(postio_ffi::ChevronFfi::Collapsed)
+    );
+    session.shutdown();
+}

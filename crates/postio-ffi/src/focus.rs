@@ -111,6 +111,13 @@ impl Session {
             .input(postio_focus::Input::Point(position));
     }
 
+    /// A click on the chevron of the thread row at `position`: the cursor
+    /// goes there and the thread opens in place, or folds when it is the one
+    /// open (`FocusSplice` / `FocusUnsplice` say which).
+    pub fn focus_chevron_clicked(&self, position: u32) {
+        self.focus_driver().chevron_clicked(position);
+    }
+
     /// A double-click on `position`: the cursor goes to the row and its
     /// message opens, as Return does there. GTK's `activate` on its list is
     /// the same two steps.

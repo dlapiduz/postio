@@ -21,8 +21,10 @@ use postio_model::{FocusScope, ListScope};
 use postio_ui::focus_list::{Conversation, FocusRow};
 use postio_ui::focus_row;
 use postio_ui::list::{ListWindow, Lookup};
+use postio_ui::thread_list::{self, Slot, Splice};
 
 use crate::event::UiEvent;
+use crate::{ChildRowFfi, ThreadRowFfi};
 
 /// Which of Focus's lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -177,6 +179,8 @@ pub enum FocusRowKindFfi {
     Reminder,
     /// A digest delivery: one row for everything it holds.
     Digest,
+    /// A message of the expanded thread, drawn under its row (spec 013).
+    Child,
 }
 
 /// A label pill: its name, and its stored colour if it has one.
@@ -264,6 +268,11 @@ pub struct FocusRowFfi {
     /// Whether opening it writes rather than reads: a draft not yet on its
     /// way, which opens in the composer.
     pub writes: bool,
+    /// What a thread row says beyond a conversation row's columns: its
+    /// participants, new badge, latest line and chevron.
+    pub thread_row: Option<ThreadRowFfi>,
+    /// The child this row is, when `kind` is `Child`.
+    pub child: Option<ChildRowFfi>,
 }
 
 impl FocusRowFfi {
@@ -307,6 +316,8 @@ impl FocusRowFfi {
                     pills: Vec::new(),
                     marker: None,
                     writes: false,
+                    thread_row: None,
+                    child: None,
                 }
             }
         }
@@ -377,6 +388,8 @@ fn conversation_row(
             .collect(),
         marker,
         writes: !postio_ui::focus_dialog::opens_to_read(message.send_state),
+        thread_row: None,
+        child: None,
     }
 }
 
@@ -475,6 +488,21 @@ pub(crate) struct FocusDriver {
     lanes: Mutex<std::collections::HashMap<postio_focus::Lane, tokio::task::AbortHandle>>,
     /// The `config.toml` a saved search is written to, when there is one.
     config_path: Mutex<Option<std::path::PathBuf>>,
+    /// The thread open in place, as the controller said. Read by the table
+    /// through display positions. A leaf lock: nothing is taken while it is
+    /// held, so it can never be one end of a cycle.
+    expanded: Mutex<Option<Expanded>>,
+    /// The account's own addresses: what "you" in a thread row is decided
+    /// by (`focus_row::participants`). Read once the driver starts.
+    me: Mutex<Vec<postio_model::EmailAddress>>,
+}
+
+/// An expanded thread: where it is, and what sits under it.
+struct Expanded {
+    /// The expanded row's position among the rows.
+    anchor: u32,
+    /// One per message, then the unsent reply.
+    children: Vec<ChildRowFfi>,
 }
 
 impl FocusDriver {
@@ -493,7 +521,124 @@ impl FocusDriver {
             search_reads: std::sync::atomic::AtomicUsize::new(0),
             lanes: Mutex::new(std::collections::HashMap::new()),
             config_path: Mutex::new(None),
+            expanded: Mutex::new(None),
+            me: Mutex::new(Vec::new()),
         })
+        .started()
+    }
+
+    /// Read who "you" is, off the caller's thread.
+    fn started(self: Arc<Self>) -> Arc<Self> {
+        let driver = Arc::clone(&self);
+        self.runtime.spawn(async move {
+            if let Ok(accounts) = driver.client.accounts().await {
+                let mut me = Vec::new();
+                for account in &accounts {
+                    me.push(account.address.clone());
+                    me.extend(account.identities.iter().map(|id| id.address.clone()));
+                }
+                *driver.me.lock().expect("me lock") = me;
+            }
+        });
+        self
+    }
+
+    /// The splice the table's display positions go through, or none.
+    fn splice(&self) -> Option<Splice> {
+        self.expanded
+            .lock()
+            .expect("expanded lock")
+            .as_ref()
+            .map(|open| Splice {
+                anchor: open.anchor,
+                children: open.children.len() as u32,
+            })
+    }
+
+    /// `row` as the table draws it at row position `position`: with its
+    /// thread words and its chevron as of now.
+    fn present(&self, held: &HeldRow, position: u32) -> FocusRowFfi {
+        let mut ffi = held.ffi.clone();
+        let (FocusRow::Conversation(conversation)
+        | FocusRow::Reminder {
+            row: conversation, ..
+        }) = &held.row
+        else {
+            return ffi;
+        };
+        if conversation.summary.message_count < 2 {
+            return ffi;
+        }
+        let open = self
+            .splice()
+            .is_some_and(|splice| splice.anchor == position);
+        let me = self.me.lock().expect("me lock");
+        let view = focus_row::ThreadRowView::new(
+            &conversation.summary,
+            &conversation.labels,
+            &me,
+            open,
+            postio_ui::clock::now(),
+        );
+        ffi.thread_row = Some(ThreadRowFfi::from(&view));
+        ffi
+    }
+
+    /// The child at `index` under the row at `anchor`, drawn as a table row:
+    /// on the anchor's day, so no heading is drawn between them.
+    fn child_row(&self, anchor: u32, index: u32) -> Option<FocusRowFfi> {
+        let child = self
+            .expanded
+            .lock()
+            .expect("expanded lock")
+            .as_ref()?
+            .children
+            .get(index as usize)?
+            .clone();
+        let (day_heading, thread, id) = self
+            .list
+            .lock()
+            .expect("list lock")
+            .resident_at(anchor)
+            .map(|held| (held.ffi.day_heading.clone(), held.ffi.thread, held.ffi.id))
+            .unwrap_or_default();
+        Some(FocusRowFfi {
+            kind: FocusRowKindFfi::Child,
+            id,
+            thread,
+            threads: Vec::new(),
+            sender: child.sender.clone(),
+            from_address: None,
+            subject: String::new(),
+            preview: Some(child.line.clone()),
+            time: child.time.clone(),
+            day_heading,
+            unread: child.bold,
+            count_badge: None,
+            has_attachments: child.attachment,
+            send_state: None,
+            pills: Vec::new(),
+            marker: None,
+            writes: false,
+            thread_row: None,
+            child: Some(child),
+        })
+    }
+
+    /// The Mac's chevron click on `position` (a display position): the
+    /// cursor goes to the row and the thread opens, or folds when it is the
+    /// one open. The two commands are the controller's, as `Right` and
+    /// `Left` are.
+    pub(crate) fn chevron_clicked(self: &Arc<Self>, position: u32) {
+        self.input(Input::Point(position));
+        let open = self.splice().is_some_and(
+            |splice| matches!(splice.slot(position), Slot::Row(row) if row == splice.anchor),
+        );
+        self.command(if open {
+            postio_core::CommandId::CollapseThread
+        } else {
+            postio_core::CommandId::ExpandThread
+        });
     }
 
     /// Show `scope`: counted first, then the list changes over.
@@ -518,6 +663,16 @@ impl FocusDriver {
         };
         self.apply(effects);
         true
+    }
+
+    /// `input` over the list as it is held now: what an open thread needs to
+    /// read the rows it sits among (`handle` would give it none).
+    fn handle_over_rows(&self, input: Input) -> Vec<Effect> {
+        let list = self.list.lock().expect("list lock");
+        self.focus
+            .lock()
+            .expect("focus lock")
+            .handle_on(input, &RowsView(&list))
     }
 
     /// Something the frontend reports that is not a command: a click, a
@@ -667,7 +822,13 @@ impl FocusDriver {
         // both in, so two threads can never hold one each.
         let list = self.list.lock().expect("list lock");
         let position = self.focus.lock().expect("focus lock").cursor()?;
-        list.resident_at(position)
+        // The controller's cursor counts the children; a verb the list
+        // aims acts on the thread's row (the message-only verbs are the
+        // controller's, and aim themselves).
+        let row = match thread_list::slot(self.splice(), position) {
+            Slot::Row(row) | Slot::Child { row, .. } => row,
+        };
+        list.resident_at(row)
             .map(|held| &held.ffi)
             .filter(|row| row.kind != FocusRowKindFfi::Digest)
             .map(|row| postio_model::MessageId::new(row.id))
@@ -704,9 +865,11 @@ impl FocusDriver {
         self.list.lock().expect("list lock").resident_rows()
     }
 
-    /// How many rows the list draws.
+    /// How many rows the table draws: the list's, and the open thread's
+    /// children among them.
     pub(crate) fn row_count(&self) -> u32 {
-        self.list.lock().expect("list lock").total()
+        let rows = self.list.lock().expect("list lock").total();
+        thread_list::len(self.splice(), rows)
     }
 
     /// The row at `position`, or `None` while its page is on its way: a miss
@@ -724,16 +887,25 @@ impl FocusDriver {
     /// asks for the page. For a table that must re-measure rows it already
     /// drew, without reading pages it was not looking at.
     pub(crate) fn row_resident(&self, position: u32) -> Option<FocusRowFfi> {
-        let list = self.list.lock().expect("list lock");
-        list.resident_at(position).map(|held| held.ffi.clone())
+        match thread_list::slot(self.splice(), position) {
+            Slot::Row(row) => {
+                let list = self.list.lock().expect("list lock");
+                list.resident_at(row).map(|held| self.present(held, row))
+            }
+            Slot::Child { row, index } => self.child_row(row, index),
+        }
     }
 
     pub(crate) fn row_at(self: &Arc<Self>, position: u32) -> Option<FocusRowFfi> {
+        let row = match thread_list::slot(self.splice(), position) {
+            Slot::Row(row) => row,
+            Slot::Child { row, index } => return self.child_row(row, index),
+        };
         let (wanted, stamp) = {
             let mut list = self.list.lock().expect("list lock");
             let stamp = list.generation();
-            match list.row_at(position)? {
-                Lookup::Resident(held) => return Some(held.ffi.clone()),
+            match list.row_at(row)? {
+                Lookup::Resident(held) => return Some(self.present(held, row)),
                 Lookup::Missing { request } => (request, stamp),
             }
         };
@@ -750,11 +922,7 @@ impl FocusDriver {
 
     /// An engine event, by the controller's rules.
     pub(crate) fn event(self: &Arc<Self>, event: &Event) {
-        let effects = self
-            .focus
-            .lock()
-            .expect("focus lock")
-            .handle(Input::Event(event.clone()));
+        let effects = self.handle_over_rows(Input::Event(event.clone()));
         self.apply(effects);
     }
 
@@ -773,6 +941,14 @@ impl FocusDriver {
     fn show(self: &Arc<Self>, intent: Intent) {
         match intent {
             Intent::ReplaceSource { total } => {
+                // A different list has no thread open (the controller
+                // forgot its expansion when it opened it).
+                let open = self.expanded.lock().expect("expanded lock").take();
+                if let Some(open) = open {
+                    self.say(UiEvent::FocusUnsplice {
+                        anchor: open.anchor,
+                    });
+                }
                 let stamp = self.list.lock().expect("list lock").reset(total);
                 self.say(UiEvent::FocusListChanged { total });
                 let effects = self.focus.lock().expect("focus lock").page_wanted(0, stamp);
@@ -797,7 +973,9 @@ impl FocusDriver {
                     (list.deliver(stamp, page, rows), resized)
                 };
                 if resized {
-                    self.say(UiEvent::FocusListChanged { total });
+                    self.say(UiEvent::FocusListChanged {
+                        total: thread_list::len(self.splice(), total),
+                    });
                 }
                 if !delivered.stale {
                     self.say(UiEvent::FocusPageReady { page });
@@ -828,7 +1006,9 @@ impl FocusDriver {
                         list.invalidate();
                         list.total()
                     };
-                    self.say(UiEvent::FocusListChanged { total });
+                    self.say(UiEvent::FocusListChanged {
+                        total: thread_list::len(self.splice(), total),
+                    });
                     return;
                 }
                 for page in held {
@@ -866,6 +1046,18 @@ impl FocusDriver {
                     everything,
                     summary,
                 });
+            }
+            Intent::Splice { anchor, children } => {
+                let children: Vec<ChildRowFfi> = children.iter().map(ChildRowFfi::from).collect();
+                *self.expanded.lock().expect("expanded lock") = Some(Expanded {
+                    anchor,
+                    children: children.clone(),
+                });
+                self.say(UiEvent::FocusSplice { anchor, children });
+            }
+            Intent::Unsplice { anchor } => {
+                *self.expanded.lock().expect("expanded lock") = None;
+                self.say(UiEvent::FocusUnsplice { anchor });
             }
             Intent::SingleHeading(text) => self.say(UiEvent::FocusHeading { text }),
             Intent::OpenMessage {
@@ -1068,11 +1260,7 @@ impl FocusDriver {
         // A post is said now, before anything after it is asked.
         let request = match postio_focus::perform_now(&self.client, request) {
             Ok(reply) => {
-                let effects = self
-                    .focus
-                    .lock()
-                    .expect("focus lock")
-                    .handle(Input::Reply(ticket, reply));
+                let effects = self.handle_over_rows(Input::Reply(ticket, reply));
                 self.apply(effects);
                 return;
             }
@@ -1092,11 +1280,7 @@ impl FocusDriver {
                     .search_reads
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
-            let effects = driver
-                .focus
-                .lock()
-                .expect("focus lock")
-                .handle(Input::Reply(ticket, reply));
+            let effects = driver.handle_over_rows(Input::Reply(ticket, reply));
             driver.apply(effects);
         });
         // The stamps keep a superseded answer off the screen; this keeps

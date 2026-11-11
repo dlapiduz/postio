@@ -62,6 +62,7 @@ mod focus_reader;
 mod focus_search;
 mod focus_states;
 mod focus_surfaces;
+mod focus_threads;
 mod keys;
 mod links;
 mod list;
@@ -163,6 +164,7 @@ pub use focus_surfaces::{
     FilteredViewFfi, FocusDigestGeometryFfi, FocusHintFfi, RulePreviewLineFfi, RuleScheduleFfi,
     RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi, focus_digest_geometry,
 };
+pub use focus_threads::{ChevronFfi, ChildHintFfi, ChildRowFfi, ThreadRowFfi};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use links::{link_gone, link_unknown, message_link, parse_message_link};
 pub use list::{RowFfi, ScopeFfi};

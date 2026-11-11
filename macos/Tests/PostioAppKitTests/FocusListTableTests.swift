@@ -33,7 +33,7 @@ struct FocusListTableTests {
                     chip: "Question", date: nil, quote: "Do you have the numbers?", status: nil,
                     actions: [FocusRowActionFfi(command: "reply", label: "Reply")])
                 : nil,
-            writes: false)
+            writes: false, threadRow: nil, child: nil)
     }
 
     static func table(_ rows: [FocusRowFfi?]) -> FocusListTable {
