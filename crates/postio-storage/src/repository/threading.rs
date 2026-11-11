@@ -36,6 +36,7 @@
 //! question later, for exactly the messages that could not have gotten a
 //! better answer at insertion time. See postio-tn9.2.
 
+use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Assignment, MailboxId, Message, RfcMessageId, Thread, ThreadCue, ThreadId,
     ThreadIndex, assign, claimed_ids,
@@ -327,7 +328,8 @@ impl<'a> ThreadingRepository<'a> {
 #[derive(Debug, Default)]
 struct LoadedIndex {
     by_id: std::collections::HashMap<String, ThreadId>,
-    by_subject: Vec<ThreadId>,
+    /// The newest thread in the subject window, if any.
+    by_subject: Option<ThreadId>,
     /// A thread to pretend does not exist. [`ThreadingRepository::reconsider`]
     /// asks "does anything *besides* the thread this message is already in
     /// explain it better", and a thread born from this exact message always
@@ -403,16 +405,37 @@ impl LoadedIndex {
         // Only consulted when nothing linked, and only for a usable subject —
         // the same condition `assign` applies, so a subject it would never ask
         // about is never queried for.
+        //
+        // Bounded twice over (spec 013, research R2): to threads whose latest
+        // message is inside the window, and to the newest of them. The model
+        // joins one thread and never merges on this path, so one row is all it
+        // can use, however many threads share a subject.
+        //
+        // No `id DESC` tie-break in the order: it makes the planner prefer
+        // `idx_threads_account_last_at`, which binds one column fewer and
+        // walks every thread in the window. Two threads with the same latest
+        // millisecond and the same subject are equally good answers. The
+        // The thread being reconsidered is excluded here, not after, so that
+        // it cannot crowd out the second-best answer.
         let by_subject = if cue.subject_is_usable() {
-            sql::all(
+            let (from, until) = cue.subject_window();
+            sql::first(
                 connection,
-                "SELECT id FROM threads WHERE account_id = ?1 AND subject = ?2 ORDER BY id",
-                bind![account_id.get(), cue.subject.as_str()],
+                "SELECT id FROM threads
+                  WHERE account_id = ?1 AND subject = ?2 AND last_at >= ?3 AND first_at <= ?4 AND id IS NOT ?5
+                  ORDER BY last_at DESC LIMIT 1",
+                bind![
+                    account_id.get(),
+                    cue.subject.as_str(),
+                    super::to_millis(from),
+                    super::to_millis(until),
+                    exclude.map(ThreadId::get)
+                ],
                 |row| Ok(ThreadId::new(row.col(0)?)),
             )
             .await?
         } else {
-            Vec::new()
+            None
         };
 
         Ok(Self {
@@ -435,13 +458,12 @@ impl ThreadIndex for LoadedIndex {
             .filter(|found| self.allowed(*found))
     }
 
-    fn threads_with_subject(&self, _subject: &str) -> Vec<ThreadId> {
-        // The subject was fixed when this was loaded -- it is the cue's own,
-        // and `assign` asks about no other.
-        self.by_subject
-            .iter()
-            .copied()
-            .filter(|found| self.allowed(*found))
-            .collect()
+    fn threads_with_subject(
+        &self,
+        _subject: &str,
+        _from: DateTime<Utc>,
+        _until: DateTime<Utc>,
+    ) -> Option<ThreadId> {
+        self.by_subject.filter(|found| self.allowed(*found))
     }
 }

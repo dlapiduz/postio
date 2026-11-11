@@ -760,7 +760,7 @@ CREATE TABLE contact_suggestions (
     // and an address-book record, with the fields as of the last sync.
     Migration {
         from: stamp(0x5689_ec6b),
-        to: FINGERPRINT,
+        to: stamp(0xf0d2_3b2a),
         statements: r#"
 CREATE TABLE contact_sync_links (
     contact_id   INTEGER PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
@@ -772,6 +772,21 @@ CREATE TABLE contact_sync_links (
     emails       TEXT    NOT NULL,
     phones       TEXT    NOT NULL
 );
+"#,
+    },
+    // `feature/focus-threads`: spec 013 (specs/013-focus-threads), the whole of
+    // it in this one step. A store at the previous stamp has never met spec
+    // 013, so every change the spec makes to the schema belongs here and not
+    // in a step of its own: add them to this statement list and to `HEAD`,
+    // and leave `from` alone.
+    //
+    // - `idx_threads_subject_recent`: the bounded subject fallback of
+    //   research R2 (`last_at >= ? ORDER BY last_at DESC LIMIT 1`).
+    Migration {
+        from: stamp(0xf0d2_3b2a),
+        to: FINGERPRINT,
+        statements: r#"
+CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
 "#,
     },
 ];
@@ -2076,6 +2091,10 @@ CREATE INDEX idx_threads_last_at ON threads (last_at DESC, id DESC);
 
 CREATE INDEX idx_threads_subject ON threads (subject);
 
+-- Spec 013: the subject fallback asks for the newest thread with a subject
+-- inside a window, which this serves as one seek with no sort.
+CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
+
 CREATE INDEX idx_unsubscribe_activations_account
     ON unsubscribe_activations (account_id, activated_at DESC);
 
@@ -2355,6 +2374,7 @@ mod tests {
         "idx_threads_account_subject",
         "idx_threads_last_at",
         "idx_threads_subject",
+        "idx_threads_subject_recent",
         "idx_unsubscribe_activations_account",
         // 4 triggers
         "messages_bodies_owed_update",
