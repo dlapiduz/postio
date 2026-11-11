@@ -213,14 +213,14 @@ the older-message banner (screen 03).
 
 **Independent test**: open Harbor, press `[` twice, `}`, then `g u`.
 
-- [ ] T042 [P] [US3] Write `crates/postio-ui/src/thread_bar.rs` tests first (red: no module):
+- [x] T042 [P] [US3] Write `crates/postio-ui/src/thread_bar.rs` tests first (red: no module):
   - `chips` with everything fitting;
   - 40 members in room for 8 keeps the first, a More, and the latest, with the current and every unread always kept;
   - forced chips beyond the room produce several More chips;
   - `kicker` ("Message 4 of 6 · ] newer · [ older", keys from the keymap);
   - `older_banner`;
   - `reply_to_row` ("Ana Ruiz, Mon 21 Sep (message 1)", none when it answers the previous member).
-- [ ] T043 [P] [US3] Write controller cases (red: no new `ReaderVerb`s; `[` unbound):
+- [x] T043 [P] [US3] Write controller cases (red: no new `ReaderVerb`s; `[` unbound):
   - `[`/`]` step and mark read;
   - `]` on the latest is a no-op;
   - `{`/`}`;
@@ -228,8 +228,8 @@ the older-message banner (screen 03).
   - `j` in the window opens the next thread;
   - `BarRoom` changes the chips.
 - [ ] T044 [P] [US3] Write the storyboard `storyboards/threads/window-walk.*`, red on `main`.
-- [ ] T045 [US3] Implement `thread_bar.rs` in `crates/postio-ui/src/thread_bar.rs`. Remove `position_line`'s and `thread_chip_at`'s thread parts from `crates/postio-ui/src/focus_dialog.rs` in favour of it (the GTK and FFI callers move in T047/T048).
-- [ ] T046 [US3] Add the `Walk` state and `ReaderVerb::{FirstInThread, LatestInThread, FirstUnread}` in `crates/postio-focus/src/surfaces.rs` (mapping the new ids at the `NextInConversation` match). Emit `ThreadBar`, `Kicker`, `OlderBanner` and `ReplyTo` intents.
+- [x] T045 [US3] Implement `thread_bar.rs` in `crates/postio-ui/src/thread_bar.rs`. Remove `position_line`'s and `thread_chip_at`'s thread parts from `crates/postio-ui/src/focus_dialog.rs` in favour of it (the GTK and FFI callers move in T047/T048).
+- [x] T046 [US3] Add the `Walk` state and `ReaderVerb::{FirstInThread, LatestInThread, FirstUnread}` in `crates/postio-focus/src/surfaces.rs` (mapping the new ids at the `NextInConversation` match). Emit `ThreadBar`, `Kicker`, `OlderBanner` and `ReplyTo` intents.
 - [ ] T047 [US3] FFI: `crates/postio-ffi/src/focus_message.rs` reads `Client::thread`, not `conversation`, and emits `ThreadBarFfi`. Mac: `macos/Sources/PostioKit/ThreadBar.swift` (new: 60 tall, 66 label column, 72×46 chips with radius 8, accent ring and dots, Thread ▾), hosted under the action row in `macos/Sources/PostioAppKit/MessageWindowChrome.swift`, with the kicker, banner and Reply to row in `macos/Sources/PostioKit/MessageWindowView.swift`. Swift test: the keyboard path `[ [ } g u` changes the ringed chip.
 - [ ] T048 [US3] GTK: the bar, kicker, banner and Reply to row in `crates/postio-gtk/src/open.rs` and `crates/postio-gtk/src/open_header.rs`, reading `Client::thread`, plus a `focus_suite` case for the walk keys. Move the remaining callers onto `Client::thread`: the terminal app (`crates/postio-tui/src/run.rs:1361`, `crates/postio-tui/src/app.rs:4820`, keeping its own view per spec D4), `crates/postio-ffi/src/session.rs:906`, and `crates/postio-host/src/tests.rs:714`. Then retire `Req::Conversation` and `Client::conversation` from `crates/postio-client/src/{protocol,api}.rs` and the host. Before removing, grep for callers: there must be none.
 - [ ] T049 [US3] Screen 03 on both platforms; write the differences in the step-4 note.

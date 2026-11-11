@@ -80,6 +80,7 @@ pub mod status;
 pub mod surfaced;
 pub mod terminal;
 pub mod test_support;
+pub mod thread_bar;
 pub mod thread_list;
 pub mod tokens;
 pub mod unsubscribe;

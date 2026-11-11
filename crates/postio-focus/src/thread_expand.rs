@@ -374,7 +374,13 @@ impl FocusController {
                 return Vec::new();
             }
         };
-        self.thread_read(thread, view, raw, rows)
+        // A window waiting for this thread begins its walk with it.
+        let mut steps = match &view {
+            Some(view) => self.walk_read(thread, view),
+            None => Vec::new(),
+        };
+        steps.extend(self.thread_read(thread, view, raw, rows));
+        steps
     }
 
     /// `Right`: read the thread the cursor's row stands for, and splice its
@@ -462,6 +468,7 @@ impl FocusController {
                 if self.cursor.position() != Some(position) {
                     return Vec::new();
                 }
+                self.walk_seed = Some(view);
                 self.open_target(position, target, rows)
             }
             None => self.reread(thread, view, raw),
@@ -657,6 +664,7 @@ impl FocusController {
         match &self.expansion {
             Some(expansion) if expansion.anchor == facts.id => {
                 let target = open_at(&expansion.view)?;
+                self.walk_seed = Some(expansion.view.clone());
                 Some(self.open_target(position, target, rows))
             }
             _ => {

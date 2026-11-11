@@ -1,0 +1,63 @@
+# Walk a thread in the message window (specs/013-focus-threads US3 #1 to #4;
+# FR-015, FR-016, FR-017).
+#
+# The defect: the window showed one message and the only way to another was
+# back to the list. On `main` `[` and `]` step the conversation in the
+# frontend's own list, there are no `{`, `}` or `g u`, and the window has no
+# thread bar, kicker or older-message banner, so the steps that expect the
+# message to change under `[` `[` `}` `g u` fail there.
+#
+# `Return` on Harbor (six messages, the last two unread) opens at the first
+# unread, message 5. The window then says, in words this observation does
+# not publish: the thread bar's ring is on chip 5 of 6 with dots on chips 5
+# and 6; the kicker reads "Message 5 of 6 · ] newer · [ older"; the quiet
+# banner says reply and forward act on this message and archive, snooze,
+# label and move on the whole thread, and offers "Latest }".
+#
+# `[` `[` shows message 3 (ring on chip 3, kicker "Message 3 of 6"). `}`
+# shows the latest and marks it read: the ring moves to chip 6, its dot goes,
+# the banner goes, and the label column reads "6 · 1 new". `g u` then shows
+# message 5, the first unread, and marks it read: "6". The kicker and the
+# bar are the controller's cases (postio-focus tests/controller_suite/
+# threads.rs); this film is their composition in the window.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US3" }
+seed   = "threads"
+design = "03-window-on-an-older-message"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
+
+[[step]]
+id      = "open"
+key     = "Return"
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true } }
+expect  = "The window opens on message 5 of 6, the first unread. The thread bar sits under the action row with the ring on chip 5 and unread dots on chips 5 and 6; the kicker says \"Message 5 of 6\" with \"] newer · [ older\"; the older-message banner is up and offers Latest }."
+
+[[step]]
+id      = "older1"
+key     = "["
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true } }
+expect  = "Message 4 is shown and its chip is ringed; the kicker says \"Message 4 of 6\"."
+
+[[step]]
+id      = "older2"
+key     = "["
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true } }
+expect  = "Message 3 is shown, ringed, and the banner is still up. The sender block carries a Reply to row only if message 3 answers one other than the one before it."
+
+[[step]]
+id      = "latest"
+key     = "}"
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true } }
+expect  = "The latest message, 6, is shown: the ring is on the last chip, its unread dot is gone because showing it marked it read, the banner is gone, and the label column reads \"6 · 1 new\"."
+
+[[step]]
+key     = "g"
+
+[[step]]
+id      = "first-unread"
+key     = "u"
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true } }
+expect  = "`g u` shows message 5, the first unread: it is ringed and marked read, the label column reads \"6\", and the banner is back because message 5 is not the latest."
