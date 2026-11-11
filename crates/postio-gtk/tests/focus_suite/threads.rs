@@ -1,0 +1,169 @@
+//! A thread opens in place (specs/013-focus-threads US1; issue #2099): `Right`
+//! splices its messages in under its row, `j` walks into them, `Left` folds
+//! them, and `Return` on one opens that message. Real keys in the real
+//! window; what is asserted is what a person sees -- the rows drawn and the
+//! observation's account of where the cursor is.
+
+use crate::support::{self, Fixture};
+use gtk::prelude::*;
+use postio_model::MessageId;
+
+/// "Harbor plan", a thread of four, above "Solo", a single message.
+async fn harbor() -> (
+    Fixture,
+    postio_gtk::window::FocusWindow,
+    Vec<MessageId>,
+    postio_gtk::list::ListPane,
+) {
+    let fixture = Fixture::empty().await;
+    let ids = fixture.thread_of("Harbor plan", 4, 10).await;
+    fixture.file_in(fixture.inbox, "Solo", 300).await;
+    let (window, _client) = fixture.open().await;
+    let pane = window.pane().expect("the inbox");
+    assert!(
+        crate::settle_until(async || pane.cursor().selected() == 0 && pane.cursor().n_items() == 2)
+            .await,
+        "the inbox opens with the thread above the single message"
+    );
+    (fixture, window, ids, pane)
+}
+
+fn said(window: &postio_gtk::window::FocusWindow, key: &str) -> Option<serde_json::Value> {
+    window.observe().app.get(key).cloned()
+}
+
+/// Every text the rows on screen drew, flattened.
+fn drawn(pane: &postio_gtk::list::ListPane) -> Vec<String> {
+    pane.rows_on_screen()
+        .iter()
+        .flat_map(|row| row.drawn().texts)
+        .collect()
+}
+
+pub fn right_opens_a_thread_in_place() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _ids, pane) = harbor().await;
+        support::keys(&window, &["Right"]);
+        assert!(
+            crate::settle_until(async || pane.cursor().n_items() == 6).await,
+            "Right spliced the four messages in under the thread: {} rows",
+            pane.cursor().n_items()
+        );
+        assert!(
+            window.reading().is_none(),
+            "Right expands; it does not open the message"
+        );
+        assert_eq!(pane.cursor().selected(), 0, "the cursor stays on the row");
+        assert_eq!(
+            said(&window, "focus.cursor.kind"),
+            Some(serde_json::json!("row"))
+        );
+        assert!(
+            crate::settle_until(async || {
+                let texts = drawn(&pane);
+                (1..=4).all(|n| texts.contains(&format!("Message {n}")))
+            })
+            .await,
+            "each child shows its own line: {:?}",
+            drawn(&pane)
+        );
+    });
+}
+
+pub fn j_walks_the_children_and_on_to_the_next_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _ids, pane) = harbor().await;
+        support::keys(&window, &["Right"]);
+        assert!(crate::settle_until(async || pane.cursor().n_items() == 6).await);
+        support::keys(&window, &["j"]);
+        assert_eq!(pane.cursor().selected(), 1, "j goes into the children");
+        assert_eq!(
+            said(&window, "focus.cursor.kind"),
+            Some(serde_json::json!("child"))
+        );
+        assert_eq!(
+            said(&window, "focus.cursor.line"),
+            Some(serde_json::json!("Message 1"))
+        );
+        support::keys(&window, &["j", "j", "j"]);
+        assert_eq!(pane.cursor().selected(), 4, "one child at a time");
+        assert_eq!(
+            said(&window, "focus.cursor.line"),
+            Some(serde_json::json!("Message 4"))
+        );
+        support::keys(&window, &["j"]);
+        assert_eq!(pane.cursor().selected(), 5, "then on to the next thread");
+        assert_eq!(
+            said(&window, "focus.cursor.kind"),
+            Some(serde_json::json!("row"))
+        );
+        support::keys(&window, &["k"]);
+        assert_eq!(pane.cursor().selected(), 4, "k walks back into them");
+    });
+}
+
+pub fn left_folds_the_thread_from_a_child() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _ids, pane) = harbor().await;
+        support::keys(&window, &["Right"]);
+        assert!(crate::settle_until(async || pane.cursor().n_items() == 6).await);
+        support::keys(&window, &["j", "j"]);
+        assert_eq!(pane.cursor().selected(), 2);
+        support::keys(&window, &["Left"]);
+        assert!(
+            crate::settle_until(async || pane.cursor().n_items() == 2).await,
+            "Left folded the children away"
+        );
+        assert_eq!(pane.cursor().selected(), 0, "the cursor is back on the row");
+        assert_eq!(
+            said(&window, "focus.cursor.kind"),
+            Some(serde_json::json!("row"))
+        );
+        assert!(
+            !drawn(&pane).contains(&"Message 2".to_owned()),
+            "no child is left on screen"
+        );
+    });
+}
+
+pub fn return_on_a_child_opens_that_message() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, ids, pane) = harbor().await;
+        support::keys(&window, &["Right"]);
+        assert!(crate::settle_until(async || pane.cursor().n_items() == 6).await);
+        support::keys(&window, &["j", "j"]);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(async || window.observe().reading.id.is_some()).await,
+            "Return opened a message"
+        );
+        assert_eq!(
+            window.observe().reading.id,
+            Some(ids[1].get().to_string()),
+            "the second message, not the latest"
+        );
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || window.observe().reading.id.is_none()).await,
+            "Escape closed it"
+        );
+        assert_eq!(
+            pane.cursor().selected(),
+            2,
+            "the ring is on the child again"
+        );
+        assert_eq!(pane.cursor().n_items(), 6, "and the thread is still open");
+    });
+}

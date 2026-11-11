@@ -1736,6 +1736,8 @@ impl FocusWindow {
             | CommandId::ExtendSelectionDown
             | CommandId::ExtendSelectionUp
             | CommandId::SelectAll
+            | CommandId::ExpandThread
+            | CommandId::CollapseThread
             | CommandId::ToggleHasAction => self.cursor_command(id),
             CommandId::Back => {
                 if let Some(places) = self.places().filter(|places| places.is_open()) {
@@ -2116,7 +2118,7 @@ impl FocusWindow {
         let on_a_row = gtk::prelude::GtkWindowExt::focus(self).is_some_and(|focus| {
             focus != *pane.view().upcast_ref::<gtk::Widget>() && focus.is_ancestor(pane.view())
         });
-        if position >= pane.feed().list().n_items() {
+        if position >= pane.feed().shown().n_items() {
             return;
         }
         pane.cursor().set_selected(position);
@@ -2340,7 +2342,7 @@ impl FocusWindow {
         let Some(pane) = self.pane() else {
             return;
         };
-        if let Some(target) = pane.feed().list().position_of(row.id()) {
+        if let Some(target) = pane.feed().shown().position_of(row.id()) {
             pane.feed().pick(target, pick == Pick::Range);
         }
     }
@@ -2368,10 +2370,21 @@ impl FocusWindow {
             return None;
         }
         pane.feed()
-            .list()
+            .shown()
             .item(at)
             .and_downcast::<RowObject>()
             .and_then(|row| row.item())
+    }
+
+    /// What the cursor is on when it is a child of the open thread rather
+    /// than a row of the list.
+    pub fn cursor_child(&self) -> Option<postio_ui::thread_list::ChildRowView> {
+        let pane = self.pane()?;
+        let at = pane.cursor().selected();
+        if at == gtk::INVALID_LIST_POSITION {
+            return None;
+        }
+        pane.feed().shown().child_at(at)
     }
 
     /// Where a verb goes, for the label picker, which sends its own: the
@@ -2648,7 +2661,7 @@ impl FocusWindow {
                 _ => {
                     if let Some(position) = window
                         .pane()
-                        .and_then(|pane| pane.feed().list().position_of(row.id()))
+                        .and_then(|pane| pane.feed().shown().position_of(row.id()))
                     {
                         window.point_cursor(position);
                     }
@@ -4737,6 +4750,30 @@ impl FocusWindow {
             crate::motion::keep_to_budget(&reading.view());
             return;
         }
+        // A message of the open thread that is not its newest has no row of
+        // the list: it opens as a hit does, by its id.
+        if row.is_none()
+            && let Some(pane) = self.pane()
+            && let Some(open) = pane.feed().shown().open_thread()
+            && let Some(reading) = self.reading_dialog()
+        {
+            let subject = pane
+                .feed()
+                .list()
+                .item(open.anchor)
+                .and_downcast::<RowObject>()
+                .and_then(|row| row.item())
+                .and_then(|row| {
+                    row.as_conversation()
+                        .and_then(|conversation| conversation.summary.subject.clone())
+                })
+                .unwrap_or_default();
+            let place = crate::open::Position { index, total };
+            reading.show_found(self, message, &subject, Some(place));
+            crate::a11y::teach_shortcuts(&reading.view());
+            crate::motion::keep_to_budget(&reading.view());
+            return;
+        }
         let (Some(row), Some(reading)) = (row, self.reading_dialog()) else {
             // Nothing to show: the controller has the message on its stack,
             // and it comes off.
@@ -5907,13 +5944,16 @@ impl FocusWindow {
             .map(|pane| pane.cursor().selected())
             .filter(|at| *at != gtk::INVALID_LIST_POSITION);
         let row = self.cursor_row();
-        let count = pane.as_ref().map(|pane| pane.feed().list().n_items());
+        let count = pane.as_ref().map(|pane| pane.feed().shown().n_items());
+        // The rows a whole-view selection spans: children are not among
+        // them.
+        let row_count = pane.as_ref().map(|pane| pane.feed().list().n_items());
         let selected = match self.selection() {
             // Filtered's rows are selected apart from the list behind them.
             _ if let Some(view) = self.filtered() => view.selected().len() as u32,
             Selection::These(ids) => ids.len() as u32,
             Selection::Everything { except } => {
-                count.unwrap_or(0).saturating_sub(except.len() as u32)
+                row_count.unwrap_or(0).saturating_sub(except.len() as u32)
             }
         };
 
@@ -6157,6 +6197,22 @@ impl FocusWindow {
             app.insert(
                 "focus.cursor.unread".to_owned(),
                 serde_json::json!(conversation.summary.unread_count),
+            );
+        }
+        // What the cursor is on: a row of the list, or one message of the
+        // open thread, with the tag and the words that child says.
+        let child = self.cursor_child();
+        if child.is_some() || row.is_some() {
+            app.insert(
+                "focus.cursor.kind".to_owned(),
+                serde_json::json!(if child.is_some() { "child" } else { "row" }),
+            );
+        }
+        if let Some(child) = &child {
+            app.insert("focus.cursor.tag".to_owned(), serde_json::json!(child.tag));
+            app.insert(
+                "focus.cursor.line".to_owned(),
+                serde_json::json!(child.line),
             );
         }
         if let Some(bar) = &bar {

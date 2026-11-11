@@ -23,6 +23,7 @@ use postio_model::{ListScope, MessageId, ThreadId};
 use postio_widgets::list_model::{PageSource, WindowedModel};
 
 use super::model::FocusList;
+use super::spliced::SplicedList;
 
 /// The conversations each selected row stands for.
 pub type SelectionReach = std::collections::HashMap<MessageId, Vec<ThreadId>>;
@@ -39,6 +40,9 @@ pub struct Feed {
 struct Inner {
     client: Client,
     list: FocusList,
+    /// The rows with the open thread's children among them: what the view
+    /// draws, and where the cursor is counted.
+    shown: SplicedList,
     /// Focus's rules for the list. Borrowed only to hand it something and
     /// take its effects: never while they are applied, because applying them
     /// calls the model, and the model calls back.
@@ -69,10 +73,12 @@ impl PageSource for Source {
 impl Feed {
     /// A feed reading through `client`, with nothing open yet.
     pub fn new(client: Client) -> Self {
+        let list = FocusList::default();
         Feed {
             inner: Rc::new(Inner {
                 client,
-                list: FocusList::default(),
+                shown: SplicedList::new(&list),
+                list,
                 focus: RefCell::new(FocusController::new(Policy::for_platform(
                     Platform::Freedesktop,
                 ))),
@@ -85,6 +91,12 @@ impl Feed {
     /// The list model a view draws.
     pub fn list(&self) -> &FocusList {
         &self.inner.list
+    }
+
+    /// The rows with the open thread's children among them, in the positions
+    /// the view and the cursor use.
+    pub fn shown(&self) -> &SplicedList {
+        &self.inner.shown
     }
 
     /// The scope in view, once one is open.
@@ -373,7 +385,7 @@ impl Feed {
             .inner
             .focus
             .borrow_mut()
-            .handle(Input::Event(event.clone()));
+            .handle_on(Input::Event(event.clone()), &self.inner.list);
         Rc::clone(&self.inner).apply(effects);
     }
 }
@@ -428,6 +440,8 @@ impl Inner {
             Intent::AbandonPage { stamp, page } => self.list.abandon_page(stamp, page),
             Intent::GiveUp { stamp, page } => self.list.give_up(stamp, page),
             Intent::RefreshList => self.list.refresh(),
+            Intent::Splice { anchor, children } => self.shown.splice(anchor, children),
+            Intent::Unsplice { .. } => self.shown.unsplice(),
             Intent::Filled => {
                 for handler in self.on_filled.borrow().iter() {
                     handler();
@@ -446,7 +460,10 @@ impl Inner {
         // A post is said now, before anything after it is asked.
         let request = match postio_focus::perform_now(&self.client, request) {
             Ok(reply) => {
-                let effects = self.focus.borrow_mut().handle(Input::Reply(ticket, reply));
+                let effects = self
+                    .focus
+                    .borrow_mut()
+                    .handle_on(Input::Reply(ticket, reply), &self.list);
                 self.apply(effects);
                 return;
             }
@@ -456,7 +473,10 @@ impl Inner {
             // POSTIO-GLIB-SAFE: perform awaits only client calls, each a
             // oneshot receive; the host answers on its own runtime (ADR 0041).
             let reply = postio_focus::perform(&self.client, request).await;
-            let effects = self.focus.borrow_mut().handle(Input::Reply(ticket, reply));
+            let effects = self
+                .focus
+                .borrow_mut()
+                .handle_on(Input::Reply(ticket, reply), &self.list);
             self.apply(effects);
         });
     }

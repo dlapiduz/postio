@@ -28,6 +28,7 @@ const BODY: &str = "Hi all,\n\nUploaded v3 of the Harbor API draft with the \
 /// question marker and two attachments. Answers the message.
 async fn every_block(fixture: &Fixture) -> MessageId {
     let ids = fixture.thread_of("Harbor API draft v3", 2, 10).await;
+    fixture.read_all_but_last(&ids).await;
     let latest = *ids.last().expect("a thread");
     dress(fixture, latest, true).await;
     fixture.write_body(latest, BODY).await;
@@ -132,6 +133,11 @@ async fn opened_at(
     );
     support::keys(&window, &["j"]);
     support::press(&window, "Return", gdk::ModifierType::empty());
+    // A thread's row opens once the thread has been read.
+    assert!(
+        crate::settle_until(async || window.reading().is_some()).await,
+        "Enter opened the message"
+    );
     let reading = window.reading().expect("Enter opened the message");
     assert!(
         crate::settle_until(async || reading.reader().view().document().is_some()

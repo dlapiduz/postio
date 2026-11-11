@@ -16,11 +16,11 @@ design = "03-window-on-an-older-message"
 
 [[step]]
 wait    = { until = { cursor.index = 0 } }
-check   = { keyboard.region = "list", cursor.subject = "Harbor API draft v3" }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
 
 [[step]]
 key     = "Right"
-check   = { cursor.index = 0, rows.count = { changed = true }, view = "list" }
+check   = { cursor.index = 0, rows.count = 17, view = "list" }
 expect  = "Harbor is open under its row: six children and the draft."
 
 [[step]]
@@ -38,7 +38,7 @@ check   = { cursor.index = 3 }
 [[step]]
 id      = "child4"
 key     = "j"
-check   = { cursor.index = 4, view = "list", keyboard.region = "list" }
+check   = { cursor.index = 4, view = "list", keyboard.region = "list", app.focus.cursor.kind = "child", app.focus.cursor.tag = "\u21b3 to Ana", app.focus.cursor.line = "Ana, on the webhooks: I would sign every delivery and leave retries to the receiver for v3." }
 expect  = "The ring is on child 4, Ben Adeyemi's reply, tagged \"to Ana\" and showing only its own new text, not the message it quotes. The footer reads \"Message 4 of 6 · Ben Adeyemi\" and offers reply and forward as acting on this one."
 
 [[step]]

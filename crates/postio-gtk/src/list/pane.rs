@@ -7,8 +7,6 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{glib, graphene};
 
-use postio_widgets::list_model::WindowedModel;
-
 use super::feed::Feed;
 use super::heading::DayHeading;
 use super::model::RowObject;
@@ -73,6 +71,12 @@ impl ListPane {
                     }
                 }));
                 item.set_child(Some(&row));
+                // A child shows its keys while the cursor is on it.
+                item.connect_selected_notify(|item| {
+                    if let Some(widget) = item.child().and_downcast::<RowWidget>() {
+                        widget.set_cursor_here(item.is_selected());
+                    }
+                });
             }
         });
         factory.connect_bind(|_, item| {
@@ -84,6 +88,7 @@ impl ListPane {
                 item.child().and_downcast::<RowWidget>(),
             ) {
                 widget.bind(&row);
+                widget.set_cursor_here(item.is_selected());
             }
         });
         factory.connect_unbind(|_, item| {
@@ -97,7 +102,7 @@ impl ListPane {
 
         // The cursor, not the selection: GTK's name, Postio's meaning
         // (`postio_ui::selection`). What `e` would archive is kept apart.
-        let cursor = keep_the_cursor(feed.list());
+        let cursor = keep_the_cursor(feed.shown());
         let view = gtk::ListView::new(Some(cursor.clone()), Some(factory));
         view.set_header_factory(Some(&day_headings(feed.list())));
         // A page landing may move where a day starts.
@@ -169,7 +174,7 @@ impl ListPane {
         let drag = gtk::DragSource::new();
         drag.set_actions(gtk::gdk::DragAction::COPY);
         let view = self.view.downgrade();
-        let list = self.feed.list().downgrade();
+        let list = self.feed.shown().downgrade();
         drag.connect_prepare(move |_, x, y| {
             let (view, list) = (view.upgrade()?, list.upgrade()?);
             offer(row_position_at(&view, &list, x, y)?)
@@ -184,7 +189,7 @@ impl ListPane {
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_SECONDARY);
         let view = self.view.downgrade();
-        let list = self.feed.list().downgrade();
+        let list = self.feed.shown().downgrade();
         click.connect_pressed(move |gesture, _, x, y| {
             let (Some(view), Some(list)) = (view.upgrade(), list.upgrade()) else {
                 return;
@@ -265,7 +270,7 @@ impl ListPane {
             let Some(row) = widget.first_child().and_downcast::<RowWidget>() else {
                 continue;
             };
-            if !row.is_mapped() || row.item().is_none() {
+            if !row.is_mapped() || (row.item().is_none() && row.child().is_none()) {
                 continue;
             }
             let Some(top) = row.compute_point(&self.scrolled, &graphene::Point::new(0.0, 0.0))
@@ -403,7 +408,7 @@ fn hold_the_top(
 /// A signal's handlers run in the order they were connected, so the one
 /// connected to `list` before the selection exists sees the cursor as it was
 /// before the change, and the selection's own `items-changed` after it.
-fn keep_the_cursor(list: &super::model::FocusList) -> gtk::SingleSelection {
+fn keep_the_cursor(list: &super::spliced::SplicedList) -> gtk::SingleSelection {
     let weak: Rc<glib::WeakRef<gtk::SingleSelection>> = Rc::default();
     let before = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
     list.connect_items_changed({
@@ -456,7 +461,7 @@ fn first_heading_height(view: &gtk::ListView) -> Option<f64> {
 /// `None` over a day's heading or the empty space between.
 fn row_position_at(
     view: &gtk::ListView,
-    list: &super::model::FocusList,
+    list: &super::spliced::SplicedList,
     x: f64,
     y: f64,
 ) -> Option<u32> {

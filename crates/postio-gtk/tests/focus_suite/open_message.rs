@@ -210,7 +210,8 @@ pub fn brackets_step_through_the_thread() {
             return;
         }
         let fixture = Fixture::empty().await;
-        fixture.thread_of("Harbor API draft", 3, 5).await;
+        let thread = fixture.thread_of("Harbor API draft", 3, 5).await;
+        fixture.read_all_but_last(&thread).await;
         let (window, _client) = fixture.open().await;
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 1).await,
@@ -218,6 +219,10 @@ pub fn brackets_step_through_the_thread() {
         );
         support::keys(&window, &["j"]);
         enter(&window);
+        assert!(
+            crate::settle_until(async || window.reading().is_some()).await,
+            "the thread never opened"
+        );
         let reading = window.reading().expect("open");
         assert!(
             crate::settle_until(async || reading.body_text().contains("Message 3")).await,
@@ -242,7 +247,7 @@ pub fn brackets_step_through_the_thread() {
         );
         assert_eq!(
             reading.thread_chip_said(),
-            "2 of 3 in this thread p earlier message n later message",
+            "2 of 3 in this thread [ earlier message ] later message",
             "the line above the subject says where the dialog is"
         );
         support::press(&window, "n", gdk::ModifierType::empty());
@@ -253,7 +258,7 @@ pub fn brackets_step_through_the_thread() {
         assert_eq!(reading.subtitle(), "Message 1 of 1 \u{b7} thread of 3");
         assert_eq!(
             reading.thread_chip_said(),
-            "Latest of 3 in this thread p earlier message"
+            "Latest of 3 in this thread [ earlier message"
         );
     });
 }
