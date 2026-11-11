@@ -2590,7 +2590,10 @@ impl Results {
         let tail: Vec<String> = own
             .and_then(|each| words::sent_to(&each.to))
             .into_iter()
-            .chain(std::iter::once(words::sent_at(sent.with_timezone(&Local))))
+            .chain(std::iter::once(words::sent_at(
+                sent.with_timezone(&Local),
+                with.now,
+            )))
             .chain(words::thread_size(hit.messages))
             .collect();
         let tail = tail.join(" \u{b7} ");

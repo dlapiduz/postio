@@ -1203,12 +1203,17 @@ pub fn match_when<Tz: TimeZone>(
 }
 
 /// When a message was sent, as Quick Look's sender line says it: "Sat 26
-/// Sep, 15:51".
-pub fn sent_at<Tz: TimeZone>(at: DateTime<Tz>) -> String
+/// Sep, 15:51", with its year when that is not this one's (#2082).
+pub fn sent_at<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
-    at.format("%a %-d %b, %H:%M").to_string()
+    use chrono::Datelike;
+    if at.year() == now.year() {
+        at.format("%a %-d %b, %H:%M").to_string()
+    } else {
+        at.format("%a %-d %b %Y, %H:%M").to_string()
+    }
 }
 
 /// Who a message went to, on Quick Look's sender line: "to you, Finance
@@ -2896,7 +2901,10 @@ mod tests {
             "Sheet \u{2018}Q3\u{2019}, row 3",
             "a file's match says where in it"
         );
-        assert_eq!(sent_at(now), "Sat 26 Sep, 15:30");
+        assert_eq!(sent_at(now, now), "Sat 26 Sep, 15:30");
+        // Another year's message says its year (#2082).
+        let last_year = now - chrono::Duration::days(365);
+        assert_eq!(sent_at(last_year, now), "Fri 26 Sep 2025, 15:30");
         assert_eq!(thread_size(3), Some("thread of 3".to_owned()));
         assert_eq!(thread_size(1), None);
     }
