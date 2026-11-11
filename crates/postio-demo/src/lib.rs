@@ -17,9 +17,11 @@
 
 mod files;
 mod search;
+mod threads;
 
 pub use files::{SearchFile, search_files};
 pub use search::{search_demo, store_search_blobs};
+pub use threads::threads_demo;
 
 /// A condition of the store, named as every app names it
 /// (specs/008-storyboards R11): something no step can produce, such as
@@ -58,11 +60,15 @@ pub enum Seed {
     /// five hundred messages in conversations of one to twelve, labels,
     /// folders, two open asks, and files with stored blobs (specs/010-focus-search).
     Search,
+    /// The threads design's conversations: a six-message thread with an
+    /// unsent reply, a 23-message and a 41-message thread, singles, and the
+    /// "rate limit headers" search fixtures (specs/013-focus-threads R14).
+    Threads,
 }
 
 impl Seed {
     /// Every seed Focus can build.
-    pub const ALL: [Seed; 11] = [
+    pub const ALL: [Seed; 12] = [
         Seed::Small,
         Seed::Empty,
         Seed::LongNewsletter,
@@ -74,6 +80,7 @@ impl Seed {
         Seed::DraftLeftOver,
         Seed::Backfilling,
         Seed::Search,
+        Seed::Threads,
     ];
 
     /// The name a storyboard uses.
@@ -90,6 +97,7 @@ impl Seed {
             Seed::DraftLeftOver => "draft-left-over",
             Seed::Backfilling => "backfilling",
             Seed::Search => "search",
+            Seed::Threads => "threads",
         }
     }
 
@@ -107,6 +115,7 @@ pub async fn seeded(seed: Seed) -> (Store, AccountId) {
     match seed {
         Seed::Empty => empty_demo().await,
         Seed::Search => search_demo().await,
+        Seed::Threads => threads_demo().await,
         Seed::LongThread | Seed::ThirtyThreads => {
             let shape = if seed == Seed::LongThread {
                 postio_storage::seed::LONG_THREAD
@@ -1820,6 +1829,56 @@ pub fn marker(message: MessageId, ask: &Ask, today: DateTime<Utc>) -> Marker {
 
 #[cfg(test)]
 mod tests {
+    /// Spec 013's seed groups through the engine: Harbor is one thread of
+    /// six with two unread, the long threads are as long as the design
+    /// says, and the unsent reply is filed in Harbor's thread.
+    #[tokio::test]
+    async fn the_threads_seed_groups_the_designs_conversations() {
+        use postio_storage::sql::scalar;
+        let (database, account) = super::seeded(super::Seed::Threads).await;
+        let connection = database.connect().await.expect("a connection");
+        let count = |subject: &'static str, unread_only: bool| {
+            let connection = &connection;
+            async move {
+                let sql = format!(
+                    "SELECT count(*) FROM messages WHERE thread_id IN \
+                     (SELECT id FROM threads WHERE subject = lower(?1)){}",
+                    if unread_only { " AND seen = 0" } else { "" }
+                );
+                scalar(connection, &sql, [subject]).await.expect("a count")
+            }
+        };
+        assert_eq!(count("Harbor API draft v3", false).await, 6);
+        assert_eq!(count("Harbor API draft v3", true).await, 2);
+        assert_eq!(count("Offsite planning", false).await, 23);
+        assert_eq!(count("Offsite planning", true).await, 3);
+        assert_eq!(count("lost cat", false).await, 41);
+        assert_eq!(count("Platform SLOs", false).await, 8);
+        assert_eq!(count("Gateway defaults", false).await, 1);
+        assert_eq!(
+            scalar(
+                &connection,
+                "SELECT count(DISTINCT thread_id) FROM messages \
+                 WHERE subject LIKE '%Harbor API draft v3'",
+                (),
+            )
+            .await
+            .expect("a count"),
+            1,
+            "Harbor is one thread"
+        );
+        let linked = scalar(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE in_reply_to_message_id IS NOT NULL AND thread_id = \
+             (SELECT id FROM threads WHERE subject = 'harbor api draft v3')",
+            (),
+        )
+        .await
+        .expect("a count");
+        assert_eq!(linked, 1, "the draft reply is in Harbor's thread");
+        let _ = account;
+    }
+
     /// Screens 05 and 06 add their people over the demo store, which has
     /// already met some of them as correspondents: adding a person someone
     /// already owns is refused, so the screenshots panicked instead.
