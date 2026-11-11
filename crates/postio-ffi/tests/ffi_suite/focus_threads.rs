@@ -305,3 +305,100 @@ async fn a_chevron_click_opens_the_thread_and_the_next_one_folds_it_and_the_curs
     );
     session.shutdown();
 }
+
+// -- The same, in Filtered (spec 013 T035, FR-009) ---------------------------
+
+/// The Threads seed with one of Harbor's messages filed away as a
+/// notification, and Filtered open over it.
+async fn filtered_with_harbor() -> (Arc<Session>, u32) {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
+    let harbor = thread_named(&database, "Harbor API draft v3").await;
+    let connection = database.connect().await.expect("a connection");
+    let message = postio_storage::sql::first(
+        &connection,
+        "SELECT id FROM messages WHERE thread_id = ?1 ORDER BY id LIMIT 1",
+        [harbor.get()],
+        |row| Ok(postio_model::MessageId::new(row.col(0)?)),
+    )
+    .await
+    .expect("a read")
+    .expect("Harbor has a message");
+    postio_storage::repository::FilterDecisionRepository::new(&connection)
+        .record(&postio_storage::repository::FilterDecision {
+            message,
+            reason: postio_storage::repository::FilterReason::Promotion,
+            source: None,
+            layer: postio_storage::repository::FilterLayer::Header,
+            decided_at: chrono::Utc::now(),
+        })
+        .await
+        .expect("a decision");
+    drop(connection);
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.invoke("go_to_filtered");
+    let mut row = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusFiltered { view } if !view.rows.is_empty() => {
+                row = view
+                    .rows
+                    .iter()
+                    .position(|line| line.message == message.get());
+                if let Some(at) = row {
+                    assert_eq!(view.rows[at].messages, 6, "the row says it is a thread");
+                }
+                row.is_some()
+            }
+            _ => false,
+        })
+        .await,
+        "Filtered lists Harbor's filed message"
+    );
+    (session, row.expect("a row") as u32)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn expanding_a_filtered_thread_hands_swift_its_children_and_a_redraw_keeps_them() {
+    let (session, harbor) = filtered_with_harbor().await;
+    session.focus_filtered_point(harbor);
+    session.invoke("expand_thread");
+    let mut spliced = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusFilteredSplice { anchor, children } => {
+                spliced = Some((*anchor, children.len()));
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "Swift is told to insert the children under Filtered's row"
+    );
+    assert_eq!(
+        spliced,
+        Some((harbor, 7)),
+        "six messages and the unsent reply"
+    );
+
+    // j walks into the children: the keyboard is a display position.
+    session.invoke("next_message");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusFilteredFocus { index: Some(index) } if *index == harbor + 1
+        ))
+        .await,
+        "the first child has the keyboard"
+    );
+
+    session.invoke("collapse_thread");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusFilteredUnsplice { anchor } if *anchor == harbor
+        ))
+        .await,
+        "Left folds it"
+    );
+    session.shutdown();
+}

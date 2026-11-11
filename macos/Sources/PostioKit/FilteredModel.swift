@@ -98,12 +98,57 @@ public final class FilteredModel {
         public let heading: String?
         /// Whether its box is checked.
         public let selected: Bool
+        /// How many messages its conversation holds; more than one and it
+        /// opens in place (spec 013 FR-009).
+        public let messages: UInt32
+
+        /// Whether `Right` opens it.
+        public var isThread: Bool { messages > 1 }
 
         func with(selected: Bool) -> Row {
             Row(
                 id: id, message: message, sender: sender, subject: subject, preview: preview,
-                pill: pill, time: time, heading: heading, selected: selected)
+                pill: pill, time: time, heading: heading, selected: selected, messages: messages)
         }
+    }
+
+    /// One message of the thread open under a row, as the words say it
+    /// (`FocusRowModel.Child`'s, for this table).
+    public struct Child: Equatable {
+        public let initials: String
+        public let sender: String
+        /// Unread: bold, with an accent dot.
+        public let unread: Bool
+        public let tag: String?
+        public let line: String
+        public let placeholder: Bool
+        public let attachment: Bool
+        public let time: String
+        public let draft: Bool
+        /// The keycaps of the focused child's hint, and what they act on.
+        public let hintKeys: [String]
+        public let hintLabel: String?
+    }
+
+    /// What the table draws, in order: the rows, and the open thread's
+    /// children among them. `display` is the position the controller's
+    /// keyboard and a click name.
+    public enum Item: Equatable, Identifiable {
+        case row(Row, display: Int)
+        case child(Child, display: Int, last: Bool)
+
+        public var id: Int {
+            switch self {
+            case let .row(_, display), let .child(_, display, _): return display
+            }
+        }
+    }
+
+    /// The thread open in place: its row, and its children.
+    public struct Open: Equatable {
+        /// The expanded row, an index into `rows`.
+        public let anchor: Int
+        public let children: [Child]
     }
 
     /// One footer hint.
@@ -127,7 +172,11 @@ public final class FilteredModel {
     public private(set) var restoreCap: String?
     public private(set) var tabs: [Tab] = []
     public private(set) var rows: [Row] = []
-    /// The row with the keyboard.
+    /// The thread open under one of the rows (spec 013 FR-009).
+    public private(set) var open: Open?
+    /// The rows with the open thread's children among them.
+    public private(set) var items: [Item] = []
+    /// The row with the keyboard: a display position, the children counted.
     public private(set) var focused: Int?
     public private(set) var footer: [Hint] = []
     /// The bar over the rows while anything is selected: the controller's
@@ -173,8 +222,19 @@ public final class FilteredModel {
             guard isOpen else { return nil }
             let boxed = Set(selected)
             rows = rows.map { $0.with(selected: boxed.contains($0.message)) }
+            rebuild()
             self.bar = bar.map(Self.words)
             return .selection
+        case let .focusFilteredSplice(anchor, children):
+            guard isOpen, rows.indices.contains(Int(anchor)) else { return nil }
+            open = Open(anchor: Int(anchor), children: children.map(Self.child))
+            rebuild()
+            return .redraw
+        case .focusFilteredUnsplice:
+            guard isOpen, open != nil else { return nil }
+            open = nil
+            rebuild()
+            return .redraw
         case .focusCloseSurface(.filtered):
             guard isOpen else { return nil }
             close()
@@ -186,20 +246,20 @@ public final class FilteredModel {
 
     /// Row `index` was clicked.
     public func point(_ index: Int) {
-        guard rows.indices.contains(index) else { return }
+        guard items.indices.contains(index) else { return }
         engine.focusFilteredPoint(UInt32(index))
     }
 
     /// Row `index` was clicked with ⌘: in or out of the selection. The box
     /// is drawn when the controller says so.
     public func toggle(_ index: Int) {
-        guard rows.indices.contains(index) else { return }
+        guard items.indices.contains(index) else { return }
         engine.focusFilteredPick(UInt32(index), range: false)
     }
 
     /// Row `index` was clicked with ⇧: the rows from the anchor to it.
     public func extend(_ index: Int) {
-        guard rows.indices.contains(index) else { return }
+        guard items.indices.contains(index) else { return }
         engine.focusFilteredPick(UInt32(index), range: true)
     }
 
@@ -211,7 +271,7 @@ public final class FilteredModel {
     /// Row `index` was double-clicked: the keyboard goes there and its
     /// message opens over Filtered, as Return would.
     public func open(_ index: Int) {
-        guard rows.indices.contains(index) else { return }
+        guard items.indices.contains(index) else { return }
         engine.focusFilteredPoint(UInt32(index))
         engine.invoke(FilteredCommand.open)
     }
@@ -259,8 +319,10 @@ public final class FilteredModel {
             Row(
                 id: index, message: line.message, sender: line.sender, subject: line.subject,
                 preview: line.preview, pill: line.pill, time: line.time, heading: line.heading,
-                selected: line.selected)
+                selected: line.selected, messages: line.messages)
         }
+        open = view.expanded.map { Open(anchor: Int($0.anchor), children: $0.children.map(Self.child)) }
+        rebuild()
         bar = view.bar.map(Self.words)
         empty = view.empty
         focused = view.focused.map(Int.init)
@@ -268,6 +330,30 @@ public final class FilteredModel {
         more = view.more
         // A page landed (or a tab changed what is listed): the end is new.
         if moved || !view.more { askedMore = false }
+    }
+
+    /// The rows with the open thread's children after its row.
+    private func rebuild() {
+        var out: [Item] = []
+        out.reserveCapacity(rows.count + (open?.children.count ?? 0))
+        for row in rows {
+            out.append(.row(row, display: out.count))
+            if let open, open.anchor == row.id {
+                for (index, child) in open.children.enumerated() {
+                    out.append(.child(child, display: out.count, last: index == open.children.count - 1))
+                }
+            }
+        }
+        items = out
+    }
+
+    private static func child(_ child: ChildRowFfi) -> Child {
+        Child(
+            initials: child.initials, sender: child.sender, unread: child.bold, tag: child.tag,
+            line: child.line, placeholder: child.placeholder, attachment: child.attachment,
+            time: child.time, draft: child.draft,
+            hintKeys: child.hint?.keys.compactMap { KeyCapSpelling.cap($0) } ?? [],
+            hintLabel: child.hint?.label)
     }
 
     /// The controller's bar, spelled for the action bar's view.
@@ -296,6 +382,8 @@ public final class FilteredModel {
         note = ""
         tabs = []
         rows = []
+        open = nil
+        items = []
         focused = nil
         footer = []
         more = false

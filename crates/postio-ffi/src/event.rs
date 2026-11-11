@@ -471,7 +471,22 @@ pub enum UiEvent {
         /// What it draws.
         view: crate::focus_surfaces::FilteredViewFfi,
     },
-    /// Filtered's keyboard moved to the row at `index` (`j`/`k`, a click).
+    /// A thread opened under Filtered's row at `anchor` (an index into its
+    /// rows): draw `children` after it, replacing any it had. The keyboard's
+    /// `FocusFilteredFocus` counts them (spec 013 FR-009).
+    FocusFilteredSplice {
+        /// The expanded row.
+        anchor: u32,
+        /// One per message, oldest first, then the unsent reply.
+        children: Vec<crate::ChildRowFfi>,
+    },
+    /// The thread at `anchor` folded: remove its children.
+    FocusFilteredUnsplice {
+        /// The collapsed row.
+        anchor: u32,
+    },
+    /// Filtered's keyboard moved to the row at `index` (`j`/`k`, a click):
+    /// a display position, an open thread's children counted.
     FocusFilteredFocus {
         /// The row, an index into the view's `rows`.
         index: Option<u32>,

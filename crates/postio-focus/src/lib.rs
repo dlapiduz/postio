@@ -62,7 +62,8 @@ pub use dropdown::{
 };
 pub use feed::{Opened, PageAnswer};
 pub use filtered::{
-    FilteredBar, FilteredBarAction, FilteredLine, FilteredTab, FilteredView, PickChange, RowPicker,
+    FilteredBar, FilteredBarAction, FilteredLine, FilteredSplice, FilteredTab, FilteredView,
+    PickChange, RowPicker,
 };
 pub use perform::{perform, perform_now};
 pub use pickers::{
@@ -701,6 +702,20 @@ pub enum Intent {
     Filtered(Box<FilteredView>),
     /// The keyboard is on Filtered's row at this index now.
     FilteredFocus(Option<u32>),
+    /// Insert `children` after Filtered's row at `anchor` (an index into
+    /// its rows), replacing any it has: the list's [`Intent::Splice`] for
+    /// the Filtered view's own table.
+    FilteredSplice {
+        /// The expanded row.
+        anchor: u32,
+        /// One per member, oldest first, then the unsent reply.
+        children: Vec<postio_ui::thread_list::ChildRowView>,
+    },
+    /// Remove the children after Filtered's row at `anchor`.
+    FilteredUnsplice {
+        /// The collapsed row.
+        anchor: u32,
+    },
     /// Filtered's selection changed: draw the boxes of `selected`, and the
     /// bar (or take it down with `None`).
     FilteredSelection {
@@ -1632,7 +1647,14 @@ impl FocusController {
         let raw = rows;
         let through = self.through(raw);
         let rows: &dyn Rows = through.as_ref().map_or(raw, |through| through);
-        let mut effects = match self.thread_input(&input, raw, rows) {
+        let mut stepped = self.filtered_thread_input(&input);
+        if stepped.is_none() || matches!(input, Input::Event(_)) {
+            // A change to a thread is news to both lists' expansions.
+            if let Some(steps) = self.thread_input(&input, raw, rows) {
+                stepped.get_or_insert_with(Vec::new).extend(steps);
+            }
+        }
+        let mut effects = match stepped {
             Some(steps) => {
                 let mut effects = self.effects(steps);
                 // A thread change is also news to the rest of the list.

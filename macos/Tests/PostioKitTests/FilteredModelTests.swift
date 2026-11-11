@@ -34,11 +34,13 @@ struct FilteredModelTests {
     }
 
     static func line(
-        _ message: Int64, _ sender: String, pill: String, heading: String? = nil, selected: Bool = false
+        _ message: Int64, _ sender: String, pill: String, heading: String? = nil, selected: Bool = false,
+        messages: UInt32 = 1
     ) -> FilteredLineFfi {
         FilteredLineFfi(
             message: message, sender: sender, subject: "Subject \(message)", preview: "First line",
-            pill: pill, time: "16:0\(message % 10)", heading: heading, selected: selected)
+            pill: pill, time: "16:0\(message % 10)", heading: heading, selected: selected,
+            messages: messages)
     }
 
     static func bar(_ summary: String = "2 selected") -> FilteredBarFfi {
@@ -57,7 +59,7 @@ struct FilteredModelTests {
 
     static func view(
         rows: [FilteredLineFfi]? = nil, focused: UInt32? = 0, more: Bool = false, on tab: Int = 0,
-        bar: FilteredBarFfi? = nil, empty: String? = nil
+        bar: FilteredBarFfi? = nil, empty: String? = nil, expanded: FilteredSpliceFfi? = nil
     ) -> FilteredViewFfi {
         let names = ["All", "Spam", "Promotions", "Notifications", "Receipts", "Shipping", "Social"]
         return FilteredViewFfi(
@@ -79,7 +81,7 @@ struct FilteredModelTests {
                 FocusHintFfi(key: "R", label: "restore + never filter sender"),
                 FocusHintFfi(key: "1\u{2013}7", label: "reason tabs"),
             ],
-            bar: bar, empty: empty)
+            bar: bar, empty: empty, expanded: expanded)
     }
 
     static func model() -> (FilteredModel, Engine) {
@@ -242,5 +244,60 @@ struct FilteredModelTests {
         #expect(model.empty == "Nothing is filtered here")
         model.apply(.focusFiltered(view: Self.view()))
         #expect(model.empty == nil)
+    }
+
+    // MARK: threads (spec 013 FR-009)
+
+    static func child(_ sender: String, draft: Bool = false) -> ChildRowFfi {
+        ChildRowFfi(
+            initials: String(sender.prefix(1)), sender: sender, bold: false, tag: nil,
+            line: "Words from \(sender)", placeholder: false, attachment: false, time: "09:0\(sender.count % 10)",
+            draft: draft, hint: nil)
+    }
+
+    @Test func aThreadOpensUnderItsRowAndTheChildrenCountInTheDisplayPositions() {
+        let (model, engine) = Self.model()
+        let rows = [
+            Self.line(1, "Build Bot", pill: "spam", messages: 6),
+            Self.line(2, "Shop Example", pill: "promotion"),
+        ]
+        model.apply(.focusFiltered(view: Self.view(rows: rows)))
+        #expect(model.rows.first?.isThread == true)
+        #expect(model.items.count == 2)
+
+        let children = [Self.child("Ben"), Self.child("Ana"), Self.child("You", draft: true)]
+        #expect(model.apply(.focusFilteredSplice(anchor: 0, children: children)) == .redraw)
+        #expect(model.items.map(\.id) == [0, 1, 2, 3, 4])
+        guard case .child(_, _, let last) = model.items[3] else {
+            Issue.record("a child sits at 3")
+            return
+        }
+        #expect(last, "the last child ends the thread's line")
+        guard case .row(let below, let display) = model.items[4] else {
+            Issue.record("a row at 4")
+            return
+        }
+        #expect((below.id, display) == (1, 4), "the next row is drawn after the children")
+
+        // The keyboard is a display position; a click names one too.
+        model.apply(.focusFilteredFocus(index: 2))
+        #expect(model.focused == 2)
+        model.point(2)
+        model.open(3)
+        #expect(engine.pointed == [2, 3])
+
+        #expect(model.apply(.focusFilteredUnsplice(anchor: 0)) == .redraw)
+        #expect(model.items.count == 2)
+        #expect(model.apply(.focusFilteredUnsplice(anchor: 0)) == nil, "nothing was open")
+    }
+
+    @Test func aRedrawKeepsTheOpenThreadAndAViewWithoutOneFoldsIt() {
+        let (model, _) = Self.model()
+        let rows = [Self.line(1, "Build Bot", pill: "spam", messages: 3)]
+        let open = FilteredSpliceFfi(anchor: 0, children: [Self.child("Ben"), Self.child("Ana")])
+        model.apply(.focusFiltered(view: Self.view(rows: rows, expanded: open)))
+        #expect(model.items.count == 3)
+        model.apply(.focusFiltered(view: Self.view(rows: rows)))
+        #expect(model.items.count == 1)
     }
 }

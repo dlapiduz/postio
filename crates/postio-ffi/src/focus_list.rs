@@ -1178,6 +1178,13 @@ impl FocusDriver {
             Intent::Filtered(view) => self.say(UiEvent::FocusFiltered {
                 view: (*view).into(),
             }),
+            Intent::FilteredSplice { anchor, children } => self.say(UiEvent::FocusFilteredSplice {
+                anchor,
+                children: children.iter().map(ChildRowFfi::from).collect(),
+            }),
+            Intent::FilteredUnsplice { anchor } => {
+                self.say(UiEvent::FocusFilteredUnsplice { anchor });
+            }
             Intent::FilteredFocus(index) => self.say(UiEvent::FocusFilteredFocus { index }),
             Intent::FilteredSelection { selected, bar } => {
                 self.say(UiEvent::FocusFilteredSelection {

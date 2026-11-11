@@ -35,15 +35,28 @@ pub(crate) struct Expansion {
 
 impl Expansion {
     /// How many children follow the anchor: the members and the draft.
-    fn children(&self) -> u32 {
+    pub(crate) fn children(&self) -> u32 {
         count(&self.view)
     }
 
-    fn splice(&self, at: u32) -> Splice {
+    pub(crate) fn splice(&self, at: u32) -> Splice {
         Splice {
             anchor: at,
             children: self.children(),
         }
+    }
+
+    /// `rows` with this expansion's children among them, when its anchor
+    /// is among them.
+    pub(crate) fn through<'a>(&self, rows: &'a dyn Rows, by_thread: bool) -> Option<Through<'a>> {
+        let at = rows.position_of(self.anchor)?;
+        Some(Through {
+            inner: rows,
+            splice: self.splice(at),
+            thread: self.thread,
+            members: self.view.members.iter().map(|m| m.id).collect(),
+            by_thread,
+        })
     }
 }
 
@@ -62,7 +75,7 @@ pub(crate) enum Pending {
 }
 
 impl Pending {
-    fn thread(self) -> ThreadId {
+    pub(crate) fn thread(self) -> ThreadId {
         match self {
             Pending::Expand { thread, .. } | Pending::Open { thread, .. } => thread,
         }
@@ -75,6 +88,9 @@ pub(crate) struct Through<'a> {
     splice: Splice,
     thread: ThreadId,
     members: Vec<MessageId>,
+    /// Whether a child's facts name its thread, so a thread verb aims the
+    /// whole conversation (spec 013 D2, through `postio_ui::scope::target`).
+    by_thread: bool,
 }
 
 impl Rows for Through<'_> {
@@ -91,7 +107,11 @@ impl Rows for Through<'_> {
                 Some(RowFacts {
                     id,
                     digest: false,
-                    threads: vec![self.thread],
+                    threads: if self.by_thread {
+                        vec![self.thread]
+                    } else {
+                        Vec::new()
+                    },
                     writes: false,
                 })
             }
@@ -130,14 +150,7 @@ impl FocusController {
     /// `rows` with the expansion's children among them, or `rows` as they
     /// are when nothing is expanded (or its anchor is not in a landed page).
     pub(crate) fn through<'a>(&self, rows: &'a dyn Rows) -> Option<Through<'a>> {
-        let expansion = self.expansion.as_ref()?;
-        let at = rows.position_of(expansion.anchor)?;
-        Some(Through {
-            inner: rows,
-            splice: expansion.splice(at),
-            thread: expansion.thread,
-            members: expansion.view.members.iter().map(|m| m.id).collect(),
-        })
+        self.expansion.as_ref()?.through(rows, true)
     }
 
     /// The expansion's splice over `rows`, when its anchor is among them.
@@ -183,7 +196,7 @@ impl FocusController {
     }
 
     /// The children of `view`, as the live keymap and clock say them.
-    fn child_views(&self, view: &ThreadView) -> Vec<ChildRowView> {
+    pub(crate) fn child_views(&self, view: &ThreadView) -> Vec<ChildRowView> {
         let now = self.pickers.clock.unwrap_or_else(Local::now);
         let keymap = self.keymap();
         (0..view.members.len())
@@ -231,18 +244,7 @@ impl FocusController {
                 self.open_thread_row(raw, rows)
             }
             Input::Reply(ticket, Reply::ThreadRead { thread, view }) => {
-                if ticket.generation != self.generation {
-                    return Some(Vec::new());
-                }
-                let view = match view {
-                    Ok(view) => view.clone(),
-                    Err(error) => {
-                        tracing::warn!(%error, "Focus could not read a thread");
-                        self.pending = None;
-                        return Some(Vec::new());
-                    }
-                };
-                Some(self.thread_read(*thread, view, raw, rows))
+                Some(self.thread_replied(*ticket, *thread, view, raw, rows))
             }
             Input::Event(Event::ThreadChanged { thread, .. }) => {
                 let expanded = self
@@ -256,10 +258,33 @@ impl FocusController {
         }
     }
 
+    /// The answer to a [`Request::ReadThread`].
+    pub(crate) fn thread_replied(
+        &mut self,
+        ticket: crate::Ticket,
+        thread: ThreadId,
+        view: &Result<Option<ThreadView>, String>,
+        raw: &dyn Rows,
+        rows: &dyn Rows,
+    ) -> Vec<Step> {
+        if ticket.generation != self.generation {
+            return Vec::new();
+        }
+        let view = match view {
+            Ok(view) => view.clone(),
+            Err(error) => {
+                tracing::warn!(%error, "Focus could not read a thread");
+                self.pending = None;
+                return Vec::new();
+            }
+        };
+        self.thread_read(thread, view, raw, rows)
+    }
+
     /// `Right`: read the thread the cursor's row stands for, and splice its
     /// children when it comes. A child, a digest, a row of one message, or
     /// a thread already open does nothing.
-    fn expand(&mut self, raw: &dyn Rows) -> Vec<Step> {
+    pub(crate) fn expand(&mut self, raw: &dyn Rows) -> Vec<Step> {
         let Some((row, None)) = self.cursor_row(raw) else {
             return Vec::new();
         };
@@ -289,7 +314,7 @@ impl FocusController {
 
     /// `Left`: fold the open thread, from its row or from a child, and put
     /// the cursor on its row.
-    fn collapse(&mut self, raw: &dyn Rows) -> Vec<Step> {
+    pub(crate) fn collapse(&mut self, raw: &dyn Rows) -> Vec<Step> {
         let Some(expansion) = &self.expansion else {
             return Vec::new();
         };
