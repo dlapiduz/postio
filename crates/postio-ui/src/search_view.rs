@@ -2817,10 +2817,11 @@ mod tests {
             said,
             [
                 ("e", "Archive"),
+                ("b", "Snooze"),
+                ("I", "Mark read"),
                 ("l", "Label"),
                 ("v", "Move"),
-                ("I", "Mark read"),
-                ("b", "Snooze"),
+                ("#", "Delete"),
             ]
         );
     }

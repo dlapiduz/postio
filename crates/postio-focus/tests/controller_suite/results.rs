@@ -1812,7 +1812,7 @@ fn x_checks_results_and_the_footer_becomes_the_bulk_bar() {
     assert_eq!(view.selected, 1);
     assert_eq!(
         labels(&view.bulk),
-        ["Archive", "Label", "Move", "Mark read", "Snooze"]
+        ["Archive", "Snooze", "Mark read", "Label", "Move", "Delete"]
     );
     let all = view.select_all.expect("`* a` on the bar's right");
     assert_eq!(
