@@ -102,6 +102,10 @@ pub enum Category {
     MissingHeaders,
     /// Part of a conversation the JWZ threading pass has to reassemble.
     Threading,
+    /// Fixtures for the threading rules proper: forks, the subject window, own
+    /// replies, replies filed in another folder, and list mail that must group
+    /// by references and never by subject (spec 013).
+    ThreadingRules,
     /// `References`/`In-Reply-To` that are absent, malformed or dangling.
     BrokenReferences,
     /// Carries `List-Id` and the rest of the RFC 2369 list headers.
@@ -148,6 +152,7 @@ impl Category {
         Category::MalformedStructure,
         Category::MissingHeaders,
         Category::Threading,
+        Category::ThreadingRules,
         Category::BrokenReferences,
         Category::MailingList,
         Category::Pgp,
@@ -180,6 +185,7 @@ impl Category {
             Category::MalformedStructure => "malformed-structure",
             Category::MissingHeaders => "missing-headers",
             Category::Threading => "threading",
+            Category::ThreadingRules => "threading-rules",
             Category::BrokenReferences => "broken-references",
             Category::MailingList => "mailing-list",
             Category::Pgp => "pgp",
@@ -498,6 +504,40 @@ corpus! {
         "text/plain with format=flowed and delsp=yes, quoting its parent — reflowing and quote detection.",
     "plain-text-simple": [PlainText, Threading] =>
         "The smallest realistic message: 7bit us-ascii, a signature delimiter, nothing unusual.",
+    "thread-archive-1-parent": [Threading, ThreadingRules, PlainText] =>
+        "Archive pair, parent: belongs in the Inbox; its reply is filed in Archive.",
+    "thread-archive-2-reply": [Threading, ThreadingRules, PlainText] =>
+        "Archive pair, reply: links to the parent by In-Reply-To and References; belongs in Archive.",
+    "thread-fork-1-root": [Threading, ThreadingRules, PlainText] =>
+        "Fork, root: both replies answer this message.",
+    "thread-fork-2-reply-a": [Threading, ThreadingRules, PlainText] =>
+        "Fork, first reply to the root; the fourth message answers this one.",
+    "thread-fork-3-reply-b": [Threading, ThreadingRules, PlainText] =>
+        "Fork, second reply to the root, from the account's own address: a sibling of the first reply.",
+    "thread-fork-4-reply-to-a": [Threading, ThreadingRules, PlainText] =>
+        "Fork, reply to the first reply: References carry root then parent.",
+    "thread-hello-30d-1": [Threading, ThreadingRules, PlainText] =>
+        "'Re: Hello' with no references: the earlier of two unrelated messages 30 days apart.",
+    "thread-hello-30d-2": [Threading, ThreadingRules, PlainText] =>
+        "'Re: Hello' with no references, 30 days after its namesake: outside the subject window, so a separate thread.",
+    "thread-hello-3d-1": [Threading, ThreadingRules, PlainText] =>
+        "'Re: Hello' with no references: the earlier of two messages 3 days apart.",
+    "thread-hello-3d-2": [Threading, ThreadingRules, PlainText] =>
+        "'Re: Hello' with no references, 3 days after its namesake: inside the 7-day subject window, so one thread.",
+    "thread-list-1-root": [Threading, ThreadingRules, MailingList, PlainText] =>
+        "List discussion, root: carries List-Id and the RFC 2369 post header.",
+    "thread-list-2-reply": [Threading, ThreadingRules, MailingList, PlainText] =>
+        "List discussion, reply linked by In-Reply-To and References: must thread by references although it has a List-Id.",
+    "thread-list-3-reply": [Threading, ThreadingRules, MailingList, PlainText] =>
+        "List discussion, grandchild with the full References chain: must thread by references although it has a List-Id.",
+    "thread-newsletter-1-issue": [Threading, ThreadingRules, MailingList, PlainText] =>
+        "Weekly newsletter, first issue: a List-Id and a subject shared by every issue.",
+    "thread-newsletter-2-issue": [Threading, ThreadingRules, MailingList, PlainText] =>
+        "Weekly newsletter, second issue a week later with the same subject: a List-Id message never joins by subject.",
+    "thread-sent-1-received": [Threading, ThreadingRules, PlainText] =>
+        "Sent-reply pair, the received message the account answers.",
+    "thread-sent-2-reply": [Threading, ThreadingRules, PlainText] =>
+        "A reply sent from the account's own address, linked by In-Reply-To and References; belongs in Sent.",
     "top-posted-reply-signature": [MultipartAlternative, PlainText, Html, Threading] =>
         "A reply above its quote in both parts: the answer, a signature, then the history as > lines and as a <blockquote>.",
     "transactional-shipping-notice": [MultipartAlternative, PlainText, Html, MailingList, Designed] =>
