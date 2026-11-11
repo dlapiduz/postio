@@ -29,4 +29,5 @@ mod results;
 mod search_support;
 mod states;
 mod surfaces;
+mod threads;
 mod verbs;

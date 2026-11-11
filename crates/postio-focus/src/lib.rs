@@ -18,7 +18,7 @@ use postio_config::paths::Platform;
 use postio_core::state::Selection;
 use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::listing::{PageRequest, Surfaced};
-use postio_model::{AccountId, ListScope, MailboxId, MailboxRole, MessageId};
+use postio_model::{AccountId, ListScope, MailboxId, MailboxRole, MessageId, ThreadId, ThreadView};
 use postio_ui::focus_list::FocusRow;
 
 mod bar;
@@ -42,6 +42,7 @@ mod pickers;
 mod results;
 mod states;
 mod surfaces;
+mod thread_expand;
 mod verbs;
 
 pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRead};
@@ -482,6 +483,20 @@ pub fn save_search(
 pub enum Intent {
     /// The header strip's counts changed.
     Counts(FocusCounts),
+    /// Insert `children` after the row at `anchor` (a row position, not a
+    /// display position). When that row already has children, they are
+    /// replaced. No animation under reduced motion.
+    Splice {
+        /// The expanded row's position among the rows.
+        anchor: u32,
+        /// One per member, oldest first, then the unsent reply.
+        children: Vec<postio_ui::thread_list::ChildRowView>,
+    },
+    /// Remove the children after the row at `anchor`.
+    Unsplice {
+        /// The collapsed row's position among the rows.
+        anchor: u32,
+    },
     /// The cursor is on `position`: draw it there and bring it into view.
     Cursor {
         /// The row.
@@ -925,6 +940,9 @@ pub enum Request {
         /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
     },
+    /// A thread's members and unsent reply: an expansion, or opening a
+    /// thread row.
+    ReadThread(ThreadId),
     /// The searches run lately, newest first.
     RecentSearches,
     /// Keep `query` among the searches run, with what it matched.
@@ -1322,6 +1340,13 @@ pub enum Reply {
         /// Their latest conversations.
         answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
+    /// The answer to [`Request::ReadThread`].
+    ThreadRead {
+        /// The thread asked for.
+        thread: ThreadId,
+        /// Its view, `None` when it is gone, or why it could not be read.
+        view: Result<Option<ThreadView>, String>,
+    },
     /// The answer to [`Request::RecentSearches`] and
     /// [`Request::ForgetSearch`].
     RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
@@ -1535,6 +1560,13 @@ pub struct FocusController {
     results: Option<results::Results>,
     /// What the main window showed before, and after (spec 010 R9).
     history: history::History,
+    /// The thread expanded in place, when one is (spec 013 US1).
+    expansion: Option<thread_expand::Expansion>,
+    /// A thread read that something waits on.
+    pending: Option<thread_expand::Pending>,
+    /// A thread row and the message opening it opened: the row is not
+    /// opened again for showing a message other than its own.
+    opened_from: Option<(MessageId, MessageId)>,
 }
 
 impl FocusController {
@@ -1573,6 +1605,9 @@ impl FocusController {
             stamps: 0,
             results: None,
             history: history::History::default(),
+            expansion: None,
+            pending: None,
+            opened_from: None,
         }
     }
 
@@ -1593,7 +1628,21 @@ impl FocusController {
         // A message a hit opened, closed however it was: the bar comes back
         // on its words.
         let reading = self.surfaces.has(SurfaceKind::Message);
-        let mut effects = self.handle_input(input, rows);
+        // An expanded thread's children are rows to everything below.
+        let raw = rows;
+        let through = self.through(raw);
+        let rows: &dyn Rows = through.as_ref().map_or(raw, |through| through);
+        let mut effects = match self.thread_input(&input, raw, rows) {
+            Some(steps) => {
+                let mut effects = self.effects(steps);
+                // A thread change is also news to the rest of the list.
+                if matches!(input, Input::Event(_)) {
+                    effects.extend(self.handle_input(input, rows));
+                }
+                effects
+            }
+            None => self.handle_input(input, rows),
+        };
         if reading && !self.surfaces.has(SurfaceKind::Message) {
             let steps = self.hit_closed(rows);
             effects.extend(self.effects(steps));
@@ -1798,6 +1847,8 @@ impl FocusController {
                 let steps = self.feed.resurfaced(surfaced);
                 self.effects(steps)
             }
+            // Read by `thread_input` before it gets here.
+            Input::Reply(_, Reply::ThreadRead { .. }) => Vec::new(),
             Input::Reply(_, Reply::Noted) => Vec::new(),
             Input::Reply(_, Reply::Sent(result)) => {
                 if let Err(error) = result {
@@ -2032,7 +2083,12 @@ impl FocusController {
     /// the first row, or back to the message `!` kept, and the strip's
     /// counts are asked for again.
     pub fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Effect> {
-        let mut steps = self.cursor.landed(rows, opened);
+        // An expanded row that left the list folds first, and the cursor
+        // settles on the rows as they now are.
+        let mut steps = self.expansion_followed(rows);
+        let through = self.through(rows);
+        let rows: &dyn Rows = through.as_ref().map_or(rows, |through| through);
+        steps.extend(self.cursor.landed(rows, opened));
         steps.extend(self.verbs.landed(&mut self.cursor, rows));
         match self.surfaces.landed(rows) {
             Some(surfaces::Landing::Open(index)) => {
@@ -2227,6 +2283,8 @@ impl FocusController {
     /// thread verbs (archive and the like) reach; a message verb on a row
     /// is aimed by its own command (spec 013 D2).
     pub fn aim(&self, rows: &dyn Rows) -> Aimed {
+        let through = self.through(rows);
+        let rows: &dyn Rows = through.as_ref().map_or(rows, |through| through);
         verbs::Verbs::aimed(&self.cursor, rows, CommandId::Archive)
     }
 
@@ -2255,7 +2313,7 @@ impl FocusController {
         if row.writes {
             return self.write(ComposerKind::Draft, Some(row.id));
         }
-        let (index, total) = self.feed.message_place(position, rows.len());
+        let (index, total) = self.place_of(position, rows);
         self.surfaces
             .open(&row, index, total, self.policy.caps.stacking)
     }
@@ -2395,7 +2453,9 @@ impl FocusController {
         let Some(row) = rows.facts(at) else {
             return Vec::new();
         };
-        if self.surfaces.reading() == Some(row.id) {
+        if self.surfaces.reading() == Some(row.id)
+            || self.opened_for(row.id, self.surfaces.reading())
+        {
             return Vec::new();
         }
         if row.digest || row.writes {
@@ -2474,6 +2534,8 @@ impl FocusController {
                 | CommandId::DeclineInvite
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage
+                | CommandId::ExpandThread
+                | CommandId::CollapseThread
                 | CommandId::CheatSheet
                 | CommandId::CaptureTask
                 | CommandId::CaptureNote
@@ -2531,6 +2593,7 @@ impl FocusController {
     /// selection goes, `!` is off, a heading a day comes back. The caller
     /// opens the place and names it ([`Self::note_place`]).
     pub fn leave_list(&mut self) -> Vec<Effect> {
+        self.expansion = None;
         let mut steps = self.cursor.leave(self.feed.total());
         steps.push(feed::Step::Show(Intent::SingleHeading(None)));
         self.effects(steps)
@@ -2549,6 +2612,7 @@ impl FocusController {
 
     /// Show `scope` in the list: counted first, then the list changes over.
     pub fn open(&mut self, scope: ListScope) -> Vec<Effect> {
+        self.expansion = None;
         self.cursor.opening();
         let request = self.feed.open(scope);
         vec![Effect::Ask(self.ticket(), request)]
@@ -2621,6 +2685,7 @@ impl FocusController {
                 }
                 feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
                 feed::Step::Open(scope) => {
+                    self.expansion = None;
                     self.cursor.opening();
                     let request = self.feed.open(scope);
                     Effect::Ask(self.ticket(), request)
@@ -2653,6 +2718,7 @@ impl FocusController {
     /// list replaced.
     pub fn invalidate(&mut self) {
         self.generation += 1;
+        self.pending = None;
     }
 
     /// What a surface no longer on the stack held is forgotten: the Mac's
