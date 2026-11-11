@@ -848,6 +848,10 @@ const CASES: &[(&str, fn())] = &[
         places::g_o_then_trav_and_enter_shows_travel as fn(),
     ),
     (
+        "places::the_folders_popover_quiets_the_lists_ring",
+        places::the_folders_popover_quiets_the_lists_ring as fn(),
+    ),
+    (
         "places::a_count_landing_keeps_the_rows_a_click_is_on",
         places::a_count_landing_keeps_the_rows_a_click_is_on as fn(),
     ),
