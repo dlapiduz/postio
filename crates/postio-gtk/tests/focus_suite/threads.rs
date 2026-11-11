@@ -251,3 +251,79 @@ pub fn clicking_the_chevron_opens_and_folds_a_thread() {
         );
     });
 }
+
+/// The child rows Filtered draws, top to bottom.
+fn filtered_children(
+    view: &postio_gtk::filtered::FilteredView,
+) -> Vec<postio_gtk::list::row::RowWidget> {
+    support::descendants(view.widget())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<postio_gtk::list::row::RowWidget>().ok())
+        .filter(|row| row.child().is_some())
+        .collect()
+}
+
+pub fn filtered_opens_a_thread_in_place_and_restores_it_whole() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        fixture
+            .filtered_thread("Build status", 3, "notification", 10)
+            .await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "f"]);
+        assert!(
+            crate::settle_until(async || window
+                .filtered()
+                .is_some_and(|view| view.subjects().len() == 1))
+            .await,
+            "Filtered never listed the thread's row"
+        );
+        let view = window.filtered().expect("the view");
+        support::keys(&window, &["Right"]);
+        assert!(
+            crate::settle_until(async || filtered_children(&view).len() == 3).await,
+            "Right showed the three messages under the row: {}",
+            filtered_children(&view).len()
+        );
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || filtered_children(&view)
+                .iter()
+                .any(|row| row.is_cursor_here()
+                    && row.child().is_some_and(|child| child.line == "Message 1")))
+            .await,
+            "j did not land on the first child"
+        );
+        support::keys(&window, &["Left"]);
+        assert!(
+            crate::settle_until(async || filtered_children(&view).is_empty()).await,
+            "Left did not fold the thread"
+        );
+        support::keys(&window, &["Right"]);
+        assert!(crate::settle_until(async || filtered_children(&view).len() == 3).await);
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || filtered_children(&view)
+                .iter()
+                .any(|row| row.is_cursor_here()))
+            .await
+        );
+        support::press(&window, "R", gtk::gdk::ModifierType::SHIFT_MASK);
+        assert!(
+            crate::settle_until(async || view.subjects().is_empty()).await,
+            "Restore on a child did not take the thread out of Filtered: {:?}",
+            view.subjects()
+        );
+    });
+}
