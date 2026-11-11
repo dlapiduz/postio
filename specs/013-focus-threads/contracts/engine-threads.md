@@ -19,9 +19,12 @@ them.
 
 ## Changed requests
 
-- **`Conversation(ThreadId)`** is retired once both frontends read `Thread`.
-  Its callers are `postio-ffi/src/focus_message.rs` and
-  `postio-gtk/src/open.rs`.
+- **`Conversation(ThreadId)`** is retired once every caller reads `Thread`.
+  The callers are `postio-ffi/src/focus_message.rs`,
+  `postio-ffi/src/session.rs`, `postio-gtk/src/open.rs`,
+  `postio-tui/src/run.rs` and `app.rs`, and `postio-host/src/tests.rs`. The
+  terminal keeps its own view (spec D4) and only changes the request it
+  reads.
 - **Verbs with a `MessageTarget`**: there is no protocol change. Scope is
   resolved before the command is built (`postio_ui::scope::target`), so a
   child row's reply carries `Messages([id])` and a row's archive carries

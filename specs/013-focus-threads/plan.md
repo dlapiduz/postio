@@ -80,7 +80,8 @@ the classic GTK reader keep building and take the model changes (D4).
 **Scale/Scope**:
 - 11 screens and 7 user stories.
 - About 14 new registry commands; 1 removed (`archive_thread`).
-- 5 new client requests and 1 retired (`Conversation`).
+- 5 new client requests and 1 retired (`Conversation`, once every caller,
+  the terminal app's included, reads `Thread`).
 - About 6 new `postio-ui` modules.
 - About 15 Swift files and 8 GTK files new or changed.
 
@@ -147,7 +148,10 @@ new ADR. ADR 0032's stacked conversation stays superseded for Focus by
 - `Thread`, `Mute`/`Unmute`, `Split`, `MutedOf`, `ForwardThread`;
   `ThreadChanged` event.
 - The composer's `ReplyToLatest` and `SetForwardForm`. `Conversation` is
-  retired after both frontends move.
+  retired after every caller moves to `Thread`: the Mac window, GTK's
+  dialog, the terminal app (`postio-tui/src/run.rs`, `app.rs`), the FFI
+  session (`postio-ffi/src/session.rs`) and the host's tests. The terminal
+  keeps its own view (D4) and only changes the request it reads.
 
 ### `postio-core`
 
@@ -226,9 +230,11 @@ wants the issue closed sooner, steps 1–3 can land as their own PR with
 
 1. **Step 1.** Count gates for `Thread` (2 vs 500 members), the bounded
    subject lookup, and the filing stage's mute check.
-2. **Step 3.** Expand and collapse are measured on the Mac (`ReaderTiming`
-   style signposts) and in the GTK suite's frame clock. Each must be
-   < 16 ms on the long-thread seed.
+2. **Step 3.** Expand and collapse are timed on the Mac (`ReaderTiming`
+   style signposts) and in the GTK suite's frame clock on the long-thread
+   seed, and the times are reported in the step note against the 16 ms
+   budget. They do not gate (constitution V): the counts in step 1 gate, and
+   a time over budget invokes the stop rule.
 3. **Step 4.** Stepping the window is measured the same way; the bar's
    `chips` is a pure function, benchmarked at 500 members.
 4. **Stop rule.** If a budget fails, the step stops and the maintainer is
