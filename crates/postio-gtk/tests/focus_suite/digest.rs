@@ -81,7 +81,7 @@ pub async fn open_digest(
 /// US10 scenario 4: the digest opens on its plain list, newest first; `⇧A`
 /// archives all of it and its row leaves the inbox; one `Ctrl+Z` brings
 /// it back.
-pub fn enter_opens_a_digest_and_shift_a_archives_all_of_it() {
+pub fn enter_opens_a_digest_and_e_archives_all_of_it() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -124,7 +124,9 @@ pub fn enter_opens_a_digest_and_shift_a_archives_all_of_it() {
             support::keycaps_are_taught(digest.dialog()),
             "the digest window's keycaps do not teach their controls (T142)"
         );
-        support::press(&window, "E", gdk::ModifierType::SHIFT_MASK);
+        // `e`, not `E`: spec 013 retired `archive_thread`, and a digest
+        // archives all of itself with `archive` (Context::Digest).
+        support::press(&window, "e", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || {
                 support::subjects(&window) == ["Staffing plan", "Harbor draft", "Atlas budget"]
