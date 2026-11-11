@@ -1,0 +1,88 @@
+# A thread opens in place and closes again (specs/013-focus-threads US1 #2,
+# #3, #5; issue #2099).
+#
+# The defect: a conversation row shows one message, the latest, and the other
+# five are unreachable from the list. Today `Right` is "open message" in the
+# list and there are no child rows at all, so every step that expects rows to
+# appear fails on `main`.
+#
+# On the `threads` seed the cursor starts on "Harbor API draft v3": six
+# messages, two unread, message 4 answering message 1, and an unsent draft
+# reply. `Right` splices its six messages and the draft in under the row
+# (rows.count grows), each child showing its own text, never its quote.
+# `j` walks into the children (the cursor leaves the thread row) and `Left`
+# on a child collapses the thread and returns the cursor to its row. `Right`
+# on a one-message row does nothing. Expanding a second thread collapses
+# the first.
+#
+# The controller's half is postio-focus tests/controller_suite/threads.rs;
+# the row words are postio-ui's focus_row and thread_list.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US1" }
+seed   = "threads"
+vary   = { scheme = ["light", "dark"] }
+design = "02-thread-expanded"
+
+[[step]]
+id      = "start"
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Harbor API draft v3" }
+expect  = "The inbox is collapsed: Harbor API draft v3 is the ringed first row with a badge of 6 and \"2 new\", and a chevron pointing right. Every other row is one line."
+
+[[step]]
+id      = "expand"
+key     = "Right"
+check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Harbor API draft v3", rows.count = { changed = true }, reading.id = { absent = true }, view = "list" }
+expect  = "Harbor opens in place and nothing is opened: Right expands, it no longer opens the message. Under the ringed thread row come six child rows, joined to it by a line, each with its sender, its own first line (message 4 reads \"to Ana\" as a tag, not the quote it carries), its time, and an unread dot on the two unread ones, then the draft reply in draft styling. The cursor is still on the thread row and the chevron points down."
+
+[[step]]
+id      = "into"
+key     = "j"
+check   = { keyboard.region = "list", cursor.index = 1, cursor.subject = { changed = true }, view = "list" }
+expect  = "The ring leaves the thread row and lands on child 1, Ana Ruiz's first message, which shows its own text. The rows around it have not moved."
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 2 }
+expect  = "The ring walks down to child 2, one row at a time through the children, not to the next thread."
+
+[[step]]
+id      = "collapse"
+key     = "Left"
+check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Harbor API draft v3", rows.count = { same_as = "start" }, view = "list" }
+expect  = "Left on a child folds the thread: the six children and the draft are gone, the list is as many rows as it began with, and the ring is back on the Harbor thread row with its chevron pointing right."
+
+[[step]]
+id      = "reopen"
+key     = "Right"
+check   = { cursor.index = 0, rows.count = { same_as = "expand" } }
+expect  = "Right again opens Harbor to the same six children and draft."
+
+[[step]]
+key     = "Left"
+check   = { cursor.index = 0, rows.count = { same_as = "start" } }
+expect  = "Left on the thread row itself also folds it, ring still on the row."
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 1, cursor.subject = { changed = true } }
+expect  = "j moves to the next thread, a one-message row that shows the sender's full name and no chevron."
+
+[[step]]
+id      = "single"
+key     = "Right"
+check   = { keyboard.region = "list", cursor.index = 1, rows.count = { same_as = "start" }, view = "list", reading.id = { absent = true } }
+expect  = "Right on a one-message row does nothing: no children, no message opened, the ring where it was."
+
+[[step]]
+command = "prev_message"
+check   = { cursor.index = 0, cursor.subject = "Harbor API draft v3" }
+
+[[step]]
+key     = "Right"
+check   = { rows.count = { same_as = "expand" } }
+expect  = "Harbor is open again."
+
+[[step]]
+key     = "Left"
+check   = { rows.count = { same_as = "start" } }

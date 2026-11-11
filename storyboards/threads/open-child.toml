@@ -1,0 +1,53 @@
+# Return on a child opens that message, not the latest (specs/013-focus-threads
+# US1 #4 and #6; issue #2099).
+#
+# The defect: the only way to read a message of a thread was the latest one,
+# and message 4 of Harbor API draft v3 (Ben Adeyemi's "to Ana" reply) could
+# not be reached from the list. Today `Right` opens a message and there are no
+# child rows, so the walk to child 4 does not exist on `main`.
+#
+# `Right` expands Harbor, `j` four times reaches child 4, and `Return` opens
+# message 4 of 6: the window and the footer both say which message it is, and
+# that it is not the latest. `Escape` returns to child 4's row.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US1" }
+seed   = "threads"
+design = "03-window-on-an-older-message"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Harbor API draft v3" }
+
+[[step]]
+key     = "Right"
+check   = { cursor.index = 0, rows.count = { changed = true }, view = "list" }
+expect  = "Harbor is open under its row: six children and the draft."
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 1 }
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 2 }
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 3 }
+
+[[step]]
+id      = "child4"
+key     = "j"
+check   = { cursor.index = 4, view = "list", keyboard.region = "list" }
+expect  = "The ring is on child 4, Ben Adeyemi's reply, tagged \"to Ana\" and showing only its own new text, not the message it quotes. The footer reads \"Message 4 of 6 · Ben Adeyemi\" and offers reply and forward as acting on this one."
+
+[[step]]
+id      = "open"
+key     = "Return"
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true } }
+expect  = "The window opens on message 4, not the latest: its kicker says \"Message 4 of 6\" with \"] newer · [ older\", the sender block carries the Reply to row naming Ana's message 1, and a quiet banner says reply and forward act on this message while archive acts on the whole thread, offering Latest }."
+
+[[step]]
+command = "back"
+check   = { view = "list", keyboard.region = "list", cursor.index = 4 }
+expect  = "Escape closes the message and the ring is on child 4 again, the thread still open."
