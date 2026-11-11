@@ -1055,6 +1055,7 @@ impl FocusDriver {
                 });
                 self.say(UiEvent::FocusSplice { anchor, children });
             }
+            Intent::Footer(view) => self.say(UiEvent::FocusFooter { view: view.into() }),
             Intent::Unsplice { anchor } => {
                 *self.expanded.lock().expect("expanded lock") = None;
                 self.say(UiEvent::FocusUnsplice { anchor });

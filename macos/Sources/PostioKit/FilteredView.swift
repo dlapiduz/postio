@@ -15,9 +15,13 @@ import SwiftUI
 /// many and what a key does to them.
 public struct FilteredView: View {
     let model: FilteredModel
+    /// The scope footer the controller worded for the focused row (spec 013
+    /// FR-014); the static hints stand until it says one.
+    let scope: FooterViewFfi?
 
-    public init(model: FilteredModel) {
+    public init(model: FilteredModel, scope: FooterViewFfi? = nil) {
         self.model = model
+        self.scope = scope
     }
 
     /// One row's height, as the list's one-line row: nothing is measured.
@@ -38,11 +42,15 @@ public struct FilteredView: View {
                 ActionBar(words: bar, run: model.run)
                     .transition(.opacity)
             }
-            Divider()
-            FocusHintRow(model.footer.map { FocusHintRow.Hint(cap: $0.cap, label: $0.label) })
-                .padding(.horizontal, 20)
-                .frame(height: 30)
-                .background(.bar)
+            if let scope {
+                ScopeFooter(words: ScopeFooterWords(scope))
+            } else {
+                Divider()
+                FocusHintRow(model.footer.map { FocusHintRow.Hint(cap: $0.cap, label: $0.label) })
+                    .padding(.horizontal, 20)
+                    .frame(height: 30)
+                    .background(.bar)
+            }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .accessibilityElement(children: .contain)

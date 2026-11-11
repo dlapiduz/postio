@@ -63,6 +63,41 @@ pub struct ChildRowFfi {
     pub hint: Option<ChildHintFfi>,
 }
 
+/// One keycap and what it does, in the footer.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FooterKeyFfi {
+    /// The keycap, a short glyph as the live keymap spells it.
+    pub cap: String,
+    /// What it does: "reply to this".
+    pub label: String,
+}
+
+/// The footer under the list: the scope in words, the keys that matter
+/// there, and one sentence on what acts on what.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FooterViewFfi {
+    /// "Message 4 of 6 · Ben Adeyemi".
+    pub title: String,
+    /// Keycap and label pairs, in drawing order.
+    pub keys: Vec<FooterKeyFfi>,
+    /// The right-hand sentence, none on a row that stands for one message.
+    pub note: Option<String>,
+}
+
+impl From<postio_ui::scope::FooterView> for FooterViewFfi {
+    fn from(view: postio_ui::scope::FooterView) -> Self {
+        FooterViewFfi {
+            title: view.title,
+            keys: view
+                .keys
+                .into_iter()
+                .map(|(cap, label)| FooterKeyFfi { cap, label })
+                .collect(),
+            note: view.note,
+        }
+    }
+}
+
 impl From<postio_ui::focus_row::Chevron> for ChevronFfi {
     fn from(chevron: postio_ui::focus_row::Chevron) -> Self {
         match chevron {

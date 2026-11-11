@@ -149,3 +149,46 @@ import Testing
         #expect(!SyncLabel(text: "Synced 16:09", mark: .synced).isAlarming)
     }
 }
+
+/// The footer under the list (spec 013 T040, FR-014): the scope's title,
+/// its keycap and label pairs and the right-hand note, as the controller
+/// worded them after the cursor moved.
+@MainActor
+@Suite struct ScopeFooterTests {
+    static let child = FooterViewFfi(
+        title: "Message 4 of 6 \u{b7} Ben Adeyemi",
+        keys: [
+            FooterKeyFfi(cap: "j k", label: "move"),
+            FooterKeyFfi(cap: "e", label: "reply to this"),
+            FooterKeyFfi(cap: "\u{21b5}", label: "open here"),
+        ],
+        note: "Reply and forward act on this message; a, s, l, m act on the thread")
+
+    @Test func theFooterHoldsTheTitleTheKeysAndTheNote() {
+        let states = FocusStates()
+        #expect(states.footer == nil, "nothing is drawn before the controller says")
+
+        #expect(states.apply(.focusFooter(view: Self.child)) == .footer)
+
+        #expect(states.footer?.title == "Message 4 of 6 \u{b7} Ben Adeyemi")
+        #expect(states.footer?.keys.map(\.cap) == ["j k", "e", "\u{21b5}"])
+        #expect(states.footer?.keys.map(\.label) == ["move", "reply to this", "open here"])
+        #expect(states.footer?.note?.hasPrefix("Reply and forward") == true)
+    }
+
+    @Test func aRowThatStandsForOneMessageHasNoNote() {
+        let states = FocusStates()
+        _ = states.apply(.focusFooter(view: FooterViewFfi(title: "Atlas staffing plan for Q4", keys: [], note: nil)))
+        #expect(states.footer?.note == nil)
+        let words = ScopeFooterWords(states.footer!)
+        #expect(words.hints.isEmpty)
+        #expect(words.note == nil)
+    }
+
+    @Test func theWordsTurnTheKeysIntoHints() {
+        let words = ScopeFooterWords(Self.child)
+        #expect(words.title == "Message 4 of 6 \u{b7} Ben Adeyemi")
+        #expect(words.hints.map(\.cap) == ["j k", "e", "\u{21b5}"])
+        #expect(words.hints.map(\.label) == ["move", "reply to this", "open here"])
+    }
+}
