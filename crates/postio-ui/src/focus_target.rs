@@ -13,6 +13,7 @@ use postio_model::EmailAddress;
 use postio_model::ids::{DraftId, MessageId, ThreadId};
 
 use crate::focus_list::FocusRow;
+use crate::scope::{self, Scope, ScopeFocus};
 
 /// How long a toast stays before it goes, in seconds: long enough to read the
 /// sentence and reach for Undo, far short of the undo stack's own expiry, so
@@ -123,24 +124,27 @@ pub enum Aim {
 /// otherwise. A row folded from several accounts is every copy
 /// ([`MessageTarget::Threads`]); a message in no conversation is itself.
 /// `reach` is what each picked row reaches, remembered when it was picked.
+/// `action` is the verb: on the cursor's row it decides, by spec 013's D2,
+/// whether the verb reaches the thread or the row's latest message.
 pub fn aim(
     selection: &Selection,
     reach: &HashMap<MessageId, Vec<ThreadId>>,
     cursor: Option<&FocusRow>,
+    action: CommandId,
 ) -> Aim {
     let cursor = cursor.map(|row| AimRow {
         id: row.id(),
         threads: row.threads(),
         digest: matches!(row, FocusRow::Digest(_)),
     });
-    aim_by(selection, reach, cursor.as_ref())
+    aim_by(selection, reach, cursor.as_ref(), action)
 }
 
 /// The cursor's row as [`aim_by`] needs it: what a frontend that keeps its
 /// rows as something other than [`FocusRow`] can say about one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AimRow {
-    /// The row's message.
+    /// The row's message: its latest, which a message verb reaches (D2).
     pub id: MessageId,
     /// The conversations it stands for, every copy.
     pub threads: Vec<ThreadId>,
@@ -149,10 +153,14 @@ pub struct AimRow {
 }
 
 /// [`aim`], with the cursor's row given as an [`AimRow`].
+///
+/// A selection is whole conversations whatever the verb; only the cursor's
+/// own row is asked of [`crate::scope::target`].
 pub fn aim_by(
     selection: &Selection,
     reach: &HashMap<MessageId, Vec<ThreadId>>,
     cursor: Option<&AimRow>,
+    action: CommandId,
 ) -> Aim {
     match selection {
         Selection::Everything { except } => Aim::Everything {
@@ -181,10 +189,20 @@ pub fn aim_by(
             // message verb has nothing to aim at there.
             Some(row) if row.digest => Vec::new(),
             None => Vec::new(),
-            Some(row) if !row.threads.is_empty() => {
-                vec![MessageTarget::Threads(row.threads.clone())]
-            }
-            Some(row) => vec![MessageTarget::Messages(vec![row.id])],
+            // A message in no conversation is only itself, whatever the verb.
+            Some(row) if row.threads.is_empty() => vec![MessageTarget::Messages(vec![row.id])],
+            Some(row) => match scope::target(
+                ScopeFocus::Row {
+                    thread: row.threads[0],
+                    latest: row.id,
+                },
+                action,
+            ) {
+                // Every copy of a row folded from several accounts.
+                Scope::Thread(_) => vec![MessageTarget::Threads(row.threads.clone())],
+                Scope::Message(message) => vec![MessageTarget::Messages(vec![message])],
+                Scope::Unavailable => Vec::new(),
+            },
         }),
     }
 }
@@ -376,7 +394,12 @@ mod tests {
     fn with_nothing_picked_a_verb_aims_at_the_cursors_whole_conversation() {
         let folded = row(1, Some(3), &[9]);
         assert_eq!(
-            aim(&Selection::default(), &HashMap::new(), Some(&folded)),
+            aim(
+                &Selection::default(),
+                &HashMap::new(),
+                Some(&folded),
+                CommandId::Archive
+            ),
             Aim::Targets(vec![MessageTarget::Threads(vec![
                 ThreadId::new(3),
                 ThreadId::new(9)
@@ -386,14 +409,46 @@ mod tests {
             aim(
                 &Selection::default(),
                 &HashMap::new(),
-                Some(&row(2, None, &[]))
+                Some(&row(2, None, &[])),
+                CommandId::Flag
             ),
             Aim::Targets(vec![MessageTarget::Messages(vec![MessageId::new(2)])])
         );
         assert_eq!(
-            aim(&Selection::default(), &HashMap::new(), None),
+            aim(
+                &Selection::default(),
+                &HashMap::new(),
+                None,
+                CommandId::Archive
+            ),
             Aim::Targets(Vec::new())
         );
+    }
+
+    #[test]
+    fn a_message_verb_on_a_collapsed_row_aims_its_latest_message() {
+        // Spec 013 D2: flag follows reply, so on a row it is the latest
+        // message's; it was the whole thread's before threads had children.
+        // Read/unread and archive stay the thread's.
+        let folded = row(1, Some(3), &[9]);
+        let aimed = |id| aim(&Selection::default(), &HashMap::new(), Some(&folded), id);
+        for id in [CommandId::Flag, CommandId::Reply, CommandId::Forward] {
+            assert_eq!(
+                aimed(id),
+                Aim::Targets(vec![MessageTarget::Messages(vec![MessageId::new(1)])]),
+                "{id:?}"
+            );
+        }
+        for id in [CommandId::ToggleRead, CommandId::Archive, CommandId::Delete] {
+            assert_eq!(
+                aimed(id),
+                Aim::Targets(vec![MessageTarget::Threads(vec![
+                    ThreadId::new(3),
+                    ThreadId::new(9)
+                ])]),
+                "{id:?}"
+            );
+        }
     }
 
     #[test]
@@ -401,7 +456,7 @@ mod tests {
         let reach = HashMap::from([(MessageId::new(1), vec![ThreadId::new(3)])]);
         let picked = Selection::These(vec![MessageId::new(1), MessageId::new(2)]);
         assert_eq!(
-            aim(&picked, &reach, None),
+            aim(&picked, &reach, None, CommandId::Flag),
             Aim::Targets(vec![
                 MessageTarget::Threads(vec![ThreadId::new(3)]),
                 MessageTarget::Messages(vec![MessageId::new(2)]),
@@ -413,7 +468,8 @@ mod tests {
                     except: vec![MessageId::new(4)]
                 },
                 &reach,
-                None
+                None,
+                CommandId::Archive
             ),
             Aim::Everything {
                 except: vec![MessageId::new(4)]

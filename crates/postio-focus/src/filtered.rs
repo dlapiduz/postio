@@ -567,7 +567,7 @@ impl FocusController {
             return Vec::new();
         };
         let (aims, steps) = filtered.with_cursor(|cursor, rows, total| {
-            let aims = Verbs::aimed(cursor, rows).aims;
+            let aims = Verbs::aimed(cursor, rows, CommandId::Archive).aims;
             let gone = match cursor.selection() {
                 Selection::These(ids) if !ids.is_empty() => ids,
                 _ => cursor.row(rows).map(|row| row.id).into_iter().collect(),
