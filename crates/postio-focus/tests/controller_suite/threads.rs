@@ -470,3 +470,196 @@ fn return_on_a_thread_row_opens_the_first_unread_and_on_a_child_that_child() {
         Some(member_id(ThreadId::new(500), 4))
     );
 }
+
+// ---- Other surfaces (T035, FR-009): a folder and Filtered -------------------
+
+/// A folder (not the inbox) is the same list surface with another scope.
+/// This is a guard, not a TDD step: it was green on arrival.
+#[test]
+fn a_folder_list_expands_and_collapses_as_the_inbox_does() {
+    let rows = List::of(&[6, 4, 1]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Mailbox(
+        postio_model::MailboxId::new(7),
+    ));
+    let _ = focus.landed(&rows, true);
+
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a folder row reads its thread");
+    let effects = answer(&mut focus, ticket, view(thread, 6, 2, true), &rows);
+    let (anchor, children) = splice_of(&effects).expect("the read splices");
+    assert_eq!((anchor, children.len()), (0, 7));
+
+    let effects = run(&mut focus, CommandId::CollapseThread, &rows);
+    assert_eq!(unspliced(&effects), vec![0]);
+}
+
+/// Filtered's rows: messages, the first of three messages in its thread.
+fn filed_rows(counts: &[u32]) -> Vec<postio_client::protocol::FilteredRow> {
+    let at = Utc.with_ymd_and_hms(2026, 10, 2, 9, 0, 0).unwrap();
+    counts
+        .iter()
+        .enumerate()
+        .map(|(index, count)| {
+            let id = 100 + index as i64;
+            postio_client::protocol::FilteredRow {
+                message: MessageSummary {
+                    id: MessageId::new(id),
+                    thread: Some(ThreadId::new(500 + index as i64)),
+                    from: Some(EmailAddress::new(Some("Ledger"), "news@ledger.example")),
+                    subject: Some(format!("Issue {id}")),
+                    preview: None,
+                    received_at: at,
+                    seen: true,
+                    flagged: false,
+                    answered: false,
+                    send_state: None,
+                    send_at: None,
+                    has_attachments: false,
+                    thread_count: *count,
+                    to: Vec::new(),
+                },
+                reason: "notification".to_owned(),
+                source: None,
+                at,
+            }
+        })
+        .collect()
+}
+
+fn filtered_splice_of(effects: &[Effect]) -> Option<(u32, Vec<ChildRowView>)> {
+    shown(effects).into_iter().find_map(|intent| match intent {
+        Intent::FilteredSplice { anchor, children } => Some((anchor, children)),
+        _ => None,
+    })
+}
+
+/// `g f`, answered with `counts`' rows.
+fn filtered_over(counts: &[u32]) -> (FocusController, List) {
+    let rows = List::of(&[1]);
+    let mut focus = focus();
+    let _ = focus.landed(&rows, true);
+    let page = filed_rows(counts);
+    for (ticket, request) in asks(&run(&mut focus, CommandId::GoToFiltered, &rows)) {
+        let reply = match request {
+            Request::FilteredTabs => Reply::FilteredTabs(Ok(Vec::new())),
+            Request::Filtered { stamp, offset, .. } => Reply::Filtered {
+                stamp,
+                offset,
+                answer: Ok(page.clone()),
+            },
+            other => panic!("g f asked for {other:?}"),
+        };
+        let _ = focus.handle_on(Input::Reply(ticket, reply), &rows);
+    }
+    (focus, rows)
+}
+
+#[test]
+fn filtered_expands_and_collapses_a_thread_row() {
+    let (mut focus, rows) = filtered_over(&[6, 1, 3]);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("Right in Filtered reads the thread");
+    assert_eq!(thread, ThreadId::new(500));
+    let effects = answer(&mut focus, ticket, view(thread, 6, 2, true), &rows);
+    let (anchor, children) = filtered_splice_of(&effects).expect("the read splices over Filtered");
+    assert_eq!((anchor, children.len()), (0, 7));
+
+    // j walks into the children, as in the inbox.
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert!(
+        shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::FilteredFocus(Some(1)))),
+        "the first child has the keyboard: {:?}",
+        shown(&effects)
+    );
+
+    let effects = run(&mut focus, CommandId::CollapseThread, &rows);
+    assert!(
+        shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::FilteredUnsplice { anchor: 0 })),
+        "{:?}",
+        shown(&effects)
+    );
+}
+
+#[test]
+fn filtered_row_of_one_message_does_not_expand() {
+    let (mut focus, rows) = filtered_over(&[1, 3]);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    assert!(read_asked(&effects).is_none());
+}
+
+#[test]
+fn filtered_keeps_its_open_thread_and_the_child_focus_when_the_page_is_read_again() {
+    let (mut focus, rows) = filtered_over(&[6, 1, 3]);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read");
+    let _ = answer(&mut focus, ticket, view(thread, 6, 2, true), &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+
+    // Mail moved elsewhere: Filtered reads its first page again.
+    let page = filed_rows(&[6, 1, 3]);
+    let effects = focus.handle_on(
+        Input::Event(Event::MessageListChanged {
+            account: AccountId::new(1),
+            mailbox: postio_model::MailboxId::new(1),
+        }),
+        &rows,
+    );
+    let (ticket, request) = asks(&effects)
+        .into_iter()
+        .find(|(_, request)| matches!(request, Request::Filtered { .. }))
+        .expect("Filtered is read again");
+    let Request::Filtered { stamp, offset, .. } = request else {
+        unreachable!()
+    };
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::Filtered {
+                stamp,
+                offset,
+                answer: Ok(page),
+            },
+        ),
+        &rows,
+    );
+    let view = shown(&effects)
+        .into_iter()
+        .find_map(|intent| match intent {
+            Intent::Filtered(view) => Some(*view),
+            _ => None,
+        })
+        .expect("the view is drawn again");
+    assert_eq!(view.expanded.as_ref().map(|x| x.children.len()), Some(7));
+    assert_eq!(view.focused, Some(2), "still on the second child");
+}
+
+/// D2: Restore moves mail, so on a child it moves the thread (every
+/// member), not the child message.
+#[test]
+fn restore_on_a_filtered_child_aims_the_whole_thread() {
+    let (mut focus, rows) = filtered_over(&[6, 1, 3]);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read");
+    let _ = answer(&mut focus, ticket, view(thread, 6, 2, true), &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+
+    let effects = run(&mut focus, CommandId::RestoreFiltered, &rows);
+    let targets: Vec<_> = asks(&effects)
+        .into_iter()
+        .filter_map(|(_, request)| match request {
+            Request::Post(postio_core::Command::RestoreFiltered { target, .. }) => Some(target),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        targets,
+        vec![postio_core::MessageTarget::Threads(vec![thread])],
+        "the child's whole thread"
+    );
+}

@@ -160,9 +160,10 @@ pub use focus_states::{
 pub use focus_surfaces::{
     CaptureModeFfi, CapturePickFfi, CaptureProjectFfi, CaptureViewFfi, CapturedFfi, ConfirmFfi,
     DigestCardFfi, DigestEmailFfi, DigestLineFfi, DigestPageFfi, DigestStatementFfi,
-    DigestSummaryFfi, DigestTopicFfi, DigestViewFfi, FilteredLineFfi, FilteredTabFfi,
-    FilteredViewFfi, FocusDigestGeometryFfi, FocusHintFfi, RulePreviewLineFfi, RuleScheduleFfi,
-    RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi, focus_digest_geometry,
+    DigestSummaryFfi, DigestTopicFfi, DigestViewFfi, FilteredLineFfi, FilteredSpliceFfi,
+    FilteredTabFfi, FilteredViewFfi, FocusDigestGeometryFfi, FocusHintFfi, RulePreviewLineFfi,
+    RuleScheduleFfi, RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi,
+    focus_digest_geometry,
 };
 pub use focus_threads::{ChevronFfi, ChildHintFfi, ChildRowFfi, ThreadRowFfi};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};

@@ -65,6 +65,18 @@ pub struct FilteredViewFfi {
     pub bar: Option<FilteredBarFfi>,
     /// What to say in place of the rows when the tab has none.
     pub empty: Option<String>,
+    /// The thread open under one of the rows, when one is; `focused` then
+    /// counts its children.
+    pub expanded: Option<FilteredSpliceFfi>,
+}
+
+/// The children of Filtered's open thread.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilteredSpliceFfi {
+    /// The expanded row, an index into `rows`.
+    pub anchor: u32,
+    /// One per message, oldest first, then the unsent reply.
+    pub children: Vec<crate::ChildRowFfi>,
 }
 
 /// What the bar over Filtered says while anything is selected: the count,
@@ -144,6 +156,9 @@ pub struct FilteredLineFfi {
     pub heading: Option<String>,
     /// Whether it is in the selection: its box is checked.
     pub selected: bool,
+    /// How many messages its conversation holds; more than one opens in
+    /// place (`invoke("expand_thread")`).
+    pub messages: u32,
 }
 
 impl From<postio_focus::FilteredView> for FilteredViewFfi {
@@ -178,6 +193,7 @@ impl From<postio_focus::FilteredView> for FilteredViewFfi {
                     time: row.time,
                     heading: row.heading,
                     selected: row.selected,
+                    messages: row.messages,
                 })
                 .collect(),
             focused: view.focused,
@@ -185,6 +201,14 @@ impl From<postio_focus::FilteredView> for FilteredViewFfi {
             footer: view.footer.into_iter().map(Into::into).collect(),
             bar: view.bar.map(Into::into),
             empty: view.empty,
+            expanded: view.expanded.map(|splice| FilteredSpliceFfi {
+                anchor: splice.anchor,
+                children: splice
+                    .children
+                    .iter()
+                    .map(crate::ChildRowFfi::from)
+                    .collect(),
+            }),
         }
     }
 }
