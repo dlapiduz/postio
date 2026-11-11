@@ -493,6 +493,9 @@ pub enum Intent {
         /// One per member, oldest first, then the unsent reply.
         children: Vec<postio_ui::thread_list::ChildRowView>,
     },
+    /// The footer under the list, redrawn: the scope of the row or child the
+    /// cursor is on, the keys that matter there, and what acts on what.
+    Footer(postio_ui::scope::FooterView),
     /// Remove the children after the row at `anchor`.
     Unsplice {
         /// The collapsed row's position among the rows.
@@ -1673,6 +1676,11 @@ impl FocusController {
         // another window in its place (M4) -- ends its composition, saved.
         let steps = self.composer_gone();
         effects.extend(self.effects(steps));
+        // The cursor moved: the footer says what its row or child is, and
+        // what the keys reach from there.
+        if let Some(footer) = self.footer_after(&effects, raw) {
+            effects.push(Effect::Show(Intent::Footer(footer)));
+        }
         effects
     }
 

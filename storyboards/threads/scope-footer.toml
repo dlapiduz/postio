@@ -1,0 +1,76 @@
+# Every action says what it acts on (specs/013-focus-threads US2 #1, #2, #4).
+#
+# The defect: Reply, forward and archive read the same on a thread's row and
+# on one of its messages, and nothing on screen said which message `r` would
+# answer. On `main` there are no child rows and no footer scope, so the steps
+# that expect the footer's words and a reply to message 4 fail there.
+#
+# On the `threads` seed the cursor starts on "Harbor API draft v3". On its
+# collapsed row the footer reads "Harbor API draft v3 · 6 messages" and its
+# keys say "reply to latest", "forward latest" and "archive thread": `r`
+# answers the latest message. After `Right` and four `j`, the ring is on
+# child 4, Ben Adeyemi's reply, and the footer reads "Message 4 of 6 · Ben
+# Adeyemi" with "reply to this", "forward this" and "archive thread", and its
+# right-hand note says reply and forward act on this message while the
+# archive, snooze, label and move keys (the registry's, not the design's)
+# act on the thread. `r` there opens a reply that quotes message 4, not the
+# latest.
+#
+# The footer's words are asserted by the controller's cases
+# (postio-focus tests/controller_suite/threads.rs) and filmed here; no
+# check names them because the runners do not publish the footer, so the
+# reviewer reads it from the frames. Not yet run against either app.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US2" }
+seed   = "threads"
+design = "02-thread-expanded-in-place"
+
+[[step]]
+id      = "row"
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", app.focus.cursor.kind = "row" }
+expect  = "The cursor is on the collapsed Harbor row. The footer under the list reads \"Harbor API draft v3 · 6 messages\" and offers reply to latest, forward latest and archive thread, each beside its key, with no sentence on the right."
+
+[[step]]
+id      = "reply-latest"
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "The reply answers the thread's latest message, the one the row shows."
+
+[[step]]
+command = "back"
+check   = { composer.open = false, view = "list", cursor.index = 0 }
+
+[[step]]
+key     = "Right"
+check   = { cursor.index = 0, rows.count = 17 }
+expect  = "Harbor is open under its row."
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 1 }
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 2 }
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 3 }
+
+[[step]]
+id      = "child4"
+key     = "j"
+check   = { cursor.index = 4, view = "list", keyboard.region = "list", app.focus.cursor.kind = "child", app.focus.cursor.tag = "↳ to Ana" }
+expect  = "The ring is on child 4. The footer now reads \"Message 4 of 6 · Ben Adeyemi\" with reply to this, forward this and archive thread beside their keys, and on the right: \"Reply and forward act on this message; \" followed by the archive, snooze, label and move keys as the keymap binds them, then \" act on the thread\". The keys are the registry's, not the design's a, s, l, m."
+
+[[step]]
+id      = "reply-this"
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body", app.focus.composer.quoted = true }
+expect  = "The reply opens quoting message 4, Ben Adeyemi's \"to Ana\" reply on exports, not the latest message of the thread."
+
+[[step]]
+command = "back"
+check   = { composer.open = false, view = "list", cursor.index = 4 }
+expect  = "Back on child 4, the thread still open and the footer still naming message 4."

@@ -663,3 +663,301 @@ fn restore_on_a_filtered_child_aims_the_whole_thread() {
         "the child's whole thread"
     );
 }
+
+// ---------------------------------------------------------------------
+// Spec 013 US2: every action says what it acts on (T037, T041).
+// ---------------------------------------------------------------------
+
+/// Harbor as the design draws it: message 4 (index 3) is Ben Adeyemi's.
+fn harbor(thread: ThreadId) -> ThreadView {
+    let mut view = view(thread, 6, 2, true);
+    view.members[3].from = Some(EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com"));
+    view
+}
+
+/// Harbor expanded as [`expanded`] does, but with the design's names.
+fn harbor_expanded(counts: &[u32]) -> (FocusController, List) {
+    let rows = List::of(counts);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read");
+    let _ = answer(&mut focus, ticket, harbor(thread), &rows);
+    (focus, rows)
+}
+
+/// The footer an effect list draws last, if any.
+fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Footer(view) => Some(view),
+            _ => None,
+        })
+}
+
+/// What `command` pressed on the cursor's row would aim at: the targets of
+/// the verb it sends, or of the picker it opens.
+fn aimed_by(
+    focus: &mut FocusController,
+    command: CommandId,
+    rows: &List,
+) -> Vec<postio_core::MessageTarget> {
+    let effects = run(focus, command, rows);
+    asks(&effects)
+        .into_iter()
+        .filter_map(|(_, request)| match request {
+            Request::Send { aims, .. } => Some(aims),
+            Request::Labels {
+                threads, message, ..
+            } => Some(match message {
+                Some(message) if threads.is_empty() => {
+                    vec![postio_core::MessageTarget::Messages(vec![message])]
+                }
+                _ => vec![postio_core::MessageTarget::Threads(threads)],
+            }),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// Down to Ben Adeyemi's message 4: the fourth child.
+fn on_child_four(focus: &mut FocusController, rows: &List) {
+    for _ in 0..4 {
+        let _ = run(focus, CommandId::NextMessage, rows);
+    }
+    assert_eq!(focus.cursor(), Some(4));
+}
+
+#[test]
+fn reply_on_a_child_answers_that_message_and_on_the_row_the_latest() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    let effects = run(&mut focus, CommandId::Reply, &rows);
+    let on_row = shown(&effects).into_iter().find_map(|intent| match intent {
+        Intent::Composer { message, .. } => message,
+        _ => None,
+    });
+    assert_eq!(on_row, Some(MessageId::new(100)), "the row's own message");
+    let _ = run(&mut focus, CommandId::Back, &rows);
+
+    on_child_four(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::Reply, &rows);
+    let on_child = shown(&effects).into_iter().find_map(|intent| match intent {
+        Intent::Composer { message, .. } => message,
+        _ => None,
+    });
+    assert_eq!(on_child, Some(member_id(ThreadId::new(500), 3)));
+}
+
+#[test]
+fn archive_on_a_child_aims_the_whole_thread() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    on_child_four(&mut focus, &rows);
+    assert_eq!(
+        aimed_by(&mut focus, CommandId::Archive, &rows),
+        vec![postio_core::MessageTarget::Threads(vec![ThreadId::new(
+            500
+        )])]
+    );
+}
+
+#[test]
+fn read_and_unread_on_a_child_is_that_message_s_and_on_the_row_the_thread_s() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    assert_eq!(
+        aimed_by(&mut focus, CommandId::ToggleRead, &rows),
+        vec![postio_core::MessageTarget::Threads(vec![ThreadId::new(
+            500
+        )])],
+        "on the row: the thread"
+    );
+    on_child_four(&mut focus, &rows);
+    assert_eq!(
+        aimed_by(&mut focus, CommandId::ToggleRead, &rows),
+        vec![postio_core::MessageTarget::Messages(vec![member_id(
+            ThreadId::new(500),
+            3
+        )])],
+        "on a child: this message"
+    );
+}
+
+#[test]
+fn move_or_delete_only_this_is_refused_on_a_collapsed_row() {
+    let rows = List::of(&[6, 4]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    for command in [CommandId::MoveThisMessage, CommandId::DeleteThisMessage] {
+        let effects = run(&mut focus, command, &rows);
+        assert!(
+            asks(&effects).is_empty() && shown(&effects).is_empty(),
+            "{command:?} does nothing on a thread's row: {effects:?}"
+        );
+    }
+}
+
+#[test]
+fn the_footer_names_the_thread_on_its_row_and_the_message_on_a_child() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(
+        footer_of(&effects).map(|f| f.title).as_deref(),
+        Some("Message 1 of 6 \u{b7} Ben Ortiz")
+    );
+    let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+    assert_eq!(
+        footer_of(&effects).map(|f| f.title).as_deref(),
+        Some("Harbor API draft v3 \u{b7} 6 messages"),
+        "the row says its thread and its size"
+    );
+    on_child_four(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+    let _ = effects;
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(
+        footer_of(&effects).map(|f| f.title).as_deref(),
+        Some("Message 4 of 6 \u{b7} Ben Adeyemi")
+    );
+}
+
+fn labels(footer: &postio_ui::scope::FooterView) -> Vec<&str> {
+    footer
+        .keys
+        .iter()
+        .map(|(_, label)| label.as_str())
+        .collect()
+}
+
+#[test]
+fn the_footer_s_labels_say_this_on_a_child_and_latest_on_a_row() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    let child = footer_of(&effects).expect("a footer on the child");
+    let said = labels(&child);
+    for want in ["reply to this", "forward this", "archive thread"] {
+        assert!(said.contains(&want), "{want} in {said:?}");
+    }
+
+    let effects = run(&mut focus, CommandId::CollapseThread, &rows);
+    let row = footer_of(&effects).expect("a footer on the row");
+    let said = labels(&row);
+    for want in ["reply to latest", "forward latest", "archive thread"] {
+        assert!(said.contains(&want), "{want} in {said:?}");
+    }
+    assert!(!said.contains(&"reply to this"));
+}
+
+#[test]
+fn the_footer_s_keycaps_and_note_are_the_keymaps_not_the_designs() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    for _ in 0..3 {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    }
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    let footer = footer_of(&effects).expect("a footer");
+    let keymap = focus.keymap().clone();
+    let key_of = |footer: &postio_ui::scope::FooterView, label: &str| {
+        footer
+            .keys
+            .iter()
+            .find(|(_, said)| said == label)
+            .map(|(cap, _)| cap.clone())
+    };
+    let reply = keymap.binding(CommandId::Reply).expect("reply is bound");
+    assert_eq!(key_of(&footer, "reply to this").as_deref(), Some(reply));
+    let [archive, snooze, label, mv] = [
+        CommandId::Archive,
+        CommandId::Snooze,
+        CommandId::AddLabel,
+        CommandId::Move,
+    ]
+    .map(|id| keymap.binding(id).expect("bound").to_owned());
+    let note = format!(
+        "Reply and forward act on this message; {archive}, {snooze}, {label}, {mv} act on the thread"
+    );
+    assert_eq!(footer.note.as_deref(), Some(note.as_str()));
+    assert_ne!(
+        footer.note.as_deref(),
+        Some("Reply and forward act on this message; a, s, l, m act on the thread"),
+        "the design's keys are not the registry's"
+    );
+
+    // Rebind reply; the next footer follows.
+    let mut overrides = postio_config::KeyBindings::default();
+    overrides
+        .overrides_mut()
+        .insert("reply".to_owned(), "alt+q".to_owned());
+    let rebound = postio_core::Keymap::resolve_on(&overrides, Platform::Apple);
+    assert_eq!(rebound.binding(CommandId::Reply), Some("alt+q"));
+    let _ = focus.handle_on(Input::Keymap(rebound), &rows);
+    let _ = run(&mut focus, CommandId::PrevMessage, &rows);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    let footer = footer_of(&effects).expect("a footer");
+    assert_eq!(key_of(&footer, "reply to this").as_deref(), Some("alt+q"));
+}
+
+#[test]
+fn a_one_message_row_s_footer_has_no_thread_wording() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    // Row 2 (one message) is display 9 behind Harbor's seven children and
+    // row 1.
+    let _ = run(&mut focus, CommandId::LastMessage, &rows);
+    let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+    assert_eq!(focus.cursor(), Some(9));
+    let footer = footer_of(&effects).expect("a footer");
+    assert_eq!(footer.title, "Harbor API draft v3");
+    assert_eq!(footer.note, None);
+    for said in labels(&footer) {
+        assert!(
+            !said.contains("thread") && !said.contains("latest") && !said.contains("this"),
+            "{said}"
+        );
+    }
+}
+
+#[test]
+fn filtered_s_footer_follows_its_children_too() {
+    let (mut focus, rows) = filtered_over(&[6, 1, 3]);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read");
+    let _ = answer(&mut focus, ticket, harbor(thread), &rows);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(
+        footer_of(&effects).map(|f| f.title).as_deref(),
+        Some("Message 1 of 6 \u{b7} Ben Ortiz")
+    );
+}
+
+/// T041, the guard: a label added from a child is on every member of the
+/// thread, and one undo takes it off all of them. The write-through is the
+/// engine's (spec 013 D3), so this is green on arrival; it keeps the child's
+/// aim from ever narrowing a thread verb to one message.
+#[test]
+fn a_label_added_from_a_child_aims_the_thread_and_one_undo_undoes_it() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    on_child_four(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::AddLabel, &rows);
+    assert!(
+        asks(&effects).iter().any(|(_, request)| matches!(
+            request,
+            Request::Labels { threads, .. } if *threads == [ThreadId::new(500)]
+        )),
+        "the label picker is for the thread, not message 4: {effects:?}"
+    );
+    let effects = run(&mut focus, CommandId::Undo, &rows);
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::Post(postio_core::Command::Undo))),
+        "one undo is one command: {effects:?}"
+    );
+}

@@ -188,7 +188,10 @@ fn r_restores_the_focused_message() {
         vec![filed(7, "notification", 5), filed(8, "spam", 9)],
     );
     let effects = run(&mut focus, CommandId::NextMessage);
-    assert_eq!(shown(&effects), vec![Intent::FilteredFocus(Some(1))]);
+    let drawn = shown(&effects);
+    assert_eq!(drawn.len(), 2, "the ring, then the footer under it");
+    assert_eq!(drawn[0], Intent::FilteredFocus(Some(1)));
+    assert!(matches!(&drawn[1], Intent::Footer(footer) if footer.title == "Issue 8"));
     let effects = run(&mut focus, CommandId::RestoreFiltered);
     assert_eq!(
         asks(&effects)

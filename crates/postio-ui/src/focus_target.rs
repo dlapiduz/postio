@@ -136,6 +136,7 @@ pub fn aim(
         id: row.id(),
         threads: row.threads(),
         digest: matches!(row, FocusRow::Digest(_)),
+        child: false,
     });
     aim_by(selection, reach, cursor.as_ref(), action)
 }
@@ -150,6 +151,9 @@ pub struct AimRow {
     pub threads: Vec<ThreadId>,
     /// Whether it is a digest's row.
     pub digest: bool,
+    /// Whether it is a child of an expanded thread: its `id` is then the
+    /// child's own message, which a message verb reaches (D2).
+    pub child: bool,
 }
 
 /// [`aim`], with the cursor's row given as an [`AimRow`].
@@ -192,9 +196,16 @@ pub fn aim_by(
             // A message in no conversation is only itself, whatever the verb.
             Some(row) if row.threads.is_empty() => vec![MessageTarget::Messages(vec![row.id])],
             Some(row) => match scope::target(
-                ScopeFocus::Row {
-                    thread: row.threads[0],
-                    latest: row.id,
+                if row.child {
+                    ScopeFocus::Child {
+                        thread: row.threads[0],
+                        message: row.id,
+                    }
+                } else {
+                    ScopeFocus::Row {
+                        thread: row.threads[0],
+                        latest: row.id,
+                    }
                 },
                 action,
             ) {

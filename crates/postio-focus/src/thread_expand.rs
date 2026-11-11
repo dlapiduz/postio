@@ -13,11 +13,12 @@ use chrono::Local;
 use postio_core::{CommandId, Event};
 use postio_model::{MessageId, ThreadId, ThreadView};
 use postio_ui::focus_row::open_at;
+use postio_ui::scope::{self, FooterAbout, FooterView, ScopeFocus};
 use postio_ui::thread_list::{self, ChildRowView, Slot, Splice};
 
 use crate::cursor::{RowFacts, Rows};
 use crate::feed::Step;
-use crate::{FocusController, Input, Intent, Reply, Request};
+use crate::{Effect, FocusController, Input, Intent, Reply, Request};
 
 /// The one expanded thread of a list (at most one per list surface).
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +83,82 @@ impl Pending {
     }
 }
 
+/// What the footer says about the row or child at display `position` of
+/// `raw`, the frontend's rows (spec 013 US2): the thread's subject and size
+/// on a row, the message's place and sender on a child.
+pub(crate) fn footer_at(
+    expansion: Option<&Expansion>,
+    position: u32,
+    raw: &dyn Rows,
+    keymap: &postio_core::Keymap,
+) -> Option<FooterView> {
+    let splice = expansion.and_then(|x| Some(x.splice(raw.position_of(x.anchor)?)));
+    match thread_list::slot(splice, position) {
+        Slot::Row(row) => {
+            let facts = raw.facts(row).filter(|facts| !facts.digest)?;
+            let thread = facts.threads.first().copied().unwrap_or(ThreadId::new(0));
+            let summary = raw.row(row)?;
+            let summary = &summary.as_conversation()?.summary;
+            let subject = summary
+                .representative
+                .subject
+                .as_deref()
+                .unwrap_or(NO_SUBJECT);
+            let about = FooterAbout {
+                subject,
+                count: summary.message_count as usize,
+                index: 0,
+                sender: "",
+            };
+            let focus = ScopeFocus::Row {
+                thread,
+                latest: facts.id,
+            };
+            Some(scope::footer(focus, &about, keymap))
+        }
+        Slot::Child { index, .. } => {
+            let view = &expansion?.view;
+            let subject = view.subject.as_deref().unwrap_or(NO_SUBJECT);
+            let Some(member) = view.members.get(index as usize) else {
+                // The unsent reply: it has no message to act on.
+                let mut footer = FooterView {
+                    title: format!("Draft \u{b7} you \u{b7} {subject}"),
+                    ..FooterView::default()
+                };
+                footer.keys.extend(
+                    postio_ui::hints::pair(
+                        keymap,
+                        CommandId::NextMessage,
+                        CommandId::PrevMessage,
+                        "move",
+                    )
+                    .map(|hint| (postio_ui::hints::short(&hint.key), hint.label)),
+                );
+                return Some(footer);
+            };
+            let sender = match (&member.from, member.own) {
+                (_, true) => "You",
+                (Some(from), false) => from.display(),
+                (None, false) => "Unknown sender",
+            };
+            let about = FooterAbout {
+                subject,
+                count: view.members.len(),
+                index: index as usize,
+                sender,
+            };
+            let focus = ScopeFocus::Child {
+                thread: view.thread,
+                message: member.id,
+            };
+            Some(scope::footer(focus, &about, keymap))
+        }
+    }
+}
+
+/// What a thread without a subject is called in the footer.
+const NO_SUBJECT: &str = "(no subject)";
+
 /// The frontend's rows with an expanded thread's children among them.
 pub(crate) struct Through<'a> {
     inner: &'a dyn Rows,
@@ -131,6 +208,10 @@ impl Rows for Through<'_> {
             })
     }
 
+    fn is_child(&self, position: u32) -> bool {
+        matches!(self.splice.slot(position), Slot::Child { .. })
+    }
+
     fn said(&self, position: u32) -> Option<(String, String)> {
         match self.splice.slot(position) {
             Slot::Row(row) => self.inner.said(row),
@@ -157,6 +238,21 @@ impl FocusController {
     fn splice_over(&self, rows: &dyn Rows) -> Option<Splice> {
         let expansion = self.expansion.as_ref()?;
         Some(expansion.splice(rows.position_of(expansion.anchor)?))
+    }
+
+    /// The footer for the cursor's last move in `effects`, if it moved:
+    /// the list's `Cursor` over its rows, Filtered's focus over its own.
+    pub(crate) fn footer_after(&self, effects: &[Effect], raw: &dyn Rows) -> Option<FooterView> {
+        let keymap = self.keymap();
+        effects.iter().rev().find_map(|effect| match effect {
+            Effect::Show(Intent::Cursor { position, .. }) => {
+                footer_at(self.expansion.as_ref(), *position, raw, keymap)
+            }
+            Effect::Show(Intent::FilteredFocus(Some(position))) => {
+                self.filtered.as_ref()?.footer_at(*position, keymap)
+            }
+            _ => None,
+        })
     }
 
     /// The cursor's row position, and whether it is on a child, over the
