@@ -33,6 +33,7 @@ pub(crate) mod digests;
 mod due;
 pub(crate) mod filtered;
 mod model;
+mod reply_wakes;
 pub(crate) mod rules;
 mod summary;
 mod surfaced;
@@ -125,9 +126,11 @@ impl FocusSetup {
     /// The pass the engines file with: the one given, or Focus's own as
     /// the config sets it.
     fn pass(&self) -> Arc<dyn FilingPass> {
-        self.filing
+        let own = self
+            .filing
             .clone()
-            .unwrap_or_else(|| Arc::new(FocusFiling::from_config(&self.config)))
+            .unwrap_or_else(|| Arc::new(FocusFiling::from_config(&self.config)));
+        reply_wakes::ReplyWakes::wrapping(own)
     }
 }
 
@@ -300,9 +303,11 @@ impl Host {
             raw,
             Arc::new(move |written: &FocusConfig| {
                 *tasks.write().expect("never poisoned") = written.clone();
-                filing.set(Some(chosen.clone().unwrap_or_else(|| {
-                    Arc::new(FocusFiling::from_config(written)) as Arc<dyn FilingPass>
-                })));
+                filing.set(Some(reply_wakes::ReplyWakes::wrapping(
+                    chosen.clone().unwrap_or_else(|| {
+                        Arc::new(FocusFiling::from_config(written)) as Arc<dyn FilingPass>
+                    }),
+                )));
             }),
         );
         handle

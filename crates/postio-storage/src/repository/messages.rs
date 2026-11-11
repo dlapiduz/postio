@@ -1448,6 +1448,30 @@ impl<'a> MessageRepository<'a> {
         Ok(sql::execute(self.connection, &sql, arguments).await? as usize)
     }
 
+    /// [`Self::unsnooze`] for whole conversations, by thread: every asleep
+    /// message of `threads` wakes, in one statement, and says how many did.
+    ///
+    /// What a new reply does to a snoozed conversation (spec 013 D3): the
+    /// same write as the `Unsnooze` verb's, reached by thread instead of by
+    /// the ids a person pointed at. A thread with nothing asleep costs the
+    /// statement and no row (`idx_messages_thread` covers `snoozed_until`).
+    pub async fn unsnooze_threads(&self, threads: &[ThreadId]) -> Result<usize> {
+        if threads.is_empty() {
+            return Ok(0);
+        }
+        let sql = format!(
+            "UPDATE messages SET snoozed_until = NULL
+              WHERE thread_id IN ({}) AND snoozed_until IS NOT NULL",
+            placeholders(threads.len(), 1)
+        );
+        Ok(sql::execute(
+            self.connection,
+            &sql,
+            threads.iter().map(|id| id.get()).collect::<Vec<_>>(),
+        )
+        .await? as usize)
+    }
+
     /// Cancels a snooze immediately, without waiting for its time to arrive.
     pub async fn unsnooze(&self, ids: &[MessageId]) -> Result<usize> {
         if ids.is_empty() {
