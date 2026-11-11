@@ -1919,8 +1919,6 @@ impl FocusWindow {
                     self.answer(message, id);
                 }
             }
-            // A Focus row is a whole conversation, so `E` is `e` here.
-            CommandId::ArchiveThread => self.act(CommandId::Archive),
             // A send on its way or stopped, from the list or the open
             // message (T239): the draft behind the message aimed at.
             CommandId::CancelSend | CommandId::RetrySend | CommandId::MarkSent => {
@@ -3317,9 +3315,7 @@ impl FocusWindow {
                     window.close();
                 }
             }
-            Ok(CommandId::ArchiveThread) => {
-                self.digest_action(crate::digest::DigestAction::ArchiveAll)
-            }
+            Ok(CommandId::Archive) => self.digest_action(crate::digest::DigestAction::ArchiveAll),
             Ok(CommandId::DigestRule) => self.digest_action(crate::digest::DigestAction::EditRule),
             Ok(CommandId::NextReference) => window.step_reference(1),
             Ok(CommandId::PrevReference) => window.step_reference(-1),

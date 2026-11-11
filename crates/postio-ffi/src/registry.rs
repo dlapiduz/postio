@@ -70,6 +70,10 @@ pub enum UiContext {
     Contacts,
     /// The contact popover (specs/011-focus-contacts S6).
     ContactPopover,
+    /// The thread outline: Postio Focus's (specs/013-focus-threads).
+    Outline,
+    /// The "Forward what?" chooser: Postio Focus's (specs/013-focus-threads).
+    ForwardChooser,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -93,6 +97,8 @@ impl From<postio_core::Context> for UiContext {
             Context::Results => UiContext::Results,
             Context::Contacts => UiContext::Contacts,
             Context::ContactPopover => UiContext::ContactPopover,
+            Context::Outline => UiContext::Outline,
+            Context::ForwardChooser => UiContext::ForwardChooser,
         }
     }
 }
@@ -125,6 +131,8 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Results => Context::Results,
             UiContext::Contacts => Context::Contacts,
             UiContext::ContactPopover => Context::ContactPopover,
+            UiContext::Outline => Context::Outline,
+            UiContext::ForwardChooser => Context::ForwardChooser,
         }
     }
 }

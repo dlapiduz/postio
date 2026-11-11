@@ -288,7 +288,7 @@ fn return_opens_the_references_email_in_the_digest_and_esc_returns_to_it() {
 fn undoing_the_window_s_archive_puts_the_cursor_back_on_the_digests_row() {
     let mut focus = mac();
     let _ = open(&mut focus, config(true));
-    let _ = run(&mut focus, CommandId::ArchiveThread);
+    let _ = run(&mut focus, CommandId::Archive);
     // The window closed; the cursor moves off the row that is going.
     let _ = run(&mut focus, CommandId::NextMessage);
     let _ = focus.handle(Input::Event(postio_core::Event::UndoPerformed {
@@ -303,10 +303,10 @@ fn undoing_the_window_s_archive_puts_the_cursor_back_on_the_digests_row() {
 }
 
 #[test]
-fn shift_a_archives_the_whole_delivery() {
+fn archive_archives_the_whole_delivery() {
     let mut focus = mac();
     let _ = open(&mut focus, config(true));
-    let effects = run(&mut focus, CommandId::ArchiveThread);
+    let effects = run(&mut focus, CommandId::Archive);
     assert!(
         asks(&effects).iter().any(|(_, request)| *request
             == Request::Post(Command::ArchiveDigest {
@@ -427,7 +427,9 @@ fn a_digest_takes_no_verb_meant_for_the_list_behind_it() {
     assert_eq!(focus.key_context(), KeyContext::Digest);
     // The list's cursor on a conversation, behind the digest.
     let _ = focus.handle_on(Input::Point(1), &List);
-    for command in [CommandId::Archive, CommandId::Delete, CommandId::ToggleRead] {
+    // Not `Archive`: in a digest it archives the digest (`archive_thread`'s
+    // old job, and the next test's).
+    for command in [CommandId::Delete, CommandId::ToggleRead] {
         let effects = run(&mut focus, command);
         assert!(asks(&effects).is_empty(), "{command:?}: {effects:?}");
     }

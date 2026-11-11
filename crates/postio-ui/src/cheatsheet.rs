@@ -100,6 +100,8 @@ fn heading(context: Context) -> &'static str {
         Context::Results => "Search results",
         Context::Contacts => "Contacts",
         Context::ContactPopover => "Contact popover",
+        Context::Outline => "Thread outline",
+        Context::ForwardChooser => "Forward",
     }
 }
 

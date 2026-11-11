@@ -75,8 +75,11 @@ pub fn target(focus: ScopeFocus, action: CommandId) -> Scope {
         }
         // Read state is the thread's on a row, the message's below it.
         CommandId::ToggleRead => child_message.map_or(Scope::Thread(thread), Scope::Message),
-        // T023: `MoveThisMessage` and `DeleteThisMessage` go here: this
-        // message on a child or in the window, `Unavailable` on a row.
+        // Move or delete only this: this message on a child or in the
+        // window, not offered on a row, which stands for the whole thread.
+        CommandId::MoveThisMessage | CommandId::DeleteThisMessage => {
+            child_message.map_or(Scope::Unavailable, Scope::Message)
+        }
         // T023: `ReplyToLatest` is the row's latest on a row, and the
         // thread's latest from a child or the window, not this message.
         // T023: `MuteThread` is thread-wide and falls to the default arm.
@@ -191,9 +194,18 @@ mod tests {
     }
 
     #[test]
+    fn move_or_delete_only_this_is_the_message_below_a_row_and_not_offered_on_one() {
+        for id in [CommandId::MoveThisMessage, CommandId::DeleteThisMessage] {
+            assert_eq!(target(row(), id), Scope::Unavailable, "{id:?}");
+            assert_eq!(target(child(), id), Scope::Message(THIS), "{id:?}");
+            assert_eq!(target(window(), id), Scope::Message(THIS), "{id:?}");
+        }
+    }
+
+    #[test]
     fn a_verb_the_table_does_not_name_stays_thread_wide() {
         for focus in [row(), child(), window()] {
-            for id in [CommandId::ArchiveThread, CommandId::Unsnooze] {
+            for id in [CommandId::Archive, CommandId::Unsnooze] {
                 assert_eq!(target(focus, id), Scope::Thread(T), "{focus:?} {id:?}");
             }
         }

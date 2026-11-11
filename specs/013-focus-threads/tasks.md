@@ -125,12 +125,12 @@ and splice rules every frontend story draws through.
 
 ### Registry (research R10)
 
-- [ ] T022 Write failing registry tests in `crates/postio-core/src/registry.rs` (red: unknown ids):
+- [x] T022 Write failing registry tests in `crates/postio-core/src/registry.rs` (red: unknown ids):
   - each new id's default key and contexts;
   - `Right`/`Left` absent from `open_message`/`prev_view` in List, Results and Filtered view;
   - `archive_thread` gone;
   - no clash in any context. Assert explicitly that `alt+e` (`reply_to_latest`) does not clash with `edit_externally`'s `alt+e` alternate in `Context::Composer` (`registry.rs:1613`); if it does, drop that alternate (it keeps `mod+shift+e`). Decide here whether the outline and forward chooser get `Context::Outline`/`Context::ForwardChooser` or reuse the picker context, and record the choice in data-model.md.
-- [ ] T023 Add the commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`:
+- [x] T023 Add the commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`:
   - `ExpandThread`, `CollapseThread`, `FirstInConversation`, `LatestInConversation`, `FirstUnreadInConversation`, `ThreadOutline`, `ThreadMenu` (`alt+period`), `ReplyToLatest`, `MuteThread`, `SplitThread` (`alt+shift+s`), `MoveThisMessage`, `DeleteThisMessage`, `ForwardWhat1..3`, `ShowNewer` and `ExpandQuoted`;
   - `[`/`]` as defaults of `Prev`/`NextInConversation`;
   - delete `ArchiveThread` and its uses (`crates/postio-ui/src/focus_target.rs` `dispatch`, the TUI, GTK, `crates/postio-ffi/src/registry.rs`, `macos/Sources/PostioKit/Accessibility.swift`). Confirm that a `[keys] archive_thread` left in `config.toml` is warned about and ignored, not fatal; if it is fatal, make it a warning in the same commit.

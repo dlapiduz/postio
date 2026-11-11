@@ -965,18 +965,15 @@ fn probe(command: CommandId, surface: Surface) -> Result<Probe, &'static str> {
             return Err("Conversation is a stacked-pane context; GTK has no such surface");
         }
         // -- Verbs ---------------------------------------------------------
-        (C::Archive, S::List | S::Reader | S::Pane | S::Menu)
-        | (C::ArchiveThread, S::List | S::Reader | S::Pane) => {
+        (C::Archive, S::List | S::Reader | S::Pane | S::Menu) => {
             Probe::new("the message leaves the inbox for the archive", |s| {
                 ok_if(s.after.mailbox() == s.archive && s.archive.is_some(), s)
             })
         }
-        (C::ArchiveThread, S::Digest) => {
-            Probe::new("everything the digest holds is archived", |s| {
-                ok_if(s.after.mailbox() == s.archive && s.archive.is_some(), s)
-            })
-            .fresh()
-        }
+        (C::Archive, S::Digest) => Probe::new("everything the digest holds is archived", |s| {
+            ok_if(s.after.mailbox() == s.archive && s.archive.is_some(), s)
+        })
+        .fresh(),
         (C::Delete, S::List | S::Menu | S::Reader | S::Pane | S::Filtered) => {
             let probe = Probe::new("the message goes to the trash", |s| {
                 ok_if(s.after.mailbox() == s.trash && s.trash.is_some(), s)
@@ -1188,7 +1185,6 @@ const GMAIL: &[CommandId] = &[
     CommandId::Forward,
     CommandId::Compose,
     CommandId::Archive,
-    CommandId::ArchiveThread,
     CommandId::Delete,
     CommandId::Move,
     CommandId::AddLabel,
@@ -1371,7 +1367,6 @@ impl Group {
             | C::ExtendSelectionUp
             | C::SelectAll => Group::Walk,
             C::Archive
-            | C::ArchiveThread
             | C::Delete
             | C::Move
             | C::AddLabel
@@ -1701,7 +1696,6 @@ pub fn every_gmail_command_is_probed_or_excused() {
         ("x", CommandId::ToggleSelection),
         ("* a", CommandId::SelectAll),
         ("T", CommandId::CaptureTask),
-        ("E", CommandId::ArchiveThread),
         ("V", CommandId::ViewSource),
         ("A", CommandId::OpenAttachmentOrLink),
         ("N", CommandId::CaptureNote),
@@ -1741,7 +1735,6 @@ pub fn every_gmail_command_is_probed_or_excused() {
 /// for that command.
 const RETIRED: &[(CommandId, &str)] = &[
     (CommandId::Archive, "a"),
-    (CommandId::ArchiveThread, "A"),
     (CommandId::Reply, "e"),
     (CommandId::ReplyAll, "E"),
     (CommandId::Move, "m"),

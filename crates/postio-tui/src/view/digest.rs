@@ -368,7 +368,7 @@ pub fn over_list(
         };
         (CommandId::Back, back.to_owned())
     } else {
-        (CommandId::ArchiveThread, digest::archive_all(window.count))
+        (CommandId::Archive, digest::archive_all(window.count))
     };
     left.push(Span::styled(
         left_words,

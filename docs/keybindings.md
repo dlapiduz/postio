@@ -49,16 +49,16 @@ command from inside a text field.
 | `k` or `Up` | Previous message | List, conversation, reader, search, digest, Filtered view, search results |  | `prev_message` |
 | `g g` | First message | List, conversation, reader, search, search results |  | `first_message` |
 | `G` | Last message | List, conversation, reader, search, search results |  | `last_message` |
-| `Return` or `o` or `Right` | Open message | List, conversation, search, digest, Filtered view, search results |  | `open_message` |
+| `Return` or `o` | Open message | List, conversation, search, digest, Filtered view, search results |  | `open_message` |
 | `x` | Toggle selection | List, conversation, reader, search, Filtered view, search results |  | `toggle_selection` |
 | `J` or `shift+Down` | Extend selection down | List, reader, search, Filtered view |  | `extend_selection_down` |
 | `K` or `shift+Up` | Extend selection up | List, reader, search, Filtered view |  | `extend_selection_up` |
 | `* a` or `ctrl+a` or `X` | Select all | List, conversation, reader, search, Filtered view, search results |  | `select_all` |
-| `Left` or `u` | Previous view | List, conversation, reader |  | `prev_view` |
+| `u` | Previous view | List, conversation, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
 | `alt+o` | Toggle result order | Search, search results |  | `toggle_result_order` |
-| `n` or `alt+Down` | Next message in conversation | Conversation, reader |  | `next_in_conversation` |
-| `p` or `alt+Up` | Previous message in conversation | Conversation, reader |  | `prev_in_conversation` |
+| `]` or `n` or `alt+Down` | Next message in conversation | Conversation, reader |  | `next_in_conversation` |
+| `[` or `p` or `alt+Up` | Previous message in conversation | Conversation, reader |  | `prev_in_conversation` |
 | `Z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
@@ -74,8 +74,7 @@ command from inside a text field.
 | `r` or `ctrl+r` | Reply | List, conversation, reader, composer, search results |  | `reply` |
 | `a` or `ctrl+shift+r` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` or `ctrl+shift+f` | Forward | List, conversation, reader, composer |  | `forward` |
-| `e` or `ctrl+shift+a` | Archive | List, conversation, reader, search results | Undoable | `archive` |
-| `E` | Archive thread | List, conversation, reader, digest | Undoable | `archive_thread` |
+| `e` or `ctrl+shift+a` | Archive | List, conversation, reader, digest, search results | Undoable | `archive` |
 | `#` or `Delete` | Delete | List, conversation, reader, Filtered view, search results | Undoable | `delete` |
 | `v` | Move to… | List, conversation, reader, search results | Undoable | `move` |
 | `s` | Flag | List, conversation, reader, Filtered view | Undoable | `flag` |
@@ -131,7 +130,7 @@ command from inside a text field.
 | `ctrl+shift+o` or `alt+o` | Detach composer | Composer |  | `detach_composer` |
 | `ctrl+shift+c` or `alt+c` | Cc and Bcc | Composer |  | `copy_fields` |
 | `ctrl+shift+g` or `alt+g` | Insert image… | Composer |  | `insert_image` |
-| `ctrl+shift+e` or `alt+e` | Edit in external editor | Composer (terminal) |  | `edit_externally` |
+| `ctrl+shift+e` or `alt+shift+e` | Edit in external editor | Composer (terminal) |  | `edit_externally` |
 | `ctrl+shift+p` or `alt+p` | Toggle preview | Composer (terminal) |  | `toggle_preview` |
 | `ctrl+b` | Bold | Composer |  | `bold` |
 | `ctrl+i` or `alt+i` | Italic | Composer |  | `italic` |
@@ -234,6 +233,24 @@ command from inside a text field.
 | `L` | Remove from group |  (not the terminal) | Undoable | `contact_group_remove` |
 | `v i` | Import contacts |  (not the terminal) |  | `contacts_import` |
 | `v x` | Export contacts |  (not the terminal) |  | `contacts_export` |
+| `Right` | Expand thread | List, Filtered view, search results (not the terminal) |  | `expand_thread` |
+| `Left` | Collapse thread | List, Filtered view, search results (not the terminal) |  | `collapse_thread` |
+| `{` | First message in conversation | Reader (not the terminal) |  | `first_in_conversation` |
+| `}` | Latest message in conversation | Reader (not the terminal) |  | `latest_in_conversation` |
+| `g u` | First unread message in conversation | Reader, thread outline (not the terminal) |  | `first_unread_in_conversation` |
+| `u` | First unread message | Thread outline (not the terminal) |  | `outline_first_unread` |
+| `alt+t` | Thread outline | List, reader (not the terminal) |  | `thread_outline` |
+| `alt+period` | Thread menu | Reader (not the terminal) |  | `thread_menu` |
+| `alt+e` | Reply to latest message | List, reader, composer, search results (not the terminal) |  | `reply_to_latest` |
+| `m` | Mute thread | List, reader, search results (not the terminal) | Undoable | `mute_thread` |
+| `alt+shift+s` | Split into its own thread | Reader (not the terminal) | Undoable | `split_thread` |
+| `alt+v` | Move this message | List, reader, search results (not the terminal) | Undoable | `move_this_message` |
+| `alt+Delete` | Delete this message | List, reader, search results (not the terminal) | Undoable | `delete_this_message` |
+| `1` | Forward this message | Forward chooser (not the terminal) |  | `forward_what_1` |
+| `2` | Forward the whole thread | Forward chooser (not the terminal) |  | `forward_what_2` |
+| `3` | Forward the attachments | Forward chooser (not the terminal) |  | `forward_what_3` |
+| `ctrl+shift+Down` | Show newer messages | Composer (not the terminal) |  | `show_newer` |
+| `ctrl+shift+q` | Expand quoted text | Composer (not the terminal) |  | `expand_quoted` |
 
 ## The one box
 

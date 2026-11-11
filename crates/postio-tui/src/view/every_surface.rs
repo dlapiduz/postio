@@ -373,7 +373,7 @@ fn cases() -> Vec<Case> {
         Case {
             marks: vec![Has("▌"), Has("g r")],
             controls: vec![ctl("Waiting on reply alt+1", "<A-1>")],
-            wheel: Some("Archive thread"),
+            wheel: Some("Archive"),
             ..case("command bar commands", "bar-commands", (120, 36))
         },
         Case {
@@ -466,7 +466,7 @@ fn cases() -> Vec<Case> {
         Case {
             marks: vec![Has("≡"), Has("[1]"), Styled("[1]", REVERSED)],
             controls: vec![
-                ctl("Archive all 14 E", "E"),
+                ctl("Archive all 14 e", "e"),
                 ctl("14 messages  tab", "<Tab>"),
                 ctl("Edit rule and cadence d", "d"),
                 ctl("The 8:10 train moves", "]"),
@@ -488,7 +488,7 @@ fn cases() -> Vec<Case> {
         Case {
             marks: vec![Has("▌")],
             controls: vec![
-                ctl("Archive all 14 E", "E"),
+                ctl("Archive all 14 e", "e"),
                 ctl("Summary", "<Tab>"),
                 ctl("Rail Notes", "j"),
                 ctl("↵ open", "<Enter>").nth(0),

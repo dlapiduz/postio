@@ -21,8 +21,8 @@ extension PostioSession: DigestEngine {}
 
 /// The registry commands the digest window's buttons are.
 public enum DigestCommand {
-    /// "Archive all 14" (`⇧A`).
-    public static let archiveAll = "archive_thread"
+    /// "Archive all 14" (`e`, as for any row).
+    public static let archiveAll = "archive"
     /// "Edit rule and cadence" (`d`).
     public static let rule = "digest_rule"
     /// The Summary and list tabs (Tab).

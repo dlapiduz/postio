@@ -223,7 +223,7 @@ pub struct DigestViewFfi {
     /// "14 messages from 6 senders · came due today 16:00"; "Source 2 of
     /// 14" on the email page.
     pub subtitle: String,
-    /// "Archive all 14": a click is `invoke("archive_thread")`.
+    /// "Archive all 14": a click is `invoke("archive")`.
     pub archive: String,
     /// Its key.
     pub archive_key: Option<String>,

@@ -82,15 +82,14 @@ fn bindings_are_gmails() {
         ("reply_all", "a"),
         ("forward", "f"),
         ("archive", "e"),
-        ("archive_thread", "E"),
         ("delete", "#"),
         ("flag", "s"),
         ("snooze", "b"),
         ("move", "v"),
         ("add_label", "l"),
         ("toggle_read", "I"),
-        ("next_in_conversation", "n"),
-        ("prev_in_conversation", "p"),
+        ("next_in_conversation", "]"),
+        ("prev_in_conversation", "["),
         ("expand_all", ";"),
         ("select_all", "* a"),
         ("more_actions", "."),
@@ -103,7 +102,7 @@ fn bindings_are_gmails() {
         ("back", "Escape"),
         ("next_message", "j"),
         ("prev_message", "k"),
-        ("prev_view", "Left"),
+        ("prev_view", "u"),
         ("first_message", "g g"),
         ("last_message", "G"),
     ];
@@ -115,17 +114,15 @@ fn bindings_are_gmails() {
         let parsed: CommandId = id.parse().expect("known command id");
         assert_eq!(keymap.binding(parsed), Some(key), "binding for {id}");
     }
-    // `Right` opens, the way `Left` comes back, and Gmail's `o`, without
-    // displacing the `Return` default that config.toml already documents.
-    // `l` no longer does: it is the label key.
-    for key in ["Right", "o"] {
-        assert!(
-            registry::get(CommandId::OpenMessage)
-                .bindings()
-                .any(|b| b == key),
-            "`{key}` must open the focused message"
-        );
-    }
+    // Gmail's `o` opens, without displacing the `Return` default that
+    // config.toml already documents. `l` no longer does: it is the label
+    // key, and `Right` expands a thread (specs/013-focus-threads D1).
+    assert!(
+        registry::get(CommandId::OpenMessage)
+            .bindings()
+            .any(|b| b == "o"),
+        "`o` must open the focused message"
+    );
     // Gmail's other halves: `u` back to the list, `U` mark unread, `mod+z`
     // the undo every other application taught.
     for (id, key) in [
@@ -222,10 +219,10 @@ fn ids_round_trip_through_strings() {
 
 #[test]
 fn ids_serialize_as_their_stable_string() {
-    let json = serde_json::to_string(&CommandId::ArchiveThread).unwrap();
-    assert_eq!(json, "\"archive_thread\"");
+    let json = serde_json::to_string(&CommandId::ExpandThread).unwrap();
+    assert_eq!(json, "\"expand_thread\"");
     let back: CommandId = serde_json::from_str(&json).unwrap();
-    assert_eq!(back, CommandId::ArchiveThread);
+    assert_eq!(back, CommandId::ExpandThread);
 }
 
 #[test]
@@ -355,8 +352,9 @@ fn contexts_round_trip_through_strings() {
     // (milestone 3) fourteen, and the Mac's search results (spec 010 D17)
     // fifteen, and Contacts (specs/005-contacts) sixteen, and the contact
     // popover (specs/011-focus-contacts S6) seventeen: the first to need the
-    // set widened past sixteen bits.
-    assert_eq!(Context::ALL.len(), 17);
+    // set widened past sixteen bits. The thread outline and the forward
+    // chooser (specs/013-focus-threads) make nineteen.
+    assert_eq!(Context::ALL.len(), 19);
 }
 
 #[test]

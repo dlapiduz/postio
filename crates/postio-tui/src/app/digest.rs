@@ -218,7 +218,7 @@ impl App {
                 return Some(self.close_digest());
             }
             "go_to_inbox" => return Some(self.close_digest()),
-            "archive_thread" => {
+            "archive" => {
                 let delivery = window.delivery;
                 let mut effects = self.close_digest();
                 effects.insert(
@@ -484,7 +484,7 @@ mod tests {
         let app = opened((120, 36), true);
         let drawn = screen(120, 36, &app);
         assert!(
-            line_with(&drawn, "Weekly · Newsletters").contains("Archive all 14 E"),
+            line_with(&drawn, "Weekly · Newsletters").contains("Archive all 14 e"),
             "{drawn}"
         );
         assert!(
@@ -783,7 +783,7 @@ mod tests {
     #[test]
     fn shift_e_archives_the_whole_delivery_and_closes() {
         let mut app = opened((120, 36), true);
-        let effects = update(&mut app, press('E'));
+        let effects = update(&mut app, press('e'));
         assert!(
             effects.contains(&Effect::Send(Command::ArchiveDigest {
                 delivery: DeliveryId::new(1),
@@ -870,7 +870,7 @@ mod tests {
             (0..40).any(|y| (0..120).any(|x| hits.at(x, y).is_some_and(|hit| hit.target == wanted)))
         };
         for command in [
-            "archive_thread",
+            "archive",
             "back",
             "digest_rule",
             "toggle_digest_summary",
@@ -906,10 +906,7 @@ mod tests {
             click(Target::Surface(Part::DigestRow, 2), false, false),
         );
         assert_eq!(app.digest().unwrap().cursor(), 2);
-        let effects = update(
-            &mut app,
-            click(Target::Command("archive_thread"), false, false),
-        );
+        let effects = update(&mut app, click(Target::Command("archive"), false, false));
         assert!(
             effects
                 .iter()
@@ -1081,23 +1078,23 @@ mod tests {
         // From the summary, on the second statement.
         let mut app = opened((120, 36), true);
         update(&mut app, press(']'));
-        archived(&update(&mut app, press('E')));
+        archived(&update(&mut app, press('e')));
         assert!(app.digest().is_none() && app.reading().is_none());
         assert_eq!(app.focus(), Focus::List);
         // From the list.
         let mut app = opened((120, 36), true);
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         update(&mut app, press('j'));
-        archived(&update(&mut app, press('E')));
+        archived(&update(&mut app, press('e')));
         // From an email in the window.
         let mut app = opened((120, 36), true);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         update(&mut app, email_body(21));
-        archived(&update(&mut app, press('E')));
+        archived(&update(&mut app, press('e')));
         assert!(app.digest().is_none() && app.reading().is_none());
-        // The lower case is not it.
+        // The retired `E` is not it.
         let mut app = opened((120, 36), true);
-        let effects = update(&mut app, press('e'));
+        let effects = update(&mut app, press('E'));
         assert!(
             !sent(&effects).contains(&&Command::ArchiveDigest {
                 delivery: DeliveryId::new(1),
@@ -1122,8 +1119,8 @@ mod tests {
             drawn.contains("Stop digesting rail@example.com?"),
             "the third statement is Rail Notes':\n{drawn}"
         );
-        // Nothing else answers it: not `E`, not `D` again, not a letter.
-        for other in ['E', 'D', 'y', 'j'] {
+        // Nothing else answers it: not `e`, not `D` again, not a letter.
+        for other in ['e', 'D', 'y', 'j'] {
             let effects = update(&mut app, press(other));
             assert!(sent(&effects).is_empty(), "{other}: {effects:?}");
         }

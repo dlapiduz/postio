@@ -157,7 +157,7 @@ fn chord_problem(chord: &str) -> Option<String> {
 /// ```toml
 /// [keys]
 /// archive = "a"
-/// archive_thread = "A"
+/// archive = "A"
 /// undo = "u"
 /// reply = "e"
 /// thread = "t"

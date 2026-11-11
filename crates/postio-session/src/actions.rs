@@ -76,7 +76,6 @@ fn now() -> chrono::DateTime<Utc> {
 /// (`postio-tui`'s parity test).
 pub const WIRED: &[CommandId] = &[
     CommandId::Archive,
-    CommandId::ArchiveThread,
     CommandId::Delete,
     CommandId::Move,
     CommandId::Flag,
@@ -381,18 +380,6 @@ impl Actions {
             Command::Archive { target } => {
                 self.relocate(
                     target,
-                    Destination::Role(MailboxRole::Archive),
-                    UndoKind::Archive,
-                )
-                .await?
-            }
-            Command::ArchiveThread { thread } => {
-                let thread = match thread {
-                    Some(thread) => *thread,
-                    None => self.thread_in_view().await?,
-                };
-                self.relocate(
-                    &MessageTarget::Thread(thread),
                     Destination::Role(MailboxRole::Archive),
                     UndoKind::Archive,
                 )
@@ -2040,26 +2027,6 @@ impl Actions {
         Ok(Aim::Bulk(units))
     }
 
-    /// The thread `A` means: the one the focused message belongs to.
-    ///
-    /// A whole-mailbox selection has no such message — `Ctrl+A` then `A` is a
-    /// gesture with no answer rather than a bulk one, because "the thread of
-    /// everything" is not a thing — so it is asked for rather than guessed at.
-    async fn thread_in_view(&self) -> Result<ThreadId, CommandError> {
-        let (connection, _permit) = self.connect().await?;
-        let rows = match self.aim(&connection, &MessageTarget::Selection).await? {
-            Aim::Rows(rows) => rows,
-            Aim::Bulk(_) => {
-                return Err(CommandError::rejected(
-                    "Pick a message, and `A` archives its thread",
-                ));
-            }
-        };
-        rows[0]
-            .thread_id
-            .ok_or_else(|| CommandError::rejected("That message is not in a thread"))
-    }
-
     /// Settle a draft whose send could not be confirmed: it did arrive.
     ///
     /// ADR 0021 Decision 3, #674. Postio resolves most of these by itself --
@@ -3030,7 +2997,7 @@ impl Actions {
     /// the permit or a permit-holder can end up waiting on the pool for a
     /// connection a permit-waiter is holding. Both rules are satisfied by
     /// scoping the pair to one call: the two verbs that resolve a target
-    /// before acting on it (`ArchiveThread`, `Undo`) do so in sequence, never
+    /// before acting on it (`Undo`) do so in sequence, never
     /// nested, so each step takes its own permit and releases it.
     ///
     /// The permit covers this module's reads as well as its writes. That costs
@@ -4028,11 +3995,13 @@ mod tests {
             }
             thread.id
         };
-        // `A` with the cursor on one of them, and no thread named.
+        // Archive with the cursor on one of them, aimed at the thread.
         world.looking_at(world.inbox, &[], Some(first)).await;
 
         world
-            .run(Command::ArchiveThread { thread: None })
+            .run(Command::Archive {
+                target: MessageTarget::Thread(thread),
+            })
             .await
             .expect("archive the thread");
 
@@ -4043,7 +4012,6 @@ mod tests {
             "the message the cursor was not on has to move too"
         );
         assert_eq!(world.queued().await.len(), 2);
-        let _ = thread;
         assert_eq!(
             completion(&world.drained().await).await,
             Some(("Archived 1 message", true)),

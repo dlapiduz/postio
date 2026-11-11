@@ -191,11 +191,8 @@ mod tests {
                 );
             }
         }
-        let archive = drawn
-            .lines()
-            .find(|line| line.contains("Archive thread"))
-            .unwrap();
-        assert!(archive.contains('A'), "{archive}");
+        let archive = drawn.lines().find(|line| line.contains("Archive")).unwrap();
+        assert!(archive.contains('e'), "{archive}");
     }
 
     #[test]

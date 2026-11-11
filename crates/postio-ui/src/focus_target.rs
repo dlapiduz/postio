@@ -310,13 +310,11 @@ pub enum Dispatch {
 }
 
 /// The host command a list verb means, or `None` when the verb is the
-/// frontend's own (opening, picking, going somewhere). `A` is `a` here: a
-/// Focus row is a whole conversation.
+/// frontend's own (opening, picking, going somewhere). `archive` acts on the
+/// whole conversation: a Focus row is one.
 pub fn dispatch(id: CommandId) -> Option<Dispatch> {
     match id {
-        CommandId::Archive | CommandId::ArchiveThread => {
-            Some(Dispatch::OnMail(Command::default_for(CommandId::Archive)))
-        }
+        CommandId::Archive => Some(Dispatch::OnMail(Command::default_for(CommandId::Archive))),
         CommandId::Delete | CommandId::ToggleRead | CommandId::Flag | CommandId::Unsnooze => {
             Some(Dispatch::OnMail(Command::default_for(id)))
         }
@@ -553,7 +551,7 @@ mod tests {
     #[test]
     fn the_list_verbs_the_host_answers_are_a_table() {
         assert_eq!(
-            dispatch(CommandId::ArchiveThread),
+            dispatch(CommandId::Archive),
             Some(Dispatch::OnMail(Command::default_for(CommandId::Archive)))
         );
         assert_eq!(

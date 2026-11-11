@@ -2,16 +2,16 @@ next_message	j | Down
 prev_message	k | Up
 first_message	g g
 last_message	G
-open_message	Return | o | Right
+open_message	Return | o
 toggle_selection	x
 extend_selection_down	J | shift+Down
 extend_selection_up	K | shift+Up
 select_all	* a | ctrl+a | X
-prev_view	Left | u
+prev_view	u
 back	Escape
 toggle_result_order	alt+o
-next_in_conversation	n | alt+Down
-prev_in_conversation	p | alt+Up
+next_in_conversation	] | n | alt+Down
+prev_in_conversation	[ | p | alt+Up
 toggle_fold	Z
 view_original	ctrl+o
 toggle_reader_view	ctrl+shift+o | alt+o
@@ -28,7 +28,6 @@ reply	r | ctrl+r
 reply_all	a | ctrl+shift+r
 forward	f | ctrl+shift+f
 archive	e | ctrl+shift+a
-archive_thread	E
 delete	# | Delete
 move	v
 flag	s
@@ -84,7 +83,7 @@ attach_file	ctrl+shift+a | alt+a
 detach_composer	ctrl+shift+o | alt+o
 copy_fields	ctrl+shift+c | alt+c
 insert_image	ctrl+shift+g | alt+g
-edit_externally	ctrl+shift+e | alt+e
+edit_externally	ctrl+shift+e | alt+shift+e
 toggle_preview	ctrl+shift+p | alt+p
 bold	ctrl+b
 italic	ctrl+i | alt+i
@@ -188,3 +187,21 @@ contact_group_remove	L
 contacts_import	v i
 contacts_export	v x
 contacts_sync	
+expand_thread	Right
+collapse_thread	Left
+first_in_conversation	{
+latest_in_conversation	}
+first_unread_in_conversation	g u
+outline_first_unread	u
+thread_outline	alt+t
+thread_menu	alt+period
+reply_to_latest	alt+e
+mute_thread	m
+split_thread	alt+shift+s
+move_this_message	alt+v
+delete_this_message	alt+Delete
+forward_what_1	1
+forward_what_2	2
+forward_what_3	3
+show_newer	ctrl+shift+Down
+expand_quoted	ctrl+shift+q

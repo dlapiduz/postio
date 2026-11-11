@@ -116,6 +116,15 @@ pub enum Context {
     /// S6): a small surface over the mail with its own keys -- `Return` is all
     /// the mail, `c` writes -- that mean nothing to the list beneath it.
     ContactPopover,
+    /// The thread outline: the conversation's messages as a list over the
+    /// reader (specs/013-focus-threads D5). Its own context, because `u`
+    /// there means "first unread" while it is `prev_view` in the reader
+    /// beneath it.
+    Outline,
+    /// The question "Forward what?" (specs/013-focus-threads D7): `1`, `2`
+    /// and `3` choose. Not the picker's context, which already gives each
+    /// digit to `picker_choose_n`, so the two would bind a digit twice.
+    ForwardChooser,
 }
 
 impl Context {
@@ -145,6 +154,9 @@ impl Context {
         Context::Contacts,
         // The popover (specs/011-focus-contacts S6).
         Context::ContactPopover,
+        // The threads design (specs/013-focus-threads).
+        Context::Outline,
+        Context::ForwardChooser,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -167,6 +179,8 @@ impl Context {
             Context::Results => "results",
             Context::Contacts => "contacts",
             Context::ContactPopover => "contact_popover",
+            Context::Outline => "outline",
+            Context::ForwardChooser => "forward_chooser",
         }
     }
 

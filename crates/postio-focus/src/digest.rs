@@ -362,7 +362,7 @@ impl FocusController {
                 | CommandId::StopDigestingSender
                 | CommandId::Unsubscribe
                 | CommandId::DigestRule
-                | CommandId::ArchiveThread
+                | CommandId::Archive
         )
     }
 
@@ -385,7 +385,7 @@ impl FocusController {
                 }
             }
             CommandId::GoToInbox => self.close_digest(),
-            CommandId::ArchiveThread => {
+            CommandId::Archive => {
                 let delivery = window.delivery;
                 let mut steps = self.verbs.archive_digest(delivery);
                 steps.extend(self.close_digest());
@@ -723,7 +723,7 @@ impl FocusController {
             title,
             subtitle,
             archive: words::archive_all(window.count),
-            archive_key: hints::key(keymap, CommandId::ArchiveThread),
+            archive_key: hints::key(keymap, CommandId::Archive),
             rule_line: words::rule_line(window.rule_when.as_deref()),
             rule_key: hints::key(keymap, CommandId::DigestRule),
             tabs: window.has_summary(),
