@@ -215,6 +215,11 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ResultsConversations
         | C::ResultsFiles
         | C::ResultsPeople
+        | C::FilterFrom
+        | C::FilterTo
+        | C::FilterDate
+        | C::FilterAnywhere
+        | C::FilterLabel
         | C::StepRangeBack
         | C::StepRangeForward
         | C::QuickLook

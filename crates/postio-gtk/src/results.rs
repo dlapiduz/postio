@@ -650,7 +650,8 @@ impl ResultsPane {
             } else {
                 button.label.clone()
             };
-            control.set_label(&label);
+            // The key that opens its popover, taught on it (#2090).
+            keyhint::dress(&control, &label, button.key.as_deref());
             control.add_css_class("focus-results-filter");
             if button.applied {
                 control.add_css_class("focus-results-filter-applied");
@@ -1230,7 +1231,7 @@ impl ResultsPane {
         let mut child = self.buttons.first_child();
         while let Some(widget) = child {
             if let Some(button) = widget.downcast_ref::<gtk::Button>()
-                && button.label().is_some_and(|label| label.starts_with(text))
+                && button_words(button).starts_with(text)
             {
                 button.emit_clicked();
                 return true;
@@ -1247,10 +1248,7 @@ impl ResultsPane {
         while let Some(widget) = child {
             if let Some(button) = widget.downcast_ref::<gtk::Button>() {
                 filters.push((
-                    button
-                        .label()
-                        .map(|label| label.to_string())
-                        .unwrap_or_default(),
+                    button_words(button),
                     button.has_css_class("focus-results-filter-applied"),
                 ));
             }
@@ -1291,6 +1289,26 @@ impl ResultsPane {
             }
         }
     }
+}
+
+/// What a filter button says: its label, or its first label's when a
+/// keycap was set beside it.
+fn button_words(button: &gtk::Button) -> String {
+    if let Some(label) = button.label() {
+        return label.to_string();
+    }
+    let mut stack = vec![button.clone().upcast::<gtk::Widget>()];
+    while let Some(widget) = stack.pop() {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+            return label.text().to_string();
+        }
+        let mut child = widget.last_child();
+        while let Some(next) = child {
+            child = next.prev_sibling();
+            stack.push(next);
+        }
+    }
+    String::new()
 }
 
 /// Scroll `list`'s scroller to its very top.

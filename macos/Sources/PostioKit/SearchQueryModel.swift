@@ -68,6 +68,9 @@ public final class SearchQueryModel {
         public let applied: Bool
         /// Its popover is open: the accent ring.
         public let open: Bool
+        /// The key that opens its popover, spelled as its cap; `nil` for a
+        /// toggle (#2090).
+        public let cap: String?
         public var id: FilterKindFfi { kind }
         /// A plain toggle (no ▾).
         public var isToggle: Bool { kind.toggleTerm != nil }
@@ -102,7 +105,9 @@ public final class SearchQueryModel {
             hint = [KeyCapSpelling.cap(view.hintKey), view.hint].compactMap { $0 }.joined(separator: " ")
             ringed = view.ringed
             buttons = view.buttons.map {
-                Button(kind: $0.kind, label: $0.label, applied: $0.applied, open: $0.open)
+                Button(
+                    kind: $0.kind, label: $0.label, applied: $0.applied, open: $0.open,
+                    cap: KeyCapSpelling.cap($0.key))
             }
             return .query
         case .focusLeaveResults:

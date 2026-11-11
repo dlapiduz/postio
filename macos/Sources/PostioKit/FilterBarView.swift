@@ -154,6 +154,10 @@ struct FilterButton: View {
                 if !button.isToggle {
                     Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .semibold))
                 }
+                // The key that opens it, taught on the button (#2090).
+                if let cap = button.cap {
+                    KeyCap(cap)
+                }
             }
             .foregroundStyle(button.applied ? AnyShapeStyle(Color(nsColor: .textBackgroundColor)) : AnyShapeStyle(.primary))
             .padding(.leading, 10)

@@ -57,6 +57,11 @@ history_forward	ctrl+bracketright
 results_conversations	ctrl+1
 results_files	ctrl+2
 results_people	ctrl+3
+filter_from	alt+f
+filter_to	alt+t
+filter_date	alt+d
+filter_anywhere	alt+w
+filter_label	alt+l
 step_range_back	alt+Left
 step_range_forward	alt+Right
 quick_look	space

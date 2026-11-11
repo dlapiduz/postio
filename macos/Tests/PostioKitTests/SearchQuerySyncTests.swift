@@ -23,7 +23,7 @@ struct SearchQuerySyncTests {
     }
 
     static func button(_ kind: FilterKindFfi, _ label: String, applied: Bool = false) -> FilterButtonFfi {
-        FilterButtonFfi(kind: kind, label: label, applied: applied, open: false)
+        FilterButtonFfi(kind: kind, label: label, applied: applied, open: false, key: nil)
     }
 
     /// The bar's eight buttons, `applied` the ones the query holds, with

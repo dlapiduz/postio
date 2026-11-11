@@ -104,6 +104,11 @@ command from inside a text field.
 | `ctrl+1` | Show conversations | Search results (not the terminal) |  | `results_conversations` |
 | `ctrl+2` | Show files | Search results (not the terminal) |  | `results_files` |
 | `ctrl+3` | Show people | Search results (not the terminal) |  | `results_people` |
+| `alt+f` | Filter by sender | Search results (not the terminal) |  | `filter_from` |
+| `alt+t` | Filter by recipient | Search results (not the terminal) |  | `filter_to` |
+| `alt+d` | Filter by date | Search results (not the terminal) |  | `filter_date` |
+| `alt+w` | Filter by folder | Search results (not the terminal) |  | `filter_anywhere` |
+| `alt+l` | Filter by label | Search results (not the terminal) |  | `filter_label` |
 | `alt+Left` | Earlier month | Search results (not the terminal) |  | `step_range_back` |
 | `alt+Right` | Later month | Search results (not the terminal) |  | `step_range_forward` |
 | `space` | Quick Look | Search results (not the terminal) |  | `quick_look` |

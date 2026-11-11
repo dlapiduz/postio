@@ -614,6 +614,37 @@ fn from_lists_the_people_in_the_results_with_their_counts() {
     );
 }
 
+/// Each filter popover opens from the keyboard (#2090), and its button
+/// shows the key that opens it, as Sort and Save search show theirs.
+#[test]
+fn the_filter_popovers_open_by_their_keys() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = search(&mut focus, "atlas budget", &rows);
+    let buttons = query_view(&effects).expect("the field").buttons;
+    let keyed: Vec<(FilterKind, Option<String>)> = buttons
+        .iter()
+        .map(|button| (button.kind, button.key.clone()))
+        .collect();
+    for (kind, command) in [
+        (FilterKind::From, CommandId::FilterFrom),
+        (FilterKind::To, CommandId::FilterTo),
+        (FilterKind::Date, CommandId::FilterDate),
+        (FilterKind::Anywhere, CommandId::FilterAnywhere),
+        (FilterKind::Label, CommandId::FilterLabel),
+    ] {
+        assert!(
+            keyed.contains(&(kind, focus.keymap().binding(command).map(str::to_owned))),
+            "{kind:?} shows no key: {keyed:?}"
+        );
+        assert!(focus.answers(command), "{command:?} is not the results'");
+        let effects = run(&mut focus, command, &rows);
+        let view = popover_view(&effects).flatten().expect("a popover");
+        assert_eq!(view.kind, kind);
+        let _ = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
+    }
+}
+
 #[test]
 fn from_lists_you_only_when_the_query_already_asks_for_you() {
     // Not someone to narrow to (screen 08), but a `from:` you typed is

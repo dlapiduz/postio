@@ -4,11 +4,11 @@
 #
 # "since july" in its field shows "→ after:2026-07-01" beside it, the
 # results narrow while it is open, This quarter is the preset ringed (it
-# is the same date), and the line under the chart says "12 of 21" and
-# "Jul – Sep 2026". Return applies it; the Date button reads "Since July".
+# is the same date), and the line under the chart says how many of the
+# conversations it opened on are kept, and the months. Return applies it;
+# the Date button reads "Since July".
 #
-# The click on Date is skipped with the reason: the format has no pointer
-# input. The controller's half is postio-focus tests/controller_suite/results.rs
+# Date opens by its key, as its button shows it (#2090). The controller's half is postio-focus tests/controller_suite/results.rs
 # (the_date_popover_turns_words_into_dates_and_its_presets_carry_counts).
 apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US3" }
@@ -30,29 +30,14 @@ check   = { keyboard.region = "results" }
 
 [[step]]
 id      = "open-date"
-wait    = { ms = 300 }
-expect  = "A click on Date opens its popover, 470 wide in two columns: on the left the presets with their counts (Any time, Last 7 days, Last 30 days, This quarter, This year, Custom…); on the right a field, a 90-tall month chart and the result line."
+command = "filter_date"
+expect  = "Date's key, shown on its button, opens its popover, 470 wide in two columns: on the left the presets with their counts (Any time, Last 7 days, Last 30 days, This quarter, This year, Custom…); on the right a field, a 90-tall month chart and the result line."
 
 [[step]]
 type    = "since july"
-expect  = "The field says “since july” with “→ after:2026-07-01” beside it. The list behind narrows to July onwards while the popover is open; This quarter is ringed; the chart's July, August and September bars are dark and bold-labelled; the line under it reads the conversations kept “of” those it opened on, and “Jul – Sep 2026”."
+expect  = "The field says “since july” with “→ after:” the last first of July beside it (2025-07-01 under the runner's clock). The list behind narrows to July onwards while the popover is open; the chart's bars from July are dark and bold-labelled; the line under it reads the months kept and the conversations kept “of” those it opened on."
 
 [[step]]
 key     = "Return"
 check   = { keyboard.region = "results", overlay.kind = "none" }
-expect  = "Return applies it: an “after:” chip in the field, the Date button solid and reading “Since July”, the timeline's band over July to September."
-
-[app.macos.step.open-date]
-skip = { reason = "A click on the Date button: the format has no pointer input; filmed by hand until it does" }
-
-# Linux's Date button is pressed by a click too; with no pointer in the
-# format nothing opens the popover, and what is typed after has nowhere to
-# go. The popovers are GTK's focus_suite results cases', clicked there.
-[app.focus.step.open-date]
-skip = { reason = "A click on Date: the format has no pointer input" }
-
-[app.focus.step.6]
-skip = { reason = "Typed into the Date popover a click opened" }
-
-[app.focus.step.7]
-skip = { reason = "Return in the Date popover a click opened" }
+expect  = "Return applies it: an “after:” chip in the field, the Date button solid and reading “Since July” and its year, the timeline's band from July."
