@@ -148,6 +148,11 @@ use super::focus::heard;
 /// The inbox over the threads seed, landed, with Harbor's row found.
 async fn inbox_with_harbor() -> (Arc<Session>, u32) {
     let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
+    inbox_with_harbor_over(database).await
+}
+
+/// The same over a store the caller keeps a handle on.
+async fn inbox_with_harbor_over(database: Store) -> (Arc<Session>, u32) {
     let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
     session.open_focus(FocusScopeFfi::Inbox);
     assert!(
@@ -399,6 +404,132 @@ async fn expanding_a_filtered_thread_hands_swift_its_children_and_a_redraw_keeps
         ))
         .await,
         "Left folds it"
+    );
+    session.shutdown();
+}
+
+// -- The footer under the list (spec 013 T040, FR-014) -----------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_footer_names_the_scope_the_keys_and_the_note_as_the_cursor_moves() {
+    let (session, harbor) = inbox_with_harbor().await;
+    session.focus_point(harbor);
+    let mut collapsed = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusFooter { view } => {
+                collapsed = Some(view.clone());
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "Swift is handed a footer when the cursor lands on the row"
+    );
+    let collapsed = collapsed.expect("a footer");
+    assert!(
+        collapsed
+            .title
+            .to_lowercase()
+            .contains("harbor api draft v3")
+            && collapsed.title.ends_with("\u{b7} 6 messages"),
+        "the row's footer names the thread and its size: {:?}",
+        collapsed.title
+    );
+
+    session.invoke("expand_thread");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusSplice { .. }
+        ))
+        .await,
+        "the thread opens before the cursor walks it"
+    );
+    for _ in 0..4 {
+        session.invoke("next_message");
+    }
+    let mut child = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusFooter { view } if view.title.starts_with("Message 4 of 6") => {
+                child = Some(view.clone());
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "a footer names message 4"
+    );
+    let child = child.expect("a footer");
+    assert_eq!(child.title, "Message 4 of 6 \u{b7} Ben Adeyemi");
+    assert!(
+        child.keys.iter().any(|key| key.label == "reply to this"),
+        "the keys say what Reply acts on: {:?}",
+        child.keys
+    );
+    assert!(child.note.is_some(), "a child's footer carries the note");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reply_on_a_child_answers_that_message_not_the_latest() {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
+    let harbor_thread = thread_named(&database, "Harbor API draft v3").await;
+    let members = postio_host::threads::view(&database, harbor_thread)
+        .await
+        .expect("a read")
+        .expect("Harbor is there")
+        .members;
+    let fourth = members[3].id.get();
+    assert_ne!(fourth, members[5].id.get(), "message 4 is not the latest");
+    let (session, harbor) = inbox_with_harbor_over(database).await;
+    session.focus_point(harbor);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position, .. } if *position == harbor
+        ))
+        .await,
+        "the cursor is on Harbor"
+    );
+    session.invoke("expand_thread");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusSplice { .. }
+        ))
+        .await,
+        "the thread opens"
+    );
+    for _ in 0..4 {
+        session.invoke("next_message");
+    }
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position, .. } if *position == harbor + 4
+        ))
+        .await,
+        "the cursor is on message 4"
+    );
+    session.invoke("reply");
+    let mut opened = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusComposer { kind, message } => {
+                opened = Some((*kind, *message));
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "Reply opens the composer"
+    );
+    assert_eq!(
+        opened,
+        Some((postio_ffi::ComposerKindFfi::Reply, Some(fourth))),
+        "the reply answers message 4"
     );
     session.shutdown();
 }

@@ -264,6 +264,13 @@ pub enum UiEvent {
         /// One per message, oldest first, then the unsent reply.
         children: Vec<crate::ChildRowFfi>,
     },
+    /// Draw the footer under the list (spec 013 FR-014): the scope in
+    /// words, the keys that matter there, and a sentence on what acts on
+    /// what. Sent after every cursor move, in the list and in Filtered.
+    FocusFooter {
+        /// What to draw.
+        view: crate::FooterViewFfi,
+    },
     /// The thread at `anchor` folded: remove its children.
     FocusUnsplice {
         /// The collapsed row's position among the rows.

@@ -24,6 +24,7 @@ public final class FocusStates {
         case banner
         case syncLabel
         case empty
+        case footer
     }
 
     /// The banner, until the controller takes it away.
@@ -33,6 +34,9 @@ public final class FocusStates {
     /// The page drawn instead of the list, while there is one. The list is
     /// what is drawn until the controller says otherwise.
     public private(set) var empty: EmptyPageFfi?
+    /// The footer under the list, as the cursor last moved it (spec 013
+    /// FR-014); `nil` until the first move.
+    public private(set) var footer: FooterViewFfi?
 
     public init() {}
 
@@ -50,6 +54,9 @@ public final class FocusStates {
         case let .focusEmpty(page):
             empty = page
             return .empty
+        case let .focusFooter(view):
+            footer = view
+            return .footer
         default:
             return nil
         }

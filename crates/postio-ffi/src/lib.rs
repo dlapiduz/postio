@@ -165,7 +165,9 @@ pub use focus_surfaces::{
     RuleScheduleFfi, RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi,
     focus_digest_geometry,
 };
-pub use focus_threads::{ChevronFfi, ChildHintFfi, ChildRowFfi, ThreadRowFfi};
+pub use focus_threads::{
+    ChevronFfi, ChildHintFfi, ChildRowFfi, FooterKeyFfi, FooterViewFfi, ThreadRowFfi,
+};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use links::{link_gone, link_unknown, message_link, parse_message_link};
 pub use list::{RowFfi, ScopeFfi};

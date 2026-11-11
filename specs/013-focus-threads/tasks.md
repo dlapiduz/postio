@@ -199,9 +199,9 @@ thread, and `z` brings it back.
   - `MoveThisMessage` on a row is refused;
   - the footer is "Message 4 of 6 · Ben Adeyemi" on a child and "Harbor API draft v3 · 6 messages" on a row;
   - labels read "reply to this" / "archive thread".
-- [ ] T038 [P] [US2] Write the storyboard `storyboards/threads/scope-footer.*`, red on `main`.
+- [x] T038 [P] [US2] Write the storyboard `storyboards/threads/scope-footer.*`, red on `main`.
 - [x] T039 [US2] Emit `Intent::Footer(FooterView)` on every cursor move in `crates/postio-focus/src/verbs.rs` and `crates/postio-focus/src/cursor.rs`, from `scope::footer`. Resolve list verbs through `scope::target`.
-- [ ] T040 [US2] Mac footer in `macos/Sources/PostioKit/FocusSurfaceParts.swift` (keycap + label pairs, right-hand note). GTK footer in `crates/postio-gtk/src/chrome.rs`. Add a `focus_suite` case: `r` on a child opens a reply quoting that child. Publish the footer in the storyboard observation (`app.focus.footer.title`, `.note`) so `storyboards/threads/scope-footer` checks the wording instead of describing it in prose, and run that storyboard red on `main` and green on Linux.
+- [x] T040 [US2] Mac footer in `macos/Sources/PostioKit/FocusSurfaceParts.swift` (keycap + label pairs, right-hand note). GTK footer in `crates/postio-gtk/src/chrome.rs`. Add a `focus_suite` case: `r` on a child opens a reply quoting that child. Publish the footer in the storyboard observation (`app.focus.footer.title`, `.note`) so `storyboards/threads/scope-footer` checks the wording instead of describing it in prose, and run that storyboard red on `main` and green on Linux.
 - [x] T041 [US2] Write the undo guard test: a label added from a child applies to every member and one `z` removes it from all of them, in `crates/postio-focus/tests/controller_suite/threads.rs`. It should be green on arrival, since the write-through is today's (research R1).
 
 ---
