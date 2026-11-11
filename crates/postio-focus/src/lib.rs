@@ -2115,6 +2115,7 @@ impl FocusController {
     pub fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Effect> {
         // An expanded row that left the list folds first, and the cursor
         // settles on the rows as they now are.
+        let raw = rows;
         let mut steps = self.expansion_followed(rows);
         let through = self.through(rows);
         let rows: &dyn Rows = through.as_ref().map_or(rows, |through| through);
@@ -2133,6 +2134,11 @@ impl FocusController {
         }
         steps.extend(self.show_empty());
         let mut effects = self.effects(steps);
+        // The cursor went to a row as the list landed: the footer says what
+        // it is.
+        if let Some(footer) = self.footer_after(&effects, raw) {
+            effects.push(Effect::Show(Intent::Footer(footer)));
+        }
         effects.push(self.refresh_counts());
         effects
     }
@@ -2313,9 +2319,15 @@ impl FocusController {
     /// thread verbs (archive and the like) reach; a message verb on a row
     /// is aimed by its own command (spec 013 D2).
     pub fn aim(&self, rows: &dyn Rows) -> Aimed {
+        self.aim_for(rows, CommandId::Archive)
+    }
+
+    /// Where `action` would go now: a child is its own message for a reply
+    /// or a forward, and its thread for an archive.
+    pub fn aim_for(&self, rows: &dyn Rows, action: CommandId) -> Aimed {
         let through = self.through(rows);
         let rows: &dyn Rows = through.as_ref().map_or(rows, |through| through);
-        verbs::Verbs::aimed(&self.cursor, rows, CommandId::Archive)
+        verbs::Verbs::aimed(&self.cursor, rows, action)
     }
 
     /// Whether an undo is waiting for the rows it brings back to be in the

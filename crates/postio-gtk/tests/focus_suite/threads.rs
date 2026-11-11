@@ -327,3 +327,49 @@ pub fn filtered_opens_a_thread_in_place_and_restores_it_whole() {
         );
     });
 }
+
+pub fn the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _ids, pane) = harbor().await;
+        assert!(
+            crate::settle_until(async || said(&window, "focus.footer.title")
+                == Some(serde_json::json!("Re: Harbor plan \u{b7} 4 messages")))
+            .await,
+            "the footer names the thread on its row: {:?}",
+            said(&window, "focus.footer.title")
+        );
+        support::keys(&window, &["Right"]);
+        assert!(crate::settle_until(async || pane.cursor().n_items() == 6).await);
+        support::keys(&window, &["j", "j"]);
+        assert_eq!(
+            said(&window, "focus.footer.title"),
+            Some(serde_json::json!("Message 2 of 4 \u{b7} Ada Moreno")),
+            "the footer names the child the cursor is on"
+        );
+        assert!(
+            said(&window, "focus.footer.note")
+                .and_then(|note| note.as_str().map(str::to_owned))
+                .is_some_and(|note| note.starts_with("Reply and forward act on this message")),
+            "and says what acts on what"
+        );
+        support::keys(&window, &["r"]);
+        assert!(
+            crate::settle_until(async || window.observe().composer.open).await,
+            "r on a child opened a reply"
+        );
+        let body = window
+            .composer()
+            .expect("the composer")
+            .draft()
+            .body
+            .text
+            .unwrap_or_default();
+        assert!(
+            body.contains("Message 2") && !body.contains("Message 4"),
+            "the reply quotes the child, not the latest: {body:?}"
+        );
+    });
+}

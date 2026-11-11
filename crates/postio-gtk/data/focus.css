@@ -2473,3 +2473,14 @@ button.focus-filtered-tab.focus-filtered-tab-on {
   outline: 2px solid var(--postio-accent);
   outline-offset: -2px;
 }
+
+/* ── The scope footer (specs/013-focus-threads US2; screens 02, 03) ───── */
+.focus-scope-footer {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-header);
+}
+
+.focus-scope-footer-title {
+  font-weight: bold;
+}
