@@ -47,6 +47,27 @@ public struct ComposeView: View {
     private enum Field: Hashable {
         case to, cc, bcc, subject, body
 
+        /// The same field in the order type, which Shift+Tab walks back.
+        var ordered: ComposeField {
+            switch self {
+            case .to: return .to
+            case .cc: return .cc
+            case .bcc: return .bcc
+            case .subject: return .subject
+            case .body: return .body
+            }
+        }
+
+        init(_ field: ComposeField) {
+            switch field {
+            case .to: self = .to
+            case .cc: self = .cc
+            case .bcc: self = .bcc
+            case .subject: self = .subject
+            case .body: self = .body
+            }
+        }
+
         var recipient: RecipientField? {
             switch self {
             case .to: return .to
@@ -108,6 +129,9 @@ public struct ComposeView: View {
                     .font(.system(size: Metrics.valueSize, weight: .semibold))
                     .focused($focus, equals: .subject)
                     .accessibilityLabel("Subject")
+                    .onKeyPress(.tab) { press in
+                        press.modifiers.contains(.shift) ? stepBack(from: .subject) : .ignored
+                    }
             }
             Divider()
             if !model.labels.isEmpty {
@@ -261,7 +285,11 @@ public struct ComposeView: View {
                 .onKeyPress(.downArrow) { suggestionKey { model.moveSuggestion(by: 1) } }
                 .onKeyPress(.upArrow) { suggestionKey { model.moveSuggestion(by: -1) } }
                 .onKeyPress(.return) { suggestionKey { model.acceptSuggestion() } }
-                .onKeyPress(.tab) { suggestionKey { model.acceptSuggestion() } }
+                .onKeyPress(.tab) { press in
+                    // Shift+Tab goes back; only a bare Tab completes.
+                    if press.modifiers.contains(.shift) { return stepBack(from: field) }
+                    return suggestionKey { model.acceptSuggestion() }
+                }
             if hint {
                 Button { model.toggleCopyFields() } label: {
                     Text(copyHint)
@@ -278,6 +306,16 @@ public struct ComposeView: View {
                     .offset(x: Metrics.inset + Metrics.labelWidth - 12, y: Metrics.rowHeight - 2)
             }
         }
+    }
+
+    /// Shift+Tab: the field above takes the keyboard. At the top it is
+    /// handled and goes nowhere, rather than leaving the composer.
+    private func stepBack(from field: Field) -> KeyPress.Result {
+        model.dismissSuggestions()
+        if let previous = field.ordered.previous(showingCopyFields: model.showsCopyFields) {
+            focus = Field(previous)
+        }
+        return .handled
     }
 
     /// A key the list answers while it is showing; the field's otherwise.
@@ -383,7 +421,9 @@ public struct ComposeView: View {
             // marks have to apply to something, and on both frontends
             // that something is a contenteditable web view over
             // `postio_body`'s dialect.
-            ComposeEditor(session: session, model: model, keyboard: richKeyboard)
+            ComposeEditor(
+                session: session, model: model, keyboard: richKeyboard,
+                backtab: { _ = stepBack(from: .body) })
                 .disabled(model.isHandedOff)
                 .accessibilityLabel("Message body")
                 .frame(maxWidth: column + 2 * Metrics.inset)
@@ -396,6 +436,9 @@ public struct ComposeView: View {
                     .scrollContentBackground(.hidden)
                     .modifier(NoWritingToolsAffordance())
                     .focused($focus, equals: .body)
+                    .onKeyPress(.tab) { press in
+                        press.modifiers.contains(.shift) ? stepBack(from: .body) : .ignored
+                    }
                     .disabled(model.isHandedOff)
                     .accessibilityLabel("Message body")
                 if let fold = model.quoteFold { quoteFold(fold) }
