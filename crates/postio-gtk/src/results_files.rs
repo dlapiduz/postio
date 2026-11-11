@@ -91,6 +91,79 @@ pub struct FilesGrid {
     act: Rc<dyn Fn(CommandId)>,
 }
 
+/// How many lines a preview draws, where the first sits and how far apart.
+const PREVIEW_LINES: u32 = 6;
+const PREVIEW_FIRST: f64 = 14.0;
+const PREVIEW_STEP: f64 = 12.0;
+
+/// A card's preview: its file's shape in quiet ink, the line `marked`
+/// matched in the find highlight.
+fn preview(shape: FilePreview, marked: Option<u32>) -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::new();
+    area.set_content_height(84);
+    area.set_hexpand(true);
+    area.add_css_class("focus-file-shape");
+    area.set_draw_func(move |area, cr, width, height| {
+        let (width, height) = (f64::from(width), f64::from(height));
+        let ink = area.color();
+        let quiet = |cr: &gtk::cairo::Context, alpha: f32| {
+            cr.set_source_rgba(
+                f64::from(ink.red()),
+                f64::from(ink.green()),
+                f64::from(ink.blue()),
+                f64::from(alpha),
+            );
+        };
+        if let Some(line) = marked.filter(|line| *line < PREVIEW_LINES) {
+            let y = PREVIEW_FIRST + f64::from(line) * PREVIEW_STEP - 6.0;
+            cr.set_source_rgba(1.0, 0.8, 0.0, 0.38);
+            cr.rectangle(4.0, y, width - 8.0, 12.0);
+            let _ = cr.fill();
+        }
+        match shape {
+            FilePreview::Sheet => {
+                quiet(cr, 0.18);
+                for row in 0..=PREVIEW_LINES {
+                    let y = PREVIEW_FIRST - PREVIEW_STEP / 2.0 + f64::from(row) * PREVIEW_STEP;
+                    cr.rectangle(0.0, y, width, 1.0);
+                }
+                for column in 1..5 {
+                    cr.rectangle(width * f64::from(column) / 5.0, 0.0, 1.0, height);
+                }
+                let _ = cr.fill();
+            }
+            FilePreview::Page | FilePreview::Text => {
+                quiet(cr, 0.28);
+                let inset = 14.0;
+                for line in 0..PREVIEW_LINES {
+                    let y = PREVIEW_FIRST + f64::from(line) * PREVIEW_STEP - 1.5;
+                    let share = if line % 3 == 2 { 0.72 } else { 0.94 };
+                    cr.rectangle(inset, y, (width - 2.0 * inset) * share, 3.0);
+                }
+                let _ = cr.fill();
+            }
+            FilePreview::Slides => {
+                quiet(cr, 0.18);
+                let (x, y, w, h) = (18.0, 10.0, width - 36.0, height - 20.0);
+                cr.rectangle(x, y, w, h);
+                let _ = cr.stroke();
+                quiet(cr, 0.28);
+                cr.rectangle(x + 14.0, y + 12.0, w * 0.5, 5.0);
+                let _ = cr.fill();
+            }
+            FilePreview::Image => {
+                let ground = gtk::cairo::LinearGradient::new(0.0, 0.0, width, height);
+                ground.add_color_stop_rgba(0.0, 0.5, 0.5, 0.5, 0.35);
+                ground.add_color_stop_rgba(1.0, 0.5, 0.5, 0.5, 0.18);
+                let _ = cr.set_source(&ground);
+                cr.rectangle(0.0, 0.0, width, height);
+                let _ = cr.fill();
+            }
+        }
+    });
+    area
+}
+
 impl FilesGrid {
     /// An empty grid over `feed`.
     pub fn new(feed: Feed, act: Rc<dyn Fn(CommandId)>) -> Rc<Self> {
@@ -262,15 +335,10 @@ impl FilesGrid {
         kind.add_css_class("focus-file-kind");
         kind.set_halign(gtk::Align::Start);
         tile.append(&kind);
-        // The preview's lines: quiet bars, the matching one marked.
-        for line in 0..4u32 {
-            let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-            bar.add_css_class("focus-file-line");
-            if card.marked == Some(line) {
-                bar.add_css_class("focus-file-line-marked");
-            }
-            tile.append(&bar);
-        }
+        // The file's shape, drawn rather than rendered from it, as on the
+        // Mac (FileCardView): a sheet's grid, a page's or a text's lines, a
+        // slide, a picture's ground; the matching line in the find yellow.
+        tile.append(&preview(card.preview, card.marked));
         let name = crate::dropdown::runs_label(&card.name, false);
         name.add_css_class("focus-file-name");
         let meta = gtk::Label::new(Some(&card.meta));

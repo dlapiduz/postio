@@ -339,6 +339,34 @@ pub fn an_unread_result_has_the_inboxs_accent_dot() {
     });
 }
 
+/// The tabs hold still when Sort changes its words: "Best match" and
+/// "Newest" are not one width, and the tabs beside Sort slid (#2082).
+pub fn the_tabs_hold_still_when_the_sort_changes() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        let tabs = support::only(results.widget(), "focus-results-tabs");
+        let at = || tabs.compute_bounds(&window).map(|bounds| bounds.x());
+        assert!(
+            crate::settle_until(async || at().is_some_and(|x| x > 0.0)).await,
+            "the tabs never drew"
+        );
+        let before = at();
+        let said = results.sort_said();
+        window.press_command(postio_core::CommandId::ToggleResultOrder);
+        assert!(
+            crate::settle_until(async || results.sort_said() != said).await,
+            "Sort did not change"
+        );
+        crate::settle();
+        assert_eq!(at(), before, "the tabs moved with Sort's words");
+    });
+}
+
 /// Each filter popover's button shows the key that opens it, and the key
 /// opens it (#2090).
 pub fn the_filter_buttons_show_and_answer_their_keys() {

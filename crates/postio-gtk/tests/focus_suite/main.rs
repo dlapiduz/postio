@@ -538,6 +538,10 @@ const CASES: &[(&str, fn())] = &[
         results::escape_closes_a_dropdown_over_the_results_then_leaves_them as fn(),
     ),
     (
+        "results::the_tabs_hold_still_when_the_sort_changes",
+        results::the_tabs_hold_still_when_the_sort_changes as fn(),
+    ),
+    (
         "results::show_all_opens_the_results_and_back_returns_to_the_inbox",
         results::show_all_opens_the_results_and_back_returns_to_the_inbox as fn(),
     ),
@@ -681,6 +685,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "drafts::g_t_lists_drafts_and_enter_opens_one_to_edit",
         drafts::g_t_lists_drafts_and_enter_opens_one_to_edit as fn(),
+    ),
+    (
+        "bar::the_fields_operator_terms_are_chips",
+        bar::the_fields_operator_terms_are_chips as fn(),
     ),
     (
         "bar::a_word_lists_top_hits_and_return_shows_all",

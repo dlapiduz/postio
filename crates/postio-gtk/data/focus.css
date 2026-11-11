@@ -1240,6 +1240,13 @@ button.focus-results-filter.focus-results-filter-applied {
   color: var(--postio-ink-secondary);
 }
 
+/* Checked: a box a person can see at a glance, as the inbox draws its
+   own, not a glyph the size of the date (#2082). */
+.focus-results-gutter.focus-results-check {
+  font-size: 1.25rem;
+  color: var(--postio-ink);
+}
+
 /* Unread: the inbox row's accent dot (FR-091's unread mark). */
 .focus-results-gutter.focus-results-dot {
   color: var(--postio-accent);
@@ -1478,17 +1485,6 @@ button.focus-popover-preset.focus-popover-preset-selected {
   font-weight: bold;
   background-color: var(--postio-selected-bg);
   color: var(--postio-ink-secondary);
-}
-
-.focus-file-line {
-  min-height: 6px;
-  margin-top: var(--postio-space-1);
-  border-radius: 2px;
-  background-color: var(--postio-hairline);
-}
-
-.focus-file-line.focus-file-line-marked {
-  background-color: rgba(255, 204, 0, 0.38);
 }
 
 .focus-file-name {

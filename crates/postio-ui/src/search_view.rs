@@ -819,16 +819,10 @@ pub fn results_hints(keymap: &Keymap) -> Vec<Hint> {
 /// The bulk bar's verbs while results are checked (§3.5): Archive, Label,
 /// Move, Mark read, Snooze, each with its key.
 pub fn bulk_hints(keymap: &Keymap) -> Vec<Hint> {
-    [
-        (CommandId::Archive, "Archive"),
-        (CommandId::AddLabel, "Label"),
-        (CommandId::Move, "Move"),
-        (CommandId::ToggleRead, "Mark read"),
-        (CommandId::Snooze, "Snooze"),
-    ]
-    .into_iter()
-    .filter_map(|(id, label)| hints::hint(keymap, id, label))
-    .collect()
+    crate::focus_dialog::RESULTS_BULK
+        .iter()
+        .filter_map(|verb| hints::hint(keymap, verb.command, verb.label))
+        .collect()
 }
 
 /// The bulk bar's right while some results are checked (§3.5): "⇧X select
@@ -1150,6 +1144,45 @@ pub fn matches_of<T: PartialEq>(cards: impl IntoIterator<Item = Option<T>>) -> u
     messages.len() + usize::from(subject)
 }
 
+/// An operator term in the search field, drawn as a chip in place
+/// (#2082): byte ranges into the typed text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldChip {
+    /// Where the whole term starts, `-from:ada` included.
+    pub start: usize,
+    /// Where it ends.
+    pub end: usize,
+    /// Where its operator ends, `-from:` drawn in mono.
+    pub operator_end: usize,
+    /// An exclusion: its value struck through.
+    pub excluded: bool,
+}
+
+/// The operator terms of `typed`, each a chip in the field; the plain
+/// words between them stay text. A term still being typed is a chip too,
+/// its operator in mono, as screen 04 sets it.
+pub fn field_chips(typed: &str, today: chrono::NaiveDate) -> Vec<FieldChip> {
+    use postio_search::query::TokenKind;
+    postio_search::parse(typed, today)
+        .tokens()
+        .iter()
+        .filter_map(|token| {
+            let excluded = match &token.kind {
+                TokenKind::Filter(clause) => clause.negated,
+                TokenKind::Partial(partial) => partial.negated,
+                TokenKind::Text(_) => return None,
+            };
+            let colon = token.raw.find(':')?;
+            Some(FieldChip {
+                start: token.span.start,
+                end: token.span.end,
+                operator_end: token.span.start + colon + 1,
+                excluded,
+            })
+        })
+        .collect()
+}
+
 /// How many matches the conversation holds: "4 matches in this
 /// conversation".
 pub fn matches_line(n: usize) -> String {
@@ -1203,12 +1236,17 @@ pub fn match_when<Tz: TimeZone>(
 }
 
 /// When a message was sent, as Quick Look's sender line says it: "Sat 26
-/// Sep, 15:51".
-pub fn sent_at<Tz: TimeZone>(at: DateTime<Tz>) -> String
+/// Sep, 15:51", with its year when that is not this one's (#2082).
+pub fn sent_at<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
-    at.format("%a %-d %b, %H:%M").to_string()
+    use chrono::Datelike;
+    if at.year() == now.year() {
+        at.format("%a %-d %b, %H:%M").to_string()
+    } else {
+        at.format("%a %-d %b %Y, %H:%M").to_string()
+    }
 }
 
 /// Who a message went to, on Quick Look's sender line: "to you, Finance
@@ -2778,10 +2816,11 @@ mod tests {
             said,
             [
                 ("e", "Archive"),
+                ("b", "Snooze"),
+                ("I", "Mark read"),
                 ("l", "Label"),
                 ("v", "Move"),
-                ("I", "Mark read"),
-                ("b", "Snooze"),
+                ("#", "Delete"),
             ]
         );
     }
@@ -2896,7 +2935,10 @@ mod tests {
             "Sheet \u{2018}Q3\u{2019}, row 3",
             "a file's match says where in it"
         );
-        assert_eq!(sent_at(now), "Sat 26 Sep, 15:30");
+        assert_eq!(sent_at(now, now), "Sat 26 Sep, 15:30");
+        // Another year's message says its year (#2082).
+        let last_year = now - chrono::Duration::days(365);
+        assert_eq!(sent_at(last_year, now), "Fri 26 Sep 2025, 15:30");
         assert_eq!(thread_size(3), Some("thread of 3".to_owned()));
         assert_eq!(thread_size(1), None);
     }
@@ -2959,6 +3001,31 @@ mod tests {
             "has:attachment",
             "nothing to say it better"
         );
+    }
+
+    #[test]
+    fn operator_terms_are_chips_in_the_field_and_an_exclusion_is_struck() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 2).unwrap();
+        let typed = "atlas from:ada@example.com -to:ben@example.net budget";
+        let chips = field_chips(typed, today);
+        let said: Vec<(&str, &str, bool)> = chips
+            .iter()
+            .map(|chip| {
+                (
+                    &typed[chip.start..chip.operator_end],
+                    &typed[chip.operator_end..chip.end],
+                    chip.excluded,
+                )
+            })
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("from:", "ada@example.com", false),
+                ("-to:", "ben@example.net", true),
+            ]
+        );
+        assert!(field_chips("atlas budget", today).is_empty());
     }
 
     // Screen 13 (§3.10): the no-results page's words.

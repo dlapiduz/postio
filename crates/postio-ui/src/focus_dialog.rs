@@ -363,6 +363,19 @@ pub const BULK: &[Verb] = &[
     verb(CommandId::Delete, "Delete", "delete"),
 ];
 
+/// The bulk bar's verbs over checked search results (spec 010 §3.5): the
+/// inbox's, in its order, so a selection looks the same wherever it is
+/// made (#2082) -- less "Digest these…", which is about senders, not a
+/// search's conversations.
+pub const RESULTS_BULK: &[Verb] = &[
+    verb(CommandId::Archive, "Archive", "archive"),
+    verb(CommandId::Snooze, "Snooze", "snooze"),
+    verb(CommandId::ToggleRead, "Mark read", "read"),
+    verb(CommandId::AddLabel, "Label", "label"),
+    verb(CommandId::Move, "Move", "move"),
+    verb(CommandId::Delete, "Delete", "delete"),
+];
+
 /// The open message's position line: "Message 3 of 60", then, for a
 /// conversation of `messages`, where the dialog is in it -- "thread of 6"
 /// at the latest, "2 of 6 in the thread" stepped back -- and, for a draft

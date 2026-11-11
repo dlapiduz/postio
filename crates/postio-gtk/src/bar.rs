@@ -297,6 +297,7 @@ impl Bar {
                 // view draws the one for these.
                 if let Some(bar) = weak.upgrade() {
                     bar.ghost.set_visible(false);
+                    bar.dress_terms();
                 }
                 if let Some(bar) = weak.upgrade()
                     && !bar.quiet.get()
@@ -522,7 +523,67 @@ impl Bar {
     pub fn show_dropdown(&self, view: &postio_focus::DropdownView) {
         self.drop_down(true);
         self.dropdown.show(view);
+        self.dress_terms();
         self.show_ghost(view.ghost.as_deref(), view.ghost_hint.as_ref());
+    }
+
+    /// The operator terms in the field, drawn as chips where they are typed
+    /// while the dropdown is up (spec 010 screens 04-05, #2082): a quiet
+    /// ground, the operator in mono, an exclusion's value struck through.
+    /// The text stays the text, so typing and the caret are the entry's.
+    fn dress_terms(&self) {
+        let attributes = gtk::pango::AttrList::new();
+        if self.dropping.get() {
+            let text = self.entry.text();
+            let today = postio_ui::clock::now().date_naive();
+            for chip in postio_ui::search_view::field_chips(&text, today) {
+                let (start, end, operator_end) =
+                    (chip.start as u32, chip.end as u32, chip.operator_end as u32);
+                let mut ground = gtk::pango::AttrColor::new_background(0x8000, 0x8000, 0x8000);
+                ground.set_start_index(start);
+                ground.set_end_index(end);
+                attributes.insert(ground);
+                let mut faint = gtk::pango::AttrInt::new_background_alpha(0x2400);
+                faint.set_start_index(start);
+                faint.set_end_index(end);
+                attributes.insert(faint);
+                let mut mono = gtk::pango::AttrString::new_family("Adwaita Mono");
+                mono.set_start_index(start);
+                mono.set_end_index(operator_end);
+                attributes.insert(mono);
+                if chip.excluded {
+                    let mut struck = gtk::pango::AttrInt::new_strikethrough(true);
+                    struck.set_start_index(operator_end);
+                    struck.set_end_index(end);
+                    attributes.insert(struck);
+                }
+            }
+        }
+        self.entry.set_attributes(&attributes);
+    }
+
+    /// The ranges of the field drawn as chips, and whether each is struck:
+    /// what a test reads of them.
+    pub fn chip_ranges(&self) -> Vec<(u32, u32, bool)> {
+        let Some(attributes) = self.entry.attributes() else {
+            return Vec::new();
+        };
+        let struck: Vec<(u32, u32)> = attributes
+            .attributes()
+            .iter()
+            .filter(|attr| attr.type_() == gtk::pango::AttrType::Strikethrough)
+            .map(|attr| (attr.start_index(), attr.end_index()))
+            .collect();
+        attributes
+            .attributes()
+            .iter()
+            .filter(|attr| attr.type_() == gtk::pango::AttrType::Background)
+            .map(|attr| {
+                let (start, end) = (attr.start_index(), attr.end_index());
+                let excluded = struck.iter().any(|(from, to)| *from > start && *to == end);
+                (start, end, excluded)
+            })
+            .collect()
     }
 
     /// Draw `ghost` after the caret, and its hint at the field's end; or
