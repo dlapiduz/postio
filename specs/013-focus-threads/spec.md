@@ -402,7 +402,8 @@ the body holds six headed messages and every attachment.
   mailing-list or bulk mail, and the candidate thread's latest message is
   within 7 days of it.
 - **FR-003**: A message that replies to a message other than the one before
-  it MUST record which message it answers.
+  it MUST show which message it answers (worked out from `In-Reply-To` when
+  the thread is read; nothing new is stored).
 - **FR-004**: Archive, snooze, label, move, remind-if-no-reply and mute MUST
   act on the thread (D3); read, action markers, the HTML rendering override and
   attachments MUST stay message state. A new reply to an archived or snoozed
@@ -414,7 +415,8 @@ the body holds six headed messages and every attachment.
   everywhere (D2).
 - **FR-007**: Splitting MUST move a message and every message that replies to
   it, directly or not, into a new thread, and MUST be remembered so later mail
-  that references them joins the split thread.
+  that references them joins the split thread. One undo (`z`) MUST reverse a
+  split: the record is forgotten and the messages rejoin the original thread.
 - **FR-008**: A draft reply MUST belong to its thread and be ordered last.
 
 **Lists**
@@ -519,9 +521,9 @@ the body holds six headed messages and every attachment.
 
 ### Measurable Outcomes
 
-- **SC-001**: From the inbox, any message of any thread is shown in at most
-  two keypresses after reaching its row (`Right` and `j`s, or `Return` and
-  `[`/`]`), on both platforms.
+- **SC-001**: From a thread's row, one keypress (`Right`) shows every one of
+  its messages, and any one of them is then reached by `j`/`k` in the list or
+  by `[` `]` `{` `}` in the window, with no other step, on both platforms.
 - **SC-002**: Expanding or collapsing a thread, and stepping in the window,
   each take under 16 ms, and expanding reads a bounded number of statements
   whatever the thread's length (gated as counts).
