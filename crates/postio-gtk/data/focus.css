@@ -1480,17 +1480,6 @@ button.focus-popover-preset.focus-popover-preset-selected {
   color: var(--postio-ink-secondary);
 }
 
-.focus-file-line {
-  min-height: 6px;
-  margin-top: var(--postio-space-1);
-  border-radius: 2px;
-  background-color: var(--postio-hairline);
-}
-
-.focus-file-line.focus-file-line-marked {
-  background-color: rgba(255, 204, 0, 0.38);
-}
-
 .focus-file-name {
   font-weight: 600;
 }
