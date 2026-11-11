@@ -129,7 +129,7 @@ public struct ComposeView: View {
                     .font(.system(size: Metrics.valueSize, weight: .semibold))
                     .focused($focus, equals: .subject)
                     .accessibilityLabel("Subject")
-                    .onKeyPress(.tab) { press in
+                    .onKeyPress(keys: [.tab]) { press in
                         press.modifiers.contains(.shift) ? stepBack(from: .subject) : .ignored
                     }
             }
@@ -285,7 +285,7 @@ public struct ComposeView: View {
                 .onKeyPress(.downArrow) { suggestionKey { model.moveSuggestion(by: 1) } }
                 .onKeyPress(.upArrow) { suggestionKey { model.moveSuggestion(by: -1) } }
                 .onKeyPress(.return) { suggestionKey { model.acceptSuggestion() } }
-                .onKeyPress(.tab) { press in
+                .onKeyPress(keys: [.tab]) { press in
                     // Shift+Tab goes back; only a bare Tab completes.
                     if press.modifiers.contains(.shift) { return stepBack(from: field) }
                     return suggestionKey { model.acceptSuggestion() }
@@ -436,7 +436,7 @@ public struct ComposeView: View {
                     .scrollContentBackground(.hidden)
                     .modifier(NoWritingToolsAffordance())
                     .focused($focus, equals: .body)
-                    .onKeyPress(.tab) { press in
+                    .onKeyPress(keys: [.tab]) { press in
                         press.modifiers.contains(.shift) ? stepBack(from: .body) : .ignored
                     }
                     .disabled(model.isHandedOff)
