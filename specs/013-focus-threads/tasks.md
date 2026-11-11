@@ -158,7 +158,7 @@ shows its own text, and `Return` opens message 4.
   - `new_badge` ("2 new");
   - `child_tag` ("↳ to Ana");
   - `open_at` (first unread, then open marker, then latest).
-- [ ] T026 [P] [US1] Write `crates/postio-focus/tests/controller_suite/threads.rs` cases (red: no expansion):
+- [x] T026 [P] [US1] Write `crates/postio-focus/tests/controller_suite/threads.rs` cases (red: no expansion):
   - `ExpandThread` emits `Splice` with six children and a draft;
   - expanding B collapses A;
   - `j`/`k` walk the children;
@@ -173,7 +173,7 @@ shows its own text, and `Return` opens message 4.
 ### Implementation
 
 - [x] T029 [US1] Implement the T025 functions in `crates/postio-ui/src/focus_row.rs`, and the thread row's `ThreadRowView` (participants, count, subject, labels, latest line, new, attachment, time, chevron).
-- [ ] T030 [US1] Add `Expansion`, `Request::ReadThread`, `Input::ThreadRead`/`ThreadChanged`, and `Intent::Splice`/`Unsplice` to `crates/postio-focus/src/lib.rs`. Wire `perform` in `crates/postio-focus/src/perform.rs`. Make the cursor read through `Splice` in `crates/postio-focus/src/cursor.rs` (`Rows` positions become display positions). Add a count guard: a list page with the new row fields costs today's statements, rows and trigger firings (SC-003; mute's +1 is T061's).
+- [x] T030 [US1] Add `Expansion`, `Request::ReadThread`, `Input::ThreadRead`/`ThreadChanged`, and `Intent::Splice`/`Unsplice` to `crates/postio-focus/src/lib.rs`. Wire `perform` in `crates/postio-focus/src/perform.rs`. Make the cursor read through `Splice` in `crates/postio-focus/src/cursor.rs` (`Rows` positions become display positions). Add a count guard: a list page with the new row fields costs today's statements, rows and trigger firings (SC-003; mute's +1 is T061's).
 - [x] T031 [US1] Add `ChildRowView` to `crates/postio-ui/src/thread_list.rs` (own line or "Quoted reply only", tag, attachment, time, draft styling, focused hint keys from `postio_ui::hints`).
 - [ ] T032 [US1] FFI: `crates/postio-ffi/src/focus_threads.rs` (new; `ChildRowFfi`, `ThreadRowFfi`), splice events in `crates/postio-ffi/src/focus_list.rs`, and `ChevronClicked` input.
 - [ ] T033 [US1] Mac: thread row columns (34 gutter, 230 participants, flexible subject, badges, 58 time) and the chevron in `macos/Sources/PostioKit/FocusList.swift`. Add `macos/Sources/PostioKit/ChildRow.swift` (38 tall, tinted, 1.5 pt line, dot, 20 pt avatar). Do row insertion and removal in `macos/Sources/PostioAppKit/FocusListTable.swift`, with no animation under Reduce Motion. Swift test: focus stays on the row after expand and returns to it after collapse.
@@ -360,7 +360,7 @@ the text and quotes message 6. Then `f`, `2` gives "Fwd: Harbor API draft v3
   - a merge while expanded;
   - a window on a message deleted elsewhere;
   - a body not yet local;
-  - a draft whose thread was archived. Also: a thread with messages in Archive, Sent and the inbox counts every message on its inbox row.
+  - a draft whose thread was archived. Also: a thread with messages in Archive, Sent and the inbox counts every message on its inbox row. Also, from T030's review: (a) `Return` on the draft child opens that draft in the composer (today it does nothing, since a draft has no message id); (b) an expansion must survive a refresh that briefly empties the landed pages. Fold only when a landed page is known to no longer hold the anchor, not when its page is merely absent.
 - [ ] T086 [P] Add a benchmark in `crates/postio-bench/benches/` for `thread_bar::chips` and `Thread` at 500 members (compiled on CI, timed by hand). Record p50/p95 in the step-4 note. Stop rule per plan.md.
 - [ ] T087 [P] Add the scope rule's boundary note to the `postio-ui` entry in `docs/ARCHITECTURE.md`: scope is resolved only by `postio_ui::scope::target`.
 - [ ] T088 [P] Check the logging added in this spec carries ids and counts only, by grepping new `tracing::` calls in the changed crates (FR-029).

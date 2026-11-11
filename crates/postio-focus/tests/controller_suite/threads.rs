@@ -1,0 +1,472 @@
+//! Expanding a thread in place (spec 013 US1, research R7).
+//!
+//! The controller holds one `Expansion` and the frontend holds the rows: the
+//! controller reads them through `Rows` (row positions) and speaks in
+//! display positions, which count the expanded thread's children. These
+//! cases drive it as a frontend would: a fake list, keys, and the replies a
+//! client would give.
+
+use crate::search_support::{asks, shown};
+use chrono::{TimeZone, Utc};
+use postio_config::paths::Platform;
+use postio_core::{CommandId, Event};
+use postio_focus::{
+    Effect, FocusController, Input, Intent, Policy, Reply, Request, RowFacts, Rows, Ticket,
+};
+use postio_model::listing::MessageSummary;
+use postio_model::thread_view::{Line, ThreadDraft, ThreadMember, ThreadView};
+use postio_model::{AccountId, DraftId, EmailAddress, MessageId, ThreadId};
+use postio_ui::focus_list::{FocusRow, lone};
+use postio_ui::thread_list::ChildRowView;
+
+/// One row of the fake list: a conversation of `count` messages.
+#[derive(Clone)]
+struct Row {
+    id: MessageId,
+    thread: ThreadId,
+    count: u32,
+}
+
+struct List {
+    rows: Vec<Row>,
+}
+
+impl List {
+    /// Rows 0.. with the message counts given; row `n` is message `100 + n`
+    /// of thread `500 + n`.
+    fn of(counts: &[u32]) -> Self {
+        List {
+            rows: counts
+                .iter()
+                .enumerate()
+                .map(|(at, count)| Row {
+                    id: MessageId::new(100 + at as i64),
+                    thread: ThreadId::new(500 + at as i64),
+                    count: *count,
+                })
+                .collect(),
+        }
+    }
+
+    /// The same list without the row for `thread`.
+    fn without(&self, thread: ThreadId) -> Self {
+        List {
+            rows: self
+                .rows
+                .iter()
+                .filter(|row| row.thread != thread)
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
+impl Rows for List {
+    fn len(&self) -> u32 {
+        self.rows.len() as u32
+    }
+    fn facts(&self, position: u32) -> Option<RowFacts> {
+        self.rows.get(position as usize).map(|row| RowFacts {
+            id: row.id,
+            digest: false,
+            threads: vec![row.thread],
+            writes: false,
+        })
+    }
+    fn position_of(&self, message: MessageId) -> Option<u32> {
+        self.rows
+            .iter()
+            .position(|row| row.id == message)
+            .map(|at| at as u32)
+    }
+    fn row(&self, position: u32) -> Option<FocusRow> {
+        let row = self.rows.get(position as usize)?;
+        let mut summary = lone(MessageSummary {
+            id: row.id,
+            thread: Some(row.thread),
+            from: Some(EmailAddress::new(Some("Ben Ortiz"), "ben@example.com")),
+            subject: Some("Harbor API draft v3".into()),
+            preview: None,
+            received_at: Utc.with_ymd_and_hms(2026, 9, 21, 9, 14, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state: None,
+            send_at: None,
+            has_attachments: false,
+            thread_count: row.count,
+            to: Vec::new(),
+        });
+        summary.message_count = row.count;
+        Some(FocusRow::conversation(summary))
+    }
+}
+
+/// The member `index` of the thread `thread`.
+fn member_id(thread: ThreadId, index: usize) -> MessageId {
+    MessageId::new(thread.get() * 100 + index as i64)
+}
+
+/// A thread read: `members` messages, the last `unread` of them unread, and
+/// an unsent reply when `draft`.
+fn view(thread: ThreadId, members: usize, unread: usize, draft: bool) -> ThreadView {
+    let at = Utc.with_ymd_and_hms(2026, 9, 21, 9, 0, 0).unwrap();
+    ThreadView {
+        thread,
+        subject: Some("Harbor API draft v3".into()),
+        members: (0..members)
+            .map(|index| ThreadMember {
+                id: member_id(thread, index),
+                from: Some(EmailAddress::new(Some("Ben Ortiz"), "ben@example.com")),
+                own: index % 3 == 2,
+                at: at + chrono::Duration::minutes(index as i64),
+                seen: index + unread < members,
+                has_attachments: false,
+                line: Line::Own(format!("Message {index} says its own thing.")),
+                answers: None,
+                marker: false,
+            })
+            .collect(),
+        draft: draft.then(|| ThreadDraft {
+            id: DraftId::new(7),
+            first_words: "Thanks, I will".into(),
+            updated_at: at,
+        }),
+        muted: None,
+        labels: Vec::new(),
+    }
+}
+
+fn focus() -> FocusController {
+    FocusController::new(Policy::for_platform(Platform::Apple))
+}
+
+fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effect> {
+    focus.handle_on(Input::Command(command), rows)
+}
+
+/// The thread read the effects ask for, and its ticket.
+fn read_asked(effects: &[Effect]) -> Option<(Ticket, ThreadId)> {
+    asks(effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::ReadThread(thread) => Some((ticket, thread)),
+            _ => None,
+        })
+}
+
+/// Answer a read the way the client would.
+fn answer(
+    focus: &mut FocusController,
+    ticket: Ticket,
+    view: ThreadView,
+    rows: &List,
+) -> Vec<Effect> {
+    focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::ThreadRead {
+                thread: view.thread,
+                view: Ok(Some(view)),
+            },
+        ),
+        rows,
+    )
+}
+
+fn splice_of(effects: &[Effect]) -> Option<(u32, Vec<ChildRowView>)> {
+    shown(effects).into_iter().find_map(|intent| match intent {
+        Intent::Splice { anchor, children } => Some((anchor, children)),
+        _ => None,
+    })
+}
+
+fn unspliced(effects: &[Effect]) -> Vec<u32> {
+    shown(effects)
+        .into_iter()
+        .filter_map(|intent| match intent {
+            Intent::Unsplice { anchor } => Some(anchor),
+            _ => None,
+        })
+        .collect()
+}
+
+fn cursor_of(effects: &[Effect]) -> Option<u32> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Cursor { position, .. } => Some(position),
+            _ => None,
+        })
+}
+
+fn opened_message(effects: &[Effect]) -> Option<MessageId> {
+    shown(effects).into_iter().find_map(|intent| match intent {
+        Intent::OpenMessage { message, .. } => Some(message),
+        _ => None,
+    })
+}
+
+/// Harbor, row 0 (thread 500, six messages and a draft), expanded over a
+/// list of `counts`.
+fn expanded(counts: &[u32]) -> (FocusController, List) {
+    let rows = List::of(counts);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read");
+    let _ = answer(&mut focus, ticket, view(thread, 6, 2, true), &rows);
+    (focus, rows)
+}
+
+#[test]
+fn expanding_harbor_reads_it_and_splices_six_children_and_the_draft() {
+    let rows = List::of(&[6, 4, 1, 3]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("ExpandThread reads the thread");
+    assert_eq!(thread, ThreadId::new(500));
+    assert!(
+        splice_of(&effects).is_none(),
+        "nothing is drawn until the thread is read"
+    );
+
+    let effects = answer(&mut focus, ticket, view(thread, 6, 2, true), &rows);
+    let (anchor, children) = splice_of(&effects).expect("the read splices");
+    assert_eq!(anchor, 0);
+    assert_eq!(children.len(), 7, "six members and the draft");
+    assert!(children[..6].iter().all(|child| !child.draft));
+    assert!(children[6].draft, "the unsent reply comes last");
+    assert!(
+        children[4].bold && children[5].bold && !children[3].bold,
+        "the two unread are bold"
+    );
+    assert_eq!(
+        children[0]
+            .focused_hint
+            .as_ref()
+            .map(|hint| hint.label.as_str()),
+        Some("this one")
+    );
+    assert_eq!(focus.cursor(), Some(0), "the cursor stays on the row");
+}
+
+#[test]
+fn expanding_another_thread_collapses_the_first() {
+    let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
+    // Harbor's children sit between rows 0 and 1: row 1 is display 8.
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(cursor_of(&effects), Some(1), "first child");
+    let _ = run(&mut focus, CommandId::LastMessage, &rows);
+    let _ = run(&mut focus, CommandId::PrevMessage, &rows);
+    // Back onto row 2 (a single message), then up to row 1.
+    let _ = run(&mut focus, CommandId::PrevMessage, &rows);
+    assert_eq!(focus.cursor(), Some(8), "row 1 sits after the 7 children");
+
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read of B");
+    assert_eq!(thread, ThreadId::new(501));
+    let effects = answer(&mut focus, ticket, view(thread, 4, 0, false), &rows);
+    assert_eq!(unspliced(&effects), vec![0], "A goes");
+    let (anchor, children) = splice_of(&effects).expect("B comes");
+    assert_eq!((anchor, children.len()), (1, 4));
+    assert_eq!(
+        cursor_of(&effects),
+        Some(1),
+        "B's row, now that A's children are gone"
+    );
+    assert_eq!(focus.cursor(), Some(1));
+}
+
+#[test]
+fn j_and_k_walk_into_and_through_the_children() {
+    let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
+    let mut seen = Vec::new();
+    for _ in 0..8 {
+        let effects = run(&mut focus, CommandId::NextMessage, &rows);
+        seen.push(cursor_of(&effects));
+    }
+    // Seven children (display 1..=7), then row 1 (display 8), then row 2,
+    // and so on to the end of the list: 12 positions in all.
+    assert_eq!(
+        seen,
+        (1..=8).map(Some).collect::<Vec<_>>(),
+        "children are walked one by one, then the next row"
+    );
+    for want in (0..8).rev() {
+        let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+        assert_eq!(cursor_of(&effects), Some(want));
+    }
+    assert_eq!(focus.cursor(), Some(0), "back on the thread's row");
+    // The list is 4 rows + 7 children: the last position is 10.
+    let effects = run(&mut focus, CommandId::LastMessage, &rows);
+    assert_eq!(cursor_of(&effects), Some(10));
+}
+
+#[test]
+fn collapsing_from_a_child_unsplices_and_returns_to_the_row() {
+    let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
+    for _ in 0..3 {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    }
+    assert_eq!(focus.cursor(), Some(3));
+    let effects = run(&mut focus, CommandId::CollapseThread, &rows);
+    assert_eq!(unspliced(&effects), vec![0]);
+    assert_eq!(cursor_of(&effects), Some(0), "the thread's row");
+    assert_eq!(focus.cursor(), Some(0));
+    // Collapsed: j goes to the next row, not into children.
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(cursor_of(&effects), Some(1));
+}
+
+#[test]
+fn expanding_a_thread_of_one_message_does_nothing() {
+    let rows = List::of(&[6, 1]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    // Positive control: the same key on a thread of six reads it.
+    let _ = run(&mut focus, CommandId::PrevMessage, &rows);
+    assert!(read_asked(&run(&mut focus, CommandId::ExpandThread, &rows)).is_some());
+    let mut focus = self::focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    assert!(effects.is_empty(), "no request, no intent: {effects:?}");
+}
+
+#[test]
+fn the_anchor_leaving_the_list_unsplices_and_the_cursor_moves_to_the_next_row() {
+    let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
+    for _ in 0..3 {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    }
+    // Archived elsewhere: the list no longer holds Harbor.
+    let rest = rows.without(ThreadId::new(500));
+    let effects = focus.landed(&rest, false);
+    assert_eq!(unspliced(&effects), vec![0]);
+    assert_eq!(
+        cursor_of(&effects),
+        Some(0),
+        "the row that moved up into Harbor's place"
+    );
+    assert_eq!(focus.cursor(), Some(0));
+    let effects = run(&mut focus, CommandId::NextMessage, &rest);
+    assert_eq!(cursor_of(&effects), Some(1), "no children left to walk");
+}
+
+#[test]
+fn a_changed_thread_is_read_again_and_keeps_the_focused_child() {
+    let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
+    for _ in 0..3 {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    }
+    let thread = ThreadId::new(500);
+    let focused = member_id(thread, 2);
+    assert_eq!(focus.cursor(), Some(3), "the third member");
+
+    // A reply arrives.
+    let effects = focus.handle_on(
+        Input::Event(Event::ThreadChanged {
+            account: AccountId::new(1),
+            thread,
+            members_added: vec![MessageId::new(9001)],
+        }),
+        &rows,
+    );
+    let (ticket, asked) = read_asked(&effects).expect("the expansion reads again");
+    assert_eq!(asked, thread);
+
+    // An older message is re-linked ahead of the focused one: the same
+    // message is now at index 3, not 2.
+    let mut changed = view(thread, 6, 3, true);
+    changed
+        .members
+        .insert(1, view(thread, 7, 0, false).members.remove(6));
+    let at = changed
+        .members
+        .iter()
+        .position(|member| member.id == focused)
+        .expect("kept");
+    assert_ne!(at, 2, "the focused message moved");
+    let effects = answer(&mut focus, ticket, changed, &rows);
+    let (anchor, children) = splice_of(&effects).expect("the children are redrawn");
+    assert_eq!(
+        (anchor, children.len()),
+        (0, 8),
+        "seven members and a draft"
+    );
+    assert_eq!(
+        cursor_of(&effects),
+        Some(1 + at as u32),
+        "the cursor follows the same message"
+    );
+    assert_eq!(focus.cursor(), Some(1 + at as u32));
+
+    // A change to another thread reads nothing.
+    let effects = focus.handle_on(
+        Input::Event(Event::ThreadChanged {
+            account: AccountId::new(1),
+            thread: ThreadId::new(501),
+            members_added: Vec::new(),
+        }),
+        &rows,
+    );
+    assert!(read_asked(&effects).is_none(), "{effects:?}");
+}
+
+#[test]
+fn return_on_a_thread_row_opens_the_first_unread_and_on_a_child_that_child() {
+    let rows = List::of(&[6, 4]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+
+    // The thread is not loaded: it is read first, then opened where
+    // `open_at` says (members 4 and 5 are unread).
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert_eq!(opened_message(&effects), None, "not before it is read");
+    let (ticket, thread) = read_asked(&effects).expect("the thread is read first");
+    let effects = answer(&mut focus, ticket, view(thread, 6, 2, true), &rows);
+    assert_eq!(opened_message(&effects), Some(member_id(thread, 4)));
+    assert!(
+        splice_of(&effects).is_none(),
+        "opening a row does not expand it"
+    );
+
+    // On a child: that child's message.
+    let (mut focus, rows) = expanded(&[6, 4]);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert_eq!(
+        opened_message(&effects),
+        Some(member_id(ThreadId::new(500), 1))
+    );
+
+    // Expanded, the row's own Return needs no second read.
+    let (mut focus, rows) = expanded(&[6, 4]);
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert!(read_asked(&effects).is_none(), "{effects:?}");
+    assert_eq!(
+        opened_message(&effects),
+        Some(member_id(ThreadId::new(500), 4))
+    );
+}
