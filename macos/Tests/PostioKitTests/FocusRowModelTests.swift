@@ -48,7 +48,7 @@ import Testing
             sendState: nil,
             pills: pills,
             marker: marker,
-            writes: false
+            writes: false, threadRow: nil, child: nil
         )
     }
 

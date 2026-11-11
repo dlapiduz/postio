@@ -444,6 +444,7 @@ final class Engine {
         // when its intents come back, never here.
         table.onPoint = { [weak session] row in session?.focusPoint(row) }
         table.onActivate = { [weak session] row in session?.focusActivate(row) }
+        table.onChevron = { [weak session] row in session?.focusChevronClicked(UInt32(max(0, row))) }
         table.onPick = { [weak session] row, range in session?.focusPick(row, range: range) }
         // A click on a sender's name hangs the known-sender popover from it.
         table.onContactName = { [weak self, weak session] row, address in
@@ -1575,6 +1576,12 @@ final class Engine {
         case let .focusListChanged(total):
             focusTable?.listChanged(total: total)
             refreshCounts()
+        case let .focusSplice(anchor, children):
+            // A thread opened in place (or was read again): its children
+            // are rows of the table, drawn from the session.
+            focusTable?.splice(anchor: Int(anchor), children: children.count)
+        case .focusUnsplice:
+            focusTable?.unsplice()
         case let .focusPageReady(page):
             focusTable?.pageArrived(page)
             listTakesTheKeyboard()

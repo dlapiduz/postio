@@ -136,6 +136,36 @@ public struct FocusRowModel: Equatable, Sendable {
         case twoLine
         /// A digest delivery: the stacked icon, one line.
         case digest
+        /// A thread of two or more messages: the one line, 46 tall, with
+        /// the chevron in its gutter (Design: focus-macos-threads §2).
+        case thread
+        /// A message of the expanded thread, drawn under its row.
+        case child
+    }
+
+    /// The chevron in a thread row's gutter.
+    public enum Chevron: Equatable, Sendable {
+        case collapsed
+        case expanded
+    }
+
+    /// One child of an expanded thread, as the words say it.
+    public struct Child: Equatable, Sendable {
+        public let initials: String
+        public let sender: String
+        /// Unread: bold, with an accent dot on the line.
+        public let unread: Bool
+        /// "\u{21b3} to Ana", or "not sent" on a draft.
+        public let tag: String?
+        public let line: String
+        /// The line is a stand-in, drawn quiet.
+        public let placeholder: Bool
+        public let attachment: Bool
+        public let draft: Bool
+        /// The keycaps of the focused child's hint, as the live keymap
+        /// spells them, and what they act on.
+        public let hintKeys: [String]
+        public let hintLabel: String?
     }
 
     /// A label pill: its name, and the dot in the label's own colour.
@@ -189,6 +219,13 @@ public struct FocusRowModel: Equatable, Sendable {
     public let sendState: String?
     public let pills: [Pill]
     public let marker: Marker?
+    /// "2 new": drawn as a filled pill in the label colour, never the
+    /// accent. Threads only.
+    public let newBadge: String?
+    /// The gutter's chevron; `nil` for a row that is not a thread.
+    public let chevron: Chevron?
+    /// What a child row says; `nil` for every other row.
+    public let child: Child?
     /// The day heading drawn above this row, when it is the first of its
     /// day. Set by `FocusListModel`, the only thing that knows the row
     /// before.
@@ -198,14 +235,25 @@ public struct FocusRowModel: Equatable, Sendable {
         id = row.id
         thread = row.thread
         layout = Self.layout(of: row)
-        sender = row.sender
-        fromAddress = row.fromAddress
+        // A thread row names its participants and quotes its latest
+        // message; the sender's popover has nobody to ask about.
+        sender = row.threadRow?.participants ?? row.sender
+        fromAddress = row.threadRow == nil ? row.fromAddress : nil
         subject = row.subject
-        preview = row.preview
+        preview = row.threadRow.map { $0.latestLine.isEmpty ? nil : $0.latestLine } ?? row.preview
+        newBadge = row.threadRow?.new
+        chevron = row.threadRow?.chevron.map { $0 == .expanded ? Chevron.expanded : .collapsed }
+        child = row.child.map {
+            Child(
+                initials: $0.initials, sender: $0.sender, unread: $0.bold, tag: $0.tag,
+                line: $0.line, placeholder: $0.placeholder, attachment: $0.attachment,
+                draft: $0.draft, hintKeys: $0.hint?.keys.compactMap { KeyCapSpelling.cap($0) } ?? [],
+                hintLabel: $0.hint?.label)
+        }
         time = row.time
         dayHeading = row.dayHeading
         unread = row.unread
-        countBadge = row.countBadge
+        countBadge = row.threadRow?.count ?? row.countBadge
         hasAttachments = row.hasAttachments
         sendState = row.sendState
         pills = row.pills.prefix(Self.maxPills).map {
@@ -232,7 +280,9 @@ public struct FocusRowModel: Equatable, Sendable {
     /// The shape a row takes, from its kind and whether it is marked.
     public static func layout(of row: FocusRowFfi) -> Layout {
         if row.kind == .digest { return .digest }
-        return row.marker == nil ? .oneLine : .twoLine
+        if row.kind == .child { return .child }
+        if row.marker != nil { return .twoLine }
+        return row.threadRow == nil ? .oneLine : .thread
     }
 
     /// Unread is bold (the Mac pack's global rules).
@@ -241,12 +291,22 @@ public struct FocusRowModel: Equatable, Sendable {
     /// Unread also has the accent dot in the gutter. A marked row says so
     /// on its second line; a dot there read as new mail. A digest's gutter
     /// holds its stack.
-    public var dot: Bool { unread && layout != .digest }
+    public var dot: Bool { unread && layout != .digest && layout != .child }
 
     /// What VoiceOver says for the row: GTK's row says the same things in
     /// the same order (`postio-gtk` `list/row.rs`).
     public var accessibilityLabel: String {
+        if let child {
+            var parts = [child.sender]
+            if let tag = child.tag { parts.append(tag) }
+            parts.append(child.line)
+            parts.append(time)
+            if child.unread { parts.append("unread") }
+            return parts.joined(separator: ", ")
+        }
         var parts = [sender, subject]
+        if let count = countBadge, chevron != nil { parts.append("\(count) messages") }
+        if let newBadge { parts.append(newBadge) }
         if let preview, !preview.isEmpty { parts.append(preview) }
         if unread { parts.append("unread") }
         if let sendState { parts.append(sendState) }
@@ -272,6 +332,17 @@ public enum FocusRowMetrics {
     public static let oneLine: Double = 40
     /// A marked row.
     public static let twoLine: Double = 72
+    /// A thread row (Design: focus-macos-threads §2), and a child under it.
+    public static let thread: Double = 46
+    public static let child: Double = 38
+    /// The gutter is 34 wide: the unread dot, then the chevron.
+    public static let dotCentre: Double = 15
+    public static let chevronCentre: Double = 31
+    /// The child's vertical line, its width, and its avatar.
+    public static let childLineX: Double = 25
+    public static let childLineWidth: Double = 1.5
+    public static let childAvatarX: Double = 69
+    public static let childAvatar: Double = 20
     /// The day heading's band above the first row of a day.
     public static let heading: Double = 32
     /// The centre of the gutter's dot, box or icon.
@@ -293,7 +364,13 @@ public enum FocusRowMetrics {
     /// A row's height: its layout's, plus the heading's band when it starts
     /// a day. Fixed per shape, so nothing is ever measured.
     public static func height(_ layout: FocusRowModel.Layout, headed: Bool) -> Double {
-        let body = layout == .twoLine ? twoLine : oneLine
+        let body: Double
+        switch layout {
+        case .twoLine: body = twoLine
+        case .thread: body = thread
+        case .child: return child
+        case .oneLine, .digest: body = oneLine
+        }
         return headed ? body + heading : body
     }
 
@@ -354,6 +431,17 @@ public final class FocusListModel {
     }
     private var shapes: [Int: Shape] = [:]
 
+    /// The thread open in place: where its row is, and how many children
+    /// sit under it. The table's positions count them (display positions),
+    /// the engine's pages do not.
+    public struct Splice: Equatable, Sendable {
+        public let anchor: Int
+        public let children: Int
+        /// The children's positions.
+        public var range: Range<Int> { (anchor + 1)..<(anchor + 1 + children) }
+    }
+    public private(set) var open: Splice?
+
     /// Keycaps by command, until the keymap changes. A binding lookup
     /// clones the whole keymap on the other side, and the table draws a
     /// row's actions on every redraw.
@@ -398,6 +486,42 @@ public final class FocusListModel {
         focus.listResized(count: count)
     }
 
+    /// The controller opened the thread at row `anchor`: `children` rows now
+    /// sit after it. Everything learned about the rows below moves down with
+    /// them. Answers the positions that are new. Replaces what was open.
+    @discardableResult
+    public func spliced(anchor: Int, children: Int) -> Range<Int> {
+        _ = unspliced()
+        let splice = Splice(anchor: anchor, children: children)
+        shapes = Dictionary(
+            uniqueKeysWithValues: shapes.map { $0.key > anchor ? ($0.key + children, $0.value) : ($0.key, $0.value) })
+        count += children
+        open = splice
+        return splice.range
+    }
+
+    /// The thread folded: its children are gone and the rows below move up.
+    /// Answers the positions that went, if anything was open.
+    @discardableResult
+    public func unspliced() -> Range<Int>? {
+        guard let splice = open else { return nil }
+        let gone = splice.range
+        shapes = Dictionary(
+            uniqueKeysWithValues: shapes.compactMap { key, shape in
+                if gone.contains(key) { return nil }
+                return (key >= gone.upperBound ? key - splice.children : key, shape)
+            })
+        count -= splice.children
+        open = nil
+        return gone
+    }
+
+    /// Where the list's `row`th row is drawn.
+    private func display(row: Int) -> Int {
+        guard let open, row > open.anchor else { return row }
+        return row + open.children
+    }
+
     /// `[keys]` changed: every cap may spell something else now.
     public func keymapChanged() {
         caps = [:]
@@ -426,7 +550,8 @@ public final class FocusListModel {
     /// engine. A row not seen yet is drawn as a one-liner until its page
     /// says otherwise.
     public func height(at index: Int) -> Double {
-        let layout = shapes[index]?.layout ?? .oneLine
+        let layout: FocusRowModel.Layout =
+            open?.range.contains(index) == true ? .child : (shapes[index]?.layout ?? .oneLine)
         let headed = focus.heading != nil ? index == 0 : startsADay(index) ?? (index == 0)
         return FocusRowMetrics.height(layout, headed: headed)
     }
@@ -443,9 +568,13 @@ public final class FocusListModel {
     /// page's own, and the next page's first, whose heading depended on
     /// this page's last row.
     public func pageArrived(_ page: UInt32) -> IndexSet {
-        let first = Int(page * Self.pageSize)
-        let end = min(first + Int(Self.pageSize), count)
-        guard first < end else { return [] }
+        // The page counts the list's rows; the table counts the children.
+        let rows = count - (open?.children ?? 0)
+        let firstRow = Int(page * Self.pageSize)
+        let endRow = min(firstRow + Int(Self.pageSize), rows)
+        guard firstRow < endRow else { return [] }
+        let first = display(row: firstRow)
+        let end = display(row: endRow)
         for index in first..<end {
             if let row = source.focusRow(at: UInt32(index)) { learn(row, at: index) }
         }

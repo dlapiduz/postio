@@ -62,7 +62,7 @@ struct FocusListScrollTests {
                         status: nil,
                         actions: [FocusRowActionFfi(command: "reply", label: "Reply")])
                     : nil,
-                writes: false)
+                writes: false, threadRow: nil, child: nil)
         }
 
         /// The pages missed since the last call have arrived; say which.

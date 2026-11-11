@@ -255,6 +255,20 @@ pub enum UiEvent {
     },
     /// Scroll the list back to its very top.
     FocusListToTop,
+    /// A thread opened in place: draw `children` after the row at `anchor`
+    /// (a row position), replacing any it had. No animation under Reduce
+    /// Motion (spec 013).
+    FocusSplice {
+        /// The expanded row's position among the rows.
+        anchor: u32,
+        /// One per message, oldest first, then the unsent reply.
+        children: Vec<crate::ChildRowFfi>,
+    },
+    /// The thread at `anchor` folded: remove its children.
+    FocusUnsplice {
+        /// The collapsed row's position among the rows.
+        anchor: u32,
+    },
     /// Say something in the toast: the host's words.
     FocusToast {
         /// What to say.

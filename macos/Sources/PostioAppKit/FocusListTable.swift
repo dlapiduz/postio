@@ -34,6 +34,10 @@ public final class FocusListTable: NSObject {
     /// A double-click on a row.
     public var onActivate: ((Int) -> Void)?
 
+    /// A click on a thread row's chevron: `focusChevronClicked`. The
+    /// controller opens or folds the thread and says which as a splice.
+    public var onChevron: ((Int) -> Void)?
+
     /// A modified click on a row: `focusPick`, with `range` for ⇧ and a
     /// toggle for ⌘.
     public var onPick: ((Int, Bool) -> Void)?
@@ -125,7 +129,20 @@ public final class FocusListTable: NSObject {
             onContactName?(row, address)
             return
         }
+        if let event, event.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
+            row >= 0, model.row(at: row)?.chevron != nil,
+            Self.chevronHit(tableView.convert(event.locationInWindow, from: nil).x)
+        {
+            onChevron?(row)
+            return
+        }
         clicked(row: row, modifiers: event?.modifierFlags ?? [])
+    }
+
+    /// Whether a click `x` points from the row's left edge is on the
+    /// chevron: the gutter's right half, as wide as the gutter is.
+    static func chevronHit(_ x: CGFloat) -> Bool {
+        abs(x - CGFloat(FocusRowMetrics.chevronCentre)) <= 10
     }
 
     /// A click landed on a sender's name: the row and its address, for the popover.
@@ -172,6 +189,54 @@ public final class FocusListTable: NSObject {
         tableView.reloadData()
         if let cursor = model.cursor { tableView.scrollRowToVisible(cursor) }
         scrolled()
+    }
+
+    /// `FocusSplice`: the thread at row `anchor` opened in place, `children`
+    /// rows long. Inserted, not reloaded: nothing else on screen moves but
+    /// what is below. Under Reduce Motion they appear at once; otherwise
+    /// they fade in within the 100 ms budget (`Motion`).
+    public func splice(anchor: Int, children: Int) {
+        let folded = model.open
+        let inserted = model.spliced(anchor: anchor, children: children)
+        heightsOwed = []
+        changing { [tableView] in
+            if let folded {
+                tableView.removeRows(at: IndexSet(folded.range), withAnimation: [])
+            }
+            tableView.insertRows(at: IndexSet(integersIn: inserted), withAnimation: Self.entrance)
+        }
+        // The anchor's chevron turned, and its row may be re-measured.
+        redraw(rows: [anchor])
+    }
+
+    /// `FocusUnsplice`: the open thread folded; its rows go.
+    public func unsplice() {
+        guard let anchor = model.open?.anchor, let gone = model.unspliced() else { return }
+        heightsOwed = []
+        changing { [tableView] in
+            tableView.removeRows(at: IndexSet(integersIn: gone), withAnimation: Self.exit)
+        }
+        redraw(rows: [anchor])
+    }
+
+    /// The row animations: none under Reduce Motion, else a quick fade.
+    private static var entrance: NSTableView.AnimationOptions {
+        Motion.duration(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion) == 0
+            ? [] : .effectFade
+    }
+    private static var exit: NSTableView.AnimationOptions { entrance }
+
+    /// Run `edit` as one batch of row changes lasting no more than
+    /// `Motion`'s 100 ms (or none).
+    private func changing(_ edit: () -> Void) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.duration(
+                reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            context.allowsImplicitAnimation = context.duration > 0
+            tableView.beginUpdates()
+            edit()
+            tableView.endUpdates()
+        }
     }
 
     /// `FocusPageReady`: redraw that page's rows, and tell the table which of
@@ -356,7 +421,9 @@ extension FocusListTable: NSTableViewDelegate {
     ) -> NSView? {
         let cell = cell(reusing: tableView.makeView(withIdentifier: Self.cellIdentifier, owner: self))
         let shown = model.row(at: row)
-        cell.show(shown, picked: shown.map { model.isPicked($0.id) } ?? false)
+        cell.show(
+            shown, picked: shown.map { model.isPicked($0.id) } ?? false,
+            cursor: row == model.cursor)
         cell.onAction = { [weak self] command in self?.onAction?(command, row) }
         // A row redrawn in place keeps its row view, which must follow.
         if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? FocusRowView {
@@ -380,6 +447,11 @@ extension FocusListTable: NSTableViewDelegate {
         rowView.isCursor = row == model.cursor
         rowView.heading = shown?.heading != nil
         rowView.isPicked = shown.map { model.isPicked($0.id) } ?? false
+        if let child = shown?.child, let open = model.open {
+            rowView.child = FocusRowView.ChildMark(unread: child.unread, last: row == open.range.upperBound - 1)
+        } else {
+            rowView.child = nil
+        }
     }
 }
 
@@ -392,6 +464,15 @@ final class FocusRowView: NSTableRowView {
     var heading = false { didSet { if heading != oldValue { needsDisplay = true } } }
     var isCursor = false { didSet { if isCursor != oldValue { needsDisplay = true } } }
     var isPicked = false { didSet { if isPicked != oldValue { needsDisplay = true } } }
+
+    /// What a child row draws behind its words: the tint, and its place on
+    /// the 1.5 pt line that joins an open thread's messages.
+    struct ChildMark: Equatable {
+        let unread: Bool
+        /// The line stops at the dot on the last child.
+        let last: Bool
+    }
+    var child: ChildMark? { didSet { if child != oldValue { needsDisplay = true } } }
 
     override var isFlipped: Bool { true }
 
@@ -419,8 +500,24 @@ final class FocusRowView: NSTableRowView {
             NSColor.labelColor.withAlphaComponent(0.06).setFill()
             body.fill()
         }
-        NSColor.separatorColor.setFill()
-        NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+        if let child {
+            // A slightly tinted ground: the label ink at 3%, so it follows
+            // the appearance. The line, then the dot on it.
+            NSColor.labelColor.withAlphaComponent(0.03).setFill()
+            bounds.fill()
+            let line = CGFloat(FocusRowMetrics.childLineX)
+            let width = CGFloat(FocusRowMetrics.childLineWidth)
+            NSColor.separatorColor.setFill()
+            NSRect(
+                x: line - width / 2, y: 0, width: width,
+                height: child.last ? bounds.midY : bounds.height
+            ).fill()
+            (child.unread ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor).setFill()
+            NSBezierPath(ovalIn: NSRect(x: line - 3.5, y: bounds.midY - 3.5, width: 7, height: 7)).fill()
+        } else {
+            NSColor.separatorColor.setFill()
+            NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+        }
         if isCursor {
             NSColor.controlAccentColor.withAlphaComponent(0.07).setFill()
             body.fill()
@@ -445,6 +542,7 @@ final class FocusRowView: NSTableRowView {
         heading = false
         isCursor = false
         isPicked = false
+        child = nil
     }
 }
 
@@ -464,20 +562,23 @@ final class FocusRowCell: NSView {
     var onAction: ((String) -> Void)?
 
     private let gutterIcon = NSImageView()
+    private let chevron = NSImageView()
     private let clip = NSImageView()
+    private var cursor = false
     private var buttons: [FocusActionButton] = []
 
     override var isFlipped: Bool { true }
 
     init() {
         super.init(frame: .zero)
-        for image in [gutterIcon, clip] {
+        for image in [gutterIcon, chevron, clip] {
             image.imageScaling = .scaleProportionallyDown
             image.isHidden = true
             addSubview(image)
         }
         clip.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Attachment")
         clip.contentTintColor = .secondaryLabelColor
+        chevron.contentTintColor = .secondaryLabelColor
         setAccessibilityElement(true)
         setAccessibilityRole(.row)
     }
@@ -485,9 +586,10 @@ final class FocusRowCell: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not from a nib") }
 
-    func show(_ row: FocusRowModel?, picked: Bool) {
+    func show(_ row: FocusRowModel?, picked: Bool, cursor: Bool = false) {
         shown = row
         self.picked = picked
+        self.cursor = cursor
         let actions = row?.marker?.actions ?? []
         while buttons.count < actions.count {
             let button = FocusActionButton()
@@ -517,10 +619,12 @@ final class FocusRowCell: NSView {
     /// The first line's centre: a one-line row's middle, or a marked row's
     /// upper line.
     private var firstLine: CGFloat {
-        guard let shown, shown.layout == .twoLine else {
-            return top + CGFloat(FocusRowMetrics.oneLine) / 2
+        switch shown?.layout {
+        case .twoLine: return top + CGFloat(FocusRowMetrics.firstLine)
+        case .thread: return top + CGFloat(FocusRowMetrics.thread) / 2
+        case .child: return CGFloat(FocusRowMetrics.child) / 2
+        default: return top + CGFloat(FocusRowMetrics.oneLine) / 2
         }
-        return top + CGFloat(FocusRowMetrics.firstLine)
     }
 
     private var secondLine: CGFloat { top + CGFloat(FocusRowMetrics.secondLine) }
@@ -530,19 +634,32 @@ final class FocusRowCell: NSView {
         let width = bounds.width
         // The gutter: a checked box when selected, a digest's stack, or
         // nothing (an unread row's dot is drawn, not an image).
-        if let shown, picked || shown.layout == .digest {
+        if let shown, shown.layout != .child, picked || shown.layout == .digest {
             gutterIcon.image = NSImage(
                 systemSymbolName: picked ? "checkmark.square.fill" : "square.stack.3d.up",
                 accessibilityDescription: nil
             )
             gutterIcon.contentTintColor = picked ? .labelColor : .secondaryLabelColor
-            gutterIcon.frame = NSRect(
-                x: CGFloat(FocusRowMetrics.gutterCentre) - 7, y: firstLine - 7, width: 14, height: 14)
+            let centre = shown.layout == .digest ? FocusRowMetrics.gutterCentre : FocusRowMetrics.dotCentre
+            gutterIcon.frame = NSRect(x: CGFloat(centre) - 7, y: firstLine - 7, width: 14, height: 14)
             gutterIcon.isHidden = false
         } else {
             gutterIcon.isHidden = true
         }
-        if let shown, shown.hasAttachments {
+        if let shown, let state = shown.chevron {
+            // Collapsed points right; open points down: the quarter turn,
+            // drawn as the two symbols so Reduce Motion has nothing to turn.
+            chevron.image = NSImage(
+                systemSymbolName: state == .expanded ? "chevron.down" : "chevron.right",
+                accessibilityDescription: state == .expanded ? "Expanded" : "Collapsed"
+            )?.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+            chevron.frame = NSRect(
+                x: CGFloat(FocusRowMetrics.chevronCentre) - 6, y: firstLine - 6, width: 12, height: 12)
+            chevron.isHidden = false
+        } else {
+            chevron.isHidden = true
+        }
+        if let shown, shown.hasAttachments, shown.layout != .child {
             let at = trailingColumn(of: shown, width: width).clip ?? 0
             clip.frame = NSRect(x: at, y: firstLine - 8, width: 16, height: 16)
             clip.isHidden = false
@@ -568,6 +685,10 @@ final class FocusRowCell: NSView {
                 heading, Ink.heading, colour: .secondaryLabelColor,
                 x: 24, middle: CGFloat(FocusRowMetrics.heading) / 2, room: width - 48)
         }
+        if let child = row.child {
+            drawChild(row, child, width: width)
+            return
+        }
         let middle = firstLine
         let bold = row.bold || row.layout == .digest
 
@@ -575,7 +696,7 @@ final class FocusRowCell: NSView {
         if row.dot, !picked {
             NSColor.controlAccentColor.setFill()
             NSBezierPath(ovalIn: NSRect(
-                x: CGFloat(FocusRowMetrics.gutterCentre) - 3.5, y: middle - 3.5, width: 7, height: 7
+                x: CGFloat(FocusRowMetrics.dotCentre) - 3.5, y: middle - 3.5, width: 7, height: 7
             )).fill()
         }
 
@@ -585,11 +706,16 @@ final class FocusRowCell: NSView {
         let trailing = trailingColumn(of: row, width: width)
         Ink.draw(row.time, trailing.timeFont, colour: .labelColor, x: trailing.time, middle: middle, room: width)
         if let badge = row.countBadge, let frame = trailing.badge {
-            NSColor.separatorColor.setStroke()
-            let outline = NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-            outline.lineWidth = 1
-            outline.stroke()
-            Ink.draw(badge, Ink.badge, colour: .secondaryLabelColor, x: frame.minX + 5, middle: middle, room: frame.width)
+            drawCount(badge, in: frame, middle: middle)
+        }
+        if let new = row.newBadge, let frame = trailing.newPill {
+            // A filled pill in the label colour, never the accent (the
+            // accent is for focus and action).
+            NSColor.labelColor.setFill()
+            NSBezierPath(roundedRect: frame, xRadius: frame.height / 2, yRadius: frame.height / 2).fill()
+            Ink.draw(
+                new, Ink.newPill, colour: .textBackgroundColor, x: frame.minX + 8, middle: middle,
+                room: frame.width - 8)
         }
         if let state = row.sendState, let at = trailing.sendState {
             Ink.draw(state, Ink.body, colour: .secondaryLabelColor, x: at, middle: middle, room: width)
@@ -599,9 +725,21 @@ final class FocusRowCell: NSView {
         // The sender, then the subject, each as it arrived.
         let columns = FocusRowMetrics.columns(width: Double(width))
         let x0 = CGFloat(FocusRowMetrics.senderX)
-        Ink.draw(
-            row.sender, bold ? Ink.bodyBold : Ink.body, colour: .labelColor,
-            x: x0, middle: middle, room: min(CGFloat(columns.senderWidth), end - x0))
+        if row.chevron != nil, let count = row.countBadge {
+            // A thread's count sits right after its participants, inside
+            // their column.
+            let boxed = Ink.width(count, Ink.badge) + 10
+            let room = min(CGFloat(columns.senderWidth), end - x0) - boxed - 6
+            let drawn = Ink.draw(
+                row.sender, bold ? Ink.bodyBold : Ink.body, colour: .labelColor,
+                x: x0, middle: middle, room: room)
+            drawCount(
+                count, in: NSRect(x: x0 + drawn + 6, y: middle - 8, width: boxed, height: 16), middle: middle)
+        } else {
+            Ink.draw(
+                row.sender, bold ? Ink.bodyBold : Ink.body, colour: .labelColor,
+                x: x0, middle: middle, room: min(CGFloat(columns.senderWidth), end - x0))
+        }
         var x = CGFloat(columns.subjectX)
         x += Ink.draw(
             row.subject, bold ? Ink.bodyBold : Ink.body, colour: .labelColor,
@@ -633,19 +771,97 @@ final class FocusRowCell: NSView {
         if let marker = row.marker { drawMarker(marker, width: width, x: CGFloat(columns.markerX)) }
     }
 
+    /// A count in a small outlined box.
+    private func drawCount(_ text: String, in frame: NSRect, middle: CGFloat) {
+        NSColor.separatorColor.setStroke()
+        let outline = NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+        outline.lineWidth = 1
+        outline.stroke()
+        Ink.draw(text, Ink.badge, colour: .secondaryLabelColor, x: frame.minX + 5, middle: middle, room: frame.width)
+    }
+
+    /// A child of the open thread: its avatar and sender, its tag, its own
+    /// words, a paperclip and the time; while it is the cursor's, the keys
+    /// that act on this message alone. The line and the dot on it are the
+    /// row view's.
+    private func drawChild(_ row: FocusRowModel, _ child: FocusRowModel.Child, width: CGFloat) {
+        let middle = firstLine
+        let gap = CGFloat(FocusRowMetrics.gap)
+        let bold = child.unread
+
+        // The time, from the right edge in; then the paperclip.
+        let timeFont = bold ? Ink.timeBold : Ink.time
+        var x = width - CGFloat(FocusRowMetrics.trailing) - Ink.width(row.time, timeFont)
+        Ink.draw(row.time, timeFont, colour: child.draft ? .secondaryLabelColor : .labelColor, x: x, middle: middle, room: width)
+        if child.attachment {
+            x -= gap + 16
+            clip.frame = NSRect(x: x, y: middle - 8, width: 16, height: 16)
+            clip.isHidden = false
+        }
+        // The focused child's hint: `e` `f` this one.
+        if cursor, let label = child.hintLabel, !child.hintKeys.isEmpty {
+            x -= gap + Ink.width(label, Ink.hint)
+            Ink.draw(label, Ink.hint, colour: .secondaryLabelColor, x: x, middle: middle, room: width)
+            for key in child.hintKeys.reversed() {
+                x -= 4 + KeyCapView.width(of: key)
+                KeyCapView.draw(key, x: x, middle: middle)
+            }
+        }
+        let end = x - gap
+
+        // The avatar, then the sender.
+        let diameter = CGFloat(FocusRowMetrics.childAvatar)
+        let avatar = NSRect(x: CGFloat(FocusRowMetrics.childAvatarX), y: middle - diameter / 2, width: diameter, height: diameter)
+        NSColor.tertiaryLabelColor.setFill()
+        NSBezierPath(ovalIn: avatar).fill()
+        let letters = Ink.width(child.initials, Ink.avatar)
+        Ink.draw(
+            child.initials, Ink.avatar, colour: .labelColor, x: avatar.midX - letters / 2, middle: middle,
+            room: diameter)
+        let senderX = avatar.maxX + 7
+        let columns = FocusRowMetrics.columns(width: Double(width))
+        let subjectX = CGFloat(columns.subjectX)
+        let senderFont = child.draft ? Ink.bodyItalic : (bold ? Ink.bodyBold : Ink.body)
+        Ink.draw(child.sender, senderFont, colour: .labelColor, x: senderX, middle: middle, room: subjectX - gap - senderX)
+
+        // The tag, then the message's own words.
+        var lineX = subjectX
+        if let tag = child.tag, !child.draft {
+            let boxed = Ink.width(tag, Ink.pill) + 12
+            let frame = NSRect(x: lineX, y: middle - 9, width: boxed, height: 18)
+            NSColor.quaternaryLabelColor.setFill()
+            NSBezierPath(roundedRect: frame, xRadius: 4, yRadius: 4).fill()
+            Ink.draw(tag, Ink.pill, colour: .secondaryLabelColor, x: frame.minX + 6, middle: middle, room: boxed)
+            lineX += boxed + 8
+        }
+        var words = child.line
+        var font = Ink.body
+        var colour = NSColor.secondaryLabelColor
+        if child.draft {
+            // "\u{201c}Thanks both...\u{201d} \u{b7} not sent", in italics.
+            words = "\u{201c}\(child.line)\u{201d}" + (child.tag.map { " \u{b7} \($0)" } ?? "")
+            font = Ink.quote
+        } else if child.placeholder {
+            colour = .tertiaryLabelColor
+            font = Ink.quote
+        }
+        Ink.draw(words, font, colour: colour, x: lineX, middle: middle, room: end - lineX)
+    }
+
     /// Where the first line's trailing things go, from the right edge in:
     /// the time, the count, the send state, the attachment's clip -- and
     /// where the middle of the line has to end.
     private func trailingColumn(of row: FocusRowModel, width: CGFloat) -> (
-        timeFont: NSFont, time: CGFloat, badge: NSRect?, sendState: CGFloat?, clip: CGFloat?,
-        end: CGFloat
+        timeFont: NSFont, time: CGFloat, badge: NSRect?, newPill: NSRect?, sendState: CGFloat?,
+        clip: CGFloat?, end: CGFloat
     ) {
         let gap = CGFloat(FocusRowMetrics.gap)
         let timeFont = row.bold || row.layout == .digest ? Ink.timeBold : Ink.time
         var x = width - CGFloat(FocusRowMetrics.trailing) - Ink.width(row.time, timeFont)
         let time = x
         var badge: NSRect?
-        if let count = row.countBadge {
+        // A thread's count is drawn after its participants, not here.
+        if let count = row.countBadge, row.chevron == nil {
             let boxed = Ink.width(count, Ink.badge) + 10
             x -= gap + boxed
             badge = NSRect(x: x, y: firstLine - 8, width: boxed, height: 16)
@@ -660,7 +876,13 @@ final class FocusRowCell: NSView {
             x -= gap + 16
             clip = x
         }
-        return (timeFont, time, badge, sendState, clip, x - gap)
+        var newPill: NSRect?
+        if let new = row.newBadge {
+            let boxed = Ink.width(new, Ink.newPill) + 16
+            x -= gap + boxed
+            newPill = NSRect(x: x, y: firstLine - 9, width: boxed, height: 18)
+        }
+        return (timeFont, time, badge, newPill, sendState, clip, x - gap)
     }
 
     /// The marker's line: the chip outlined in the accent, the date bold in
@@ -834,6 +1056,11 @@ enum Ink {
     static let timeBold = NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .bold)
     static let badge = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
     static let keycap = NSFont.monospacedSystemFont(ofSize: KeyCapMetrics.fontSize, weight: .regular)
+    static let newPill = NSFont.systemFont(ofSize: 11, weight: .bold)
+    static let avatar = NSFont.systemFont(ofSize: 8, weight: .semibold)
+    static let hint = NSFont.systemFont(ofSize: 12)
+    static let bodyItalic = NSFontManager.shared.convert(
+        NSFont.systemFont(ofSize: 14), toHaveTrait: .italicFontMask)
 
     /// One line, truncated at its tail.
     private static let truncating: NSParagraphStyle = {
