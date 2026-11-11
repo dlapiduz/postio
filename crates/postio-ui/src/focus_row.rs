@@ -8,6 +8,10 @@
 
 use chrono::{Datelike, NaiveDate};
 use postio_core::CommandId;
+use postio_model::label::Label;
+use postio_model::listing::ThreadSummary;
+use postio_model::thread_view::{ThreadMember, ThreadView};
+use postio_model::{EmailAddress, MessageId};
 
 /// The most label pills a row draws; the open message shows them all
 /// (spec Edge Cases, "Labels").
@@ -127,6 +131,215 @@ pub fn digest_rules(count: usize) -> String {
         "1 digest rule".to_owned()
     } else {
         format!("{count} digest rules")
+    }
+}
+
+/// The longest a row's one line of words runs before it is cut with an
+/// ellipsis. The row's width cuts it again; this keeps a whole preview from
+/// riding every frontend's text layout.
+const LINE_CHARS: usize = 90;
+
+/// Whether `who` is one of the account's own identities.
+fn is_me(who: &EmailAddress, me: &[EmailAddress]) -> bool {
+    me.iter().any(|mine| mine.same_address(who))
+}
+
+/// The first name a row says: the display name's first word, else the local
+/// part, else the address.
+fn first_name(who: &EmailAddress) -> &str {
+    let name = who.display();
+    if who.name.as_deref().is_some_and(|n| !n.trim().is_empty()) {
+        name.split_whitespace().next().unwrap_or(name)
+    } else {
+        who.local_part().unwrap_or(name)
+    }
+}
+
+/// Who a thread row names (spec 013 US1): up to three first names, newest
+/// first, then "you" when the account took part, then "+N" for the others
+/// that did not fit ("Lena, Ben, Ana, you +2"). A thread of one message
+/// names its sender in full, as any single message does.
+///
+/// `participants` is first-seen order, as `ThreadSummary` carries it; "you"
+/// is decided by the account's identities in `me`, never by a name.
+pub fn participants(
+    participants: &[EmailAddress],
+    message_count: u32,
+    me: &[EmailAddress],
+) -> String {
+    if message_count <= 1 {
+        return match participants.first() {
+            Some(only) if is_me(only, me) => "You".to_owned(),
+            Some(only) => only.display().to_owned(),
+            None => String::new(),
+        };
+    }
+    let mut took_part = false;
+    let mut others: Vec<&str> = Vec::new();
+    for who in participants.iter().rev() {
+        if is_me(who, me) {
+            took_part = true;
+        } else {
+            others.push(first_name(who));
+        }
+    }
+    let hidden = others.len().saturating_sub(3);
+    others.truncate(3);
+    let mut said = others.join(", ");
+    if took_part {
+        if !said.is_empty() {
+            said.push_str(", ");
+        }
+        said.push_str("you");
+    }
+    if hidden > 0 {
+        said.push_str(&format!(" +{hidden}"));
+    }
+    said
+}
+
+/// The thread row's snippet: the latest message's sender and the start of
+/// its words, "Ben: Looks good…". The ellipsis marks a cut, so a short line
+/// is not given one. Empty words leave the sender alone out of it.
+pub fn latest_line(from: Option<&EmailAddress>, me: &[EmailAddress], words: &str) -> String {
+    let first = words.lines().map(str::trim).find(|line| !line.is_empty());
+    let Some(first) = first else {
+        return String::new();
+    };
+    let mut said = String::new();
+    if let Some(from) = from {
+        said.push_str(if is_me(from, me) {
+            "You"
+        } else {
+            first_name(from)
+        });
+        said.push_str(": ");
+    }
+    if first.chars().count() > LINE_CHARS {
+        // Cut at a word, not through one, unless the line is one long word.
+        let end = first
+            .char_indices()
+            .nth(LINE_CHARS)
+            .map_or(first.len(), |(at, _)| at);
+        let cut = match first[..end].rsplit_once(char::is_whitespace) {
+            Some((head, _)) if !first[end..].starts_with(char::is_whitespace) => head,
+            _ => &first[..end],
+        };
+        said.push_str(cut.trim_end());
+        said.push('\u{2026}');
+    } else {
+        said.push_str(first);
+    }
+    said
+}
+
+/// The "2 new" pill, or none when nothing is unread.
+pub fn new_badge(unread: u32) -> Option<String> {
+    (unread > 0).then(|| format!("{unread} new"))
+}
+
+/// The tag on a child that answers an older message than the one before it,
+/// "↳ to Ana". `answers` indexes `members` (date order); a member that
+/// cannot be found or has no sender leaves nothing to name.
+pub fn child_tag(answers: Option<u32>, members: &[ThreadMember]) -> Option<String> {
+    let answered = members.get(answers? as usize)?;
+    let who = if answered.own {
+        "you"
+    } else {
+        first_name(answered.from.as_ref()?)
+    };
+    Some(format!("\u{21b3} to {who}"))
+}
+
+/// Which message opening a thread row lands on (FR-013): the first unread,
+/// else the first with an open action marker, else the latest. `None` only
+/// for a thread with no members.
+pub fn open_at(view: &ThreadView) -> Option<MessageId> {
+    let members = &view.members;
+    members
+        .iter()
+        .find(|member| !member.seen)
+        .or_else(|| members.iter().find(|member| member.marker))
+        .or_else(|| members.last())
+        .map(|member| member.id)
+}
+
+/// The chevron in a thread row's gutter. A one-message thread has none, so
+/// it is `Option<Chevron>` on the row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Chevron {
+    /// Folded: the thread's children are not shown.
+    Collapsed,
+    /// Open: the children sit under the row.
+    Expanded,
+}
+
+/// Everything a thread row says, composed once here so the Mac and GTK draw
+/// the same words (contracts/frontend-threads.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadRowView {
+    /// "Lena, Ben, Ana, you", or the sender's full name for a thread of one.
+    pub participants: String,
+    /// The message count, for threads of two or more only.
+    pub count: Option<String>,
+    /// The thread's subject.
+    pub subject: String,
+    /// Drawn bold: some message here is unread.
+    pub bold: bool,
+    /// Every label of the thread; the row draws [`MAX_PILLS`] of them.
+    pub labels: Vec<Label>,
+    /// "Ben: Looks good…".
+    pub latest_line: String,
+    /// "2 new".
+    pub new: Option<String>,
+    /// A paperclip: any message has an attachment.
+    pub attachment: bool,
+    /// Replies since the thread was muted. Always `None` until mute lands
+    /// (spec 013 US5).
+    pub muted: Option<u32>,
+    /// The latest message's time, as every row says it.
+    pub time: String,
+    /// The gutter's chevron; `None` for a thread of one.
+    pub chevron: Option<Chevron>,
+}
+
+impl ThreadRowView {
+    /// The row for `thread`, with its `labels`, as seen by an account whose
+    /// identities are `me`, `expanded` when its children are shown.
+    pub fn new(
+        thread: &ThreadSummary,
+        labels: &[Label],
+        me: &[EmailAddress],
+        expanded: bool,
+        now: chrono::DateTime<chrono::Local>,
+    ) -> Self {
+        let latest = &thread.representative;
+        let words = latest.preview.as_deref().unwrap_or("");
+        Self {
+            participants: participants(&thread.participants, thread.message_count, me),
+            count: count_badge(thread.message_count),
+            subject: thread
+                .subject
+                .clone()
+                .or_else(|| latest.subject.clone())
+                .unwrap_or_default(),
+            bold: thread.unread_count > 0,
+            labels: labels.to_vec(),
+            latest_line: latest_line(
+                latest.from.as_ref(),
+                me,
+                postio_model::thread_view::before_attribution(words),
+            ),
+            new: new_badge(thread.unread_count),
+            attachment: thread.has_attachments,
+            muted: None,
+            time: crate::row::timestamp(latest.received_at, now),
+            chevron: (thread.message_count > 1).then_some(if expanded {
+                Chevron::Expanded
+            } else {
+                Chevron::Collapsed
+            }),
+        }
     }
 }
 
@@ -745,5 +958,245 @@ mod strip_tests {
         assert_eq!(digest_rules(4), "4 digest rules");
         assert_eq!(compose_tooltip(Some("c")), "Compose \u{b7} c");
         assert_eq!(compose_tooltip(None), "Compose");
+    }
+}
+
+#[cfg(test)]
+mod thread_words_tests {
+    use chrono::{Local, TimeZone, Utc};
+    use postio_model::listing::{MessageSummary, ThreadSummary};
+    use postio_model::thread_view::{Line, ThreadMember, ThreadView};
+    use postio_model::{EmailAddress, MessageId, ThreadId};
+
+    use super::*;
+
+    fn who(name: &str) -> EmailAddress {
+        let address = format!("{}@example.com", name.to_lowercase().replace(' ', "."));
+        EmailAddress::new(Some(name), address)
+    }
+
+    fn me() -> Vec<EmailAddress> {
+        vec![EmailAddress::new(Some("Test User"), "me@example.com")]
+    }
+
+    fn member(id: i64, from: &str, seen: bool, marker: bool) -> ThreadMember {
+        ThreadMember {
+            id: MessageId::new(id),
+            from: Some(who(from)),
+            own: false,
+            at: Utc.with_ymd_and_hms(2026, 9, 21, 9, 0, 0).unwrap(),
+            seen,
+            has_attachments: false,
+            line: Line::Own("hello".into()),
+            answers: None,
+            marker,
+        }
+    }
+
+    fn view(members: Vec<ThreadMember>) -> ThreadView {
+        ThreadView {
+            thread: ThreadId::new(1),
+            subject: Some("Plans".into()),
+            members,
+            draft: None,
+            muted: None,
+            labels: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn participants_are_first_names_newest_first_with_you_last() {
+        // First-seen order in; newest first out (SPEC §2).
+        let seen = [
+            who("Ana Ruiz"),
+            who("Ben Ortiz"),
+            me()[0].clone(),
+            who("Lena Park"),
+        ];
+        assert_eq!(participants(&seen, 6, &me()), "Lena, Ben, Ana, you");
+    }
+
+    #[test]
+    fn participants_past_three_say_how_many_more() {
+        let seen = [
+            who("Ana Ruiz"),
+            who("Ben Ortiz"),
+            who("Cleo Diaz"),
+            who("Dan Wu"),
+            who("Eve Lin"),
+            me()[0].clone(),
+        ];
+        assert_eq!(participants(&seen, 9, &me()), "Eve, Dan, Cleo, you +2");
+    }
+
+    #[test]
+    fn a_thread_the_account_did_not_join_has_no_you() {
+        let seen = [who("Ana Ruiz"), who("Ben Ortiz")];
+        assert_eq!(participants(&seen, 2, &me()), "Ben, Ana");
+    }
+
+    #[test]
+    fn a_single_message_names_its_sender_in_full() {
+        assert_eq!(participants(&[who("Ana Ruiz")], 1, &me()), "Ana Ruiz");
+        assert_eq!(participants(&me(), 1, &me()), "You");
+    }
+
+    #[test]
+    fn you_is_decided_by_address_not_by_name() {
+        let alias = EmailAddress::new(Some("Somebody Else"), "ME@example.com");
+        let impostor = EmailAddress::new(Some("Test User"), "other@example.com");
+        assert_eq!(participants(&[alias, impostor], 2, &me()), "Test, you");
+    }
+
+    #[test]
+    fn a_nameless_sender_is_said_by_the_local_part() {
+        let bare = EmailAddress::new(None::<String>, "ops@example.com");
+        assert_eq!(participants(&[bare, who("Ana Ruiz")], 2, &me()), "Ana, ops");
+    }
+
+    #[test]
+    fn the_latest_line_leads_with_the_sender_and_marks_a_cut() {
+        let ben = who("Ben Ortiz");
+        assert_eq!(
+            latest_line(Some(&ben), &me(), "Looks good"),
+            "Ben: Looks good"
+        );
+        let long = format!("Looks good {}", "to me ".repeat(30));
+        let said = latest_line(Some(&ben), &me(), &long);
+        assert!(said.starts_with("Ben: Looks good to me"), "{said}");
+        assert!(said.ends_with("me\u{2026}"), "{said}");
+        assert_eq!(latest_line(Some(&me()[0]), &me(), "Done"), "You: Done");
+        assert_eq!(
+            latest_line(Some(&ben), &me(), "  \n "),
+            "",
+            "no words, no line"
+        );
+    }
+
+    #[test]
+    fn the_new_badge_counts_and_vanishes_at_zero() {
+        assert_eq!(new_badge(2).as_deref(), Some("2 new"));
+        assert_eq!(new_badge(0), None);
+    }
+
+    #[test]
+    fn a_tag_names_the_first_name_of_who_was_answered() {
+        let members = [
+            member(1, "Ana Ruiz", true, false),
+            member(2, "Ben Ortiz", true, false),
+        ];
+        assert_eq!(
+            child_tag(Some(0), &members).as_deref(),
+            Some("\u{21b3} to Ana")
+        );
+        assert_eq!(child_tag(None, &members), None);
+        assert_eq!(child_tag(Some(7), &members), None, "an index off the end");
+        let mut own = member(3, "Test User", true, false);
+        own.own = true;
+        assert_eq!(
+            child_tag(Some(0), &[own]).as_deref(),
+            Some("\u{21b3} to you")
+        );
+    }
+
+    #[test]
+    fn opening_a_thread_lands_on_unread_then_marker_then_latest() {
+        let both = view(vec![
+            member(1, "Ana", true, true),
+            member(2, "Ben", false, false),
+            member(3, "Cleo", false, false),
+            member(4, "Dan", true, false),
+        ]);
+        assert_eq!(open_at(&both), Some(MessageId::new(2)), "first unread");
+
+        let marked = view(vec![
+            member(1, "Ana", true, false),
+            member(2, "Ben", true, true),
+            member(3, "Cleo", true, true),
+            member(4, "Dan", true, false),
+        ]);
+        assert_eq!(
+            open_at(&marked),
+            Some(MessageId::new(2)),
+            "first open marker"
+        );
+
+        let read = view(vec![
+            member(1, "Ana", true, false),
+            member(2, "Ben", true, false),
+        ]);
+        assert_eq!(open_at(&read), Some(MessageId::new(2)), "latest");
+        assert_eq!(open_at(&view(Vec::new())), None);
+    }
+
+    fn summary(count: u32, unread: u32) -> ThreadSummary {
+        let latest = Utc.with_ymd_and_hms(2026, 9, 21, 9, 14, 0).unwrap();
+        ThreadSummary {
+            id: Some(ThreadId::new(1)),
+            representative: MessageSummary {
+                id: MessageId::new(9),
+                thread: Some(ThreadId::new(1)),
+                from: Some(who("Ben Ortiz")),
+                subject: Some("Q3 plan".into()),
+                preview: Some("Looks good. On Mon, Ana wrote: > the plan".into()),
+                received_at: latest,
+                seen: unread == 0,
+                flagged: false,
+                answered: false,
+                send_state: None,
+                send_at: None,
+                has_attachments: false,
+                thread_count: count,
+                to: Vec::new(),
+            },
+            subject: Some("Q3 plan".into()),
+            participants: vec![who("Ana Ruiz"), who("Ben Ortiz")],
+            message_count: count,
+            unread_count: unread,
+            flagged: false,
+            has_attachments: true,
+            last_at: latest,
+            marker: None,
+            copies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_thread_row_says_every_field() {
+        let now = Local.with_ymd_and_hms(2026, 9, 21, 12, 0, 0).unwrap();
+        let labels = [Label {
+            id: postio_model::LabelId::new(1),
+            account_id: postio_model::AccountId::new(1),
+            name: "Plans".into(),
+            color: None,
+        }];
+        let row = ThreadRowView::new(&summary(6, 2), &labels, &me(), false, now);
+        assert_eq!(row.participants, "Ben, Ana");
+        assert_eq!(row.count.as_deref(), Some("6"));
+        assert_eq!(row.subject, "Q3 plan");
+        assert!(row.bold);
+        assert_eq!(row.labels, labels);
+        assert_eq!(
+            row.latest_line, "Ben: Looks good.",
+            "the attribution is cut"
+        );
+        assert_eq!(row.new.as_deref(), Some("2 new"));
+        assert!(row.attachment);
+        assert_eq!(row.muted, None);
+        assert_eq!(row.chevron, Some(Chevron::Collapsed));
+        assert_eq!(
+            ThreadRowView::new(&summary(6, 2), &[], &me(), true, now).chevron,
+            Some(Chevron::Expanded)
+        );
+    }
+
+    #[test]
+    fn a_thread_of_one_has_no_chevron_count_or_new() {
+        let now = Local.with_ymd_and_hms(2026, 9, 21, 12, 0, 0).unwrap();
+        let row = ThreadRowView::new(&summary(1, 0), &[], &me(), false, now);
+        assert_eq!(row.chevron, None);
+        assert_eq!(row.count, None);
+        assert_eq!(row.new, None);
+        assert!(!row.bold);
     }
 }
