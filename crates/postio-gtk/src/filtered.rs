@@ -23,6 +23,8 @@ use postio_widgets::widgets::space::{S1, S3};
 use postio_widgets::widgets::{Kind, Size};
 
 use crate::bulk::Bulk;
+use crate::list::RowObject;
+use crate::list::RowWidget;
 
 /// What a person asked of the view.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +47,28 @@ pub enum FilteredAction {
 }
 
 type Handler = Rc<dyn Fn(FilteredAction)>;
+
+/// What a row of the list is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    /// A day's heading.
+    Heading,
+    /// The row at this index of `rows`.
+    Row(usize),
+    /// The child at this index of the open thread.
+    Child(usize),
+}
+
+/// The thread open under one of the rows (spec 013 FR-009): its children are
+/// drawn after the row, and the keyboard walks them like rows.
+#[derive(Debug, Clone)]
+struct Open {
+    /// The expanded row, an index into `rows`.
+    anchor: usize,
+    /// The messages, oldest first; the unsent reply has none.
+    members: Vec<MessageId>,
+    children: Vec<postio_ui::thread_list::ChildRowView>,
+}
 
 /// The view. See the module.
 pub struct FilteredView {
@@ -73,7 +97,9 @@ pub struct FilteredView {
     rows: RefCell<Vec<FilteredRow>>,
     /// What each row of the list is: a day's heading, or the row at that
     /// index of `rows`.
-    shown: RefCell<Vec<Option<usize>>>,
+    shown: RefCell<Vec<Slot>>,
+    /// The thread open under one row, if one is.
+    open: RefCell<Option<Open>>,
     /// Whether the last page read was full: there may be more.
     more: Cell<bool>,
     /// Moves with every re-read, so a page for an earlier one is dropped.
@@ -170,6 +196,7 @@ impl FilteredView {
             counted: Cell::new(false),
             rows: RefCell::default(),
             shown: RefCell::default(),
+            open: RefCell::default(),
             more: Cell::new(false),
             generation: Cell::new(0),
             handler: RefCell::default(),
@@ -204,12 +231,18 @@ impl FilteredView {
         view.list.connect_row_activated({
             let weak = weak.clone();
             move |_, row| {
-                if let Some(view) = weak.upgrade()
-                    && let Some(found) = view.row_at(row.index())
-                {
+                let Some(view) = weak.upgrade() else {
+                    return;
+                };
+                if let Some(found) = view.row_at(row.index()) {
                     view.emit(FilteredAction::Open {
                         message: found.message.id,
                         subject: found.message.subject.clone().unwrap_or_default(),
+                    });
+                } else if let Some((anchor, message)) = view.child_message_at(row.index()) {
+                    view.emit(FilteredAction::Open {
+                        message,
+                        subject: anchor.message.subject.clone().unwrap_or_default(),
                     });
                 }
             }
@@ -228,8 +261,16 @@ impl FilteredView {
                         );
                     }
                 }
+                // A child shows the keys that act on it while it is focused.
+                let mut child = list.first_child();
+                while let Some(row) = child {
+                    child = row.next_sibling();
+                    if let Some(widget) = row.first_child().and_downcast::<RowWidget>() {
+                        widget.set_cursor_here(selected.is_some_and(|selected| *selected == row));
+                    }
+                }
                 if let Some(view) = weak.upgrade() {
-                    let index = selected.and_then(|row| view.index_of_row(row.index()));
+                    let index = selected.and_then(|row| view.owner_of_row(row.index()));
                     view.picker.borrow_mut().focus(index.map(|at| at as u32));
                 }
             }
@@ -336,6 +377,7 @@ impl FilteredView {
         if filtered::tab_reason(index).is_none() {
             return;
         }
+        self.open.replace(None);
         self.tab.set(index);
         // Another place, as another folder is: what was selected is not
         // shown any more.
@@ -355,7 +397,8 @@ impl FilteredView {
     /// The focused row's message, if any: what `R` restores.
     pub fn focused(&self) -> Option<MessageId> {
         let row = self.list.selected_row()?;
-        self.row_at(row.index()).map(|found| found.message.id)
+        let index = self.owner_of_row(row.index())?;
+        self.rows.borrow().get(index).map(|found| found.message.id)
     }
 
     /// The listed rows' subjects, top to bottom.
@@ -398,7 +441,7 @@ impl FilteredView {
             let Some(slot) = usize::try_from(at).ok().and_then(|at| rows.get(at)) else {
                 return;
             };
-            if slot.is_some() {
+            if *slot != Slot::Heading {
                 if let Some(row) = self.list.row_at_index(at) {
                     self.list.select_row(Some(&row));
                     row.grab_focus();
@@ -437,7 +480,9 @@ impl FilteredView {
     pub fn runs(&self, id: CommandId) -> bool {
         matches!(
             id,
-            CommandId::ToggleSelection
+            CommandId::ExpandThread
+                | CommandId::CollapseThread
+                | CommandId::ToggleSelection
                 | CommandId::ExtendSelectionDown
                 | CommandId::ExtendSelectionUp
                 | CommandId::SelectAll
@@ -447,6 +492,11 @@ impl FilteredView {
     /// Run a selection command, drawing what it changed; `j`/`k` stay with
     /// [`Self::step`].
     pub fn run(&self, id: CommandId) {
+        match id {
+            CommandId::ExpandThread => return self.expand_focused(),
+            CommandId::CollapseThread => return self.collapse(),
+            _ => {}
+        }
         let change = self.picker.borrow_mut().run(id);
         self.apply(change);
     }
@@ -488,7 +538,33 @@ impl FilteredView {
     /// The index in `rows` of the list row at `index`, over day headings.
     fn index_of_row(&self, index: i32) -> Option<usize> {
         let at = usize::try_from(index).ok()?;
-        self.shown.borrow().get(at).copied().flatten()
+        match self.shown.borrow().get(at).copied()? {
+            Slot::Row(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    /// The row of `rows` the list row at `index` belongs to: itself, or for
+    /// a child the row it hangs from.
+    fn owner_of_row(&self, index: i32) -> Option<usize> {
+        let at = usize::try_from(index).ok()?;
+        match self.shown.borrow().get(at).copied()? {
+            Slot::Row(index) => Some(index),
+            Slot::Child(_) => self.open.borrow().as_ref().map(|open| open.anchor),
+            Slot::Heading => None,
+        }
+    }
+
+    /// The row a child at list row `index` hangs from, and its message.
+    fn child_message_at(&self, index: i32) -> Option<(FilteredRow, MessageId)> {
+        let at = usize::try_from(index).ok()?;
+        let Slot::Child(child) = self.shown.borrow().get(at).copied()? else {
+            return None;
+        };
+        let open = self.open.borrow();
+        let open = open.as_ref()?;
+        let anchor = self.rows.borrow().get(open.anchor).cloned()?;
+        Some((anchor, *open.members.get(child)?))
     }
 
     /// Check the selected rows' boxes and bring the bar up or down.
@@ -523,6 +599,96 @@ impl FilteredView {
             }
         }
         self.show_bar(&selected);
+    }
+
+    /// `Right`: open the focused row's thread under it, when it has more
+    /// than one message.
+    fn expand_focused(&self) {
+        let Some(row) = self.list.selected_row() else {
+            return;
+        };
+        if let Some(index) = self.index_of_row(row.index()) {
+            self.expand(index);
+        }
+    }
+
+    fn toggle(&self, index: usize) {
+        if self
+            .open
+            .borrow()
+            .as_ref()
+            .is_some_and(|open| open.anchor == index)
+        {
+            self.collapse();
+        } else {
+            self.expand(index);
+        }
+    }
+
+    /// Read the thread of the row at `index` and draw its messages under it,
+    /// folding any other.
+    fn expand(&self, index: usize) {
+        let Some(row) = self.rows.borrow().get(index).cloned() else {
+            return;
+        };
+        let Some(thread) = row.message.thread.filter(|_| row.message.thread_count > 1) else {
+            return;
+        };
+        if self
+            .open
+            .borrow()
+            .as_ref()
+            .is_some_and(|open| open.anchor == index)
+        {
+            return;
+        }
+        let client = self.client.clone();
+        let weak = self.me.borrow().clone();
+        let generation = self.generation.get();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let read = client.thread(thread).await;
+            let (Some(view), Ok(Some(thread))) = (weak.upgrade(), read) else {
+                return;
+            };
+            if view.generation.get() != generation {
+                return;
+            }
+            let now = postio_ui::clock::now();
+            let keymap = view.keymap.borrow().clone();
+            let mut children: Vec<_> = (0..thread.members.len())
+                .filter_map(|at| {
+                    postio_ui::thread_list::ChildRowView::member(&thread, at, &[], &keymap, now)
+                })
+                .collect();
+            children.extend(postio_ui::thread_list::ChildRowView::draft(&thread, now));
+            if thread.members.len() < 2 {
+                return;
+            }
+            view.open.replace(Some(Open {
+                anchor: index,
+                members: thread.members.iter().map(|member| member.id).collect(),
+                children,
+            }));
+            view.show_rows();
+            if let Some(row) = view.list_row(index) {
+                view.list.select_row(Some(&row));
+                row.grab_focus();
+            }
+        });
+    }
+
+    /// `Left`: fold the open thread, the keyboard back on its row.
+    fn collapse(&self) {
+        let Some(open) = self.open.take() else {
+            return;
+        };
+        self.show_rows();
+        if let Some(row) = self.list_row(open.anchor) {
+            self.list.select_row(Some(&row));
+            row.grab_focus();
+        }
     }
 
     /// Say so when the tab on screen has nothing, once it has been read.
@@ -560,7 +726,9 @@ impl FilteredView {
 
     fn row_at(&self, index: i32) -> Option<FilteredRow> {
         let at = usize::try_from(index).ok()?;
-        let index = self.shown.borrow().get(at).copied().flatten()?;
+        let Slot::Row(index) = self.shown.borrow().get(at).copied()? else {
+            return None;
+        };
         self.rows.borrow().get(index).cloned()
     }
 
@@ -570,7 +738,7 @@ impl FilteredView {
             .shown
             .borrow()
             .iter()
-            .position(|shown| *shown == Some(index))?;
+            .position(|shown| *shown == Slot::Row(index))?;
         self.list.row_at_index(i32::try_from(at).ok()?)
     }
 
@@ -714,7 +882,7 @@ impl FilteredView {
                 item.set_activatable(false);
                 item.set_can_focus(false);
                 self.list.append(&item);
-                shown.push(None);
+                shown.push(Slot::Heading);
             }
             let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
             line.add_css_class("focus-filtered-row");
@@ -725,6 +893,36 @@ impl FilteredView {
             // rest; only drawn while it is selected.
             check.set_opacity(0.0);
             line.append(&check);
+            // A conversation of more than one message has a chevron, and
+            // says how many (spec 013 FR-009).
+            let thread = row.message.thread_count > 1;
+            let chevron = gtk::Image::from_icon_name(
+                if self
+                    .open
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|open| open.anchor == index)
+                {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                },
+            );
+            chevron.add_css_class("focus-filtered-chevron");
+            chevron.set_opacity(if thread { 1.0 } else { 0.0 });
+            if thread {
+                let click = gtk::GestureClick::new();
+                click.set_propagation_phase(gtk::PropagationPhase::Capture);
+                let weak = self.me.borrow().clone();
+                click.connect_pressed(move |gesture, _, _, _| {
+                    if let Some(view) = weak.upgrade() {
+                        gesture.set_state(gtk::EventSequenceState::Claimed);
+                        view.toggle(index);
+                    }
+                });
+                chevron.add_controller(click);
+            }
+            line.append(&chevron);
             let sender = gtk::Label::new(Some(
                 &row.message
                     .from
@@ -738,6 +936,14 @@ impl FilteredView {
             sender.set_max_width_chars(22);
             sender.set_ellipsize(gtk::pango::EllipsizeMode::End);
             line.append(&sender);
+            if thread
+                && let Some(count) = postio_ui::focus_row::count_badge(row.message.thread_count)
+            {
+                let badge = gtk::Label::new(Some(&count));
+                badge.add_css_class("dim-label");
+                badge.add_css_class("focus-filtered-count");
+                line.append(&badge);
+            }
             let subject = gtk::Label::new(Some(row.message.subject.as_deref().unwrap_or_default()));
             subject.add_css_class("focus-filtered-subject");
             subject.set_xalign(0.0);
@@ -776,7 +982,24 @@ impl FilteredView {
             let item = gtk::ListBoxRow::new();
             item.set_child(Some(&line));
             self.list.append(&item);
-            shown.push(Some(index));
+            shown.push(Slot::Row(index));
+            if let Some(open) = self
+                .open
+                .borrow()
+                .as_ref()
+                .filter(|open| open.anchor == index)
+            {
+                for (at, child) in open.children.iter().enumerate() {
+                    let widget = RowWidget::default();
+                    let last = at + 1 == open.children.len();
+                    widget.bind(&RowObject::child(child.clone(), last));
+                    let item = gtk::ListBoxRow::new();
+                    item.set_child(Some(&widget));
+                    item.add_css_class("focus-filtered-child");
+                    self.list.append(&item);
+                    shown.push(Slot::Child(at));
+                }
+            }
         }
         drop(rows);
         self.shown.replace(shown);

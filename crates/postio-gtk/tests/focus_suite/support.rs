@@ -479,6 +479,70 @@ impl Fixture {
         id
     }
 
+    /// A conversation of `count` messages about `subject` in the archive,
+    /// only the newest of them filtered (for `reason`), so Filtered lists it
+    /// as one row that stands for a thread. Answers its messages, oldest
+    /// first.
+    pub async fn filtered_thread(
+        &self,
+        subject: &str,
+        count: usize,
+        reason: &str,
+        minutes: i64,
+    ) -> Vec<MessageId> {
+        let connection = self.database.connect().await.expect("a connection");
+        let archive: i64 = postio_storage::sql::scalar(
+            &connection,
+            "SELECT id FROM mailboxes WHERE account_id = ?1 AND name = 'Archive'",
+            [self.account.id.get()],
+        )
+        .await
+        .expect("the archive");
+        let mut previous: Option<postio_model::RfcMessageId> = None;
+        let mut ids = Vec::new();
+        for n in 1..=count {
+            let at = now() - Duration::minutes(minutes + 60 * (count - n) as i64);
+            let mut message = Message::new(self.account.id, MailboxId::new(archive), at);
+            message.from = vec![EmailAddress::new(Some("Forge"), "noreply@forge.test")];
+            message.subject = Some(if n == 1 {
+                subject.to_owned()
+            } else {
+                format!("Re: {subject}")
+            });
+            message.preview = Some(format!("Message {n}"));
+            let id =
+                postio_model::RfcMessageId::new(format!("<filtered.{subject}.{n}@example.test>"));
+            message.rfc_message_id = Some(id.clone());
+            if let Some(parent) = previous.replace(id) {
+                message.in_reply_to = Some(parent.clone());
+                message.references = vec![parent];
+            }
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+            ThreadingRepository::new(&connection, self.account.id)
+                .thread(&message)
+                .await
+                .expect("threaded");
+            if n == count {
+                postio_storage::repository::FilterDecisionRepository::new(&connection)
+                    .record(&postio_storage::repository::FilterDecision {
+                        message: message.id,
+                        reason: postio_storage::repository::FilterReason::from_name(reason)
+                            .expect("a reason the store has"),
+                        source: Some("Forge".to_owned()),
+                        layer: postio_storage::repository::FilterLayer::Header,
+                        decided_at: at,
+                    })
+                    .await
+                    .expect("a decision");
+            }
+            ids.push(message.id);
+        }
+        ids
+    }
+
     /// A second account, enabled, with an inbox of its own.
     pub async fn second_account(&self) -> (Account, MailboxId) {
         let connection = self.database.connect().await.expect("a connection");
