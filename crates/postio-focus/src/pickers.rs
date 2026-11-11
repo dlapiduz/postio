@@ -492,7 +492,8 @@ impl FocusController {
             digest: row.digest,
         });
         let (aims, everything) =
-            match postio_ui::focus_target::aim_by(&selection, self.cursor.reach(), at.as_ref()) {
+            match postio_ui::focus_target::aim_by(&selection, self.cursor.reach(), at.as_ref(), id)
+            {
                 Aim::Everything { except } => (
                     Vec::new(),
                     Some(Everything {
@@ -543,6 +544,7 @@ impl FocusController {
             &Selection::These(Vec::new()),
             &Default::default(),
             Some(&at),
+            id,
         ) else {
             return Some(Vec::new());
         };

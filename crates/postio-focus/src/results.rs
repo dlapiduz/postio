@@ -1750,7 +1750,12 @@ impl Results {
             .iter()
             .filter_map(|(message, thread)| thread.map(|thread| (*message, vec![thread])))
             .collect();
-        match postio_ui::focus_target::aim_by(&selection, &reach, None) {
+        match postio_ui::focus_target::aim_by(
+            &selection,
+            &reach,
+            None,
+            postio_core::CommandId::Archive,
+        ) {
             postio_ui::focus_target::Aim::Targets(aims) if !aims.is_empty() => {
                 Some(ResultsAim::Targets {
                     aims,

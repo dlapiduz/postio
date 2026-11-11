@@ -2223,9 +2223,11 @@ impl FocusController {
     }
 
     /// Where a verb would go now: the selection when there is one, the
-    /// cursor's row otherwise.
+    /// cursor's row otherwise. The whole-thread aim, which is what the
+    /// thread verbs (archive and the like) reach; a message verb on a row
+    /// is aimed by its own command (spec 013 D2).
     pub fn aim(&self, rows: &dyn Rows) -> Aimed {
-        verbs::Verbs::aimed(&self.cursor, rows)
+        verbs::Verbs::aimed(&self.cursor, rows, CommandId::Archive)
     }
 
     /// Whether an undo is waiting for the rows it brings back to be in the

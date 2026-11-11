@@ -114,14 +114,14 @@ and splice rules every frontend story draws through.
 
 ### Scope and splice (research R7, R9)
 
-- [ ] T017 [P] Write `crates/postio-ui/src/scope.rs` tests first: one case per cell of spec D2's table, including `Unavailable` for `alt+v`/`alt+BackSpace` on a row, flag→latest on a row, and read/unread→thread on a row (red: no module).
-- [ ] T018 Implement `ScopeFocus`, `Scope`, `target` and `footer` in `crates/postio-ui/src/scope.rs`. Export them from `crates/postio-ui/src/lib.rs`.
-- [ ] T019 [P] Write `crates/postio-ui/src/thread_list.rs` tests first (red: no module):
+- [x] T017 [P] Write `crates/postio-ui/src/scope.rs` tests first: one case per cell of spec D2's table, including `Unavailable` for `alt+v`/`alt+BackSpace` on a row, flag→latest on a row, and read/unread→thread on a row (red: no module).
+- [x] T018 Implement `ScopeFocus`, `Scope`, `target` and `footer` in `crates/postio-ui/src/scope.rs`. Export them from `crates/postio-ui/src/lib.rs`.
+- [x] T019 [P] Write `crates/postio-ui/src/thread_list.rs` tests first (red: no module):
   - `slot`/`display`/`len` round-trip around an anchor at the top, middle and end;
   - zero children;
   - an anchor beyond the landed pages.
-- [ ] T020 Implement `Splice` and `Slot` in `crates/postio-ui/src/thread_list.rs`.
-- [ ] T021 Route `postio_ui::focus_target::aim_by` through `scope::target` in `crates/postio-ui/src/focus_target.rs`. Existing focus_target tests are guards and stay green, except the flag-on-row case, which changes on purpose: update it with a comment citing spec D2.
+- [x] T020 Implement `Splice` and `Slot` in `crates/postio-ui/src/thread_list.rs`.
+- [x] T021 Route `postio_ui::focus_target::aim_by` through `scope::target` in `crates/postio-ui/src/focus_target.rs`. Existing focus_target tests are guards and stay green, except the flag-on-row case, which changes on purpose: update it with a comment citing spec D2.
 
 ### Registry (research R10)
 

@@ -147,6 +147,7 @@ impl Verbs {
             &Selection::These(Vec::new()),
             &Default::default(),
             Some(&at),
+            id,
         ) else {
             return Some(Vec::new());
         };
@@ -210,7 +211,7 @@ impl Verbs {
     ) -> Vec<Step> {
         let selection = cursor.selection();
         let at = Self::row_aimed_at(cursor, rows);
-        let Aimed { aims, everything } = Self::aimed(cursor, rows);
+        let Aimed { aims, everything } = Self::aimed(cursor, rows, command.id());
         if everything.is_none() && aims.is_empty() {
             return Vec::new();
         }
@@ -242,9 +243,14 @@ impl Verbs {
     /// (`MessageTarget::Threads`, T161); a message in no conversation is
     /// itself. A whole-view selection is a predicate the host resolves over
     /// the inboxes, never a list of what happens to be on screen.
-    pub(crate) fn aimed(cursor: &Cursor, rows: &dyn Rows) -> Aimed {
+    pub(crate) fn aimed(cursor: &Cursor, rows: &dyn Rows, action: CommandId) -> Aimed {
         let at = Self::row_aimed_at(cursor, rows);
-        match postio_ui::focus_target::aim_by(&cursor.selection(), cursor.reach(), at.as_ref()) {
+        match postio_ui::focus_target::aim_by(
+            &cursor.selection(),
+            cursor.reach(),
+            at.as_ref(),
+            action,
+        ) {
             Aim::Everything { except } => Aimed {
                 aims: Vec::new(),
                 everything: Some(Everything {
