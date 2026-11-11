@@ -510,6 +510,9 @@ pub struct FilterButtonFfi {
     pub applied: bool,
     /// Its popover is open: the accent ring.
     pub open: bool,
+    /// The key that opens its popover, as the registry spells it; `None`
+    /// for a toggle.
+    pub key: Option<String>,
 }
 
 /// The query as the field and the filter bar draw it.
@@ -558,6 +561,7 @@ impl From<postio_focus::QueryView> for QueryViewFfi {
                     label: button.label,
                     applied: button.applied,
                     open: button.open,
+                    key: button.key,
                 })
                 .collect(),
         }

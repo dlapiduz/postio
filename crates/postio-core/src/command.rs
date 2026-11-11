@@ -405,6 +405,16 @@ commands! {
     ResultsFiles => "results_files",
     /// The results' People tab.
     ResultsPeople => "results_people",
+    /// The results' From filter popover (#2090).
+    FilterFrom => "filter_from",
+    /// The results' To filter popover.
+    FilterTo => "filter_to",
+    /// The results' Date filter popover.
+    FilterDate => "filter_date",
+    /// The results' Anywhere (folder) filter popover.
+    FilterAnywhere => "filter_anywhere",
+    /// The results' Label filter popover.
+    FilterLabel => "filter_label",
     /// Step the timeline's range a month earlier (`after:` and `before:`
     /// both).
     StepRangeBack => "step_range_back",

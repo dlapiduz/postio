@@ -327,6 +327,21 @@ pub struct FilterButton {
     pub applied: bool,
     /// Ringed: its popover is open (step 4).
     pub open: bool,
+    /// The key that opens its popover, as the registry spells it (#2090);
+    /// `None` for the toggles, which a click flips.
+    pub key: Option<String>,
+}
+
+/// The command that opens `kind`'s popover, for the popovers that have one.
+pub fn filter_command(kind: FilterKind) -> Option<CommandId> {
+    match kind {
+        FilterKind::From => Some(CommandId::FilterFrom),
+        FilterKind::To => Some(CommandId::FilterTo),
+        FilterKind::Date => Some(CommandId::FilterDate),
+        FilterKind::Anywhere => Some(CommandId::FilterAnywhere),
+        FilterKind::Label => Some(CommandId::FilterLabel),
+        _ => None,
+    }
 }
 
 /// The query as the field and the filter bar draw it: one query, two
@@ -1830,6 +1845,7 @@ impl Results {
                     .popover
                     .as_ref()
                     .is_some_and(|popover| popover.kind == *kind),
+                key: None,
             })
             .collect();
         QueryView {
@@ -2768,7 +2784,7 @@ pub(crate) fn show(view: ResultsView) -> Step {
 }
 
 /// The commands the results answer while nothing is over them.
-const RESULTS_KEYS: [CommandId; 26] = [
+const RESULTS_KEYS: [CommandId; 31] = [
     CommandId::NextMessage,
     CommandId::PrevMessage,
     CommandId::FirstMessage,
@@ -2782,6 +2798,11 @@ const RESULTS_KEYS: [CommandId; 26] = [
     CommandId::ResultsConversations,
     CommandId::ResultsFiles,
     CommandId::ResultsPeople,
+    CommandId::FilterFrom,
+    CommandId::FilterTo,
+    CommandId::FilterDate,
+    CommandId::FilterAnywhere,
+    CommandId::FilterLabel,
     CommandId::ToggleResultOrder,
     CommandId::ToggleHasAction,
     CommandId::SaveSearch,
@@ -2893,6 +2914,10 @@ impl FocusController {
             };
         };
         let mut view = results.query_view(self.bar.now().date_naive(), &names);
+        for button in &mut view.buttons {
+            button.key = filter_command(button.kind)
+                .and_then(|command| postio_ui::hints::key(self.bar.keymap(), command));
+        }
         view.ringed = results.found_nothing();
         // D24: with nothing found, ⌘⌫ clears the filters, and the field
         // says so where it says "/ to edit".
@@ -3147,6 +3172,19 @@ impl FocusController {
             CommandId::ResultsConversations => self.results_tab(ResultsTab::Conversations),
             CommandId::ResultsFiles => self.results_tab(ResultsTab::Files),
             CommandId::ResultsPeople => self.results_tab(ResultsTab::People),
+            CommandId::FilterFrom
+            | CommandId::FilterTo
+            | CommandId::FilterDate
+            | CommandId::FilterAnywhere
+            | CommandId::FilterLabel => {
+                match FilterKind::ALL
+                    .into_iter()
+                    .find(|kind| filter_command(*kind) == Some(id))
+                {
+                    Some(kind) => self.open_popover(kind),
+                    None => Vec::new(),
+                }
+            }
             CommandId::ToggleResultOrder => {
                 let order = match results.order {
                     ConversationOrder::BestMatch => ConversationOrder::Newest,

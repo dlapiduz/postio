@@ -10,9 +10,8 @@
 # as they were. Opening it again and pressing Return keeps the check: the
 # chip appears in the field and the From button is solid with her name.
 #
-# The format has no pointer input (specs/008-storyboards
-# storyboard-format.md), so the click on From is a step the Mac skips with
-# the reason; the controller's half is proven by postio-focus
+# From opens by its key, as its button shows it (#2090), so the popover is
+# filmed on both apps; the controller's half is proven by postio-focus
 # tests/controller_suite/results.rs (checking_a_person_previews_live_and_esc_restores_the_
 # query_exactly, return_keeps_the_previewed_query).
 apps   = ["macos", "focus"]
@@ -37,8 +36,8 @@ expect  = "The results for “atlas budget”: the filter bar's From button is a
 
 [[step]]
 id      = "open-from"
-wait    = { ms = 300 }
-expect  = "A click on From opens its popover, 360 wide with an arrow, hung from the button, which takes the accent ring. Its field says “Filter people in these results”; the rows are the senders the results hold, 44 tall: a checkbox, the initials, the name over the address, a bar and a count."
+command = "filter_from"
+expect  = "From's key, shown on its button, opens its popover, 360 wide with an arrow, hung from the button, which takes the accent ring. Its field says “Filter people in these results”; the rows are the senders the results hold, 44 tall: a checkbox, the initials, the name over the address, a bar and a count."
 
 [[step]]
 id      = "check-ada"
@@ -52,7 +51,7 @@ expect  = "Esc closes the popover and nothing it previewed is left: no chip, the
 
 [[step]]
 id      = "reopen-from"
-wait    = { ms = 300 }
+command = "filter_from"
 expect  = "From again: the popover, nobody checked."
 
 [[step]]
@@ -62,31 +61,3 @@ key     = "space"
 key     = "Return"
 check   = { keyboard.region = "results", overlay.kind = "none" }
 expect  = "Return keeps it: the field holds a “from: Ada Moreno” chip before the words, the From button is solid and reads “From: Ada Moreno”, and the list is hers."
-
-[app.macos.step.open-from]
-skip = { reason = "A click on the From button: the format has no pointer input; filmed by hand until it does" }
-
-[app.macos.step.reopen-from]
-skip = { reason = "A click on the From button: the format has no pointer input; filmed by hand until it does" }
-
-# Linux's From button is pressed by a click too; with no pointer in the
-# format nothing opens the popover, and the keys after it would reach the
-# results. GTK's focus_suite clicks it (results::from_checks_a_person_and_
-# return_keeps_the_chip, results::a_click_away_from_a_popover_keeps_nothing).
-[app.focus.step.open-from]
-skip = { reason = "A click on From: the format has no pointer input" }
-
-[app.focus.step.check-ada]
-skip = { reason = "Space in the From popover a click opened" }
-
-[app.focus.step.7]
-skip = { reason = "Escape from the From popover a click opened" }
-
-[app.focus.step.reopen-from]
-skip = { reason = "A click on From: the format has no pointer input" }
-
-[app.focus.step.9]
-skip = { reason = "Space in the From popover a click opened" }
-
-[app.focus.step.10]
-skip = { reason = "Return in the From popover a click opened" }

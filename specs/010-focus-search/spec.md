@@ -496,7 +496,10 @@ address, message count, last date. ↩ runs `from:<person>`.
 - **FR-022**: The filter bar MUST hold the tabs with counts (⌘1–3), the
   filter buttons of design §3.2 (solid when applied, labelled with their
   value, accent ring while their popover is open), and Sort (Best match
-  default when the query has words, else Newest).
+  default when the query has words, else Newest). Each popover button
+  MUST open by its key and show it as a keycap: From ⌥F, To ⌥T, Date ⌥D,
+  Anywhere ⌥W, Label ⌥L (maintainer, 2026-11-08); the toggles are flipped
+  by a click or by typing their operator.
 - **FR-023**: The timeline MUST show the count line, 12 monthly bars (D4),
   and update whenever the query changes; dragging MUST set `after:`/`before:`
   and ⌥←/⌥→ MUST step the range by a month.

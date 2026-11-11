@@ -339,6 +339,34 @@ pub fn an_unread_result_has_the_inboxs_accent_dot() {
     });
 }
 
+/// Each filter popover's button shows the key that opens it, and the key
+/// opens it (#2090).
+pub fn the_filter_buttons_show_and_answer_their_keys() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        let keymap = postio_core::Keymap::defaults();
+        let from_key = keymap
+            .binding(postio_core::CommandId::FilterFrom)
+            .expect("From has a key")
+            .to_owned();
+        assert!(
+            crate::settle_until(async || support::texts(results.widget()).contains(&from_key))
+                .await,
+            "the From button teaches no key: {:?}",
+            support::texts(results.widget())
+        );
+        window.press_command(postio_core::CommandId::FilterFrom);
+        assert!(
+            crate::settle_until(async || results.popover().is_open()).await,
+            "the key opened no popover"
+        );
+    });
+}
+
 /// A toggle filter button adds its term as a chip, and the chip's ✕ takes
 /// it out again.
 pub fn a_toggle_filter_adds_its_chip_and_the_chip_removes_it() {
