@@ -246,6 +246,11 @@ impl Feed {
         self.inner.focus.borrow().route(id)
     }
 
+    /// The keymap in force now.
+    pub fn keymap(&self) -> postio_core::Keymap {
+        self.inner.focus.borrow().keymap().clone()
+    }
+
     /// The key `id` runs on now, as a keycap spells it.
     pub fn key(&self, id: CommandId) -> Option<String> {
         postio_ui::hints::key(self.inner.focus.borrow().keymap(), id)

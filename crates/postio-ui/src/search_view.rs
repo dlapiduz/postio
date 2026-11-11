@@ -819,16 +819,10 @@ pub fn results_hints(keymap: &Keymap) -> Vec<Hint> {
 /// The bulk bar's verbs while results are checked (§3.5): Archive, Label,
 /// Move, Mark read, Snooze, each with its key.
 pub fn bulk_hints(keymap: &Keymap) -> Vec<Hint> {
-    [
-        (CommandId::Archive, "Archive"),
-        (CommandId::AddLabel, "Label"),
-        (CommandId::Move, "Move"),
-        (CommandId::ToggleRead, "Mark read"),
-        (CommandId::Snooze, "Snooze"),
-    ]
-    .into_iter()
-    .filter_map(|(id, label)| hints::hint(keymap, id, label))
-    .collect()
+    crate::focus_dialog::RESULTS_BULK
+        .iter()
+        .filter_map(|verb| hints::hint(keymap, verb.command, verb.label))
+        .collect()
 }
 
 /// The bulk bar's right while some results are checked (§3.5): "⇧X select

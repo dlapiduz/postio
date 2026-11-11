@@ -183,6 +183,9 @@ pub struct ResultsPane {
     found_nothing: Cell<bool>,
     quick_look: Rc<crate::results_files::QuickLookPanel>,
     hints: gtk::Box,
+    /// The inbox's bulk bar, offering what checked results take: one bar
+    /// for a selection wherever it is made (#2082).
+    bulk: crate::bulk::Bulk,
     footer: gtk::Label,
     view: RefCell<Option<ResultsView>>,
     cursor: Cell<Option<u64>>,
@@ -292,6 +295,12 @@ impl ResultsPane {
         root.append(&buttons);
         root.append(&timeline_line);
         let act: Rc<dyn Fn(CommandId)> = Rc::new(act);
+        let bulk =
+            crate::bulk::Bulk::with_verbs(postio_ui::focus_dialog::RESULTS_BULK, &feed.keymap());
+        bulk.connect_command({
+            let act = Rc::clone(&act);
+            move |command| act(command)
+        });
         let files = crate::results_files::FilesGrid::new(feed.clone(), Rc::clone(&act));
         let quick_look = crate::results_files::QuickLookPanel::new(Rc::clone(&act));
         let people = crate::results_files::PeopleList::new(feed.clone(), Rc::clone(&act));
@@ -313,6 +322,7 @@ impl ResultsPane {
         over.add_overlay(quick_look.widget());
         root.append(&over);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        root.append(bulk.widget());
         root.append(&foot);
 
         let popover_feed = feed.clone();
@@ -352,6 +362,7 @@ impl ResultsPane {
             found_nothing: Cell::new(false),
             quick_look,
             hints,
+            bulk,
             footer,
             view: RefCell::default(),
             cursor: Cell::new(None),
@@ -492,16 +503,11 @@ impl ResultsPane {
         }
         clear(&self.hints);
         let bulk = view.selected > 0;
-        if bulk {
-            // The bulk bar (§3.5): how many the next verb reaches, then each
-            // verb before its key, as the inbox's bulk bar says them.
-            let count = gtk::Label::new(Some(&words::checked_line(view.selected)));
-            count.add_css_class("focus-results-selected");
-            self.hints.append(&count);
-            for hint in &view.bulk {
-                self.hints.append(&verb_line(&hint.key, &hint.label));
-            }
-        } else {
+        // The bulk bar (§3.5) is the inbox's, over the footer: how many the
+        // next verb reaches, then its verbs with their keys.
+        self.bulk
+            .set_summary(bulk.then(|| words::checked_line(view.selected)).as_deref());
+        if !bulk {
             for hint in &view.hints {
                 self.hints.append(&hint_line(&hint.key, &hint.label));
             }
@@ -962,6 +968,9 @@ impl ResultsPane {
         if row.unread && !row.checked {
             gutter.add_css_class("focus-results-dot");
         }
+        if row.checked {
+            gutter.add_css_class("focus-results-check");
+        }
         line.append(&gutter);
 
         let sender = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -1398,16 +1407,6 @@ fn hint_line(key: &str, label: &str) -> gtk::Box {
     words.add_css_class("dim-label");
     words.set_single_line_mode(true);
     line.append(&words);
-    line
-}
-
-/// A verb on the bulk bar: its word, then its key.
-fn verb_line(key: &str, label: &str) -> gtk::Box {
-    let line = gtk::Box::new(gtk::Orientation::Horizontal, S1);
-    let words = gtk::Label::new(Some(label));
-    words.set_single_line_mode(true);
-    line.append(&words);
-    line.append(&keyhint::cap(key));
     line
 }
 
