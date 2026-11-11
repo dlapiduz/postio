@@ -687,6 +687,10 @@ const CASES: &[(&str, fn())] = &[
         drafts::g_t_lists_drafts_and_enter_opens_one_to_edit as fn(),
     ),
     (
+        "bar::the_fields_operator_terms_are_chips",
+        bar::the_fields_operator_terms_are_chips as fn(),
+    ),
+    (
         "bar::a_word_lists_top_hits_and_return_shows_all",
         bar::a_word_lists_top_hits_and_return_shows_all as fn(),
     ),

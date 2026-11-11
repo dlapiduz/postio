@@ -365,6 +365,49 @@ pub fn the_dropdown_opens_on_the_newest_recent_search() {
     });
 }
 
+/// The operator terms typed into the field are drawn as chips where they
+/// stand, an exclusion struck through (spec 010 screens 04-05, #2082);
+/// the plain words stay plain.
+pub fn the_fields_operator_terms_are_chips() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Archive plan",
+                "Boxes.",
+                5,
+            )
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        let typed = "archive from:ada@example.com -to:ben@example.net";
+        type_in(&bar, typed).await;
+        let from = typed.find("from:").unwrap() as u32;
+        let to = typed.find("-to:").unwrap() as u32;
+        assert!(
+            crate::settle_until(async || {
+                bar.chip_ranges()
+                    == [
+                        (from, from + "from:ada@example.com".len() as u32, false),
+                        (to, typed.len() as u32, true),
+                    ]
+            })
+            .await,
+            "the terms are not chips: {:?}",
+            bar.chip_ranges()
+        );
+    });
+}
+
 /// `@` offers the correspondents the address book holds, and choosing one
 /// puts their `with:` search in the box: mail involving any of the person's
 /// addresses, as specs/005-contacts/contracts/query-with.md has the finder do.
