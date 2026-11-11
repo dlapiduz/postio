@@ -638,9 +638,31 @@ async fn file_fixture(
     minute: i64,
     name: &str,
 ) -> ThreadId {
+    file_fixture_as(connection, account, mailbox, minute, name, false).await
+}
+
+/// [`file_fixture`], optionally as if the message were not list mail.
+///
+/// Spec 013 keeps list and bulk mail out of the subject fallback (FR-002), so
+/// a list message whose references were stripped is its own thread. The
+/// rethreading cases below are about the fallback's *repair*, which needs an
+/// orphan the fallback may place: the same message, minus its `List-Id` and
+/// `Precedence`.
+async fn file_fixture_as(
+    connection: &Connection,
+    account: AccountId,
+    mailbox: MailboxId,
+    minute: i64,
+    name: &str,
+    unlisted: bool,
+) -> ThreadId {
     let fixture = postio_model::test_corpus::load(name);
     let mut message =
         postio_model::mime::parse(fixture.bytes()).into_message(account, mailbox, at(minute).await);
+    if unlisted {
+        message.list_id = None;
+        message.promoted = None;
+    }
     MessageRepository::new(connection)
         .create(&mut message)
         .await
@@ -679,14 +701,24 @@ async fn the_corpus_mailing_list_threads_as_one_conversation() {
         threads.push(file_fixture(&connection, account.id, inbox, index as i64, name).await);
     }
 
+    // Everything with a reference is one conversation. The one with none is
+    // list mail, which spec 013 never groups by subject (FR-002), so it is its
+    // own thread however well its subject matches.
     let first = threads[0];
     for (name, thread) in LIST_THREAD.iter().zip(&threads) {
+        if *name == "list-thread-06-reply-subject-only" {
+            assert_ne!(*thread, first, "list mail never groups by subject");
+            continue;
+        }
         assert_eq!(
             *thread, first,
             "`{name}` fell out of the conversation it belongs to"
         );
     }
-    assert_eq!(members(&connection, first).await.len(), LIST_THREAD.len());
+    assert_eq!(
+        members(&connection, first).await.len(),
+        LIST_THREAD.len() - 1
+    );
 }
 
 #[tokio::test]
@@ -757,7 +789,15 @@ async fn rethreading_recovers_the_orphan_arrival_order_stranded() {
     for (index, name) in LIST_THREAD.iter().enumerate().rev() {
         placed.push((
             name,
-            file_fixture(&connection, account.id, inbox, index as i64, name).await,
+            file_fixture_as(
+                &connection,
+                account.id,
+                inbox,
+                index as i64,
+                name,
+                *name == "list-thread-06-reply-subject-only",
+            )
+            .await,
         ));
     }
     let conversation = placed

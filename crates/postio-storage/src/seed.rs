@@ -171,6 +171,25 @@ const UNSEEDED: &[&str] = &[
     "hostile-remote-srcset-picture",
     "hostile-remote-stylesheet-link",
     "hostile-remote-svg-images",
+    // Spec 013's threading-rule fixtures: dated in November 2026 and built for
+    // the grouping tests, not for a screenshot.
+    "thread-archive-1-parent",
+    "thread-archive-2-reply",
+    "thread-fork-1-root",
+    "thread-fork-2-reply-a",
+    "thread-fork-3-reply-b",
+    "thread-fork-4-reply-to-a",
+    "thread-hello-30d-1",
+    "thread-hello-30d-2",
+    "thread-hello-3d-1",
+    "thread-hello-3d-2",
+    "thread-list-1-root",
+    "thread-list-2-reply",
+    "thread-list-3-reply",
+    "thread-newsletter-1-issue",
+    "thread-newsletter-2-issue",
+    "thread-sent-1-received",
+    "thread-sent-2-reply",
 ];
 
 /// The corpus fixtures every small seed files, the extra account's included.

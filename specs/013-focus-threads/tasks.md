@@ -83,13 +83,13 @@ and splice rules every frontend story draws through.
 
 ### Grouping (research R2)
 
-- [ ] T005 [P] Write failing `assign` cases in `crates/postio-model/src/threading.rs` tests (red: today two same-subject threads merge, an 8-day gap joins, and a `List-Id` message joins by subject):
+- [x] T005 [P] Write failing `assign` cases in `crates/postio-model/src/threading.rs` tests (red: today two same-subject threads merge, an 8-day gap joins, and a `List-Id` message joins by subject):
   - the subject fallback joins the newest thread within 7 days and never merges;
   - an 8-day gap starts a new thread;
   - `is_list` skips the fallback.
-- [ ] T006 Implement `ThreadCue.date`/`is_list`, `SUBJECT_WINDOW`, and `threads_with_subject(subject, since) -> Option<ThreadId>` in `crates/postio-model/src/threading.rs`, with `assign` joining only.
-- [ ] T007 Write a failing storage case in `crates/postio-storage/tests/storage_suite/threading.rs` over T002's corpus (red: the two "Re: Hello" 30 days apart and the newsletter group together). Add a count assertion that the bounded subject lookup costs today's statements. Assert rows materialised and trigger firings too, not just statements (constitution V).
-- [ ] T008 Bound the subject lookup in `crates/postio-storage/src/repository/threading.rs` (`LoadedIndex::load`, `last_at >= ?`), and add the migration with `idx_threads_subject_recent` in `crates/postio-storage/src/schema.rs` plus its fingerprint under `crates/postio-storage/tests/schemas/`.
+- [x] T006 Implement `ThreadCue.date`/`is_list`, `SUBJECT_WINDOW`, and `threads_with_subject(subject, since) -> Option<ThreadId>` in `crates/postio-model/src/threading.rs`, with `assign` joining only.
+- [x] T007 Write a failing storage case in `crates/postio-storage/tests/storage_suite/threading.rs` over T002's corpus (red: the two "Re: Hello" 30 days apart and the newsletter group together). Add a count assertion that the bounded subject lookup costs today's statements. Assert rows materialised and trigger firings too, not just statements (constitution V).
+- [x] T008 Bound the subject lookup in `crates/postio-storage/src/repository/threading.rs` (`LoadedIndex::load`, `last_at >= ?`), and add the migration with `idx_threads_subject_recent` in `crates/postio-storage/src/schema.rs` plus its fingerprint under `crates/postio-storage/tests/schemas/`.
 
 ### Own line (research R5)
 
