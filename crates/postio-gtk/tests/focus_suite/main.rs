@@ -538,6 +538,10 @@ const CASES: &[(&str, fn())] = &[
         results::escape_closes_a_dropdown_over_the_results_then_leaves_them as fn(),
     ),
     (
+        "results::the_tabs_hold_still_when_the_sort_changes",
+        results::the_tabs_hold_still_when_the_sort_changes as fn(),
+    ),
+    (
         "results::show_all_opens_the_results_and_back_returns_to_the_inbox",
         results::show_all_opens_the_results_and_back_returns_to_the_inbox as fn(),
     ),

@@ -479,6 +479,17 @@ impl ResultsPane {
                 _ => words::BEST_MATCH,
             }
         ));
+        // As wide as its widest words, whichever it says: the tabs beside
+        // it held still while it changed (#2082).
+        if let Some(label) = self.sort.child().and_downcast::<gtk::Label>() {
+            label.set_width_chars(
+                [words::NEWEST, words::BEST_MATCH]
+                    .iter()
+                    .map(|order| format!("{} {order}", words::SORT).chars().count())
+                    .max()
+                    .unwrap_or_default() as i32,
+            );
+        }
         clear(&self.hints);
         let bulk = view.selected > 0;
         if bulk {
