@@ -74,6 +74,8 @@ the screens'.
 | `⌥E` | Reply to the latest message | `alt+e`, as designed. `alt+r` is Retry send; `alt+e` is taken only by the terminal composer's Edit externally, which this does not reach |
 | `⇧M` | Mute or unmute the thread | `m` (free on mail surfaces; Gmail's mute) |
 | `⇧T` | Thread outline | `alt+t` (T3; `T` is Capture a task) |
+| Thread ▾ | Open the thread menu | `alt+period` (`⌥.`), beside `.` (More actions) |
+| (menu only) | Split into its own thread | `alt+shift+s` (`⌥⇧S`), a chord so it is not hit by accident |
 | `⌥M` | Move only this message | `alt+v` (move is `v`; `alt+m` is Mark as sent) |
 | `⌥⌫` | Delete only this message | `alt+BackSpace` (taken only in search's field) |
 | `⇧O` | Always show this message's HTML as sent | `O`, the existing `switch_treatment`, made to persist per message |
@@ -99,17 +101,27 @@ archive (only `alt+BackSpace` deletes one message). With archive
 thread-scoped everywhere, `archive_thread` (`E`) duplicates `archive` and is
 removed; `E` becomes free.
 
-**D3. Thread state is stored once, and written through to the messages the
-server knows.** Mute, snooze, remind and split are local thread state. Archive
-moves every one of the thread's inbox messages; a label is applied to every
-message; move moves every message outside Sent and Drafts. A message that
-joins a thread later is shown with the thread's state; it is not rewritten on
-the server unless an action asks for it, except that a muted thread's new
-reply is archived on arrival (FR-012).
+**D3. A thread action is written through to its messages; a new reply
+follows Gmail.** Archive, snooze, label and move on a thread write every one of
+its messages (move skips Sent and Drafts), as the server keeps that state per
+message. Mute, remind and split are the only local thread state. A reply that
+arrives later is not given the thread's state: it brings an archived thread
+back to the inbox, ends a snooze early, and is not labelled on the server
+unless an action asks for it; the row shows the union of its messages' labels.
+The exception is a muted thread, whose new reply is archived on arrival
+(FR-012).
 
 **D4. The classic GTK reader and the terminal app keep building and keep
 their own views.** They take the model changes (grouping, D2 and D3, mute,
 split) because the rules are shared; their layouts are not redesigned here.
+
+## Clarifications
+
+### Session 2026-11-11
+
+- Q: When a new reply arrives in a thread you've archived, snoozed or labelled (but not muted), what should happen to the thread? → A: Gmail's way: it returns to the inbox and ends a snooze; labels show as the union, and the reply is not labelled on the server by arriving.
+- Q: Which keys should open the Thread ▾ menu and split a message into its own thread? → A: Thread menu `alt+period` (⌥.), split `alt+shift+s` (⌥⇧S).
+- Q: If someone writes to you directly in a thread you've muted, should that reply still be archived quietly? → A: No: a reply addressed to you alone (only you in To, no Cc) comes to the inbox; the thread stays muted.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -242,10 +254,10 @@ unchanged; `}` shows the new one.
 
 ### User Story 5 - Thread menu, outline, mute and split (Priority: P2)
 
-Thread ▾ opens a menu in two groups. **Whole thread:** Outline and filter
+Thread ▾ (`alt+period`) opens a menu in two groups. **Whole thread:** Outline and filter
 (`alt+t`), Forward the whole thread (`f`, `2`), Reply to the latest message
 (`alt+e`), Mute thread (`m`). **This message only:** Split into its own
-thread, Move just this message (`alt+v`), Delete just this message
+thread (`alt+shift+s`), Move just this message (`alt+v`), Delete just this message
 (`alt+BackSpace`), Always show its HTML as sent (`O`). Entries may carry a
 one-line explanation. The outline lists every message (number, avatar, name,
 first line, date, unread dot), filtered by a field (`/`) and by person chips
@@ -268,11 +280,14 @@ one.
 
 1. **Given** a muted thread, **When** a reply arrives, **Then** it is archived
    on arrival, the row says "muted" with a count of 1, and search finds it.
-2. **Given** a muted thread, **When** `m` is pressed, **Then** it is unmuted
+2. **Given** a muted thread, **When** a reply arrives addressed only to the
+   person (no one else in To, no Cc), **Then** it arrives in the inbox and the
+   thread stays muted.
+3. **Given** a muted thread, **When** `m` is pressed, **Then** it is unmuted
    and later replies arrive in the inbox.
-3. **Given** message 4 split off, **When** a reply whose `In-Reply-To` is
+4. **Given** message 4 split off, **When** a reply whose `In-Reply-To` is
    message 4 arrives, **Then** it joins the split thread, not the original.
-4. **Given** the outline filtered to "Ben", **When** `Return` is pressed on a
+5. **Given** the outline filtered to "Ben", **When** `Return` is pressed on a
    row, **Then** the window shows that message and the outline closes.
 
 ---
@@ -356,6 +371,9 @@ the body holds six headed messages and every attachment.
   with no references: not grouped.
 - An expanded thread loses its last inbox message (archived elsewhere): it
   collapses and the focus moves to the next row, as for any row that leaves.
+- A reply arrives in an archived, snoozed or labelled thread that is not
+  muted: the thread returns to the inbox at its new time, the snooze ends, and
+  the row's labels are the union of its messages' (D3, FR-004).
 - An expanded thread gains a message: the new child appears in place, and the
   focused child stays focused.
 - A child message whose body is not yet fetched: its row shows the sender and
@@ -385,9 +403,11 @@ the body holds six headed messages and every attachment.
   within 7 days of it.
 - **FR-003**: A message that replies to a message other than the one before
   it MUST record which message it answers.
-- **FR-004**: Archive, snooze, labels, folder, remind-if-no-reply and mute
-  MUST be thread state (D3); read, action markers, the HTML rendering override
-  and attachments MUST stay message state.
+- **FR-004**: Archive, snooze, label, move, remind-if-no-reply and mute MUST
+  act on the thread (D3); read, action markers, the HTML rendering override and
+  attachments MUST stay message state. A new reply to an archived or snoozed
+  thread that is not muted MUST bring the thread back to the inbox (ending the
+  snooze), and MUST NOT be labelled on the server by the arrival alone.
 - **FR-005**: One rule MUST resolve every action's target from the focus and
   the action, exactly as D2's table; frontends MUST NOT decide scope.
 - **FR-006**: `archive_thread` MUST be removed, `archive` acting on the thread
@@ -412,7 +432,9 @@ the body holds six headed messages and every attachment.
   unread mark; the draft child MUST be drawn as Story 1 says.
 - **FR-012**: A muted thread's new messages MUST be archived on arrival,
   remain searchable, and increment a "replies since muting" count shown on
-  the row.
+  the row, except a message addressed to the person alone (one of the
+  account's identities is the only `To` address and there is no `Cc`), which
+  MUST arrive in the inbox as usual while the thread stays muted.
 - **FR-013**: `Return` on a thread row MUST open the first unread message,
   else the message with an open action marker, else the latest; on a child
   row, that message.
@@ -431,8 +453,9 @@ the body holds six headed messages and every attachment.
 - **FR-018**: A message joining the open thread MUST add a chip and the
   new-reply banner, MUST update the list row behind the window, and MUST NOT
   change the shown message, its scroll position or the focus.
-- **FR-019**: Thread ▾ MUST open the menu and outline of Story 5; the outline
-  MUST filter by text and by person.
+- **FR-019**: Thread ▾ and `alt+period` MUST open the menu, and `alt+t` the
+  outline, of Story 5; the outline MUST filter by text and by person. Every
+  menu entry MUST have a key (split: `alt+shift+s`).
 
 **Search**
 
