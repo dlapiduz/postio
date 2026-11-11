@@ -12,7 +12,8 @@
 //! | Collapsed row | latest message | thread | thread | not offered |
 //! | Child row, window | this message | thread | this message | this message |
 
-use postio_core::CommandId;
+use crate::hints;
+use postio_core::{CommandId, Keymap};
 use postio_model::ids::{MessageId, ThreadId};
 
 /// Where the focus is, as far as scope cares.
@@ -91,28 +92,117 @@ pub fn target(focus: ScopeFocus, action: CommandId) -> Scope {
     }
 }
 
-/// The scope's title under the list and in the window: the thread's subject
-/// and size on a row, the message's place and sender below it.
+/// What the footer under the list says (spec 013 US2): the scope in words,
+/// the keys that matter there, and one sentence on what acts on what.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FooterView {
+    /// The scope: "Harbor API draft v3 \u{b7} 6 messages", "Message 4 of 6 \u{b7} Ben Adeyemi".
+    pub title: String,
+    /// Keycap and label pairs, in the order they are drawn.
+    pub keys: Vec<(String, String)>,
+    /// The right-hand sentence; none on a row that stands for one message.
+    pub note: Option<String>,
+}
+
+/// What the footer is about: the thread's subject and size, and the
+/// message the focus is on when it is on one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FooterAbout<'a> {
+    /// The thread's subject.
+    pub subject: &'a str,
+    /// How many messages it holds.
+    pub count: usize,
+    /// The focused message, from zero, oldest first.
+    pub index: usize,
+    /// Who sent it: "You" for the person's own.
+    pub sender: &'a str,
+}
+
+/// The footer under the list, by spec 013's D2: its title says the scope,
+/// its keys say what reply, forward and archive reach from here, and the
+/// note under a child says which keys act on the thread.
 ///
-/// `index` counts from zero, oldest first. Plain inputs, so both frontends
-/// and the tests say the same sentence; the keys beside it are the footer
-/// view's, later.
-pub fn footer(
-    focus: ScopeFocus,
-    subject: &str,
-    count: usize,
-    index: usize,
-    sender: &str,
-) -> String {
-    match focus {
-        ScopeFocus::Row { .. } => {
-            let messages = if count == 1 { "message" } else { "messages" };
-            format!("{subject} \u{b7} {count} {messages}")
-        }
-        ScopeFocus::Child { .. } | ScopeFocus::Window { .. } => {
-            format!("Message {} of {count} \u{b7} {sender}", index + 1)
-        }
+/// A row that stands for one message has no thread to speak of: its title
+/// is the subject, its keys are plain "reply", "forward" and "archive", and
+/// there is no note. Every keycap is the keymap's, so a rebinding shows.
+pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> FooterView {
+    let (title, reply, forward, archive, walk, note) = match focus {
+        ScopeFocus::Row { .. } if about.count <= 1 => (
+            about.subject.to_owned(),
+            "reply",
+            "forward",
+            "archive",
+            Some((CommandId::OpenMessage, "open")),
+            None,
+        ),
+        ScopeFocus::Row { .. } => (
+            format!("{} \u{b7} {} messages", about.subject, about.count),
+            "reply to latest",
+            "forward latest",
+            "archive thread",
+            Some((CommandId::ExpandThread, "expand")),
+            None,
+        ),
+        ScopeFocus::Child { .. } | ScopeFocus::Window { .. } => (
+            format!(
+                "Message {} of {} \u{b7} {}",
+                about.index + 1,
+                about.count,
+                about.sender
+            ),
+            "reply to this",
+            "forward this",
+            "archive thread",
+            matches!(focus, ScopeFocus::Child { .. })
+                .then_some((CommandId::CollapseThread, "collapse")),
+            Some(thread_note(keymap)),
+        ),
+    };
+    let mut keys = Vec::new();
+    let mut push = |hint: Option<hints::Hint>| {
+        keys.extend(hint.map(|hint| (hints::short(&hint.key), hint.label)));
+    };
+    if !matches!(focus, ScopeFocus::Window { .. }) {
+        push(hints::pair(
+            keymap,
+            CommandId::NextMessage,
+            CommandId::PrevMessage,
+            "move",
+        ));
+        let open = if matches!(focus, ScopeFocus::Child { .. }) {
+            "open here"
+        } else {
+            "open"
+        };
+        push(hints::hint(keymap, CommandId::OpenMessage, open));
     }
+    push(hints::hint(keymap, CommandId::Reply, reply));
+    push(hints::hint(keymap, CommandId::Forward, forward));
+    push(hints::hint(keymap, CommandId::Archive, archive));
+    if let Some((command, label)) = walk
+        && command != CommandId::OpenMessage
+    {
+        push(hints::hint(keymap, command, label));
+    }
+    FooterView { title, keys, note }
+}
+
+/// "Reply and forward act on this message; e, b, l, v act on the thread",
+/// with the keys the keymap binds to archive, snooze, label and move.
+fn thread_note(keymap: &Keymap) -> String {
+    let keys: Vec<&str> = [
+        CommandId::Archive,
+        CommandId::Snooze,
+        CommandId::AddLabel,
+        CommandId::Move,
+    ]
+    .into_iter()
+    .filter_map(|command| keymap.binding(command))
+    .collect();
+    format!(
+        "Reply and forward act on this message; {} act on the thread",
+        keys.join(", ")
+    )
 }
 
 #[cfg(test)]
@@ -211,22 +301,62 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_footer_names_the_thread_on_a_row() {
-        assert_eq!(
-            footer(row(), "Harbor API draft v3", 6, 5, "Lena Ortiz"),
-            "Harbor API draft v3 \u{b7} 6 messages"
-        );
-        assert_eq!(
-            footer(row(), "Lunch", 1, 0, "Ada"),
-            "Lunch \u{b7} 1 message"
-        );
+    fn about(count: usize, index: usize) -> FooterAbout<'static> {
+        FooterAbout {
+            subject: "Harbor API draft v3",
+            count,
+            index,
+            sender: "Ben Adeyemi",
+        }
+    }
+
+    fn labels(view: &FooterView) -> Vec<&str> {
+        view.keys.iter().map(|(_, label)| label.as_str()).collect()
     }
 
     #[test]
-    fn the_footer_places_the_message_below_a_row() {
-        let said = "Message 4 of 6 \u{b7} Ben Adeyemi";
-        assert_eq!(footer(child(), "Harbor", 6, 3, "Ben Adeyemi"), said);
-        assert_eq!(footer(window(), "Harbor", 6, 3, "Ben Adeyemi"), said);
+    fn the_footer_names_the_thread_on_a_row_and_what_its_keys_reach() {
+        let view = footer(row(), &about(6, 5), Keymap::defaults());
+        assert_eq!(view.title, "Harbor API draft v3 \u{b7} 6 messages");
+        let said = labels(&view);
+        for want in [
+            "reply to latest",
+            "forward latest",
+            "archive thread",
+            "expand",
+        ] {
+            assert!(said.contains(&want), "{want} in {said:?}");
+        }
+        assert_eq!(view.note, None);
+    }
+
+    #[test]
+    fn the_footer_places_the_message_below_a_row_and_says_what_acts_on_what() {
+        for focus in [child(), window()] {
+            let view = footer(focus, &about(6, 3), Keymap::defaults());
+            assert_eq!(view.title, "Message 4 of 6 \u{b7} Ben Adeyemi");
+            let said = labels(&view);
+            for want in ["reply to this", "forward this", "archive thread"] {
+                assert!(said.contains(&want), "{want} in {said:?}");
+            }
+            let note = view.note.expect("a note below a row");
+            assert!(note.starts_with("Reply and forward act on this message; "));
+            assert!(note.ends_with(" act on the thread"));
+        }
+    }
+
+    #[test]
+    fn a_row_of_one_message_has_no_thread_wording() {
+        let view = footer(row(), &about(1, 0), Keymap::defaults());
+        assert_eq!(view.title, "Harbor API draft v3");
+        assert_eq!(view.note, None);
+        for said in labels(&view) {
+            assert!(
+                !["thread", "latest", "this", "expand"]
+                    .iter()
+                    .any(|w| said.contains(w)),
+                "{said}"
+            );
+        }
     }
 }

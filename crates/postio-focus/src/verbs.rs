@@ -142,6 +142,7 @@ impl Verbs {
             id: row.id,
             threads: row.threads.clone(),
             digest: row.digest,
+            child: false,
         };
         let Aim::Targets(aims) = postio_ui::focus_target::aim_by(
             &Selection::These(Vec::new()),
@@ -231,11 +232,7 @@ impl Verbs {
 
     /// The cursor's row as a verb aims at it.
     fn row_aimed_at(cursor: &Cursor, rows: &dyn Rows) -> Option<AimRow> {
-        cursor.row(rows).map(|row| AimRow {
-            id: row.id,
-            threads: row.threads,
-            digest: row.digest,
-        })
+        cursor.aim_row(rows)
     }
 
     /// Where a verb goes: the selection when there is one, the cursor's row

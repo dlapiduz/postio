@@ -486,11 +486,7 @@ impl FocusController {
     ) -> Option<Vec<Step>> {
         let kind = PickerKind::of(id)?;
         let selection = self.cursor.selection();
-        let at = self.cursor.row(rows).map(|row| AimRow {
-            id: row.id,
-            threads: row.threads,
-            digest: row.digest,
-        });
+        let at = self.cursor.aim_row(rows);
         let (aims, everything) =
             match postio_ui::focus_target::aim_by(&selection, self.cursor.reach(), at.as_ref(), id)
             {
@@ -539,6 +535,7 @@ impl FocusController {
             id: row.id,
             threads: row.threads,
             digest: row.digest,
+            child: false,
         };
         let Aim::Targets(aims) = postio_ui::focus_target::aim_by(
             &Selection::These(Vec::new()),

@@ -404,6 +404,16 @@ impl Filtered {
         through.facts(index as u32)
     }
 
+    /// The footer for the row or child at display `index`.
+    pub(crate) fn footer_at(
+        &self,
+        index: u32,
+        keymap: &postio_core::Keymap,
+    ) -> Option<postio_ui::scope::FooterView> {
+        let raw = FilteredRows(&self.rows, true);
+        crate::thread_expand::footer_at(self.expansion.as_ref(), index, &raw, keymap)
+    }
+
     /// Where `message` is among the rows read, children counted.
     pub(crate) fn index_of(&self, message: MessageId) -> Option<usize> {
         let raw = FilteredRows(&self.rows, true);
