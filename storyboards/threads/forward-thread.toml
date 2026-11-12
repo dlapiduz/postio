@@ -71,6 +71,12 @@ check   = { cursor.index = 1 }
 key     = "j"
 check   = { cursor.index = 2 }
 
+# Rows 1 and 2 are the long threads; row 3 is the design-review invitation,
+# one message.
+[[step]]
+key     = "j"
+check   = { cursor.index = 3, cursor.subject = "Invitation: Harbor design review" }
+
 [[step]]
 id      = "alone"
 command = "forward"

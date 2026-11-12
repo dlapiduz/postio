@@ -428,6 +428,14 @@ async fn file_thread(
 ) -> (postio_model::ThreadId, MessageId) {
     let mut filed: Vec<MessageId> = Vec::new();
     let mut thread_id = None;
+    // The raw sources' ids, from a scratch store under the test keys: the
+    // runner puts the same bytes in the host's own.
+    let scratch_dir = tempfile::tempdir().expect("scratch for the blobs");
+    let scratch = postio_storage::BlobStore::open(
+        scratch_dir.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a scratch blob store");
     for (index, turn) in thread.turns.iter().enumerate() {
         let parent = turn.answers.or(index.checked_sub(1));
         let mut message = Message::new(account, mailbox, turn.at);
@@ -458,9 +466,19 @@ async fn file_thread(
             let mut file = Attachment::new(MessageId::UNASSIGNED, "application/pdf", size);
             file.filename = Some(name.to_owned());
             file.part_id = Some("2".to_owned());
+            file.blob_id = Some(
+                scratch
+                    .put(FILE_BYTES)
+                    .expect("a blob in the scratch store"),
+            );
             message.attachments.push(file);
         }
         message.rfc_message_id = Some(rfc_id(thread.key, index));
+        message.raw_blob_id = Some(
+            scratch
+                .put(&raw_source(thread, index))
+                .expect("a blob in the scratch store"),
+        );
         if let Some(parent) = parent {
             // The chain back to the first message, nearest last.
             let mut chain = vec![parent];
@@ -625,4 +643,71 @@ pub async fn deliver_harbor_reply(store: &Store, account: AccountId) -> Result<A
         thread: threaded.thread_id,
         message: message.id,
     })
+}
+
+/// The message `index` of `thread` as it arrived, the source the engine
+/// keeps: what a forward as attachments or of the whole thread needs on this
+/// machine. A pure function of the seed, so the row and the blob agree.
+fn raw_source(thread: &Thread, index: usize) -> Vec<u8> {
+    let turn = &thread.turns[index];
+    let parent = turn.answers.or(index.checked_sub(1));
+    let to = if turn.from.is_you() {
+        parent.map_or(Who::Person(ANA), |parent| thread.turns[parent].from)
+    } else {
+        Who::Person(YOU)
+    };
+    let subject = if index == 0 || thread.always_re || thread.subject.starts_with("Re: ") {
+        thread.subject.to_owned()
+    } else {
+        format!("Re: {}", thread.subject)
+    };
+    let mut raw = format!(
+        "From: {}\r\nTo: {}\r\nSubject: {subject}\r\nDate: {}\r\nMessage-ID: {}\r\n",
+        turn.from.address(),
+        to.address(),
+        turn.at.to_rfc2822(),
+        rfc_id(thread.key, index).as_str(),
+    );
+    if let Some(parent) = parent {
+        raw.push_str(&format!(
+            "In-Reply-To: {}\r\n",
+            rfc_id(thread.key, parent).as_str()
+        ));
+    }
+    match turn.file {
+        // The part the row declares, with a few bytes of it.
+        Some((name, _)) => raw.push_str(&format!(
+            "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"edge\"\r\n\r\n\
+             --edge\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{}\r\n\
+             --edge\r\nContent-Type: application/pdf; name=\"{name}\"\r\n\
+             Content-Disposition: attachment; filename=\"{name}\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--edge--\r\n",
+            turn.text
+        )),
+        None => raw.push_str(&format!(
+            "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{}\r\n",
+            turn.text
+        )),
+    }
+    raw.into_bytes()
+}
+
+/// What the seed's one attached file holds on this machine.
+const FILE_BYTES: &[u8] = b"%PDF-1.4\n";
+
+/// The threads seed's raw sources, put in `blobs`: its rows name them
+/// (`raw_blob_id`), so Forward as attachments and Forward the whole thread
+/// find every message on this machine, as they do once mail has synced.
+///
+/// # Errors
+///
+/// The store's: a blob that could not be written.
+pub fn store_threads_blobs(blobs: &postio_storage::BlobStore) -> postio_storage::Result<()> {
+    blobs.put(FILE_BYTES)?;
+    for thread in conversations(today()) {
+        for index in 0..thread.turns.len() {
+            blobs.put(&raw_source(&thread, index))?;
+        }
+    }
+    Ok(())
 }

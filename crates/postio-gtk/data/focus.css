@@ -2613,3 +2613,41 @@ button.focus-filtered-tab.focus-filtered-tab-on {
 .focus-match-banner {
   background-color: var(--postio-raised-bg);
 }
+
+/* ── A thread in the composer (spec 013 US7; screens 09, 10) ──────────── */
+.focus-older-reply {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-accent-soft);
+}
+
+.focus-older-reply-title {
+  font-weight: bold;
+}
+
+.focus-forward-chooser {
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-forward-card {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  border: 1px solid var(--postio-hairline);
+  background: none;
+}
+
+.focus-forward-card-selected {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-accent-soft);
+}
+
+.focus-forward-card-title {
+  font-weight: bold;
+}
+
+.focus-newer-messages {
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-raised-bg);
+}

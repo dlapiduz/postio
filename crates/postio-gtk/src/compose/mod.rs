@@ -10,6 +10,7 @@
 mod frame;
 mod host;
 mod seams;
+pub mod thread;
 
 use std::rc::Rc;
 
@@ -42,6 +43,9 @@ pub struct Compose {
     /// (US3 scenario 5): the remind picker the row uses, choosing for the
     /// draft instead of for a conversation.
     remind: Rc<WhenPicker>,
+    /// The chooser, the older-reply bar and the newer messages (spec 013
+    /// US7).
+    pub thread: Rc<thread::ThreadParts>,
 }
 
 impl Compose {
@@ -84,6 +88,9 @@ impl Compose {
         layout.add_css_class("focus-compose-surface");
         layout.add_top_bar(&frame.header);
         layout.add_top_bar(&frame.actions);
+        let thread = thread::ThreadParts::new();
+        layout.add_top_bar(&thread.older);
+        layout.add_top_bar(&thread.chooser);
         layout.set_content(Some(&column));
         // The message dialog's size rule (T205), fitted to the window as it
         // is presented and as it is resized (`host`).
@@ -103,6 +110,7 @@ impl Compose {
             layout.clone().upcast(),
         ));
         composer.mount_on(Rc::clone(&host) as Rc<dyn postio_widgets::composer::ComposerHost>);
+        host.slot.append(&thread.newer);
         // The dialog's own ways out -- Escape reaching it, a click outside
         // -- mean what `Esc` means: close, keeping the draft.
         dialog.set_can_close(false);
@@ -152,6 +160,7 @@ impl Compose {
             resume,
             account,
             remind,
+            thread,
         });
         let weak = Rc::downgrade(&compose);
         compose.frame.remind.connect_clicked(move |_| {
