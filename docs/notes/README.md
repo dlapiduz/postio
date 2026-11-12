@@ -46,3 +46,4 @@ leaves this list. Traps worth knowing before you start are in
 - 2026-11-11 — [Focus threads, steps 2–3: thread rows and expansion against screens 01, 02 and 11](2026-11-11-focus-threads-step-2-3.md)
 - 2026-11-12 — [Focus threads, step 4: the message window's thread bar against screen 03](2026-11-12-focus-threads-step-4.md)
 - 2026-11-12 — [Focus threads, steps 5–6: live replies, the thread menu and outline, search in threads](2026-11-12-focus-threads-steps-5-6.md)
+- 2026-11-12 — [Focus threads, step 7: replying to an older message and forwarding a thread](2026-11-12-focus-threads-step-7.md)
