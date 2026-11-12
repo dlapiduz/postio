@@ -3278,7 +3278,9 @@ impl FocusController {
                 let kind = match id {
                     CommandId::Reply => crate::ComposerKind::Reply,
                     CommandId::ReplyAll => crate::ComposerKind::ReplyAll,
-                    _ => crate::ComposerKind::Forward,
+                    _ => crate::ComposerKind::Forward {
+                        form: postio_model::ForwardForm::This,
+                    },
                 };
                 match results.cursor_message() {
                     Some((message, _)) => self.write(kind, Some(message)),

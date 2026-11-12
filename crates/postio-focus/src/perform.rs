@@ -322,6 +322,20 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::SetForwardForm { draft, form } => Reply::Forwarded {
+            form,
+            answer: client
+                .set_forward_form(*draft, form)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::ReplyToLatest { draft } => Reply::RepliedToLatest(
+            client
+                .reply_to_latest(*draft)
+                .await
+                .map(Box::new)
+                .map_err(|error| error.to_string()),
+        ),
         Request::RecentSearches => Reply::RecentSearches(
             client
                 .recent_searches()

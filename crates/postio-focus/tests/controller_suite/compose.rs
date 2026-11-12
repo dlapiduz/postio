@@ -194,7 +194,12 @@ fn e_cap_e_and_f_answer_the_cursors_row() {
     for (command, kind) in [
         (CommandId::Reply, ComposerKind::Reply),
         (CommandId::ReplyAll, ComposerKind::ReplyAll),
-        (CommandId::Forward, ComposerKind::Forward),
+        (
+            CommandId::Forward,
+            ComposerKind::Forward {
+                form: postio_model::ForwardForm::This,
+            },
+        ),
     ] {
         let rows = List::received(3);
         let mut focus = mac();
@@ -313,7 +318,9 @@ fn a_sent_message_and_a_forward_are_not_refused() {
         matches!(
             shown(&effects).as_slice(),
             [Intent::Composer {
-                kind: ComposerKind::Forward,
+                kind: ComposerKind::Forward {
+                    form: postio_model::ForwardForm::This,
+                },
                 ..
             }]
         ),

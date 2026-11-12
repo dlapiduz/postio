@@ -202,6 +202,11 @@ pub enum Input {
     },
     /// A Thread ▾ menu entry was chosen by a click: it runs (spec 013 US5).
     ThreadMenuPick(CommandId),
+    /// A chooser card was clicked (spec 013 FR-023): as `1` `2` `3`.
+    ForwardFormClicked(postio_model::ForwardForm),
+    /// The composer's draft, as it is now: the answer to
+    /// [`Intent::ComposerDraftWanted`].
+    ComposerDraft(DraftEdit, Box<postio_model::Draft>),
     /// The outline's field, chips, arrows and Return (spec 013 US5).
     Outline(thread_menu::OutlineInput),
     /// The bar's words, as they are now.
@@ -820,6 +825,37 @@ pub enum Intent {
     ContactsSettings(Box<postio_ui::contacts_settings::SuggestionsView>),
     /// Put the keyboard in the Contacts filter.
     ContactsFocusFilter,
+    /// Draw the *What to forward* chooser above To, or redraw it with the
+    /// chosen card (spec 013 FR-023). Said after the [`Intent::Composer`]
+    /// of a forward in a thread of two or more; keys `1` `2` `3` are
+    /// [`postio_core::Context::ForwardChooser`]'s while it holds the keyboard.
+    ForwardChooser(Box<postio_ui::compose::ChooserView>),
+    /// Draw the bar under the composer's title on a reply to a message that
+    /// is not the latest, or take it away (spec 013 FR-022).
+    OlderReply(Option<Box<postio_ui::compose::OlderReplyView>>),
+    /// Show the messages newer than the one the reply answers, read-only,
+    /// in the composer, or hide them: `Some` with their ids, oldest first.
+    NewerMessages(Option<Vec<MessageId>>),
+    /// Draw the quoted messages as their collapsed rows (`false`), or
+    /// expanded (`true`).
+    QuotedExpanded(bool),
+    /// The controller needs the composer's draft as it is now, typed text
+    /// included, to change it: answer with [`Input::ComposerDraft`].
+    ComposerDraftWanted(DraftEdit),
+    /// Put this draft in the composer in place of the one it holds: the
+    /// subject, the body, the attachments, the recipients. What was typed
+    /// above the quote is in it already.
+    ComposerDraft(Box<postio_model::Draft>),
+}
+
+/// A change to the composer's draft that the engine makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DraftEdit {
+    /// The forward carries this form (a chooser card).
+    ForwardForm(postio_model::ForwardForm),
+    /// The reply answers the thread's latest received message.
+    ReplyToLatest,
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -1011,6 +1047,21 @@ pub enum Request {
     /// A thread's members and unsent reply: an expansion, or opening a
     /// thread row.
     ReadThread(ThreadId),
+    /// The composer's forward, changed to carry `form`
+    /// (`Client::set_forward_form`); answered with [`Reply::Forwarded`].
+    SetForwardForm {
+        /// The draft, as the composer holds it.
+        draft: Box<postio_model::Draft>,
+        /// What it should carry.
+        form: postio_model::ForwardForm,
+    },
+    /// The composer's reply, changed to answer the thread's latest received
+    /// message (`Client::reply_to_latest`); answered with
+    /// [`Reply::RepliedToLatest`].
+    ReplyToLatest {
+        /// The draft, as the composer holds it.
+        draft: Box<postio_model::Draft>,
+    },
     /// The searches run lately, newest first.
     RecentSearches,
     /// Keep `query` among the searches run, with what it matched.
@@ -1418,6 +1469,15 @@ pub enum Reply {
         /// Its view, `None` when it is gone, or why it could not be read.
         view: Result<Option<ThreadView>, String>,
     },
+    /// The answer to [`Request::SetForwardForm`].
+    Forwarded {
+        /// The form asked for.
+        form: postio_model::ForwardForm,
+        /// The draft in that form, or the messages that are not here.
+        answer: Result<postio_model::Forwarded, String>,
+    },
+    /// The answer to [`Request::ReplyToLatest`].
+    RepliedToLatest(Result<Box<postio_model::Draft>, String>),
     /// The answer to [`Request::RecentSearches`] and
     /// [`Request::ForgetSearch`].
     RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
@@ -1908,7 +1968,9 @@ impl FocusController {
                 | Reply::ContactSuggestions(_)
                 | Reply::FoundMessage { .. }
                 | Reply::ThreadOf { .. }
-                | Reply::DraftBehind { .. }),
+                | Reply::DraftBehind { .. }
+                | Reply::Forwarded { .. }
+                | Reply::RepliedToLatest(_)),
             ) => {
                 let steps = self.surface_reply(reply, rows);
                 self.effects(steps)
@@ -2102,6 +2164,14 @@ impl FocusController {
             }
             Input::Outline(input) => {
                 let steps = self.outline_input(input, rows);
+                self.effects(steps)
+            }
+            Input::ForwardFormClicked(form) => {
+                let steps = self.forward_form_chosen(form);
+                self.effects(steps)
+            }
+            Input::ComposerDraft(edit, draft) => {
+                let steps = self.composer_draft(edit, draft);
                 self.effects(steps)
             }
             Input::ContactPopoverAt(address) => {
@@ -2931,6 +3001,8 @@ impl FocusController {
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::ThreadOf { message, thread } => self.walk_followed(message, thread),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
+            Reply::Forwarded { form, answer } => self.forwarded(form, answer),
+            Reply::RepliedToLatest(answer) => self.replied_to_latest(answer),
             _ => Vec::new(),
         }
     }

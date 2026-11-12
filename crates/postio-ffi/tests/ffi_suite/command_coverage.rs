@@ -83,7 +83,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
         "specs/013-focus-threads",
     ),
     (CommandId::OutlineFirstUnread, "specs/013-focus-threads"),
-    (CommandId::ReplyToLatest, "specs/013-focus-threads"),
     (CommandId::ForwardWhat1, "specs/013-focus-threads"),
     (CommandId::ForwardWhat2, "specs/013-focus-threads"),
     (CommandId::ForwardWhat3, "specs/013-focus-threads"),
