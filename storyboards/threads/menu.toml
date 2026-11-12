@@ -1,0 +1,48 @@
+# Thread ▾ and splitting a message off (specs/013-focus-threads US5 #4;
+# FR-019).
+#
+# The defect: the window has no Thread menu. On `main` `alt+period` and
+# `alt+shift+s` are not bound, so the first step fails there. This needs GTK
+# to run; it is linted here, and filmed with `/ux-review`. The popover's
+# state is published as `app.focus.menu.*` (the frontend's task, T067).
+#
+# Harbor opens at message 5 (index 4). `alt+period` opens the menu in two
+# groups, "Whole thread" (Outline and filter, Forward the whole thread,
+# Reply to the latest message, Mute thread) then "This message only" (Split
+# into its own thread, Move just this message, Delete just this message,
+# Always show its HTML as sent), each with the key the keymap has. Escape
+# closes it with the window on the same message. `alt+shift+s` then splits
+# message 5, and the replies to it, into a thread of their own: the list
+# behind has two threads where there was one, and the toast offers Undo.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US5" }
+seed   = "threads"
+design = "04-thread-menu"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
+
+[[step]]
+id      = "open"
+key     = "Return"
+check   = { view = "reader", keyboard.region = "reader", app.focus.reading.chip = 4 }
+expect  = "Harbor opens on message 5 of 6, the first unread."
+
+[[step]]
+id      = "menu"
+command = "thread_menu"
+check   = { view = "reader", app.focus.menu.open = true, app.focus.menu.groups = "Whole thread | This message only", app.focus.menu.keycaps = "alt+t | f, 2 | alt+e | m | alt+shift+s | alt+v | alt+BackSpace | O" }
+expect  = "A 340-wide popover hangs from Thread: Whole thread above, This message only below, each entry with its key and, where it helps, one line under it. Nothing behind it moved."
+
+[[step]]
+id      = "closed"
+key     = "Escape"
+check   = { view = "reader", reading.id = { unchanged = true }, app.focus.menu.open = false }
+expect  = "The menu is gone and the window is on the same message."
+
+[[step]]
+id      = "split"
+command = "split_thread"
+check   = { notice.undo = true }
+expect  = "Message 5 and the replies to it leave Harbor for a thread of their own. The toast says so and offers Undo; the list behind the window has two threads where there was one."

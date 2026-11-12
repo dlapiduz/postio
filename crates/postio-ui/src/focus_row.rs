@@ -294,9 +294,10 @@ pub struct ThreadRowView {
     pub new: Option<String>,
     /// A paperclip: any message has an attachment.
     pub attachment: bool,
-    /// Replies since the thread was muted. Always `None` until mute lands
-    /// (spec 013 US5).
+    /// Replies since the thread was muted, when it is.
     pub muted: Option<u32>,
+    /// What the row says of it: "muted \u{b7} 1".
+    pub muted_badge: Option<String>,
     /// The latest message's time, as every row says it.
     pub time: String,
     /// The gutter's chevron; `None` for a thread of one.
@@ -332,7 +333,8 @@ impl ThreadRowView {
             ),
             new: new_badge(thread.unread_count),
             attachment: thread.has_attachments,
-            muted: None,
+            muted: thread.muted,
+            muted_badge: thread.muted.map(crate::thread_outline::muted_badge),
             time: crate::row::timestamp(latest.received_at, now),
             chevron: (thread.message_count > 1).then_some(if expanded {
                 Chevron::Expanded
@@ -1189,6 +1191,18 @@ mod thread_words_tests {
             ThreadRowView::new(&summary(6, 2), &[], &me(), true, now).chevron,
             Some(Chevron::Expanded)
         );
+    }
+
+    #[test]
+    fn a_muted_thread_row_reads_muted_and_the_count() {
+        let now = Local.with_ymd_and_hms(2026, 9, 21, 12, 0, 0).unwrap();
+        let mut muted = summary(4, 0);
+        muted.muted = Some(1);
+        let row = ThreadRowView::new(&muted, &[], &me(), false, now);
+        assert_eq!(row.muted, Some(1));
+        assert_eq!(row.muted_badge.as_deref(), Some("muted \u{b7} 1"));
+        let plain = ThreadRowView::new(&summary(4, 0), &[], &me(), false, now);
+        assert_eq!(plain.muted_badge, None);
     }
 
     #[test]

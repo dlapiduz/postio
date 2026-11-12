@@ -21,7 +21,7 @@ mod threads;
 
 pub use files::{SearchFile, search_files};
 pub use search::{search_demo, store_search_blobs};
-pub use threads::threads_demo;
+pub use threads::{Arrival, deliver_harbor_reply, threads_demo};
 
 /// A condition of the store, named as every app names it
 /// (specs/008-storyboards R11): something no step can produce, such as
@@ -1829,6 +1829,42 @@ pub fn marker(message: MessageId, ask: &Ask, today: DateTime<Utc>) -> Marker {
 
 #[cfg(test)]
 mod tests {
+    /// Spec 013 US4's arrival: a seventh Harbor member, threaded by the
+    /// engine's own path, unread, with the thread to announce.
+    #[tokio::test]
+    async fn the_harbor_reply_lands_as_a_seventh_member_of_the_thread() {
+        use postio_storage::sql::scalar;
+        let (database, account) = super::seeded(super::Seed::Threads).await;
+        let arrival = super::deliver_harbor_reply(&database, account)
+            .await
+            .expect("the reply is delivered");
+        let connection = database.connect().await.expect("a connection");
+        let thread: i64 = scalar(
+            &connection,
+            "SELECT thread_id FROM messages WHERE subject LIKE '%Harbor API draft v3' LIMIT 1",
+            (),
+        )
+        .await
+        .expect("harbor");
+        assert_eq!(arrival.thread.get(), thread, "filed into Harbor's thread");
+        let members: i64 = scalar(
+            &connection,
+            "SELECT count(*) FROM messages WHERE thread_id = ?1",
+            [thread],
+        )
+        .await
+        .expect("a count");
+        assert_eq!(members, 7);
+        let unread: i64 = scalar(
+            &connection,
+            "SELECT count(*) FROM messages WHERE thread_id = ?1 AND seen = 0",
+            [thread],
+        )
+        .await
+        .expect("a count");
+        assert_eq!(unread, 3, "two unread and the reply");
+    }
+
     /// Spec 013's seed groups through the engine: Harbor is one thread of
     /// six with two unread, the long threads are as long as the design
     /// says, and the unsent reply is filed in Harbor's thread.

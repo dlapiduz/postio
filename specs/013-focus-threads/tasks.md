@@ -244,14 +244,14 @@ the window, without ever moving the reader (screen 08).
 **Independent test**: with message 4 open, deliver a reply. Nothing moves,
 and `}` shows it.
 
-- [ ] T050 [P] [US4] Write controller cases (red: no reaction to `ThreadChanged` in a walk):
+- [x] T050 [P] [US4] Write controller cases (red: no reaction to `ThreadChanged` in a walk):
   - `ThreadChanged` with an open `Walk` keeps `shown` and emits `NewReply` naming the latest added member;
   - two arrivals name the latest and add two chips;
   - `}` clears the banner;
   - the list row's `ThreadRow` intent updates count, participants, new and time.
-- [ ] T051 [P] [US4] Write the storyboard `storyboards/threads/live-reply.*`, red on `main` (an arrival key from the demo).
-- [ ] T052 [US4] Add a live-reply key to `crates/postio-demo/src/lib.rs` (`POSTIO_DEMO_KEYS` token) that delivers a reply into Harbor through the real arrival path.
-- [ ] T053 [US4] Implement `pending_new` and `NewReply` in `crates/postio-focus/src/surfaces.rs` and the row refresh in `crates/postio-focus/src/feed.rs`. Add `new_reply_banner` to `crates/postio-ui/src/thread_bar.rs`.
+- [x] T051 [P] [US4] Write the storyboard `storyboards/threads/live-reply.*`, red on `main` (an arrival key from the demo).
+- [x] T052 [US4] Add a live-reply key to `crates/postio-demo/src/lib.rs` (`POSTIO_DEMO_KEYS` token) that delivers a reply into Harbor through the real arrival path.
+- [x] T053 [US4] Implement `pending_new` and `NewReply` in `crates/postio-focus/src/surfaces.rs` and the row refresh in `crates/postio-focus/src/feed.rs`. Add `new_reply_banner` to `crates/postio-ui/src/thread_bar.rs`.
 - [ ] T054 [US4] Mac banner (accent-tinted, "Read it }") in `macos/Sources/PostioKit/MessageWindowView.swift`, with a Swift test that the scroll offset is unchanged after an arrival. GTK banner in `crates/postio-gtk/src/open.rs`, with a `focus_suite` case asserting that the shown message and its adjustment value are unchanged.
 - [ ] T055 [US4] Screen 08 on both platforms; write the differences in the step-4 note. Commit step 4.
 
@@ -281,16 +281,16 @@ and `}` shows it.
 
 ### Menu and outline
 
-- [ ] T062 [P] [US5] Write `crates/postio-ui/src/thread_outline.rs` tests first (red): `filter_rows` by text and by person, people chips with counts, `u` to the first unread, and the menu's two groups with keycaps from the keymap.
-- [ ] T063 [P] [US5] Write controller cases (red):
+- [x] T062 [P] [US5] Write `crates/postio-ui/src/thread_outline.rs` tests first (red): `filter_rows` by text and by person, people chips with counts, `u` to the first unread, and the menu's two groups with keycaps from the keymap.
+- [x] T063 [P] [US5] Write controller cases (red):
   - `ThreadMenu` opens the menu;
   - `ThreadOutline` (`alt+t`) opens the outline;
   - `Return` in the outline shows that message and closes it;
   - `MuteThread` (`m`) toggles mute;
   - `SplitThread` from the menu;
   - `MoveThisMessage`/`DeleteThisMessage` aim `Messages([shown])`.
-- [ ] T064 [P] [US5] Write the storyboards `storyboards/threads/menu.*`, `outline.*` and `mute.*`, red on `main`.
-- [ ] T065 [US5] Implement `crates/postio-ui/src/thread_outline.rs`, the `Outline` and `ThreadMenu` surfaces in `crates/postio-focus/src/surfaces.rs`, and the "muted" badge and count on `ThreadRowView`.
+- [x] T064 [P] [US5] Write the storyboards `storyboards/threads/menu.*`, `outline.*` and `mute.*`, red on `main`.
+- [x] T065 [US5] Implement `crates/postio-ui/src/thread_outline.rs`, the `Outline` and `ThreadMenu` surfaces in `crates/postio-focus/src/surfaces.rs`, and the "muted" badge and count on `ThreadRowView`.
 - [ ] T066 [US5] Mac: `macos/Sources/PostioKit/ThreadMenu.swift` (340 wide, two groups, explanations) and `macos/Sources/PostioKit/ThreadOutline.swift` (440 wide, filter field, person chips, 34-tall rows, footer) as `NSPopover`s from Thread ▾. Swift test for the outline's keyboard path.
 - [ ] T067 [US5] GTK: `crates/postio-gtk/src/thread_popovers.rs` (new) with the menu and outline `GtkPopover`s, and `focus_suite` cases for outline filter → `Return`, and for mute.
 - [ ] T068 [US5] Screens 04 and 05 on both platforms; write the differences in the step-5 note. Commit step 5.
@@ -360,7 +360,7 @@ the text and quotes message 6. Then `f`, `2` gives "Fwd: Harbor API draft v3
   - a merge while expanded;
   - a window on a message deleted elsewhere;
   - a body not yet local;
-  - a draft whose thread was archived. Also: a thread with messages in Archive, Sent and the inbox counts every message on its inbox row. Also, from T030's review: (a) `Return` on the draft child opens that draft in the composer (today it does nothing, since a draft has no message id); (b) an expansion must survive a refresh that briefly empties the landed pages. Fold only when a landed page is known to no longer hold the anchor, not when its page is merely absent. (c) GTK's Filtered view is self-contained: it never consumed the controller's Filtered intents, before this spec too, so T035 implemented expansion there in GTK. Move it onto `postio-focus`'s `Intent::FilteredSplice`/`FilteredUnsplice` and display-position `FilteredFocus`, as the Mac does, so the rule lives once (FR-025, ADR 0045). (d) A click on a thread-bar chip shows that message: the controller needs a `ThreadBarChipClicked(index)` input (contract), which Mac and GTK then wire; both draw chips inert until then. (e) When a walk fails to begin, `walk_after` clears it but emits no clearing intents, so a stale bar can stay; emit empty `ThreadBar`/`Kicker` and `None` banners.
+  - a draft whose thread was archived. Also: a thread with messages in Archive, Sent and the inbox counts every message on its inbox row. Also, from T030's review: (a) `Return` on the draft child opens that draft in the composer (today it does nothing, since a draft has no message id); (b) an expansion must survive a refresh that briefly empties the landed pages. Fold only when a landed page is known to no longer hold the anchor, not when its page is merely absent. (c) GTK's Filtered view is self-contained: it never consumed the controller's Filtered intents, before this spec too, so T035 implemented expansion there in GTK. Move it onto `postio-focus`'s `Intent::FilteredSplice`/`FilteredUnsplice` and display-position `FilteredFocus`, as the Mac does, so the rule lives once (FR-025, ADR 0045). (d) A click on a thread-bar chip shows that message: the controller needs a `ThreadBarChipClicked(index)` input (contract), which Mac and GTK then wire; both draw chips inert until then. (e) When a walk fails to begin, `walk_after` clears it but emits no clearing intents, so a stale bar can stay; emit empty `ThreadBar`/`Kicker` and `None` banners. (f) The list refreshes on every `ThreadChanged` (`feed.rs`): coalesce them so a sync pass that touches many threads repaints once.
 - [ ] T086 [P] Add a benchmark in `crates/postio-bench/benches/` for `thread_bar::chips` and `Thread` at 500 members (compiled on CI, timed by hand). Record p50/p95 in the step-4 note. Stop rule per plan.md.
 - [ ] T087 [P] Add the scope rule's boundary note to the `postio-ui` entry in `docs/ARCHITECTURE.md`: scope is resolved only by `postio_ui::scope::target`.
 - [ ] T088 [P] Check the logging added in this spec carries ids and counts only, by grepping new `tracing::` calls in the changed crates (FR-029).

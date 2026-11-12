@@ -1,0 +1,56 @@
+# The thread outline (specs/013-focus-threads US5 #5; FR-019).
+#
+# The defect: a long thread can only be walked one message at a time. On
+# `main` `alt+t` opens nothing, so the first step fails there. This needs GTK
+# to run; it is linted here, and filmed with `/ux-review`. The popover's
+# state is published as `app.focus.outline.*` (the frontend's task, T067).
+#
+# Harbor opens at message 5. `alt+t` lists every message with its number,
+# avatar, name (bold when unread), first line, date and unread dot, the
+# current one ringed, with a person chip and its count for each author. `/`
+# puts the keyboard in the field and typing narrows the rows. Down moves, `u`
+# goes to the first unread of the rows shown, and `Return` shows that
+# message and closes the outline: the window is on it, ringed in the bar.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US5" }
+seed   = "threads"
+design = "05-long-thread-outline"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
+
+[[step]]
+id      = "open"
+key     = "Return"
+check   = { view = "reader", keyboard.region = "reader", app.focus.reading.chip = 4 }
+expect  = "Harbor opens on message 5 of 6."
+
+[[step]]
+id      = "outline"
+command = "thread_outline"
+check   = { app.focus.outline.open = true, app.focus.outline.rows = 6, app.focus.outline.cursor = 4 }
+expect  = "A 440-wide popover lists six messages, message 5 ringed, a filter field and a chip with a count for each person, and a footer: arrows move, Return shows it, u first unread."
+
+[[step]]
+id      = "filter"
+command = "search"
+check   = { app.focus.outline.filtering = true }
+expect  = "The keyboard is in the filter field."
+
+[[step]]
+type    = "ben"
+check   = { app.focus.outline.rows = 3 }
+expect  = "Only Ben's messages are listed; the chips still count the whole thread."
+
+[[step]]
+id      = "down"
+key     = "Down"
+check   = { app.focus.outline.cursor = 1 }
+expect  = "The ring moves one row down."
+
+[[step]]
+id      = "show"
+key     = "Return"
+check   = { view = "reader", reading.id = { changed = true }, app.focus.outline.open = false, app.focus.reading.chip = 3 }
+expect  = "The outline closes and the window shows that message of Ben's, ringed in the bar; it is marked read if it was not."

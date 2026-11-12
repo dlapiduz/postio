@@ -43,6 +43,7 @@ mod results;
 mod states;
 mod surfaces;
 mod thread_expand;
+mod thread_menu;
 mod verbs;
 mod walk;
 
@@ -81,6 +82,7 @@ pub use results::{
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
+pub use thread_menu::OutlineInput;
 pub use verbs::{Aimed, Everything, ToastKind};
 
 /// What differs between platforms, as policy rather than as a fork
@@ -190,6 +192,10 @@ pub enum Input {
     /// The message window's width allows this many thread-bar chips (sent
     /// when it opens and on resize): the bar is composed again.
     BarRoom(u32),
+    /// A Thread ▾ menu entry was chosen by a click: it runs (spec 013 US5).
+    ThreadMenuPick(CommandId),
+    /// The outline's field, chips, arrows and Return (spec 013 US5).
+    Outline(thread_menu::OutlineInput),
     /// The bar's words, as they are now.
     Typed {
         /// The field's text.
@@ -624,6 +630,9 @@ pub enum Intent {
     Kicker(String),
     /// Draw the older-message banner, or take it away.
     OlderBanner(Option<postio_ui::thread_bar::BannerView>),
+    /// Draw the new-reply banner, or take it away: a reply arrived while
+    /// the window was on another message, which stays on screen (FR-018).
+    NewReply(Option<postio_ui::thread_bar::BannerView>),
     /// Draw the sender block's Reply to row, or take it away.
     ReplyTo(Option<String>),
     /// Nothing is over the list any more: the keyboard goes back to it, on
@@ -760,6 +769,14 @@ pub enum Intent {
     /// put it on the stack as a [`SurfaceKind::ContactPopover`]; the frontend
     /// anchors it to the sender's name.
     ContactPopover(Box<postio_ui::contact_popover::PopoverView>),
+    /// Open Thread ▾'s menu, over the window (a 340-point popover). The
+    /// controller has put it on the stack as a [`SurfaceKind::ThreadMenu`].
+    ThreadMenu(Box<postio_ui::thread_outline::ThreadMenuView>),
+    /// Open the thread outline, or redraw it, whole (a 440-point popover).
+    /// The controller has put it on the stack as a [`SurfaceKind::Outline`].
+    Outline(Box<postio_ui::thread_outline::OutlineView>),
+    /// Put the keyboard in the outline's filter field.
+    OutlineFocusFilter,
     /// Open a composer to this address, as a `mailto:` link would.
     WriteTo(String),
     /// Draw the Contacts view's frame, whole. The controller has put it on
@@ -1610,6 +1627,8 @@ pub struct FocusController {
     walk_seed: Option<ThreadView>,
     /// How many thread-bar chips the window has room for.
     bar_room: u32,
+    /// The thread menu and outline over the window (spec 013 US5).
+    thread_ui: thread_menu::ThreadUi,
 }
 
 impl FocusController {
@@ -1655,6 +1674,7 @@ impl FocusController {
             walk_asked: None,
             walk_seed: None,
             bar_room: walk::DEFAULT_ROOM,
+            thread_ui: thread_menu::ThreadUi::default(),
         }
     }
 
@@ -1943,6 +1963,7 @@ impl FocusController {
                 steps.extend(self.results_heard(&event));
                 steps.extend(self.bar.heard(&event));
                 steps.extend(self.feed.event(&event));
+                steps.extend(self.walk_heard(&event));
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
                 steps.extend(self.contacts_heard(&event));
@@ -2040,6 +2061,14 @@ impl FocusController {
             }
             Input::OpenLink(uri) => {
                 let steps = self.open_link(&uri);
+                self.effects(steps)
+            }
+            Input::ThreadMenuPick(id) => {
+                let steps = self.thread_menu_pick(id, rows);
+                self.effects(steps)
+            }
+            Input::Outline(input) => {
+                let steps = self.outline_input(input, rows);
                 self.effects(steps)
             }
             Input::ContactPopoverAt(address) => {
@@ -2276,6 +2305,9 @@ impl FocusController {
                 return self.open_capture(postio_ui::capture::Mode::Note, rows);
             }
             CommandId::DigestRule => return self.new_rule(rows),
+            CommandId::MuteThread | CommandId::ThreadOutline => {
+                return self.thread_list_command(id, rows);
+            }
             CommandId::ContactPopover => return self.open_contact_popover(None, rows),
             CommandId::OpenContacts => {
                 let mut steps = self.open_contacts();
@@ -2431,6 +2463,9 @@ impl FocusController {
             Some(SurfaceKind::Contacts) if self.contacts.is_some() => {
                 return self.contacts_command(id, rows);
             }
+            Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
+                return self.thread_surface_command(id, rows);
+            }
             _ => {}
         }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
@@ -2444,6 +2479,9 @@ impl FocusController {
             });
         }
         if let Some(steps) = self.walk_command(id) {
+            return Some(steps);
+        }
+        if let Some(steps) = self.thread_window_command(id, rows) {
             return Some(steps);
         }
         if let Some(steps) = self.surfaces.reader_key(id) {
@@ -2591,6 +2629,9 @@ impl FocusController {
             Some(SurfaceKind::Capture) => Self::capture_answers(id),
             Some(SurfaceKind::ContactPopover) => Self::contact_popover_answers(id),
             Some(SurfaceKind::Contacts) => Self::contacts_answers(id),
+            Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
+                Self::thread_surface_answers(id)
+            }
             _ => false,
         };
         if own {
@@ -2622,6 +2663,12 @@ impl FocusController {
                 | CommandId::CaptureNote
                 | CommandId::DigestRule
                 | CommandId::ContactPopover
+                | CommandId::ThreadMenu
+                | CommandId::ThreadOutline
+                | CommandId::MuteThread
+                | CommandId::SplitThread
+                | CommandId::MoveThisMessage
+                | CommandId::DeleteThisMessage
                 | CommandId::OpenContacts
                 | CommandId::ContactsSuggestions
         ) || bar::goes(id)
@@ -2823,6 +2870,7 @@ impl FocusController {
         if !self.surfaces.has(SurfaceKind::Contacts) {
             self.contacts = None;
         }
+        self.forget_thread_surfaces();
     }
 
     /// An answer for one of the surfaces over the list.

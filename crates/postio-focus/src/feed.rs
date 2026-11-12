@@ -253,6 +253,12 @@ impl Feed {
             }));
         }
         let surfaced_moved = matches!(event, Event::SurfacedChanged);
+        // A thread that gained a reply has a row whose people, count, new
+        // badge and time moved: the pages in view are read again.
+        if matches!(event, Event::ThreadChanged { .. }) {
+            effects.push(Step::Show(Intent::RefreshList));
+            return effects;
+        }
         match self.paging.plan(event) {
             Plan::Ignore if !surfaced_moved => {}
             _ if self.splices_now() => {

@@ -47,6 +47,10 @@ pub enum SurfaceKind {
     Picker,
     /// A row's menu.
     RowMenu,
+    /// Thread ▾'s menu, over the message window (spec 013 US5).
+    ThreadMenu,
+    /// The thread outline, over the message window (spec 013 US5).
+    Outline,
 }
 
 impl SurfaceKind {
@@ -73,6 +77,8 @@ impl SurfaceKind {
             SurfaceKind::Picker => KeyContext::Picker,
             SurfaceKind::ContactPopover => KeyContext::ContactPopover,
             SurfaceKind::Contacts => KeyContext::Contacts,
+            SurfaceKind::ThreadMenu => KeyContext::Reader,
+            SurfaceKind::Outline => KeyContext::Outline,
             // Their keys are the list's context, and only the ones that
             // close them are the window's (GTK's dialog close rule).
             SurfaceKind::Settings
@@ -99,6 +105,8 @@ impl SurfaceKind {
                 | SurfaceKind::Filtered
                 | SurfaceKind::ContactPopover
                 | SurfaceKind::Contacts
+                | SurfaceKind::ThreadMenu
+                | SurfaceKind::Outline
         )
     }
 }
@@ -310,7 +318,10 @@ impl Surfaces {
                     Route::Surface(top)
                 }
             }
-            SurfaceKind::ContactPopover | SurfaceKind::Contacts => Route::Controller,
+            SurfaceKind::ContactPopover
+            | SurfaceKind::Contacts
+            | SurfaceKind::ThreadMenu
+            | SurfaceKind::Outline => Route::Controller,
             SurfaceKind::Digest
             | SurfaceKind::Capture
             | SurfaceKind::Composer

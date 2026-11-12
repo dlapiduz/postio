@@ -529,3 +529,93 @@ fn name_of(who: Who) -> &'static str {
         Who::Neighbour(index) => NEIGHBOURS[index].0,
     }
 }
+
+/// What a reply's arrival leaves for the caller to announce, as a sync pass
+/// would: `NewMail` for the message and `ThreadChanged` for its thread.
+#[derive(Debug, Clone, Copy)]
+pub struct Arrival {
+    /// The mailbox it landed in.
+    pub mailbox: MailboxId,
+    /// The thread it joined.
+    pub thread: postio_model::ThreadId,
+    /// The message.
+    pub message: MessageId,
+}
+
+/// Ana's reply in the Harbor thread (spec 013 US4, screen 08): written,
+/// threaded through the engine's own path (`In-Reply-To` and `References`
+/// from Ben's last message), with its body and the inbox counted. Delivered
+/// again, it is another reply, one minute on.
+pub async fn deliver_harbor_reply(store: &Store, account: AccountId) -> Result<Arrival, String> {
+    let text = |error: postio_storage::Error| error.to_string();
+    let connection = store.connect().await.map_err(|error| error.to_string())?;
+    let messages = MessageRepository::new(&connection);
+    let inbox = postio_storage::repository::MailboxRepository::new(&connection)
+        .by_role(account, postio_model::MailboxRole::Inbox)
+        .await
+        .map_err(text)?
+        .ok_or("the account has no inbox")?
+        .id;
+    // The newest member answers the reply: the chain of rfc ids is what
+    // the threading pass links by.
+    let mut chain: Vec<RfcMessageId> = (0..6).map(|turn| rfc_id("harbor", turn)).collect();
+    let mut sent = 0;
+    while !messages
+        .ids_by_rfc_message_id(
+            account,
+            &RfcMessageId::new(format!("<threads.harbor.reply{sent}@example.test>")),
+        )
+        .await
+        .map_err(text)?
+        .is_empty()
+    {
+        chain.push(RfcMessageId::new(format!(
+            "<threads.harbor.reply{sent}@example.test>"
+        )));
+        sent += 1;
+    }
+    let at = today() + Duration::minutes(sent as i64);
+    let mut message = Message::new(account, inbox, at);
+    message.date = Some(at);
+    message.from = vec![Who::Person(ANA).address()];
+    message.to = vec![Who::Person(YOU).address()];
+    message.subject = Some("Re: Harbor API draft v3".to_owned());
+    let line = "+1 to Ben on exports. Lena, can you fold that in?";
+    message.preview = Some(line.to_owned());
+    message.rfc_message_id = Some(RfcMessageId::new(format!(
+        "<threads.harbor.reply{sent}@example.test>"
+    )));
+    message.in_reply_to = chain.last().cloned();
+    message.references = chain;
+    messages.create(&mut message).await.map_err(text)?;
+    record_correspondents(&connection, &message)
+        .await
+        .map_err(text)?;
+    let threaded = ThreadingRepository::new(&connection, account)
+        .thread(&message)
+        .await
+        .map_err(text)?;
+    messages
+        .set_body(
+            message.id,
+            &StoredBody {
+                text: Some(format!("{line}\n")),
+                html: None,
+                headers: None,
+                headers_truncated: false,
+                encoding_problems: false,
+            },
+            postio_model::BodyState::Full,
+        )
+        .await
+        .map_err(text)?;
+    postio_storage::repository::MailboxRepository::new(&connection)
+        .recount(inbox)
+        .await
+        .map_err(text)?;
+    Ok(Arrival {
+        mailbox: inbox,
+        thread: threaded.thread_id,
+        message: message.id,
+    })
+}

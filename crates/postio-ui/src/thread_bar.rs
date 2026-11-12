@@ -10,7 +10,7 @@
 use chrono::{DateTime, Local};
 use postio_core::{CommandId, Keymap};
 use postio_model::MessageId;
-use postio_model::thread_view::{ThreadMember, ThreadView};
+use postio_model::thread_view::{Line, ThreadMember, ThreadView};
 
 use crate::{focus_row, hints, row};
 
@@ -205,6 +205,31 @@ pub fn older_banner(keymap: &Keymap) -> BannerView {
                label and move act on the whole thread."
             .to_owned(),
         action: "Latest".to_owned(),
+        key: hints::key(keymap, CommandId::LatestInConversation),
+    }
+}
+
+/// The banner for a reply that arrived while the window was on another
+/// message: who wrote, the first line of it, and `}` to read it. The reader
+/// stays where they are.
+pub fn new_reply_banner(member: &ThreadMember, keymap: &Keymap) -> BannerView {
+    let who = match (&member.from, member.own) {
+        (_, true) => "You",
+        (Some(from), false) => focus_row::first_name(from),
+        (None, false) => "Someone",
+    };
+    let line = match &member.line {
+        Line::Own(text) | Line::Preview(text) => text.trim(),
+        Line::Quoted => "",
+    };
+    let quoted = if line.is_empty() {
+        String::new()
+    } else {
+        format!(": \u{201c}{line}\u{201d}")
+    };
+    BannerView {
+        text: format!("{who} replied just now{quoted}. You stay on this message until you move."),
+        action: "Read it".to_owned(),
         key: hints::key(keymap, CommandId::LatestInConversation),
     }
 }
