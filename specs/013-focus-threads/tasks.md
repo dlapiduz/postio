@@ -350,7 +350,7 @@ the text and quotes message 6. Then `f`, `2` gives "Fwd: Harbor API draft v3
 - [x] T081 [P] [US7] Write the storyboards `storyboards/threads/reply-older.*` and `forward-thread.*`, red on `main`.
 - [x] T082 [US7] Implement the chooser (`ComposerKind::Forward { form }`) and the older-reply state in `crates/postio-focus/src/compose.rs`, with the words in `crates/postio-ui/src/compose.rs`.
 - [x] T083 [US7] Mac: `macos/Sources/PostioKit/ForwardChooser.swift` (three cards with number keys) and the older-reply bar in `macos/Sources/PostioKit/ComposeColumn.swift` / `ComposeModel.swift`, with a Swift test of the chooser keys. GTK: the same under `crates/postio-gtk/src/compose/`, with a `focus_suite` case.
-- [ ] T084 [US7] Screens 09 and 10 on both platforms; write the differences in the step-7 note. Commit step 7.
+- [x] T084 [US7] Screens 09 and 10 on both platforms; write the differences in the step-7 note. Commit step 7.
 
 ---
 
