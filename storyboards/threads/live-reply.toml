@@ -1,0 +1,50 @@
+# A reply arrives while the window reads (specs/013-focus-threads US4 #1, #2;
+# FR-018).
+#
+# The defect: nothing in the window reacts to `ThreadChanged`, so a reply
+# that arrives while message 4 is open is invisible until the window is
+# reopened. On `main` the steps that expect a seventh chip and the banner
+# fail there. The reader is never moved: the message on screen and the
+# ringed chip stay where they are. This needs GTK to run; it is linted here,
+# and filmed with `/ux-review`.
+#
+# Harbor opens at message 5 (index 4); `[` goes to message 4. `reply` files
+# Ana's reply into Harbor through the real path (store write, threading,
+# then `NewMail` and `ThreadChanged`). The bar gains a chip with an unread
+# dot, the banner says who replied and quotes the first line, ending in
+# "Read it }", the kicker says "of 7", and the list row behind the window
+# says 7 messages. `}` then shows the reply and the banner goes. The thread
+# state is published as `app.focus.reading.*`.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US4" }
+seed   = "threads"
+design = "08-new-reply-while-reading"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
+
+[[step]]
+id      = "open"
+key     = "Return"
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chips = 6 }
+expect  = "Harbor opens on message 5 of 6, the first unread."
+
+[[step]]
+id      = "older"
+key     = "["
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 3, app.focus.reading.kicker = "Message 4 of 6 · ] newer · [ older" }
+expect  = "Message 4 is shown and ringed."
+
+[[step]]
+id      = "arrives"
+event   = "reply"
+settle  = { until = { app.focus.reading.chips = 7 } }
+check   = { view = "reader", reading.id = { same_as = "older" }, app.focus.reading.chip = 3, app.focus.reading.chips = 7, app.focus.reading.new_reply = true }
+expect  = "Message 4 is still shown and still ringed; nothing scrolled. The bar has a seventh chip with an unread dot, and an accent banner says Ana replied, quotes the first line of it, and ends with Read it }. The kicker now says Message 4 of 7."
+
+[[step]]
+id      = "read-it"
+key     = "}"
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 6, app.focus.reading.new_reply = false }
+expect  = "The reply, message 7, is shown and ringed, its dot is gone, and the banner is gone."

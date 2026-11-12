@@ -613,6 +613,24 @@ impl FocusController {
         Some(self.open_picker(kind, Anchor::Result(position), target, aimed))
     }
 
+    /// The Move picker over the open message, aimed at that message alone
+    /// (`MoveThisMessage`, spec 013 D2): the rest of its thread stays.
+    pub(crate) fn picker_on_shown(&mut self, shown: MessageId) -> Vec<Step> {
+        let aimed = Aimed {
+            aims: vec![MessageTarget::Messages(vec![shown])],
+            everything: None,
+            message: Some(shown),
+            from_list: false,
+            from_results: false,
+        };
+        self.open_picker(
+            PickerKind::Move,
+            Anchor::OpenMessage,
+            "This message".to_owned(),
+            aimed,
+        )
+    }
+
     /// Put the picker up, and ask for what it lists.
     fn open_picker(
         &mut self,

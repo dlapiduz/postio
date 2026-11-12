@@ -33,6 +33,9 @@ pub(crate) struct Walk {
     pub(crate) row: MessageId,
     /// The `(index, total)` the window was opened at in its list.
     pub(crate) place: (u32, u32),
+    /// Replies that arrived while the window was open and have not been
+    /// shown: the banner names the latest (FR-018).
+    pub(crate) pending_new: Vec<MessageId>,
 }
 
 impl Walk {
@@ -152,8 +155,80 @@ impl FocusController {
                 self.walk_asked = None;
                 self.begin_walk(opening, view.clone())
             }
+            _ if self
+                .walk
+                .as_ref()
+                .is_some_and(|walk| walk.view.thread == thread) =>
+            {
+                self.walk_refresh(view)
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// A thread the open window walks changed: its arrivals are pending
+    /// until shown, and it is read again. The message on screen never
+    /// changes here (FR-018).
+    pub(crate) fn walk_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
+        let postio_core::Event::ThreadChanged {
+            thread,
+            members_added,
+            ..
+        } = event
+        else {
+            return Vec::new();
+        };
+        let Some(walk) = self
+            .walk
+            .as_mut()
+            .filter(|walk| walk.view.thread == *thread)
+        else {
+            return Vec::new();
+        };
+        for added in members_added {
+            if *added != walk.shown && !walk.pending_new.contains(added) {
+                walk.pending_new.push(*added);
+            }
+        }
+        vec![Step::Ask(Request::ReadThread(*thread))]
+    }
+
+    /// The open walk's thread, read again: the bar, kicker and banners are
+    /// drawn from it, with `shown` where it was.
+    fn walk_refresh(&mut self, view: &ThreadView) -> Vec<Step> {
+        let Some(walk) = self.walk.as_mut() else {
+            return Vec::new();
+        };
+        let mut view = view.clone();
+        // What was shown since stays read, whether or not the store has
+        // caught up.
+        for member in &mut view.members {
+            if let Some(old) = walk.view.members.iter().find(|old| old.id == member.id) {
+                member.seen |= old.seen;
+            }
+        }
+        if !view.members.iter().any(|member| member.id == walk.shown) {
+            return Vec::new();
+        }
+        walk.view = view;
+        let members = &walk.view.members;
+        walk.pending_new
+            .retain(|id| members.iter().any(|member| member.id == *id));
+        let mut steps = self.walk_intents();
+        steps.push(Step::Show(Intent::NewReply(self.new_reply())));
+        steps
+    }
+
+    /// The banner for the latest reply not yet shown.
+    fn new_reply(&self) -> Option<thread_bar::BannerView> {
+        let walk = self.walk.as_ref()?;
+        let latest = walk.pending_new.last()?;
+        let member = walk
+            .view
+            .members
+            .iter()
+            .find(|member| member.id == *latest)?;
+        Some(thread_bar::new_reply_banner(member, self.keymap()))
     }
 
     fn begin_walk(&mut self, opening: Opening, view: ThreadView) -> Vec<Step> {
@@ -162,6 +237,7 @@ impl FocusController {
             shown: opening.shown,
             row: opening.row,
             place: opening.place,
+            pending_new: Vec::new(),
         };
         if walk.at().is_none() {
             return Vec::new();
@@ -236,7 +312,7 @@ impl FocusController {
     }
 
     /// Show the member at `target`, marking it read.
-    fn walk_show(&mut self, target: usize) -> Vec<Step> {
+    pub(crate) fn walk_show(&mut self, target: usize) -> Vec<Step> {
         let Some(walk) = self.walk.as_mut() else {
             return Vec::new();
         };
@@ -244,6 +320,16 @@ impl FocusController {
         let (message, unread) = (member.id, !member.seen);
         member.seen = true;
         walk.shown = message;
+        let had_pending = !walk.pending_new.is_empty();
+        if target + 1 == walk.view.members.len() {
+            walk.pending_new.clear();
+        } else {
+            walk.pending_new.retain(|id| *id != message);
+        }
+        let banner = had_pending.then(|| self.new_reply());
+        let Some(walk) = self.walk.as_ref() else {
+            return Vec::new();
+        };
         let (row, (index, total)) = (walk.row, walk.place);
         self.surfaces.show(message);
         // The row the window came from stays the cursor's: it is not a
@@ -261,6 +347,9 @@ impl FocusController {
             })));
         }
         steps.extend(self.walk_intents());
+        if let Some(banner) = banner {
+            steps.push(Step::Show(Intent::NewReply(banner)));
+        }
         steps
     }
 }

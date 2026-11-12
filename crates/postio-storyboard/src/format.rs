@@ -216,6 +216,8 @@ pub enum EnvEvent {
     BackfillProgress,
     /// A body that was missing arrives.
     BodyArrived,
+    /// A reply arrives in a thread the window is reading (spec 013 US4).
+    Reply,
 }
 
 /// How a step waits for the app to settle (research R4).
@@ -683,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn event_accepts_only_the_six_names() {
+    fn event_accepts_only_the_seven_names() {
         for name in [
             "new_mail",
             "mailboxes_changed",
@@ -691,6 +693,7 @@ mod tests {
             "connection_restored",
             "backfill_progress",
             "body_arrived",
+            "reply",
         ] {
             let board = ok(&format!("{HEAD}[[step]]\nevent = \"{name}\"\n"));
             assert!(matches!(board.steps[0].input, Input::Event(_)), "{name}");

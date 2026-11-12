@@ -679,7 +679,12 @@ impl FocusController {
 
     /// Open `target`, a message of the thread the row at `position` stands
     /// for.
-    fn open_target(&mut self, position: u32, target: MessageId, rows: &dyn Rows) -> Vec<Step> {
+    pub(crate) fn open_target(
+        &mut self,
+        position: u32,
+        target: MessageId,
+        rows: &dyn Rows,
+    ) -> Vec<Step> {
         let Some(mut row) = rows.facts(position) else {
             return Vec::new();
         };

@@ -1,0 +1,39 @@
+# Mute a thread (specs/013-focus-threads US5 #1 to #3; FR-012).
+#
+# The defect: replies to a thread nobody wants keep arriving in the inbox. On
+# `main` `m` is Move, so the row never says muted there. This needs GTK to
+# run; it is linted here, and filmed with `/ux-review`. The row's state is
+# published as `app.focus.row.muted`.
+#
+# `m` on Harbor's row mutes it. A reply then arrives through the real path:
+# it is filed away on arrival, the row stays where it was and reads
+# "muted · 1", and search still finds it. `m` again unmutes it, and the
+# row's "muted" goes. The reply addressed to the person alone, which does
+# reach the inbox, is the engine's case, not this film's.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US5" }
+seed   = "threads"
+design = "01-inbox-threads-collapsed"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
+
+[[step]]
+id      = "mute"
+command = "mute_thread"
+check   = { cursor.index = 0, app.focus.row.muted = "muted", notice.undo = true }
+expect  = "Harbor's row says muted at its right, where the design draws it, and stays where it was. The toast offers Undo."
+
+[[step]]
+id      = "arrives"
+event   = "reply"
+settle  = { until = { app.focus.row.muted = "muted · 1" } }
+check   = { cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", app.focus.row.muted = "muted · 1" }
+expect  = "A reply arrived and the inbox did not gain a row: Harbor stays in its place, reading muted with a count of 1."
+
+[[step]]
+id      = "unmute"
+command = "mute_thread"
+check   = { cursor.index = 0, app.focus.row.muted = { absent = true } }
+expect  = "The row no longer says muted; later replies reach the inbox."

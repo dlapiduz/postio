@@ -924,6 +924,24 @@ fn deliver_input(
                         messages: vec![message],
                     })
                 }
+                // As `NewMail` is, and then the thread said changed, as a
+                // sync pass says it (spec 013 US4).
+                EnvEvent::Reply => {
+                    let store = acting.store.clone();
+                    let arrival = off_thread(async move {
+                        postio_demo::deliver_harbor_reply(&store, account).await
+                    })
+                    .map_err(|error| format!("the reply could not be filed: {error}"))?;
+                    acting.sink.emit(Event::NewMail {
+                        account,
+                        mailbox: arrival.mailbox,
+                        messages: vec![arrival.message],
+                    }) && acting.sink.emit(Event::ThreadChanged {
+                        account,
+                        thread: arrival.thread,
+                        members_added: vec![arrival.message],
+                    })
+                }
                 EnvEvent::BodyArrived => {
                     let store = acting.store.clone();
                     let message =

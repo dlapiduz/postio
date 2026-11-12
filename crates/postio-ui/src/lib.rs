@@ -82,5 +82,6 @@ pub mod terminal;
 pub mod test_support;
 pub mod thread_bar;
 pub mod thread_list;
+pub mod thread_outline;
 pub mod tokens;
 pub mod unsubscribe;

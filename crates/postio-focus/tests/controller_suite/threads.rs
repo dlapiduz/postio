@@ -27,14 +27,14 @@ struct Row {
     count: u32,
 }
 
-struct List {
+pub(crate) struct List {
     rows: Vec<Row>,
 }
 
 impl List {
     /// Rows 0.. with the message counts given; row `n` is message `100 + n`
     /// of thread `500 + n`.
-    fn of(counts: &[u32]) -> Self {
+    pub(crate) fn of(counts: &[u32]) -> Self {
         List {
             rows: counts
                 .iter()
@@ -103,13 +103,13 @@ impl Rows for List {
 }
 
 /// The member `index` of the thread `thread`.
-fn member_id(thread: ThreadId, index: usize) -> MessageId {
+pub(crate) fn member_id(thread: ThreadId, index: usize) -> MessageId {
     MessageId::new(thread.get() * 100 + index as i64)
 }
 
 /// A thread read: `members` messages, the last `unread` of them unread, and
 /// an unsent reply when `draft`.
-fn view(thread: ThreadId, members: usize, unread: usize, draft: bool) -> ThreadView {
+pub(crate) fn view(thread: ThreadId, members: usize, unread: usize, draft: bool) -> ThreadView {
     let at = Utc.with_ymd_and_hms(2026, 9, 21, 9, 0, 0).unwrap();
     ThreadView {
         thread,
@@ -137,16 +137,16 @@ fn view(thread: ThreadId, members: usize, unread: usize, draft: bool) -> ThreadV
     }
 }
 
-fn focus() -> FocusController {
+pub(crate) fn focus() -> FocusController {
     FocusController::new(Policy::for_platform(Platform::Apple))
 }
 
-fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effect> {
+pub(crate) fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effect> {
     focus.handle_on(Input::Command(command), rows)
 }
 
 /// The thread read the effects ask for, and its ticket.
-fn read_asked(effects: &[Effect]) -> Option<(Ticket, ThreadId)> {
+pub(crate) fn read_asked(effects: &[Effect]) -> Option<(Ticket, ThreadId)> {
     asks(effects)
         .into_iter()
         .find_map(|(ticket, request)| match request {
@@ -156,7 +156,7 @@ fn read_asked(effects: &[Effect]) -> Option<(Ticket, ThreadId)> {
 }
 
 /// Answer a read the way the client would.
-fn answer(
+pub(crate) fn answer(
     focus: &mut FocusController,
     ticket: Ticket,
     view: ThreadView,
@@ -966,15 +966,15 @@ fn a_label_added_from_a_child_aims_the_thread_and_one_undo_undoes_it() {
 
 /// What the window was told, as one record.
 #[derive(Default, Debug)]
-struct Window {
-    shown: Option<MessageId>,
-    bar: Option<postio_ui::thread_bar::ThreadBarView>,
-    kicker: Option<String>,
-    banner: Option<Option<postio_ui::thread_bar::BannerView>>,
-    reply_to: Option<Option<String>>,
+pub(crate) struct Window {
+    pub(crate) shown: Option<MessageId>,
+    pub(crate) bar: Option<postio_ui::thread_bar::ThreadBarView>,
+    pub(crate) kicker: Option<String>,
+    pub(crate) banner: Option<Option<postio_ui::thread_bar::BannerView>>,
+    pub(crate) reply_to: Option<Option<String>>,
 }
 
-fn window_of(effects: &[Effect]) -> Window {
+pub(crate) fn window_of(effects: &[Effect]) -> Window {
     let mut window = Window::default();
     for intent in shown(effects) {
         match intent {
@@ -990,14 +990,14 @@ fn window_of(effects: &[Effect]) -> Window {
 }
 
 /// The index of the ringed chip.
-fn ringed(bar: &postio_ui::thread_bar::ThreadBarView) -> Option<u32> {
+pub(crate) fn ringed(bar: &postio_ui::thread_bar::ThreadBarView) -> Option<u32> {
     bar.chips.iter().find_map(|chip| match chip {
         postio_ui::thread_bar::Chip::Message { index, current, .. } if *current => Some(*index),
         _ => None,
     })
 }
 
-fn marked_read(effects: &[Effect]) -> Vec<MessageId> {
+pub(crate) fn marked_read(effects: &[Effect]) -> Vec<MessageId> {
     asked_requests(effects)
         .into_iter()
         .filter_map(|request| match request {
@@ -1016,7 +1016,7 @@ fn asked_requests(effects: &[Effect]) -> Vec<Request> {
 
 /// Harbor (row 0, six messages, the last two unread) opened with Return: the
 /// window is on message 4 (index 4), the first unread.
-fn window_on_harbor(unread: usize) -> (FocusController, List, Window) {
+pub(crate) fn window_on_harbor(unread: usize) -> (FocusController, List, Window) {
     let rows = List::of(&[6, 4, 1, 3]);
     let mut focus = focus();
     let _ = focus.open(postio_model::ListScope::Focus(
