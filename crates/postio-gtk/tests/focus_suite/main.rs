@@ -1365,6 +1365,10 @@ const CASES: &[(&str, fn())] = &[
         open_message::a_hundredth_open_builds_no_second_message_view as fn(),
     ),
     (
+        "open_message::a_hundredth_open_of_a_thread_builds_no_second_message_view",
+        open_message::a_hundredth_open_of_a_thread_builds_no_second_message_view as fn(),
+    ),
+    (
         "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
     ),
@@ -1606,6 +1610,10 @@ const CASES: &[(&str, fn())] = &[
         list_contract::the_list_output_stays_libtest_shaped as fn(),
     ),
     ("harness::an_empty_case", harness::an_empty_case as fn()),
+    (
+        "harness::settle_outlasts_the_runtimes_budget",
+        harness::settle_outlasts_the_runtimes_budget as fn(),
+    ),
     (
         "harness::an_empty_case_is_listed_and_runs",
         harness::an_empty_case_is_listed_and_runs as fn(),
@@ -1981,8 +1989,28 @@ const CASES: &[(&str, fn())] = &[
 use gtk::glib;
 
 /// Turn the GTK main loop until there is nothing left to do.
+///
+/// The loop is turned inside one poll of the case's future (`gtk_case` is a
+/// `block_on`), so every future it dispatches that awaits a tokio resource
+/// spends that poll's budget of 128 operations. A case that never yields to
+/// its runtime between opens spent it after a few dozen, and from then on
+/// each such future returned `Pending` and woke itself at once, for as long
+/// as the loop was turned: `settle` never went idle, at 100% CPU. A real
+/// window has no such budget -- GTK's loop is not inside a tokio poll -- so
+/// the turn runs where tokio does not count, as a blocking section does.
 pub fn settle() {
-    while glib::MainContext::default().iteration(false) {}
+    // A loop that has not gone idle in this long is not settling.
+    let patience = postio_test_support::scaled(std::time::Duration::from_secs(10));
+    tokio::task::block_in_place(|| {
+        let started = std::time::Instant::now();
+        while glib::MainContext::default().iteration(false) {
+            assert!(
+                started.elapsed() < patience,
+                "the main loop never went idle: a future it polls is woken the moment \
+                 it returns Pending"
+            );
+        }
+    });
 }
 
 /// Let the main loop run for at least `least`: a dwell a case must outlast,

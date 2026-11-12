@@ -42,3 +42,37 @@ pub fn an_empty_case_is_listed_and_runs() {
         "asked to run {name} alone, the harness did not run exactly it:\n{ran}"
     );
 }
+
+/// The main loop is turned inside one poll of the case's future, so every
+/// future it dispatches that awaits a tokio resource spends the same budget
+/// (128 operations a poll). A case that never yields to its runtime ran it
+/// out after a few dozen opens, and from then on each such future was woken
+/// again the moment it returned `Pending`: `settle` never went idle, at 100%
+/// CPU. Three hundred reads, none awaited from the case, are well past it.
+pub fn settle_outlasts_the_runtimes_budget() {
+    use std::{cell::Cell, rc::Rc};
+    crate::gtk_case(async {
+        if !crate::support::display() {
+            return;
+        }
+        let landed = Rc::new(Cell::new(0_usize));
+        for _ in 0..300 {
+            let (answer, answered) = tokio::sync::oneshot::channel::<()>();
+            let landed = Rc::clone(&landed);
+            gtk::glib::spawn_future_local(async move {
+                let _ = answered.await;
+                landed.set(landed.get() + 1);
+            });
+            tokio::spawn(async move {
+                let _ = answer.send(());
+            });
+        }
+        // No `.await` here: the poll is never given back.
+        let until = std::time::Instant::now()
+            + postio_test_support::scaled(std::time::Duration::from_secs(10));
+        while landed.get() < 300 && std::time::Instant::now() < until {
+            crate::settle();
+        }
+        assert_eq!(landed.get(), 300, "reads that were answered never landed");
+    });
+}

@@ -38,6 +38,8 @@ These are the traps in this repository that are still live and that no check, ho
 
 **One clean run of a GUI suite on a loaded machine proves nothing.** Bisect by running each side two or three times. If a test is red for one person on every commit and a bisect finds nothing, the cause is machine state (a state file, the keyring), not the tree.
 
+**`settle()` runs GTK's loop inside one tokio poll, which has a budget of 128 operations.** A `focus_suite` case that opens and closes things back to back without ever awaiting a real yield (a `settle_until` that is already true does not) spends it on the reads GTK's futures await; after that each of those futures returns `Pending` and wakes itself at once, and `settle` never goes idle, at 100% CPU. It looked like a feedback loop in the thread walk (`a_hundredth_open_builds_no_second_message_view` hung once a message asked for its thread) and was not: the controller asks once per open (`threads::a_hundred_opens_of_a_thread_ask_for_it_once_each_and_its_answer_asks_for_nothing`). `settle` now runs its turns under `block_in_place`, which tokio does not count, and panics after ten seconds instead of hanging. A new suite that turns the loop inside `block_on` needs the same.
+
 ## The store and the search index
 
 The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and most of what follows fails silently.
