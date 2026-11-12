@@ -1230,6 +1230,9 @@ pub enum Request {
     },
     /// Whether this store holds `message`, and its row: what a link opens.
     FindMessage(MessageId),
+    /// The thread `message` is in now, for a window whose thread no longer
+    /// holds the message it shows (a split moved it; a delete removed it).
+    ThreadOf(MessageId),
     /// The draft behind `message`, for the send verb `command` to settle.
     DraftBehind {
         /// The message aimed at.
@@ -1572,6 +1575,13 @@ pub enum Reply {
         /// Its row, or `None` when the store does not hold it.
         row: Option<postio_model::listing::MessageSummary>,
     },
+    /// The answer to [`Request::ThreadOf`].
+    ThreadOf {
+        /// The message asked about.
+        message: MessageId,
+        /// Its thread, `None` when the store no longer holds it.
+        thread: Option<ThreadId>,
+    },
     /// The answer to [`Request::DraftBehind`].
     DraftBehind {
         /// The message asked about.
@@ -1897,6 +1907,7 @@ impl FocusController {
                 | Reply::ContactSeen(_)
                 | Reply::ContactSuggestions(_)
                 | Reply::FoundMessage { .. }
+                | Reply::ThreadOf { .. }
                 | Reply::DraftBehind { .. }),
             ) => {
                 let steps = self.surface_reply(reply, rows);
@@ -2918,6 +2929,7 @@ impl FocusController {
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
             Reply::ContactSuggestions(answer) => self.contacts_suggestions_read(answer),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
+            Reply::ThreadOf { message, thread } => self.walk_followed(message, thread),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
             _ => Vec::new(),
         }

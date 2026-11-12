@@ -55,6 +55,19 @@ pub(crate) struct Walk {
     /// The search's matches in this thread, when the window was opened on
     /// one of them.
     pub(crate) matches: Option<ThreadMatches>,
+    /// The message on screen was missing from a re-read: where it went is
+    /// being asked, and the thread as it was read waits for the answer.
+    pub(crate) follow: Option<Follow>,
+}
+
+/// A re-read that no longer holds the message on screen, while its new
+/// thread is looked for.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Follow {
+    /// The thread as the re-read said.
+    pub(crate) view: ThreadView,
+    /// The thread the message is in now, once known.
+    pub(crate) to: Option<ThreadId>,
 }
 
 impl Walk {
@@ -214,10 +227,13 @@ impl FocusController {
                 self.walk_asked = None;
                 self.begin_walk(opening, view.clone())
             }
-            _ if self
-                .walk
-                .as_ref()
-                .is_some_and(|walk| walk.view.thread == thread) =>
+            _ if self.walk.as_ref().is_some_and(|walk| {
+                walk.view.thread == thread
+                    || walk
+                        .follow
+                        .as_ref()
+                        .is_some_and(|follow| follow.to == Some(thread))
+            }) =>
             {
                 self.walk_refresh(view)
             }
@@ -228,14 +244,30 @@ impl FocusController {
     /// A thread was read and is gone: the window walking it has nothing left
     /// to show.
     pub(crate) fn walk_gone(&mut self, thread: ThreadId) -> Vec<Step> {
-        if self
-            .walk
+        let Some(walk) = self.walk.as_mut() else {
+            return Vec::new();
+        };
+        // The thread the window was sent to is gone as well.
+        let sent = walk
+            .follow
             .as_ref()
-            .is_some_and(|walk| walk.view.thread == thread)
-        {
+            .is_some_and(|follow| follow.to == Some(thread));
+        if sent {
             return self.walk_close();
         }
-        Vec::new()
+        if walk.view.thread != thread {
+            return Vec::new();
+        }
+        // The thread may be gone because its last message moved (an undone
+        // split): ask where the one on screen is before closing.
+        let shown = walk.shown;
+        if walk.follow.is_some() || walk.gone.contains(&shown) {
+            return self.walk_close();
+        }
+        let mut view = walk.view.clone();
+        view.members.clear();
+        walk.follow = Some(Follow { view, to: None });
+        vec![Step::Ask(Request::ThreadOf(shown))]
     }
 
     /// A thread the open window walks changed: its arrivals are pending
@@ -295,8 +327,19 @@ impl FocusController {
         view.members
             .retain(|member| !walk.gone.contains(&member.id));
         if !view.members.iter().any(|member| member.id == walk.shown) {
-            return self.walk_displaced(view);
+            // Not deleted from here: ask where it went before saying it is
+            // gone. One question at a time.
+            if walk.gone.contains(&walk.shown) {
+                return self.walk_displaced(view);
+            }
+            let shown = walk.shown;
+            if walk.follow.is_none() {
+                walk.follow = Some(Follow { view, to: None });
+                return vec![Step::Ask(Request::ThreadOf(shown))];
+            }
+            return Vec::new();
         }
+        walk.follow = None;
         walk.view = view;
         let members = &walk.view.members;
         walk.pending_new
@@ -304,6 +347,33 @@ impl FocusController {
         let mut steps = self.walk_intents();
         steps.push(Step::Show(Intent::NewReply(self.new_reply())));
         steps
+    }
+
+    /// Where the message on screen is now (spec 013 US5): in another thread
+    /// (a split moved it, an undo brought it back) the walk goes there and
+    /// nothing is said; in none (deleted) the window moves on as for any
+    /// message gone.
+    pub(crate) fn walk_followed(
+        &mut self,
+        message: MessageId,
+        thread: Option<ThreadId>,
+    ) -> Vec<Step> {
+        let Some(walk) = self.walk.as_mut() else {
+            return Vec::new();
+        };
+        let Some(follow) = walk.follow.as_mut().filter(|_| walk.shown == message) else {
+            return Vec::new();
+        };
+        match thread.filter(|thread| *thread != walk.view.thread) {
+            Some(thread) => {
+                follow.to = Some(thread);
+                vec![Step::Ask(Request::ReadThread(thread))]
+            }
+            None => {
+                let view = walk.follow.take().expect("checked above").view;
+                self.walk_displaced(view)
+            }
+        }
     }
 
     /// The message on screen is not in the thread any more (`view` is the
@@ -394,6 +464,7 @@ impl FocusController {
             place: opening.place,
             pending_new: Vec::new(),
             gone: Vec::new(),
+            follow: None,
             matches: self
                 .results
                 .as_mut()
