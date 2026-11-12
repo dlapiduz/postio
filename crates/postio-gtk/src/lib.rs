@@ -49,5 +49,6 @@ mod split;
 pub mod startup;
 pub mod style;
 pub mod thread_bar;
+pub mod thread_popovers;
 pub mod verbs;
 pub mod window;

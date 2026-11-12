@@ -365,7 +365,12 @@ mod tests {
 
     #[test]
     fn the_menu_has_two_groups_with_the_keymaps_keys() {
-        let menu = menu(Keymap::defaults(), false, true);
+        let keymap = Keymap::defaults();
+        // The one key that differs by platform: the keymap's own.
+        let delete_this = keymap
+            .binding(CommandId::DeleteThisMessage)
+            .map(str::to_owned);
+        let menu = menu(keymap, false, true);
         let groups: Vec<_> = menu.groups.iter().map(|g| g.title.as_str()).collect();
         assert_eq!(groups, ["Whole thread", "This message only"]);
         let titles = |at: usize| {
@@ -389,7 +394,7 @@ mod tests {
             [
                 ("Split into its own thread", Some("alt+shift+s")),
                 ("Move just this message", Some("alt+v")),
-                ("Delete just this message", Some("alt+BackSpace")),
+                ("Delete just this message", delete_this.as_deref()),
                 ("Always show its HTML as sent", Some("O")),
             ]
         );

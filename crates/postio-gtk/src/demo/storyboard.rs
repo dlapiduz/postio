@@ -929,18 +929,37 @@ fn deliver_input(
                 EnvEvent::Reply => {
                     let store = acting.store.clone();
                     let arrival = off_thread(async move {
-                        postio_demo::deliver_harbor_reply(&store, account).await
+                        let arrival = postio_demo::deliver_harbor_reply(&store, account).await?;
+                        // Through the filing pass every arrival takes: a muted
+                        // thread's reply is archived there, not here.
+                        postio_host::FocusSetup::default()
+                            .file_stored(&store, arrival.message, arrival.thread)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        let connection = store.connect().await.map_err(|e| e.to_string())?;
+                        let filed = postio_storage::repository::MessageRepository::new(&connection)
+                            .get(arrival.message)
+                            .await
+                            .map_err(|e| e.to_string())?
+                            .ok_or("the reply is gone")?;
+                        Ok::<_, String>((arrival, filed.mailbox_id))
                     })
                     .map_err(|error| format!("the reply could not be filed: {error}"))?;
-                    acting.sink.emit(Event::NewMail {
-                        account,
-                        mailbox: arrival.mailbox,
-                        messages: vec![arrival.message],
-                    }) && acting.sink.emit(Event::ThreadChanged {
-                        account,
-                        thread: arrival.thread,
-                        members_added: vec![arrival.message],
-                    })
+                    let (arrival, landed) = arrival;
+                    // Sync says an arrival to the inbox; a reply the filing
+                    // pass archived (a muted thread's) is none, and only the
+                    // thread changed.
+                    (landed != arrival.mailbox
+                        || acting.sink.emit(Event::NewMail {
+                            account,
+                            mailbox: arrival.mailbox,
+                            messages: vec![arrival.message],
+                        }))
+                        && acting.sink.emit(Event::ThreadChanged {
+                            account,
+                            thread: arrival.thread,
+                            members_added: vec![arrival.message],
+                        })
                 }
                 EnvEvent::BodyArrived => {
                     let store = acting.store.clone();

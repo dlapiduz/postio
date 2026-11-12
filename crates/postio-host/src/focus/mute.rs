@@ -353,6 +353,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_demo_or_test_filing_what_it_stored_takes_the_same_path() {
+        // `FocusSetup::file_stored` is the pass every arrival goes through,
+        // for a caller that stored the message itself.
+        let scene = a_muted_thread(true).await;
+        let (reply, thread) = scene
+            .arrival(
+                "m2",
+                &["m1"],
+                &["ada@example.com", "ben@example.com"],
+                &[],
+                2,
+            )
+            .await;
+
+        crate::FocusSetup::default()
+            .file_stored(&scene._database, reply.id, thread)
+            .await
+            .expect("filed");
+
+        assert_eq!(
+            scene.mailbox_of(&reply).await,
+            scene.archive.expect("an archive"),
+            "a muted thread's reply is archived"
+        );
+        assert_eq!(scene.replies_since().await, Some(1));
+    }
+
+    #[tokio::test]
     async fn a_reply_addressed_to_you_alone_arrives_in_the_inbox_and_the_thread_stays_muted() {
         let scene = a_muted_thread(true).await;
         let (reply, thread) = scene

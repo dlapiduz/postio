@@ -1621,6 +1621,64 @@ mod mute_and_split {
         (vec![m1, m2, m3, m4, m5, m6], thread)
     }
 
+    /// Spec 013 US5: "the row stays in place". A reply archived into a muted
+    /// thread is the newest message of the conversation, and the inbox row is
+    /// drawn from the newest message *in the inbox*, so the page does not move
+    /// the thread up. A guard: it held when written.
+    #[tokio::test]
+    async fn an_archived_reply_to_a_muted_thread_does_not_move_its_row() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("a connection");
+        let scene = scene(&connection).await;
+        let mut archive = postio_model::Mailbox::new(scene.account, "Archive", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut archive)
+            .await
+            .expect("an archive");
+        let archive = archive.id;
+        let (m1, muted) = scene.file("m1", &[], 1).await;
+        let (_, other) = scene.file("b1", &[], 5).await;
+        ThreadRepository::new(&connection)
+            .mute(muted)
+            .await
+            .expect("mute");
+        let order = || async {
+            ThreadRepository::new(&connection)
+                .page(&ThreadListQuery {
+                    account_id: scene.account,
+                    mailbox: Some(scene.inbox),
+                    limit: 10,
+                    after: None,
+                })
+                .await
+                .expect("a page")
+                .iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order().await, [Some(other), Some(muted)]);
+
+        let (reply, joined) = scene.file("m2", &["m1"], 10).await;
+        assert_eq!(joined, muted);
+        postio_storage::actions::relocate(
+            &connection,
+            scene.account,
+            &std::collections::BTreeMap::from([(scene.inbox, vec![reply])]),
+            archive,
+            postio_storage::actions::Relocation::Move,
+            Utc::now(),
+        )
+        .await
+        .expect("archived");
+
+        assert_eq!(
+            order().await,
+            [Some(other), Some(muted)],
+            "the muted thread stays below the newer inbox thread"
+        );
+        let _ = m1;
+    }
+
     #[tokio::test]
     async fn a_mute_survives_a_merge_and_a_renumbering() {
         let database = test_support::memory().await;

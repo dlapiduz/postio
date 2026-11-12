@@ -172,6 +172,8 @@ mod tests {
             || rule.starts_with("button.focus-nothing-row.focus-nothing-focused ")
             || rule.starts_with(".focus-digest-summary-statement.focus-digest-summary-focused ")
             || rule.starts_with(".focus-thread-chip-current ")
+            || rule.starts_with(".focus-new-reply-banner ")
+            || rule.starts_with(".focus-outline-current ")
             || rule == ".focus-thread-dot { color }"
             || rule.contains(".focus-marker")
             || rule.contains(".focus-has-action:checked")

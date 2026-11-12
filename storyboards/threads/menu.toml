@@ -32,7 +32,7 @@ expect  = "Harbor opens on message 5 of 6, the first unread."
 [[step]]
 id      = "menu"
 command = "thread_menu"
-check   = { view = "reader", app.focus.menu.open = true, app.focus.menu.groups = "Whole thread | This message only", app.focus.menu.keycaps = "alt+t | f, 2 | alt+e | m | alt+shift+s | alt+v | alt+BackSpace | O" }
+check   = { view = "reader", app.focus.menu.open = true, app.focus.menu.groups = "Whole thread | This message only", app.focus.menu.keycaps = "alt+t | f, 2 | alt+e | m | alt+shift+s | alt+v | alt+Delete | O" }
 expect  = "A 340-wide popover hangs from Thread: Whole thread above, This message only below, each entry with its key and, where it helps, one line under it. Nothing behind it moved."
 
 [[step]]

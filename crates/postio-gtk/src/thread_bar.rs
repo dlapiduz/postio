@@ -43,6 +43,7 @@ pub struct ThreadBar {
     drawn: Cell<usize>,
     room: Cell<u32>,
     on_room: RefCell<Option<RoomHandler>>,
+    on_menu: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 impl ThreadBar {
@@ -70,9 +71,6 @@ impl ThreadBar {
         postio_widgets::widgets::button::style(&menu, Kind::Ghost, Size::Regular);
         menu.add_css_class("focus-thread-bar-menu");
         menu.set_valign(gtk::Align::Center);
-        // The menu is spec 013 US5's: until it exists the button is drawn
-        // and does nothing.
-        menu.set_sensitive(false);
         root.append(&label);
         root.append(&chips);
         root.append(&menu);
@@ -86,6 +84,16 @@ impl ThreadBar {
             drawn: Cell::new(0),
             room: Cell::new(0),
             on_room: RefCell::default(),
+            on_menu: RefCell::default(),
+        });
+        let weak = Rc::downgrade(&bar);
+        bar.menu.connect_clicked(move |_| {
+            if let Some(bar) = weak.upgrade() {
+                let handler = bar.on_menu.borrow().clone();
+                if let Some(handler) = handler {
+                    handler();
+                }
+            }
         });
         // Say how many chips fit when the bar's width changes.
         let weak = Rc::downgrade(&bar);
@@ -101,6 +109,16 @@ impl ThreadBar {
     /// The bar, to place under the action row.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
+    }
+
+    /// The Thread button: what the thread menu hangs from.
+    pub fn menu_button(&self) -> &gtk::Button {
+        &self.menu
+    }
+
+    /// Run `handler` when the Thread button is pressed.
+    pub fn connect_menu(&self, handler: impl Fn() + 'static) {
+        self.on_menu.replace(Some(Rc::new(handler)));
     }
 
     /// Run `handler` with how many chips fit, once the bar has a width and
@@ -232,8 +250,14 @@ pub struct OlderBanner {
 impl OlderBanner {
     /// A banner, hidden until there is something to say.
     pub fn new() -> Rc<Self> {
+        Self::with_class("focus-older-banner")
+    }
+
+    /// A banner of its own kind, styled by `class`.
+    pub fn with_class(class: &str) -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        root.add_css_class("focus-older-banner");
+        root.add_css_class("focus-banner-bar");
+        root.add_css_class(class);
         root.set_visible(false);
         let text = gtk::Label::new(None);
         text.add_css_class("dim-label");

@@ -2548,3 +2548,53 @@ button.focus-filtered-tab.focus-filtered-tab-on {
   border-radius: var(--postio-radius-lg);
   background-color: var(--postio-raised-bg);
 }
+
+/* ── A reply that arrived while reading (spec 013 US4; screen 08) ──────── */
+.focus-banner-bar {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+}
+
+.focus-new-reply-banner {
+  background-color: var(--postio-accent-soft);
+  border: 1px solid var(--postio-accent);
+}
+
+/* ── The thread menu and the outline (spec 013 US5; screens 04, 05) ───── */
+.focus-thread-menu-body,
+.focus-outline-body {
+  padding: var(--postio-space-2);
+}
+
+.focus-thread-menu-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+  padding: var(--postio-space-2) var(--postio-space-3) 0;
+}
+
+.focus-thread-menu-note {
+  font-size: var(--postio-text-label);
+}
+
+.focus-outline-row {
+  padding: 0 var(--postio-space-2);
+  border-radius: var(--postio-radius-lg);
+  border: 1px solid transparent;
+}
+
+.focus-outline-cursor {
+  background-color: var(--postio-selected-bg);
+}
+
+.focus-outline-current {
+  border-color: var(--postio-accent);
+}
+
+.focus-outline-unread {
+  font-weight: bold;
+}
+
+.focus-outline-footer {
+  font-size: var(--postio-text-label);
+}
