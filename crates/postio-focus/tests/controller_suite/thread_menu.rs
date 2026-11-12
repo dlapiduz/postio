@@ -471,3 +471,170 @@ fn move_just_this_message_opens_the_folder_picker() {
             .any(|request| matches!(request, Request::Folders { .. }))
     );
 }
+
+// ---------------------------------------------------------------------
+// Spec 013 edge case: the message on screen leaves its thread.
+// ---------------------------------------------------------------------
+
+fn change(focus: &mut FocusController, rows: &List, thread: ThreadId) -> Ticket {
+    let effects = focus.handle_on(
+        Input::Event(postio_core::Event::ThreadChanged {
+            account: postio_model::AccountId::new(1),
+            thread,
+            members_added: Vec::new(),
+        }),
+        rows,
+    );
+    read_asked(&effects)
+        .expect("the window reads its thread again")
+        .0
+}
+
+/// The thread without `gone`.
+fn without(thread: ThreadId, gone: &[i64]) -> ThreadView {
+    let mut left = view(thread);
+    left.members
+        .retain(|member| !gone.contains(&member.id.get()));
+    left
+}
+
+fn read_back(
+    focus: &mut FocusController,
+    ticket: Ticket,
+    thread: ThreadId,
+    view: Option<ThreadView>,
+    rows: &List,
+) -> Vec<Effect> {
+    focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::ThreadRead {
+                thread,
+                view: Ok(view),
+            },
+        ),
+        rows,
+    )
+}
+
+fn notice(effects: &[Effect]) -> Option<String> {
+    shown(effects).into_iter().find_map(|intent| match intent {
+        Intent::Toast {
+            text,
+            kind: ToastKind::Notice,
+        } => Some(text),
+        _ => None,
+    })
+}
+
+fn thread_bar_of(effects: &[Effect]) -> bool {
+    shown(effects)
+        .iter()
+        .any(|intent| matches!(intent, Intent::ThreadBar(_)))
+}
+
+#[test]
+fn deleting_just_this_message_shows_the_next_newer_one_and_says_so() {
+    let (mut focus, rows) = window();
+    let thread = ThreadId::new(500);
+    let effects = run(&mut focus, CommandId::DeleteThisMessage, &rows);
+    assert_eq!(
+        opened_message(&effects),
+        Some(member_id(thread, 5)),
+        "the window moves to the next newer message: {effects:?}"
+    );
+    assert!(notice(&effects).is_some(), "and says so: {effects:?}");
+    assert!(thread_bar_of(&effects), "the bar is drawn for the new one");
+    assert!(
+        read_asked(&effects).is_some(),
+        "the thread is read again: {effects:?}"
+    );
+    // The store's answer agrees: nothing more moves.
+    let (ticket, _) = read_asked(&effects).unwrap();
+    let effects = read_back(
+        &mut focus,
+        ticket,
+        thread,
+        Some(without(thread, &[member_id(thread, 4).get()])),
+        &rows,
+    );
+    assert_eq!(opened_message(&effects), None, "{effects:?}");
+    assert!(!closed(&effects, SurfaceKind::Message));
+}
+
+#[test]
+fn deleting_the_newest_message_falls_back_to_the_next_older_one() {
+    let (mut focus, rows) = window();
+    let thread = ThreadId::new(500);
+    let _ = run(&mut focus, CommandId::LatestInConversation, &rows);
+    let effects = run(&mut focus, CommandId::DeleteThisMessage, &rows);
+    assert_eq!(opened_message(&effects), Some(member_id(thread, 4)));
+    assert!(notice(&effects).is_some());
+}
+
+#[test]
+fn a_message_deleted_elsewhere_moves_the_window_to_the_nearest_and_says_so() {
+    let (mut focus, rows) = window();
+    let thread = ThreadId::new(500);
+    let ticket = change(&mut focus, &rows, thread);
+    let gone = member_id(thread, 4).get();
+    let effects = read_back(
+        &mut focus,
+        ticket,
+        thread,
+        Some(without(thread, &[gone])),
+        &rows,
+    );
+    assert_eq!(opened_message(&effects), Some(member_id(thread, 5)));
+    assert!(notice(&effects).is_some(), "{effects:?}");
+}
+
+#[test]
+fn the_nearest_remaining_is_older_when_nothing_newer_is_left() {
+    let (mut focus, rows) = window();
+    let thread = ThreadId::new(500);
+    let ticket = change(&mut focus, &rows, thread);
+    let gone = [member_id(thread, 4).get(), member_id(thread, 5).get()];
+    let effects = read_back(
+        &mut focus,
+        ticket,
+        thread,
+        Some(without(thread, &gone)),
+        &rows,
+    );
+    assert_eq!(opened_message(&effects), Some(member_id(thread, 3)));
+}
+
+#[test]
+fn the_window_closes_when_no_message_of_the_thread_is_left() {
+    let (mut focus, rows) = window();
+    let thread = ThreadId::new(500);
+    let ticket = change(&mut focus, &rows, thread);
+    let effects = read_back(&mut focus, ticket, thread, None, &rows);
+    assert!(closed(&effects, SurfaceKind::Message), "{effects:?}");
+    // An empty read says the same.
+    let (mut focus, rows) = window();
+    let ticket = change(&mut focus, &rows, thread);
+    let gone: Vec<i64> = (0..6).map(|i| member_id(thread, i).get()).collect();
+    let effects = read_back(
+        &mut focus,
+        ticket,
+        thread,
+        Some(without(thread, &gone)),
+        &rows,
+    );
+    assert!(closed(&effects, SurfaceKind::Message), "{effects:?}");
+}
+
+#[test]
+fn a_change_that_leaves_the_message_shown_keeps_it_as_a_move_does() {
+    // A move files the message elsewhere but it stays in its thread, so the
+    // window keeps showing it: only a message gone from the thread moves it.
+    let (mut focus, rows) = window();
+    let thread = ThreadId::new(500);
+    let ticket = change(&mut focus, &rows, thread);
+    let effects = read_back(&mut focus, ticket, thread, Some(view(thread)), &rows);
+    assert_eq!(opened_message(&effects), None, "{effects:?}");
+    assert!(notice(&effects).is_none());
+    assert!(!closed(&effects, SurfaceKind::Message));
+}

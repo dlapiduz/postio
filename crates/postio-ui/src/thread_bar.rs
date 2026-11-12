@@ -198,6 +198,17 @@ pub struct BannerView {
     pub key: Option<String>,
 }
 
+/// What the window says when the message on screen left its thread (deleted
+/// here or elsewhere) and it moved to `newer`, the next newer message, or
+/// the next older one.
+pub fn gone_notice(newer: bool) -> &'static str {
+    if newer {
+        "That message is gone. Showing the next newer one."
+    } else {
+        "That message is gone. Showing the next older one."
+    }
+}
+
 /// The banner on a message that is not the latest.
 pub fn older_banner(keymap: &Keymap) -> BannerView {
     BannerView {

@@ -197,11 +197,15 @@ impl FocusController {
             }
             CommandId::DeleteThisMessage => {
                 let shown = self.surfaces.reading()?;
-                Some(vec![Step::Ask(Request::Send {
+                let mut steps = vec![Step::Ask(Request::Send {
                     command: Command::default_for(CommandId::Delete),
                     aims: vec![MessageTarget::Messages(vec![shown])],
                     everything: None,
-                })])
+                })];
+                // The window leaves the message at once (spec 013, edge
+                // cases); a window with no walk has no thread to stay in.
+                steps.extend(self.walk_deleted_shown());
+                Some(steps)
             }
             _ => {
                 let _ = rows;
