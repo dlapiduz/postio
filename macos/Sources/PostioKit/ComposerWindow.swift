@@ -11,6 +11,12 @@ public protocol ComposerEngine: AnyObject {
     func focusComposerEdited()
     /// How the save `FocusSaveDraft { composition }` asked for went.
     func focusDraftSaved(_ composition: UInt64, kept: Bool, error: String?)
+    /// The composer's draft, with what was typed, for the engine to change
+    /// (`FocusComposerDraftWanted`).
+    func focusComposerDraft(edit: DraftEditFfi, draft: DraftFfi)
+    /// The messages newer than the one a reply answers, read for the
+    /// composer's read-only block.
+    func focusNewerMessages(_ ids: [Int64]) -> [NewerMessageFfi]
     /// A surface the Mac opened itself: a `mailto:` link's composer.
     func focusSurfaceOpened(_ kind: SurfaceKindFfi)
     /// A surface closed some way the controller did not close it.
@@ -48,6 +54,10 @@ public final class ComposerWindow {
         case save(UInt64)
         /// The controller closed it.
         case close
+        /// The thread's part of the composer changed -- the chooser, the
+        /// older-reply bar, the newer messages, the quoted rows, the draft:
+        /// the model holds it and the view draws it.
+        case threadChanged
     }
 
     /// Whether the composer is up, as far as the controller knows.
@@ -77,6 +87,32 @@ public final class ComposerWindow {
             guard isOpen else { return nil }
             isOpen = false
             return .close
+        case let .focusForwardChooser(view):
+            guard let model else { return nil }
+            model.chooser = view
+            return .threadChanged
+        case let .focusOlderReply(view):
+            guard let model else { return nil }
+            model.olderReply = view
+            return .threadChanged
+        case let .focusNewerMessages(ids):
+            guard let model else { return nil }
+            model.newer = ids.map { engine.focusNewerMessages($0) }
+            return .threadChanged
+        case let .focusQuotedExpanded(expanded):
+            guard let model else { return nil }
+            model.setQuotedExpanded(expanded)
+            return .threadChanged
+        case let .focusComposerDraftWanted(edit):
+            // The engine changes the draft from what is typed, so what is
+            // typed goes with the answer.
+            guard let model else { return nil }
+            engine.focusComposerDraft(edit: edit, draft: model.edited)
+            return .threadChanged
+        case let .focusComposerDraft(draft):
+            guard let model else { return nil }
+            model.adopt(draft)
+            return .threadChanged
         default:
             return nil
         }

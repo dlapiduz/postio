@@ -602,6 +602,45 @@ pub enum UiEvent {
         /// The message it answers, or the draft's own message.
         message: Option<i64>,
     },
+    /// Draw the *What to forward* chooser above To, or redraw it with the
+    /// card now chosen ringed (spec 013 FR-023). While it holds the
+    /// keyboard, `1` `2` `3` resolve in `UiContext::ForwardChooser`.
+    FocusForwardChooser {
+        /// The three cards and the chosen one.
+        view: crate::focus_compose::ChooserFfi,
+    },
+    /// Draw the older-reply bar under the composer's title, redraw it, or
+    /// (`None`) take it away (FR-022).
+    FocusOlderReply {
+        /// What the bar says; `None` removes it.
+        view: Option<crate::focus_compose::OlderReplyFfi>,
+    },
+    /// Show these messages, newer than the one answered, read-only in the
+    /// composer; `None` puts them away.
+    FocusNewerMessages {
+        /// The messages, oldest first.
+        ids: Option<Vec<i64>>,
+    },
+    /// The forwarded or quoted messages as collapsed rows (`false`) or
+    /// expanded (`true`).
+    FocusQuotedExpanded {
+        /// Whether they are expanded.
+        expanded: bool,
+    },
+    /// The engine is about to change the composer's draft: answer with
+    /// `focus_composer_draft(edit, draft)`, the draft as it is now with
+    /// what was typed.
+    FocusComposerDraftWanted {
+        /// What will change.
+        edit: crate::focus_compose::DraftEditFfi,
+    },
+    /// Put this draft in the composer in place of its own, keeping the
+    /// caret where it can be kept. Its `from` and `path` are empty: the
+    /// composer keeps its own.
+    FocusComposerDraft {
+        /// The draft as the engine changed it.
+        draft: crate::DraftFfi,
+    },
     /// Save what the composer holds -- open, or just closed -- now, and say
     /// how it went with `focus_draft_saved(composition, …)`.
     FocusSaveDraft {

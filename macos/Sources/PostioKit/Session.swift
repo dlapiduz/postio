@@ -203,6 +203,24 @@ public final class PostioSession {
     /// Something was written in the composer: said on every edit.
     public func focusComposerEdited() { inner.focusComposerEdited() }
 
+    /// The composer's draft, with what was typed, as `FocusComposerDraftWanted`
+    /// asked: the controller has the engine change it and answers with
+    /// `FocusComposerDraft`.
+    public func focusComposerDraft(edit: DraftEditFfi, draft: DraftFfi) {
+        inner.focusComposerDraft(edit: edit, draft: draft)
+    }
+
+    /// A chooser card was clicked: as its number key.
+    public func focusForwardFormClicked(_ form: ForwardFormFfi) {
+        inner.focusForwardFormClicked(form: form)
+    }
+
+    /// The messages newer than the one a reply answers, for the composer's
+    /// read-only block. Read from the store; nothing is fetched.
+    public func focusNewerMessages(_ ids: [Int64]) -> [NewerMessageFfi] {
+        inner.focusNewerMessages(ids: ids)
+    }
+
     /// How the save `FocusSaveDraft { composition }` asked for went.
     public func focusDraftSaved(_ composition: UInt64, kept: Bool, error: String?) {
         inner.focusDraftSaved(composition: composition, kept: kept, error: error)

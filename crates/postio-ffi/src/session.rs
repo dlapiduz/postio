@@ -3961,7 +3961,7 @@ impl Session {
     /// fields: the kind, the ancestor and the reserved `Message-ID` are not
     /// things a composer edits, and rebuilding would drop all three — the
     /// last of which is what stops one message being sent twice (ADR 0021).
-    async fn rehydrate(
+    pub(crate) async fn rehydrate(
         &self,
         database: &postio_storage::Store,
         edited: &crate::DraftFfi,
@@ -3977,6 +3977,7 @@ impl Session {
                 postio_model::Draft::new(postio_model::ids::AccountId::new(edited.account));
             fresh.kind = edited.kind.into();
             fresh.in_reply_to = edited.in_reply_to.map(postio_model::ids::MessageId::new);
+            fresh.forwarded_from = edited.forwarded_from.map(postio_model::ids::MessageId::new);
             fresh
         };
         Some(crate::compose::from_ffi(base, edited))
