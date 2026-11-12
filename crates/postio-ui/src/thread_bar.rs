@@ -152,6 +152,19 @@ pub struct ThreadBarView {
     pub menu_label: String,
 }
 
+impl ThreadBarView {
+    /// A bar with nothing in it: said to take the one on screen away. It
+    /// has no chips, which is what a thread of one draws too.
+    pub fn empty() -> Self {
+        ThreadBarView {
+            title: String::new(),
+            count_line: String::new(),
+            chips: Vec::new(),
+            menu_label: String::new(),
+        }
+    }
+}
+
 /// The bar of `view` with the member at `current` on screen.
 pub fn bar(
     view: &ThreadView,

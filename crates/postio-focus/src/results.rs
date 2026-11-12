@@ -2519,9 +2519,26 @@ impl Results {
                 .collect(),
             attachments: hit.has_attachments,
             count_badge: (hit.messages > 1).then(|| hit.messages.to_string()),
-            summary: matched_messages(hit).map(|matched| {
-                postio_ui::search_view::match_summary(matched, hit.messages as usize)
-            }),
+            summary: match matched_messages(hit) {
+                Some(matched) => Some(postio_ui::search_view::match_summary(
+                    matched,
+                    hit.messages as usize,
+                )),
+                // One match among several messages: which one it is.
+                None => single_match(hit).then(|| {
+                    let who = hit
+                        .from
+                        .as_ref()
+                        .map(postio_ui::focus_row::first_name)
+                        .unwrap_or_default();
+                    postio_ui::search_view::single_match_snippet(
+                        hit.best_number as usize,
+                        hit.messages as usize,
+                        who,
+                        &passage_text,
+                    )
+                }),
+            },
             source_tag,
             source_is_file,
             passage,
@@ -2744,6 +2761,14 @@ fn matched_messages(hit: &ConversationHit) -> Option<usize> {
         _ => None,
     })?;
     (hit.messages > 1 && matched > 1).then_some(matched)
+}
+
+/// A thread of several messages of which one matched (spec 013 US6): its
+/// row names which message that is.
+fn single_match(hit: &ConversationHit) -> bool {
+    matches!(hit.key, ConversationKey::Thread(_))
+        && hit.messages > 1
+        && matched_messages(hit).is_none()
 }
 
 fn thread_of(hit: &ConversationHit) -> Option<ThreadId> {
@@ -4108,6 +4133,7 @@ impl FocusController {
 
     /// An answer the results asked for.
     pub(crate) fn results_reply(&mut self, reply: Reply) -> Vec<Step> {
+        let now = self.pickers.clock.unwrap_or_else(Local::now);
         let Some(results) = self.results.as_mut() else {
             return Vec::new();
         };
@@ -4179,7 +4205,7 @@ impl FocusController {
                 answer,
             } => self.file_copied(stamp, purpose, answer),
             Reply::QuickLookMatches { stamp, answer } => {
-                if let Some(changed) = results.expansion_matches(stamp, &answer) {
+                if let Some(changed) = results.expansion_matches(stamp, &answer, now) {
                     return if changed {
                         results.draw_splice()
                     } else {
@@ -4390,6 +4416,7 @@ impl Results {
         &mut self,
         stamp: u64,
         answer: &Result<Vec<ConversationMatch>, String>,
+        now: DateTime<Local>,
     ) -> Option<bool> {
         let expansion = self.expansion.as_mut().filter(|each| each.stamp == stamp)?;
         match answer {
@@ -4400,11 +4427,16 @@ impl Results {
                 return Some(false);
             }
         }
-        Some(self.compose_children())
+        Some(self.compose_children(now))
     }
 
     /// The expanded result's thread was read: whether the children changed.
-    pub(crate) fn expansion_thread(&mut self, thread: ThreadId, view: Option<&ThreadView>) -> bool {
+    pub(crate) fn expansion_thread(
+        &mut self,
+        thread: ThreadId,
+        view: Option<&ThreadView>,
+        now: DateTime<Local>,
+    ) -> bool {
         let Some(expansion) = self.expansion.as_mut().filter(|each| each.thread == thread) else {
             return false;
         };
@@ -4413,18 +4445,18 @@ impl Results {
             return false;
         };
         expansion.view = Some(view.clone());
-        self.compose_children()
+        self.compose_children(now)
     }
 
     /// Children from what has been read; whether they changed.
-    fn compose_children(&mut self) -> bool {
+    fn compose_children(&mut self, now: DateTime<Local>) -> bool {
         let Some(expansion) = self.expansion.as_mut() else {
             return false;
         };
         let (Some(matches), Some(view)) = (&expansion.matches, &expansion.view) else {
             return false;
         };
-        let children = postio_ui::search_view::children(view, matches);
+        let children = postio_ui::search_view::children(view, matches, now);
         if children == expansion.children {
             return false;
         }
@@ -4684,10 +4716,11 @@ impl FocusController {
         thread: ThreadId,
         view: Option<&ThreadView>,
     ) -> Vec<Step> {
+        let now = self.pickers.clock.unwrap_or_else(Local::now);
         let Some(results) = self.results.as_mut() else {
             return Vec::new();
         };
-        if results.expansion_thread(thread, view) {
+        if results.expansion_thread(thread, view, now) {
             results.draw_splice()
         } else {
             Vec::new()

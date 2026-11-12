@@ -146,7 +146,7 @@ fn is_me(who: &EmailAddress, me: &[EmailAddress]) -> bool {
 
 /// The first name a row says: the display name's first word, else the local
 /// part, else the address.
-pub(crate) fn first_name(who: &EmailAddress) -> &str {
+pub fn first_name(who: &EmailAddress) -> &str {
     let name = who.display();
     if who.name.as_deref().is_some_and(|n| !n.trim().is_empty()) {
         name.split_whitespace().next().unwrap_or(name)

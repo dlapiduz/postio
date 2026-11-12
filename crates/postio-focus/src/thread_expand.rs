@@ -32,12 +32,34 @@ pub(crate) struct Expansion {
     pub(crate) focused: Option<MessageId>,
     /// Where the anchor row was when the children were last drawn.
     pub(crate) at: u32,
+    /// Reads of the thread asked for after a change and not yet answered.
+    pub(crate) reads: u8,
+    /// The question "which thread is the anchor in now?", asked after a
+    /// change to some other thread (a late parent merges two).
+    pub(crate) probe: Probe,
+}
+
+/// Whether the anchor's thread is being asked after a thread changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Probe {
+    #[default]
+    Idle,
+    /// Asked, and not answered.
+    Flying,
+    /// Asked, and another thread changed since: ask again once answered.
+    Again,
 }
 
 impl Expansion {
     /// How many children follow the anchor: the members and the draft.
     pub(crate) fn children(&self) -> u32 {
         count(&self.view)
+    }
+
+    /// Whether something that may move or replace the anchor row is still
+    /// being read: a landing that misses the row waits for it.
+    pub(crate) fn settling(&self) -> bool {
+        self.reads > 0 || self.probe != Probe::Idle
     }
 
     pub(crate) fn splice(&self, at: u32) -> Splice {
@@ -63,6 +85,26 @@ impl Expansion {
 
 fn count(view: &ThreadView) -> u32 {
     (view.members.len() + usize::from(view.draft.is_some())) as u32
+}
+
+/// Where the row of a thread is among the pages in hand: the anchor's own
+/// position, else the newest of `view`'s members that has a row. That
+/// member is the row's new anchor.
+fn locate(rows: &dyn Rows, anchor: MessageId, view: &ThreadView) -> Option<(u32, MessageId)> {
+    if let Some(at) = rows.position_of(anchor) {
+        return Some((at, anchor));
+    }
+    view.members
+        .iter()
+        .rev()
+        .find_map(|member| Some((rows.position_of(member.id)?, member.id)))
+}
+
+/// Whether the row position `at` is a position the pages in hand do not
+/// cover: an empty list, or a page not landed, as opposed to a landed one
+/// that holds another row or a list that is shorter now.
+fn page_absent(rows: &dyn Rows, at: u32) -> bool {
+    rows.facts(at).is_none() && (rows.is_empty() || at < rows.len())
 }
 
 /// A read in flight that something waits on.
@@ -337,18 +379,27 @@ impl FocusController {
                     && self.filtered.is_none()
                     && self.shown_apart(rows).is_none() =>
             {
-                self.open_thread_row(raw, rows)
+                self.open_draft_child(raw)
+                    .or_else(|| self.open_thread_row(raw, rows))
             }
             Input::Reply(ticket, Reply::ThreadRead { thread, view }) => {
                 Some(self.thread_replied(*ticket, *thread, view, raw, rows))
             }
             Input::Event(Event::ThreadChanged { thread, .. }) => {
-                let expanded = self
-                    .expansion
-                    .as_ref()
-                    .is_some_and(|expansion| expansion.thread == *thread);
                 // The event still goes on to the rest of the controller.
-                expanded.then(|| vec![Step::Ask(Request::ReadThread(*thread))])
+                let expansion = self.expansion.as_mut()?;
+                if expansion.thread == *thread {
+                    expansion.reads = expansion.reads.saturating_add(1);
+                    Some(vec![Step::Ask(Request::ReadThread(*thread))])
+                } else {
+                    // Another thread changed. It may have swallowed this
+                    // one (a late parent links two), and only the store
+                    // knows: the anchor is asked where it is now.
+                    Some(self.probe_anchor())
+                }
+            }
+            Input::Reply(_, Reply::ThreadOf { message, thread }) => {
+                self.anchor_probed(*message, *thread, raw)
             }
             _ => None,
         }
@@ -371,7 +422,12 @@ impl FocusController {
             Err(error) => {
                 tracing::warn!(%error, "Focus could not read a thread");
                 self.pending = None;
-                return Vec::new();
+                if let Some(expansion) = self.expansion.as_mut() {
+                    // Nothing more is coming that a landing should wait for.
+                    expansion.reads = 0;
+                    expansion.probe = Probe::Idle;
+                }
+                return self.walk_unread(thread);
             }
         };
         // An expanded search result may be waiting for it too.
@@ -451,6 +507,18 @@ impl FocusController {
             {
                 self.pending = None;
             }
+            // The expanded thread is gone from the store: it may have been
+            // merged into another, which the anchor knows.
+            if self
+                .expansion
+                .as_ref()
+                .is_some_and(|expansion| expansion.thread == thread)
+            {
+                if let Some(expansion) = self.expansion.as_mut() {
+                    expansion.reads = expansion.reads.saturating_sub(1);
+                }
+                return self.probe_anchor();
+            }
             return Vec::new();
         };
         match self.pending.filter(|pending| pending.thread() == thread) {
@@ -509,6 +577,8 @@ impl FocusController {
             view,
             focused: None,
             at,
+            reads: 0,
+            probe: Probe::Idle,
         });
         if let Some(row) = kept {
             let display = thread_list::display(self.splice_over(raw), Slot::Row(row));
@@ -520,17 +590,28 @@ impl FocusController {
     }
 
     /// The expanded thread changed and was read again: redraw its children
-    /// and keep the cursor on the same message.
+    /// and keep the cursor on the same message. The row it hangs from may
+    /// have become another message's (a reply is the thread's newest, a
+    /// merge makes a new thread), and is found again among the new members.
     fn reread(&mut self, thread: ThreadId, view: ThreadView, raw: &dyn Rows) -> Vec<Step> {
-        let Some(expansion) = self.expansion.as_ref().filter(|x| x.thread == thread) else {
+        let Some(expansion) = self.expansion.as_mut().filter(|x| x.thread == thread) else {
             return Vec::new();
         };
-        let Some(at) = raw.position_of(expansion.anchor) else {
-            return Vec::new();
+        expansion.reads = expansion.reads.saturating_sub(1);
+        let Some((at, anchor)) = locate(raw, expansion.anchor, &view) else {
+            // No row of the thread is among the pages in hand.
+            if page_absent(raw, expansion.at) {
+                // Its page is not there to say: keep the thread as read and
+                // draw it when the row lands.
+                expansion.view = view;
+                return Vec::new();
+            }
+            return self.fold_gone(raw);
         };
+        let old_at = expansion.at;
         let position = self.cursor.position();
         // Where the cursor was among the old children, by what it named.
-        let slot = position.map(|position| expansion.splice(at).slot(position));
+        let slot = position.map(|position| expansion.splice(old_at).slot(position));
         let old_members = expansion.view.members.len();
         let focused = match slot {
             Some(Slot::Child { index, .. }) => {
@@ -541,9 +622,13 @@ impl FocusController {
         let on_draft =
             matches!(slot, Some(Slot::Child { index, .. }) if index as usize == old_members);
         let on_child = matches!(slot, Some(Slot::Child { .. }));
+        let mut steps = Vec::new();
+        if at != old_at {
+            steps.push(Step::Show(Intent::Unsplice { anchor: old_at }));
+        }
         if view.members.len() < 2 {
             self.expansion = None;
-            let mut steps = vec![Step::Show(Intent::Unsplice { anchor: at })];
+            steps.push(Step::Show(Intent::Unsplice { anchor: at }));
             if on_child {
                 steps.push(self.put_cursor(at));
             }
@@ -554,6 +639,7 @@ impl FocusController {
         let next = Expansion {
             focused,
             at,
+            anchor,
             view,
             ..self.expansion.take().expect("checked above")
         };
@@ -575,10 +661,10 @@ impl FocusController {
             None => None,
         };
         self.expansion = Some(next);
-        let mut steps = vec![Step::Show(Intent::Splice {
+        steps.push(Step::Show(Intent::Splice {
             anchor: at,
             children,
-        })];
+        }));
         if let Some(target) = target
             && Some(target) != position
         {
@@ -587,71 +673,157 @@ impl FocusController {
         steps
     }
 
-    /// The list landed: if the expanded row left it, fold the children and
-    /// leave the cursor on what slid into its place; if it moved, draw the
-    /// children where it went.
-    pub(crate) fn expansion_followed(&mut self, raw: &dyn Rows) -> Vec<Step> {
+    /// The expanded row left the list for good: fold the children and leave
+    /// the cursor on what slid into its place.
+    fn fold_gone(&mut self, raw: &dyn Rows) -> Vec<Step> {
         let Some(expansion) = &self.expansion else {
             return Vec::new();
         };
         let old = expansion.splice(expansion.at);
         let position = self.cursor.position();
-        match raw.position_of(expansion.anchor) {
-            None => {
-                let at = expansion.at;
-                self.expansion = None;
-                let mut steps = vec![Step::Show(Intent::Unsplice { anchor: at })];
-                if let Some(position) = position {
-                    let next = if position < at {
-                        position
-                    } else if position <= at + old.children {
-                        at
-                    } else {
-                        position - old.children
-                    };
-                    match raw.len().checked_sub(1) {
-                        Some(last) => {
-                            let next = next.min(last);
-                            if next != position {
-                                steps.push(self.put_cursor(next));
-                            }
-                        }
-                        None => self.cursor.moved_to(None),
+        let at = expansion.at;
+        self.expansion = None;
+        let mut steps = vec![Step::Show(Intent::Unsplice { anchor: at })];
+        if let Some(position) = position {
+            let next = if position < at {
+                position
+            } else if position <= at + old.children {
+                at
+            } else {
+                position - old.children
+            };
+            match raw.len().checked_sub(1) {
+                Some(last) => {
+                    let next = next.min(last);
+                    if next != position {
+                        steps.push(self.put_cursor(next));
                     }
                 }
-                steps
+                None => self.cursor.moved_to(None),
             }
-            Some(at) if at != expansion.at => {
-                let old_at = expansion.at;
-                let children = self.child_views(&expansion.view);
-                let new = expansion.splice(at);
-                let mut steps = vec![
-                    Step::Show(Intent::Unsplice { anchor: old_at }),
-                    Step::Show(Intent::Splice {
-                        anchor: at,
-                        children,
-                    }),
-                ];
-                if let Some(position) = position {
-                    let slot = match old.slot(position) {
-                        Slot::Child { index, .. } => Slot::Child { row: at, index },
-                        slot => slot,
-                    };
-                    // A row that was not the anchor's keeps its place among
-                    // the rows; the anchor moved, so the rows around it may
-                    // have too, and the frontend's landing says which.
-                    let display = new.display(slot);
-                    if display != position {
-                        steps.push(self.put_cursor(display));
-                    }
-                }
-                if let Some(expansion) = &mut self.expansion {
-                    expansion.at = at;
-                }
-                steps
-            }
-            Some(_) => Vec::new(),
         }
+        steps
+    }
+
+    /// Ask which thread the anchor is in now, one question at a time.
+    fn probe_anchor(&mut self) -> Vec<Step> {
+        let Some(expansion) = self.expansion.as_mut() else {
+            return Vec::new();
+        };
+        match expansion.probe {
+            Probe::Idle => {
+                expansion.probe = Probe::Flying;
+                vec![Step::Ask(Request::ThreadOf(expansion.anchor))]
+            }
+            Probe::Flying | Probe::Again => {
+                expansion.probe = Probe::Again;
+                Vec::new()
+            }
+        }
+    }
+
+    /// The store says which thread the anchor is in: the same one, and a
+    /// landing that waited for the answer is judged now; another, and the
+    /// expansion goes with the message into it. `None` when the answer is
+    /// not to the expansion's question.
+    fn anchor_probed(
+        &mut self,
+        message: MessageId,
+        thread: Option<ThreadId>,
+        raw: &dyn Rows,
+    ) -> Option<Vec<Step>> {
+        let expansion = self.expansion.as_mut()?;
+        if expansion.anchor != message || expansion.probe == Probe::Idle {
+            return None;
+        }
+        let again = expansion.probe == Probe::Again;
+        expansion.probe = Probe::Idle;
+        let mut steps = Vec::new();
+        match thread {
+            Some(thread) if thread != expansion.thread => {
+                expansion.thread = thread;
+                expansion.reads = expansion.reads.saturating_add(1);
+                steps.push(Step::Ask(Request::ReadThread(thread)));
+            }
+            _ => steps.extend(self.expansion_followed(raw)),
+        }
+        if again {
+            steps.extend(self.probe_anchor());
+        }
+        Some(steps)
+    }
+
+    /// The list landed: if the expanded row left it, fold the children and
+    /// leave the cursor on what slid into its place; if it moved, draw the
+    /// children where it went. A row that is not in the pages in hand is
+    /// not a row that left (a refresh lets go of its pages for a moment),
+    /// and one that a change in flight may yet explain is waited for.
+    pub(crate) fn expansion_followed(&mut self, raw: &dyn Rows) -> Vec<Step> {
+        let Some(expansion) = &self.expansion else {
+            return Vec::new();
+        };
+        let found = match raw.position_of(expansion.anchor) {
+            Some(at) => Some((at, expansion.anchor)),
+            // The thread's newest message may have changed: its row is
+            // whichever of its members has one.
+            None => locate(raw, expansion.anchor, &expansion.view),
+        };
+        let Some((at, anchor)) = found else {
+            if page_absent(raw, expansion.at) || expansion.settling() {
+                return Vec::new();
+            }
+            return self.fold_gone(raw);
+        };
+        let old = expansion.splice(expansion.at);
+        let position = self.cursor.position();
+        if at == expansion.at {
+            if let Some(expansion) = &mut self.expansion {
+                expansion.anchor = anchor;
+            }
+            return Vec::new();
+        }
+        let old_at = expansion.at;
+        let children = self.child_views(&expansion.view);
+        let new = expansion.splice(at);
+        let mut steps = vec![
+            Step::Show(Intent::Unsplice { anchor: old_at }),
+            Step::Show(Intent::Splice {
+                anchor: at,
+                children,
+            }),
+        ];
+        if let Some(position) = position {
+            let slot = match old.slot(position) {
+                Slot::Child { index, .. } => Slot::Child { row: at, index },
+                slot => slot,
+            };
+            // A row that was not the anchor's keeps its place among
+            // the rows; the anchor moved, so the rows around it may
+            // have too, and the frontend's landing says which.
+            let display = new.display(slot);
+            if display != position {
+                steps.push(self.put_cursor(display));
+            }
+        }
+        if let Some(expansion) = &mut self.expansion {
+            expansion.at = at;
+            expansion.anchor = anchor;
+        }
+        steps
+    }
+
+    /// `Return` on the unsent reply among the children: it is written, not
+    /// read. `None` when the cursor is on anything else.
+    fn open_draft_child(&mut self, raw: &dyn Rows) -> Option<Vec<Step>> {
+        let expansion = self.expansion.as_ref()?;
+        let (_, Some(index)) = self.cursor_row(raw)? else {
+            return None;
+        };
+        if index as usize != expansion.view.members.len() {
+            return None;
+        }
+        let draft = expansion.view.draft.as_ref()?.id;
+        Some(self.write(crate::ComposerKind::ThreadDraft { draft }, None))
     }
 
     /// `Return` on a row of a thread: open the message `open_at` names, the

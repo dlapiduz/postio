@@ -1115,8 +1115,26 @@ struct Hydrated {
     sent_count: i64,
     /// The thread's own counts, when it has one.
     thread: Option<(u32, bool, bool)>,
+    /// The message's place among its thread's members, oldest first, from
+    /// 1; `None` for a message that is in no thread.
+    number: Option<u32>,
     files: Vec<(AttachmentId, String)>,
 }
+
+/// A message's place among its thread's members, as the thread's own read
+/// orders and filters them (`ThreadRepository::members`: oldest first,
+/// neither deleted nor snoozed, no draft). The outer side of the thread
+/// match is an expression so the engine keeps this a seek per row
+/// (docs/gotchas.md, "group-first"): one range of `idx_messages_thread` up
+/// to the message, so it costs its place in the thread, not the store.
+const NUMBER: &str = "(SELECT count(*) FROM messages x
+                        WHERE x.thread_id = m.thread_id + 0
+                          AND x.received_at <= m.received_at
+                          AND (x.received_at, x.id) <= (m.received_at, m.id)
+                          AND x.deleted_locally = 0
+                          AND (x.snoozed_until IS NULL
+                               OR x.snoozed_until <= (strftime('%s','now') * 1000))
+                          AND x.draft = 0)";
 
 /// The separator between a hydrated row's attachments: a unit separator,
 /// which no file name carries.
@@ -1154,7 +1172,8 @@ async fn hydrate(
         "SELECT sub.id, sub.subject, sender.name, a.address,
                 {affinity},
                 (SELECT w.sent_count FROM correspondents w WHERE w.address_id = a.id),
-                sub.thread_messages, sub.thread_unread, sub.thread_files, sub.files
+                sub.thread_messages, sub.thread_unread, sub.thread_files, sub.files,
+                sub.number
            FROM (SELECT m.id, m.subject,
                         (SELECT r.id FROM recipients r
                           WHERE r.message_id = m.id AND r.kind = 'from'
@@ -1162,6 +1181,7 @@ async fn hydrate(
                         t.message_count AS thread_messages,
                         t.unread_count AS thread_unread,
                         t.has_attachments AS thread_files,
+                        {NUMBER} AS number,
                         (SELECT group_concat(f.id || ':' || f.filename, '{UNIT}')
                            FROM attachments f
                           WHERE f.message_id = m.id AND f.filename IS NOT NULL) AS files
@@ -1195,6 +1215,9 @@ async fn hydrate(
                     )),
                     None => None,
                 },
+                number: row
+                    .col::<Option<i64>>(10)?
+                    .map(|number| u32::try_from(number.max(1)).unwrap_or(u32::MAX)),
                 files: row
                     .col::<Option<String>>(9)?
                     .map(|files| {
@@ -1361,6 +1384,10 @@ fn hit(
     ConversationHit {
         key: conversation.key,
         best: MessageId::new(best.id),
+        best_number: match conversation.key {
+            ConversationKey::Thread(_) => row.number.unwrap_or(1),
+            ConversationKey::Lone(_) => 1,
+        },
         mailbox_id: MailboxId::new(best.mailbox),
         subject: row.subject.clone(),
         from: row

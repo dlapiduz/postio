@@ -260,6 +260,7 @@ pub fn conversation(n: i64) -> ConversationHit {
     ConversationHit {
         key: ConversationKey::Thread(ThreadId::new(2000 + n)),
         best: MessageId::new(1000 + n),
+        best_number: if n == 0 { 3 } else { 1 },
         mailbox_id: MailboxId::new(1),
         subject: Some(format!("Atlas budget, part {n}")),
         from: Some(from),

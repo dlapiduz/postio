@@ -19,6 +19,7 @@ mod contacts;
 mod contacts_settings;
 mod cursor;
 mod digest;
+mod edge_cases;
 mod feed;
 mod filtered;
 mod history;

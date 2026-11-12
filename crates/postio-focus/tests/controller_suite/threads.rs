@@ -48,6 +48,14 @@ impl List {
         }
     }
 
+    /// The list with row `at` standing for message `id` of `thread`, `count`
+    /// messages: a conversation whose newest message changed.
+    pub(crate) fn with_row(&self, at: usize, id: MessageId, thread: ThreadId, count: u32) -> Self {
+        let mut rows = self.rows.clone();
+        rows[at] = Row { id, thread, count };
+        List { rows }
+    }
+
     /// The same list without the row for `thread`.
     fn without(&self, thread: ThreadId) -> Self {
         List {
@@ -174,14 +182,14 @@ pub(crate) fn answer(
     )
 }
 
-fn splice_of(effects: &[Effect]) -> Option<(u32, Vec<ChildRowView>)> {
+pub(crate) fn splice_of(effects: &[Effect]) -> Option<(u32, Vec<ChildRowView>)> {
     shown(effects).into_iter().find_map(|intent| match intent {
         Intent::Splice { anchor, children } => Some((anchor, children)),
         _ => None,
     })
 }
 
-fn unspliced(effects: &[Effect]) -> Vec<u32> {
+pub(crate) fn unspliced(effects: &[Effect]) -> Vec<u32> {
     shown(effects)
         .into_iter()
         .filter_map(|intent| match intent {
@@ -191,7 +199,7 @@ fn unspliced(effects: &[Effect]) -> Vec<u32> {
         .collect()
 }
 
-fn cursor_of(effects: &[Effect]) -> Option<u32> {
+pub(crate) fn cursor_of(effects: &[Effect]) -> Option<u32> {
     shown(effects)
         .into_iter()
         .rev()
@@ -201,7 +209,7 @@ fn cursor_of(effects: &[Effect]) -> Option<u32> {
         })
 }
 
-fn opened_message(effects: &[Effect]) -> Option<MessageId> {
+pub(crate) fn opened_message(effects: &[Effect]) -> Option<MessageId> {
     shown(effects).into_iter().find_map(|intent| match intent {
         Intent::OpenMessage { message, .. } => Some(message),
         _ => None,
@@ -210,7 +218,7 @@ fn opened_message(effects: &[Effect]) -> Option<MessageId> {
 
 /// Harbor, row 0 (thread 500, six messages and a draft), expanded over a
 /// list of `counts`.
-fn expanded(counts: &[u32]) -> (FocusController, List) {
+pub(crate) fn expanded(counts: &[u32]) -> (FocusController, List) {
     let rows = List::of(counts);
     let mut focus = focus();
     let _ = focus.open(postio_model::ListScope::Focus(

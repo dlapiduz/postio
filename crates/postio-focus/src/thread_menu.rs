@@ -254,6 +254,24 @@ impl FocusController {
         }
     }
 
+    /// A click on the bar's "... N more" chip: the outline, with the ring
+    /// on the first member the chip stands for.
+    pub(crate) fn more_chip_clicked(&mut self, from: u32) -> Vec<Step> {
+        let (Some(at), Some(walk)) = (self.shown_at(), self.walk.as_ref()) else {
+            return Vec::new();
+        };
+        let view = walk.view.clone();
+        let last = view.members.len().saturating_sub(1);
+        let mut steps = self.open_outline(view, at, None);
+        if let Some(outline) = self.thread_ui.outline.as_mut() {
+            outline.cursor = (from as usize).min(last);
+        }
+        // Drawn once more with the ring where the chip pointed.
+        steps.retain(|step| !matches!(step, Step::Show(Intent::Outline(_))));
+        steps.extend(self.draw_outline());
+        steps
+    }
+
     fn open_outline(
         &mut self,
         view: ThreadView,

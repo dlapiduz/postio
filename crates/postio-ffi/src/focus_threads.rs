@@ -256,6 +256,8 @@ impl From<&postio_ui::search_view::ResultChild> for ResultChildFfi {
                 number,
                 tag,
                 passage,
+                // The sender, initials and time are the Mac's to adopt.
+                ..
             } => ResultChildFfi::Match {
                 message: message.get(),
                 number: *number,

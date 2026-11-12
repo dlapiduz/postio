@@ -1961,3 +1961,78 @@ async fn the_muted_lookup_reads_the_mutes_and_seeks_the_links_by_their_key() {
         "the links are sought with both columns of their key bound:\n{plan}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Spec 013 T085: the edge cases of a thread across folders
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_thread_across_archive_sent_and_the_inbox_counts_every_message_on_its_inbox_row() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
+    let sent = test_support::mailbox(&connection, &account, "Sent")
+        .await
+        .id;
+
+    let thread = a_thread(&connection, account.id).await;
+    unread_in(&connection, account.id, archive, thread.id, 10).await;
+    unread_in(&connection, account.id, archive, thread.id, 11).await;
+    unread_in(&connection, account.id, sent, thread.id, 20).await;
+    unread_in(&connection, account.id, sent, thread.id, 21).await;
+    unread_in(&connection, account.id, inbox, thread.id, 30).await;
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
+        .expect("a page of threads");
+
+    assert_eq!(page.len(), 1, "one conversation");
+    assert_eq!(
+        page[0].message_count, 5,
+        "the sent replies and the archived mail are the conversation's too"
+    );
+    let members = ThreadRepository::new(&connection)
+        .members(thread.id)
+        .await
+        .expect("members");
+    assert_eq!(members.len(), 5, "and every one of them is a child");
+}
+
+/// A draft the server holds is a message of its thread to the threading, and
+/// it is listed in Drafts. Archiving the thread acts on the messages
+/// `ThreadRepository::messages` names, so it must not name the draft: the
+/// draft stays in Drafts (spec 013, edge cases).
+#[tokio::test]
+async fn the_messages_a_thread_verb_acts_on_leave_a_draft_of_the_thread_out() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let drafts = test_support::mailbox(&connection, &account, "Drafts")
+        .await
+        .id;
+    let thread = a_thread(&connection, account.id).await;
+    let received = unread_in(&connection, account.id, inbox, thread.id, 10).await;
+    let draft = unread_in(&connection, account.id, drafts, thread.id, 20).await;
+    connection
+        .execute("UPDATE messages SET draft = 1 WHERE id = ?1", [draft.get()])
+        .await
+        .expect("mark it a draft");
+
+    let acted_on: Vec<MessageId> = ThreadRepository::new(&connection)
+        .messages(thread.id, ThreadOrder::Oldest)
+        .await
+        .expect("the thread's messages")
+        .iter()
+        .map(|row| row.id)
+        .collect();
+
+    assert_eq!(
+        acted_on,
+        vec![received],
+        "the draft is not archived with it"
+    );
+}
