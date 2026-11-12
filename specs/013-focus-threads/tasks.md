@@ -332,15 +332,15 @@ and `}` shows it.
 the text and quotes message 6. Then `f`, `2` gives "Fwd: Harbor API draft v3
 (6 messages)".
 
-- [ ] T076 [P] [US7] Write failing tests in `crates/postio-body/src/forward.rs` (new) (red: no module):
+- [x] T076 [P] [US7] Write failing tests in `crates/postio-body/src/forward.rs` (new) (red: no module):
   - `forward_thread` puts six members oldest first under a "From · date" header each, folds quotes, and includes each attachment once by content hash;
   - `forward_as_attachments` gives one `message/rfc822` per member.
-- [ ] T077 [US7] Implement `crates/postio-body/src/forward.rs` and export it from `crates/postio-body/src/lib.rs`.
-- [ ] T078 [P] [US7] Write session/host tests (red):
+- [x] T077 [US7] Implement `crates/postio-body/src/forward.rs` and export it from `crates/postio-body/src/lib.rs`.
+- [x] T078 [P] [US7] Write session/host tests (red):
   - `ReplyToLatest` swaps `in_reply_to`, `References` and the quote, and keeps the typed text;
   - `SetForwardForm` rebuilds the forwarded content and keeps the typed text;
   - forms 2 and 3 with a member not local answer `NotLocal` and fetch nothing (assert no transport call through the `MailBackend` mock).
-- [ ] T079 [US7] Implement `ReplyToLatest`, `SetForwardForm` and `Req::ForwardThread` in `crates/postio-session/src/` and `crates/postio-client/src/{protocol,api}.rs`, with the subject "Fwd: <subject> (N messages)".
+- [x] T079 [US7] Implement `ReplyToLatest`, `SetForwardForm` and `Req::ForwardThread` in `crates/postio-session/src/` and `crates/postio-client/src/{protocol,api}.rs`, with the subject "Fwd: <subject> (N messages)".
 - [ ] T080 [P] [US7] Write controller cases in `crates/postio-focus/tests/controller_suite/threads.rs` (red):
   - `f` in a thread of 2+ opens the chooser on This;
   - `2`/`3` switch the form;

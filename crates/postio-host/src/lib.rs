@@ -1573,6 +1573,32 @@ impl Inner {
                 Ok(muted) => Resp::Muted(muted),
                 Err(error) => Resp::Failed(error),
             },
+            Req::ForwardThread { thread, form } => forwarded(
+                postio_session::thread_compose::forward_thread(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    thread,
+                    form,
+                )
+                .await,
+            ),
+            Req::SetForwardForm { draft, form } => forwarded(
+                postio_session::thread_compose::set_forward_form(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    *draft,
+                    form,
+                )
+                .await,
+            ),
+            Req::ReplyToLatest { draft } => {
+                match postio_session::thread_compose::reply_to_latest(&self.wiring.database, *draft)
+                    .await
+                {
+                    Ok(draft) => Resp::Draft(Some(Box::new(draft))),
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
             Req::Unsubscribe(message) => self.unsubscribe(message).await,
             Req::ListMail(message) => self.list_mail(message).await,
             Req::Parts(message) => {
@@ -2515,3 +2541,11 @@ mod model_tests;
 mod tests;
 #[cfg(test)]
 mod verbs_tests;
+
+/// A thread forward's answer, on the wire.
+fn forwarded(built: Result<postio_model::Forwarded, String>) -> Resp {
+    match built {
+        Ok(forwarded) => Resp::Forwarded(forwarded),
+        Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+    }
+}

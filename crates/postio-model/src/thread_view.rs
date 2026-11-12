@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::address::EmailAddress;
+use crate::draft::Draft;
 use crate::ids::{DraftId, MessageId, ThreadId};
 use crate::label::Label;
 
@@ -135,4 +136,30 @@ mod tests {
             "On the other hand, ship it Friday."
         );
     }
+}
+
+/// What a forward carries (spec 013 FR-023): the chooser's three cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ForwardForm {
+    /// One message, quoted as a forward always has been. The default.
+    #[default]
+    This,
+    /// Every message, oldest first, in one readable message, with every
+    /// attachment once.
+    Thread,
+    /// Each message as an `.eml` attachment.
+    Attachments,
+}
+
+/// What building a forward answered (`Req::ForwardThread`,
+/// `Req::SetForwardForm`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Forwarded {
+    /// The draft, not yet saved: the composer's autosave gives it an id, as
+    /// for any reply.
+    Draft(Box<Draft>),
+    /// These messages are not on this machine (a body, a raw source or an
+    /// attachment's bytes), so the form was refused. Nothing was fetched
+    /// (FR-028).
+    NotLocal(Vec<MessageId>),
 }

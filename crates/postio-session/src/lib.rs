@@ -64,6 +64,7 @@ pub mod refresh;
 pub mod search;
 pub mod signin;
 pub mod start_over;
+pub mod thread_compose;
 
 use std::path::Path;
 use std::sync::Arc;

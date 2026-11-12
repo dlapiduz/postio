@@ -105,6 +105,9 @@ impl Req {
             Req::Unmute(_) => "Unmute",
             Req::Split(_) => "Split",
             Req::MutedOf(_) => "MutedOf",
+            Req::ForwardThread { .. } => "ForwardThread",
+            Req::SetForwardForm { .. } => "SetForwardForm",
+            Req::ReplyToLatest { .. } => "ReplyToLatest",
             Req::Unsubscribe(_) => "Unsubscribe",
             Req::ListMail(_) => "ListMail",
             Req::Parts(_) => "Parts",
@@ -390,6 +393,63 @@ impl Client {
             "the muted threads",
             |answer| match answer {
                 Resp::Muted(muted) => Some(muted),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// A forward of `thread` in `form`: a draft to compose in, or the
+    /// messages that are not on this machine (spec 013 FR-023). Reads the
+    /// local store; nothing is fetched.
+    pub async fn forward_thread(
+        &self,
+        thread: postio_model::ThreadId,
+        form: postio_model::ForwardForm,
+    ) -> Result<postio_model::Forwarded, StoreError> {
+        self.read(
+            Req::ForwardThread { thread, form },
+            "a thread forward",
+            |answer| match answer {
+                Resp::Forwarded(forwarded) => Some(forwarded),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `draft`, a forward, changed to carry `form`; what was typed above the
+    /// forwarded content stays.
+    pub async fn set_forward_form(
+        &self,
+        draft: Draft,
+        form: postio_model::ForwardForm,
+    ) -> Result<postio_model::Forwarded, StoreError> {
+        self.read(
+            Req::SetForwardForm {
+                draft: Box::new(draft),
+                form,
+            },
+            "a forward form",
+            |answer| match answer {
+                Resp::Forwarded(forwarded) => Some(forwarded),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `draft`, a reply, changed to answer its thread's latest received
+    /// message: the quote and the threading move there, what was typed
+    /// stays.
+    pub async fn reply_to_latest(&self, draft: Draft) -> Result<Draft, StoreError> {
+        self.read(
+            Req::ReplyToLatest {
+                draft: Box::new(draft),
+            },
+            "a reply to the latest",
+            |answer| match answer {
+                Resp::Draft(Some(draft)) => Some(*draft),
                 _ => None,
             },
         )

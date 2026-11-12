@@ -918,3 +918,88 @@ fn a_reply_to_a_message_with_no_body_yet_has_no_attribution() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Reply to latest: the quote changes, the person's words do not (spec 013 FR-022)
+// ---------------------------------------------------------------------------
+
+mod requoting {
+    use postio_body::{Block, Inline, quote_of, quoted_reply, requote};
+    use postio_model::MessageBody;
+
+    const FOUR: &str = "On 2026-03-04, Ann wrote:";
+    const SIX: &str = "On 2026-03-06, Cy wrote:";
+
+    fn six() -> postio_body::Quoted {
+        quote_of(None, "six says hello\nand goodbye", "q6")
+    }
+
+    /// A reply to message 4 as the rich composer saves it, `typed` written
+    /// in the caret paragraph.
+    fn rich_reply_with(typed: &str) -> MessageBody {
+        let four = quote_of(None, "four says hello", "q4");
+        let mut document = quoted_reply(&four, FOUR);
+        document.blocks[0] = Block::Paragraph(vec![Inline::Text(typed.to_owned())]);
+        MessageBody {
+            text: Some(document.to_text()),
+            html: Some(document.to_html()),
+        }
+    }
+
+    #[test]
+    fn the_plain_half_keeps_the_typed_words_and_quotes_the_new_message() {
+        let old = MessageBody {
+            text: Some(format!(
+                "typed first\n\nand second\n\n{FOUR}\n> four says hello\n"
+            )),
+            html: None,
+        };
+        let new = requote(&old, SIX, &six());
+        assert_eq!(
+            new.text.as_deref(),
+            Some(
+                format!("typed first\n\nand second\n\n{SIX}\n> six says hello\n> and goodbye")
+                    .as_str()
+            )
+        );
+        assert_eq!(new.html, None, "a plain reply stays plain");
+    }
+
+    #[test]
+    fn the_rich_half_keeps_the_typed_words_and_quotes_the_new_message() {
+        let new = requote(&rich_reply_with("my typed words"), SIX, &six());
+        let html = new.html.expect("still rich");
+        assert!(html.contains("my typed words"), "{html}");
+        assert!(html.contains("six says hello"), "{html}");
+        assert!(html.contains(SIX), "{html}");
+        assert!(!html.contains("four says"), "the old quote is gone: {html}");
+        assert!(!html.contains(FOUR), "so is its attribution: {html}");
+        let text = new.text.expect("and its text half");
+        assert!(text.contains("my typed words"), "{text}");
+        assert!(text.contains("> six says hello"), "{text}");
+        assert!(!text.contains("four says"), "{text}");
+    }
+
+    #[test]
+    fn what_follows_the_quote_is_kept() {
+        let old = MessageBody {
+            text: Some(format!("{FOUR}\n> four says hello\n-- \nAda\n")),
+            html: None,
+        };
+        let text = requote(&old, SIX, &six()).text.expect("text");
+        assert!(text.ends_with("> and goodbye\n-- \nAda\n"), "{text:?}");
+    }
+
+    #[test]
+    fn a_body_with_no_quote_gets_the_new_one_after_the_words() {
+        let old = MessageBody {
+            text: Some("only my words".to_owned()),
+            html: None,
+        };
+        let text = requote(&old, SIX, &six()).text.expect("text");
+        assert_eq!(
+            text,
+            format!("only my words\n\n{SIX}\n> six says hello\n> and goodbye")
+        );
+    }
+}
