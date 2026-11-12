@@ -25,6 +25,7 @@ public final class ResultsTable: NSObject {
 
     static let rowIdentifier = NSUserInterfaceItemIdentifier("postio.results.row")
     static let headerIdentifier = NSUserInterfaceItemIdentifier("postio.results.header")
+    static let childIdentifier = NSUserInterfaceItemIdentifier("postio.results.child")
     static let rowViewIdentifier = NSUserInterfaceItemIdentifier("postio.results.rowview")
 
     public init(model: ResultsModel) {
@@ -117,6 +118,16 @@ public final class ResultsTable: NSObject {
                 if case .header = model.item(at: row - 1) { tableView.scrollRowToVisible(row - 1) }
                 tableView.scrollRowToVisible(row)
             }
+        case let .spliced(removed, inserted):
+            // The opened result's lines come and go under it; no animation
+            // under Reduce Motion, else a fade within the 100 ms budget.
+            let animation: NSTableView.AnimationOptions =
+                Motion.duration(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion) == 0
+                ? [] : .effectFade
+            tableView.beginUpdates()
+            if let removed { tableView.removeRows(at: IndexSet(integersIn: removed), withAnimation: animation) }
+            if let inserted { tableView.insertRows(at: IndexSet(integersIn: inserted), withAnimation: animation) }
+            tableView.endUpdates()
         case .close:
             tableView.reloadData()
         }
@@ -192,6 +203,19 @@ extension ResultsTable: NSTableViewDelegate {
             cell.identifier = Self.rowIdentifier
             cellsCreated += 1
             return cell
+        case let .child(index):
+            let view = ResultChildView(child: model.child(at: index))
+            if let cell = tableView.makeView(withIdentifier: Self.childIdentifier, owner: self)
+                as? NSHostingView<ResultChildView>
+            {
+                cell.rootView = view
+                return cell
+            }
+            let cell = NSHostingView(rootView: view)
+            cell.sizingOptions = []
+            cell.identifier = Self.childIdentifier
+            cellsCreated += 1
+            return cell
         case nil:
             return nil
         }
@@ -199,17 +223,23 @@ extension ResultsTable: NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
         guard let rowView = rowView as? ResultRowBackground else { return }
-        if case let .row(position) = model.item(at: row) {
+        switch model.item(at: row) {
+        case let .row(position):
             dress(rowView, row: row, shown: model.row(at: position))
-        } else {
+        case .child:
+            dress(rowView, row: row, shown: nil)
+            rowView.isChild = true
+        default:
             rowView.isHeader = true
             rowView.isCursor = false
             rowView.isChecked = false
+            rowView.isChild = false
         }
     }
 
     private func dress(_ rowView: ResultRowBackground, row: Int, shown: ResultRowFfi?) {
         rowView.isHeader = false
+        rowView.isChild = false
         rowView.isCursor = row == model.cursorRow
         rowView.isChecked = shown?.checked == true
     }
@@ -224,12 +254,22 @@ final class ResultRowBackground: NSTableRowView {
     var isHeader = false { didSet { if isHeader != oldValue { needsDisplay = true } } }
     var isCursor = false { didSet { if isCursor != oldValue { needsDisplay = true } } }
     var isChecked = false { didSet { if isChecked != oldValue { needsDisplay = true } } }
+    /// A line under an opened result: a faint ground and a rule down the
+    /// left, so the lines read as inside the result above (screen 06).
+    var isChild = false { didSet { if isChild != oldValue { needsDisplay = true } } }
 
     override var isFlipped: Bool { true }
 
     override func drawBackground(in dirtyRect: NSRect) {
         NSColor.textBackgroundColor.setFill()
         bounds.fill()
+        if isChild {
+            NSColor.labelColor.withAlphaComponent(0.03).setFill()
+            bounds.fill()
+            NSColor.separatorColor.setFill()
+            NSRect(x: ResultRowView.Columns.leading + ResultRowView.Columns.gutter / 2, y: 0, width: 1, height: bounds.height)
+                .fill()
+        }
         if isChecked {
             // Neutral, never the accent, which is the ring's.
             NSColor.labelColor.withAlphaComponent(0.06).setFill()
@@ -263,6 +303,7 @@ final class ResultRowBackground: NSTableRowView {
         isHeader = false
         isCursor = false
         isChecked = false
+        isChild = false
     }
 }
 

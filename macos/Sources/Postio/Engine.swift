@@ -120,6 +120,7 @@ final class Engine {
                     session?.focusReaderState(moreOpen: more, finding: finding)
                 },
                 markRead: { [weak session] message in session?.markReadOnDwell(message) },
+                matchEdge: { [weak session] forward in session?.focusMatchEdge(forward: forward) },
                 handOff: { file in
                     // POSTIO-CONSENT: runs only when a person clicked an
                     // attachment's chip or chose it from the menu `o` offers,
@@ -1311,7 +1312,7 @@ final class Engine {
                     self.resultsTable?.takeKeyboard()
                 }
             }
-        case .rows, .cursor:
+        case .rows, .cursor, .spliced:
             break
         }
     }
@@ -1567,7 +1568,9 @@ final class Engine {
         // The results view (specs/010-focus-search step 3): its query, its
         // frame, its pages and its focus ring, and leaving it. The list's
         // own cursor and selection follow `FocusLeaveResults` as intents.
-        if case .focusQuery = event {
+        if case let .focusQuery(view) = event {
+            // The words the window opened from this search finds in a message.
+            messageWindow?.searchWords = view.words
             searchQuery?.apply(event)
             redrawQuery()
             return

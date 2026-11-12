@@ -168,6 +168,15 @@ impl Session {
             .input(postio_focus::Input::BarRoom(chips));
     }
 
+    /// The message window opened from a search has no more of its own find
+    /// matches in this direction: the controller goes on to the next matched
+    /// message, or says it is the last. Swift then selects that message's
+    /// first match going forward, or its last going back.
+    pub fn focus_match_edge(&self, forward: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::MatchEdge { forward });
+    }
+
     /// A Thread ▾ menu entry was clicked: `command` is its id.
     pub fn focus_thread_menu_pick(&self, command: String) {
         if let Ok(id) = command.parse::<postio_core::CommandId>() {

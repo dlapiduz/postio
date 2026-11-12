@@ -1220,6 +1220,9 @@ pub struct ResultRowFfi {
     pub attachments: bool,
     /// The thread count.
     pub count_badge: Option<String>,
+    /// "3 of 6 messages match", in the passage's place, when several of a
+    /// thread's messages matched.
+    pub summary: Option<String>,
     /// "body", "quoted text", "subject", a file's name.
     pub source_tag: String,
     /// The tag is a file's name: italics.
@@ -1258,6 +1261,7 @@ impl From<postio_focus::ResultRow> for ResultRowFfi {
                 .collect(),
             attachments: row.attachments,
             count_badge: row.count_badge,
+            summary: row.summary,
             source_tag: row.source_tag,
             source_is_file: row.source_is_file,
             passage: runs(row.passage),

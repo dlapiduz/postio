@@ -99,6 +99,8 @@ public struct MessageHeaderWords: Equatable {
         public var replyTo: String?
         /// A reply arrived while reading: the accent-tinted banner.
         public var newReply: ThreadBannerFfi?
+        /// The window was opened from a search: its match banner.
+        public var matchBanner: MatchBannerFfi?
 
         public static let none = Thread(kicker: "", banner: nil, replyTo: nil)
     }
@@ -267,6 +269,8 @@ public struct MessageContentView<BodyView: View>: View {
             ThreadBannerView(banner: banner, tinted: true) { run(Self.latest) }
         case let .olderBanner(banner):
             ThreadBannerView(banner: banner) { run(Self.latest) }
+        case let .matchBanner(banner):
+            MatchBannerView(banner: banner, next: { run("find_next") }, back: { run("back") })
         case let .kicker(kicker):
             Text(kicker)
                 .font(.system(size: 13))
@@ -324,6 +328,8 @@ public enum MessageBlock: Equatable, Identifiable {
     case newReply(ThreadBannerFfi)
     /// The quiet banner on a message that is not the latest.
     case olderBanner(ThreadBannerFfi)
+    /// Where the message is among the search's matches in its thread.
+    case matchBanner(MatchBannerFfi)
     /// "Message 4 of 6 · ] newer · [ older".
     case kicker(String)
     /// The subject, the largest text in the window.
@@ -353,6 +359,7 @@ public enum MessageBlock: Equatable, Identifiable {
         switch self {
         case .newReply: "newReply"
         case .olderBanner: "olderBanner"
+        case .matchBanner: "matchBanner"
         case .kicker: "kicker"
         case .subject: "subject"
         case .labels: "labels"
@@ -378,6 +385,7 @@ public enum MessageBlock: Equatable, Identifiable {
         var blocks: [MessageBlock] = []
         if let banner = words.thread.newReply { blocks.append(.newReply(banner)) }
         if let banner = words.thread.banner { blocks.append(.olderBanner(banner)) }
+        if let banner = words.thread.matchBanner { blocks.append(.matchBanner(banner)) }
         if !words.thread.kicker.isEmpty { blocks.append(.kicker(words.thread.kicker)) }
         blocks += [.subject(words.subject), .labels, .sender]
         if let warning = document?.senderWarning { blocks.append(.senderWarning(warning)) }
@@ -399,6 +407,7 @@ public enum MessageBlock: Equatable, Identifiable {
         switch block {
         case .newReply: 0
         case .olderBanner: previous == nil ? 0 : MessageRhythm.bannerToKicker
+        case .matchBanner: previous == nil ? 0 : MessageRhythm.bannerToKicker
         case .kicker: previous == nil ? 0 : MessageRhythm.bannerToKicker
         case .subject:
             switch previous {

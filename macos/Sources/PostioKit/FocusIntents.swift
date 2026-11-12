@@ -166,6 +166,9 @@ public final class FocusIntents {
         /// A reply arrived while another message is shown: "Read it }".
         case newReply(ThreadBannerFfi?)
         case replyTo(String?)
+        /// The window was opened from a search: where the shown message
+        /// is among the thread's matches, and the two ways on.
+        case matchBanner(MatchBannerFfi?)
     }
 
     /// `event` as a window over the list hears it, or `nil` for any other
@@ -193,6 +196,8 @@ public final class FocusIntents {
             return .thread(.newReply(banner))
         case let .focusReplyTo(text):
             return .thread(.replyTo(text))
+        case let .focusMatchBanner(banner):
+            return .thread(.matchBanner(banner))
         default:
             return nil
         }

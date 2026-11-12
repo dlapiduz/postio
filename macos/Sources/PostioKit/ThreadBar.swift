@@ -196,3 +196,56 @@ struct ThreadBannerView: View {
         .accessibilityElement(children: .contain)
     }
 }
+
+/// The banner of a window opened from a search (spec 013 US6; screen 07):
+/// the search's words marked, where the message on screen is among the
+/// thread's matches, and the two ways on, each with its key. The marked
+/// words wear the find yellow, never the accent.
+struct MatchBannerView: View {
+    let banner: MatchBannerFfi
+    let next: () -> Void
+    let back: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(words)
+                .font(.system(size: 12.5))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            button(banner.next, key: banner.nextKey, action: next)
+            button(banner.back, key: banner.backKey, action: back)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(banner.text)
+    }
+
+    /// The text with the quoted query marked and its quotes dropped.
+    private var words: AttributedString {
+        let text = banner.text
+        guard text.hasPrefix("\u{2018}"), let close = text.firstIndex(of: "\u{2019}") else {
+            return AttributedString(text)
+        }
+        var query = AttributedString(String(text[text.index(after: text.startIndex)..<close]))
+        query.backgroundColor = SearchRuns.highlight(scheme)
+        query.foregroundColor = .primary
+        var rest = AttributedString(String(text[text.index(after: close)...]))
+        rest.foregroundColor = .secondary
+        return query + rest
+    }
+
+    private func button(_ label: String, key: String?, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(label).font(.system(size: 12.5, weight: .medium))
+                if let key { KeyCap(KeyCapSpelling.cap(key) ?? key) }
+            }
+            .foregroundStyle(.primary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}

@@ -651,6 +651,24 @@ pub enum UiEvent {
         /// The row.
         position: u64,
     },
+    /// A result opened in place (spec 013 US6): draw its matching messages
+    /// and the lines between them after the row at `anchor`, or none to
+    /// take them away. Results after it keep their positions.
+    FocusResultSplice {
+        /// The children, or none.
+        splice: Option<crate::ResultSpliceFfi>,
+    },
+    /// The focus ring is on this child of the opened result, or back on
+    /// the result's own row.
+    FocusResultChildFocus {
+        /// An index into the splice's children.
+        child: Option<u32>,
+    },
+    /// The message window was opened from a search: its banner, or none.
+    FocusMatchBanner {
+        /// The banner.
+        banner: Option<crate::MatchBannerFfi>,
+    },
     /// Back to the inbox: Esc's last rung, or ⌘[. The list's own cursor and
     /// selection follow.
     FocusLeaveResults,

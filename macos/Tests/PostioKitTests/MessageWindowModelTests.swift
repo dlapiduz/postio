@@ -344,6 +344,61 @@ struct MessageWindowModelTests {
         #expect(model.find.request?.backwards == true)
     }
 
+    @Test func theFindRunningOutInASearchWindowSaysSoAndTheNextMessageGetsItsFirstMatch() async {
+        // Spec 013 US6: ⌘G steps the message's own matches, stopping at the
+        // last; when there is none the controller is told, and the message
+        // it shows next has its first match selected going forward.
+        let source = Source()
+        var edges: [Bool] = []
+        let model = MessageWindowModel(
+            source: source, report: { _, _ in }, matchEdge: { edges.append($0) })
+        model.searchWords = "rate limit headers"
+        model.open(message: 103, index: 0, total: 3, mainWidth: 1440)
+        await model.settled()
+        model.said(.matchBanner(MatchBannerFfi(
+            text: "x", next: "Next", nextKey: "cmd+g", back: "Back to results", backKey: "escape")))
+
+        model.apply(.nextMatch)
+        #expect(model.find.request?.query == "rate limit headers", "the search's words, no bar typed")
+        #expect(model.find.request?.bounded == true, "it stops at the last match instead of going round")
+        #expect(!model.find.isOpen)
+        model.found(true)
+        #expect(edges.isEmpty, "a match was found: nothing to say")
+
+        model.apply(.nextMatch)
+        model.found(false)
+        #expect(edges == [true], "the matches ran out going forward")
+
+        // The controller shows the next matched message in place.
+        model.open(message: 105, index: 0, total: 3, mainWidth: 1440)
+        await model.settled()
+        // The body paints (or the patience runs out), then the find runs.
+        for _ in 0..<200 where model.find.request == nil {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.find.request?.backwards == false)
+        #expect(model.find.request?.bounded == false, "arriving never counts as running out")
+        model.found(false)
+        #expect(edges == [true], "a message whose match is in a file is not an edge")
+
+        model.apply(.prevMatch)
+        model.found(false)
+        #expect(edges == [true, false])
+    }
+
+    @Test func aWindowNotOpenedFromASearchHasNoMatchBanner() async {
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        #expect(model.matchBanner == nil)
+        model.said(.matchBanner(MatchBannerFfi(
+            text: "x", next: "Next", nextKey: nil, back: "Back to results", backKey: nil)))
+        #expect(model.matchBanner?.back == "Back to results")
+        model.closed()
+        #expect(model.matchBanner == nil)
+    }
+
     @Test func closingForgetsTheMessage() async {
         let source = Source()
         let (model, reports) = Self.model(source)

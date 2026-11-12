@@ -490,6 +490,11 @@ public final class PostioSession {
         inner.focusReaderState(moreOpen: moreOpen, finding: finding)
     }
 
+    /// The message's own find ran out in a window opened from a search:
+    /// the controller goes on to the next matched message, or says this
+    /// was the last.
+    public func focusMatchEdge(forward: Bool) { inner.focusMatchEdge(forward: forward) }
+
     /// Always draw `sender`'s mail in `treatment`, or forget the choice
     /// with `nil`: "Always for this sender", in the file GTK keeps it in.
     public func alwaysTreatment(sender: String, treatment: TreatmentFfi?) {
