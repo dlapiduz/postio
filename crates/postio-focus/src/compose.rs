@@ -77,6 +77,11 @@ struct Chooser {
     form: ForwardForm,
     /// How many messages the thread has.
     messages: usize,
+    /// The thread, for a forward of the whole of it.
+    thread: Option<postio_model::ThreadId>,
+    /// The composer opened on a form other than This and the engine has
+    /// not built it yet: a refusal falls back to This.
+    opening: bool,
     /// Whose message "This message" forwards, and when it arrived.
     of: Option<(String, chrono::DateTime<chrono::Utc>)>,
 }
@@ -104,6 +109,8 @@ struct ThreadCompose {
 /// The composer, as the controller keeps it.
 #[derive(Debug, Default)]
 pub(crate) struct Compose {
+    /// The form the next forward opens on, when a menu entry names one.
+    next_form: Option<ForwardForm>,
     /// The chooser, the older-reply bar and the quoted rows of the
     /// composition in the composer.
     thread: ThreadCompose,
@@ -121,6 +128,11 @@ pub(crate) struct Compose {
 }
 
 impl Compose {
+    /// The form the next forward opens on, or `None` for This message.
+    pub(crate) fn forward_as(&mut self, form: Option<ForwardForm>) {
+        self.next_form = form;
+    }
+
     /// Whether the accounts Focus writes from, as last said, are none.
     pub(crate) fn set_no_account(&mut self, none: bool) {
         self.no_account = none;
@@ -152,7 +164,7 @@ impl FocusController {
             CommandId::Reply => ComposerKind::Reply,
             CommandId::ReplyAll => ComposerKind::ReplyAll,
             CommandId::Forward => ComposerKind::Forward {
-                form: ForwardForm::This,
+                form: self.compose.next_form.unwrap_or_default(),
             },
             // The latest message of the thread, from the window or a row.
             CommandId::ReplyToLatest => {
@@ -311,7 +323,9 @@ impl FocusController {
         steps.push(Step::Show(Intent::Composer { kind, message }));
         if let Some(message) = message {
             match kind {
-                ComposerKind::Forward { .. } => steps.extend(self.offer_chooser(message, rows)),
+                ComposerKind::Forward { form } => {
+                    steps.extend(self.offer_chooser(message, rows, form));
+                }
                 ComposerKind::Reply | ComposerKind::ReplyAll => {
                     steps.extend(self.offer_older_reply(message));
                 }
@@ -350,33 +364,50 @@ impl FocusController {
 
     /// The *What to forward* chooser, when `message`'s thread has two
     /// messages or more (FR-023).
-    fn offer_chooser(&mut self, message: MessageId, rows: Option<&dyn Rows>) -> Vec<Step> {
-        let (messages, of) = match self.thread_view_of(message) {
+    fn offer_chooser(
+        &mut self,
+        message: MessageId,
+        rows: Option<&dyn Rows>,
+        form: ForwardForm,
+    ) -> Vec<Step> {
+        let (messages, of, thread) = match self.thread_view_of(message) {
             Some(view) => (
                 view.members.len(),
                 view.members
                     .iter()
                     .find(|member| member.id == message)
                     .map(|member| (words::member_name(member), member.at)),
+                Some(view.thread),
             ),
             None => {
                 let count = rows
                     .and_then(|rows| rows.row(rows.position_of(message)?))
                     .and_then(|row| row.as_conversation().map(|c| c.summary.message_count));
-                (count.unwrap_or(1) as usize, None)
+                let thread = rows
+                    .and_then(|rows| rows.facts(rows.position_of(message)?))
+                    .and_then(|facts| facts.threads.first().copied());
+                (count.unwrap_or(1) as usize, None, thread)
             }
         };
         if messages < 2 {
             return Vec::new();
         }
         let chooser = Chooser {
-            form: ForwardForm::This,
+            form,
+            thread,
+            opening: form != ForwardForm::This,
             messages,
             of,
         };
         let view = self.chooser_view(&chooser);
+        let mut steps = vec![Step::Show(Intent::ForwardChooser(Box::new(view)))];
+        // Opened on a form the composer's own draft is not in: the engine
+        // builds it, so no frontend picks the call from the form.
+        if let (true, Some(thread)) = (chooser.opening, chooser.thread) {
+            steps.push(Step::Ask(Request::ForwardThread { thread, form }));
+        }
         self.compose.thread.chooser = Some(chooser);
-        vec![Step::Show(Intent::ForwardChooser(Box::new(view)))]
+        steps
     }
 
     fn chooser_view(&self, chooser: &Chooser) -> words::ChooserView {
@@ -486,7 +517,19 @@ impl FocusController {
         match answer {
             // Said, and the form stays as it was; nothing was fetched.
             Ok(Forwarded::NotLocal(missing)) => {
-                notice(words::forward_not_local(form, missing.len()))
+                let mut steps = notice(words::forward_not_local(form, missing.len()));
+                // An open that was refused is a forward of This message.
+                if let Some(chooser) = self.compose.thread.chooser.as_mut()
+                    && chooser.opening
+                {
+                    chooser.opening = false;
+                    chooser.form = ForwardForm::This;
+                    let chooser = chooser.clone();
+                    steps.push(Step::Show(Intent::ForwardChooser(Box::new(
+                        self.chooser_view(&chooser),
+                    ))));
+                }
+                steps
             }
             Err(sentence) => notice(sentence),
             Ok(Forwarded::Draft(draft)) => {
@@ -494,6 +537,7 @@ impl FocusController {
                     return Vec::new();
                 };
                 chooser.form = form;
+                chooser.opening = false;
                 let chooser = chooser.clone();
                 vec![
                     Step::Show(Intent::ForwardChooser(Box::new(
