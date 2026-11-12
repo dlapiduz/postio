@@ -115,6 +115,42 @@ pub fn a_hundredth_open_builds_no_second_message_view() {
     });
 }
 
+pub fn a_hundredth_open_of_a_thread_builds_no_second_message_view() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 4, 10).await;
+        for id in &ids {
+            fixture.write_body(*id, "A line.").await;
+        }
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let before = postio_ui::test_support::surfaces_created();
+        for _ in 0..100 {
+            enter(&window);
+            assert!(
+                crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+                "Enter did not open the thread"
+            );
+            support::press(&window, "Escape", gdk::ModifierType::empty());
+            assert!(
+                crate::settle_until(async || !window.reading().is_some_and(|r| r.is_open())).await,
+                "Escape did not close the dialog"
+            );
+        }
+        assert_eq!(
+            postio_ui::test_support::surfaces_created() - before,
+            1,
+            "a hundred opens of a thread built more than the one message view"
+        );
+    });
+}
+
 /// Five one-message conversations with bodies, the cursor on none yet.
 async fn five_with_bodies() -> (Fixture, postio_gtk::window::FocusWindow) {
     let fixture = Fixture::empty().await;

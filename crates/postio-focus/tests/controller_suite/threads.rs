@@ -1160,3 +1160,57 @@ fn closing_the_window_forgets_the_walk() {
     let effects = focus.handle_on(Input::BarRoom(4), &rows);
     assert!(shown(&effects).is_empty(), "no window, no bar: {effects:?}");
 }
+
+/// How many thread reads the effects ask for.
+fn reads_asked(effects: &[Effect]) -> usize {
+    asked_requests(effects)
+        .iter()
+        .filter(|request| matches!(request, Request::ReadThread(_)))
+        .count()
+}
+
+#[test]
+fn a_hundred_opens_of_a_thread_ask_for_it_once_each_and_its_answer_asks_for_nothing() {
+    let rows = List::of(&[6, 4, 1, 3]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    for _ in 0..100 {
+        let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+        assert_eq!(reads_asked(&effects), 1, "an open reads its thread once");
+        let (ticket, thread) = read_asked(&effects).expect("the read");
+        let effects = answer(&mut focus, ticket, view(thread, 6, 2, false), &rows);
+        assert!(
+            asks(&effects).is_empty(),
+            "the answer to a read asks for nothing: {effects:?}"
+        );
+        // The frontend's own echo of what it was shown must not begin the
+        // window again.
+        let echo = focus.handle_on(
+            Input::Shown(Some(window_of(&effects).shown.unwrap())),
+            &rows,
+        );
+        assert_eq!(reads_asked(&echo), 0, "{echo:?}");
+        let effects = run(&mut focus, CommandId::Back, &rows);
+        assert_eq!(reads_asked(&effects), 0, "closing reads nothing");
+    }
+}
+
+#[test]
+fn a_row_of_one_message_asks_for_no_thread_read() {
+    let rows = List::of(&[1, 4]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert_eq!(
+        opened_message(&effects),
+        Some(MessageId::new(100)),
+        "{effects:?}"
+    );
+    assert_eq!(reads_asked(&effects), 0, "{effects:?}");
+}

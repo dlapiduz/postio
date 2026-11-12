@@ -628,3 +628,50 @@ async fn the_window_walks_a_thread_and_the_controller_says_what_to_draw() {
     assert_eq!(walked.banner, Some(None), "`}}` clears the banner");
     session.shutdown();
 }
+
+/// Opening a message window and closing it, again and again, as the Mac's
+/// table does: each open draws the bar once, and nothing a draw or a reply
+/// causes opens, reads or draws again (no feedback between the controller's
+/// `ReadThread` and the frontend's echo of what it was shown).
+#[tokio::test(flavor = "multi_thread")]
+async fn forty_opens_of_a_thread_draw_its_bar_forty_times_and_no_more() {
+    let (session, harbor) = inbox_with_harbor().await;
+    let mut bars = 0_u32;
+    let mut count = |event: &UiEvent| {
+        if matches!(event, UiEvent::FocusThreadBar { .. }) {
+            bars += 1;
+        }
+    };
+    for open in 1..=40 {
+        session.focus_point(harbor);
+        session.invoke("open_message");
+        let mut walked = Walked::default();
+        let mut heard_bar = false;
+        assert!(
+            heard(&session, 10, |event| {
+                count(event);
+                if let UiEvent::FocusThreadBar { view } = event {
+                    heard_bar = true;
+                    walked.bar = Some(view.clone());
+                }
+                if matches!(event, UiEvent::FocusReplyTo { .. }) {
+                    walked.whole = true;
+                }
+                heard_bar && walked.whole
+            })
+            .await,
+            "open {open} drew no bar"
+        );
+        session.focus_surface_opened(postio_ffi::SurfaceKindFfi::Message);
+        session.invoke("back");
+        session.focus_surface_closed(postio_ffi::SurfaceKindFfi::Message);
+    }
+    // Whatever the last open set going has had a quarter of a second to say.
+    while let Ok(Some(event)) =
+        tokio::time::timeout(std::time::Duration::from_millis(250), session.next_event()).await
+    {
+        count(&event);
+    }
+    assert_eq!(bars, 40, "one bar for each open, none from the replies");
+    session.shutdown();
+}
