@@ -148,6 +148,10 @@ public final class PostioSession {
     /// that brings rows in above leaves it.
     public func focusAtTop(_ atTop: Bool) { inner.focusAtTop(atTop: atTop) }
 
+    /// How many thread-bar chips the message window has room for: sent when
+    /// it opens and on resize. The controller composes the bar again.
+    public func focusBarRoom(_ chips: UInt32) { inner.focusBarRoom(chips: chips) }
+
     /// What Undo would take back now, in the toast's words, or `nil`. A
     /// store read: off the main actor (`PostioUndoManager.refresh`).
     public nonisolated func undoDescription() -> String? { inner.undoDescription() }

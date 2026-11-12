@@ -151,6 +151,19 @@ public final class FocusIntents {
         case reader(ReaderVerbFfi)
         /// `FocusKeyboardHome`: the list's table takes the keyboard.
         case keyboardHome
+        /// The open message's thread, as the walk says it now
+        /// (`FocusThreadBar`, `FocusKicker`, `FocusOlderBanner`,
+        /// `FocusReplyTo`).
+        case thread(ThreadSaid)
+    }
+
+    /// One of the four things the controller says about the thread of the
+    /// message in the window.
+    public enum ThreadSaid: Equatable {
+        case bar(ThreadBarFfi)
+        case kicker(String)
+        case olderBanner(ThreadBannerFfi?)
+        case replyTo(String?)
     }
 
     /// `event` as a window over the list hears it, or `nil` for any other
@@ -168,6 +181,14 @@ public final class FocusIntents {
             return .reader(verb)
         case .focusKeyboardHome:
             return .keyboardHome
+        case let .focusThreadBar(view):
+            return .thread(.bar(view))
+        case let .focusKicker(text):
+            return .thread(.kicker(text))
+        case let .focusOlderBanner(banner):
+            return .thread(.olderBanner(banner))
+        case let .focusReplyTo(text):
+            return .thread(.replyTo(text))
         default:
             return nil
         }

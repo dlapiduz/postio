@@ -23,7 +23,7 @@ public struct MessageChromeWords: Equatable {
 
     /// The subject.
     public let title: String
-    /// "Message 5 of 60 · thread of 6".
+    /// "Message 5 of 60".
     public let position: String
     /// The one cap beside the pair: previous then next, "k j".
     public let stepCap: String?
@@ -255,16 +255,19 @@ public struct MessageWindowView<BodyView: View>: View {
     let run: (String) -> Void
     let alwaysForSender: () -> Void
     let verbFrames: ([String: CGRect]) -> Void
+    let barRoom: (UInt32) -> Void
     let bodyView: (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
     /// `verbFrames` hears where the action row's buttons are, by command,
-    /// whenever they move. `body` draws a message's body, given which.
+    /// whenever they move. `barRoom` hears how many thread-bar chips the
+    /// window's width has room for, when it opens and on every resize. `body` draws a message's body, given which.
     public init(
         model: MessageWindowModel,
         binding: @escaping (String) -> String?,
         run: @escaping (String) -> Void,
         alwaysForSender: @escaping () -> Void,
         verbFrames: @escaping ([String: CGRect]) -> Void = { _ in },
+        barRoom: @escaping (UInt32) -> Void = { _ in },
         @ViewBuilder body: @escaping (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
     ) {
         self.model = model
@@ -272,12 +275,16 @@ public struct MessageWindowView<BodyView: View>: View {
         self.run = run
         self.alwaysForSender = alwaysForSender
         self.verbFrames = verbFrames
+        self.barRoom = barRoom
         bodyView = body
     }
 
     public var body: some View {
         GeometryReader { proxy in
             window(width: proxy.size.width)
+                .onChange(of: ThreadBarMetrics.room(window: proxy.size.width), initial: true) {
+                    barRoom($1)
+                }
         }
     }
 
@@ -298,6 +305,10 @@ public struct MessageWindowView<BodyView: View>: View {
                     .background(MessageSurface.chrome)
             } else {
                 Color.clear.frame(height: MessageActionRow.height)
+            }
+            if let bar = model.bar {
+                ThreadBarView(bar: bar)
+                    .background(MessageSurface.chrome)
             }
             if model.find.isOpen {
                 FindBar(
@@ -347,7 +358,12 @@ public struct MessageWindowView<BodyView: View>: View {
                 ForEach(layers(displayed: displayed, view: view), id: \.message) { layer in
                     let front = layer.message == displayed
                     MessageContentView(
-                        words: MessageHeaderWords(view: layer.view, binding: binding),
+                        words: MessageHeaderWords(
+                            view: layer.view,
+                            thread: .init(
+                                kicker: model.kicker, banner: model.olderBanner,
+                                replyTo: model.replyTo),
+                            binding: binding),
                         document: layer.document,
                         unsubscribe: model.unsubscribeState(of: layer.message),
                         binding: binding,

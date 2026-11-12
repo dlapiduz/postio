@@ -21,8 +21,6 @@ struct MessageWindowModelTests {
         private let lock = NSLock()
         private var _views: [(Int64, UInt32, UInt32)] = []
         private var _documents: [(Int64, TreatmentFfi?, Int32)] = []
-        var earlier: Int64?
-        var later: Int64?
         var shown: TreatmentFfi = .paper
         var raw: Result<Data, Error> = .success(Data("Received: by example.com\r\n".utf8))
         /// When set, every document read waits for it: a body still being
@@ -34,7 +32,7 @@ struct MessageWindowModelTests {
 
         func focusMessageView(message: Int64, index: UInt32, total: UInt32) -> FocusMessageViewFfi {
             lock.withLock { _views.append((message, index, total)) }
-            return MessageWindowModelTests.view(message, earlier: earlier, later: later)
+            return MessageWindowModelTests.view(message)
         }
 
         func focusReaderDocument(
@@ -87,11 +85,11 @@ struct MessageWindowModelTests {
         }
     }
 
-    nonisolated static func view(_ message: Int64, earlier: Int64? = nil, later: Int64? = nil) -> FocusMessageViewFfi {
+    nonisolated static func view(_ message: Int64) -> FocusMessageViewFfi {
         let action = FocusRowActionFfi(command: "dismiss_marker", label: "Dismiss")
         return FocusMessageViewFfi(
             message: message, subject: "Harbor API draft v3", position: "Message 1 of 3",
-            thread: nil, earlier: earlier, later: later, labels: [], addLabel: action,
+            labels: [], addLabel: action,
             fields: [], date: "Today, 15:22", marker: nil, dismiss: action, actions: [],
             more: nil, attachments: [])
     }
@@ -277,28 +275,18 @@ struct MessageWindowModelTests {
         #expect(source.documents.count == documents)
     }
 
-    @Test func aBracketShowsTheMessageTheEngineNamedInPlace() async {
+    @Test func aStepTheControllerTookShowsItsMessageInPlace() async {
         let source = Source()
-        source.earlier = 5
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
         await model.settled()
-        model.apply(.stepThread(by: -1))
+        // The walk is the controller's: it says the message, with the row's
+        // own place, and the window shows it without reopening.
+        let fresh = model.open(message: 5, index: 2, total: 9, mainWidth: 1440)
         await model.settled()
+        #expect(!fresh)
         #expect(model.shown == 5)
-        #expect(model.place?.message == 7, "the row is still the one the list is on")
         #expect(source.views.last.map { [$0.0, Int64($0.1), Int64($0.2)] } == [5, 2, 9])
-    }
-
-    @Test func aBracketPastTheEndDoesNothing() async {
-        let source = Source()
-        let (model, _) = Self.model(source)
-        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
-        await model.settled()
-        model.apply(.stepThread(by: 1))
-        await model.settled()
-        #expect(model.shown == 7)
-        #expect(source.views.count == 1)
     }
 
     @Test func vPutsTheSourceInPlaceAndVAgainTakesItAway() async {

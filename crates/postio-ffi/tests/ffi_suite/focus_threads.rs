@@ -136,7 +136,10 @@ async fn reading_a_thread_costs_the_same_at_any_length() {
         "six messages cost {} statements and forty-one cost {}",
         costs[0], costs[1]
     );
-    assert!(costs[0] <= 4, "the read took {} statements", costs[0]);
+    // Five: the members, the draft, the subject, the labels, and whether
+    // the thread is muted (US5). Equal at both lengths above is the budget
+    // that matters; this cap catches a read that grows a statement.
+    assert!(costs[0] <= 5, "the read took {} statements", costs[0]);
 }
 
 // -- What Swift receives when a thread opens (spec 013 T028) ----------------
@@ -531,5 +534,97 @@ async fn reply_on_a_child_answers_that_message_not_the_latest() {
         Some((postio_ffi::ComposerKindFfi::Reply, Some(fourth))),
         "the reply answers message 4"
     );
+    session.shutdown();
+}
+
+// -- The message window's thread bar and walk (spec 013 T047, US3) -----------
+
+/// Everything the window's thread intents said, as they arrive.
+#[derive(Default, Debug)]
+struct Walked {
+    bar: Option<postio_ffi::ThreadBarFfi>,
+    kicker: Option<String>,
+    banner: Option<Option<postio_ffi::ThreadBannerFfi>>,
+    reply_to: Option<Option<String>>,
+    /// The Reply to row that closes the bar's four intents has arrived.
+    whole: bool,
+    opened: Vec<i64>,
+}
+
+/// Drain the event stream for what the walk said, until the bar shows the
+/// ringed chip `current` (a 1-based message number) and all four intents
+/// of that step have arrived.
+async fn walked_to(session: &Session, walked: &mut Walked, current: u32) -> bool {
+    heard(session, 10, |event| {
+        match event {
+            UiEvent::FocusThreadBar { view } => {
+                walked.bar = Some(view.clone());
+                walked.whole = false;
+            }
+            UiEvent::FocusKicker { text } => walked.kicker = Some(text.clone()),
+            UiEvent::FocusOlderBanner { banner } => walked.banner = Some(banner.clone()),
+            UiEvent::FocusReplyTo { text } => {
+                walked.reply_to = Some(text.clone());
+                walked.whole = true;
+            }
+            UiEvent::FocusOpenMessage { message, .. } => walked.opened.push(*message),
+            _ => {}
+        }
+        walked.whole
+            && walked.bar.as_ref().is_some_and(|bar| {
+            bar.chips.iter().any(|chip| {
+                matches!(chip, postio_ffi::ThreadChipFfi::Message { index, current: true, .. } if *index + 1 == current)
+            })
+        })
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_window_walks_a_thread_and_the_controller_says_what_to_draw() {
+    let (session, harbor) = inbox_with_harbor().await;
+    session.focus_point(harbor);
+    session.invoke("open_message");
+    let mut walked = Walked::default();
+    assert!(
+        walked_to(&session, &mut walked, 5).await,
+        "the window opens on Harbor's open question (message 5), ringed: {walked:?}"
+    );
+    session.focus_surface_opened(postio_ffi::SurfaceKindFfi::Message);
+    session.focus_bar_room(8);
+
+    session.invoke("prev_in_conversation");
+    assert!(
+        walked_to(&session, &mut walked, 4).await,
+        "`[` rings message 4: {walked:?}"
+    );
+    let bar = walked.bar.clone().expect("a bar");
+    assert_eq!(bar.chips.len(), 6, "every member has a chip: {bar:?}");
+    assert_eq!(bar.title, "Thread");
+    let kicker = walked.kicker.clone().expect("a kicker");
+    assert!(kicker.starts_with("Message 4 of 6 \u{b7} "), "{kicker:?}");
+    assert!(
+        walked.banner.clone().flatten().is_some(),
+        "an older message says so: {:?}",
+        walked.banner
+    );
+    let reply_to = walked.reply_to.clone().flatten().expect("a Reply to row");
+    assert!(
+        reply_to.starts_with("Ana Ruiz, ") && reply_to.ends_with("(message 1)"),
+        "{reply_to:?}"
+    );
+    assert_eq!(
+        walked.opened.len(),
+        2,
+        "the open and the step each show a message in place: {:?}",
+        walked.opened
+    );
+
+    session.invoke("latest_in_conversation");
+    assert!(
+        walked_to(&session, &mut walked, 6).await,
+        "`}}` goes to the latest"
+    );
+    assert_eq!(walked.banner, Some(None), "`}}` clears the banner");
     session.shutdown();
 }

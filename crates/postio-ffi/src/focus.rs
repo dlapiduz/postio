@@ -161,6 +161,13 @@ impl Session {
             .input(postio_focus::Input::ReaderState { more_open, finding });
     }
 
+    /// The message window's width allows `chips` thread-bar chips: sent
+    /// when it opens and on resize. The controller composes the bar again.
+    pub fn focus_bar_room(&self, chips: u32) {
+        self.focus_driver()
+            .input(postio_focus::Input::BarRoom(chips));
+    }
+
     /// What Undo would take back now, in the toast's words, or `None` when
     /// nothing can be: what the Edit menu names its Undo item with. Read,
     /// not taken; the engine's stack stays the only one (FR-041).

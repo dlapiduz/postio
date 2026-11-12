@@ -373,6 +373,28 @@ pub enum UiEvent {
         /// What.
         verb: crate::focus_list::ReaderVerbFfi,
     },
+    /// The message window's thread bar, when it opens and on every step.
+    /// No chips means a thread of one: draw no bar.
+    FocusThreadBar {
+        /// The bar.
+        view: crate::focus_thread_bar::ThreadBarFfi,
+    },
+    /// The line above the subject, "Message 4 of 6 · ] newer · [ older";
+    /// empty for none.
+    FocusKicker {
+        /// What it says.
+        text: String,
+    },
+    /// The quiet banner on a message that is not the latest, or none.
+    FocusOlderBanner {
+        /// The banner.
+        banner: Option<crate::focus_thread_bar::ThreadBannerFfi>,
+    },
+    /// The sender block's Reply to row, or none.
+    FocusReplyTo {
+        /// "Ana Ruiz, Mon 21 Sep (message 1)".
+        text: Option<String>,
+    },
     /// Nothing is over the list: the keyboard goes back to it, on the
     /// cursor's row.
     FocusKeyboardHome,

@@ -69,7 +69,7 @@ public final class MessageWindowModel {
     /// The row the window shows, or `nil` while it is closed.
     public private(set) var place: Place?
     /// The message on screen: the row's, or one of its conversation's that
-    /// `[` or `]` stepped to.
+    /// the controller's walk stepped to.
     public private(set) var shown: Int64?
     /// The message whose chrome and body are on screen: `shown`, once it
     /// is read and its body drawn.
@@ -98,6 +98,17 @@ public final class MessageWindowModel {
     public private(set) var find = FindInMessage()
     /// Where each message's unsubscribe banner has got to (#1585).
     public private(set) var unsubscribing = Unsubscribing()
+
+    /// The thread bar the controller last drew. No chips: a message of one,
+    /// and no bar.
+    public private(set) var bar: ThreadBarFfi?
+    /// The line above the subject, "Message 4 of 6 · ] newer · [ older";
+    /// empty when the message is alone.
+    public private(set) var kicker = ""
+    /// The banner on a message that is not the latest.
+    public private(set) var olderBanner: ThreadBannerFfi?
+    /// The Reply to row of the sender block.
+    public private(set) var replyTo: String?
 
     /// The main window's width the window opened beside: kept while it is
     /// open, so `j` and `k` never resize it (M1).
@@ -206,8 +217,24 @@ public final class MessageWindowModel {
         return fresh
     }
 
+    /// What the controller said about the thread of the message shown. The
+    /// walk is the controller's: which message is next, which chip is ringed,
+    /// and what the banner offers are decided there, and this only holds them.
+    public func said(_ thread: FocusIntents.ThreadSaid) {
+        switch thread {
+        case let .bar(view): bar = view.chips.isEmpty ? nil : view
+        case let .kicker(text): kicker = text
+        case let .olderBanner(banner): olderBanner = banner
+        case let .replyTo(text): replyTo = text
+        }
+    }
+
     /// The window closed, however it did: forget the message.
     public func closed() {
+        bar = nil
+        kicker = ""
+        olderBanner = nil
+        replyTo = nil
         dwell?.stop()
         settledRead = nil
         _ = gate.begin()
@@ -371,10 +398,6 @@ public final class MessageWindowModel {
             } else {
                 openSource()
             }
-        case let .stepThread(by):
-            let target = by < 0 ? view?.earlier : view?.later
-            guard let target else { return }
-            show(target)
         }
     }
 

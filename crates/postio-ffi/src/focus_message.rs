@@ -1,5 +1,5 @@
 //! What surrounds the body in the Mac's message window (specs/009-focus-macos
-//! T067, T068): the subject, the position line, the thread chip, the labels,
+//! T067, T068): the subject, the position line, the labels,
 //! the sender block, the marker's card, the action row and the attachments.
 //!
 //! Every word is composed here by the functions GTK's open message draws
@@ -49,18 +49,6 @@ pub struct FocusVerbFfi {
     pub folds: bool,
 }
 
-/// The line above the subject in a conversation: "Latest of 6 in this
-/// thread", and the keys that step through it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct FocusThreadChipFfi {
-    /// The sentence.
-    pub text: String,
-    /// `[` and "earlier message", when there is one to step to.
-    pub earlier: Option<FocusRowActionFfi>,
-    /// `]` and "later message", when there is one.
-    pub later: Option<FocusRowActionFfi>,
-}
-
 /// An attachment chip under the body.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusAttachmentFfi {
@@ -79,15 +67,9 @@ pub struct FocusMessageViewFfi {
     pub message: i64,
     /// Its subject, or "(no subject)".
     pub subject: String,
-    /// "Message 5 of 60 · thread of 6", with the account when several are
-    /// enabled.
+    /// "Message 5 of 60", with the account when several are enabled. Where
+    /// the message stands in its thread is the controller's kicker.
     pub position: String,
-    /// The thread chip, for a conversation of more than one message.
-    pub thread: Option<FocusThreadChipFfi>,
-    /// The message `[` shows in this window, if any.
-    pub earlier: Option<i64>,
-    /// The message `]` shows, if any.
-    pub later: Option<i64>,
     /// The conversation's labels.
     pub labels: Vec<LabelPillFfi>,
     /// "+ Label", and the command it runs.
@@ -173,14 +155,6 @@ impl Session {
             None => None,
         };
         let thread = summary.as_ref().and_then(|summary| summary.thread);
-        let conversation: Vec<i64> = match (&client, thread) {
-            (Some(client), Some(thread)) => client
-                .conversation(thread)
-                .await
-                .map(|rows| rows.iter().map(|row| row.id.get()).collect())
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
         let labels = match (&client, thread) {
             (Some(client), Some(thread)) => client
                 .thread_labels(vec![thread])
@@ -210,40 +184,11 @@ impl Session {
             _ => None,
         };
 
-        // Where the message stands in its conversation. Opened from its row
-        // it is the conversation's latest, as GTK's dialog says it, whatever
-        // was filed elsewhere since; stepped to, it is where it is.
-        let messages = summary
-            .as_ref()
-            .map_or(1, |summary| summary.thread_count.max(1));
-        let at = conversation
-            .iter()
-            .position(|member| *member == message)
-            .unwrap_or(conversation.len().saturating_sub(1));
-        let latest = row.is_some() || conversation.is_empty() || at + 1 == conversation.len();
-        let step = |by: isize| {
-            focus_dialog::step_thread(at, conversation.len(), by).map(|next| conversation[next])
-        };
         let send_state = reading.and_then(|reading| reading.send_state);
         let position = focus_dialog::with_account(
-            &focus_dialog::position_line(
-                index as usize,
-                total as usize,
-                messages,
-                at,
-                latest,
-                send_state,
-            ),
+            &focus_dialog::position_line(index as usize, total as usize, 1, 0, true, send_state),
             account.as_deref(),
         );
-        let thread_chip =
-            focus_dialog::thread_chip_at(messages, at, latest).map(|text| FocusThreadChipFfi {
-                text,
-                earlier: (latest || at > 0)
-                    .then(|| action(CommandId::PrevInConversation, focus_dialog::EARLIER_MESSAGE)),
-                later: (!latest)
-                    .then(|| action(CommandId::NextInConversation, focus_dialog::LATER_MESSAGE)),
-            });
 
         let envelope = reading.and_then(|reading| reading.row.as_deref());
         let subject = postio_ui::reader::header::subject_text(
@@ -308,9 +253,6 @@ impl Session {
             message,
             subject,
             position,
-            thread: thread_chip,
-            earlier: step(-1),
-            later: step(1),
             labels,
             add_label: action(CommandId::AddLabel, focus_dialog::ADD_LABEL),
             fields,
