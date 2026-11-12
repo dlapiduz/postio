@@ -490,9 +490,19 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             crate::settle_until(async || support::only(&dialog, "postio-attachments").is_mapped())
                 .await
         );
+        // The thread bar and the kicker are the controller's, drawn once the
+        // thread has been read.
+        assert!(
+            crate::settle_until(
+                async || !reading.thread_chip_said().is_empty() && reading.thread_bar_state().1 > 0
+            )
+            .await,
+            "the thread's bar never arrived"
+        );
         let at = |class: &str| edges(&shown(&dialog, class), &dialog);
         let toolbar = at("focus-open-toolbar");
         let header = at("focus-open-header");
+        let bar = at("focus-thread-bar");
         let thread = at("focus-open-thread");
         let subject = at("focus-open-subject");
         let labels = at("focus-open-labels");
@@ -506,11 +516,9 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
         let checks = [
             ("header bar height", height(header), 52),
             ("action row height", height(toolbar), 44),
-            (
-                "action row -> thread marker",
-                gap(toolbar, thread),
-                rhythm::TOP,
-            ),
+            ("thread bar height", height(bar), 60),
+            ("action row -> thread bar", gap(toolbar, bar), 0),
+            ("thread bar -> thread marker", gap(bar, thread), rhythm::TOP),
             (
                 "thread marker -> subject",
                 gap(thread, subject),

@@ -148,6 +148,9 @@ mod tests {
     /// An unread result's dot is the inbox row's: its snapshot draws the
     /// accent dot, and a result is the same conversation in another list.
     ///
+    /// The thread bar's current chip, which is the focus there, and an unread
+    /// chip's dot, the inbox row's (spec 013 US3; SPEC section 4).
+    ///
     /// And one more that paints nothing of Focus's: the open message's
     /// accent probe, an invisible widget whose colour is read to hand a body
     /// in app colours its link colour -- links in the accent are the
@@ -168,6 +171,8 @@ mod tests {
             || rule.starts_with(".focus-quicklook-card.focus-quicklook-current ")
             || rule.starts_with("button.focus-nothing-row.focus-nothing-focused ")
             || rule.starts_with(".focus-digest-summary-statement.focus-digest-summary-focused ")
+            || rule.starts_with(".focus-thread-chip-current ")
+            || rule == ".focus-thread-dot { color }"
             || rule.contains(".focus-marker")
             || rule.contains(".focus-has-action:checked")
     }

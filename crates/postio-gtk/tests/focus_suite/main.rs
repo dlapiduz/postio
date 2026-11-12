@@ -1687,6 +1687,10 @@ const CASES: &[(&str, fn())] = &[
         threads::the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it as fn(),
     ),
     (
+        "threads::the_window_walks_its_thread",
+        threads::the_window_walks_its_thread as fn(),
+    ),
+    (
         "cursor::j_and_k_move_only_the_cursor",
         cursor::j_and_k_move_only_the_cursor as fn(),
     ),

@@ -1153,7 +1153,6 @@ impl FocusWindow {
             }
             ReaderVerb::ViewSource => self.view_source(),
             ReaderVerb::ShowMore => reading.show_more(),
-            ReaderVerb::StepThread(by) => reading.step_thread(by as isize),
             _ => {}
         }
     }
@@ -2173,6 +2172,26 @@ impl FocusWindow {
             Intent::Footer(footer) => {
                 if let Some(bar) = self.imp().scope_footer.borrow().as_ref() {
                     bar.set(footer);
+                }
+            }
+            Intent::ThreadBar(bar) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_thread_bar(bar);
+                }
+            }
+            Intent::Kicker(kicker) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_kicker(kicker);
+                }
+            }
+            Intent::OlderBanner(banner) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_older_banner(banner.as_ref());
+                }
+            }
+            Intent::ReplyTo(text) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_reply_to(text.as_deref());
                 }
             }
             Intent::Counts(_) => self.show_counts(),
@@ -4652,6 +4671,17 @@ impl FocusWindow {
                 ));
                 // Open for the dwell, it counts as read (T237): the host
                 // marks it without an undo entry.
+                // The bar says how many chips fit; the controller composes it
+                // again for that many.
+                reading.connect_bar_room(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |room| {
+                        if let Some(pane) = window.pane() {
+                            pane.feed().input(postio_focus::Input::BarRoom(room));
+                        }
+                    }
+                ));
                 reading.connect_read(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -4779,6 +4809,17 @@ impl FocusWindow {
     /// Show `message`, which the controller opened, at `index` of `total`
     /// messages in the list: the open-email dialog, or the pane beside it.
     fn show_message(&self, message: MessageId, index: u32, total: u32) {
+        // A step of the thread the window is walking: the same window, the
+        // message in place, and the list's cursor where it was.
+        if let Some(reading) = self.reading_dialog()
+            && reading.is_open()
+            && self
+                .pane()
+                .is_some_and(|pane| pane.feed().walking(message, reading.row()))
+        {
+            reading.show_in_place(message);
+            return;
+        }
         let row = self.pane().and_then(|pane| {
             let at = pane.feed().list().position_of(message)?;
             pane.feed()
@@ -4830,8 +4871,9 @@ impl FocusWindow {
                         .and_then(|conversation| conversation.summary.subject.clone())
                 })
                 .unwrap_or_default();
-            let place = crate::open::Position { index, total };
-            reading.show_found(self, message, &subject, Some(place));
+            // The header is the thread's, not a result's: no hit.
+            let _ = (index, total);
+            reading.show_found(self, message, &subject, None);
             crate::a11y::teach_shortcuts(&reading.view());
             crate::motion::keep_to_budget(&reading.view());
             return;
@@ -6259,6 +6301,26 @@ impl FocusWindow {
             app.insert(
                 "focus.cursor.unread".to_owned(),
                 serde_json::json!(conversation.summary.unread_count),
+            );
+        }
+        // What the window says of the thread it is walking.
+        if let Some(reading) = reading.as_ref()
+            && view == View::Reader
+        {
+            let (chip, chips) = reading.thread_bar_state();
+            app.insert("focus.reading.chip".to_owned(), serde_json::json!(chip));
+            app.insert("focus.reading.chips".to_owned(), serde_json::json!(chips));
+            app.insert(
+                "focus.reading.kicker".to_owned(),
+                serde_json::json!(reading.thread_chip_said()),
+            );
+            app.insert(
+                "focus.reading.banner".to_owned(),
+                serde_json::json!(reading.banner_said().is_some()),
+            );
+            app.insert(
+                "focus.reading.reply_to".to_owned(),
+                serde_json::json!(reading.reply_to_said()),
             );
         }
         // What the footer says: the scope of the keys under the list, or

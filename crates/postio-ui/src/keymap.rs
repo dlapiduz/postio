@@ -214,6 +214,8 @@ const PUNCTUATION_NAMES: &[(&str, char)] = &[
     ("greater", '>'),
     ("bracketleft", '['),
     ("bracketright", ']'),
+    ("braceleft", '{'),
+    ("braceright", '}'),
     ("grave", '`'),
     ("apostrophe", '\''),
     ("quotedbl", '"'),

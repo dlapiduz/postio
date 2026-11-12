@@ -48,5 +48,6 @@ pub mod source;
 mod split;
 pub mod startup;
 pub mod style;
+pub mod thread_bar;
 pub mod verbs;
 pub mod window;
