@@ -1225,3 +1225,64 @@ async fn the_people_tab_lists_who_the_matched_mail_is_from_and_to_but_you() {
     );
     assert_eq!(found[1].last, Some(now() - days(3)));
 }
+
+/// Spec 013 T085 (g): the row of a single-match thread says which message
+/// it is ("Message 3 of 4"), counted as the thread's own read counts its
+/// members: oldest first, a deleted message not among them.
+#[tokio::test]
+async fn a_hit_knows_its_best_message_s_place_in_its_thread() {
+    let (_database, connection, account, inbox) = store().await;
+    let hours = Duration::hours;
+    let mut ids = Vec::new();
+    for (ago, subject, body) in [
+        (50, "Harbor plan", "Opening notes."),
+        (45, "Re: Harbor plan", "Deleted before anyone read it."),
+        (40, "Re: Harbor plan", "More notes."),
+        (30, "Re: Harbor plan", "The quokka estimate is final."),
+        (20, "Re: Harbor plan", "Thanks all."),
+    ] {
+        let message = file(
+            &connection,
+            &account,
+            inbox,
+            Mail {
+                subject,
+                body,
+                ago: hours(ago),
+                ..Mail::default()
+            },
+        )
+        .await;
+        ids.push(message.id);
+    }
+    let conversation = thread(&connection, &account, &ids).await;
+    connection
+        .execute(
+            "UPDATE messages SET deleted_locally = 1 WHERE id = ?1",
+            [ids[1].get()],
+        )
+        .await
+        .expect("delete the second");
+    let lone = file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            subject: "Notes",
+            body: "A quokka, briefly.",
+            ago: hours(60),
+            ..Mail::default()
+        },
+    )
+    .await;
+
+    let results = conversations(&connection, "quokka", ConversationOrder::BestMatch, 0, 10).await;
+
+    let threaded = hit(&results, ConversationKey::Thread(conversation));
+    assert_eq!(threaded.best, ids[3]);
+    assert_eq!(
+        threaded.best_number, 3,
+        "the fourth filed, counted without the second, which is deleted"
+    );
+    assert_eq!(hit(&results, ConversationKey::Lone(lone.id)).best_number, 1);
+}

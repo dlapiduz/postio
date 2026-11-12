@@ -75,6 +75,9 @@ fn hit(
     let mut hit = conversation(0);
     hit.key = ConversationKey::Thread(ThreadId::new(thread));
     hit.best = MessageId::new(best);
+    // Message `n` of a thread is `n` places in.
+    hit.best_number = (best % 100) as u32;
+    hit.from = Some(if best % 2 == 0 { ben() } else { tomas() });
     hit.messages = messages;
     hit.subject = Some(subject.to_owned());
     hit.unread = false;
@@ -229,6 +232,44 @@ fn the_top_result_with_several_matches_is_expanded_on_arrival() {
         ],
         "the subject match is no child, and one line stands for message 4"
     );
+}
+
+/// Spec 013 T085 (i): a match child carries who wrote it, their initials and
+/// when, from the thread the controller already reads for the gaps, so
+/// neither frontend reads the thread again to draw an avatar.
+#[test]
+fn a_match_child_carries_its_sender_initials_and_time() {
+    let rows = List::of(3);
+    let (_focus, batches) = harbor_results(&rows);
+    let splice = last_splice(&flat(&batches))
+        .expect("a splice was said")
+        .expect("and it is one");
+    let people: Vec<_> = splice
+        .children
+        .iter()
+        .filter_map(|child| match child {
+            ResultChild::Match {
+                number,
+                sender,
+                initials,
+                time,
+                ..
+            } => Some((*number, sender.clone(), initials.clone(), time.clone())),
+            ResultChild::Gap { .. } => None,
+        })
+        .collect();
+    let said = |number: i64| {
+        postio_ui::row::timestamp(view_of(HARBOR, 6).members[number as usize - 1].at, today())
+    };
+    assert_eq!(
+        people,
+        [
+            (3, "Tom\u{e1}s Reyes".to_owned(), "TR".to_owned(), said(3)),
+            (5, "Tom\u{e1}s Reyes".to_owned(), "TR".to_owned(), said(5)),
+            (6, "Ben Adeyemi".to_owned(), "BA".to_owned(), said(6)),
+        ]
+    );
+    assert!(people.iter().all(|(_, _, _, time)| !time.is_empty()));
 }
 
 #[test]
@@ -502,17 +543,24 @@ fn a_window_not_opened_from_a_search_has_no_match_banner() {
 }
 
 #[test]
-fn a_multi_match_thread_says_how_many_of_its_messages_match_and_a_single_match_does_not() {
+fn a_multi_match_thread_says_how_many_of_its_messages_match_and_a_single_match_says_which() {
     let rows = List::of(3);
     let (focus, _) = harbor_results(&rows);
     assert_eq!(
         focus.result_row(0).expect("harbor").summary.as_deref(),
         Some("3 of 6 messages match")
     );
-    assert_eq!(focus.result_row(1).expect("gateway").summary, None);
     assert_eq!(
-        focus.result_row(2).expect("slos").summary,
+        focus.result_row(1).expect("gateway").summary,
         None,
-        "one match in eight keeps its snippet"
+        "a message alone has no place to name"
+    );
+    // One match in eight: "Message 5 of 8 \u{b7} Tom\u{e1}s: the words".
+    let slos = focus.result_row(2).expect("slos");
+    let words: String = slos.passage.iter().map(|run| run.text.as_str()).collect();
+    assert!(!words.is_empty(), "the passage was read");
+    assert_eq!(
+        slos.summary,
+        Some(format!("Message 5 of 8 \u{b7} Tom\u{e1}s: {words}"))
     );
 }

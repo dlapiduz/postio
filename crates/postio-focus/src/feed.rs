@@ -80,6 +80,16 @@ pub struct Opened {
     pub surfaced: Option<Result<Vec<Surfaced>, String>>,
 }
 
+/// The timer a sync pass's thread changes share: [`Input::Timer`] with this
+/// token repaints the list once. Apart from the composer's small counts and
+/// the open message's high bit.
+pub(crate) const THREAD_REFRESH_TIMER: u64 = 1 << 62;
+
+/// How long the list waits after the first thread change before it repaints,
+/// so a sync pass that changes many threads (each emits one
+/// `ThreadChanged`) reads the pages once, not once per thread.
+pub(crate) const THREAD_REFRESH_WAIT: std::time::Duration = std::time::Duration::from_millis(60);
+
 /// The list's state, as the feed keeps it.
 #[derive(Debug, Default)]
 pub(crate) struct Feed {
@@ -100,6 +110,8 @@ pub(crate) struct Feed {
     surfaced: Vec<FocusRow>,
     /// Where they sit.
     spliced: Spliced,
+    /// A repaint for changed threads is waiting out [`THREAD_REFRESH_WAIT`].
+    refresh_armed: bool,
     /// The newest stamp the list has asked a page under: only an answer for
     /// it may move the totals, as the list's own generation guarded them.
     newest_stamp: Option<u64>,
@@ -256,7 +268,15 @@ impl Feed {
         // A thread that gained a reply has a row whose people, count, new
         // badge and time moved: the pages in view are read again.
         if matches!(event, Event::ThreadChanged { .. }) {
-            effects.push(Step::Show(Intent::RefreshList));
+            // A pass emits one per thread, back to back: the first starts
+            // the wait and the rest join it.
+            if !self.refresh_armed {
+                self.refresh_armed = true;
+                effects.push(Step::Timer {
+                    token: THREAD_REFRESH_TIMER,
+                    after: THREAD_REFRESH_WAIT,
+                });
+            }
             return effects;
         }
         match self.paging.plan(event) {
@@ -273,6 +293,15 @@ impl Feed {
             }
         }
         effects
+    }
+
+    /// The wait for thread changes has run out: the pages in view are read
+    /// again, once, whatever changed while it ran.
+    pub(crate) fn thread_refresh_due(&mut self) -> Vec<Step> {
+        if !std::mem::take(&mut self.refresh_armed) {
+            return Vec::new();
+        }
+        vec![Step::Show(Intent::RefreshList)]
     }
 
     /// The surfaced rows, read again after an event: placed, then the pages

@@ -1474,6 +1474,7 @@ mod dropdown {
         ConversationHit {
             key: ConversationKey::Thread(ThreadId::new(message + 400)),
             best: MessageId::new(message),
+            best_number: 1,
             mailbox_id: MailboxId::new(1),
             subject: Some(subject.to_owned()),
             from: Some(from),

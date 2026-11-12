@@ -1982,6 +1982,13 @@ pub enum ResultChild {
         /// The words around the match; one that names the file for a match
         /// in an attachment. `None` while no passage is cut.
         passage: Option<postio_search::results::Passage>,
+        /// Who wrote it, as a thread's child row says it: "Tom\u{e1}s Reyes",
+        /// "You".
+        sender: String,
+        /// The avatar's letters.
+        initials: String,
+        /// When, as every row says it.
+        time: String,
     },
     /// Messages `from..=to` (from 1) that did not match.
     Gap {
@@ -1998,10 +2005,12 @@ pub enum ResultChild {
 
 /// The children of an expanded result: the messages of `view` that
 /// `matches` name, oldest first, with one [`ResultChild::Gap`] for each run
-/// of messages between two of them that did not match.
+/// of messages between two of them that did not match. `now` is what the
+/// times are said against.
 pub fn children(
     view: &postio_model::ThreadView,
     matches: &[postio_search::results::ConversationMatch],
+    now: DateTime<chrono::Local>,
 ) -> Vec<ResultChild> {
     use chrono::Local;
     // The first match of each message names it: a subject match is the
@@ -2045,11 +2054,19 @@ pub fn children(
             });
         }
         previous = Some(at);
+        let member = &view.members[at];
         out.push(ResultChild::Match {
-            message: view.members[at].id,
+            message: member.id,
             number: (at + 1) as u32,
             tag: match_tag(at + 1, &each.found.source),
             passage: child_passage(&each.found),
+            sender: match (&member.from, member.own) {
+                (_, true) => "You".to_owned(),
+                (Some(from), false) => from.display().to_owned(),
+                (None, false) => "Unknown sender".to_owned(),
+            },
+            initials: crate::row::initials(member.from.as_ref()),
+            time: crate::row::timestamp(member.at, now),
         });
     }
     out
@@ -2123,8 +2140,12 @@ pub fn match_summary(matched: usize, total: usize) -> String {
     format!("{matched} of {total} messages match")
 }
 
-/// A single-match thread's snippet: "Message 5 of 8 \u{b7} Tom\u{e1}s: the words".
+/// A single-match thread's snippet: "Message 5 of 8 \u{b7} Tom\u{e1}s: the words",
+/// or "Message 5 of 8 \u{b7} Tom\u{e1}s" while the words are not cut yet.
 pub fn single_match_snippet(number: usize, total: usize, who: &str, words: &str) -> String {
+    if words.trim().is_empty() {
+        return format!("Message {number} of {total} \u{b7} {who}");
+    }
     format!("Message {number} of {total} \u{b7} {who}: {words}")
 }
 
@@ -3559,6 +3580,48 @@ mod tests {
             }
         }
 
+        /// Thursday 24 September 2026, the afternoon.
+        fn now() -> DateTime<chrono::Local> {
+            chrono::Local
+                .with_ymd_and_hms(2026, 9, 24, 15, 0, 0)
+                .unwrap()
+        }
+
+        #[test]
+        fn a_match_child_says_who_wrote_it_and_when_as_every_row_does() {
+            let mut view = harbor();
+            view.members[4].own = true;
+            let kids = children(
+                &view,
+                &[
+                    found(3, Source::Body, "rate limit"),
+                    found(5, Source::Body, "rate limit"),
+                ],
+                now(),
+            );
+            let people: Vec<_> = kids
+                .iter()
+                .filter_map(|kid| match kid {
+                    ResultChild::Match {
+                        sender,
+                        initials,
+                        time,
+                        ..
+                    } => Some((sender.as_str(), initials.as_str(), time.as_str())),
+                    ResultChild::Gap { .. } => None,
+                })
+                .collect();
+            let said = |number: usize| crate::row::timestamp(view.members[number - 1].at, now());
+            assert_eq!(
+                people,
+                [
+                    ("Tom\u{e1}s Reyes", "TR", said(3).as_str()),
+                    ("You", "TR", said(5).as_str()),
+                ]
+            );
+            assert_ne!(said(3), "", "the time is said");
+        }
+
         fn found(message: i64, source: Source, text: &str) -> ConversationMatch {
             ConversationMatch {
                 message: Some(MessageId::new(message)),
@@ -3587,7 +3650,7 @@ mod tests {
 
         #[test]
         fn matches_one_child_each_and_a_gap_where_a_message_did_not() {
-            let kids = children(&harbor(), &matches_3_5_6());
+            let kids = children(&harbor(), &matches_3_5_6(), now());
             assert_eq!(kids.len(), 4, "{kids:?}");
             let numbers: Vec<_> = kids
                 .iter()
@@ -3618,7 +3681,7 @@ mod tests {
                 },
                 "rate limit headers table",
             );
-            let kids = children(&harbor(), &[file]);
+            let kids = children(&harbor(), &[file], now());
             let [ResultChild::Match { tag, passage, .. }] = kids.as_slice() else {
                 panic!("one match: {kids:?}");
             };
@@ -3638,6 +3701,7 @@ mod tests {
                     found(2, Source::Body, "rate limit"),
                     found(6, Source::Body, "rate limit"),
                 ],
+                now(),
             );
             assert_eq!(kids.len(), 3);
             assert_eq!(
@@ -3665,6 +3729,7 @@ mod tests {
                     found(99, Source::Body, "rate"),
                     found(4, Source::Body, "rate"),
                 ],
+                now(),
             );
             assert_eq!(kids.len(), 1, "{kids:?}");
         }
@@ -3675,6 +3740,11 @@ mod tests {
             assert_eq!(
                 single_match_snippet(5, 8, "Tom\u{e1}s", "the rate limit"),
                 "Message 5 of 8 \u{b7} Tom\u{e1}s: the rate limit"
+            );
+            assert_eq!(
+                single_match_snippet(5, 8, "Tom\u{e1}s", " "),
+                "Message 5 of 8 \u{b7} Tom\u{e1}s",
+                "no words yet, no colon"
             );
         }
     }

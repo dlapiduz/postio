@@ -754,7 +754,10 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// A thread's messages as list rows, in either direction.
+    /// A thread's messages as list rows, in either direction. A draft of
+    /// the thread is not one of them: this is what a verb on the thread
+    /// acts on, and archiving a conversation leaves its unsent reply in
+    /// Drafts (spec 013, edge cases).
     pub async fn messages(&self, id: ThreadId, order: ThreadOrder) -> Result<Vec<MessageListRow>> {
         sql::all(
             self.connection,
@@ -789,7 +792,7 @@ impl<'a> ThreadRepository<'a> {
         };
         format!(
             "SELECT {LIST_COLUMNS} FROM messages
-              WHERE messages.thread_id = ?1 AND messages.{MEMBER}
+              WHERE messages.thread_id = ?1 AND messages.{MEMBER} AND messages.draft = 0
               ORDER BY messages.received_at {direction}, messages.id {direction}"
         )
     }

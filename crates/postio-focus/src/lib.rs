@@ -209,6 +209,18 @@ pub enum Input {
     ComposerDraft(DraftEdit, Box<postio_model::Draft>),
     /// The outline's field, chips, arrows and Return (spec 013 US5).
     Outline(thread_menu::OutlineInput),
+    /// A click on the thread bar's chip for the member at this index (a
+    /// [`postio_ui::thread_bar::Chip::Message`]'s `index`): that message is
+    /// shown, as `]` and `[` would have shown it (spec 013 US3).
+    ThreadBarChipClicked(u32),
+    /// A click on the thread bar's "... N more" chip, which stands for the
+    /// members from `from`: the outline opens with the ring on the first of
+    /// them (spec 013 US3).
+    ThreadBarMoreClicked {
+        /// The first member the chip stands for
+        /// ([`postio_ui::thread_bar::Chip::More`]'s `from`).
+        from: u32,
+    },
     /// The bar's words, as they are now.
     Typed {
         /// The field's text.
@@ -1721,6 +1733,9 @@ pub struct FocusController {
     /// The thread a read in hand gave to the message just opened, so its
     /// walk begins without a second read.
     walk_seed: Option<ThreadView>,
+    /// The window has a thread bar up, which something must take away when
+    /// no walk is left to own it.
+    bar_up: bool,
     /// How many thread-bar chips the window has room for.
     bar_room: u32,
     /// The thread menu and outline over the window (spec 013 US5).
@@ -1769,6 +1784,7 @@ impl FocusController {
             walk: None,
             walk_asked: None,
             walk_seed: None,
+            bar_up: false,
             bar_room: walk::DEFAULT_ROOM,
             thread_ui: thread_menu::ThreadUi::default(),
         }
@@ -1796,7 +1812,7 @@ impl FocusController {
         let through = self.through(raw);
         let rows: &dyn Rows = through.as_ref().map_or(raw, |through| through);
         let mut stepped = self.filtered_thread_input(&input);
-        if stepped.is_none() || matches!(input, Input::Event(_)) {
+        if stepped.is_none() || Self::also_for_the_rest(&input) {
             // A change to a thread is news to both lists' expansions.
             if let Some(steps) = self.thread_input(&input, raw, rows) {
                 stepped.get_or_insert_with(Vec::new).extend(steps);
@@ -1806,7 +1822,7 @@ impl FocusController {
             Some(steps) => {
                 let mut effects = self.effects(steps);
                 // A thread change is also news to the rest of the list.
-                if matches!(input, Input::Event(_)) {
+                if Self::also_for_the_rest(&input) {
                     effects.extend(self.handle_input(input, rows));
                 }
                 effects
@@ -1830,6 +1846,16 @@ impl FocusController {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
         effects
+    }
+
+    /// An input a thread surface takes part in and the rest of the controller
+    /// hears as well: an event, and the answer to "where is this message's
+    /// thread", which a window's walk asks as well.
+    fn also_for_the_rest(input: &Input) -> bool {
+        matches!(
+            input,
+            Input::Event(_) | Input::Reply(_, Reply::ThreadOf { .. })
+        )
     }
 
     fn handle_input(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
@@ -2174,6 +2200,14 @@ impl FocusController {
                 let steps = self.outline_input(input, rows);
                 self.effects(steps)
             }
+            Input::ThreadBarChipClicked(index) => {
+                let steps = self.chip_clicked(index);
+                self.effects(steps)
+            }
+            Input::ThreadBarMoreClicked { from } => {
+                let steps = self.more_chip_clicked(from);
+                self.effects(steps)
+            }
             Input::ForwardFormClicked(form) => {
                 let steps = self.forward_form_chosen(form);
                 self.effects(steps)
@@ -2236,6 +2270,10 @@ impl FocusController {
             }
             Input::DraftSaved { composition, saved } => {
                 let steps = self.draft_saved(composition, saved);
+                self.effects(steps)
+            }
+            Input::Timer(token) if token == feed::THREAD_REFRESH_TIMER => {
+                let steps = self.feed.thread_refresh_due();
                 self.effects(steps)
             }
             Input::Timer(token) if surfaces::is_reader_timer(token) => {

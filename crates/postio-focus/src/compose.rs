@@ -56,6 +56,13 @@ pub enum ComposerKind {
     },
     /// The draft behind the message, to go on writing.
     Draft,
+    /// An unsent reply shown in a thread, which has no message of its own to
+    /// name: the draft itself, to go on writing (`Intent::Composer`'s
+    /// `message` is `None`).
+    ThreadDraft {
+        /// The draft.
+        draft: DraftId,
+    },
 }
 
 /// One draft's time in the composer.
@@ -312,7 +319,9 @@ impl FocusController {
         let mut steps = self.end_composition();
         // A draft is written, not read: the message it was open in closes,
         // on Linux too, as GTK's window closed its reading dialog.
-        if kind == ComposerKind::Draft && self.surfaces.dismiss(SurfaceKind::Message) {
+        if matches!(kind, ComposerKind::Draft | ComposerKind::ThreadDraft { .. })
+            && self.surfaces.dismiss(SurfaceKind::Message)
+        {
             steps.push(Step::Show(Intent::CloseSurface(SurfaceKind::Message)));
         }
         steps.extend(

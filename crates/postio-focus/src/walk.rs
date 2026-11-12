@@ -141,6 +141,8 @@ impl FocusController {
             let from_a_match = self.walk.take().is_some_and(|walk| walk.matches.is_some());
             self.walk_asked = None;
             self.walk_seed = None;
+            // The window is gone, and its bar with it.
+            self.bar_up = false;
             // A window opened on a match is closed: the ring goes back to
             // the child it came from.
             return if from_a_match {
@@ -169,7 +171,7 @@ impl FocusController {
         self.walk = None;
         self.walk_asked = None;
         if host != Host::Own || self.surfaces.origin() != Origin::List {
-            return Vec::new();
+            return self.walk_unbarred();
         }
         // The row the cursor is on, when it is the message shown (or the
         // row a thread opened it from), says which thread it is of.
@@ -180,10 +182,10 @@ impl FocusController {
             .filter(|facts| facts.id == message || self.opened_for(facts.id, Some(message)))
             .or_else(|| self.hit_facts(message));
         let Some(facts) = facts else {
-            return Vec::new();
+            return self.walk_unbarred();
         };
         let Some(&thread) = facts.threads.first() else {
-            return Vec::new();
+            return self.walk_unbarred();
         };
         // A conversation of one message has no thread to walk: nothing is
         // asked for it.
@@ -196,7 +198,7 @@ impl FocusController {
             .is_some_and(|count| count <= 1)
             && seed.is_none()
         {
-            return Vec::new();
+            return self.walk_unbarred();
         }
         match seed.filter(|view| view.thread == thread) {
             Some(view) => self.begin_walk(
@@ -241,11 +243,39 @@ impl FocusController {
         }
     }
 
+    /// The bar, kicker and banners of a walk that is over, taken away. Said
+    /// once, and only when one is up: a window whose walk never began has
+    /// nothing to clear (spec 013 T085).
+    pub(crate) fn walk_unbarred(&mut self) -> Vec<Step> {
+        if !std::mem::take(&mut self.bar_up) {
+            return Vec::new();
+        }
+        vec![
+            Step::Show(Intent::ThreadBar(thread_bar::ThreadBarView::empty())),
+            Step::Show(Intent::Kicker(String::new())),
+            Step::Show(Intent::OlderBanner(None)),
+            Step::Show(Intent::NewReply(None)),
+            Step::Show(Intent::ReplyTo(None)),
+            Step::Show(Intent::MatchBanner(None)),
+        ]
+    }
+
+    /// The thread a window waits on could not be read: its walk will not
+    /// begin, and the bar of the window before it must not stay.
+    pub(crate) fn walk_unread(&mut self, thread: ThreadId) -> Vec<Step> {
+        if self.walk_asked.is_some_and(|asked| asked.thread == thread) {
+            self.walk_asked = None;
+            return self.walk_unbarred();
+        }
+        Vec::new()
+    }
+
     /// A thread was read and is gone: the window walking it has nothing left
     /// to show.
     pub(crate) fn walk_gone(&mut self, thread: ThreadId) -> Vec<Step> {
+        let unread = self.walk_unread(thread);
         let Some(walk) = self.walk.as_mut() else {
-            return Vec::new();
+            return unread;
         };
         // The thread the window was sent to is gone as well.
         let sent = walk
@@ -418,6 +448,7 @@ impl FocusController {
     fn walk_close(&mut self) -> Vec<Step> {
         self.walk = None;
         self.walk_asked = None;
+        self.bar_up = false;
         self.surfaces.dismiss(SurfaceKind::Message);
         let mut steps = vec![Step::Show(Intent::CloseSurface(SurfaceKind::Message))];
         if !self.has_surface() {
@@ -472,9 +503,11 @@ impl FocusController {
                 .filter(|found| found.messages.get(found.at) == Some(&opening.shown)),
         };
         if walk.at().is_none() {
-            return Vec::new();
+            // The thread does not hold the message on screen: no walk.
+            return self.walk_unbarred();
         }
         self.walk = Some(walk);
+        self.bar_up = true;
         self.walk_intents()
     }
 
@@ -580,6 +613,20 @@ impl FocusController {
             return Some(Vec::new());
         };
         Some(self.walk_show(target))
+    }
+
+    /// A click on the chip of the member at `index`: shown as `]` and `[`
+    /// would have shown it. The one on screen, a member that is not there,
+    /// and a window with no walk do nothing.
+    pub(crate) fn chip_clicked(&mut self, index: u32) -> Vec<Step> {
+        let Some(walk) = self.walk.as_ref() else {
+            return Vec::new();
+        };
+        let target = index as usize;
+        if target >= walk.view.members.len() || walk.at() == Some(target) {
+            return Vec::new();
+        }
+        self.walk_show(target)
     }
 
     /// Show the member at `target`, marking it read.

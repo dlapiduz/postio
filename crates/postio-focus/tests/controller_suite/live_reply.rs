@@ -139,6 +139,15 @@ fn latest_shows_the_reply_and_takes_the_banner_away() {
 fn the_row_behind_the_window_is_read_again() {
     let (mut focus, rows, _) = window_on_harbor(2);
     let effects = focus.handle_on(changed(THREAD, &[6]), &rows);
+    // The repaint waits out the burst a sync pass makes (T085 (f)).
+    let token = effects
+        .iter()
+        .find_map(|effect| match effect {
+            postio_focus::Effect::Timer { token, .. } => Some(*token),
+            _ => None,
+        })
+        .expect("the repaint is armed");
+    let effects = focus.handle_on(postio_focus::Input::Timer(token), &rows);
     assert!(
         shown(&effects)
             .iter()
