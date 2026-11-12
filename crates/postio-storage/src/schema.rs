@@ -783,12 +783,35 @@ CREATE TABLE contact_sync_links (
     // - `idx_threads_subject_recent`: the bounded subject fallback of
     //   research R2 (`last_at >= ? ORDER BY last_at DESC LIMIT 1`).
     // - `messages.own_line`: the sender's own words, cut to a line (R5).
+    // - `thread_mutes` and `thread_splits`: the person's mute and split of a
+    //   thread, keyed by a claimed `Message-ID` so they survive a merge and a
+    //   renumbering (R3).
     Migration {
         from: stamp(0xf0d2_3b2a),
         to: FINGERPRINT,
         statements: r#"
 ALTER TABLE messages ADD COLUMN own_line TEXT;
 CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
+-- A thread the person muted: new replies are archived on arrival (spec 013
+-- FR-012). Keyed by a folded Message-ID the thread claims, so it survives
+-- merges and the renumbering a rethread does (research R3): a thread is
+-- muted when any of its `thread_links` claims is here.
+CREATE TABLE thread_mutes (
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    rfc_message_id TEXT    NOT NULL,
+    muted_at       INTEGER NOT NULL,
+    replies_since  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, rfc_message_id)
+);
+
+-- A message the person split into its own thread, with the replies to it
+-- (FR-007). Later mail that names it joins the split thread, never merges.
+CREATE TABLE thread_splits (
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    rfc_message_id TEXT    NOT NULL,
+    split_at       INTEGER NOT NULL,
+    PRIMARY KEY (account_id, rfc_message_id)
+);
 "#,
     },
 ];
@@ -1859,6 +1882,27 @@ CREATE TABLE thread_links (
     -- on `messages` keep original case; this table never reaches the wire.
     rfc_message_id TEXT    NOT NULL,
     thread_id      INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    PRIMARY KEY (account_id, rfc_message_id)
+);
+
+-- A thread the person muted: new replies are archived on arrival (spec 013
+-- FR-012). Keyed by a folded Message-ID the thread claims, so it survives
+-- merges and the renumbering a rethread does (research R3): a thread is
+-- muted when any of its `thread_links` claims is here.
+CREATE TABLE thread_mutes (
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    rfc_message_id TEXT    NOT NULL,
+    muted_at       INTEGER NOT NULL,
+    replies_since  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, rfc_message_id)
+);
+
+-- A message the person split into its own thread, with the replies to it
+-- (FR-007). Later mail that names it joins the split thread, never merges.
+CREATE TABLE thread_splits (
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    rfc_message_id TEXT    NOT NULL,
+    split_at       INTEGER NOT NULL,
     PRIMARY KEY (account_id, rfc_message_id)
 );
 

@@ -129,6 +129,7 @@ impl FocusRow {
                 cancelled: false,
             }),
             copies: Vec::new(),
+            muted: None,
             representative: representative.clone(),
         };
         Some(FocusRow::Reminder {
@@ -258,6 +259,7 @@ pub fn lone(message: MessageSummary) -> ThreadSummary {
         last_at: message.received_at,
         marker: None,
         copies: Vec::new(),
+        muted: None,
         representative: message,
     }
 }
@@ -310,6 +312,7 @@ mod tests {
             last_at: Utc::now(),
             marker: None,
             copies: Vec::new(),
+            muted: None,
         }
     }
 

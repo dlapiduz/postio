@@ -5865,3 +5865,86 @@ fn with_suggest_merging_off_the_body_stage_notes_nothing_for_the_review() {
         Vec::<String>::new()
     );
 }
+
+#[test]
+fn a_frontend_mutes_and_splits_a_thread_and_one_undo_takes_each_back() {
+    // Spec 013 US5: Req::{Mute, Unmute, Split, MutedOf}, the view's `muted`,
+    // and the session's undo behind each.
+    let world = World::new();
+    let (client, events) = world.frontend(ClientKind::Tui);
+    let (thread, third) = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut ids = Vec::new();
+        let mut thread = None;
+        for (n, rfc) in ["a1", "a2", "a3"].into_iter().enumerate() {
+            let mut message = Message::new(
+                world.account,
+                world.inbox,
+                Utc::now() + chrono::Duration::minutes(n as i64),
+            );
+            message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+                "<{rfc}@example.com>"
+            )));
+            message.references = ids_to_refs(n);
+            message.in_reply_to = message.references.last().cloned();
+            message.subject = Some("Re: Tide gate".to_owned());
+            ids.push(
+                MessageRepository::new(&connection)
+                    .create(&mut message)
+                    .await
+                    .expect("a message"),
+            );
+            thread = Some(
+                postio_storage::repository::ThreadingRepository::new(&connection, world.account)
+                    .thread(&message)
+                    .await
+                    .expect("threaded")
+                    .thread_id,
+            );
+        }
+        (thread.expect("a thread"), ids[2])
+    });
+    fn ids_to_refs(n: usize) -> Vec<postio_model::RfcMessageId> {
+        ["a1", "a2"][..n]
+            .iter()
+            .map(|id| postio_model::RfcMessageId::new(format!("<{id}@example.com>")))
+            .collect()
+    }
+    let muted = |thread| {
+        world
+            .rt
+            .block_on(client.muted_of(vec![thread]))
+            .expect("muted_of")
+    };
+
+    world.rt.block_on(client.mute(thread)).expect("mute");
+    assert_eq!(muted(thread), vec![(thread, 0)]);
+    let view = world
+        .rt
+        .block_on(client.thread(thread))
+        .expect("a read")
+        .expect("there");
+    assert_eq!(view.muted, Some(0), "the view says muted");
+    world.hear(
+        &events,
+        |event| matches!(event, Event::ThreadChanged { thread: t, .. } if *t == thread),
+    );
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert!(muted(thread).is_empty(), "one undo unmutes");
+
+    let split = world.rt.block_on(client.split(third)).expect("split");
+    assert_ne!(split, thread);
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    let view = world
+        .rt
+        .block_on(client.thread(thread))
+        .expect("a read")
+        .expect("there");
+    assert_eq!(view.members.len(), 3, "one undo rejoins the messages");
+}

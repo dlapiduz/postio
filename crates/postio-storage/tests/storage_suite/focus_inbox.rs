@@ -351,9 +351,10 @@ async fn a_one_account_focus_page_is_at_most_three_statements_and_reads_only_wha
         page.len()
     );
     assert!(
-        first.statements <= 3,
+        first.statements <= 3 + 1,
         "a one-account Focus page took {} statements; the budget is the \
-         window, its participants and its markers -- never one per row, and \
+         window, its participants and its markers, plus one for the mutes \
+         (spec 013) -- never one per row, and \
          no partner search with no other account to fold with",
         first.statements
     );
@@ -382,7 +383,7 @@ async fn a_one_account_focus_page_is_at_most_three_statements_and_reads_only_wha
             .expect("a resumed page");
     })
     .await;
-    assert!(resumed.statements <= 3, "{resumed:?}");
+    assert!(resumed.statements <= 3 + 1, "{resumed:?}");
 
     // One inbox is its own list's seek: no scan and no sort at all.
     for (label, query) in [
@@ -523,9 +524,10 @@ async fn folding_across_accounts_adds_only_the_partner_search_unified_pays() {
     assert_eq!(folded, 1, "the fixture folds one row");
     // The page's own three, the partner search's five -- the threads, their
     // roots, partners by root, by subject, and where those are in view --
-    // and one to dedupe each folded row's counts.
+    // one to dedupe each folded row's counts, and the one that reads the
+    // page's mutes (spec 013).
     assert!(
-        counts.statements <= 3 + 5 + folded,
+        counts.statements <= 3 + 1 + 5 + folded,
         "a two-account Focus page took {} statements: {counts:?}",
         counts.statements
     );
@@ -790,9 +792,9 @@ async fn a_focus_page_draws_each_conversation_s_marker_in_its_budget_of_three() 
         assert_eq!(&row.marker, marker, "{drawn}");
     }
     assert!(
-        counts.statements <= 3,
+        counts.statements <= 3 + 1,
         "a Focus page with markers took {} statements; the budget is the \
-         window, its participants and its markers",
+         window, its participants and its markers, and the page's mutes",
         counts.statements
     );
     let participants: usize = page
@@ -1062,7 +1064,7 @@ async fn leaving_held_mail_out_costs_no_statement_and_scans_nothing() {
         page = rows(threads.focus_page_at(&query, 0).await.expect("a page"));
     })
     .await;
-    assert!(counts.statements <= 3, "{counts:?}");
+    assert!(counts.statements <= 3 + 1, "{counts:?}");
     let participants: usize = page
         .iter()
         .filter(|row| row.id.is_some())
@@ -1522,4 +1524,57 @@ async fn which_arrivals_stayed_in_focus_is_one_statement() {
             .is_empty(),
         "sought by id"
     );
+}
+
+#[tokio::test]
+async fn a_muted_conversation_is_drawn_muted_for_one_statement_and_its_mutes_rows() {
+    // Spec 013 T061: a page with mutes costs a page without + 1, and reads
+    // one row per mute on top of what it shows. (`counting` does not see
+    // trigger firings; no trigger fires on this read.)
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    let alone = &inboxes[..1];
+    let threads = ThreadRepository::new(&connection);
+    let query = focus(alone, 50, None);
+    let weir = threads
+        .focus_page_at(&query, 0)
+        .await
+        .expect("a page")
+        .into_iter()
+        .find(|group| subject(&group.row) == Some("About <weir@example.com>"))
+        .expect("weir is listed")
+        .row
+        .id
+        .expect("a conversation");
+    let before = {
+        let _ = threads.focus_page_at(&query, 0).await.expect("warm");
+        counted_async(|| async {
+            threads.focus_page_at(&query, 0).await.expect("a page");
+        })
+        .await
+    };
+    threads.mute(weir).await.expect("mute");
+    threads
+        .note_muted_replies(weir, 2)
+        .await
+        .expect("two replies");
+    let _ = threads.focus_page_at(&query, 0).await.expect("warm");
+
+    let mut page = Vec::new();
+    let after = counted_async(|| async {
+        page = rows(threads.focus_page_at(&query, 0).await.expect("a page"));
+    })
+    .await;
+
+    let muted: Vec<_> = page.iter().filter(|row| row.muted.is_some()).collect();
+    assert_eq!(muted.len(), 1);
+    assert_eq!(muted[0].id, Some(weir));
+    assert_eq!(muted[0].muted, Some(2), "muted, with two replies since");
+    assert_eq!(
+        after.statements, before.statements,
+        "the lookup is already in the budget"
+    );
+    assert_eq!(after.rows, before.rows + 1, "one more row: the mute itself");
 }

@@ -266,18 +266,18 @@ and `}` shows it.
 
 ### Mute and split in the engine (research R3, R4)
 
-- [ ] T056 [P] [US5] Write failing tests in `crates/postio-model/src/threading.rs` (red):
+- [x] T056 [P] [US5] Write failing tests in `crates/postio-model/src/threading.rs` (red):
   - a cue whose links find a split thread and its origin joins the nearest link's thread and does not merge;
   - `descendants` covers transitive replies.
-- [ ] T057 [US5] Implement `ThreadIndex::is_split`, the split rule in `assign`, and `descendants` in `crates/postio-model/src/threading.rs`.
-- [ ] T058 [P] [US5] Write failing storage tests in `crates/postio-storage/tests/storage_suite/threads.rs` (red: no tables):
+- [x] T057 [US5] Implement `ThreadIndex::is_split`, the split rule in `assign`, and `descendants` in `crates/postio-model/src/threading.rs`.
+- [x] T058 [P] [US5] Write failing storage tests in `crates/postio-storage/tests/storage_suite/threads.rs` (red: no tables):
   - `mute` survives a merge and a renumbering;
   - `muted(ids)` is one statement per page;
   - `split` moves message 4 and its replies, relinks claims and recomputes both aggregates in one transaction;
   - a later reply to message 4 joins the split thread. Assert rows and trigger firings for `muted(ids)` and `split` (constitution V). Also write the undo case: one `z` after a split forgets the `thread_splits` row and rejoins the messages, and a later reply to message 4 then joins the original thread (FR-007, constitution I).
-- [ ] T059 [US5] Add `thread_mutes` and `thread_splits` to the migration in `crates/postio-storage/src/schema.rs` (with a fingerprint), `mute`/`unmute`/`muted`/`split` in `crates/postio-storage/src/repository/threads.rs`, and split flags in `LoadedIndex` in `crates/postio-storage/src/repository/threading.rs`.
-- [ ] T060 [P] [US5] Write a failing host case (red: the reply lands in the inbox): a reply arriving in a muted thread is archived by the filing stage, `replies_since` becomes 1, it is searchable, and it is not a Filtered decision. Also write the exemption case: a reply addressed to the person alone (only identity in To, no Cc) lands in the inbox and the thread stays muted (FR-012). Use the filing-stage tests in `crates/postio-host/src/focus/`.
-- [ ] T061 [US5] Add the mute check first in the filing stage in `crates/postio-host/src/focus/`, and `Req::{Mute, Unmute, Split, MutedOf}` in `crates/postio-client/src/{protocol,api}.rs`, answered in `crates/postio-host/src/lib.rs` (undoable mute). Add the `muted` field to list pages in `crates/postio-storage/src/repository/threads.rs` (`FocusListQuery`), with a count assertion of today's statements + 1. The count assertion covers rows and trigger firings too. Make `split` undoable through the existing undo stack.
+- [x] T059 [US5] Add `thread_mutes` and `thread_splits` to the migration in `crates/postio-storage/src/schema.rs` (with a fingerprint), `mute`/`unmute`/`muted`/`split` in `crates/postio-storage/src/repository/threads.rs`, and split flags in `LoadedIndex` in `crates/postio-storage/src/repository/threading.rs`.
+- [x] T060 [P] [US5] Write a failing host case (red: the reply lands in the inbox): a reply arriving in a muted thread is archived by the filing stage, `replies_since` becomes 1, it is searchable, and it is not a Filtered decision. Also write the exemption case: a reply addressed to the person alone (only identity in To, no Cc) lands in the inbox and the thread stays muted (FR-012). Use the filing-stage tests in `crates/postio-host/src/focus/`.
+- [x] T061 [US5] Add the mute check first in the filing stage in `crates/postio-host/src/focus/`, and `Req::{Mute, Unmute, Split, MutedOf}` in `crates/postio-client/src/{protocol,api}.rs`, answered in `crates/postio-host/src/lib.rs` (undoable mute). Add the `muted` field to list pages in `crates/postio-storage/src/repository/threads.rs` (`FocusListQuery`), with a count assertion of today's statements + 1. The count assertion covers rows and trigger firings too. Make `split` undoable through the existing undo stack.
 
 ### Menu and outline
 

@@ -101,6 +101,10 @@ impl Req {
             Req::Body(_) => "Body",
             Req::Conversation(_) => "Conversation",
             Req::Thread(_) => "Thread",
+            Req::Mute(_) => "Mute",
+            Req::Unmute(_) => "Unmute",
+            Req::Split(_) => "Split",
+            Req::MutedOf(_) => "MutedOf",
             Req::Unsubscribe(_) => "Unsubscribe",
             Req::ListMail(_) => "ListMail",
             Req::Parts(_) => "Parts",
@@ -341,6 +345,54 @@ impl Client {
             Resp::Thread(view) => Some(view.map(|view| *view)),
             _ => None,
         })
+        .await
+    }
+
+    /// Mutes `thread`: its new replies are archived on arrival, except one
+    /// addressed to the person alone (spec 013 FR-012). One undo takes it
+    /// back.
+    pub async fn mute(&self, thread: postio_model::ThreadId) -> Result<(), StoreError> {
+        self.read(Req::Mute(thread), "a mute", |answer| match answer {
+            Resp::Done => Some(()),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Lets `thread`'s replies reach the inbox again. One undo takes it
+    /// back.
+    pub async fn unmute(&self, thread: postio_model::ThreadId) -> Result<(), StoreError> {
+        self.read(Req::Unmute(thread), "an unmute", |answer| match answer {
+            Resp::Done => Some(()),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Splits `message` and the replies to it off into a new thread of their
+    /// own, and answers it (spec 013 FR-007). One undo takes it back.
+    pub async fn split(&self, message: MessageId) -> Result<postio_model::ThreadId, StoreError> {
+        self.read(Req::Split(message), "a split", |answer| match answer {
+            Resp::Split(thread) => Some(thread),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Which of `threads` are muted, with the replies since muting: one
+    /// statement for the page.
+    pub async fn muted_of(
+        &self,
+        threads: Vec<postio_model::ThreadId>,
+    ) -> Result<Vec<(postio_model::ThreadId, u32)>, StoreError> {
+        self.read(
+            Req::MutedOf(threads),
+            "the muted threads",
+            |answer| match answer {
+                Resp::Muted(muted) => Some(muted),
+                _ => None,
+            },
+        )
         .await
     }
 

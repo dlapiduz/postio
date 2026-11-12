@@ -66,6 +66,7 @@ impl Rows for List {
                 last_at: at,
                 marker: None,
                 copies: Vec::new(),
+                muted: None,
             })
         })
     }

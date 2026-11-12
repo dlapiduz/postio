@@ -1158,6 +1158,7 @@ mod thread_words_tests {
             last_at: latest,
             marker: None,
             copies: Vec::new(),
+            muted: None,
         }
     }
 

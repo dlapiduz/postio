@@ -549,6 +549,22 @@ impl Actions {
                 let group = group.ok_or_else(|| CommandError::rejected("Choose a group"))?;
                 vec![self.group_members(group, people, false).await?]
             }
+            Command::MuteThread { thread, muted } => {
+                let thread =
+                    thread.ok_or_else(|| CommandError::rejected("Choose a conversation"))?;
+                vec![self.mute(thread, *muted, events).await?]
+            }
+            Command::SplitThread {
+                rejoin: Some((split, original)),
+                ..
+            } => vec![self.unsplit(*split, *original, events).await?],
+            Command::SplitThread {
+                message: Some(message),
+                rejoin: None,
+            } => vec![self.split(*message, events).await?.0],
+            Command::SplitThread { .. } => {
+                return Err(CommandError::rejected("Choose a message to split off"));
+            }
             Command::MarkReadOnDwell { message } => {
                 self.set_flag(
                     &MessageTarget::Messages(vec![*message]),
@@ -7446,5 +7462,181 @@ mod tests {
             world.run(Command::Undo).await.expect("undo the create");
             assert_eq!(members("Family").await, None);
         }
+    }
+
+    // ── Mute and split (specs/013-focus-threads US5) ─────────────────────
+
+    /// Files a message the way a sync pass does: stored, then threaded.
+    async fn threaded(
+        world: &World,
+        rfc: &str,
+        references: &[&str],
+        minutes: i64,
+    ) -> (MessageId, postio_model::ThreadId) {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut message = Message::new(
+            world.account.id,
+            world.inbox,
+            Utc::now() + chrono::TimeDelta::minutes(minutes),
+        );
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<{rfc}@example.com>"
+        )));
+        message.references = references
+            .iter()
+            .map(|id| postio_model::RfcMessageId::new(format!("<{id}@example.com>")))
+            .collect();
+        message.in_reply_to = message.references.last().cloned();
+        message.subject = Some("Re: Harbor API".to_owned());
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        let thread =
+            postio_storage::repository::ThreadingRepository::new(&connection, world.account.id)
+                .thread(&message)
+                .await
+                .expect("threaded")
+                .thread_id;
+        (id, thread)
+    }
+
+    async fn muted(world: &World, thread: postio_model::ThreadId) -> bool {
+        let connection = world.database.connect().await.expect("a connection");
+        !ThreadRepository::new(&connection)
+            .muted(&[thread])
+            .await
+            .expect("a read")
+            .is_empty()
+    }
+
+    #[tokio::test]
+    async fn muting_a_thread_is_one_undo_and_says_the_thread_changed() {
+        let world = world().await;
+        let (_, thread) = threaded(&world, "m1", &[], 1).await;
+
+        world
+            .actions
+            .mute_thread(thread, true, &world.sink)
+            .await
+            .expect("mute");
+
+        assert!(muted(&world, thread).await);
+        let events = world.drained().await;
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::ThreadChanged { thread: changed, .. } if *changed == thread
+            )),
+            "an open window re-reads the thread: {events:?}"
+        );
+        assert_eq!(completion(&events).await, Some(("Muted the thread", true)));
+        assert_eq!(
+            world.actions.peek_description().as_deref(),
+            Some("Muted the thread")
+        );
+
+        world.run(Command::Undo).await.expect("undo");
+
+        assert!(!muted(&world, thread).await, "one undo unmutes");
+        assert_eq!(
+            undone(&world.drained().await).as_deref(),
+            Some("Muted the thread, undone")
+        );
+    }
+
+    #[tokio::test]
+    async fn unmuting_is_undone_by_muting_again() {
+        let world = world().await;
+        let (_, thread) = threaded(&world, "m1", &[], 1).await;
+        world
+            .actions
+            .mute_thread(thread, true, &world.sink)
+            .await
+            .expect("mute");
+        world
+            .actions
+            .mute_thread(thread, false, &world.sink)
+            .await
+            .expect("unmute");
+        assert!(!muted(&world, thread).await);
+
+        world.run(Command::Undo).await.expect("undo");
+
+        assert!(muted(&world, thread).await);
+    }
+
+    #[tokio::test]
+    async fn one_undo_of_a_split_rejoins_the_messages_and_a_reply_follows_the_original() {
+        let world = world().await;
+        let (m1, original) = threaded(&world, "m1", &[], 1).await;
+        let (m2, _) = threaded(&world, "m2", &["m1"], 2).await;
+        let (m3, _) = threaded(&world, "m3", &["m1", "m2"], 3).await;
+        let (m4, _) = threaded(&world, "m4", &["m1", "m2", "m3"], 4).await;
+
+        let split = world
+            .actions
+            .split_thread(m3, &world.sink)
+            .await
+            .expect("split");
+
+        assert_ne!(split, original);
+        let events = world.drained().await;
+        let changed: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::ThreadChanged { thread, .. } => Some(*thread),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            changed.contains(&split) && changed.contains(&original),
+            "{changed:?}"
+        );
+        let members = |thread| {
+            let database = world.database.clone();
+            async move {
+                let connection = database.connect().await.expect("a connection");
+                ThreadRepository::new(&connection)
+                    .member_ids(thread)
+                    .await
+                    .expect("members")
+            }
+        };
+        assert_eq!(members(split).await, vec![m3, m4]);
+        assert_eq!(members(original).await, vec![m1, m2]);
+
+        world.run(Command::Undo).await.expect("one undo");
+
+        assert_eq!(
+            members(original).await,
+            vec![m1, m2, m3, m4],
+            "all four are back"
+        );
+        let (_, joined) = threaded(&world, "m5", &["m1", "m2", "m3"], 5).await;
+        assert_eq!(
+            joined, original,
+            "a reply to the split message follows the original"
+        );
+        assert_eq!(
+            world.actions.peek_description(),
+            None,
+            "nothing more to take back"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_first_message_cannot_be_split_off_and_nothing_is_recorded() {
+        let world = world().await;
+        let (m1, _) = threaded(&world, "m1", &[], 1).await;
+        threaded(&world, "m2", &["m1"], 2).await;
+
+        let refused = world.actions.split_thread(m1, &world.sink).await;
+
+        assert!(
+            matches!(refused, Err(CommandError::Rejected(_))),
+            "{refused:?}"
+        );
+        assert_eq!(world.actions.peek_description(), None);
     }
 }

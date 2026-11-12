@@ -1066,6 +1066,19 @@ impl Inner {
         entry.verbs.dispatch(queued.command, sink).await;
     }
 
+    /// Mute or unmute a thread for `client`, through its undo stack.
+    async fn mute(&self, client: ClientId, thread: postio_model::ThreadId, muted: bool) -> Resp {
+        let Some(entry) = self.entry(client) else {
+            return Resp::Stopped;
+        };
+        match entry.actions.mute_thread(thread, muted, &entry.sink).await {
+            Ok(()) => Resp::Done,
+            Err(error) => Resp::Failed(postio_model::listing::StoreError::new(
+                error.message().to_owned(),
+            )),
+        }
+    }
+
     /// Answer one request from local state. Nothing here waits on the
     /// network: a remote effect is a command, queued.
     async fn answer(&self, client: ClientId, request: Req) -> Resp {
@@ -1542,6 +1555,22 @@ impl Inner {
             Req::Conversation(thread) => self.conversation(thread).await,
             Req::Thread(thread) => match threads::view(&self.wiring.database, thread).await {
                 Ok(view) => Resp::Thread(view.map(Box::new)),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::Mute(thread) => self.mute(client, thread, true).await,
+            Req::Unmute(thread) => self.mute(client, thread, false).await,
+            Req::Split(message) => match self.entry(client) {
+                Some(entry) => match entry.actions.split_thread(message, &entry.sink).await {
+                    Ok(thread) => Resp::Split(thread),
+                    Err(error) => Resp::Failed(postio_model::listing::StoreError::new(
+                        error.message().to_owned(),
+                    )),
+                },
+                None => Resp::Stopped,
+            },
+            Req::MutedOf(threads) => match threads::muted_of(&self.wiring.database, &threads).await
+            {
+                Ok(muted) => Resp::Muted(muted),
                 Err(error) => Resp::Failed(error),
             },
             Req::Unsubscribe(message) => self.unsubscribe(message).await,
