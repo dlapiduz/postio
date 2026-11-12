@@ -1038,7 +1038,7 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
             reading.body_text()
         );
         assert!(
-            reading.subtitle().contains("2 of 3 in the thread"),
+            reading.subtitle().contains("Message 2 of 3"),
             "{:?}",
             reading.subtitle()
         );

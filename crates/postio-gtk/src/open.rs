@@ -90,7 +90,16 @@ pub struct OpenMessage {
     /// The message on screen is a draft another client wrote: the received
     /// row stands without the verbs that answer a correspondent (#1212).
     foreign_draft: Cell<bool>,
+    /// The line above the subject: "Message 4 of 6 · ] newer · [ older".
     thread_chip: gtk::Box,
+    kicker: gtk::Label,
+    /// What the kicker says now: the header's place line for a message that
+    /// is no list row.
+    kicker_said: RefCell<String>,
+    /// The thread bar under the action row, and the older-message banner
+    /// above the kicker (spec 013 US3): the controller's words, drawn.
+    thread_bar: Rc<crate::thread_bar::ThreadBar>,
+    banner: Rc<crate::thread_bar::OlderBanner>,
     subject: gtk::Label,
     labels: gtk::Box,
     /// What holds the column to its width, centred in the dialog (T207).
@@ -150,7 +159,7 @@ pub struct OpenMessage {
     handler: RefCell<Option<Handler>>,
     /// The conversation's messages, oldest first, once read, and which of
     /// them is on screen; the row's place in the list.
-    thread: Rc<RefCell<Vec<MessageId>>>,
+    thread_total: Cell<usize>,
     at: Rc<Cell<usize>>,
     position: Cell<Position>,
     /// Where a search's hit is among the hits, while one is on screen.
@@ -345,6 +354,13 @@ impl OpenMessage {
         let thread_chip = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::THREAD_GAP);
         thread_chip.add_css_class("focus-open-thread");
         thread_chip.set_margin_bottom(rhythm::MARKER_TO_SUBJECT);
+        let kicker = gtk::Label::new(None);
+        kicker.set_xalign(0.0);
+        thread_chip.append(&kicker);
+        thread_chip.set_visible(false);
+        let thread_bar = crate::thread_bar::ThreadBar::new();
+        let banner = crate::thread_bar::OlderBanner::new();
+        banner.widget().set_margin_bottom(rhythm::MARKER_TO_SUBJECT);
         let subject = gtk::Label::new(None);
         subject.add_css_class("focus-open-subject");
         subject.set_xalign(0.0);
@@ -375,6 +391,7 @@ impl OpenMessage {
         // Its own height, not the page's: the bottom padding sits under the
         // last block, not at the foot of a stretched column.
         column.set_valign(gtk::Align::Start);
+        column.append(banner.widget());
         column.append(&thread_chip);
         column.append(&subject);
         column.append(&labels);
@@ -430,6 +447,7 @@ impl OpenMessage {
         content.append(&header);
         content.append(&toolbar.widget());
         content.append(&send_bar.widget());
+        content.append(thread_bar.widget());
         // Find sits above the column, not at its top, so opening it keeps
         // the reading position (T203).
         content.append(reader.find_bar().widget());
@@ -462,6 +480,10 @@ impl OpenMessage {
             send_state: Cell::new(None),
             foreign_draft: Cell::new(false),
             thread_chip,
+            kicker,
+            kicker_said: RefCell::default(),
+            thread_bar,
+            banner,
             subject,
             labels,
             clamp,
@@ -490,7 +512,7 @@ impl OpenMessage {
             open,
             handler: RefCell::default(),
             chip: RefCell::default(),
-            thread: Rc::default(),
+            thread_total: Cell::new(0),
             at: Rc::default(),
             accounts: RefCell::default(),
             account_said: Rc::default(),
@@ -513,6 +535,15 @@ impl OpenMessage {
 
         let weak = Rc::downgrade(&page);
         page.this.replace(weak.clone());
+        // "Latest }" is the key's own command, asked for.
+        page.banner.connect_press({
+            let weak = weak.clone();
+            move || {
+                if let Some(page) = weak.upgrade() {
+                    page.run(CommandId::LatestInConversation);
+                }
+            }
+        });
         // A chip asks: where the verbs live is the window's chooser (T240).
         page.reader.connect_attachment({
             let weak = weak.clone();
@@ -1064,8 +1095,7 @@ impl OpenMessage {
         self.position.set(position);
         self.hit.set(None);
         self.messages.set(summary.message_count.max(1));
-        self.thread.borrow_mut().clear();
-        self.at.set(0);
+        self.clear_thread();
         self.set_send_state(summary.representative.send_state);
         self.show_position(true);
         self.show_labels(&conversation.labels);
@@ -1075,9 +1105,6 @@ impl OpenMessage {
 
         self.present(parent.upcast_ref());
         self.show_message(message);
-        if let (Some(thread), true) = (summary.id, summary.message_count > 1) {
-            self.read_thread(thread, message);
-        }
     }
 
     /// Show `message`, which is no row of the list -- a search's hit, a
@@ -1098,14 +1125,19 @@ impl OpenMessage {
         self.read_hit_thread(message);
     }
 
+    /// Show `message`, a step of the thread the window is walking, in place:
+    /// the same subject, labels and place, the body and the clock new.
+    pub fn show_in_place(&self, message: MessageId) {
+        self.show_message(message);
+    }
+
     /// What a hit shows before its message is read.
     fn begin_hit(&self, message: MessageId, subject: &str) {
         let _ = message;
         self.title.set_text(subject);
         self.subject.set_text(subject);
         self.messages.set(1);
-        self.thread.borrow_mut().clear();
-        self.at.set(0);
+        self.clear_thread();
         self.show_position(true);
         self.show_labels(&[]);
         self.marker.replace(None);
@@ -1146,9 +1178,6 @@ impl OpenMessage {
             }
             page.messages.set(row.thread_count.max(1));
             page.show_position(true);
-            if let (Some(thread), true) = (row.thread, row.thread_count > 1) {
-                page.read_thread(thread, message);
-            }
         });
     }
 
@@ -1335,50 +1364,87 @@ impl OpenMessage {
         }
     }
 
-    /// Read the conversation's messages, so `p` and `n` can step through
-    /// them, and find `showing` among them.
-    fn read_thread(&self, thread: postio_model::ThreadId, showing: MessageId) {
-        let client = self.client.clone();
-        let (messages, at) = (Rc::clone(&self.thread), Rc::clone(&self.at));
-        let generation = Rc::clone(&self.generation);
-        let asked = generation.get();
-        let weak = self.this.borrow().clone();
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            let read = client.conversation(thread).await;
-            let Ok(rows) = read else { return };
-            if generation.get() != asked {
-                return;
-            }
-            let ids: Vec<MessageId> = rows.iter().map(|row| row.id).collect();
-            at.set(
-                ids.iter()
-                    .position(|id| *id == showing)
-                    .unwrap_or(ids.len().saturating_sub(1)),
-            );
-            messages.replace(ids);
-            // Where it is in the thread is known now: a search's best match
-            // need not be the latest.
-            if let Some(page) = weak.upgrade() {
-                page.show_position(false);
-            }
+    /// Nothing of a thread is on screen: no bar, kicker, banner or Reply to.
+    fn clear_thread(&self) {
+        self.thread_total.set(0);
+        self.at.set(0);
+        self.thread_bar.clear();
+        self.thread_chip.set_visible(false);
+        self.kicker.set_text("");
+        self.kicker_said.replace(String::new());
+        self.banner.set(None);
+        self.header_card.set_reply_to(None);
+    }
+
+    /// The thread's bar, as the controller composed it for the message on
+    /// screen: where the message is among them is the ringed chip.
+    pub fn set_thread_bar(&self, view: &postio_ui::thread_bar::ThreadBarView) {
+        self.thread_bar.set(view);
+        self.thread_total.set(
+            view.count_line
+                .split_whitespace()
+                .next()
+                .and_then(|count| count.parse().ok())
+                .unwrap_or(0),
+        );
+        if let Some(at) = self.thread_bar.current() {
+            self.at.set(at as usize);
+        }
+        self.show_position(false);
+    }
+
+    /// The line above the subject; none for a thread of one.
+    pub fn set_kicker(&self, kicker: &str) {
+        self.kicker.set_text(kicker);
+        self.kicker_said.replace(kicker.to_owned());
+        self.thread_chip.set_visible(!kicker.is_empty());
+        self.show_position(false);
+    }
+
+    /// The banner on a message that is not the latest, or none.
+    pub fn set_older_banner(&self, banner: Option<&postio_ui::thread_bar::BannerView>) {
+        self.banner.set(banner);
+    }
+
+    /// The sender block's Reply to row, or none.
+    pub fn set_reply_to(&self, reply_to: Option<&str>) {
+        self.header_card.set_reply_to(reply_to);
+    }
+
+    /// Run `handler` with how many thread-bar chips fit the window.
+    pub fn connect_bar_room(&self, handler: impl Fn(u32) + 'static) {
+        self.thread_bar.connect_room(handler);
+    }
+
+    /// Step `by` messages through the thread: `[` is -1, `]` is 1. The
+    /// controller decides where that goes; this only asks.
+    pub fn step_thread(&self, by: isize) {
+        self.run(if by < 0 {
+            CommandId::PrevInConversation
+        } else {
+            CommandId::NextInConversation
         });
     }
 
-    /// Step `by` messages through the conversation: `p` is -1, `n` is 1.
-    /// Nothing happens past either end, or before the conversation is read.
-    pub fn step_thread(&self, by: isize) {
-        let (next, message) = {
-            let thread = self.thread.borrow();
-            let Some(next) = focus_dialog::step_thread(self.at.get(), thread.len(), by) else {
-                return;
-            };
-            (next, thread[next])
-        };
-        self.at.set(next);
-        self.show_position(false);
-        self.show_message(message);
+    /// The list row the window was opened from.
+    pub fn row(&self) -> Option<MessageId> {
+        self.row.get()
+    }
+
+    /// The thread bar's current chip, from zero, and how many chips are
+    /// drawn.
+    pub fn thread_bar_state(&self) -> (Option<u32>, usize) {
+        (self.thread_bar.current(), self.thread_bar.chip_count())
+    }
+
+    /// The older-message banner's words, while it is up.
+    pub fn banner_said(&self) -> Option<String> {
+        self.banner.said()
+    }
+
+    /// The sender block's Reply to row, while it is drawn.
+    pub fn reply_to_said(&self) -> Option<String> {
+        self.header_card.reply_to()
     }
 
     /// The position line and the thread chip, for where the dialog is: the
@@ -1386,9 +1452,14 @@ impl OpenMessage {
     fn show_position(&self, latest: bool) {
         let position = self.position.get();
         let messages = self.messages.get();
-        let thread_len = self.thread.borrow().len();
+        let thread_len = self.thread_total.get();
         let latest = latest || thread_len == 0 || self.at.get() + 1 == thread_len;
-        let said = if let Some(hit) = self.hit.get() {
+        let kicker = self.kicker_said.borrow().clone();
+        let said = if self.row.get().is_none() && self.hit.get().is_none() && !kicker.is_empty() {
+            // A message of a thread that is no row of the list: the header
+            // says where it is in its thread, in the controller's words.
+            kicker
+        } else if let Some(hit) = self.hit.get() {
             focus_dialog::result_line(
                 hit.index as usize,
                 hit.total as usize,
@@ -1410,7 +1481,6 @@ impl OpenMessage {
         };
         self.line_said.replace(said);
         self.draw_place_line();
-        self.show_thread_chip(messages, latest);
     }
 
     /// Say which accounts are enabled: the place line names the message's
@@ -1590,55 +1660,11 @@ impl OpenMessage {
         });
     }
 
-    /// "Latest of 6 in this thread · p earlier message", for a thread.
-    fn show_thread_chip(&self, messages: u32, latest: bool) {
-        while let Some(child) = self.thread_chip.first_child() {
-            self.thread_chip.remove(&child);
-        }
-        let at = self.at.get();
-        let chip = focus_dialog::thread_chip_at(messages, at, latest);
-        self.thread_chip.set_visible(chip.is_some());
-        let Some(chip) = chip else {
-            return;
-        };
-        let keymap = self.keymap.borrow();
-        self.thread_chip.append(&gtk::Label::new(Some(&chip)));
-        if (latest || at > 0)
-            && let Some(key) = hints::key(&keymap, CommandId::PrevInConversation)
-        {
-            self.thread_chip.append(&keyhint::cap(&key));
-            self.thread_chip
-                .append(&gtk::Label::new(Some(focus_dialog::EARLIER_MESSAGE)));
-        }
-        if !latest && let Some(key) = hints::key(&keymap, CommandId::NextInConversation) {
-            self.thread_chip.append(&keyhint::cap(&key));
-            self.thread_chip
-                .append(&gtk::Label::new(Some(focus_dialog::LATER_MESSAGE)));
-        }
-    }
-
-    /// The line above the subject as it reads: the words and the keys.
+    /// The line above the subject as it reads.
     pub fn thread_chip_said(&self) -> String {
-        let mut words = Vec::new();
-        let mut child = self.thread_chip.first_child();
-        while let Some(widget) = child {
-            if let Some(label) = widget.downcast_ref::<gtk::Label>() {
-                words.push(label.text().to_string());
-            } else {
-                let mut inner = widget.first_child();
-                while let Some(part) = inner {
-                    if let Some(label) = part.downcast_ref::<gtk::Label>() {
-                        words.push(label.text().to_string());
-                    }
-                    inner = part.next_sibling();
-                }
-            }
-            child = widget.next_sibling();
-        }
-        words.join(" ")
+        self.kicker.text().to_string()
     }
 
-    /// The conversation's label pills, and "+ Label".
     fn show_labels(&self, labels: &[postio_model::Label]) {
         while let Some(child) = self.labels.first_child() {
             self.labels.remove(&child);
@@ -1965,7 +1991,7 @@ impl OpenMessage {
     /// How many of the conversation's messages `p` and `n` can step
     /// through: none until the conversation has been read.
     pub fn thread_known(&self) -> usize {
-        self.thread.borrow().len()
+        self.thread_total.get()
     }
 
     /// The message on screen.

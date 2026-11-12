@@ -2484,3 +2484,67 @@ button.focus-filtered-tab.focus-filtered-tab-on {
 .focus-scope-footer-title {
   font-weight: bold;
 }
+
+/* ── The thread bar and the older-message banner (spec 013 US3; screen 03) ── */
+.focus-thread-bar {
+  min-height: 60px;
+  padding: 0 var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+.focus-thread-bar-title {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+}
+
+.focus-thread-bar-count {
+  font-size: var(--postio-text-label);
+}
+
+.focus-thread-chip {
+  border-radius: var(--postio-radius-lg);
+  border: 1px solid transparent;
+  padding: 3px 4px;
+}
+
+.focus-thread-chip-current {
+  background-color: var(--postio-accent-soft);
+  border-color: var(--postio-accent);
+}
+
+.focus-thread-avatar {
+  min-width: 20px;
+  min-height: 20px;
+  border-radius: 10px;
+  background-color: var(--postio-raised-bg);
+  font-size: 0.6rem;
+  font-weight: bold;
+}
+
+.focus-thread-chip-name {
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-thread-chip-unread .focus-thread-chip-name {
+  font-weight: bold;
+  color: var(--postio-ink);
+}
+
+.focus-thread-dot,
+.focus-thread-match {
+  font-size: 0.5rem;
+  color: var(--postio-ink);
+}
+
+/* The unread dot is the accent, as an unread row's is. */
+.focus-thread-dot {
+  color: var(--postio-accent);
+}
+
+.focus-older-banner {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-raised-bg);
+}

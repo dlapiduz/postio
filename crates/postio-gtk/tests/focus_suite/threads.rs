@@ -373,3 +373,108 @@ pub fn the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it() {
         );
     });
 }
+
+fn reading_said(window: &postio_gtk::window::FocusWindow, key: &str) -> Option<serde_json::Value> {
+    said(window, &format!("focus.reading.{key}"))
+}
+
+pub fn the_window_walks_its_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 6, 10).await;
+        fixture.read_first(&ids, 4).await;
+        let solo = fixture.file_in(fixture.inbox, "Solo", 600).await;
+        let (window, _client) = fixture.open().await;
+        let pane = window.pane().expect("the inbox");
+        assert!(
+            crate::settle_until(
+                async || pane.cursor().selected() == 0 && pane.cursor().n_items() == 2
+            )
+            .await
+        );
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(4))
+            )
+            .await,
+            "the window opened on the first unread, message 5: {:?}",
+            reading_said(&window, "chip")
+        );
+        assert_eq!(reading_said(&window, "chips"), Some(serde_json::json!(6)));
+        assert_eq!(
+            reading_said(&window, "kicker"),
+            Some(serde_json::json!(
+                "Message 5 of 6 \u{b7} ] newer \u{b7} [ older"
+            ))
+        );
+        assert_eq!(
+            reading_said(&window, "banner"),
+            Some(serde_json::json!(true))
+        );
+
+        for _ in 0..2 {
+            support::press(&window, "bracketleft", gtk::gdk::ModifierType::empty());
+        }
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(2))
+            )
+            .await,
+            "[ [ showed message 3: {:?}",
+            reading_said(&window, "chip")
+        );
+        assert_eq!(
+            reading_said(&window, "banner"),
+            Some(serde_json::json!(true))
+        );
+        assert_eq!(pane.cursor().selected(), 0, "the list's cursor stayed");
+        assert_eq!(
+            window.reading().expect("open").subtitle(),
+            "Message 3 of 6 \u{b7} ] newer \u{b7} [ older",
+            "the header says where the message is in its thread, not a result"
+        );
+
+        support::press(&window, "braceright", gtk::gdk::ModifierType::SHIFT_MASK);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(5))
+            )
+            .await,
+            "}} showed the latest: {:?}",
+            reading_said(&window, "chip")
+        );
+        assert_eq!(
+            reading_said(&window, "banner"),
+            Some(serde_json::json!(false))
+        );
+
+        support::keys(&window, &["g", "u"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(4))
+            )
+            .await,
+            "g u showed the first unread: {:?}",
+            reading_said(&window, "chip")
+        );
+
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(
+                async || window.observe().reading.id == Some(solo.get().to_string())
+            )
+            .await,
+            "j in the window opened the next thread: {:?}",
+            window.observe().reading.id
+        );
+        assert_eq!(
+            reading_said(&window, "chips"),
+            Some(serde_json::json!(0)),
+            "a thread of one has no bar"
+        );
+    });
+}

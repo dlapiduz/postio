@@ -55,6 +55,15 @@ pub(crate) struct Opening {
 }
 
 impl FocusController {
+    /// Whether `message` is the one a walk of the open thread is showing:
+    /// an `OpenMessage` for it is a step in place, and the frontend does not
+    /// begin the window again.
+    pub fn walking(&self, message: MessageId, row: Option<MessageId>) -> bool {
+        self.walk
+            .as_ref()
+            .is_some_and(|walk| walk.shown == message && Some(walk.row) == row)
+    }
+
     /// A message was shown in the window: begin its walk. `effects` are what
     /// the input just produced, `rows` the list with any expansion's children
     /// among them. Steps asking for the thread read when it is not in hand.
@@ -101,6 +110,19 @@ impl FocusController {
         let Some(&thread) = facts.threads.first() else {
             return Vec::new();
         };
+        // A conversation of one message has no thread to walk: nothing is
+        // asked for it.
+        if self
+            .cursor
+            .position()
+            .and_then(|position| rows.row(position))
+            .filter(|row| row.id() == facts.id)
+            .and_then(|row| row.as_conversation().map(|row| row.summary.message_count))
+            .is_some_and(|count| count <= 1)
+            && seed.is_none()
+        {
+            return Vec::new();
+        }
         match seed.filter(|view| view.thread == thread) {
             Some(view) => self.begin_walk(
                 Opening {

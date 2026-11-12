@@ -331,6 +331,12 @@ impl Feed {
         self.inner.focus.borrow().aim(&self.inner.list)
     }
 
+    /// Whether `message` is the one the open thread's walk is showing: a
+    /// step in place, not a message to open.
+    pub fn walking(&self, message: MessageId, row: Option<MessageId>) -> bool {
+        self.inner.focus.borrow().walking(message, row)
+    }
+
     /// Where `action` would go now.
     pub fn aim_for(&self, action: CommandId) -> postio_focus::Aimed {
         self.inner.focus.borrow().aim_for(&self.inner.list, action)

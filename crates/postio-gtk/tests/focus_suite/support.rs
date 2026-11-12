@@ -827,6 +827,23 @@ impl Fixture {
         ids
     }
 
+    /// Mark the first `count` messages of `thread` read.
+    pub async fn read_first(&self, thread: &[MessageId], count: usize) {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut seen = postio_model::FlagSet::new();
+        seen.insert(postio_model::Flag::Seen);
+        for message in &thread[..count.min(thread.len())] {
+            MessageRepository::new(&connection)
+                .set_flags(
+                    *message,
+                    &seen,
+                    postio_storage::repository::FlagSource::Server,
+                )
+                .await
+                .expect("the message is read");
+        }
+    }
+
     /// Mark every message of `thread` but the newest read, so the thread
     /// opens on its newest: a thread opens at its first unread message
     /// (spec 013 FR-013), and `thread_of` leaves every message unread.
