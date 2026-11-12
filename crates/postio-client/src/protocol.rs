@@ -128,6 +128,29 @@ pub enum Req {
     /// Which of these threads are muted, and the replies filed away since:
     /// one statement for a page.
     MutedOf(Vec<postio_model::ThreadId>),
+    /// A new forward of a thread (spec 013 FR-023): of its latest message
+    /// for `This`, of every message for `Thread`, each as an `.eml` for
+    /// `Attachments`. Reads the local store only.
+    ForwardThread {
+        /// The thread.
+        thread: postio_model::ThreadId,
+        /// What to carry.
+        form: postio_model::ForwardForm,
+    },
+    /// The forward in `draft` changed to carry `form`, its typed text kept.
+    SetForwardForm {
+        /// The draft as it stands.
+        draft: Box<Draft>,
+        /// What to carry now.
+        form: postio_model::ForwardForm,
+    },
+    /// The reply in `draft` changed to answer the thread's latest received
+    /// message: the quote and `In-Reply-To` move, the typed text stays
+    /// (spec 013 FR-022).
+    ReplyToLatest {
+        /// The draft as it stands.
+        draft: Box<Draft>,
+    },
     /// Leave the list this message came from: record the activation, and
     /// answer the list's name. Only ever on a person's deliberate act.
     Unsubscribe(MessageId),
@@ -842,6 +865,8 @@ pub enum Resp {
     Thread(Option<Box<postio_model::ThreadView>>),
     /// The thread a split made.
     Split(postio_model::ThreadId),
+    /// A forward built, or why it was refused.
+    Forwarded(postio_model::Forwarded),
     /// The muted threads of a page, each with its replies since.
     Muted(Vec<(postio_model::ThreadId, u32)>),
     /// Rows, in the scope's shape.

@@ -270,7 +270,7 @@ fn forward_body(source: &Message) -> String {
 /// kept when there is one: the bytes are already in the blob store and sending
 /// does not need to re-upload them. When there is not, `part_id` and the
 /// draft's [`Draft::forwarded_from`] say where to fetch them from (#1686).
-fn carried_attachments(source: &Message) -> Vec<Attachment> {
+pub fn carried_attachments(source: &Message) -> Vec<Attachment> {
     source
         .attachments
         .iter()

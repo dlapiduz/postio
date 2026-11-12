@@ -5948,3 +5948,443 @@ fn a_frontend_mutes_and_splits_a_thread_and_one_undo_takes_each_back() {
         .expect("there");
     assert_eq!(view.members.len(), 3, "one undo rejoins the messages");
 }
+
+// ── Reply to an older message, forward a thread (spec 013 US7) ──────────────
+
+/// Who wrote message `n` of the fixture thread, as `(name, address)`. Message
+/// 3 is the account's own; the rest are received.
+fn writer(n: usize) -> (&'static str, &'static str) {
+    match n {
+        1 => ("Ada", "ada@example.com"),
+        2 => ("Ben", "ben@example.com"),
+        3 => ("Test User", "test@example.com"),
+        4 => ("Ann", "ann@example.com"),
+        5 => ("Bo", "bo@example.com"),
+        _ => ("Cy", "cy@example.com"),
+    }
+}
+
+/// Message `n` of a thread, stored the way a finished sync leaves it: header
+/// row, body and raw source local when `local`, headers only when not.
+/// `after` names the messages it answers, oldest first.
+fn thread_member(
+    world: &World,
+    blobs: &postio_storage::BlobStore,
+    n: usize,
+    after: &[String],
+    local: bool,
+    attachments: Vec<postio_model::Attachment>,
+) -> MessageId {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let (name, address) = writer(n);
+        let mut message = Message::new(
+            world.account,
+            world.inbox,
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 3, n as u32, 9, 0, 0).unwrap(),
+        );
+        message.from = vec![postio_model::EmailAddress::new(Some(name), address)];
+        message.to = vec![postio_model::EmailAddress::new(
+            Some("Test User"),
+            "test@example.com",
+        )];
+        message.subject = Some(if n == 1 { "Tide gate" } else { "Re: Tide gate" }.to_owned());
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<m{n}@example.com>"
+        )));
+        message.references = after.iter().map(postio_model::RfcMessageId::new).collect();
+        message.in_reply_to = message.references.last().cloned();
+        message.attachments = attachments;
+        if local {
+            message.sync.body_state = postio_model::BodyState::Full;
+            message.raw_blob_id = Some(
+                blobs
+                    .put(format!("Subject: member {n}\r\n\r\nwords {n}").as_bytes())
+                    .expect("a raw source"),
+            );
+        }
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        if local {
+            MessageRepository::new(&connection)
+                .set_body(
+                    id,
+                    &postio_storage::repository::StoredBody {
+                        text: Some(format!("{name} says words {n}\n")),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    postio_model::BodyState::Full,
+                )
+                .await
+                .expect("a body");
+        }
+        postio_storage::repository::ThreadingRepository::new(&connection, world.account)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        id
+    })
+}
+
+fn pdf(blobs: &postio_storage::BlobStore, name: &str, bytes: &[u8]) -> postio_model::Attachment {
+    let mut attachment =
+        postio_model::Attachment::new(MessageId::UNASSIGNED, "application/pdf", bytes.len() as u64);
+    attachment.filename = Some(name.to_owned());
+    attachment.blob_id = Some(blobs.put(bytes).expect("a blob"));
+    attachment
+}
+
+/// Six local messages in one thread. Messages 2 and 5 carry the same file
+/// under two names; message 4 carries another.
+fn six_local(
+    world: &World,
+) -> (
+    postio_model::ThreadId,
+    Vec<MessageId>,
+    postio_storage::BlobStore,
+) {
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("a blob store");
+    let mut ids = Vec::new();
+    for n in 1..=6 {
+        let after: Vec<String> = (1..n).map(|k| format!("<m{k}@example.com>")).collect();
+        let attachments = match n {
+            2 => vec![pdf(&blobs, "plan.pdf", b"the plan")],
+            4 => vec![pdf(&blobs, "map.pdf", b"the map")],
+            5 => vec![pdf(&blobs, "plan-final.pdf", b"the plan")],
+            _ => Vec::new(),
+        };
+        ids.push(thread_member(world, &blobs, n, &after, true, attachments));
+    }
+    let thread = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        MessageRepository::new(&connection)
+            .get(ids[0])
+            .await
+            .expect("read")
+            .expect("there")
+            .thread_id
+            .expect("threaded")
+    });
+    (thread, ids, blobs)
+}
+
+/// A reply to `message` as a composer opens it, with `typed` written above
+/// the quote.
+fn reply_with(world: &World, message: MessageId, typed: &str) -> postio_model::Draft {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut source = MessageRepository::new(&connection)
+            .get(message)
+            .await
+            .expect("read")
+            .expect("there");
+        source.body = postio_model::MessageBody {
+            text: Some(format!("{} says words\n", writer_of(&source))),
+            html: None,
+        };
+        let account = crate::compose::account(&world.database, world.account)
+            .await
+            .expect("the account");
+        let mut draft = postio_model::reply::reply(
+            &source,
+            &account,
+            postio_model::reply::plain_quote(&source),
+        );
+        let old = draft.body.text.take().unwrap_or_default();
+        draft.body.text = Some(format!("{typed}{old}"));
+        draft
+    })
+}
+
+fn writer_of(message: &Message) -> String {
+    message.from[0].display().to_owned()
+}
+
+#[test]
+fn a_reply_to_message_four_moves_to_message_six_and_keeps_what_was_typed() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let (thread, ids, _) = six_local(&world);
+    let draft = reply_with(&world, ids[3], "My own sentence.");
+    assert_eq!(draft.in_reply_to, Some(ids[3]));
+    assert_eq!(draft.thread_id, Some(thread));
+
+    let moved = world
+        .rt
+        .block_on(client.reply_to_latest(draft.clone()))
+        .expect("an answer");
+
+    assert_eq!(moved.in_reply_to, Some(ids[5]), "it answers message 6");
+    let text = moved.body.text.clone().expect("a body");
+    assert!(
+        text.starts_with("My own sentence."),
+        "typed text kept first: {text:?}"
+    );
+    assert!(
+        text.contains("On 2026-03-06, Cy wrote:\n> Cy says words 6"),
+        "{text:?}"
+    );
+    assert!(
+        !text.contains("Ann"),
+        "message 4's quote and attribution are gone: {text:?}"
+    );
+    assert_eq!(
+        moved.to, draft.to,
+        "what the person addressed is left alone"
+    );
+
+    // The threading headers follow `in_reply_to`: built against message 6.
+    let (parent, account) = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        (
+            MessageRepository::new(&connection)
+                .get(ids[5])
+                .await
+                .expect("read")
+                .expect("there"),
+            crate::compose::account(&world.database, world.account)
+                .await
+                .expect("the account"),
+        )
+    });
+    let identity = postio_model::account::Identity::new(
+        account.id,
+        postio_model::EmailAddress::new(Some("Test User"), "test@example.com"),
+    );
+    let built = postio_model::outgoing::build(&moved, &identity, &[], Some(&parent), None);
+    let raw = String::from_utf8_lossy(&built.raw).replace("\r\n ", " ");
+    assert!(raw.contains("In-Reply-To: <m6@example.com>"), "{raw}");
+    let references = raw
+        .lines()
+        .find(|l| l.starts_with("References:"))
+        .expect("References");
+    assert!(references.contains("<m6@example.com>"), "{references}");
+
+    // Already on the latest: nothing to change.
+    let again = world
+        .rt
+        .block_on(client.reply_to_latest(moved.clone()))
+        .expect("an answer");
+    assert_eq!(again, moved);
+}
+
+#[test]
+fn the_forward_form_changes_and_the_typed_words_stay() {
+    use postio_model::{ForwardForm, Forwarded};
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let (thread, ids, blobs) = six_local(&world);
+
+    let Forwarded::Draft(mut draft) = world
+        .rt
+        .block_on(client.forward_thread(thread, ForwardForm::This))
+        .expect("an answer")
+    else {
+        panic!("everything is local");
+    };
+    assert_eq!(draft.kind, postio_model::DraftKind::Forward);
+    assert_eq!(draft.forwarded_from, Some(ids[5]), "of the latest message");
+    assert_eq!(draft.subject, "Fwd: Re: Tide gate");
+
+    // The person types above the forwarded content and attaches a file of
+    // their own.
+    let text = draft.body.text.take().expect("a forward body");
+    draft.body.text = Some(format!("Look at this.{text}"));
+    draft
+        .attachments
+        .push(pdf(&blobs, "mine.pdf", b"my own file"));
+
+    let switch = |draft: Box<postio_model::Draft>, form| match world
+        .rt
+        .block_on(client.set_forward_form(*draft, form))
+        .expect("an answer")
+    {
+        Forwarded::Draft(draft) => draft,
+        other => panic!("refused: {other:?}"),
+    };
+
+    let thread_form = switch(draft, ForwardForm::Thread);
+    let text = thread_form.body.text.clone().expect("text");
+    assert!(
+        text.starts_with("Look at this.\n\n---------- Forwarded messages"),
+        "{text:?}"
+    );
+    for n in 1..=6 {
+        assert!(
+            text.contains(&format!("says words {n}")),
+            "message {n} is in it"
+        );
+    }
+    assert!(
+        text.find("Ada ·").unwrap() < text.find("Cy ·").unwrap(),
+        "oldest first"
+    );
+    assert_eq!(thread_form.subject, "Fwd: Tide gate (6 messages)");
+    let names = |draft: &postio_model::Draft| {
+        let mut names: Vec<_> = draft
+            .attachments
+            .iter()
+            .map(|a| a.filename.clone().unwrap())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(
+        names(&thread_form),
+        ["map.pdf", "mine.pdf", "plan.pdf"],
+        "each file once by content, and the person's own kept"
+    );
+
+    let eml = switch(thread_form, ForwardForm::Attachments);
+    assert_eq!(
+        eml.body.text.as_deref(),
+        Some("Look at this."),
+        "only the typed words"
+    );
+    assert_eq!(eml.attachments.len(), 7, "six .eml and the person's own");
+    let emls: Vec<_> = eml
+        .attachments
+        .iter()
+        .filter(|a| a.mime_type == "message/rfc822")
+        .collect();
+    assert_eq!(emls.len(), 6);
+    let first = emls[0].blob_id.clone().expect("stored");
+    assert_eq!(
+        blobs.get(&first).expect("bytes"),
+        b"Subject: member 1\r\n\r\nwords 1"
+    );
+    assert_eq!(eml.subject, "Fwd: Tide gate (6 messages)");
+
+    let back = switch(eml, ForwardForm::Thread);
+    assert!(
+        back.body
+            .text
+            .as_deref()
+            .unwrap()
+            .starts_with("Look at this.\n\n---------- Forwarded messages")
+    );
+    assert_eq!(back.attachments.len(), 3);
+
+    let this = switch(back, ForwardForm::This);
+    let text = this.body.text.clone().expect("text");
+    assert!(
+        text.starts_with("Look at this.\n\n---------- Forwarded message ----------"),
+        "{text:?}"
+    );
+    assert!(text.contains("Cy says words 6"), "{text:?}");
+    assert!(!text.contains("words 5"), "{text:?}");
+    assert_eq!(this.subject, "Fwd: Re: Tide gate");
+}
+
+#[test]
+fn forwarding_a_thread_creates_the_draft_in_the_form_asked_for() {
+    use postio_model::{ForwardForm, Forwarded};
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let (thread, ids, _) = six_local(&world);
+    let Forwarded::Draft(draft) = world
+        .rt
+        .block_on(client.forward_thread(thread, ForwardForm::Thread))
+        .expect("an answer")
+    else {
+        panic!("everything is local");
+    };
+    assert_eq!(draft.kind, postio_model::DraftKind::Forward);
+    assert_eq!(draft.subject, "Fwd: Tide gate (6 messages)");
+    assert_eq!(
+        draft.in_reply_to, None,
+        "a forward starts a new conversation"
+    );
+    assert_eq!(draft.forwarded_from, Some(ids[5]));
+    assert_eq!(
+        draft.id,
+        postio_model::DraftId::UNASSIGNED,
+        "the composer's autosave saves it"
+    );
+    assert!(
+        draft
+            .body
+            .text
+            .as_deref()
+            .unwrap()
+            .starts_with("\n\n---------- Forwarded messages")
+    );
+    assert_eq!(draft.attachments.len(), 2, "plan.pdf once, map.pdf once");
+}
+
+#[test]
+fn a_form_that_needs_a_message_not_here_is_refused_and_nothing_is_fetched() {
+    use postio_model::{ForwardForm, Forwarded};
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, _) = world.frontend(ClientKind::Focus);
+    world.host().start_syncing();
+    let synced = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    // Two replies that are fully here, to the message that is not.
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("a blob store");
+    let first = vec!["<tide@example.com>".to_owned()];
+    let second = vec![
+        "<tide@example.com>".to_owned(),
+        "<m2@example.com>".to_owned(),
+    ];
+    thread_member(&world, &blobs, 2, &first, true, Vec::new());
+    thread_member(&world, &blobs, 3, &second, true, Vec::new());
+    let thread = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        MessageRepository::new(&connection)
+            .get(synced)
+            .await
+            .expect("read")
+            .expect("there")
+            .thread_id
+            .expect("threaded")
+    });
+    let view = world
+        .rt
+        .block_on(client.thread(thread))
+        .expect("read")
+        .expect("there");
+    assert_eq!(
+        view.members.len(),
+        3,
+        "the replies joined the synced message's thread"
+    );
+    assert!(
+        mock.body_fetches().is_empty(),
+        "the synced message has no body yet"
+    );
+
+    let before = (mock.calls(), mock.body_fetches(), mock.header_fetches());
+    for form in [ForwardForm::Thread, ForwardForm::Attachments] {
+        let answer = world
+            .rt
+            .block_on(client.forward_thread(thread, form))
+            .expect("an answer");
+        assert_eq!(answer, Forwarded::NotLocal(vec![synced]), "{form:?}");
+    }
+    // The same through a draft already open on the local replies.
+    let Forwarded::Draft(draft) = world
+        .rt
+        .block_on(client.forward_thread(thread, ForwardForm::This))
+        .expect("an answer")
+    else {
+        panic!("one message forwards as it always has");
+    };
+    let answer = world
+        .rt
+        .block_on(client.set_forward_form(*draft, ForwardForm::Thread))
+        .expect("an answer");
+    assert_eq!(answer, Forwarded::NotLocal(vec![synced]));
+    assert_eq!(
+        (mock.calls(), mock.body_fetches(), mock.header_fetches()),
+        before,
+        "the server heard nothing"
+    );
+}

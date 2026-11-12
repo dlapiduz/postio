@@ -186,6 +186,30 @@ fn introduces(text: &str) -> bool {
 /// after the last block's close (`<div>Thanks,</div>On Mon, Ana wrote:`),
 /// whose line is not a block of its own to mark.
 fn mark_html_attribution(own: &str) -> Option<String> {
+    let (start, tag_end) = introducing_block(own)?;
+    let block = &own[start..];
+    let tag = &block[..tag_end];
+    let marked = match tag.find(" class=\"") {
+        Some(at) => {
+            let at = at + " class=\"".len();
+            format!("{}{ATTRIBUTION_CLASS} {}", &tag[..at], &tag[at..])
+        }
+        None => {
+            let name = if tag.starts_with("<div") { 4 } else { 2 };
+            format!(
+                "{} class=\"{ATTRIBUTION_CLASS}\"{}",
+                &tag[..name],
+                &tag[name..]
+            )
+        }
+    };
+    Some(format!("{}{marked}{}", &own[..start], &block[tag_end..]))
+}
+
+/// Where the block introducing a quote starts in `own`, and where its start
+/// tag ends (relative to that start): the last `<div>` or `<p>` when it
+/// holds the introducing line and nothing but closing tags follows.
+fn introducing_block(own: &str) -> Option<(usize, usize)> {
     let start = ["<div", "<p"]
         .iter()
         .filter_map(|open| {
@@ -207,22 +231,18 @@ fn mark_html_attribution(own: &str) -> Option<String> {
     if !introduces(&strip_tags(&block[tag_end + 1..close])) {
         return None;
     }
-    let tag = &block[..tag_end];
-    let marked = match tag.find(" class=\"") {
-        Some(at) => {
-            let at = at + " class=\"".len();
-            format!("{}{ATTRIBUTION_CLASS} {}", &tag[..at], &tag[at..])
-        }
-        None => {
-            let name = if tag.starts_with("<div") { 4 } else { 2 };
-            format!(
-                "{} class=\"{ATTRIBUTION_CLASS}\"{}",
-                &tag[..name],
-                &tag[name..]
-            )
-        }
-    };
-    Some(format!("{}{marked}{}", &own[..start], &block[tag_end..]))
+    Some((start, tag_end))
+}
+
+/// `own` -- sanitized HTML that a quote follows -- without the block that
+/// introduces the quote ("On Monday, Ana wrote:"): what the person said, in
+/// markup. [`without_attribution`]'s HTML twin. `own` whole when its last
+/// block introduces nothing.
+pub fn html_without_attribution(own: &str) -> &str {
+    match introducing_block(own) {
+        Some((start, _)) => &own[..start],
+        None => own,
+    }
 }
 
 /// Whether `html` is tags and white space only: no words.
