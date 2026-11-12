@@ -20,17 +20,17 @@ use std::time::Duration;
 
 use chrono::{DateTime, Local, NaiveDate};
 use postio_core::{CommandId, Keymap};
-use postio_model::{MailboxId, MessageId, ThreadId};
+use postio_model::{MailboxId, MessageId, ThreadId, ThreadView};
 use postio_search::ParsedQuery;
 use postio_search::facets::SearchFacets;
 use postio_search::query::{Clause, Filter, TokenKind};
 use postio_search::relax::{Loosen, Relaxation};
 use postio_search::results::{
     ConversationHit, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
-    Counted, FacetNames, FileHit, Location, Match, ResultsTab, Source,
+    Counted, FacetNames, FileHit, Location, Match, RankReason, ResultsTab, Source,
 };
 use postio_ui::hints::Hint;
-use postio_ui::search_view::{self as words, FilterKind};
+use postio_ui::search_view::{self as words, FilterKind, ResultChild};
 
 use crate::dropdown::{self, Run};
 use crate::feed::Step;
@@ -247,6 +247,19 @@ pub(crate) fn remove_copy(path: &std::path::Path) {
     }
 }
 
+/// A result expanded in place (spec 013 US6): the lines drawn after its
+/// row. The rows keep their positions; the frontend splices these in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultSplice {
+    /// The expanded result's row position.
+    pub anchor: u64,
+    /// The matching messages, and one line for each run of messages
+    /// between them that did not match.
+    pub children: Vec<postio_ui::search_view::ResultChild>,
+    /// The child with the focus ring, when it is on one.
+    pub focused: Option<u32>,
+}
+
 /// One result row (design §3.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultRow {
@@ -275,6 +288,9 @@ pub struct ResultRow {
     pub attachments: bool,
     /// The thread count, when more than one.
     pub count_badge: Option<String>,
+    /// "3 of 6 messages match", in place of the snippet, when several of a
+    /// thread's messages matched (spec 013 US6).
+    pub summary: Option<String>,
     /// Where it matched: "body", "quoted text", a file's name.
     pub source_tag: String,
     /// Whether the tag is a file's name, drawn in italics.
@@ -796,6 +812,12 @@ pub(crate) struct Results {
     listed_asked: bool,
     /// The person with the focus ring.
     person_cursor: Option<u64>,
+    /// The result expanded in place (spec 013 US6).
+    pub(crate) expansion: Option<ResultExpansion>,
+    /// Whether the top result has had its chance at the default expansion.
+    default_done: bool,
+    /// The matches of the window being opened on a child, for its walk.
+    pub(crate) opening: Option<crate::walk::ThreadMatches>,
 }
 
 /// A copy of a file, asked for or handed to the system.
@@ -845,6 +867,9 @@ impl Results {
             listed: None,
             listed_asked: false,
             person_cursor: None,
+            expansion: None,
+            default_done: false,
+            opening: None,
         }
     }
 
@@ -1063,7 +1088,11 @@ impl Results {
         self.files_asked = false;
         self.listed = None;
         self.listed_asked = false;
+        self.default_done = false;
         let mut steps = Vec::new();
+        if self.expansion.take().is_some() {
+            steps.push(Step::Show(Intent::ResultSplice(None)));
+        }
         if self.none.take().is_some() {
             steps.push(Step::Show(Intent::Relaxations(None)));
         }
@@ -1655,6 +1684,7 @@ impl Results {
             return None;
         }
         *ring = Some(next);
+        self.unfocus_child();
         Some(next)
     }
 
@@ -1671,10 +1701,14 @@ impl Results {
     pub(crate) fn point(&mut self, position: u64) -> Option<u64> {
         let rows = self.rows();
         let ring = self.ring();
-        (position < rows && *ring != Some(position)).then(|| {
+        let moved = (position < rows && *ring != Some(position)).then(|| {
             *ring = Some(position);
             position
-        })
+        });
+        if moved.is_some() {
+            self.unfocus_child();
+        }
+        moved
     }
 
     /// `x` on the focused row: checked, or not -- under ⇧X, taken back
@@ -2485,6 +2519,9 @@ impl Results {
                 .collect(),
             attachments: hit.has_attachments,
             count_badge: (hit.messages > 1).then(|| hit.messages.to_string()),
+            summary: matched_messages(hit).map(|matched| {
+                postio_ui::search_view::match_summary(matched, hit.messages as usize)
+            }),
             source_tag,
             source_is_file,
             passage,
@@ -2699,6 +2736,16 @@ pub(crate) struct Landed {
     pub(crate) nothing: bool,
 }
 
+/// How many of a thread's messages matched, when several of its several
+/// did.
+fn matched_messages(hit: &ConversationHit) -> Option<usize> {
+    let matched = hit.reasons.iter().find_map(|reason| match reason {
+        RankReason::Matches(n) => Some(*n as usize),
+        _ => None,
+    })?;
+    (hit.messages > 1 && matched > 1).then_some(matched)
+}
+
 fn thread_of(hit: &ConversationHit) -> Option<ThreadId> {
     match hit.key {
         ConversationKey::Thread(thread) => Some(thread),
@@ -2794,7 +2841,7 @@ pub(crate) fn show(view: ResultsView) -> Step {
 }
 
 /// The commands the results answer while nothing is over them.
-const RESULTS_KEYS: [CommandId; 31] = [
+const RESULTS_KEYS: [CommandId; 33] = [
     CommandId::NextMessage,
     CommandId::PrevMessage,
     CommandId::FirstMessage,
@@ -2826,6 +2873,8 @@ const RESULTS_KEYS: [CommandId; 31] = [
     CommandId::PickRelaxation3,
     CommandId::PickRelaxation4,
     CommandId::SaveFile,
+    CommandId::ExpandThread,
+    CommandId::CollapseThread,
 ];
 
 /// Whether the results, up, answer `id` themselves: their own keys, and
@@ -3146,10 +3195,12 @@ impl FocusController {
             CommandId::PickRelaxation4 => self.pick_way_out(3),
             CommandId::NextMessage | CommandId::PrevMessage => {
                 let by = if id == CommandId::NextMessage { 1 } else { -1 };
-                cursor_moved(results.step(by))
+                self.results_step(by)
             }
-            CommandId::FirstMessage => cursor_moved(results.step(i64::MIN / 2)),
-            CommandId::LastMessage => cursor_moved(results.step(i64::MAX / 2)),
+            CommandId::FirstMessage => self.results_step(i64::MIN / 2),
+            CommandId::LastMessage => self.results_step(i64::MAX / 2),
+            CommandId::ExpandThread => self.expand_result(),
+            CommandId::CollapseThread => self.collapse_result(),
             // A conversation can be drawn twice -- a Top hit and its
             // month's row -- so every row redraws, which the toolkit does
             // for the ones on screen.
@@ -3518,16 +3569,30 @@ impl FocusController {
         steps
     }
 
-    /// Open the focused result, among the others its `j`/`k` walk.
+    /// Open the focused result, among the others its `j`/`k` walk -- or,
+    /// with the focus on a matching child of the expanded result, that
+    /// message, carrying the thread's matches into the window.
     fn open_result(&mut self) -> Vec<Step> {
-        let Some(results) = &self.results else {
+        let Some(results) = self.results.as_mut() else {
             return Vec::new();
         };
         let Some((message, _)) = results.cursor_message() else {
             return Vec::new();
         };
-        self.bar.walk(results.walk());
-        self.show_hit(message)
+        let mut walk = results.walk();
+        let mut target = message;
+        if let Some((child, matches, view)) = results.opened_child() {
+            // The window walks the results with this result standing for
+            // the child it was opened on.
+            if let Some(entry) = walk.iter_mut().find(|(each, _)| *each == message) {
+                entry.0 = child;
+            }
+            results.opening = Some(matches);
+            self.walk_seed = Some(view);
+            target = child;
+        }
+        self.bar.walk(walk);
+        self.show_hit(target)
     }
 
     /// The message a result opened is now `reading`: the focus ring
@@ -4081,6 +4146,10 @@ impl FocusController {
                     }));
                 }
                 steps.extend(landed.passages.map(Step::Ask));
+                // The top result's matches ride with its page (spec 013
+                // R11): asked beside the passages, so the default
+                // expansion costs no trip of its own.
+                steps.extend(self.default_expansion());
                 steps
             }
             Reply::ResultsPassages { stamp, answer } => results
@@ -4108,6 +4177,13 @@ impl FocusController {
                 answer,
             } => self.file_copied(stamp, purpose, answer),
             Reply::QuickLookMatches { stamp, answer } => {
+                if let Some(changed) = results.expansion_matches(stamp, &answer) {
+                    return if changed {
+                        results.draw_splice()
+                    } else {
+                        Vec::new()
+                    };
+                }
                 if results.matches_landed(stamp, answer) {
                     self.draw_quick_look()
                 } else {
@@ -4249,5 +4325,389 @@ fn marked_line(location: &Location) -> u32 {
         Location::Sheet { row, .. } | Location::Table { row, .. } => row.saturating_sub(1) % DRAWN,
         Location::Line(n) | Location::Paragraph(n) => n.saturating_sub(1) % DRAWN,
         Location::Page(_) | Location::Slide(_) | Location::ImageText => 3,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A result expanded in place (spec 013 US6, research R11)
+// ---------------------------------------------------------------------------
+
+/// The result expanded under its row: the thread's matching messages and
+/// the lines for the runs between them.
+#[derive(Debug)]
+pub(crate) struct ResultExpansion {
+    /// The row it hangs from.
+    anchor: u64,
+    /// Its thread.
+    thread: ThreadId,
+    /// What the matches were asked under.
+    stamp: u64,
+    /// Every match in it, once read.
+    matches: Option<Vec<ConversationMatch>>,
+    /// Its messages, once read.
+    view: Option<ThreadView>,
+    /// The children, once both are read.
+    children: Vec<ResultChild>,
+    /// The child with the focus ring, an index into `children`.
+    focused: Option<usize>,
+}
+
+impl Results {
+    /// Expand the result at `position`: what to read for it, or `None`
+    /// when it is not a thread of several messages. Any other expansion is
+    /// folded.
+    fn expand_at(&mut self, position: u64, stamp: u64) -> Option<(Request, Request)> {
+        if self.tab != ResultsTab::Conversations {
+            return None;
+        }
+        let (hit, _, _) = self.hit_at(position)?;
+        let thread = thread_of(hit).filter(|_| hit.messages > 1)?;
+        let key = hit.key;
+        self.expansion = Some(ResultExpansion {
+            anchor: position,
+            thread,
+            stamp,
+            matches: None,
+            view: None,
+            children: Vec::new(),
+            focused: None,
+        });
+        Some((
+            Request::QuickLookMatches {
+                query: self.parsed.clone(),
+                key,
+                stamp,
+            },
+            Request::ReadThread(thread),
+        ))
+    }
+
+    /// The expanded result's matches were read, if they are its own: whether
+    /// the children changed, `None` when this answer is not the expansion's.
+    fn expansion_matches(
+        &mut self,
+        stamp: u64,
+        answer: &Result<Vec<ConversationMatch>, String>,
+    ) -> Option<bool> {
+        let expansion = self.expansion.as_mut().filter(|each| each.stamp == stamp)?;
+        match answer {
+            Ok(matches) => expansion.matches = Some(matches.clone()),
+            Err(error) => {
+                tracing::debug!(%error, "the matches of an expanded result could not be read");
+                self.expansion = None;
+                return Some(false);
+            }
+        }
+        Some(self.compose_children())
+    }
+
+    /// The expanded result's thread was read: whether the children changed.
+    pub(crate) fn expansion_thread(&mut self, thread: ThreadId, view: Option<&ThreadView>) -> bool {
+        let Some(expansion) = self.expansion.as_mut().filter(|each| each.thread == thread) else {
+            return false;
+        };
+        let Some(view) = view else {
+            self.expansion = None;
+            return false;
+        };
+        expansion.view = Some(view.clone());
+        self.compose_children()
+    }
+
+    /// Children from what has been read; whether they changed.
+    fn compose_children(&mut self) -> bool {
+        let Some(expansion) = self.expansion.as_mut() else {
+            return false;
+        };
+        let (Some(matches), Some(view)) = (&expansion.matches, &expansion.view) else {
+            return false;
+        };
+        let children = postio_ui::search_view::children(view, matches);
+        if children == expansion.children {
+            return false;
+        }
+        expansion.children = children;
+        expansion.focused = None;
+        true
+    }
+
+    /// The expansion as the frontend draws it, once its children are read.
+    pub(crate) fn splice(&self) -> Option<ResultSplice> {
+        let expansion = self
+            .expansion
+            .as_ref()
+            .filter(|each| !each.children.is_empty())?;
+        Some(ResultSplice {
+            anchor: expansion.anchor,
+            children: expansion.children.clone(),
+            focused: expansion.focused.map(|child| child as u32),
+        })
+    }
+
+    /// The expansion, drawn (or taken away).
+    pub(crate) fn draw_splice(&self) -> Vec<Step> {
+        vec![Step::Show(Intent::ResultSplice(
+            self.splice().map(Box::new),
+        ))]
+    }
+
+    /// The focused child of the expansion, if any.
+    pub(crate) fn focused_child(&self) -> Option<u32> {
+        self.expansion
+            .as_ref()
+            .and_then(|each| each.focused)
+            .map(|child| child as u32)
+    }
+
+    fn unfocus_child(&mut self) {
+        if let Some(expansion) = self.expansion.as_mut() {
+            expansion.focused = None;
+        }
+    }
+
+    /// `j` or `k` by one with children under the ring: into them, between
+    /// them, and out at their ends.
+    fn step_children(&mut self, by: i64) -> ChildStep {
+        let Some(cursor) = self.cursor else {
+            return ChildStep::NotMine;
+        };
+        let rows = self.rows();
+        let Some(expansion) = self.expansion.as_mut() else {
+            return ChildStep::NotMine;
+        };
+        // Matches take the ring; a gap is a line to read.
+        let marks: Vec<usize> = expansion
+            .children
+            .iter()
+            .enumerate()
+            .filter_map(|(at, child)| matches!(child, ResultChild::Match { .. }).then_some(at))
+            .collect();
+        let (Some(&first), Some(&last)) = (marks.first(), marks.last()) else {
+            return ChildStep::NotMine;
+        };
+        let to = |focus: usize, cursor: Option<u64>| ChildStep::To {
+            focus: Some(focus as u32),
+            cursor,
+        };
+        match expansion.focused {
+            Some(at) => {
+                let place = marks.iter().position(|mark| *mark == at).unwrap_or(0);
+                if by > 0 {
+                    match marks.get(place + 1) {
+                        Some(&next) => {
+                            expansion.focused = Some(next);
+                            to(next, None)
+                        }
+                        // Past the last child, the next result; with none,
+                        // the ring stays.
+                        None if cursor + 1 >= rows => ChildStep::Stay,
+                        None => ChildStep::NotMine,
+                    }
+                } else if place > 0 {
+                    expansion.focused = Some(marks[place - 1]);
+                    to(marks[place - 1], None)
+                } else {
+                    expansion.focused = None;
+                    ChildStep::To {
+                        focus: None,
+                        cursor: None,
+                    }
+                }
+            }
+            None if by > 0 && cursor == expansion.anchor => {
+                expansion.focused = Some(first);
+                to(first, None)
+            }
+            // Up from the result after the expansion: its last child.
+            None if by < 0 && cursor == expansion.anchor + 1 => {
+                expansion.focused = Some(last);
+                self.cursor = Some(expansion.anchor);
+                to(last, Some(expansion.anchor))
+            }
+            None => ChildStep::NotMine,
+        }
+    }
+
+    /// The child to open, with the matches and the thread the window walks.
+    pub(crate) fn opened_child(
+        &self,
+    ) -> Option<(MessageId, crate::walk::ThreadMatches, ThreadView)> {
+        let expansion = self.expansion.as_ref()?;
+        let ResultChild::Match { message, .. } = expansion.children.get(expansion.focused?)? else {
+            return None;
+        };
+        let messages: Vec<MessageId> = expansion
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                ResultChild::Match { message, .. } => Some(*message),
+                ResultChild::Gap { .. } => None,
+            })
+            .collect();
+        let at = messages.iter().position(|each| each == message)?;
+        Some((
+            *message,
+            crate::walk::ThreadMatches {
+                query: self.parsed.clone(),
+                messages,
+                at,
+            },
+            expansion.view.clone()?,
+        ))
+    }
+
+    /// The conversation at the top, when it is the default expansion's to
+    /// make.
+    fn wants_default(&mut self) -> bool {
+        if self.default_done || self.expansion.is_some() {
+            return false;
+        }
+        let Some(top) = self.top.as_ref().filter(|_| self.top_len() > 0) else {
+            return false;
+        };
+        self.default_done = true;
+        self.order == ConversationOrder::BestMatch
+            && self.tab == ResultsTab::Conversations
+            && top.first().and_then(matched_messages).is_some()
+    }
+}
+
+/// What `j` or `k` does to the children of the expanded result.
+enum ChildStep {
+    /// Not theirs: the rows move.
+    NotMine,
+    /// At the end, with nowhere to go.
+    Stay,
+    /// The ring is here now.
+    To {
+        /// The child with it, or the result's own row.
+        focus: Option<u32>,
+        /// The row the ring moved to, when it did.
+        cursor: Option<u64>,
+    },
+}
+
+impl FocusController {
+    /// `j`, `k`, `gg` and `G` over the results, children among them.
+    fn results_step(&mut self, by: i64) -> Vec<Step> {
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        let before = results.focused_child();
+        if by.abs() == 1 {
+            match results.step_children(by) {
+                ChildStep::Stay => return Vec::new(),
+                ChildStep::To { focus, cursor } => {
+                    let mut steps: Vec<Step> = cursor
+                        .map(|position| Step::Show(Intent::ResultsCursor(position)))
+                        .into_iter()
+                        .collect();
+                    steps.push(Step::Show(Intent::ResultChildFocus(focus)));
+                    return steps;
+                }
+                ChildStep::NotMine => {}
+            }
+        }
+        let moved = results.step(by);
+        let mut steps = Vec::new();
+        if moved.is_some() && before.is_some() {
+            steps.push(Step::Show(Intent::ResultChildFocus(None)));
+        }
+        steps.extend(cursor_moved(moved));
+        steps
+    }
+
+    /// The top result's matches and thread, when it has several matches.
+    fn default_expansion(&mut self) -> Vec<Step> {
+        if !self.results.as_mut().is_some_and(Results::wants_default) {
+            return Vec::new();
+        }
+        self.expand_row(0)
+    }
+
+    /// `Right` on a result: its matching messages, read and drawn when they
+    /// come.
+    fn expand_result(&mut self) -> Vec<Step> {
+        let Some(position) = self.results.as_ref().and_then(|results| results.cursor) else {
+            return Vec::new();
+        };
+        if self
+            .results
+            .as_ref()
+            .and_then(|results| results.expansion.as_ref())
+            .is_some_and(|each| each.anchor == position)
+        {
+            return Vec::new();
+        }
+        self.expand_row(position)
+    }
+
+    fn expand_row(&mut self, position: u64) -> Vec<Step> {
+        let stamp = self.stamp();
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        let folded = results.expansion.take().is_some();
+        let mut steps = Vec::new();
+        if folded {
+            steps.push(Step::Show(Intent::ResultChildFocus(None)));
+            steps.push(Step::Show(Intent::ResultSplice(None)));
+        }
+        if let Some((matches, thread)) = results.expand_at(position, stamp) {
+            steps.push(Step::Ask(matches));
+            steps.push(Step::Ask(thread));
+        }
+        steps
+    }
+
+    /// `Left`: the expanded result folds, the ring back on its row.
+    fn collapse_result(&mut self) -> Vec<Step> {
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        let Some(expansion) = results.expansion.take() else {
+            return Vec::new();
+        };
+        let mut steps = Vec::new();
+        if expansion.focused.is_some() {
+            steps.push(Step::Show(Intent::ResultChildFocus(None)));
+        }
+        steps.push(Step::Show(Intent::ResultSplice(None)));
+        steps
+    }
+
+    /// A thread was read: the expanded result may be waiting for it.
+    pub(crate) fn result_thread_read(
+        &mut self,
+        thread: ThreadId,
+        view: Option<&ThreadView>,
+    ) -> Vec<Step> {
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        if results.expansion_thread(thread, view) {
+            results.draw_splice()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The window opened on a child of an expanded result has closed: the
+    /// ring goes back to that child.
+    pub(crate) fn results_returned(&mut self) -> Vec<Step> {
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        results.opening = None;
+        let Some(expansion) = results.expansion.as_ref() else {
+            return Vec::new();
+        };
+        let (Some(child), anchor) = (expansion.focused, expansion.anchor) else {
+            return Vec::new();
+        };
+        vec![
+            Step::Show(Intent::ResultsCursor(anchor)),
+            Step::Show(Intent::ResultChildFocus(Some(child as u32))),
+        ]
     }
 }

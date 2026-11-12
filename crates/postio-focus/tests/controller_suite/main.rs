@@ -28,6 +28,7 @@ mod live_reply;
 mod pickers;
 mod results;
 mod search_support;
+mod search_threads;
 mod states;
 mod surfaces;
 mod thread_menu;

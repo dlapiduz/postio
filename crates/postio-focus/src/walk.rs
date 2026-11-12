@@ -14,12 +14,25 @@ use postio_ui::thread_bar;
 
 use crate::cursor::Rows;
 use crate::feed::Step;
-use crate::surfaces::{Host, Origin};
+use crate::surfaces::{Host, Origin, ReaderVerb};
 use crate::{Effect, FocusController, Intent, Request, SurfaceKind, ToastKind};
 
 /// How many chips the bar is composed for until the window says (a 72-point
 /// chip each, in the narrowest window).
 pub(crate) const DEFAULT_ROOM: u32 = 8;
+
+/// The matches of the search a window was opened from (spec 013 US6): the
+/// messages of the thread that matched, in date order, and which one the
+/// window opened on.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ThreadMatches {
+    /// The search.
+    pub(crate) query: postio_search::ParsedQuery,
+    /// The matching messages, oldest first.
+    pub(crate) messages: Vec<MessageId>,
+    /// The one the window last showed, an index into `messages`.
+    pub(crate) at: usize,
+}
 
 /// The thread of the message on screen.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +52,9 @@ pub(crate) struct Walk {
     /// Messages deleted from the window: a read that still lists them (the
     /// store has not caught up) does not bring them back.
     pub(crate) gone: Vec<MessageId>,
+    /// The search's matches in this thread, when the window was opened on
+    /// one of them.
+    pub(crate) matches: Option<ThreadMatches>,
 }
 
 impl Walk {
@@ -61,6 +77,40 @@ pub(crate) struct Opening {
 }
 
 impl FocusController {
+    /// The shown message has no more of its own find matches in this
+    /// direction (spec 013 US6): on to the next matched message, or say it
+    /// is the last.
+    pub(crate) fn match_edge(&mut self, forward: bool) -> Vec<Step> {
+        let Some(walk) = self.walk.as_ref() else {
+            return Vec::new();
+        };
+        let (Some(matches), Some(shown)) = (walk.matches.as_ref(), walk.at()) else {
+            return Vec::new();
+        };
+        // Where the matched messages are among the members, whichever one
+        // is on screen now.
+        let places: Vec<usize> = walk
+            .view
+            .members
+            .iter()
+            .enumerate()
+            .filter(|(_, member)| matches.messages.contains(&member.id))
+            .map(|(at, _)| at)
+            .collect();
+        let target = if forward {
+            places.iter().copied().find(|at| *at > shown)
+        } else {
+            places.iter().copied().rev().find(|at| *at < shown)
+        };
+        match target {
+            Some(target) => self.walk_show(target),
+            None => vec![Step::Show(Intent::Toast {
+                text: thread_bar::no_more_matches(forward).to_owned(),
+                kind: ToastKind::Notice,
+            })],
+        }
+    }
+
     /// Whether `message` is the one a walk of the open thread is showing:
     /// an `OpenMessage` for it is a step in place, and the frontend does not
     /// begin the window again.
@@ -75,10 +125,16 @@ impl FocusController {
     /// among them. Steps asking for the thread read when it is not in hand.
     pub(crate) fn walk_after(&mut self, effects: &[Effect], rows: &dyn Rows) -> Vec<Step> {
         if !self.surfaces.has(SurfaceKind::Message) {
-            self.walk = None;
+            let from_a_match = self.walk.take().is_some_and(|walk| walk.matches.is_some());
             self.walk_asked = None;
             self.walk_seed = None;
-            return Vec::new();
+            // A window opened on a match is closed: the ring goes back to
+            // the child it came from.
+            return if from_a_match {
+                self.results_returned()
+            } else {
+                Vec::new()
+            };
         }
         let opened = effects.iter().rev().find_map(|effect| match effect {
             Effect::Show(Intent::OpenMessage {
@@ -338,6 +394,11 @@ impl FocusController {
             place: opening.place,
             pending_new: Vec::new(),
             gone: Vec::new(),
+            matches: self
+                .results
+                .as_mut()
+                .and_then(|results| results.opening.take())
+                .filter(|found| found.messages.get(found.at) == Some(&opening.shown)),
         };
         if walk.at().is_none() {
             return Vec::new();
@@ -357,7 +418,7 @@ impl FocusController {
         let many = walk.view.members.len() > 1;
         let keymap = self.keymap();
         let latest = at + 1 == walk.view.members.len();
-        vec![
+        let mut steps = vec![
             Step::Show(Intent::ThreadBar(self.walk_bar(walk, at))),
             Step::Show(Intent::Kicker(if many {
                 thread_bar::kicker(at, walk.view.members.len(), keymap)
@@ -368,12 +429,38 @@ impl FocusController {
                 (many && !latest).then(|| thread_bar::older_banner(keymap)),
             )),
             Step::Show(Intent::ReplyTo(thread_bar::reply_to_row(&walk.view, at))),
-        ]
+        ];
+        if let Some(banner) = self.match_banner(walk) {
+            steps.push(Step::Show(Intent::MatchBanner(Some(banner))));
+        }
+        steps
+    }
+
+    /// The banner of a window opened from a search: where the shown match
+    /// is among the thread's.
+    fn match_banner(&self, walk: &Walk) -> Option<thread_bar::MatchBannerView> {
+        let matches = walk.matches.as_ref()?;
+        let numbers: Vec<u32> = matches
+            .messages
+            .iter()
+            .filter_map(|id| walk.view.members.iter().position(|member| member.id == *id))
+            .map(|at| at as u32 + 1)
+            .collect();
+        Some(thread_bar::match_banner(
+            matches.query.input(),
+            matches.at,
+            &numbers,
+            self.keymap(),
+        ))
     }
 
     fn walk_bar(&self, walk: &Walk, at: usize) -> thread_bar::ThreadBarView {
         let now = self.pickers.clock.unwrap_or_else(Local::now);
-        thread_bar::bar(&walk.view, at, &[], self.bar_room, now)
+        let matched: &[MessageId] = walk
+            .matches
+            .as_ref()
+            .map_or(&[], |matches| matches.messages.as_slice());
+        thread_bar::bar(&walk.view, at, matched, self.bar_room, now)
     }
 
     /// The window's width allows `room` chips: draw the bar again.
@@ -392,6 +479,19 @@ impl FocusController {
     /// (the frontend's own stepping is still its own then).
     pub(crate) fn walk_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
         let walk = self.walk.as_ref()?;
+        // From a search, find first steps the message's own matches; the
+        // frontend says when they run out.
+        if walk.matches.is_some() {
+            match id {
+                CommandId::FindNext => {
+                    return Some(vec![Step::Show(Intent::Reader(ReaderVerb::NextMatch))]);
+                }
+                CommandId::FindPrevious => {
+                    return Some(vec![Step::Show(Intent::Reader(ReaderVerb::PrevMatch))]);
+                }
+                _ => {}
+            }
+        }
         let at = walk.at()?;
         let last = walk.view.members.len().checked_sub(1)?;
         let target = match id {
@@ -420,6 +520,11 @@ impl FocusController {
         let (message, unread) = (member.id, !member.seen);
         member.seen = true;
         walk.shown = message;
+        if let Some(matches) = walk.matches.as_mut()
+            && let Some(at) = matches.messages.iter().position(|id| *id == message)
+        {
+            matches.at = at;
+        }
         let had_pending = !walk.pending_new.is_empty();
         if target + 1 == walk.view.members.len() {
             walk.pending_new.clear();

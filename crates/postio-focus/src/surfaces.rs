@@ -157,6 +157,13 @@ pub enum ReaderVerb {
     FindNext,
     /// The previous match.
     FindPrevious,
+    /// The next match of the shown message's own find, in a window opened
+    /// from a search; when there is none, say [`crate::Input::MatchEdge`].
+    NextMatch,
+    /// The previous match of the shown message's own find, in a window
+    /// opened from a search; when there is none, say
+    /// [`crate::Input::MatchEdge`].
+    PrevMatch,
     /// App colours or the original, for this message.
     SwitchTreatment,
     /// The message's raw source, in place of its content (M4).
