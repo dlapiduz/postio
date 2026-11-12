@@ -171,7 +171,8 @@ pub use focus_thread_bar::{
     ThreadMenuEntryFfi, ThreadMenuFfi, ThreadMenuGroupFfi,
 };
 pub use focus_threads::{
-    ChevronFfi, ChildHintFfi, ChildRowFfi, FooterKeyFfi, FooterViewFfi, ThreadRowFfi,
+    ChevronFfi, ChildHintFfi, ChildRowFfi, FooterKeyFfi, FooterViewFfi, MatchBannerFfi,
+    ResultChildFfi, ResultSpliceFfi, ThreadRowFfi,
 };
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use links::{link_gone, link_unknown, message_link, parse_message_link};

@@ -45,7 +45,7 @@ struct ResultsModelTests {
         ResultRowFfi(
             id: Int64(position) + 100, thread: nil, group: 0, topHit: position < 3, sender: "Ada Moreno", fromAddress: "ada@example.org",
             unread: false, reason: nil, subject: [RunFfi(text: "Atlas", highlighted: true, style: .plain)],
-            pills: [], attachments: false, countBadge: nil, sourceTag: "body", sourceIsFile: false,
+            pills: [], attachments: false, countBadge: nil, summary: nil, sourceTag: "body", sourceIsFile: false,
             passage: [], folder: "in:Inbox", date: "26 Sep", checked: false, accessible: "Ada Moreno")
     }
 
@@ -253,5 +253,74 @@ struct ResultsModelTests {
         #expect(model.apply(.focusLeaveResults) == .close)
         #expect(!model.isOpen)
         #expect(model.count == 0)
+    }
+
+    // MARK: an opened result's lines (spec 013 US6, screen 06)
+
+    /// Harbor's three matches and the gap between two of them, under the
+    /// first Top hit.
+    static func splice(focused: UInt32? = nil) -> UiEvent {
+        .focusResultSplice(
+            splice: ResultSpliceFfi(
+                anchor: 0,
+                children: [
+                    .match(
+                        message: 103, number: 3, tag: "message 3",
+                        passage: [RunFfi(text: "rate-limit headers", highlighted: true, style: .plain)]),
+                    .gap(text: "Message 4 doesn't match \u{b7} Ben, Thu"),
+                    .match(message: 105, number: 5, tag: "message 5 \u{b7} file", passage: []),
+                    .match(message: 106, number: 6, tag: "message 6", passage: []),
+                ],
+                focused: focused))
+    }
+
+    @Test func anOpenedResultsLinesAreDrawnAfterItsRowAndPushTheRestDown() {
+        let model = ResultsModel(engine: Engine())
+        model.apply(Self.results())
+        let before = model.count
+
+        // The header is table row 0, the first Top hit row 1.
+        #expect(model.apply(Self.splice()) == .spliced(removed: nil, inserted: 2..<6))
+        #expect(model.count == before + 4)
+        #expect(model.item(at: 1) == .row(0))
+        #expect(model.item(at: 2) == .child(0))
+        #expect(model.item(at: 5) == .child(3))
+        #expect(model.item(at: 6) == .row(1), "the next result keeps its position, lower down")
+        #expect(model.tableRow(of: 1) == 6)
+        #expect(model.height(at: 2) == ResultsModel.Metrics.child)
+        #expect(model.height(at: 3) == ResultsModel.Metrics.gap, "one 30-tall line")
+        #expect(model.height(at: 6) == ResultsModel.Metrics.topHit)
+        #expect(model.group(at: 4)?.title == "Top hits")
+        if case let .gap(text)? = model.child(at: 1) {
+            #expect(text.hasPrefix("Message 4 doesn't match"))
+        } else {
+            Issue.record("the second line is the gap")
+        }
+    }
+
+    @Test func theRingMovesOntoAChildAndBackToItsRow() {
+        let model = ResultsModel(engine: Engine())
+        model.apply(Self.results(cursor: 0))
+        model.apply(Self.splice())
+        #expect(model.cursorRow == 1)
+
+        #expect(model.apply(.focusResultChildFocus(child: 2)) == .cursor(previous: 1))
+        #expect(model.cursorRow == 4, "the third line, not the result's own row")
+        #expect(model.apply(.focusResultChildFocus(child: nil)) == .cursor(previous: 4))
+        #expect(model.cursorRow == 1)
+    }
+
+    @Test func aFoldedResultTakesItsLinesBackAndAClickOnALineIsNotAResult() {
+        let engine = Engine()
+        let model = ResultsModel(engine: engine)
+        model.apply(Self.results())
+        let before = model.count
+        model.apply(Self.splice())
+
+        model.point(tableRow: 3)
+        #expect(engine.pointed.isEmpty, "a line has no click of its own")
+        #expect(model.apply(.focusResultSplice(splice: nil)) == .spliced(removed: 2..<6, inserted: nil))
+        #expect(model.count == before)
+        #expect(model.item(at: 2) == .row(1))
     }
 }

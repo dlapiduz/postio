@@ -842,3 +842,191 @@ async fn the_outline_filters_by_typing_and_show_opens_that_message() {
     );
     session.shutdown();
 }
+
+// -- A search answers in threads (spec 013 T074, FR-020, FR-021) --------------
+
+/// What Swift draws when "rate limit headers" is searched over the threads
+/// seed, then what it is told as a person walks into the thread: `j` and
+/// Return open the window on message 3 with the match banner and the
+/// matches marked on the bar, two `MatchEdge`s reach message 6, and Escape
+/// puts the ring back on the child the window opened from.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
+    use postio_ffi::{ResultChildFfi, ThreadChipFfi};
+
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.invoke("search");
+    session.focus_bar_typed("rate limit headers".to_owned());
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusDropdown { view } if view.footer_count.is_some()
+        ))
+        .await,
+        "the dropdown answers the query"
+    );
+    session.focus_search_show_all();
+
+    let mut spliced = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusResultSplice {
+                splice: Some(splice),
+            } => {
+                spliced = Some(splice.clone());
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "the top result opens in place, and Swift is told its children"
+    );
+    let splice = spliced.expect("a splice");
+    assert_eq!(splice.anchor, 0, "under the top hit");
+    assert_eq!(splice.focused, None);
+    let numbers: Vec<Option<u32>> = splice
+        .children
+        .iter()
+        .map(|child| match child {
+            ResultChildFfi::Match { number, .. } => Some(*number),
+            ResultChildFfi::Gap { .. } => None,
+        })
+        .collect();
+    assert_eq!(
+        numbers,
+        [Some(3), None, Some(5), Some(6)],
+        "three matches and one gap: {:?}",
+        splice.children
+    );
+    let ResultChildFfi::Gap { text } = &splice.children[1] else {
+        panic!("the second line is the gap");
+    };
+    assert!(
+        text.starts_with("Message 4 doesn't match \u{b7} Ben, "),
+        "the gap names the message, who wrote it and the day: {text}"
+    );
+    let ResultChildFfi::Match {
+        message: third,
+        tag,
+        passage,
+        ..
+    } = &splice.children[0]
+    else {
+        panic!("the first line is message 3");
+    };
+    assert_eq!(tag, "message 3");
+    assert!(
+        passage.iter().any(|run| run.highlighted),
+        "the passage marks the match: {passage:?}"
+    );
+    let row = session.focus_search_row(0).expect("the top result");
+    assert_eq!(row.summary.as_deref(), Some("3 of 6 messages match"));
+
+    // j enters the children; Return opens the window on message 3.
+    session.invoke("next_message");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusResultChildFocus { child: Some(0) }
+        ))
+        .await,
+        "the ring is on the first child"
+    );
+    session.invoke("open_message");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusOpenMessage { message, .. } if message == third
+        ))
+        .await,
+        "Return opens message 3"
+    );
+    // The window's bar and banner arrive together, in either order.
+    let mut banner = None;
+    let mut marked = Vec::new();
+    assert!(
+        heard(&session, 10, |event| {
+            match event {
+                UiEvent::FocusMatchBanner { banner: Some(each) } => banner = Some(each.clone()),
+                UiEvent::FocusThreadBar { view } if !view.chips.is_empty() => {
+                    marked = view
+                        .chips
+                        .iter()
+                        .filter_map(|chip| match chip {
+                            ThreadChipFfi::Message {
+                                index,
+                                matched: true,
+                                ..
+                            } => Some(*index),
+                            _ => None,
+                        })
+                        .collect();
+                }
+                _ => {}
+            }
+            banner.is_some() && !marked.is_empty()
+        })
+        .await,
+        "the window carries the match banner and the marked bar"
+    );
+    let banner = banner.expect("a banner");
+    assert_eq!(
+        banner.text,
+        "\u{2018}rate limit headers\u{2019} \u{b7} match 1 of 3 in this thread (messages 3, 5 and 6)"
+    );
+    assert_eq!(banner.back, "Back to results");
+    assert_eq!(marked, [2, 4, 5], "messages 3, 5 and 6 are marked");
+
+    // ⌘G asks the message's own find first.
+    session.invoke("find_next");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusReader {
+                verb: postio_ffi::ReaderVerbFfi::NextMatch
+            }
+        ))
+        .await,
+        "⌘G in a window opened from a search steps the message's own matches first"
+    );
+
+    // The message's own find ran out twice: on to 5, then 6.
+    let mut shown = Vec::new();
+    for _ in 0..2 {
+        session.focus_match_edge(true);
+        assert!(
+            heard(&session, 10, |event| match event {
+                UiEvent::FocusOpenMessage { message, .. } => {
+                    shown.push(*message);
+                    true
+                }
+                _ => false,
+            })
+            .await,
+            "the next matched message shows"
+        );
+    }
+    assert_eq!(shown.len(), 2);
+    assert_ne!(shown[0], shown[1]);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusMatchBanner { banner: Some(each) } if each.text.contains("match 3 of 3")
+        ))
+        .await,
+        "the banner says it is the last match"
+    );
+
+    // Escape closes the window; the ring is back on the child it came from.
+    session.invoke("back");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusResultChildFocus { child: Some(0) }
+        ))
+        .await,
+        "Escape refocuses the child the window opened from"
+    );
+    session.shutdown();
+}

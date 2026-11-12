@@ -147,6 +147,12 @@ pub enum ReaderVerbFfi {
     FindNext,
     /// The previous match.
     FindPrevious,
+    /// ⌘G in a window opened from a search: the next match in the message,
+    /// and when it has none, `focus_match_edge(true)`.
+    NextMatch,
+    /// ⇧⌘G in a window opened from a search: the previous match, and when
+    /// there is none, `focus_match_edge(false)`.
+    PrevMatch,
     /// App colours or the original.
     SwitchTreatment,
     /// The raw source, in place of the content.
@@ -164,6 +170,8 @@ impl ReaderVerbFfi {
             Verb::FindInMessage => ReaderVerbFfi::FindInMessage,
             Verb::FindNext => ReaderVerbFfi::FindNext,
             Verb::FindPrevious => ReaderVerbFfi::FindPrevious,
+            Verb::NextMatch => ReaderVerbFfi::NextMatch,
+            Verb::PrevMatch => ReaderVerbFfi::PrevMatch,
             Verb::SwitchTreatment => ReaderVerbFfi::SwitchTreatment,
             Verb::ViewSource => ReaderVerbFfi::ViewSource,
             Verb::ShowMore => ReaderVerbFfi::ShowMore,
@@ -1147,6 +1155,13 @@ impl FocusDriver {
             Intent::ResultsCursor(position) => {
                 self.say(UiEvent::FocusResultsCursor { position });
             }
+            Intent::ResultSplice(splice) => self.say(UiEvent::FocusResultSplice {
+                splice: splice.map(|splice| (&*splice).into()),
+            }),
+            Intent::ResultChildFocus(child) => self.say(UiEvent::FocusResultChildFocus { child }),
+            Intent::MatchBanner(banner) => self.say(UiEvent::FocusMatchBanner {
+                banner: banner.map(Into::into),
+            }),
             Intent::Query(view) => self.say(UiEvent::FocusQuery { view: view.into() }),
             Intent::LeaveResults => self.say(UiEvent::FocusLeaveResults),
             Intent::Popover(view) => self.say(UiEvent::FocusPopover {

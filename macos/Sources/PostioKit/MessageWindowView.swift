@@ -362,7 +362,8 @@ public struct MessageWindowView<BodyView: View>: View {
                             view: layer.view,
                             thread: .init(
                                 kicker: model.kicker, banner: model.olderBanner,
-                                replyTo: model.replyTo, newReply: model.newReply),
+                                replyTo: model.replyTo, newReply: model.newReply,
+                                matchBanner: model.matchBanner),
                             binding: binding),
                         document: layer.document,
                         unsubscribe: model.unsubscribeState(of: layer.message),

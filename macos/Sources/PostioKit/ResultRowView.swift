@@ -121,6 +121,11 @@ public struct ResultRowView: View {
                     Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
                 }
+                // Several of the thread's messages matched: how many, in the
+                // snippet's place (spec 013 US6).
+                if let summary = row.summary {
+                    Text(summary).font(.system(size: 13)).foregroundStyle(.secondary)
+                }
                 if let badge = row.countBadge {
                     Text(badge)
                         .font(.system(size: 10.5).monospacedDigit())
@@ -131,21 +136,27 @@ public struct ResultRowView: View {
                         .fixedSize()
                 }
             }
-            HStack(spacing: 8) {
-                if !row.sourceTag.isEmpty {
-                    Text(row.sourceTag)
-                        .font(.system(size: 11))
-                        .italic(row.sourceIsFile)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .frame(height: 17)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
-                        .fixedSize()
+            if row.summary == nil {
+                HStack(spacing: 8) {
+                    if !row.sourceTag.isEmpty {
+                        sourceChip(row.sourceTag, italic: row.sourceIsFile)
+                    }
+                    Text(SearchRuns.attributed(row.passage, size: 12.5, secondary: true, scheme: scheme))
+                        .truncationMode(.tail)
                 }
-                Text(SearchRuns.attributed(row.passage, size: 12.5, secondary: true, scheme: scheme))
-                    .truncationMode(.tail)
             }
         }
+    }
+
+    private func sourceChip(_ tag: String, italic: Bool) -> some View {
+        Text(tag)
+            .font(.system(size: 11))
+            .italic(italic)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .frame(height: 17)
+            .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
+            .fixedSize()
     }
 
     private func labelPill(_ pill: LabelPillFfi) -> some View {
@@ -160,6 +171,59 @@ public struct ResultRowView: View {
         .frame(height: 18)
         .overlay(Capsule().strokeBorder(.separator, lineWidth: 1))
         .fixedSize()
+    }
+}
+
+/// A line under an opened result (spec 013 US6; screen 06): a message that
+/// matched, with the tag that says which message it is and where it
+/// matched, and its words marked; or the one 30-point line that stands for
+/// the messages between matches that did not.
+public struct ResultChildView: View {
+    let child: ResultChildFfi?
+    @Environment(\.colorScheme) private var scheme
+
+    public init(child: ResultChildFfi?) {
+        self.child = child
+    }
+
+    public var body: some View {
+        HStack(spacing: ResultRowView.Columns.gap) {
+            Color.clear.frame(width: ResultRowView.Columns.gutter)
+            switch child {
+            case let .match(_, _, tag, passage):
+                Text(tag)
+                    .font(.system(size: 11))
+                    .italic(tag.hasSuffix("file"))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .frame(height: 17)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
+                    .fixedSize()
+                Text(SearchRuns.attributed(passage, size: 12.5, secondary: true, scheme: scheme))
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            case let .gap(text):
+                Text(text).font(.system(size: 12)).foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+            case nil:
+                Spacer()
+            }
+        }
+        .lineLimit(1)
+        .padding(.leading, ResultRowView.Columns.leading)
+        .padding(.trailing, ResultRowView.Columns.trailing)
+        .frame(maxHeight: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.accessible(child))
+    }
+
+    /// What VoiceOver reads for a line.
+    static func accessible(_ child: ResultChildFfi?) -> String {
+        switch child {
+        case let .match(_, _, tag, passage): "\(tag), " + passage.map(\.text).joined()
+        case let .gap(text): text
+        case nil: ""
+        }
     }
 }
 

@@ -12,6 +12,10 @@ public struct FindInMessage: Equatable, Sendable {
         public let query: String
         public let backwards: Bool
         public let serial: Int
+        /// Stops at the last match instead of going round: finding nothing
+        /// then means the message's matches ran out (spec 013 US6), and
+        /// the window goes on to the next matched message.
+        public let bounded: Bool
     }
 
     /// Whether the bar is on screen.
@@ -49,6 +53,29 @@ public struct FindInMessage: Equatable, Sendable {
     /// `⇧⌘G`. As `next`, the other way.
     public mutating func previous() -> Bool { step(backwards: true) }
 
+    /// `⌘G` in a window opened from a search: the next match of `words`
+    /// in this message, stopping at its last. The bar stays shut, and the
+    /// words are the search's when none were typed.
+    public mutating func nextWithin(_ words: String) { stepWithin(words, backwards: false) }
+
+    /// `⇧⌘G`: the previous one, stopping at the first.
+    public mutating func previousWithin(_ words: String) { stepWithin(words, backwards: true) }
+
+    /// A message just shown from a search: its first match of `words`
+    /// going forward, or its last going back. The bar stays shut, and
+    /// finding nothing is not an edge (the match may be in a file).
+    public mutating func arrive(_ words: String, backwards: Bool) {
+        if query.isEmpty { query = words }
+        missing = false
+        ask(backwards: backwards, bounded: false)
+    }
+
+    private mutating func stepWithin(_ words: String, backwards: Bool) {
+        if query.isEmpty { query = words }
+        guard !query.isEmpty else { return }
+        ask(backwards: backwards, bounded: true)
+    }
+
     /// `Escape`: the bar and its highlight go; the words stay.
     public mutating func close() {
         isOpen = false
@@ -71,12 +98,12 @@ public struct FindInMessage: Equatable, Sendable {
         return true
     }
 
-    private mutating func ask(backwards: Bool) {
+    private mutating func ask(backwards: Bool, bounded: Bool = false) {
         guard !query.isEmpty else {
             request = nil
             return
         }
         serial += 1
-        request = Request(query: query, backwards: backwards, serial: serial)
+        request = Request(query: query, backwards: backwards, serial: serial, bounded: bounded)
     }
 }

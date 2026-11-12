@@ -141,3 +141,140 @@ impl From<&postio_ui::thread_list::ChildRowView> for ChildRowFfi {
         }
     }
 }
+
+// -- A search in threads (spec 013 US6) ---------------------------------------
+
+use crate::RunFfi;
+
+/// One line under an expanded result: a message that matched, or the run of
+/// messages between matches that did not.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ResultChildFfi {
+    /// A message that matched.
+    Match {
+        /// The message.
+        message: i64,
+        /// Its place in the thread, from 1.
+        number: u32,
+        /// "message 5", "message 5 · file".
+        tag: String,
+        /// The words around the match, the matched ones marked; empty
+        /// while no passage is cut.
+        passage: Vec<RunFfi>,
+    },
+    /// Messages that did not match: a 30-point line to read.
+    Gap {
+        /// "Message 4 doesn't match · Ben, Thu".
+        text: String,
+    },
+}
+
+/// The children drawn after a result's row.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ResultSpliceFfi {
+    /// The expanded result's position among the results.
+    pub anchor: u64,
+    /// The lines, oldest message first.
+    pub children: Vec<ResultChildFfi>,
+    /// The child with the focus ring, an index into `children`.
+    pub focused: Option<u32>,
+}
+
+/// The banner of a window opened from a search.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MatchBannerFfi {
+    /// "‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)".
+    pub text: String,
+    /// The first button: "Next".
+    pub next: String,
+    /// Its key, as the keymap has it.
+    pub next_key: Option<String>,
+    /// The second: "Back to results".
+    pub back: String,
+    /// Its key, as the keymap has it.
+    pub back_key: Option<String>,
+}
+
+impl From<postio_ui::thread_bar::MatchBannerView> for MatchBannerFfi {
+    fn from(view: postio_ui::thread_bar::MatchBannerView) -> Self {
+        MatchBannerFfi {
+            text: view.text,
+            next: view.next,
+            next_key: view.next_key,
+            back: view.back,
+            back_key: view.back_key,
+        }
+    }
+}
+
+/// `passage` as runs: the byte ranges it names marked, an ellipsis where
+/// text was cut.
+fn passage_runs(passage: &postio_search::passage::Passage) -> Vec<RunFfi> {
+    let plain = |text: &str| RunFfi {
+        text: text.to_owned(),
+        highlighted: false,
+        style: crate::RunStyleFfi::Plain,
+    };
+    let mut runs = Vec::new();
+    if passage.elided_start {
+        runs.push(plain("\u{2026}"));
+    }
+    let text = &passage.text;
+    let mut at = 0;
+    for range in &passage.ranges {
+        let (start, end) = (range.start, range.end);
+        if start < at
+            || end > text.len()
+            || !text.is_char_boundary(start)
+            || !text.is_char_boundary(end)
+        {
+            continue;
+        }
+        if start > at {
+            runs.push(plain(&text[at..start]));
+        }
+        runs.push(RunFfi {
+            highlighted: true,
+            ..plain(&text[start..end])
+        });
+        at = end;
+    }
+    if at < text.len() {
+        runs.push(plain(&text[at..]));
+    }
+    if passage.elided_end {
+        runs.push(plain("\u{2026}"));
+    }
+    runs
+}
+
+impl From<&postio_ui::search_view::ResultChild> for ResultChildFfi {
+    fn from(child: &postio_ui::search_view::ResultChild) -> Self {
+        match child {
+            postio_ui::search_view::ResultChild::Match {
+                message,
+                number,
+                tag,
+                passage,
+            } => ResultChildFfi::Match {
+                message: message.get(),
+                number: *number,
+                tag: tag.clone(),
+                passage: passage.as_ref().map(passage_runs).unwrap_or_default(),
+            },
+            gap @ postio_ui::search_view::ResultChild::Gap { .. } => ResultChildFfi::Gap {
+                text: postio_ui::search_view::gap_line(gap),
+            },
+        }
+    }
+}
+
+impl From<&postio_focus::ResultSplice> for ResultSpliceFfi {
+    fn from(splice: &postio_focus::ResultSplice) -> Self {
+        ResultSpliceFfi {
+            anchor: splice.anchor,
+            children: splice.children.iter().map(Into::into).collect(),
+            focused: splice.focused,
+        }
+    }
+}

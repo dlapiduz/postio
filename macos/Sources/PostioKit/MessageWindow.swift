@@ -112,6 +112,12 @@ public final class MessageWindowModel {
     public private(set) var newReply: ThreadBannerFfi?
     /// The Reply to row of the sender block.
     public private(set) var replyTo: String?
+    /// The banner of a window opened from a search: where the message on
+    /// screen is among the thread's matches (spec 013 US6).
+    public private(set) var matchBanner: MatchBannerFfi?
+    /// The words of the search the window was opened from: what the
+    /// message's own find looks for when `⌘G` is pressed.
+    public var searchWords = ""
 
     /// The main window's width the window opened beside: kept while it is
     /// open, so `j` and `k` never resize it (M1).
@@ -130,6 +136,12 @@ public final class MessageWindowModel {
     @ObservationIgnored private var dwell: DwellClock?
     /// Called with a message the read clock ran out on.
     @ObservationIgnored private let markRead: (Int64) -> Void
+    /// The message's own find ran out in a window opened from a search:
+    /// said to the controller, which goes on to the next matched message.
+    @ObservationIgnored private let matchEdge: (Bool) -> Void
+    /// Which way the last step across messages went: the message that
+    /// shows next gets its first match going forward, or its last going back.
+    @ObservationIgnored private var arriving: Bool?
     /// Hand a file to the system to open: the one place a chosen
     /// attachment leaves Postio. Nothing calls it but a person's choice.
     @ObservationIgnored private let handOff: (URL) -> Void
@@ -152,6 +164,7 @@ public final class MessageWindowModel {
         source: any MessageWindowSource,
         report: @escaping (Bool, Bool) -> Void,
         markRead: @escaping (Int64) -> Void = { _ in },
+        matchEdge: @escaping (Bool) -> Void = { _ in },
         handOff: @escaping (URL) -> Void = { _ in },
         schedule: @escaping @MainActor (TimeInterval, @escaping () -> Void) -> DwellClock.Cancellable =
             DwellClock.afterOnMain
@@ -159,6 +172,7 @@ public final class MessageWindowModel {
         engine = source
         self.report = report
         self.markRead = markRead
+        self.matchEdge = matchEdge
         self.handOff = handOff
         dwell = DwellClock(schedule: schedule) { [weak self] message in
             self?.dwellRanOut(message)
@@ -230,6 +244,7 @@ public final class MessageWindowModel {
         case let .olderBanner(banner): olderBanner = banner
         case let .newReply(banner): newReply = banner
         case let .replyTo(text): replyTo = text
+        case let .matchBanner(banner): matchBanner = banner
         }
     }
 
@@ -240,6 +255,8 @@ public final class MessageWindowModel {
         olderBanner = nil
         newReply = nil
         replyTo = nil
+        matchBanner = nil
+        arriving = nil
         dwell?.stop()
         settledRead = nil
         _ = gate.begin()
@@ -391,6 +408,14 @@ public final class MessageWindowModel {
             _ = find.next()
         case .findPrevious:
             _ = find.previous()
+        case .nextMatch:
+            // The message's own matches first; when they run out, `found`
+            // tells the controller, which shows the next matched message.
+            arriving = nil
+            find.nextWithin(searchWords)
+        case .prevMatch:
+            arriving = nil
+            find.previousWithin(searchWords)
         case .switchTreatment:
             guard let shownTreatment = document?.treatmentShown else { return }
             chosen = shownTreatment == .paper ? .appColours : .paper
@@ -429,7 +454,15 @@ public final class MessageWindowModel {
 
     /// The web view's answer to the last find.
     public func found(_ any: Bool) {
+        let ranOut = !any && find.request?.bounded == true
+        let backwards = find.request?.backwards ?? false
         find.found(any)
+        if ranOut {
+            // The next message shows its first match going forward, its
+            // last going back.
+            arriving = !backwards
+            matchEdge(!backwards)
+        }
     }
 
     /// Wait for whatever is being read: a test's way to see the result.
@@ -526,6 +559,22 @@ public final class MessageWindowModel {
         displayed = screen.message
         view = screen.view
         document = screen.document
+        arrive(at: screen.message)
+    }
+
+    /// A message from a search is on screen: select its first match going
+    /// forward, or its last going back, once its body has painted.
+    private func arrive(at message: Int64) {
+        let backwards = arriving.map { !$0 } ?? false
+        arriving = nil
+        guard !searchWords.isEmpty else { return }
+        pending.append(
+            Task { [weak self] in
+                try? await Task.sleep(for: Self.drawPatience)
+                guard let self, self.displayed == message, !self.showingSource, self.matchBanner != nil
+                else { return }
+                self.find.arrive(self.searchWords, backwards: backwards)
+            })
     }
 
     private func loadView(_ message: Int64) {
