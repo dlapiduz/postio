@@ -737,6 +737,346 @@ pub fn fold_quote(body: &str) -> Option<QuoteFold> {
     })
 }
 
+// ---- Spec 013 US7: replying to an older message, forwarding a thread ----
+
+/// One message newer than the one a reply answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewerMessage {
+    /// Who wrote it, as a first name.
+    pub who: String,
+    /// When it arrived.
+    pub at: chrono::DateTime<chrono::Utc>,
+}
+
+/// The message a reply answers, when it is not the thread's latest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OlderReplyFacts {
+    /// Its place in the thread, from 1.
+    pub number: usize,
+    /// How many messages the thread has.
+    pub total: usize,
+    /// Who wrote it, as a first name.
+    pub who: String,
+    /// When it arrived.
+    pub at: chrono::DateTime<chrono::Utc>,
+    /// The messages after it, oldest first.
+    pub newer: Vec<NewerMessage>,
+}
+
+/// One of the older-reply bar's two buttons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BarAction {
+    /// "Show them", "Reply to latest".
+    pub label: String,
+    /// Its key, as the keymap has it.
+    pub key: Option<String>,
+}
+
+/// The bar under the composer's title on a reply to a message that is not
+/// the latest (spec 013 FR-022, screen 09).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OlderReplyView {
+    /// "You're replying to message 4 of 6, not the latest".
+    pub title: String,
+    /// Which newer messages there are, and what the reply quotes.
+    pub detail: String,
+    /// Show them (or Hide them), then Reply to latest.
+    pub actions: [BarAction; 2],
+    /// Whether the newer messages are on show: "Show them" reads "Hide
+    /// them" then.
+    pub newer_shown: bool,
+}
+
+/// How a thread's member is named in these words: "You", or the first name.
+pub fn member_name(member: &postio_model::thread_view::ThreadMember) -> String {
+    match (&member.from, member.own) {
+        (_, true) => "You".to_owned(),
+        (Some(from), false) => crate::focus_row::first_name(from).to_owned(),
+        (None, false) => "Someone".to_owned(),
+    }
+}
+
+fn newer_count_words(count: usize) -> String {
+    match count {
+        1 => "One newer message".to_owned(),
+        2 => "Two newer messages".to_owned(),
+        n => format!("{n} newer messages"),
+    }
+}
+
+fn clock_and_day(at: chrono::DateTime<chrono::Utc>) -> (String, String) {
+    let local = at.with_timezone(&chrono::Local);
+    (
+        local.format("%H:%M").to_string(),
+        local.format("%A").to_string(),
+    )
+}
+
+/// The older-reply bar's words, from the keymap's keys.
+pub fn older_reply(
+    facts: &OlderReplyFacts,
+    newer_shown: bool,
+    keymap: &postio_core::Keymap,
+) -> OlderReplyView {
+    let named: Vec<String> = facts
+        .newer
+        .iter()
+        .map(|message| format!("{} at {}", message.who, clock_and_day(message.at).0))
+        .collect();
+    let newer = match (named.len(), named.split_last()) {
+        (0, _) | (_, None) => String::new(),
+        (1, _) => format!("{}: {}.", newer_count_words(1), named[0]),
+        (n, Some((last, rest))) if n <= 3 => {
+            format!("{}: {} and {last}.", newer_count_words(n), rest.join(", "))
+        }
+        (n, Some((last, _))) => format!("{}, the latest {last}.", newer_count_words(n)),
+    };
+    let quoted = format!(
+        "Your reply quotes {}\u{2019}s {} message and threads under it.",
+        facts.who,
+        clock_and_day(facts.at).1
+    );
+    OlderReplyView {
+        title: format!(
+            "You\u{2019}re replying to message {} of {}, not the latest",
+            facts.number, facts.total
+        ),
+        detail: format!("{newer} {quoted}"),
+        actions: [
+            BarAction {
+                label: if newer_shown {
+                    "Hide them"
+                } else {
+                    "Show them"
+                }
+                .to_owned(),
+                key: crate::hints::key(keymap, postio_core::CommandId::ShowNewer),
+            },
+            BarAction {
+                label: "Reply to latest".to_owned(),
+                key: crate::hints::key(keymap, postio_core::CommandId::ReplyToLatest),
+            },
+        ],
+        newer_shown,
+    }
+}
+
+/// One card of the *What to forward* chooser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChooserCard {
+    /// What choosing it does.
+    pub form: postio_model::ForwardForm,
+    /// Its number key, as the keymap has it.
+    pub key: Option<String>,
+    /// "This message".
+    pub title: String,
+    /// One line under it.
+    pub detail: String,
+}
+
+/// The chooser the composer shows above To when a thread of two or more is
+/// forwarded (spec 013 FR-023, screen 10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChooserView {
+    /// "What to forward".
+    pub heading: String,
+    /// The three cards, in key order.
+    pub cards: Vec<ChooserCard>,
+    /// The one chosen.
+    pub selected: postio_model::ForwardForm,
+}
+
+/// The chooser's cards. `of` is whose message "This message" would forward,
+/// and the day it arrived, when the thread says.
+pub fn forward_chooser(
+    selected: postio_model::ForwardForm,
+    messages: usize,
+    of: Option<(&str, chrono::DateTime<chrono::Utc>)>,
+    keymap: &postio_core::Keymap,
+) -> ChooserView {
+    use postio_core::CommandId;
+    use postio_model::ForwardForm;
+    let this = match of {
+        Some((who, at)) => format!(
+            "Only {who}\u{2019}s {} message, quoted as usual.",
+            clock_and_day(at).1
+        ),
+        None => "Only this message, quoted as usual.".to_owned(),
+    };
+    let card = |form, command, title: &str, detail: String| ChooserCard {
+        form,
+        key: crate::hints::key(keymap, command),
+        title: title.to_owned(),
+        detail,
+    };
+    ChooserView {
+        heading: "What to forward".to_owned(),
+        cards: vec![
+            card(
+                ForwardForm::This,
+                CommandId::ForwardWhat1,
+                "This message",
+                this,
+            ),
+            card(
+                ForwardForm::Thread,
+                CommandId::ForwardWhat2,
+                "Whole thread",
+                format!(
+                    "All {messages} messages, oldest first, in one readable message. \
+                     Attachments included."
+                ),
+            ),
+            card(
+                ForwardForm::Attachments,
+                CommandId::ForwardWhat3,
+                "As attachments",
+                "Each message as an .eml file, for someone who needs the originals.".to_owned(),
+            ),
+        ],
+        selected,
+    }
+}
+
+/// What is said when a forward form was refused because `missing` of the
+/// thread's messages are not on this machine: nothing was fetched.
+pub fn forward_not_local(form: postio_model::ForwardForm, missing: usize) -> String {
+    let which = match missing {
+        1 => "1 message isn\u{2019}t".to_owned(),
+        n => format!("{n} messages aren\u{2019}t"),
+    };
+    let what = match form {
+        postio_model::ForwardForm::Attachments => "they can\u{2019}t be forwarded as attachments",
+        _ => "the thread can\u{2019}t be forwarded whole",
+    };
+    format!("{which} on this machine yet, so {what}. Nothing was fetched.")
+}
+
+#[cfg(test)]
+mod thread_words_tests {
+    use chrono::{Local, TimeZone, Utc};
+    use postio_core::Keymap;
+    use postio_model::ForwardForm;
+
+    use super::*;
+
+    fn at(hour: u32, minute: u32) -> chrono::DateTime<Utc> {
+        Local
+            .with_ymd_and_hms(2026, 9, 24, hour, minute, 0)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn the_bar_says_which_message_and_names_the_newer_ones() {
+        let facts = OlderReplyFacts {
+            number: 4,
+            total: 6,
+            who: "Ben".into(),
+            at: at(9, 0),
+            newer: vec![
+                NewerMessage {
+                    who: "Lena".into(),
+                    at: at(15, 22),
+                },
+                NewerMessage {
+                    who: "Ben".into(),
+                    at: at(16, 40),
+                },
+            ],
+        };
+        let view = older_reply(&facts, false, Keymap::defaults());
+        assert_eq!(
+            view.title,
+            "You\u{2019}re replying to message 4 of 6, not the latest"
+        );
+        assert_eq!(
+            view.detail,
+            "Two newer messages: Lena at 15:22 and Ben at 16:40. Your reply quotes \
+             Ben\u{2019}s Thursday message and threads under it."
+        );
+        assert_eq!(view.actions[0].label, "Show them");
+        assert_eq!(
+            view.actions[0].key,
+            crate::hints::key(Keymap::defaults(), postio_core::CommandId::ShowNewer)
+        );
+        assert!(
+            view.actions[0]
+                .key
+                .as_deref()
+                .is_some_and(|k| k.ends_with("shift+Down"))
+        );
+        assert_eq!(view.actions[1].label, "Reply to latest");
+        assert!(
+            view.actions[1]
+                .key
+                .as_deref()
+                .is_some_and(|k| k.ends_with("+e"))
+        );
+        let shown = older_reply(&facts, true, Keymap::defaults());
+        assert_eq!(shown.actions[0].label, "Hide them");
+    }
+
+    #[test]
+    fn many_newer_messages_name_only_the_latest() {
+        let newer = (0..5)
+            .map(|n| NewerMessage {
+                who: "Ana".into(),
+                at: at(10 + n, 0),
+            })
+            .collect();
+        let facts = OlderReplyFacts {
+            number: 2,
+            total: 8,
+            who: "Ben".into(),
+            at: at(9, 0),
+            newer,
+        };
+        let view = older_reply(&facts, false, Keymap::defaults());
+        assert!(
+            view.detail
+                .starts_with("5 newer messages, the latest Ana at 14:00."),
+            "{}",
+            view.detail
+        );
+    }
+
+    #[test]
+    fn the_chooser_has_three_numbered_cards_and_the_choice() {
+        let view = forward_chooser(
+            ForwardForm::This,
+            6,
+            Some(("Ben", at(9, 0))),
+            Keymap::defaults(),
+        );
+        assert_eq!(view.heading, "What to forward");
+        let titles: Vec<_> = view.cards.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(titles, ["This message", "Whole thread", "As attachments"]);
+        let keys: Vec<_> = view.cards.iter().map(|c| c.key.as_deref()).collect();
+        assert_eq!(keys, [Some("1"), Some("2"), Some("3")]);
+        assert_eq!(
+            view.cards[0].detail,
+            "Only Ben\u{2019}s Thursday message, quoted as usual."
+        );
+        assert!(
+            view.cards[1]
+                .detail
+                .starts_with("All 6 messages, oldest first")
+        );
+        assert_eq!(view.selected, ForwardForm::This);
+    }
+
+    #[test]
+    fn a_refusal_counts_the_messages_that_are_not_here() {
+        assert_eq!(
+            forward_not_local(ForwardForm::Thread, 2),
+            "2 messages aren\u{2019}t on this machine yet, so the thread can\u{2019}t be \
+             forwarded whole. Nothing was fetched."
+        );
+        assert!(forward_not_local(ForwardForm::Attachments, 1).starts_with("1 message isn"));
+    }
+}
+
 #[cfg(test)]
 mod frame_tests {
     use chrono::{Local, TimeZone, Utc};

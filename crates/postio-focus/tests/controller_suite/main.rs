@@ -31,6 +31,7 @@ mod search_support;
 mod search_threads;
 mod states;
 mod surfaces;
+mod thread_compose;
 mod thread_menu;
 mod threads;
 mod verbs;

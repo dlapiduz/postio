@@ -36,7 +36,7 @@ impl ComposerKindFfi {
             Kind::New => ComposerKindFfi::New,
             Kind::Reply => ComposerKindFfi::Reply,
             Kind::ReplyAll => ComposerKindFfi::ReplyAll,
-            Kind::Forward => ComposerKindFfi::Forward,
+            Kind::Forward { .. } => ComposerKindFfi::Forward,
             Kind::Draft => ComposerKindFfi::Draft,
             _ => return None,
         })

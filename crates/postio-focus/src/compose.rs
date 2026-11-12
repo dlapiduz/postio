@@ -23,12 +23,14 @@
 use std::time::Duration;
 
 use postio_core::CommandId;
-use postio_model::{DraftId, DraftState, MessageId};
+use postio_model::thread_view::ThreadView;
+use postio_model::{DraftId, DraftState, ForwardForm, Forwarded, MessageId};
+use postio_ui::compose::{self as words, OlderReplyFacts};
 use postio_ui::focus_target;
 
 use crate::cursor::Rows;
 use crate::feed::Step;
-use crate::{FocusController, Intent, Request, SurfaceKind, ToastKind};
+use crate::{DraftEdit, FocusController, Intent, Request, SurfaceKind, ToastKind};
 
 /// How long the composer waits after an edit before saving what is
 /// written: a burst of keystrokes is one save, and a crash loses at most
@@ -36,7 +38,7 @@ use crate::{FocusController, Intent, Request, SurfaceKind, ToastKind};
 pub const AUTOSAVE: Duration = Duration::from_millis(1500);
 
 /// What the composer is asked to write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ComposerKind {
     /// A new message, answering nothing.
@@ -45,8 +47,13 @@ pub enum ComposerKind {
     Reply,
     /// A reply to everyone on the message.
     ReplyAll,
-    /// The message, forwarded.
-    Forward,
+    /// The message, forwarded: in what form (spec 013 FR-023). Every
+    /// forward opens as [`postio_model::ForwardForm::This`]; the chooser
+    /// changes it afterwards.
+    Forward {
+        /// What the forward carries.
+        form: postio_model::ForwardForm,
+    },
     /// The draft behind the message, to go on writing.
     Draft,
 }
@@ -63,9 +70,43 @@ struct Composition {
     pending: Option<u64>,
 }
 
+/// A forward in a thread of two or more: what the chooser is drawn from.
+#[derive(Debug, Clone)]
+struct Chooser {
+    /// The card chosen.
+    form: ForwardForm,
+    /// How many messages the thread has.
+    messages: usize,
+    /// Whose message "This message" forwards, and when it arrived.
+    of: Option<(String, chrono::DateTime<chrono::Utc>)>,
+}
+
+/// A reply to a message that is not the latest.
+#[derive(Debug, Clone)]
+struct Older {
+    facts: OlderReplyFacts,
+    /// The messages after the one answered, oldest first.
+    newer: Vec<MessageId>,
+    /// Whether they are on show.
+    shown: bool,
+}
+
+/// What a composition's thread, if it has one, adds to the composer (spec
+/// 013 US7). Begun afresh with each composition.
+#[derive(Debug, Default)]
+struct ThreadCompose {
+    chooser: Option<Chooser>,
+    older: Option<Older>,
+    /// The quoted messages' collapsed rows are expanded.
+    quoted_expanded: bool,
+}
+
 /// The composer, as the controller keeps it.
 #[derive(Debug, Default)]
 pub(crate) struct Compose {
+    /// The chooser, the older-reply bar and the quoted rows of the
+    /// composition in the composer.
+    thread: ThreadCompose,
     /// The composition in the composer, while it is open.
     open: Option<Composition>,
     /// Compositions begun so far.
@@ -94,6 +135,7 @@ pub(crate) fn compose_key(id: CommandId) -> bool {
             | CommandId::Reply
             | CommandId::ReplyAll
             | CommandId::Forward
+            | CommandId::ReplyToLatest
             | CommandId::CancelSend
             | CommandId::RetrySend
             | CommandId::MarkSent
@@ -109,7 +151,21 @@ impl FocusController {
             CommandId::Compose => return Some(self.write(ComposerKind::New, None)),
             CommandId::Reply => ComposerKind::Reply,
             CommandId::ReplyAll => ComposerKind::ReplyAll,
-            CommandId::Forward => ComposerKind::Forward,
+            CommandId::Forward => ComposerKind::Forward {
+                form: ForwardForm::This,
+            },
+            // The latest message of the thread, from the window or a row.
+            CommandId::ReplyToLatest => {
+                let message = self.aimed_for_writing(rows)?;
+                if focus_target::refuses_reply(self.send_state_of(message, rows)) {
+                    return Some(vec![Step::Show(Intent::Toast {
+                        text: focus_target::NO_REPLY_TO_OUTGOING.to_owned(),
+                        kind: ToastKind::Notice,
+                    })]);
+                }
+                let latest = self.latest_received(message).unwrap_or(message);
+                return Some(self.write_in(ComposerKind::Reply, Some(latest), Some(rows)));
+            }
             CommandId::CancelSend | CommandId::RetrySend | CommandId::MarkSent => {
                 let message = self.aimed_for_writing(rows)?;
                 return Some(self.settle(id, message, rows));
@@ -119,7 +175,7 @@ impl FocusController {
         let message = self.aimed_for_writing(rows)?;
         // Not on mail still on its way out (#1749): it has no other party
         // yet, and answering it would be replying to oneself.
-        if kind != ComposerKind::Forward
+        if !matches!(kind, ComposerKind::Forward { .. })
             && focus_target::refuses_reply(self.send_state_of(message, rows))
         {
             return Some(vec![Step::Show(Intent::Toast {
@@ -127,7 +183,7 @@ impl FocusController {
                 kind: ToastKind::Notice,
             })]);
         }
-        Some(self.write(kind, Some(message)))
+        Some(self.write_in(kind, Some(message), Some(rows)))
     }
 
     /// A command while the composer is on top: Esc ends the composition,
@@ -143,13 +199,31 @@ impl FocusController {
             steps.extend(self.end_composition());
             return steps;
         }
+        match id {
+            CommandId::ForwardWhat1 => return self.forward_form_chosen(ForwardForm::This),
+            CommandId::ForwardWhat2 => return self.forward_form_chosen(ForwardForm::Thread),
+            CommandId::ForwardWhat3 => return self.forward_form_chosen(ForwardForm::Attachments),
+            CommandId::ReplyToLatest => return self.reply_to_latest_asked(),
+            CommandId::ShowNewer => return self.show_newer_toggled(),
+            CommandId::ExpandQuoted => return self.quoted_toggled(),
+            _ => {}
+        }
         self.compose_verb(id, rows).unwrap_or_default()
     }
 
     /// Whether the composer, on top, answers `id` here rather than leaving
     /// it to the toolkit's composer.
     pub(crate) fn composer_answers(id: CommandId) -> bool {
-        id == CommandId::Back || compose_key(id)
+        id == CommandId::Back
+            || compose_key(id)
+            || matches!(
+                id,
+                CommandId::ForwardWhat1
+                    | CommandId::ForwardWhat2
+                    | CommandId::ForwardWhat3
+                    | CommandId::ShowNewer
+                    | CommandId::ExpandQuoted
+            )
     }
 
     /// The message `e`, `E`, `f` and the send verbs aim at: the message open
@@ -201,6 +275,17 @@ impl FocusController {
     /// the secondary window that was open (M4). A new message with no
     /// account to write from offers to add one instead (T172).
     pub(crate) fn write(&mut self, kind: ComposerKind, message: Option<MessageId>) -> Vec<Step> {
+        self.write_in(kind, message, None)
+    }
+
+    /// [`Self::write`], with the list the message was aimed in when there is
+    /// one: a collapsed row says how many messages its thread has.
+    fn write_in(
+        &mut self,
+        kind: ComposerKind,
+        message: Option<MessageId>,
+        rows: Option<&dyn Rows>,
+    ) -> Vec<Step> {
         if kind == ComposerKind::New && self.compose.no_account {
             return vec![Step::Show(Intent::Toast {
                 text: focus_target::NO_ACCOUNT_TO_WRITE_FROM.to_owned(),
@@ -224,7 +309,250 @@ impl FocusController {
         );
         self.begin_composition();
         steps.push(Step::Show(Intent::Composer { kind, message }));
+        if let Some(message) = message {
+            match kind {
+                ComposerKind::Forward { .. } => steps.extend(self.offer_chooser(message, rows)),
+                ComposerKind::Reply | ComposerKind::ReplyAll => {
+                    steps.extend(self.offer_older_reply(message));
+                }
+                _ => {}
+            }
+        }
         steps
+    }
+
+    /// The thread `message` is a member of, as the window or the expanded
+    /// row last read it.
+    fn thread_view_of(&self, message: MessageId) -> Option<&ThreadView> {
+        let has = |view: &ThreadView| view.members.iter().any(|member| member.id == message);
+        self.walk
+            .as_ref()
+            .map(|walk| &walk.view)
+            .filter(|view| has(view))
+            .or_else(|| {
+                self.expansion
+                    .as_ref()
+                    .map(|expansion| &expansion.view)
+                    .filter(|view| has(view))
+            })
+    }
+
+    /// The latest message of `message`'s thread that was received, when the
+    /// thread has been read: the one `alt+e` answers.
+    fn latest_received(&self, message: MessageId) -> Option<MessageId> {
+        let view = self.thread_view_of(message)?;
+        view.members
+            .iter()
+            .rev()
+            .find(|member| !member.own)
+            .map(|member| member.id)
+    }
+
+    /// The *What to forward* chooser, when `message`'s thread has two
+    /// messages or more (FR-023).
+    fn offer_chooser(&mut self, message: MessageId, rows: Option<&dyn Rows>) -> Vec<Step> {
+        let (messages, of) = match self.thread_view_of(message) {
+            Some(view) => (
+                view.members.len(),
+                view.members
+                    .iter()
+                    .find(|member| member.id == message)
+                    .map(|member| (words::member_name(member), member.at)),
+            ),
+            None => {
+                let count = rows
+                    .and_then(|rows| rows.row(rows.position_of(message)?))
+                    .and_then(|row| row.as_conversation().map(|c| c.summary.message_count));
+                (count.unwrap_or(1) as usize, None)
+            }
+        };
+        if messages < 2 {
+            return Vec::new();
+        }
+        let chooser = Chooser {
+            form: ForwardForm::This,
+            messages,
+            of,
+        };
+        let view = self.chooser_view(&chooser);
+        self.compose.thread.chooser = Some(chooser);
+        vec![Step::Show(Intent::ForwardChooser(Box::new(view)))]
+    }
+
+    fn chooser_view(&self, chooser: &Chooser) -> words::ChooserView {
+        words::forward_chooser(
+            chooser.form,
+            chooser.messages,
+            chooser.of.as_ref().map(|(who, at)| (who.as_str(), *at)),
+            self.keymap(),
+        )
+    }
+
+    /// The bar under the title of a reply to a message that is not the
+    /// latest one received (FR-022).
+    fn offer_older_reply(&mut self, message: MessageId) -> Vec<Step> {
+        let Some(view) = self.thread_view_of(message) else {
+            return Vec::new();
+        };
+        let Some(at) = view.members.iter().position(|member| member.id == message) else {
+            return Vec::new();
+        };
+        let latest = view.members.iter().rposition(|member| !member.own);
+        if latest.is_none_or(|latest| at >= latest) {
+            return Vec::new();
+        }
+        let answered = &view.members[at];
+        let newer = &view.members[at + 1..];
+        let older = Older {
+            facts: OlderReplyFacts {
+                number: at + 1,
+                total: view.members.len(),
+                who: words::member_name(answered),
+                at: answered.at,
+                newer: newer
+                    .iter()
+                    .map(|member| words::NewerMessage {
+                        who: words::member_name(member),
+                        at: member.at,
+                    })
+                    .collect(),
+            },
+            newer: newer.iter().map(|member| member.id).collect(),
+            shown: false,
+        };
+        let bar = self.older_bar(&older);
+        self.compose.thread.older = Some(older);
+        vec![Step::Show(Intent::OlderReply(Some(Box::new(bar))))]
+    }
+
+    fn older_bar(&self, older: &Older) -> words::OlderReplyView {
+        words::older_reply(&older.facts, older.shown, self.keymap())
+    }
+
+    /// `1`, `2`, `3` or a click on a card: the composer is asked for its
+    /// draft, which the engine then rebuilds in that form.
+    pub(crate) fn forward_form_chosen(&mut self, form: ForwardForm) -> Vec<Step> {
+        if !self.surfaces.has(SurfaceKind::Composer) {
+            return Vec::new();
+        }
+        match self.compose.thread.chooser.as_ref() {
+            Some(chooser) if chooser.form != form => {
+                vec![Step::Show(Intent::ComposerDraftWanted(
+                    DraftEdit::ForwardForm(form),
+                ))]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// `alt+e` in a reply to an older message.
+    fn reply_to_latest_asked(&mut self) -> Vec<Step> {
+        if self.compose.thread.older.is_none() {
+            return Vec::new();
+        }
+        vec![Step::Show(Intent::ComposerDraftWanted(
+            DraftEdit::ReplyToLatest,
+        ))]
+    }
+
+    /// The composer's draft, as the controller asked for it: the engine
+    /// changes it.
+    pub(crate) fn composer_draft(
+        &mut self,
+        edit: DraftEdit,
+        draft: Box<postio_model::Draft>,
+    ) -> Vec<Step> {
+        if self.compose.open.is_none() {
+            return Vec::new();
+        }
+        vec![Step::Ask(match edit {
+            DraftEdit::ForwardForm(form) => Request::SetForwardForm { draft, form },
+            DraftEdit::ReplyToLatest => Request::ReplyToLatest { draft },
+        })]
+    }
+
+    /// The engine rebuilt the forward in `form`, or said why it could not.
+    pub(crate) fn forwarded(
+        &mut self,
+        form: ForwardForm,
+        answer: Result<Forwarded, String>,
+    ) -> Vec<Step> {
+        let notice = |text: String| {
+            vec![Step::Show(Intent::Toast {
+                text,
+                kind: ToastKind::Notice,
+            })]
+        };
+        match answer {
+            // Said, and the form stays as it was; nothing was fetched.
+            Ok(Forwarded::NotLocal(missing)) => {
+                notice(words::forward_not_local(form, missing.len()))
+            }
+            Err(sentence) => notice(sentence),
+            Ok(Forwarded::Draft(draft)) => {
+                let Some(chooser) = self.compose.thread.chooser.as_mut() else {
+                    return Vec::new();
+                };
+                chooser.form = form;
+                let chooser = chooser.clone();
+                vec![
+                    Step::Show(Intent::ForwardChooser(Box::new(
+                        self.chooser_view(&chooser),
+                    ))),
+                    Step::Show(Intent::ComposerDraft(draft)),
+                ]
+            }
+        }
+    }
+
+    /// The engine moved the reply to the latest message, or said why not.
+    pub(crate) fn replied_to_latest(
+        &mut self,
+        answer: Result<Box<postio_model::Draft>, String>,
+    ) -> Vec<Step> {
+        match answer {
+            Err(sentence) => vec![Step::Show(Intent::Toast {
+                text: sentence,
+                kind: ToastKind::Notice,
+            })],
+            Ok(draft) => {
+                let Some(older) = self.compose.thread.older.take() else {
+                    return Vec::new();
+                };
+                let mut steps = vec![Step::Show(Intent::OlderReply(None))];
+                if older.shown {
+                    steps.push(Step::Show(Intent::NewerMessages(None)));
+                }
+                steps.push(Step::Show(Intent::ComposerDraft(draft)));
+                steps
+            }
+        }
+    }
+
+    /// `mod+shift+Down`: the messages newer than the one answered, on show
+    /// read-only, or put away.
+    fn show_newer_toggled(&mut self) -> Vec<Step> {
+        let Some(older) = self.compose.thread.older.as_mut() else {
+            return Vec::new();
+        };
+        older.shown = !older.shown;
+        let (shown, ids) = (older.shown, older.newer.clone());
+        let bar = self.older_bar(self.compose.thread.older.as_ref().expect("just toggled"));
+        vec![
+            Step::Show(Intent::NewerMessages(shown.then_some(ids))),
+            Step::Show(Intent::OlderReply(Some(Box::new(bar)))),
+        ]
+    }
+
+    /// `mod+shift+q`: the quoted messages' collapsed rows, expanded or
+    /// collapsed again.
+    fn quoted_toggled(&mut self) -> Vec<Step> {
+        if self.compose.open.is_none() {
+            return Vec::new();
+        }
+        let expanded = !self.compose.thread.quoted_expanded;
+        self.compose.thread.quoted_expanded = expanded;
+        vec![Step::Show(Intent::QuotedExpanded(expanded))]
     }
 
     /// The frontend opened the composer itself (a `mailto:` link): a
@@ -236,6 +564,7 @@ impl FocusController {
     }
 
     fn begin_composition(&mut self) {
+        self.compose.thread = ThreadCompose::default();
         self.compose.begun += 1;
         self.compose.open = Some(Composition {
             number: self.compose.begun,

@@ -341,14 +341,14 @@ the text and quotes message 6. Then `f`, `2` gives "Fwd: Harbor API draft v3
   - `SetForwardForm` rebuilds the forwarded content and keeps the typed text;
   - forms 2 and 3 with a member not local answer `NotLocal` and fetch nothing (assert no transport call through the `MailBackend` mock).
 - [x] T079 [US7] Implement `ReplyToLatest`, `SetForwardForm` and `Req::ForwardThread` in `crates/postio-session/src/` and `crates/postio-client/src/{protocol,api}.rs`, with the subject "Fwd: <subject> (N messages)".
-- [ ] T080 [P] [US7] Write controller cases in `crates/postio-focus/tests/controller_suite/threads.rs` (red):
+- [x] T080 [P] [US7] Write controller cases in `crates/postio-focus/tests/controller_suite/threads.rs` (red):
   - `f` in a thread of 2+ opens the chooser on This;
   - `2`/`3` switch the form;
   - `f` in a one-message thread shows no chooser;
   - a reply to a non-latest member shows `OlderReply`;
   - `ShowNewer` and `ExpandQuoted` toggle their views.
-- [ ] T081 [P] [US7] Write the storyboards `storyboards/threads/reply-older.*` and `forward-thread.*`, red on `main`.
-- [ ] T082 [US7] Implement the chooser (`ComposerKind::Forward { form }`) and the older-reply state in `crates/postio-focus/src/compose.rs`, with the words in `crates/postio-ui/src/compose.rs`.
+- [x] T081 [P] [US7] Write the storyboards `storyboards/threads/reply-older.*` and `forward-thread.*`, red on `main`.
+- [x] T082 [US7] Implement the chooser (`ComposerKind::Forward { form }`) and the older-reply state in `crates/postio-focus/src/compose.rs`, with the words in `crates/postio-ui/src/compose.rs`.
 - [ ] T083 [US7] Mac: `macos/Sources/PostioKit/ForwardChooser.swift` (three cards with number keys) and the older-reply bar in `macos/Sources/PostioKit/ComposeColumn.swift` / `ComposeModel.swift`, with a Swift test of the chooser keys. GTK: the same under `crates/postio-gtk/src/compose/`, with a `focus_suite` case.
 - [ ] T084 [US7] Screens 09 and 10 on both platforms; write the differences in the step-7 note. Commit step 7.
 

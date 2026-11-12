@@ -1,0 +1,61 @@
+# Replying to an older message (specs/013-focus-threads US7 #1; FR-022).
+#
+# The defect: a reply to message 4 of 6 quotes and threads under message 4
+# and nothing says the thread has moved on, so a person answers a question
+# that was settled two messages ago. On `main` the composer has no bar and
+# `mod+shift+Down` and `alt+e` are not bound there, so the first check on the
+# bar fails. This needs GTK to run; it is linted here, and filmed with
+# `/ux-review`. The bar and the composer's thread state are published as
+# `app.focus.compose.*` (the frontend's task, T083).
+#
+# Harbor opens at message 5 (index 4) and `[` goes to message 4. `r` opens
+# the reply with an accent bar under the title: "You're replying to message
+# 4 of 6, not the latest", a line naming the two newer messages and saying
+# the reply quotes and threads under Ben's message, and two actions, Show
+# them and Reply to latest, each with its key. `mod+shift+Down` shows the
+# newer messages read-only in the composer. `alt+e` moves the quote and the
+# threading to message 6 and keeps what was typed; the bar goes.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US7" }
+seed   = "threads"
+design = "09-reply-to-older-message"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
+
+[[step]]
+id      = "open"
+key     = "Return"
+check   = { view = "reader", app.focus.reading.chip = 4 }
+expect  = "Harbor opens on message 5 of 6, the first unread."
+
+[[step]]
+id      = "older"
+key     = "["
+check   = { view = "reader", app.focus.reading.chip = 3 }
+expect  = "Message 4 is shown and ringed."
+
+[[step]]
+id      = "reply"
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body", app.focus.compose.older.title = "You’re replying to message 4 of 6, not the latest", app.focus.compose.older.actions = "Show them | Reply to latest", app.focus.compose.replying_to = 4 }
+expect  = "The reply opens with the caret in the body. An accent-tinted bar under the title says it answers message 4 of 6, not the latest; its second line names the two newer messages and says the reply quotes and threads under Ben's message; Show them and Reply to latest sit on the right, each with its keycap."
+
+[[step]]
+id      = "typed"
+type    = " Agreed on exports under accounts."
+check   = { composer.open = true, keyboard.field = "body", app.focus.compose.typed = " Agreed on exports under accounts." }
+expect  = "The text is typed in the body, above the quote."
+
+[[step]]
+id      = "show-them"
+command = "show_newer"
+check   = { composer.open = true, app.focus.compose.newer.count = 2, app.focus.compose.older.actions = "Hide them | Reply to latest" }
+expect  = "The two newer messages, 5 and 6, are drawn read-only in the composer, below what is typed; none of them takes the caret. The first action now reads Hide them."
+
+[[step]]
+id      = "latest"
+command = "reply_to_latest"
+check   = { composer.open = true, keyboard.field = "body", app.focus.compose.replying_to = 6, app.focus.compose.older.open = false, app.focus.compose.newer.count = 0, app.focus.compose.typed = " Agreed on exports under accounts." }
+expect  = "The bar is gone, the newer messages are put away, and the quote and the threading are message 6's. What was typed is still there, in the same place, with the caret where it was."

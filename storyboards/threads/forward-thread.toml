@@ -1,0 +1,78 @@
+# Forwarding a thread (specs/013-focus-threads US7 #2, #3; FR-023; decision
+# T3).
+#
+# The defect: `f` forwards one message and there is no way to forward the
+# conversation, so a person pastes six messages by hand. On `main` the
+# composer has no chooser, so the first check on it fails. This needs GTK to
+# run; it is linted here, and filmed with `/ux-review`. The chooser and the
+# composer's thread state are published as `app.focus.compose.*` (the
+# frontend's task, T083).
+#
+# Harbor opens at message 5 (index 4). `f` opens the composer with a *What to
+# forward* chooser of three cards, each with its number key, on "This
+# message". `2` picks "Whole thread": the subject becomes "Fwd: Harbor API
+# draft v3 (6 messages)" and the quoted messages show as collapsed rows;
+# `mod+shift+q` expands them. The design's `shift+f` is `f` then `2` here
+# (T3). On a one-message thread, the third row of the seed, `f` opens no
+# chooser.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US7" }
+seed   = "threads"
+design = "10-forward-thread"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
+
+[[step]]
+id      = "open"
+key     = "Return"
+check   = { view = "reader", app.focus.reading.chip = 4 }
+expect  = "Harbor opens on message 5 of 6, the first unread."
+
+[[step]]
+id      = "forward"
+command = "forward"
+check   = { composer.open = true, keyboard.field = "to", app.focus.compose.chooser.open = true, app.focus.compose.chooser.selected = "This message", app.focus.compose.chooser.cards = "This message 1 | Whole thread 2 | As attachments 3" }
+expect  = "The forward opens with the caret in To. Above To, under the title, a What to forward chooser draws three cards, each with its number key; This message is ringed and its line says it quotes Ben's message as usual."
+
+[[step]]
+id      = "whole"
+key     = "2"
+check   = { composer.open = true, app.focus.compose.chooser.selected = "Whole thread", app.focus.compose.subject = "Fwd: Harbor API draft v3 (6 messages)", app.focus.compose.forwarded.messages = 6 }
+expect  = "Whole thread is ringed. The subject reads Fwd: Harbor API draft v3 (6 messages) and the body holds the six messages, oldest first, each headed by who wrote it and when, as collapsed rows under the caret; the attachments are listed once."
+
+[[step]]
+id      = "expand"
+key     = "mod+shift+q"
+check   = { composer.open = true, app.focus.compose.quoted_expanded = true }
+expect  = "The collapsed rows open into the messages they stand for; nothing above them moved."
+
+[[step]]
+id      = "attachments"
+key     = "3"
+check   = { composer.open = true, app.focus.compose.chooser.selected = "As attachments", app.focus.compose.forwarded.eml = 6 }
+expect  = "As attachments is ringed and each of the six messages is an .eml attachment."
+
+[[step]]
+command = "back"
+check   = { composer.open = false }
+
+[[step]]
+command = "back"
+check   = { view = "list", cursor.index = 0 }
+expect  = "Back on the list, on the Harbor row."
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 1 }
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 2 }
+
+[[step]]
+id      = "alone"
+command = "forward"
+check   = { composer.open = true, keyboard.field = "to", app.focus.compose.chooser.open = false }
+expect  = "The forward of a one-message conversation opens as it always did: no chooser, the caret in To."
