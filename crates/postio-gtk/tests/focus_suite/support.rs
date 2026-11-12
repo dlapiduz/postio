@@ -827,6 +827,40 @@ impl Fixture {
         ids
     }
 
+    /// A reply to `parent`, filed into the same thread as a sync pass would:
+    /// its id and its thread's.
+    pub async fn reply_to(&self, parent: MessageId, text: &str) -> (MessageId, ThreadId) {
+        let connection = self.database.connect().await.expect("a connection");
+        let parent = MessageRepository::new(&connection)
+            .get(parent)
+            .await
+            .expect("a read")
+            .expect("the parent");
+        let rfc = parent.rfc_message_id.clone().expect("a Message-ID");
+        let mut message = Message::new(self.account.id, self.inbox, now());
+        message.from = vec![EmailAddress::new(Some("Ana Ruiz"), "ana@example.com")];
+        message.subject = Some(format!(
+            "Re: {}",
+            parent.subject.clone().unwrap_or_default()
+        ));
+        message.preview = Some(text.to_owned());
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<reply.{}@example.test>",
+            parent.id.get()
+        )));
+        message.in_reply_to = Some(rfc.clone());
+        message.references = vec![rfc];
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        let threaded = ThreadingRepository::new(&connection, self.account.id)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        (message.id, threaded.thread_id)
+    }
+
     /// Mark the first `count` messages of `thread` read.
     pub async fn read_first(&self, thread: &[MessageId], count: usize) {
         let connection = self.database.connect().await.expect("a connection");

@@ -100,6 +100,8 @@ pub struct OpenMessage {
     /// above the kicker (spec 013 US3): the controller's words, drawn.
     thread_bar: Rc<crate::thread_bar::ThreadBar>,
     banner: Rc<crate::thread_bar::OlderBanner>,
+    /// "Ana replied. Read it }": a reply that arrived while reading.
+    new_reply: Rc<crate::thread_bar::OlderBanner>,
     subject: gtk::Label,
     labels: gtk::Box,
     /// What holds the column to its width, centred in the dialog (T207).
@@ -360,6 +362,10 @@ impl OpenMessage {
         thread_chip.set_visible(false);
         let thread_bar = crate::thread_bar::ThreadBar::new();
         let banner = crate::thread_bar::OlderBanner::new();
+        let new_reply = crate::thread_bar::OlderBanner::with_class("focus-new-reply-banner");
+        new_reply
+            .widget()
+            .set_margin_bottom(rhythm::MARKER_TO_SUBJECT);
         banner.widget().set_margin_bottom(rhythm::MARKER_TO_SUBJECT);
         let subject = gtk::Label::new(None);
         subject.add_css_class("focus-open-subject");
@@ -391,6 +397,7 @@ impl OpenMessage {
         // Its own height, not the page's: the bottom padding sits under the
         // last block, not at the foot of a stretched column.
         column.set_valign(gtk::Align::Start);
+        column.append(new_reply.widget());
         column.append(banner.widget());
         column.append(&thread_chip);
         column.append(&subject);
@@ -484,6 +491,7 @@ impl OpenMessage {
             kicker_said: RefCell::default(),
             thread_bar,
             banner,
+            new_reply,
             subject,
             labels,
             clamp,
@@ -536,6 +544,14 @@ impl OpenMessage {
         let weak = Rc::downgrade(&page);
         page.this.replace(weak.clone());
         // "Latest }" is the key's own command, asked for.
+        page.new_reply.connect_press({
+            let weak = weak.clone();
+            move || {
+                if let Some(page) = weak.upgrade() {
+                    page.run(CommandId::LatestInConversation);
+                }
+            }
+        });
         page.banner.connect_press({
             let weak = weak.clone();
             move || {
@@ -1373,6 +1389,7 @@ impl OpenMessage {
         self.kicker.set_text("");
         self.kicker_said.replace(String::new());
         self.banner.set(None);
+        self.new_reply.set(None);
         self.header_card.set_reply_to(None);
     }
 
@@ -1404,6 +1421,26 @@ impl OpenMessage {
     /// The banner on a message that is not the latest, or none.
     pub fn set_older_banner(&self, banner: Option<&postio_ui::thread_bar::BannerView>) {
         self.banner.set(banner);
+    }
+
+    /// The banner for a reply that arrived while reading, or none.
+    pub fn set_new_reply(&self, banner: Option<&postio_ui::thread_bar::BannerView>) {
+        self.new_reply.set(banner);
+    }
+
+    /// Whether that banner is up.
+    pub fn new_reply_up(&self) -> bool {
+        self.new_reply.said().is_some()
+    }
+
+    /// The Thread button, which the thread menu and the outline hang from.
+    pub fn thread_button(&self) -> gtk::Button {
+        self.thread_bar.menu_button().clone()
+    }
+
+    /// Run `handler` when the Thread button is pressed.
+    pub fn connect_thread_menu(&self, handler: impl Fn() + 'static) {
+        self.thread_bar.connect_menu(handler);
     }
 
     /// The sender block's Reply to row, or none.

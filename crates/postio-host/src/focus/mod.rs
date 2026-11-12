@@ -124,6 +124,37 @@ impl FocusSetup {
         self
     }
 
+    /// Files `message`, just stored in the inbox and threaded into `thread`,
+    /// with the pass the engines file with: what a demo or a test that stores
+    /// mail itself calls so the arrival takes the path every arrival takes --
+    /// a muted thread's reply is archived, a snoozed one wakes. Answers what
+    /// the pass did.
+    pub async fn file_stored(
+        &self,
+        database: &postio_storage::Store,
+        message: postio_model::MessageId,
+        thread: postio_model::ThreadId,
+    ) -> Result<postio_sync::FilingEffects, postio_sync::SyncError> {
+        let connection = database.connect().await?;
+        let stored = postio_storage::repository::MessageRepository::new(&connection)
+            .get(message)
+            .await?
+            .ok_or(postio_storage::Error::NotFound {
+                entity: "message",
+                id: message.get(),
+            })?;
+        let filed = postio_sync::FiledMessage {
+            message: &stored,
+            thread: Some(thread),
+            role: postio_model::MailboxRole::Inbox,
+        };
+        let pass = self.pass();
+        postio_storage::transaction(&connection, move |scope| async move {
+            pass.file(&scope, &[filed]).await
+        })
+        .await
+    }
+
     /// The pass the engines file with: the one given, or Focus's own as
     /// the config sets it.
     fn pass(&self) -> Arc<dyn FilingPass> {

@@ -148,6 +148,10 @@ mod imp {
         pub bulk: RefCell<Option<Rc<Bulk>>>,
         /// The bar under the list that says what the keys act on.
         pub scope_footer: RefCell<Option<Rc<crate::scope_footer::ScopeFooter>>>,
+        /// The thread menu and the outline hung from the message window's
+        /// Thread button (spec 013 US5).
+        pub thread_menu: RefCell<Option<Rc<crate::thread_popovers::ThreadMenu>>>,
+        pub outline: RefCell<Option<Rc<crate::thread_popovers::OutlinePopover>>>,
         /// The host's view of this window's aim: a whole-view selection is
         /// a predicate the host resolves, and it reads it from here.
         pub state: RefCell<Option<SharedState>>,
@@ -315,6 +319,8 @@ mod imp {
                 picked: SelectionState::new(),
                 bulk: RefCell::default(),
                 scope_footer: RefCell::default(),
+                thread_menu: RefCell::default(),
+                outline: RefCell::default(),
                 state: RefCell::default(),
                 accounts: RefCell::default(),
                 placing_cursor: Cell::default(),
@@ -1016,6 +1022,31 @@ impl FocusWindow {
         if self.reading_beside() {
             now.push(SurfaceKind::Message);
         }
+        // The popovers from the message window's Thread button are over it.
+        let over_message = self.reading().is_some_and(|reading| reading.is_open());
+        if over_message {
+            if !now.contains(&SurfaceKind::Message) {
+                now.push(SurfaceKind::Message);
+            }
+            if self
+                .imp()
+                .thread_menu
+                .borrow()
+                .as_ref()
+                .is_some_and(|menu| menu.is_open())
+            {
+                now.push(SurfaceKind::ThreadMenu);
+            }
+            if self
+                .imp()
+                .outline
+                .borrow()
+                .as_ref()
+                .is_some_and(|outline| outline.is_open())
+            {
+                now.push(SurfaceKind::Outline);
+            }
+        }
         if self.compose().is_some_and(|compose| compose.is_showing()) {
             // On Linux the composer stacks over the open message, which is
             // still open under it and comes back when it goes: told closed,
@@ -1131,7 +1162,99 @@ impl FocusWindow {
             SurfaceKind::Filtered => self.leave_filtered(),
             SurfaceKind::Contacts => self.leave_contacts(),
             SurfaceKind::ContactPopover => self.close_contact_popover(),
+            SurfaceKind::ThreadMenu => {
+                if let Some(menu) = self.imp().thread_menu.borrow().as_ref() {
+                    menu.close();
+                }
+            }
+            SurfaceKind::Outline => {
+                if let Some(outline) = self.imp().outline.borrow().as_ref() {
+                    outline.close();
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Open the thread menu from the Thread button, drawn from `view`.
+    fn show_thread_menu(&self, view: &postio_ui::thread_outline::ThreadMenuView) {
+        let Some(reading) = self.reading() else {
+            return;
+        };
+        let menu = {
+            let held = self.imp().thread_menu.borrow().clone();
+            held.unwrap_or_else(|| {
+                let menu = crate::thread_popovers::ThreadMenu::new(&reading.thread_button());
+                menu.connect_pick(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |id| {
+                        if let Some(pane) = window.pane() {
+                            pane.feed().input(postio_focus::Input::ThreadMenuPick(id));
+                        }
+                    }
+                ));
+                menu.connect_closed(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move || window.thread_surface_closed(SurfaceKind::ThreadMenu)
+                ));
+                self.imp().thread_menu.replace(Some(Rc::clone(&menu)));
+                menu
+            })
+        };
+        menu.show(view);
+        self.imp()
+            .surfaces
+            .borrow_mut()
+            .push(SurfaceKind::ThreadMenu);
+    }
+
+    /// Draw the outline, whole, hung from the Thread button.
+    fn show_outline(&self, view: &postio_ui::thread_outline::OutlineView) {
+        let Some(reading) = self.reading() else {
+            return;
+        };
+        let outline = {
+            let held = self.imp().outline.borrow().clone();
+            held.unwrap_or_else(|| {
+                let outline = crate::thread_popovers::OutlinePopover::new(&reading.thread_button());
+                outline.connect_input(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |input| {
+                        if let Some(pane) = window.pane() {
+                            pane.feed().input(postio_focus::Input::Outline(input));
+                        }
+                    }
+                ));
+                outline.connect_closed(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move || window.thread_surface_closed(SurfaceKind::Outline)
+                ));
+                self.imp().outline.replace(Some(Rc::clone(&outline)));
+                outline
+            })
+        };
+        let was_open = outline.is_open();
+        outline.show(view);
+        if !was_open {
+            self.imp().surfaces.borrow_mut().push(SurfaceKind::Outline);
+        }
+    }
+
+    /// A popover from the Thread button has closed, by whatever way: the
+    /// controller is told, once.
+    fn thread_surface_closed(&self, kind: SurfaceKind) {
+        let known = {
+            let mut surfaces = self.imp().surfaces.borrow_mut();
+            let before = surfaces.len();
+            surfaces.retain(|held| *held != kind);
+            before != surfaces.len()
+        };
+        if known && let Some(pane) = self.pane() {
+            pane.feed().input(postio_focus::Input::SurfaceClosed(kind));
         }
     }
 
@@ -1752,6 +1875,10 @@ impl FocusWindow {
             | CommandId::SelectAll
             | CommandId::ExpandThread
             | CommandId::CollapseThread
+            | CommandId::MuteThread
+            | CommandId::ThreadOutline
+            | CommandId::ThreadMenu
+            | CommandId::SplitThread
             | CommandId::ToggleHasAction => self.cursor_command(id),
             CommandId::Back => {
                 if let Some(places) = self.places().filter(|places| places.is_open()) {
@@ -2192,6 +2319,18 @@ impl FocusWindow {
             Intent::ReplyTo(text) => {
                 if let Some(reading) = self.reading() {
                     reading.set_reply_to(text.as_deref());
+                }
+            }
+            Intent::NewReply(banner) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_new_reply(banner.as_ref());
+                }
+            }
+            Intent::ThreadMenu(view) => self.show_thread_menu(view),
+            Intent::Outline(view) => self.show_outline(view),
+            Intent::OutlineFocusFilter => {
+                if let Some(outline) = self.imp().outline.borrow().as_ref() {
+                    outline.focus_filter();
                 }
             }
             Intent::Counts(_) => self.show_counts(),
@@ -4682,6 +4821,11 @@ impl FocusWindow {
                         }
                     }
                 ));
+                reading.connect_thread_menu(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move || window.act(CommandId::ThreadMenu)
+                ));
                 reading.connect_read(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -6315,6 +6459,10 @@ impl FocusWindow {
                 serde_json::json!(reading.thread_chip_said()),
             );
             app.insert(
+                "focus.reading.new_reply".to_owned(),
+                serde_json::json!(reading.new_reply_up()),
+            );
+            app.insert(
                 "focus.reading.banner".to_owned(),
                 serde_json::json!(reading.banner_said().is_some()),
             );
@@ -6322,6 +6470,47 @@ impl FocusWindow {
                 "focus.reading.reply_to".to_owned(),
                 serde_json::json!(reading.reply_to_said()),
             );
+        }
+        // The thread menu and the outline, while they are up.
+        let (menu, outline) = (
+            self.imp().thread_menu.borrow().clone(),
+            self.imp().outline.borrow().clone(),
+        );
+        if let Some(menu) = menu {
+            app.insert(
+                "focus.menu.open".to_owned(),
+                serde_json::json!(menu.is_open()),
+            );
+            if menu.is_open() {
+                app.insert(
+                    "focus.menu.groups".to_owned(),
+                    serde_json::json!(menu.groups_said()),
+                );
+                app.insert(
+                    "focus.menu.keycaps".to_owned(),
+                    serde_json::json!(menu.keycaps_said()),
+                );
+            }
+        }
+        if let Some(outline) = outline {
+            app.insert(
+                "focus.outline.open".to_owned(),
+                serde_json::json!(outline.is_open()),
+            );
+            if outline.is_open() {
+                app.insert(
+                    "focus.outline.rows".to_owned(),
+                    serde_json::json!(outline.row_count()),
+                );
+                app.insert(
+                    "focus.outline.cursor".to_owned(),
+                    serde_json::json!(outline.cursor()),
+                );
+                app.insert(
+                    "focus.outline.filtering".to_owned(),
+                    serde_json::json!(outline.filtering()),
+                );
+            }
         }
         // What the footer says: the scope of the keys under the list, or
         // under Filtered's rows.
@@ -6347,6 +6536,13 @@ impl FocusWindow {
                 "focus.cursor.kind".to_owned(),
                 serde_json::json!(if child.is_some() { "child" } else { "row" }),
             );
+        }
+        if let Some(conversation) = row.as_ref().and_then(|row| row.as_conversation()) {
+            let badge = conversation
+                .summary
+                .muted
+                .map(postio_ui::thread_outline::muted_badge);
+            app.insert("focus.row.muted".to_owned(), serde_json::json!(badge));
         }
         if let Some(child) = &child {
             app.insert("focus.cursor.tag".to_owned(), serde_json::json!(child.tag));

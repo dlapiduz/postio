@@ -363,6 +363,8 @@ pub async fn threads_demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
+    // Where a muted thread's replies go (spec 013 FR-012).
+    postio_storage::test_support::mailbox(&connection, &account, "Archive").await;
     postio_storage::repository::IdentityRepository::new(&connection)
         .create(&mut postio_model::Identity::new(
             account.id,
@@ -531,7 +533,9 @@ fn name_of(who: Who) -> &'static str {
 }
 
 /// What a reply's arrival leaves for the caller to announce, as a sync pass
-/// would: `NewMail` for the message and `ThreadChanged` for its thread.
+/// would: `NewMail` for the message and `ThreadChanged` for its thread. It is
+/// stored in the inbox and not yet filed: the host's filing pass runs over it
+/// (`postio_host::FocusSetup::file_stored`), so a muted thread archives it.
 #[derive(Debug, Clone, Copy)]
 pub struct Arrival {
     /// The mailbox it landed in.
@@ -578,7 +582,10 @@ pub async fn deliver_harbor_reply(store: &Store, account: AccountId) -> Result<A
     let mut message = Message::new(account, inbox, at);
     message.date = Some(at);
     message.from = vec![Who::Person(ANA).address()];
+    // To you and copied to Lena: a reply addressed to you alone would reach
+    // the inbox even through a mute.
     message.to = vec![Who::Person(YOU).address()];
+    message.cc = vec![Who::Person(LENA).address()];
     message.subject = Some("Re: Harbor API draft v3".to_owned());
     let line = "+1 to Ben on exports. Lena, can you fold that in?";
     message.preview = Some(line.to_owned());

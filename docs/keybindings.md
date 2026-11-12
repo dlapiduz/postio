@@ -45,11 +45,11 @@ command from inside a text field.
 
 | Keys | Command | Where | Undo | Id |
 |---|---|---|---|---|
-| `j` or `Down` | Next message | List, conversation, reader, search, digest, Filtered view, search results |  | `next_message` |
-| `k` or `Up` | Previous message | List, conversation, reader, search, digest, Filtered view, search results |  | `prev_message` |
+| `j` or `Down` | Next message | List, conversation, reader, search, digest, Filtered view, search results, thread outline |  | `next_message` |
+| `k` or `Up` | Previous message | List, conversation, reader, search, digest, Filtered view, search results, thread outline |  | `prev_message` |
 | `g g` | First message | List, conversation, reader, search, search results |  | `first_message` |
 | `G` | Last message | List, conversation, reader, search, search results |  | `last_message` |
-| `Return` or `o` | Open message | List, conversation, search, digest, Filtered view, search results |  | `open_message` |
+| `Return` or `o` | Open message | List, conversation, search, digest, Filtered view, search results, thread outline |  | `open_message` |
 | `x` | Toggle selection | List, conversation, reader, search, Filtered view, search results |  | `toggle_selection` |
 | `J` or `shift+Down` | Extend selection down | List, reader, search, Filtered view |  | `extend_selection_down` |
 | `K` or `shift+Up` | Extend selection up | List, reader, search, Filtered view |  | `extend_selection_up` |
@@ -92,7 +92,7 @@ command from inside a text field.
 | `-` | Dismiss marker | List, conversation, reader | Undoable | `dismiss_marker` |
 | `.` | More actions | Reader |  | `more_actions` |
 | `F8` | Read beside the list or over it | List |  | `toggle_reading_pane` |
-| `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list, search results |  | `search` |
+| `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list, search results, thread outline |  | `search` |
 | `ctrl+s` | Save search as folder | Search, search results |  | `save_search` |
 | `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search, search results |  | `back_to_words` |
 | `ctrl+Return` | Show all results | Search (not the terminal) |  | `show_all_results` |

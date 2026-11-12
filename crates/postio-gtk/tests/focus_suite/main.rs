@@ -1699,6 +1699,18 @@ const CASES: &[(&str, fn())] = &[
         threads::the_window_walks_its_thread as fn(),
     ),
     (
+        "threads::a_reply_while_reading_changes_nothing_on_screen_until_read_it",
+        threads::a_reply_while_reading_changes_nothing_on_screen_until_read_it as fn(),
+    ),
+    (
+        "threads::the_thread_menu_mutes_the_thread_and_its_row_says_so",
+        threads::the_thread_menu_mutes_the_thread_and_its_row_says_so as fn(),
+    ),
+    (
+        "threads::the_outline_filters_by_name_and_return_shows_that_message",
+        threads::the_outline_filters_by_name_and_return_shows_that_message as fn(),
+    ),
+    (
         "cursor::j_and_k_move_only_the_cursor",
         cursor::j_and_k_move_only_the_cursor as fn(),
     ),

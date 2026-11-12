@@ -113,6 +113,9 @@ pub const WIRED: &[CommandId] = &[
     CommandId::ContactGroupRename,
     CommandId::ContactGroupAdd,
     CommandId::ContactGroupRemove,
+    // Spec 013 US5: on the undo stack, each its own way back.
+    CommandId::MuteThread,
+    CommandId::SplitThread,
 ];
 
 /// How long [`Command::Snooze`] hides a message for when it names no time:
@@ -7543,6 +7546,74 @@ mod tests {
             undone(&world.drained().await).as_deref(),
             Some("Muted the thread, undone")
         );
+    }
+
+    #[tokio::test]
+    async fn the_bus_answers_mute_and_split() {
+        // A frontend posts `Command::MuteThread` and `SplitThread` as it posts
+        // every verb; a command `WIRED` does not name is "not wired up" to
+        // it, and nothing reaches the undo stack.
+        let world = world().await;
+        let bus = dispatcher(world.actions.clone()).await;
+        let wired: Vec<_> = bus.wired().collect();
+        for id in [CommandId::MuteThread, CommandId::SplitThread] {
+            assert!(wired.contains(&id), "{id} is not on the bus");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_posted_mute_is_one_undo_that_unmutes() {
+        let world = world().await;
+        let (_, thread) = threaded(&world, "m1", &[], 1).await;
+
+        world
+            .run(Command::MuteThread {
+                thread: Some(thread),
+                muted: true,
+            })
+            .await
+            .expect("mute");
+
+        assert!(muted(&world, thread).await);
+        assert_eq!(
+            world.actions.peek_description().as_deref(),
+            Some("Muted the thread"),
+            "the command left an undo behind"
+        );
+        world.run(Command::Undo).await.expect("undo");
+        assert!(!muted(&world, thread).await, "one undo unmutes");
+    }
+
+    #[tokio::test]
+    async fn a_posted_split_is_one_undo_that_rejoins() {
+        let world = world().await;
+        let (m1, original) = threaded(&world, "m1", &[], 1).await;
+        let (m2, _) = threaded(&world, "m2", &["m1"], 2).await;
+
+        world
+            .run(Command::SplitThread {
+                message: Some(m2),
+                rejoin: None,
+            })
+            .await
+            .expect("split");
+
+        let connection = world.database.connect().await.expect("a connection");
+        let members = ThreadRepository::new(&connection)
+            .member_ids(original)
+            .await
+            .expect("members");
+        assert_eq!(members, vec![m1]);
+        assert!(
+            world.actions.peek_description().is_some(),
+            "an undo is waiting"
+        );
+        world.run(Command::Undo).await.expect("one undo");
+        let members = ThreadRepository::new(&connection)
+            .member_ids(original)
+            .await
+            .expect("members");
+        assert_eq!(members, vec![m1, m2]);
     }
 
     #[tokio::test]

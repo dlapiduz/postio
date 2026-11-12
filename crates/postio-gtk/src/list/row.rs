@@ -845,6 +845,25 @@ impl RowWidget {
             );
             trailing_texts.push(new);
         }
+        // "muted", or "muted · 1" once replies have come since: dim, at the
+        // right where the design draws it.
+        if let Some(badge) = thread
+            .as_ref()
+            .and_then(|thread| thread.muted_badge.clone())
+        {
+            let layout = self.layout(&badge, false, 0.9);
+            let (width, _) = layout.pixel_size();
+            trailing -= GAP + width as f32;
+            self.put(
+                snapshot,
+                &layout,
+                trailing,
+                middle,
+                width as f32,
+                &palette.dim,
+            );
+            trailing_texts.push(badge);
+        }
         let end = trailing - GAP;
 
         // The sender, then the subject, each as it arrived.

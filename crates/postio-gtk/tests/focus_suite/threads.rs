@@ -478,3 +478,212 @@ pub fn the_window_walks_its_thread() {
         );
     });
 }
+
+/// Open the first row's message in a window over `fixture`, with the sink
+/// its events can be told through.
+async fn opened_telling(
+    fixture: &Fixture,
+) -> (
+    postio_gtk::window::FocusWindow,
+    postio_core::bridge::EventSink,
+) {
+    let (host, sink) = fixture.host_telling();
+    let window = postio_gtk::window::FocusWindow::new(None);
+    window.present();
+    support::keep(postio_gtk::startup::adopt(
+        &window,
+        host,
+        &postio_config::Config::default(),
+    ));
+    assert!(
+        crate::settle_until(async || !window.rows_on_screen().is_empty()).await,
+        "the inbox never reached the screen"
+    );
+    (window, sink)
+}
+
+pub fn a_reply_while_reading_changes_nothing_on_screen_until_read_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 4, 10).await;
+        let (window, sink) = opened_telling(&fixture).await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chips") == Some(serde_json::json!(4))
+            )
+            .await
+        );
+        support::press(&window, "bracketright", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(1))
+            )
+            .await
+        );
+        let shown = window.observe().reading.id;
+
+        let (reply, thread) = fixture.reply_to(*ids.last().unwrap(), "Ana replied").await;
+        sink.emit(postio_core::Event::NewMail {
+            account: fixture.account.id,
+            mailbox: fixture.inbox,
+            messages: vec![reply],
+        });
+        sink.emit(postio_core::Event::ThreadChanged {
+            account: fixture.account.id,
+            thread,
+            members_added: vec![reply],
+        });
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chips") == Some(serde_json::json!(5))
+            )
+            .await,
+            "the bar never gained the reply's chip"
+        );
+        assert_eq!(
+            reading_said(&window, "new_reply"),
+            Some(serde_json::json!(true)),
+            "the banner says a reply came"
+        );
+        assert_eq!(
+            window.observe().reading.id,
+            shown,
+            "the shown message is unchanged"
+        );
+        assert_eq!(reading_said(&window, "chip"), Some(serde_json::json!(1)));
+
+        support::press(&window, "braceright", gtk::gdk::ModifierType::SHIFT_MASK);
+        assert!(
+            crate::settle_until(async || reading_said(&window, "chip")
+                == Some(serde_json::json!(4))
+                && reading_said(&window, "new_reply") == Some(serde_json::json!(false)))
+            .await,
+            "Read it showed the reply and took the banner away"
+        );
+    });
+}
+
+pub fn the_thread_menu_mutes_the_thread_and_its_row_says_so() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.thread_of("Harbor plan", 4, 10).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chips") == Some(serde_json::json!(4))
+            )
+            .await
+        );
+        let reading = window.reading().expect("open");
+        support::click(&window, &thread_button(&reading), 1);
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.menu.open") == Some(serde_json::json!(true))
+            )
+            .await,
+            "Thread opened the menu"
+        );
+        assert_eq!(
+            said(&window, "focus.menu.groups"),
+            Some(serde_json::json!("Whole thread | This message only"))
+        );
+        let mute = support::descendants(&thread_button(&reading))
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+            .find(|button| {
+                button.has_css_class("focus-thread-menu-entry")
+                    && support::texts(button)
+                        .iter()
+                        .any(|text| text == "Mute thread")
+            })
+            .expect("a Mute entry");
+        mute.emit_clicked();
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.row.muted") == Some(serde_json::json!("muted"))
+            )
+            .await,
+            "the row says muted: {:?}",
+            said(&window, "focus.row.muted")
+        );
+        assert_eq!(
+            said(&window, "focus.menu.open"),
+            Some(serde_json::json!(false)),
+            "picking closed the menu"
+        );
+    });
+}
+
+pub fn the_outline_filters_by_name_and_return_shows_that_message() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_with_you("Plans", 10).await;
+        fixture.read_first(&ids, 1).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(1))
+            )
+            .await,
+            "the window opened on the first unread, the account's own reply"
+        );
+        support::press(&window, "t", gtk::gdk::ModifierType::ALT_MASK);
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.outline.open") == Some(serde_json::json!(true))
+            )
+            .await,
+            "alt+t opened the outline"
+        );
+        assert_eq!(
+            said(&window, "focus.outline.rows"),
+            Some(serde_json::json!(2))
+        );
+        let reading = window.reading().expect("open");
+        let field = support::descendants(&thread_button(&reading))
+            .into_iter()
+            .find_map(|widget| widget.downcast::<gtk::Entry>().ok())
+            .expect("the filter field");
+        field.set_text("ada");
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.outline.rows") == Some(serde_json::json!(1))
+            )
+            .await,
+            "typing a name left that person's messages"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(
+                async || window.observe().reading.id == Some(ids[0].get().to_string())
+            )
+            .await,
+            "Return showed Ada's message: {:?}",
+            window.observe().reading.id
+        );
+        assert_eq!(
+            said(&window, "focus.outline.open"),
+            Some(serde_json::json!(false))
+        );
+    });
+}
+
+/// The Thread button in the message window's bar.
+fn thread_button(reading: &postio_gtk::open::OpenMessage) -> gtk::Widget {
+    support::only(&reading.dialog(), "focus-thread-bar-menu")
+}

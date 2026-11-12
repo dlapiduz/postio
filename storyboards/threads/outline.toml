@@ -34,14 +34,14 @@ expect  = "A 440-wide popover lists six messages, message 5 ringed, a filter fie
 
 [[step]]
 id      = "filter"
-command = "search"
+key     = "/"
 check   = { app.focus.outline.filtering = true }
 expect  = "The keyboard is in the filter field."
 
 [[step]]
 type    = "ben"
-check   = { app.focus.outline.rows = 3 }
-expect  = "Only Ben's messages are listed; the chips still count the whole thread."
+check   = { app.focus.outline.rows = 2 }
+expect  = "Only Ben's two messages are listed; the chips still count the whole thread."
 
 [[step]]
 id      = "down"
@@ -52,5 +52,5 @@ expect  = "The ring moves one row down."
 [[step]]
 id      = "show"
 key     = "Return"
-check   = { view = "reader", reading.id = { changed = true }, app.focus.outline.open = false, app.focus.reading.chip = 3 }
+check   = { view = "reader", reading.id = { changed = true }, app.focus.outline.open = false, app.focus.reading.chip = 5 }
 expect  = "The outline closes and the window shows that message of Ben's, ringed in the bar; it is marked read if it was not."

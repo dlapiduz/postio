@@ -439,7 +439,8 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Filtered)
             .with(Context::Digest)
             .with(Context::Results)
-            .with(Context::Contacts),
+            .with(Context::Contacts)
+            .with(Context::Outline),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -456,7 +457,8 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Filtered)
             .with(Context::Digest)
             .with(Context::Results)
-            .with(Context::Contacts),
+            .with(Context::Contacts)
+            .with(Context::Outline),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -493,11 +495,13 @@ static SPECS: &[CommandSpec] = &[
         // (specs/013-focus-threads D1).
         default_binding: "Return",
         alternate_bindings: &["o"],
-        // And a row of Focus's Filtered view or digest window.
+        // And a row of Focus's Filtered view or digest window, and the
+        // outline's: the row the keyboard is on is shown.
         contexts: ctx(&[Context::List, Context::Conversation, Context::Search])
             .with(Context::Filtered)
             .with(Context::Digest)
-            .with(Context::Results),
+            .with(Context::Results)
+            .with(Context::Outline),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1091,7 +1095,10 @@ static SPECS: &[CommandSpec] = &[
         // The go-to surfaces, for the go-to reason: the folder list is one
         // pane over, and nobody checks which pane has the keyboard before
         // reaching for search.
-        contexts: ctx(GO_SURFACES).with(Context::Results),
+        // And the outline, where it takes the keyboard to the filter field.
+        contexts: ctx(GO_SURFACES)
+            .with(Context::Results)
+            .with(Context::Outline),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -4088,6 +4095,12 @@ mod tests {
                 lookup_binding(Context::Picker, key).map(|spec| spec.id),
             );
         }
+        // `/` in the outline is the filter field's: search, where the outline
+        // is concerned.
+        assert_eq!(
+            lookup_binding(Context::Outline, "/").map(|spec| spec.id),
+            Some(CommandId::Search)
+        );
         // And `u` is `prev_view` in the reader, so the outline cannot share it.
         assert_eq!(
             lookup_binding(Context::Outline, "u").map(|spec| spec.id),
