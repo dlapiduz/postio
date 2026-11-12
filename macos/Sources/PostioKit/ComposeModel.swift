@@ -118,6 +118,81 @@ public final class ComposeModel: Identifiable {
         quoteFold = nil
     }
 
+    // MARK: threads (spec 013 US7, T083)
+
+    /// The *What to forward* chooser, while a thread of two or more is
+    /// forwarded: the controller sends it again with the chosen card ringed.
+    public var chooser: ChooserFfi?
+
+    /// The older-reply bar, while the reply is not to the latest message.
+    public var olderReply: OlderReplyFfi?
+
+    /// The messages newer than the one answered, read-only, while shown.
+    public var newer: [NewerMessageFfi]?
+
+    /// Whether the quoted or forwarded messages are expanded into the body
+    /// (`mod+shift+q`) rather than folded to rows.
+    public private(set) var quotedExpanded = false
+
+    /// The collapsed rows of a forwarded thread, one per message, when the
+    /// fold is one.
+    public var forwardedRows: [ForwardedRow] {
+        quoteFold.map { ForwardedRows.rows(in: $0.quote) } ?? []
+    }
+
+    /// Fold what the body ends in, if it ends in something to fold: a
+    /// forwarded thread, or a reply's quote.
+    static func fold(_ body: String) -> QuoteFoldFfi? {
+        ForwardedRows.fold(body) ?? foldQuote(body: body)
+    }
+
+    /// The controller's `mod+shift+q`: the folded messages into the body,
+    /// or back to rows.
+    public func setQuotedExpanded(_ expanded: Bool) {
+        quotedExpanded = expanded
+        if expanded {
+            showQuote()
+        } else if !rich, quoteFold == nil, let fold = Self.fold(body) {
+            body = fold.written
+            quoteFold = fold
+        }
+    }
+
+    /// The engine changed the draft (a forward's form, a reply's target):
+    /// take its words in place of this one's, and keep what is the
+    /// window's own -- where it is written from, where it lives, the
+    /// label names. The body is replaced only when it differs, so the
+    /// caret stays where a switch of the quote left what is written.
+    public func adopt(_ new: DraftFfi) {
+        var next = new
+        next.from = draft.from
+        next.path = draft.path
+        next.labels = new.labels.map { label in
+            labels.first { $0.id == label.id } ?? label
+        }
+        draft = next
+        to = next.to
+        cc = next.cc
+        bcc = next.bcc
+        showsCopyFields = showsCopyFields || !next.cc.isEmpty || !next.bcc.isEmpty
+        subject = next.subject
+        bodyHtml = next.bodyHtml
+        rich = next.rich
+        labels = next.labels
+        let fold = next.rich ? nil : Self.fold(next.body)
+        let written: String
+        if let fold, !quotedExpanded {
+            written = fold.written
+            quoteFold = fold
+        } else {
+            written = next.body
+            quoteFold = nil
+        }
+        if body != written { body = written }
+        htmlAtSwitch = bodyHtml
+        textAtSwitch = plainText
+    }
+
     /// The account it is written from, and its address as the From line
     /// says it.
     public private(set) var account: Int64
@@ -213,7 +288,7 @@ public final class ComposeModel: Identifiable {
         // A plain reply's quote folds under what is written (screen 06). A
         // rich draft keeps its document whole: the editing surface is the
         // one `editor.js` shared with GTK, and is not cut here.
-        if !draft.rich, let fold = foldQuote(body: draft.body) {
+        if !draft.rich, let fold = Self.fold(draft.body) {
             body = fold.written
             quoteFold = fold
         } else {

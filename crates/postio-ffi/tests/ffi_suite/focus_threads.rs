@@ -1030,3 +1030,179 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
     );
     session.shutdown();
 }
+
+// -- The composer's older-reply bar and forward chooser (spec 013 T083, US7) --
+
+/// The first event of the composer's that `pick` takes, as the Mac hears it.
+async fn composer_said<T>(session: &Session, mut pick: impl FnMut(&UiEvent) -> Option<T>) -> T {
+    let mut found = None;
+    let mut seen = Vec::new();
+    assert!(
+        heard(session, 10, |event| {
+            found = pick(event);
+            if found.is_none() {
+                seen.push(format!("{event:?}").chars().take(60).collect::<String>());
+            }
+            found.is_some()
+        })
+        .await,
+        "the composer was told; it heard {seen:#?}"
+    );
+    found.expect("heard")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replying_to_message_four_shows_the_bar_and_reply_to_latest_keeps_what_was_typed() {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
+    let harbor_thread = thread_named(&database, "Harbor API draft v3").await;
+    let members = postio_host::threads::view(&database, harbor_thread)
+        .await
+        .expect("a read")
+        .expect("Harbor is there")
+        .members;
+    let (fourth, sixth) = (members[3].id.get(), members[5].id.get());
+    let (session, harbor) = inbox_with_harbor_over(database).await;
+    session.focus_point(harbor);
+    session.invoke("expand_thread");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusSplice { .. }
+        ))
+        .await,
+        "the thread opens"
+    );
+    for _ in 0..4 {
+        session.invoke("next_message");
+    }
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position, .. } if *position == harbor + 4
+        ))
+        .await,
+        "the cursor is on message 4"
+    );
+    session.invoke("reply");
+    let bar = composer_said(&session, |event| match event {
+        UiEvent::FocusOlderReply { view: Some(view) } => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(
+        bar.title.contains("message 4 of 6"),
+        "the bar says which: {bar:?}"
+    );
+    assert_eq!(bar.actions.len(), 2, "Show them, Reply to latest");
+
+    // The Mac made the draft for message 4 and the person typed into it.
+    let mut draft = session
+        .reply_draft_ffi(fourth, false)
+        .expect("a reply to message 4");
+    assert_eq!(draft.in_reply_to, Some(fourth));
+    draft.body = format!("Six is fine, with one change.\n\n{}", draft.body);
+
+    session.invoke("reply_to_latest");
+    let wanted = composer_said(&session, |event| match event {
+        UiEvent::FocusComposerDraftWanted { edit } => Some(*edit),
+        _ => None,
+    })
+    .await;
+    assert_eq!(wanted, postio_ffi::DraftEditFfi::ReplyToLatest);
+    session.focus_composer_draft(wanted, draft);
+    composer_said(&session, |event| match event {
+        UiEvent::FocusOlderReply { view: None } => Some(()),
+        _ => None,
+    })
+    .await;
+    // The bar goes with the switch.
+    let moved = composer_said(&session, |event| match event {
+        UiEvent::FocusComposerDraft { draft } => Some(draft.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        moved.in_reply_to,
+        Some(sixth),
+        "the reply now answers message 6"
+    );
+    assert!(
+        moved.body.starts_with("Six is fine, with one change."),
+        "what was typed stays: {:?}",
+        moved.body
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forwarding_a_thread_offers_the_chooser_and_two_forwards_the_whole_thread() {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
+    // The seed's attachments are rows with no bytes; a whole-thread forward
+    // is refused for a message that is not here, so give them some.
+    let connection = database.connect().await.expect("a connection");
+    connection
+        .execute(
+            "UPDATE attachments SET blob_id = 'seeded' WHERE blob_id IS NULL",
+            (),
+        )
+        .await
+        .expect("a write");
+    drop(connection);
+    let (session, harbor) = inbox_with_harbor_over(database).await;
+    session.focus_point(harbor);
+    session.invoke("forward");
+    let opened = composer_said(&session, |event| match event {
+        UiEvent::FocusComposer { kind, message } => Some((*kind, *message)),
+        _ => None,
+    })
+    .await;
+    assert_eq!(opened.0, postio_ffi::ComposerKindFfi::Forward);
+    let chooser = composer_said(&session, |event| match event {
+        UiEvent::FocusForwardChooser { view } => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(chooser.cards.len(), 3);
+    assert_eq!(chooser.selected, postio_ffi::ForwardFormFfi::This);
+    assert_eq!(
+        chooser
+            .cards
+            .iter()
+            .map(|card| card.key.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("1".to_owned()),
+            Some("2".to_owned()),
+            Some("3".to_owned())
+        ]
+    );
+
+    let draft = session
+        .forward_draft_ffi(opened.1.expect("a message"))
+        .expect("a forward");
+    session.invoke("forward_what_2");
+    let wanted = composer_said(&session, |event| match event {
+        UiEvent::FocusComposerDraftWanted { edit } => Some(*edit),
+        _ => None,
+    })
+    .await;
+    assert_eq!(wanted, postio_ffi::DraftEditFfi::ForwardThread);
+    session.focus_composer_draft(wanted, draft);
+    let chooser = composer_said(&session, |event| match event {
+        UiEvent::FocusForwardChooser { view } => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(chooser.selected, postio_ffi::ForwardFormFfi::Thread);
+    let whole = composer_said(&session, |event| match event {
+        UiEvent::FocusComposerDraft { draft } => Some(draft.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(
+        whole.subject.starts_with("Fwd: ") && whole.subject.ends_with("(6 messages)"),
+        "the subject counts the thread: {:?}",
+        whole.subject
+    );
+    session.shutdown();
+}

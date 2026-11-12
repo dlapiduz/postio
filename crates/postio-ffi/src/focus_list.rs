@@ -1276,6 +1276,26 @@ impl FocusDriver {
                     });
                 }
             }
+            Intent::ForwardChooser(view) => self.say(UiEvent::FocusForwardChooser {
+                view: (*view).into(),
+            }),
+            Intent::OlderReply(view) => self.say(UiEvent::FocusOlderReply {
+                view: view.map(|view| (*view).into()),
+            }),
+            Intent::NewerMessages(ids) => self.say(UiEvent::FocusNewerMessages {
+                ids: ids.map(|ids| ids.into_iter().map(|id| id.get()).collect()),
+            }),
+            Intent::QuotedExpanded(expanded) => {
+                self.say(UiEvent::FocusQuotedExpanded { expanded });
+            }
+            Intent::ComposerDraftWanted(edit) => {
+                if let Some(edit) = crate::focus_compose::DraftEditFfi::of(edit) {
+                    self.say(UiEvent::FocusComposerDraftWanted { edit });
+                }
+            }
+            Intent::ComposerDraft(draft) => self.say(UiEvent::FocusComposerDraft {
+                draft: crate::compose::to_ffi(&draft, String::new(), String::new()),
+            }),
             Intent::SaveDraft { composition } => {
                 self.say(UiEvent::FocusSaveDraft { composition });
             }

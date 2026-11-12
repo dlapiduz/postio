@@ -109,7 +109,10 @@ pub use focus::{FocusCountsFfi, FocusStripFfi, NoticesFfi};
 pub use focus_bar::{
     BarLineFfi, BarLineKindFfi, BarModeFfi, BarSelectFfi, BarViewFfi, PlaceEntryFfi, PlaceMarkFfi,
 };
-pub use focus_compose::ComposerKindFfi;
+pub use focus_compose::{
+    BarActionFfi, ChooserCardFfi, ChooserFfi, ComposerKindFfi, DraftEditFfi, ForwardFormFfi,
+    NewerMessageFfi, OlderReplyFfi,
+};
 pub use focus_contact_edit::{
     AddressLabelFfi, ContactEditViewFfi, EditAddressFfi, EditButtonFfi, EditChangeFfi, EditHintFfi,
     EditSeenFfi, EditSegmentFfi, FormFieldFfi, GroupOptionFfi, GroupPickerFfi, ShowAsFfi,

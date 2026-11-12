@@ -277,6 +277,9 @@ final class Engine {
             composer?.save(composition) { session.saveDraft($0) }
         case .close:
             secondary.close(.composer)
+        case .threadChanged:
+            // The model holds it; the composer's view reads the model.
+            break
         }
     }
 
@@ -1990,7 +1993,17 @@ final class Engine {
     private func installKeyboard(_ session: PostioSession) {
         let monitor = KeyMonitor(
             resolve: { [weak self] reduced, context, typing in
-                self?.session?.key(reduced, in: context, typing: typing) ?? .unhandled
+                guard let self, let session = self.session else { return .unhandled }
+                // The forward chooser, while it holds the keyboard, answers
+                // first; what it does not bind is the composer's.
+                let shown = self.keyWindow.current == .compose && self.composer?.model?.chooser != nil
+                var outcome = KeyOutcomeFfi.unhandled
+                for asked in ForwardChooserKeys.contexts(base: context, chooserShown: shown, typing: typing) {
+                    outcome = session.key(reduced, in: asked, typing: typing)
+                    if case .unhandled = outcome { continue }
+                    break
+                }
+                return outcome
             },
             run: { [weak self] id in self?.run(id) ?? false },
             pending: { [weak self] description in self?.pendingChord = description },

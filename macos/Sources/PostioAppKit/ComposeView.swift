@@ -110,6 +110,16 @@ public struct ComposeView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            // The thread's part (spec 013 US7): the older-reply bar under
+            // the title, the forward chooser above the fields.
+            if let bar = model.olderReply {
+                OlderReplyBar(bar: bar) { session.invoke($0) }
+                Divider()
+            }
+            if let chooser = model.chooser {
+                ForwardChooserView(chooser: chooser) { session.focusForwardFormClicked($0) }
+                Divider()
+            }
             fromRow
             Divider()
             recipientRow("To", field: .to, text: Bindable(model).to, hint: !model.showsCopyFields)
@@ -136,6 +146,10 @@ public struct ComposeView: View {
             Divider()
             if !model.labels.isEmpty {
                 labelsRow
+                Divider()
+            }
+            if let newer = model.newer, !newer.isEmpty {
+                NewerMessagesView(messages: newer)
                 Divider()
             }
             if model.rich { formatBar }
@@ -441,7 +455,15 @@ public struct ComposeView: View {
                     }
                     .disabled(model.isHandedOff)
                     .accessibilityLabel("Message body")
-                if let fold = model.quoteFold { quoteFold(fold) }
+                if let fold = model.quoteFold {
+                    if model.forwardedRows.isEmpty {
+                        quoteFold(fold)
+                    } else {
+                        ForwardedRowsView(rows: model.forwardedRows, cap: expandQuotedCap) {
+                            session.invoke("expand_quoted")
+                        }
+                    }
+                }
             }
             .frame(maxWidth: column, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -453,12 +475,15 @@ public struct ComposeView: View {
     /// The reply's quote, folded under what is written (screen 06):
     /// whose words, how many lines, and a way to show them.
     private func quoteFold(_ fold: QuoteFoldFfi) -> some View {
-        Button { model.showQuote() } label: {
+        // Through the controller, which holds whether the quote is open
+        // (`expand_quoted`): it answers with `FocusQuotedExpanded`.
+        Button { session.invoke("expand_quoted") } label: {
             HStack(spacing: 8) {
-                Text("\u{203a} \(fold.summary)")
+                Text("\u{25b8} \(fold.summary)")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
-                Text("show").font(.system(size: 13)).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                if let cap = expandQuotedCap { KeyCap(cap) }
             }
             .padding(.horizontal, 10)
             .frame(height: 28)
@@ -469,6 +494,11 @@ public struct ComposeView: View {
         .padding(.leading, 5)
         .padding(.bottom, 8)
         .accessibilityLabel("\(fold.summary). Show the quoted text")
+    }
+
+    /// The key that opens the folded messages, as the live keymap spells it.
+    private var expandQuotedCap: String? {
+        KeyCapSpelling.cap(session.binding(for: "expand_quoted"))
     }
 
     /// What is attached, each with a way off again.
