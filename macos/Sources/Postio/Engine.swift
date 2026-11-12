@@ -587,6 +587,8 @@ final class Engine {
             }
         case let .reader(verb):
             messageWindow?.apply(verb)
+        case let .thread(said):
+            messageWindow?.said(said)
         case .keyboardHome where results?.isOpen == true:
             // In the results, home is the results table, or the Files
             // tab's grid.
@@ -643,7 +645,8 @@ final class Engine {
             alwaysForSender: { [weak session, weak model] in
                 model?.keepForSender { session?.alwaysTreatment(sender: $0, treatment: $1) }
             },
-            verbFrames: { [weak self] in self?.verbFrames = $0 }
+            verbFrames: { [weak self] in self?.verbFrames = $0 },
+            barRoom: { [weak session] in session?.focusBarRoom($0) }
         ) { [weak session, weak model] message, document, card in
             MessageBodyView(
                 message: message,

@@ -145,11 +145,6 @@ pub enum ReaderVerbFfi {
     ViewSource,
     /// The More menu.
     ShowMore,
-    /// Step through the conversation.
-    StepThread {
-        /// By how many messages.
-        by: i32,
-    },
 }
 
 impl ReaderVerbFfi {
@@ -164,7 +159,6 @@ impl ReaderVerbFfi {
             Verb::SwitchTreatment => ReaderVerbFfi::SwitchTreatment,
             Verb::ViewSource => ReaderVerbFfi::ViewSource,
             Verb::ShowMore => ReaderVerbFfi::ShowMore,
-            Verb::StepThread(by) => ReaderVerbFfi::StepThread { by },
             _ => return None,
         })
     }
@@ -1085,6 +1079,12 @@ impl FocusDriver {
                     self.say(UiEvent::FocusReader { verb });
                 }
             }
+            Intent::ThreadBar(view) => self.say(UiEvent::FocusThreadBar { view: view.into() }),
+            Intent::Kicker(text) => self.say(UiEvent::FocusKicker { text }),
+            Intent::OlderBanner(banner) => self.say(UiEvent::FocusOlderBanner {
+                banner: banner.map(Into::into),
+            }),
+            Intent::ReplyTo(text) => self.say(UiEvent::FocusReplyTo { text }),
             Intent::KeyboardHome => self.say(UiEvent::FocusKeyboardHome),
             Intent::ListToTop => self.say(UiEvent::FocusListToTop),
             // A toast with a way to put it right is drawn with its button.

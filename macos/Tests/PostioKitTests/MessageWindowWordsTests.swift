@@ -37,12 +37,7 @@ struct MessageWindowWordsTests {
     ) -> FocusMessageViewFfi {
         FocusMessageViewFfi(
             message: 7, subject: "Harbor API draft v3",
-            position: "Message 5 of 60 \u{b7} thread of 6",
-            thread: FocusThreadChipFfi(
-                text: "Latest of 6 in this thread",
-                earlier: FocusRowActionFfi(command: "prev_in_conversation", label: "earlier message"),
-                later: nil),
-            earlier: 6, later: nil,
+            position: "Message 5 of 60",
             labels: [LabelPillFfi(name: "Harbor", color: "#3a9a6b")],
             addLabel: FocusRowActionFfi(command: "add_label", label: "+ Label"),
             fields: [
@@ -59,7 +54,7 @@ struct MessageWindowWordsTests {
     @Test func theTitleAreaIsTheSubjectThePositionAndOneKJCap() {
         let words = MessageChromeWords(view: Self.view(), folds: false, binding: Self.binding)
         #expect(words.title == "Harbor API draft v3")
-        #expect(words.position == "Message 5 of 60 \u{b7} thread of 6")
+        #expect(words.position == "Message 5 of 60")
         #expect(words.stepCap == "k j", "one cap for the pair, previous first, as screen 04")
         #expect(words.previous == "prev_message" && words.next == "next_message")
     }
@@ -98,9 +93,7 @@ struct MessageWindowWordsTests {
             chip: "To-do", date: "Wed 30 Sep", quote: "Please leave comments by Wednesday",
             status: nil, actions: [FocusRowActionFfi(command: "snooze", label: "Snooze")])
         let words = MessageHeaderWords(view: Self.view(marker: marker), binding: Self.binding)
-        #expect(words.thread?.text == "Latest of 6 in this thread")
-        #expect(words.thread?.earlier?.cap == "[")
-        #expect(words.thread?.later == nil)
+        #expect(words.thread == .none, "the walk's words arrive from the controller")
         #expect(words.subject == "Harbor API draft v3")
         #expect(words.labels.map(\.name) == ["Harbor"])
         #expect(words.labels.first?.colour != nil, "the label's own dot")

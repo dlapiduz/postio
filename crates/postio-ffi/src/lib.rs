@@ -62,6 +62,7 @@ mod focus_reader;
 mod focus_search;
 mod focus_states;
 mod focus_surfaces;
+mod focus_thread_bar;
 mod focus_threads;
 mod keys;
 mod links;
@@ -137,8 +138,8 @@ pub use focus_list::{
     ReaderVerbFfi, SurfaceKindFfi,
 };
 pub use focus_message::{
-    FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusThreadChipFfi,
-    FocusVerbFfi, OpenChoicesFfi,
+    FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusVerbFfi,
+    OpenChoicesFfi,
 };
 pub use focus_pickers::{
     PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
@@ -165,6 +166,7 @@ pub use focus_surfaces::{
     RuleScheduleFfi, RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi,
     focus_digest_geometry,
 };
+pub use focus_thread_bar::{ThreadBannerFfi, ThreadBarFfi, ThreadChipFfi};
 pub use focus_threads::{
     ChevronFfi, ChildHintFfi, ChildRowFfi, FooterKeyFfi, FooterViewFfi, ThreadRowFfi,
 };

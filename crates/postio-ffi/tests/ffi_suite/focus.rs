@@ -622,23 +622,9 @@ async fn the_message_window_s_chrome_is_composed_in_rust() {
     assert_eq!(view.subject, "Re: Harbor API draft v3");
     assert_eq!(
         view.position,
-        focus_dialog::position_line(0, 1, 2, 1, true, None),
-        "the row's place, and the conversation's size at its latest"
+        focus_dialog::position_line(0, 1, 1, 0, true, None),
+        "the row's place; where it stands in its thread is the kicker's"
     );
-    let chip = view.thread.expect("a conversation of two has a chip");
-    assert_eq!(
-        Some(chip.text.clone()),
-        focus_dialog::thread_chip_at(2, 1, true)
-    );
-    let earlier_key = chip.earlier.expect("the latest offers the earlier one");
-    assert_eq!(
-        earlier_key.command,
-        CommandId::PrevInConversation.to_string()
-    );
-    assert_eq!(earlier_key.label, focus_dialog::EARLIER_MESSAGE);
-    assert!(chip.later.is_none(), "nothing is later than the latest");
-    assert_eq!(view.earlier, Some(earlier), "what [ shows");
-    assert_eq!(view.later, None, "what ] shows");
 
     assert_eq!(
         view.labels
@@ -728,13 +714,9 @@ async fn the_message_window_s_chrome_is_composed_in_rust() {
     let stepped = session.focus_message_view(earlier, 0, 1);
     assert_eq!(
         stepped.position,
-        focus_dialog::position_line(0, 1, 2, 0, false, None)
+        focus_dialog::position_line(0, 1, 1, 0, true, None)
     );
     assert!(stepped.marker.is_none(), "the card is the marked message's");
-    assert_eq!(stepped.earlier, None);
-    assert_eq!(stepped.later, Some(latest));
-    let chip = stepped.thread.expect("still a conversation");
-    assert!(chip.later.is_some(), "] is offered from an earlier message");
     session.shutdown();
 }
 
