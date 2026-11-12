@@ -253,7 +253,7 @@ and `}` shows it.
 - [x] T052 [US4] Add a live-reply key to `crates/postio-demo/src/lib.rs` (`POSTIO_DEMO_KEYS` token) that delivers a reply into Harbor through the real arrival path.
 - [x] T053 [US4] Implement `pending_new` and `NewReply` in `crates/postio-focus/src/surfaces.rs` and the row refresh in `crates/postio-focus/src/feed.rs`. Add `new_reply_banner` to `crates/postio-ui/src/thread_bar.rs`.
 - [x] T054 [US4] Mac banner (accent-tinted, "Read it }") in `macos/Sources/PostioKit/MessageWindowView.swift`, with a Swift test that the scroll offset is unchanged after an arrival. GTK banner in `crates/postio-gtk/src/open.rs`, with a `focus_suite` case asserting that the shown message and its adjustment value are unchanged.
-- [ ] T055 [US4] Screen 08 on both platforms; write the differences in the step-4 note. Commit step 4.
+- [x] T055 [US4] Screen 08 on both platforms; write the differences in the step-4 note. Commit step 4.
 
 ---
 
@@ -293,7 +293,7 @@ and `}` shows it.
 - [x] T065 [US5] Implement `crates/postio-ui/src/thread_outline.rs`, the `Outline` and `ThreadMenu` surfaces in `crates/postio-focus/src/surfaces.rs`, and the "muted" badge and count on `ThreadRowView`.
 - [x] T066 [US5] Mac: `macos/Sources/PostioKit/ThreadMenu.swift` (340 wide, two groups, explanations) and `macos/Sources/PostioKit/ThreadOutline.swift` (440 wide, filter field, person chips, 34-tall rows, footer) as `NSPopover`s from Thread ▾. Swift test for the outline's keyboard path.
 - [x] T067 [US5] GTK: `crates/postio-gtk/src/thread_popovers.rs` (new) with the menu and outline `GtkPopover`s, and `focus_suite` cases for outline filter → `Return`, and for mute.
-- [ ] T068 [US5] Screens 04 and 05 on both platforms; write the differences in the step-5 note. Commit step 5.
+- [x] T068 [US5] Screens 04 and 05 on both platforms; write the differences in the step-5 note. Commit step 5.
 
 ---
 
@@ -320,7 +320,7 @@ and `}` shows it.
 - [x] T072 [US6] Implement `ResultChild`, `children` and the match summary in `crates/postio-ui/src/search_view.rs`. In `crates/postio-focus/src/results.rs`, read the top result's `conversation_matches` with the page and expand it.
 - [x] T073 [US6] Add `ThreadMatches` to `Walk` and `ReaderVerb::{NextMatch, PrevMatch}` in `crates/postio-focus/src/surfaces.rs`, mapped from `FindNext`/`FindPrevious` when matches are present, plus `match_banner` in `crates/postio-ui/src/thread_bar.rs` and matched chips (yellow square).
 - [x] T074 [US6] Mac: children and gaps in `macos/Sources/PostioAppKit/ResultsTable.swift` and `macos/Sources/PostioKit/ResultRowView.swift`; the match banner in `MessageWindowView.swift`. GTK: the same in `crates/postio-gtk/src/results.rs` and `crates/postio-gtk/src/open.rs`, with a `focus_suite` case for the independent test.
-- [ ] T075 [US6] Screens 06 and 07 on both platforms; write the differences in the step-6 note. Commit step 6.
+- [x] T075 [US6] Screens 06 and 07 on both platforms; write the differences in the step-6 note. Commit step 6.
 
 ---
 
