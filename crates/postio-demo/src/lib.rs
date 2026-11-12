@@ -21,7 +21,7 @@ mod threads;
 
 pub use files::{SearchFile, search_files};
 pub use search::{search_demo, store_search_blobs};
-pub use threads::{Arrival, deliver_harbor_reply, threads_demo};
+pub use threads::{Arrival, deliver_harbor_reply, store_threads_blobs, threads_demo};
 
 /// A condition of the store, named as every app names it
 /// (specs/008-storyboards R11): something no step can produce, such as

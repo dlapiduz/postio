@@ -45,7 +45,7 @@ expect  = "The reply opens with the caret in the body. An accent-tinted bar unde
 [[step]]
 id      = "typed"
 type    = " Agreed on exports under accounts."
-check   = { composer.open = true, keyboard.field = "body", app.focus.compose.typed = " Agreed on exports under accounts." }
+check   = { composer.open = true, keyboard.field = "body", app.focus.compose.typed = "Agreed on exports under accounts." }
 expect  = "The text is typed in the body, above the quote."
 
 [[step]]
@@ -57,5 +57,5 @@ expect  = "The two newer messages, 5 and 6, are drawn read-only in the composer,
 [[step]]
 id      = "latest"
 command = "reply_to_latest"
-check   = { composer.open = true, keyboard.field = "body", app.focus.compose.replying_to = 6, app.focus.compose.older.open = false, app.focus.compose.newer.count = 0, app.focus.compose.typed = " Agreed on exports under accounts." }
+check   = { composer.open = true, keyboard.field = "body", app.focus.compose.replying_to = 6, app.focus.compose.older.open = false, app.focus.compose.newer.count = 0, app.focus.compose.typed = "Agreed on exports under accounts." }
 expect  = "The bar is gone, the newer messages are put away, and the quote and the threading are message 6's. What was typed is still there, in the same place, with the caret where it was."

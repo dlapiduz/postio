@@ -1720,6 +1720,14 @@ const CASES: &[(&str, fn())] = &[
         threads::find_in_a_window_opened_from_the_list_still_wraps as fn(),
     ),
     (
+        "threads::a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed",
+        threads::a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed as fn(),
+    ),
+    (
+        "threads::forwarding_the_whole_thread_says_so_in_the_subject",
+        threads::forwarding_the_whole_thread_says_so_in_the_subject as fn(),
+    ),
+    (
         "cursor::j_and_k_move_only_the_cursor",
         cursor::j_and_k_move_only_the_cursor as fn(),
     ),

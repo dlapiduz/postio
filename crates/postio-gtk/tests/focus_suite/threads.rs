@@ -818,3 +818,127 @@ pub fn find_in_a_window_opened_from_the_list_still_wraps() {
         );
     });
 }
+
+fn compose_said(window: &postio_gtk::window::FocusWindow, key: &str) -> Option<serde_json::Value> {
+    said(window, &format!("focus.compose.{key}"))
+}
+
+pub fn a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 6, 10).await;
+        fixture.read_first(&ids, 5).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(5))
+            )
+            .await
+        );
+        for _ in 0..2 {
+            support::press(&window, "bracketleft", gtk::gdk::ModifierType::empty());
+        }
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(3))
+            )
+            .await
+        );
+        support::keys(&window, &["r"]);
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "older.open") == Some(serde_json::json!(true))
+            )
+            .await,
+            "the bar says this reply is to an older message"
+        );
+        assert_eq!(
+            compose_said(&window, "older.title"),
+            Some(serde_json::json!(
+                "You\u{2019}re replying to message 4 of 6, not the latest"
+            ))
+        );
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "replying_to") == Some(serde_json::json!(4))
+            )
+            .await
+        );
+        let composer = window.composer().expect("the composer");
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "the reply opened"
+        );
+        // Typed at the caret, above the quote, as a person does.
+        composer.test_body_eval("document.execCommand('insertText', false, 'Agreed on exports.')");
+        assert!(
+            crate::settle_until(async || composer
+                .draft()
+                .body
+                .text
+                .unwrap_or_default()
+                .contains("Agreed on exports."))
+            .await,
+            "the words reached the draft"
+        );
+        support::press(&window, "e", gtk::gdk::ModifierType::ALT_MASK);
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "replying_to") == Some(serde_json::json!(6))
+            )
+            .await,
+            "alt+e moved the reply to message 6: {:?}",
+            compose_said(&window, "replying_to")
+        );
+        assert_eq!(
+            compose_said(&window, "older.open"),
+            Some(serde_json::json!(false))
+        );
+        let body = composer.draft().body.text.unwrap_or_default();
+        assert!(
+            body.contains("Agreed on exports."),
+            "what was typed is still there: {body:?}"
+        );
+    });
+}
+
+pub fn forwarding_the_whole_thread_says_so_in_the_subject() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.thread_of("Harbor plan", 6, 10).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["f"]);
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "chooser.open") == Some(serde_json::json!(true))
+            )
+            .await,
+            "a forward of a thread offers the chooser"
+        );
+        assert_eq!(
+            compose_said(&window, "chooser.selected"),
+            Some(serde_json::json!("This message"))
+        );
+        support::keys(&window, &["2"]);
+        assert!(
+            crate::settle_until(async || compose_said(&window, "subject")
+                == Some(serde_json::json!("Fwd: Harbor plan (6 messages)")))
+            .await,
+            "the subject says six messages: {:?}",
+            compose_said(&window, "subject")
+        );
+        assert_eq!(
+            compose_said(&window, "chooser.selected"),
+            Some(serde_json::json!("Whole thread"))
+        );
+    });
+}
