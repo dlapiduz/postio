@@ -1711,6 +1711,15 @@ const CASES: &[(&str, fn())] = &[
         threads::the_outline_filters_by_name_and_return_shows_that_message as fn(),
     ),
     (
+        "threads::a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the_child",
+        threads::a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the_child
+            as fn(),
+    ),
+    (
+        "threads::find_in_a_window_opened_from_the_list_still_wraps",
+        threads::find_in_a_window_opened_from_the_list_still_wraps as fn(),
+    ),
+    (
         "cursor::j_and_k_move_only_the_cursor",
         cursor::j_and_k_move_only_the_cursor as fn(),
     ),

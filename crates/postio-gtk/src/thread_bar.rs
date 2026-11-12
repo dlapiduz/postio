@@ -41,6 +41,8 @@ pub struct ThreadBar {
     current: Cell<Option<u32>>,
     /// How many chips are drawn.
     drawn: Cell<usize>,
+    /// Which chips a search matched, from zero.
+    matched: RefCell<Vec<u32>>,
     room: Cell<u32>,
     on_room: RefCell<Option<RoomHandler>>,
     on_menu: RefCell<Option<Rc<dyn Fn()>>>,
@@ -82,6 +84,7 @@ impl ThreadBar {
             menu,
             current: Cell::new(None),
             drawn: Cell::new(0),
+            matched: RefCell::default(),
             room: Cell::new(0),
             on_room: RefCell::default(),
             on_menu: RefCell::default(),
@@ -154,6 +157,7 @@ impl ThreadBar {
             self.chips.remove(&child);
         }
         self.current.set(None);
+        self.matched.borrow_mut().clear();
         for chip in &view.chips {
             self.chips.append(&self.chip(chip));
         }
@@ -174,6 +178,11 @@ impl ThreadBar {
     /// The chip on screen, from zero.
     pub fn current(&self) -> Option<u32> {
         self.current.get()
+    }
+
+    /// The chips a search matched (the yellow square), from zero.
+    pub fn matched(&self) -> Vec<u32> {
+        self.matched.borrow().clone()
     }
 
     /// How many chips are drawn.
@@ -213,7 +222,13 @@ impl ThreadBar {
                     tile.add_css_class("focus-thread-chip-unread");
                 }
                 if *matched {
-                    let mark = gtk::Label::new(Some("\u{25a0}"));
+                    self.matched.borrow_mut().push(*index);
+                    // The find highlight's yellow, as the design draws a match.
+                    let mark = gtk::Label::new(None);
+                    mark.set_markup(&format!(
+                        "<span foreground=\"{}\">\u{25a0}</span>",
+                        crate::dropdown::find_yellow()
+                    ));
                     mark.add_css_class("focus-thread-match");
                     mark.set_halign(gtk::Align::Start);
                     mark.set_valign(gtk::Align::Start);
@@ -307,6 +322,101 @@ impl OlderBanner {
         self.text.set_text(&view.text);
         self.action
             .set_child(Some(&keyhint::labelled(&view.action, view.key.as_deref())));
+        self.root.set_visible(true);
+    }
+
+    /// What it says, while it is up.
+    pub fn said(&self) -> Option<String> {
+        self.root.is_visible().then(|| self.text.text().to_string())
+    }
+}
+
+/// The banner of a window opened from a search: which match of how many in
+/// the thread, and the two ways on (spec 013 US6).
+pub struct MatchBanner {
+    root: gtk::Box,
+    text: gtk::Label,
+    next: gtk::Button,
+    back: gtk::Button,
+    on_next: RefCell<Option<Rc<dyn Fn()>>>,
+    on_back: RefCell<Option<Rc<dyn Fn()>>>,
+}
+
+impl MatchBanner {
+    /// A banner, hidden until a search opened the window.
+    pub fn new() -> Rc<Self> {
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        root.add_css_class("focus-banner-bar");
+        root.add_css_class("focus-match-banner");
+        root.set_visible(false);
+        let text = gtk::Label::new(None);
+        text.add_css_class("dim-label");
+        text.set_wrap(true);
+        text.set_xalign(0.0);
+        text.set_hexpand(true);
+        let button = || {
+            let button = gtk::Button::new();
+            postio_widgets::widgets::button::style(&button, Kind::Ghost, Size::Regular);
+            button.set_valign(gtk::Align::Center);
+            button
+        };
+        let (next, back) = (button(), button());
+        root.append(&text);
+        root.append(&next);
+        root.append(&back);
+        let banner = Rc::new(MatchBanner {
+            root,
+            text,
+            next,
+            back,
+            on_next: RefCell::default(),
+            on_back: RefCell::default(),
+        });
+        for (button, pick) in [(&banner.next, true), (&banner.back, false)] {
+            let weak = Rc::downgrade(&banner);
+            button.connect_clicked(move |_| {
+                if let Some(banner) = weak.upgrade() {
+                    let handler = if pick {
+                        banner.on_next.borrow().clone()
+                    } else {
+                        banner.on_back.borrow().clone()
+                    };
+                    if let Some(handler) = handler {
+                        handler();
+                    }
+                }
+            });
+        }
+        banner
+    }
+
+    /// The banner, to place above the kicker.
+    pub fn widget(&self) -> &gtk::Box {
+        &self.root
+    }
+
+    /// Run `next` or `back` when its button is pressed.
+    pub fn connect(&self, next: impl Fn() + 'static, back: impl Fn() + 'static) {
+        self.on_next.replace(Some(Rc::new(next)));
+        self.on_back.replace(Some(Rc::new(back)));
+    }
+
+    /// Draw `view`, or take the banner away.
+    pub fn set(&self, view: Option<&postio_ui::thread_bar::MatchBannerView>) {
+        let Some(view) = view else {
+            self.root.set_visible(false);
+            self.text.set_text("");
+            return;
+        };
+        self.text.set_text(&view.text);
+        self.next.set_child(Some(&keyhint::labelled(
+            &view.next,
+            view.next_key.as_deref(),
+        )));
+        self.back.set_child(Some(&keyhint::labelled(
+            &view.back,
+            view.back_key.as_deref(),
+        )));
         self.root.set_visible(true);
     }
 

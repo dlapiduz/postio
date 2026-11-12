@@ -19,6 +19,9 @@ pub(super) struct FindState {
     query: String,
     matches: Vec<std::ops::Range<usize>>,
     current: Option<usize>,
+    /// The next match found is the last, not the first: a find carried
+    /// into a message from the one after it (spec 013 US6).
+    from_end: bool,
 }
 
 /// The find bar a reading pane shows above its `BodyView`.
@@ -133,6 +136,43 @@ impl BodyView {
         self.scroll_to_current();
     }
 
+    /// Look for `query` as [`set_find_query`](Self::set_find_query) does, the
+    /// first match to be the last of the message when `from_end`: a find
+    /// that walks backwards into a message lands on its last match.
+    pub fn set_find_query_from(&self, query: &str, from_end: bool) {
+        self.imp().find.borrow_mut().from_end = from_end;
+        self.set_find_query(query);
+    }
+
+    /// The current match's place among the message's matches, and how many
+    /// there are.
+    pub fn find_state(&self) -> (Option<usize>, usize) {
+        let find = self.imp().find.borrow();
+        (find.current, find.matches.len())
+    }
+
+    /// Step to the next match (`forward`) or the previous, *without*
+    /// wrapping: whether there was one. False at either end, which is where
+    /// a search's window goes on to the next matched message.
+    pub fn find_walk(&self, forward: bool) -> bool {
+        {
+            let mut find = self.imp().find.borrow_mut();
+            let count = find.matches.len();
+            let next = match (find.current, forward) {
+                (_, _) if count == 0 => return false,
+                (None, true) => 0,
+                (None, false) => count - 1,
+                (Some(at), true) if at + 1 < count => at + 1,
+                (Some(at), false) if at > 0 => at - 1,
+                _ => return false,
+            };
+            find.current = Some(next);
+        }
+        self.scroll_to_current();
+        self.queue_draw();
+        true
+    }
+
     /// Recompute the matches from the query, over the snapshot on screen.
     pub(super) fn refresh_find(&self) {
         let matches = match self.document() {
@@ -153,11 +193,16 @@ impl BodyView {
             })
         });
         let mut find = self.imp().find.borrow_mut();
+        let from_end = find.from_end && !matches.is_empty();
         find.current = match find.current {
             Some(at) if at < matches.len() => Some(at),
+            _ if from_end => Some(matches.len() - 1),
             _ if !matches.is_empty() => Some(from_here.unwrap_or(0)),
             _ => None,
         };
+        if from_end {
+            find.from_end = false;
+        }
         find.matches = matches;
         drop(find);
         self.queue_draw();

@@ -102,6 +102,8 @@ pub struct OpenMessage {
     banner: Rc<crate::thread_bar::OlderBanner>,
     /// "Ana replied. Read it }": a reply that arrived while reading.
     new_reply: Rc<crate::thread_bar::OlderBanner>,
+    /// "match 1 of 3 in this thread": a window a search opened.
+    match_banner: Rc<crate::thread_bar::MatchBanner>,
     subject: gtk::Label,
     labels: gtk::Box,
     /// What holds the column to its width, centred in the dialog (T207).
@@ -362,6 +364,10 @@ impl OpenMessage {
         thread_chip.set_visible(false);
         let thread_bar = crate::thread_bar::ThreadBar::new();
         let banner = crate::thread_bar::OlderBanner::new();
+        let match_banner = crate::thread_bar::MatchBanner::new();
+        match_banner
+            .widget()
+            .set_margin_bottom(rhythm::MARKER_TO_SUBJECT);
         let new_reply = crate::thread_bar::OlderBanner::with_class("focus-new-reply-banner");
         new_reply
             .widget()
@@ -397,6 +403,7 @@ impl OpenMessage {
         // Its own height, not the page's: the bottom padding sits under the
         // last block, not at the foot of a stretched column.
         column.set_valign(gtk::Align::Start);
+        column.append(match_banner.widget());
         column.append(new_reply.widget());
         column.append(banner.widget());
         column.append(&thread_chip);
@@ -492,6 +499,7 @@ impl OpenMessage {
             thread_bar,
             banner,
             new_reply,
+            match_banner,
             subject,
             labels,
             clamp,
@@ -544,6 +552,24 @@ impl OpenMessage {
         let weak = Rc::downgrade(&page);
         page.this.replace(weak.clone());
         // "Latest }" is the key's own command, asked for.
+        page.match_banner.connect(
+            {
+                let weak = weak.clone();
+                move || {
+                    if let Some(page) = weak.upgrade() {
+                        page.run(CommandId::FindNext);
+                    }
+                }
+            },
+            {
+                let weak = weak.clone();
+                move || {
+                    if let Some(page) = weak.upgrade() {
+                        page.run(CommandId::Back);
+                    }
+                }
+            },
+        );
         page.new_reply.connect_press({
             let weak = weak.clone();
             move || {
@@ -1390,6 +1416,7 @@ impl OpenMessage {
         self.kicker_said.replace(String::new());
         self.banner.set(None);
         self.new_reply.set(None);
+        self.match_banner.set(None);
         self.header_card.set_reply_to(None);
     }
 
@@ -1426,6 +1453,22 @@ impl OpenMessage {
     /// The banner for a reply that arrived while reading, or none.
     pub fn set_new_reply(&self, banner: Option<&postio_ui::thread_bar::BannerView>) {
         self.new_reply.set(banner);
+    }
+
+    /// The banner of a window opened from a search, or none.
+    pub fn set_match_banner(&self, banner: Option<&postio_ui::thread_bar::MatchBannerView>) {
+        self.match_banner.set(banner);
+        self.show_position(false);
+    }
+
+    /// What the match banner says, while it is up.
+    pub fn match_banner_said(&self) -> Option<String> {
+        self.match_banner.said()
+    }
+
+    /// The chips a search matched, from zero.
+    pub fn matched_chips(&self) -> Vec<u32> {
+        self.thread_bar.matched()
     }
 
     /// Whether that banner is up.
@@ -1492,7 +1535,11 @@ impl OpenMessage {
         let thread_len = self.thread_total.get();
         let latest = latest || thread_len == 0 || self.at.get() + 1 == thread_len;
         let kicker = self.kicker_said.borrow().clone();
-        let said = if self.row.get().is_none() && self.hit.get().is_none() && !kicker.is_empty() {
+        let from_results = self.match_banner.said().is_some();
+        let said = if self.row.get().is_none()
+            && !kicker.is_empty()
+            && (self.hit.get().is_none() || from_results)
+        {
             // A message of a thread that is no row of the list: the header
             // says where it is in its thread, in the controller's words.
             kicker

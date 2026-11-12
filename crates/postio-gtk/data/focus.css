@@ -2598,3 +2598,18 @@ button.focus-filtered-tab.focus-filtered-tab-on {
 .focus-outline-footer {
   font-size: var(--postio-text-label);
 }
+
+/* ── Thread children under a search result (spec 013 US6; screens 06, 07) ── */
+.focus-results-child {
+  min-height: 30px;
+  padding: 0 var(--postio-space-4) 0 calc(var(--postio-space-4) * 3);
+  background-color: var(--postio-raised-bg);
+}
+
+.focus-results-gap {
+  min-height: 30px;
+}
+
+.focus-match-banner {
+  background-color: var(--postio-raised-bg);
+}

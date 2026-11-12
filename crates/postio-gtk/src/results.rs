@@ -23,7 +23,9 @@ use gtk::pango;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_core::CommandId;
-use postio_focus::{Input, QueryView, ResultGroup, ResultRow, ResultsView, TermEdit};
+use postio_focus::{
+    Input, QueryView, ResultGroup, ResultRow, ResultsView, Run, RunStyle, TermEdit,
+};
 use postio_search::results::ConversationOrder;
 use postio_ui::search_view::{self as words, FilterKind};
 use postio_widgets::widgets::keyhint;
@@ -46,6 +48,8 @@ enum Item {
     Header(usize),
     /// The result at this position.
     Row(u64),
+    /// The `index`th child of the expanded result (spec 013 US6).
+    Child(u32),
 }
 
 mod imp {
@@ -56,6 +60,8 @@ mod imp {
         /// Each group's header position, and its group's first result.
         pub starts: RefCell<Vec<(u32, u64)>>,
         pub total: Cell<u32>,
+        /// The expanded result's position and how many children follow it.
+        pub splice: Cell<Option<(u64, u32)>>,
     }
 
     #[glib::object_subclass]
@@ -73,11 +79,11 @@ mod imp {
         }
 
         fn n_items(&self) -> u32 {
-            self.total.get()
+            self.obj().len()
         }
 
         fn item(&self, position: u32) -> Option<glib::Object> {
-            (position < self.total.get())
+            (position < self.obj().len())
                 .then(|| gtk::StringObject::new(&position.to_string()).upcast())
         }
     }
@@ -97,7 +103,22 @@ impl Default for ResultsItems {
 }
 
 impl ResultsItems {
-    /// The list is `groups` now: every row drawn is asked for again.
+    /// How many positions the list has: the groups' rows and headers, and the
+    /// expanded result's children after it.
+    fn len(&self) -> u32 {
+        self.imp().total.get() + self.extra()
+    }
+
+    /// How many children are in the list: none while their result is not.
+    fn extra(&self) -> u32 {
+        match self.imp().splice.get() {
+            Some((anchor, count)) if self.raw_position_of(anchor).is_some() => count,
+            _ => 0,
+        }
+    }
+
+    /// The list is `groups` now: every row drawn is asked for again, and
+    /// nothing is expanded until the controller says.
     fn set_groups(&self, groups: &[ResultGroup]) {
         let mut starts = Vec::with_capacity(groups.len());
         let mut at = 0u32;
@@ -105,13 +126,69 @@ impl ResultsItems {
             starts.push((at, group.first));
             at = at.saturating_add(1).saturating_add(group.rows as u32);
         }
+        let before = self.len();
+        self.imp().splice.set(None);
         self.imp().starts.replace(starts);
-        let before = self.imp().total.replace(at);
+        self.imp().total.set(at);
         self.items_changed(0, before, at);
+    }
+
+    /// The children of the result at `anchor` follow it from now on (or
+    /// none, with `None`).
+    fn set_splice(&self, splice: Option<(u64, u32)>) {
+        if let Some((anchor, count)) = self.imp().splice.take()
+            && let Some(at) = self.raw_position_of(anchor)
+            && count > 0
+        {
+            self.items_changed(at + 1, count, 0);
+        }
+        if let Some((anchor, count)) = splice {
+            self.imp().splice.set(Some((anchor, count)));
+            if let Some(at) = self.raw_position_of(anchor)
+                && count > 0
+            {
+                self.items_changed(at + 1, 0, count);
+            }
+        }
+    }
+
+    /// The list position of child `index` of the expanded result.
+    fn child_position(&self, index: u32) -> Option<u32> {
+        let (anchor, count) = self.imp().splice.get()?;
+        (index < count)
+            .then(|| self.raw_position_of(anchor).map(|at| at + 1 + index))
+            .flatten()
+    }
+
+    /// Child `index` is drawn again.
+    fn child_changed(&self, index: u32) {
+        if let Some(at) = self.child_position(index) {
+            self.items_changed(at, 1, 1);
+        }
     }
 
     /// What list position `at` shows.
     fn item_at(&self, at: u32) -> Option<Item> {
+        if at >= self.len() {
+            return None;
+        }
+        let Some((anchor, count)) = self.imp().splice.get() else {
+            return self.raw_item_at(at);
+        };
+        let Some(anchor_at) = self.raw_position_of(anchor) else {
+            return self.raw_item_at(at);
+        };
+        if at <= anchor_at {
+            self.raw_item_at(at)
+        } else if at <= anchor_at + count {
+            Some(Item::Child(at - anchor_at - 1))
+        } else {
+            self.raw_item_at(at - count)
+        }
+    }
+
+    /// What list position `at` shows, the children not counted.
+    fn raw_item_at(&self, at: u32) -> Option<Item> {
         if at >= self.imp().total.get() {
             return None;
         }
@@ -126,6 +203,19 @@ impl ResultsItems {
 
     /// The list position of the result at `position`.
     fn position_of(&self, position: u64) -> Option<u32> {
+        let raw = self.raw_position_of(position)?;
+        let moved = match self.imp().splice.get() {
+            Some((anchor, count)) if self.raw_position_of(anchor).is_some_and(|at| raw > at) => {
+                count
+            }
+            _ => 0,
+        };
+        Some(raw + moved)
+    }
+
+    /// The list position of the result at `position`, the children not
+    /// counted.
+    fn raw_position_of(&self, position: u64) -> Option<u32> {
         let starts = self.imp().starts.borrow();
         let index = starts.iter().rposition(|(_, first)| *first <= position)?;
         let (start, first) = starts[index];
@@ -189,6 +279,11 @@ pub struct ResultsPane {
     footer: gtk::Label,
     view: RefCell<Option<ResultsView>>,
     cursor: Cell<Option<u64>>,
+    /// The expanded result's children, and the one with the ring.
+    splice: RefCell<Option<postio_focus::ResultSplice>>,
+    child_focus: Cell<Option<u32>>,
+    /// The initials of each message of the expanded thread, once read.
+    initials: RefCell<std::collections::HashMap<postio_model::MessageId, String>>,
     /// Positions asked for and not yet landed, so a redraw does not ask
     /// again.
     asked: RefCell<std::collections::HashSet<u64>>,
@@ -366,6 +461,9 @@ impl ResultsPane {
             footer,
             view: RefCell::default(),
             cursor: Cell::new(None),
+            splice: RefCell::default(),
+            child_focus: Cell::new(None),
+            initials: RefCell::default(),
             asked: RefCell::default(),
             me: RefCell::default(),
         });
@@ -575,6 +673,91 @@ impl ResultsPane {
         {
             self.reveal_cursor();
         }
+    }
+
+    /// The expanded result's children, drawn after its row; `None` takes
+    /// them away (`Intent::ResultSplice`).
+    pub fn show_splice(&self, splice: Option<&postio_focus::ResultSplice>) {
+        let anchor = splice.map(|splice| (splice.anchor, splice.children.len() as u32));
+        self.splice.replace(splice.cloned());
+        self.child_focus
+            .set(splice.and_then(|splice| splice.focused));
+        self.items.set_splice(anchor);
+        if let Some(splice) = splice {
+            self.read_initials(splice.anchor);
+        }
+        // The result wears its chevron's turn and loses a ring a child has.
+        if let Some((anchor, _)) = anchor {
+            self.items.rows_changed(anchor, 1);
+        }
+    }
+
+    /// The ring is on child `child` of the expanded result, or back on the
+    /// result's own row (`Intent::ResultChildFocus`).
+    pub fn show_child_focus(&self, child: Option<u32>) {
+        let was = self.child_focus.replace(child);
+        if let Some(was) = was {
+            self.items.child_changed(was);
+        }
+        if let Some(child) = child {
+            self.items.child_changed(child);
+        }
+        if let Some((anchor, _)) = self.items.imp().splice.get() {
+            self.items.rows_changed(anchor, 1);
+        }
+        if let Some(at) = child.and_then(|child| self.items.child_position(child)) {
+            let weak = self.me.borrow().clone();
+            glib::idle_add_local_once(move || {
+                if let Some(pane) = weak.upgrade() {
+                    pane.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+                }
+            });
+        } else {
+            self.reveal_cursor();
+        }
+    }
+
+    /// Read who wrote the expanded thread's messages, for their avatars, and
+    /// draw the children again once they are known.
+    fn read_initials(&self, anchor: u64) {
+        let Some(thread) = self.feed.result_row(anchor).and_then(|row| row.thread) else {
+            return;
+        };
+        let client = self.feed.client();
+        let weak = self.me.borrow().clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let Ok(Some(view)) = client.thread(thread).await else {
+                return;
+            };
+            let Some(pane) = weak.upgrade() else {
+                return;
+            };
+            {
+                let mut held = pane.initials.borrow_mut();
+                for member in &view.members {
+                    held.insert(member.id, postio_ui::row::initials(member.from.as_ref()));
+                }
+            }
+            let count = pane.child_count() as u32;
+            for index in 0..count {
+                pane.items.child_changed(index);
+            }
+        });
+    }
+
+    /// How many children the expanded result has drawn.
+    pub fn child_count(&self) -> usize {
+        self.splice
+            .borrow()
+            .as_ref()
+            .map_or(0, |splice| splice.children.len())
+    }
+
+    /// The child with the ring, from zero.
+    pub fn child_focus(&self) -> Option<u32> {
+        self.child_focus.get()
     }
 
     /// The focus ring is on the result at `position` now.
@@ -922,7 +1105,20 @@ impl ResultsPane {
                 };
                 item.set_accessible_label(&row.accessible);
                 let widget = self.row(position, &row);
-                if self.cursor.get() == Some(position) {
+                if self.cursor.get() == Some(position) && self.child_focus.get().is_none() {
+                    widget.add_css_class("focus-results-cursor");
+                }
+                Some(widget.upcast())
+            }
+            Item::Child(index) => {
+                let splice = self.splice.borrow();
+                let child = splice.as_ref()?.children.get(index as usize)?;
+                let gap = matches!(child, words::ResultChild::Gap { .. });
+                // A gap is a quiet line, no place for the keyboard.
+                item.set_activatable(!gap);
+                item.set_focusable(!gap);
+                let widget = self.child(index, child);
+                if self.child_focus.get() == Some(index) {
                     widget.add_css_class("focus-results-cursor");
                 }
                 Some(widget.upcast())
@@ -1024,7 +1220,11 @@ impl ResultsPane {
             tag.add_css_class("focus-results-source-file");
         }
         bottom.append(&tag);
-        let passage = crate::dropdown::runs_label(&row.passage, true);
+        let passage = match &row.summary {
+            // "3 of 6 messages match", in place of the snippet.
+            Some(summary) => crate::dropdown::runs_label(&[plain_run(summary)], true),
+            None => crate::dropdown::runs_label(&row.passage, true),
+        };
         passage.add_css_class("focus-results-passage");
         passage.set_hexpand(true);
         bottom.append(&passage);
@@ -1062,6 +1262,54 @@ impl ResultsPane {
             }
         });
         line.add_controller(click);
+        line
+    }
+
+    /// One line under the expanded result: a message that matched, with its
+    /// tag and the words around the match, or one quiet line for the run of
+    /// messages that did not (30 tall).
+    fn child(&self, index: u32, child: &words::ResultChild) -> gtk::Box {
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+        line.add_css_class("focus-results-child");
+        match child {
+            words::ResultChild::Match {
+                message,
+                tag,
+                passage,
+                ..
+            } => {
+                // The initials avatar the thread's rows wear.
+                let avatar = gtk::Label::new(Some(
+                    self.initials
+                        .borrow()
+                        .get(message)
+                        .map_or("", String::as_str),
+                ));
+                avatar.add_css_class("focus-thread-avatar");
+                avatar.set_valign(gtk::Align::Center);
+                line.append(&avatar);
+                let tag = gtk::Label::new(Some(tag));
+                tag.add_css_class("focus-results-source");
+                tag.set_width_chars(14);
+                tag.set_xalign(0.0);
+                line.append(&tag);
+                let runs = passage.as_ref().map(passage_runs).unwrap_or_default();
+                let words = crate::dropdown::runs_label(&runs, true);
+                words.add_css_class("focus-results-passage");
+                words.set_hexpand(true);
+                line.append(&words);
+            }
+            gap @ words::ResultChild::Gap { .. } => {
+                line.add_css_class("focus-results-gap");
+                line.set_size_request(-1, 30);
+                let said = gtk::Label::new(Some(&words::gap_line(gap)));
+                said.add_css_class("dim-label");
+                said.set_xalign(0.0);
+                said.set_hexpand(true);
+                line.append(&said);
+            }
+        }
+        let _ = index;
         line
     }
 
@@ -1413,5 +1661,45 @@ fn hint_line(key: &str, label: &str) -> gtk::Box {
 fn clear(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
+    }
+}
+
+/// A passage as runs: its words, the matched ones marked, an ellipsis where
+/// it was cut.
+fn passage_runs(passage: &postio_search::results::Passage) -> Vec<Run> {
+    let mut runs = Vec::new();
+    if passage.elided_start {
+        runs.push(plain_run("\u{2026} "));
+    }
+    let mut at = 0;
+    for range in &passage.ranges {
+        if range.start > at {
+            runs.push(plain_run(&passage.text[at..range.start]));
+        }
+        runs.push(marked_run(&passage.text[range.clone()]));
+        at = range.end;
+    }
+    if at < passage.text.len() {
+        runs.push(plain_run(&passage.text[at..]));
+    }
+    if passage.elided_end {
+        runs.push(plain_run(" \u{2026}"));
+    }
+    runs
+}
+
+fn plain_run(text: &str) -> Run {
+    Run {
+        text: text.to_owned(),
+        highlighted: false,
+        style: RunStyle::Plain,
+    }
+}
+
+fn marked_run(text: &str) -> Run {
+    Run {
+        text: text.to_owned(),
+        highlighted: true,
+        style: RunStyle::Plain,
     }
 }
