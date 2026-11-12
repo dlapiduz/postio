@@ -220,6 +220,15 @@ pub fn older_banner(keymap: &Keymap) -> BannerView {
     }
 }
 
+/// What the window says when `mod+g` has no match left to go to.
+pub fn no_more_matches(forward: bool) -> &'static str {
+    if forward {
+        "That is the last match in this thread"
+    } else {
+        "That is the first match in this thread"
+    }
+}
+
 /// The banner for a reply that arrived while the window was on another
 /// message: who wrote, the first line of it, and `}` to read it. The reader
 /// stays where they are.
@@ -242,6 +251,46 @@ pub fn new_reply_banner(member: &ThreadMember, keymap: &Keymap) -> BannerView {
         text: format!("{who} replied just now{quoted}. You stay on this message until you move."),
         action: "Read it".to_owned(),
         key: hints::key(keymap, CommandId::LatestInConversation),
+    }
+}
+
+/// The banner of a window opened from a search: where among the matched
+/// messages the one on screen is, and the two ways on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchBannerView {
+    /// "\u{2018}rate limit headers\u{2019} \u{b7} match 1 of 3 in this thread (messages 3, 5 and 6)".
+    pub text: String,
+    /// The first button: "Next".
+    pub next: String,
+    /// Its key, as the keymap has it.
+    pub next_key: Option<String>,
+    /// The second: "Back to results".
+    pub back: String,
+    /// Its key, as the keymap has it.
+    pub back_key: Option<String>,
+}
+
+/// The match banner: `query` as typed, the matched message at `at` of
+/// `numbers` (each message's place in the thread, from 1) on screen.
+pub fn match_banner(query: &str, at: usize, numbers: &[u32], keymap: &Keymap) -> MatchBannerView {
+    let listed: Vec<String> = numbers.iter().map(u32::to_string).collect();
+    let (last, rest) = listed
+        .split_last()
+        .map_or(("", &[][..]), |(l, r)| (l.as_str(), r));
+    let where_ = match rest {
+        [] => format!("message {last}"),
+        _ => format!("messages {} and {last}", rest.join(", ")),
+    };
+    MatchBannerView {
+        text: format!(
+            "\u{2018}{query}\u{2019} \u{b7} match {} of {} in this thread ({where_})",
+            at + 1,
+            numbers.len()
+        ),
+        next: "Next".to_owned(),
+        next_key: hints::key(keymap, CommandId::FindNext),
+        back: "Back to results".to_owned(),
+        back_key: hints::key(keymap, CommandId::Back),
     }
 }
 
@@ -507,5 +556,40 @@ mod tests {
     fn the_count_line_is_the_size_and_what_is_new() {
         assert_eq!(count_line(&view(members(6, &[4, 5]))), "6 \u{b7} 2 new");
         assert_eq!(count_line(&view(members(6, &[]))), "6");
+    }
+
+    #[test]
+    fn the_match_banner_says_which_match_and_where_the_others_are() {
+        let banner = match_banner("rate limit headers", 0, &[3, 5, 6], Keymap::defaults());
+        assert_eq!(
+            banner.text,
+            "\u{2018}rate limit headers\u{2019} \u{b7} match 1 of 3 in this thread (messages 3, 5 and 6)"
+        );
+        assert_eq!(
+            (banner.next.as_str(), banner.next_key.as_deref()),
+            (
+                "Next",
+                hints::key(Keymap::defaults(), CommandId::FindNext).as_deref()
+            )
+        );
+        assert!(banner.next_key.is_some(), "find next is bound");
+        assert_eq!(
+            (banner.back.as_str(), banner.back_key.as_deref()),
+            ("Back to results", Some("Escape"))
+        );
+        let two = match_banner("rate", 1, &[3, 5], Keymap::defaults());
+        assert!(
+            two.text
+                .ends_with("match 2 of 2 in this thread (messages 3 and 5)"),
+            "{}",
+            two.text
+        );
+        let one = match_banner("rate", 0, &[3], Keymap::defaults());
+        assert!(
+            one.text
+                .ends_with("match 1 of 1 in this thread (message 3)"),
+            "{}",
+            one.text
+        );
     }
 }

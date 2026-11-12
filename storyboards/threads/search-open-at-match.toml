@@ -1,0 +1,71 @@
+# Search answers in threads: open a result at the message that matched
+# (specs/013-focus-threads US6 #1 to #3; FR-020, FR-021; screens 06 and 07).
+#
+# The defect: a result opened at the thread's best message, which hides why
+# the thread matched, and the window knew nothing of the search. On `main`
+# the results have no children, Return opens the result's latest message,
+# the bar marks no match, there is no match banner, and `mod+g` only steps
+# the find inside the one message, so the steps that expect message 3 to
+# open and `mod+g` to carry the window on to message 5 and 6 fail there.
+#
+# "rate limit headers" matches Harbor's messages 3, 5 and 6 (not 4). The
+# top result is expanded: three matching children and one line for message 4
+# ("Message 4 doesn't match · Ben, Thu"). `j` goes to message 3 and Return
+# opens the window on it: the bar marks 3, 5 and 6 with a yellow square, the
+# kicker says "Message 3 of 6", and a banner reads "‘rate limit headers’ ·
+# match 1 of 3 in this thread (messages 3, 5 and 6)" with "Next ⌘G" and "Back
+# to results Esc". `mod+g` twice reaches message 6 (find first steps inside a
+# message, and these messages hold one match each). Escape returns to the
+# results with the ring on message 3's child, not on message 6's.
+#
+# The controller's cases are postio-focus tests/controller_suite/
+# search_threads.rs; this film is their composition in the window, and it
+# needs GTK (the headless compositor) to play. The thread bar's ringed chip
+# is published as `app.focus.reading.chip`, from zero.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US6" }
+seed   = "threads"
+design = "07-opened-from-search"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+check   = { keyboard.region = "search" }
+
+[[step]]
+type    = "rate limit headers"
+
+[[step]]
+id      = "results"
+command = "show_all_results"
+expect  = "The results group by thread. The top result, Harbor API draft v3, reads \"3 of 6 messages match\" in place of its snippet and is expanded: a child for message 3, one short line \"Message 4 doesn't match · Ben, Thu\", then children for messages 5 and 6, each tagged with its message and with the matched words highlighted."
+
+[[step]]
+command = "next_message"
+expect  = "The ring moves from the result to its first child, message 3."
+
+[[step]]
+id      = "open"
+command = "open_message"
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 2, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 3 of 6 · ] newer · [ older" }
+expect  = "The window opens on message 3, not on the thread's latest. The bar marks messages 3, 5 and 6 with a yellow square and rings chip 3; the kicker says \"Message 3 of 6\"; a banner reads \"‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)\" with Next and Back to results, each with its key."
+
+[[step]]
+id      = "next"
+command = "find_next"
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 4 }
+expect  = "Message 3 holds one match, so find carries the window on to message 5, skipping message 4: chip 5 is ringed and the banner reads \"match 2 of 3\"."
+
+[[step]]
+id      = "last"
+command = "find_next"
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 5 }
+expect  = "Message 6 is shown, chip 6 ringed, and the banner reads \"match 3 of 3\"."
+
+[[step]]
+id      = "back"
+command = "back"
+check   = { view = "main", keyboard.region = "list" }
+expect  = "The window closes and the results are back with the ring on message 3's child, the one the window was opened from, not on message 6."

@@ -305,20 +305,20 @@ and `}` shows it.
 **Independent test**: search `rate limit headers`, then `j`, `Return`,
 `mod+g` twice, `Escape`.
 
-- [ ] T069 [P] [US6] Write `crates/postio-ui/src/search_view.rs` tests first (red):
+- [x] T069 [P] [US6] Write `crates/postio-ui/src/search_view.rs` tests first (red):
   - `children(view, matches)` gives three `Match` children and one `Gap` ("Message 4 doesn't match · Ben, Thu");
   - a file match is tagged "message 5 · file";
   - a single-match thread gives the summary "Message 5 of 8 · Tomás: …";
   - "3 of 6 messages match".
-- [ ] T070 [P] [US6] Write controller cases in `crates/postio-focus/tests/controller_suite/threads.rs` (red):
+- [x] T070 [P] [US6] Write controller cases in `crates/postio-focus/tests/controller_suite/threads.rs` (red):
   - the top multi-match result is expanded on arrival;
   - `Return` on a match child opens the window at that message with `ThreadMatches`;
   - `FindNext` past the shown message's last match moves to the next matched message;
   - on the last match it stays and says so;
   - `Escape` returns to Results with the cursor on that child (History).
-- [ ] T071 [P] [US6] Write the storyboard `storyboards/threads/search-open-at-match.*`, red on `main`.
-- [ ] T072 [US6] Implement `ResultChild`, `children` and the match summary in `crates/postio-ui/src/search_view.rs`. In `crates/postio-focus/src/results.rs`, read the top result's `conversation_matches` with the page and expand it.
-- [ ] T073 [US6] Add `ThreadMatches` to `Walk` and `ReaderVerb::{NextMatch, PrevMatch}` in `crates/postio-focus/src/surfaces.rs`, mapped from `FindNext`/`FindPrevious` when matches are present, plus `match_banner` in `crates/postio-ui/src/thread_bar.rs` and matched chips (yellow square).
+- [x] T071 [P] [US6] Write the storyboard `storyboards/threads/search-open-at-match.*`, red on `main`.
+- [x] T072 [US6] Implement `ResultChild`, `children` and the match summary in `crates/postio-ui/src/search_view.rs`. In `crates/postio-focus/src/results.rs`, read the top result's `conversation_matches` with the page and expand it.
+- [x] T073 [US6] Add `ThreadMatches` to `Walk` and `ReaderVerb::{NextMatch, PrevMatch}` in `crates/postio-focus/src/surfaces.rs`, mapped from `FindNext`/`FindPrevious` when matches are present, plus `match_banner` in `crates/postio-ui/src/thread_bar.rs` and matched chips (yellow square).
 - [ ] T074 [US6] Mac: children and gaps in `macos/Sources/PostioAppKit/ResultsTable.swift` and `macos/Sources/PostioKit/ResultRowView.swift`; the match banner in `MessageWindowView.swift`. GTK: the same in `crates/postio-gtk/src/results.rs` and `crates/postio-gtk/src/open.rs`, with a `focus_suite` case for the independent test.
 - [ ] T075 [US6] Screens 06 and 07 on both platforms; write the differences in the step-6 note. Commit step 6.
 
@@ -360,7 +360,7 @@ the text and quotes message 6. Then `f`, `2` gives "Fwd: Harbor API draft v3
   - a merge while expanded;
   - a window on a message deleted elsewhere;
   - a body not yet local;
-  - a draft whose thread was archived. Also: a thread with messages in Archive, Sent and the inbox counts every message on its inbox row. Also, from T030's review: (a) `Return` on the draft child opens that draft in the composer (today it does nothing, since a draft has no message id); (b) an expansion must survive a refresh that briefly empties the landed pages. Fold only when a landed page is known to no longer hold the anchor, not when its page is merely absent. (c) GTK's Filtered view is self-contained: it never consumed the controller's Filtered intents, before this spec too, so T035 implemented expansion there in GTK. Move it onto `postio-focus`'s `Intent::FilteredSplice`/`FilteredUnsplice` and display-position `FilteredFocus`, as the Mac does, so the rule lives once (FR-025, ADR 0045). (d) A click on a thread-bar chip shows that message: the controller needs a `ThreadBarChipClicked(index)` input (contract), which Mac and GTK then wire; both draw chips inert until then. (e) When a walk fails to begin, `walk_after` clears it but emits no clearing intents, so a stale bar can stay; emit empty `ThreadBar`/`Kicker` and `None` banners. (f) The list refreshes on every `ThreadChanged` (`feed.rs`): coalesce them so a sync pass that touches many threads repaints once.
+  - a draft whose thread was archived. Also: a thread with messages in Archive, Sent and the inbox counts every message on its inbox row. Also, from T030's review: (a) `Return` on the draft child opens that draft in the composer (today it does nothing, since a draft has no message id); (b) an expansion must survive a refresh that briefly empties the landed pages. Fold only when a landed page is known to no longer hold the anchor, not when its page is merely absent. (c) GTK's Filtered view is self-contained: it never consumed the controller's Filtered intents, before this spec too, so T035 implemented expansion there in GTK. Move it onto `postio-focus`'s `Intent::FilteredSplice`/`FilteredUnsplice` and display-position `FilteredFocus`, as the Mac does, so the rule lives once (FR-025, ADR 0045). (d) A click on a thread-bar chip shows that message: the controller needs a `ThreadBarChipClicked(index)` input (contract), which Mac and GTK then wire; both draw chips inert until then. (e) When a walk fails to begin, `walk_after` clears it but emits no clearing intents, so a stale bar can stay; emit empty `ThreadBar`/`Kicker` and `None` banners. (f) The list refreshes on every `ThreadChanged` (`feed.rs`): coalesce them so a sync pass that touches many threads repaints once. (g) A single-match result's row reads "Message 5 of 8 · Tomás: …" through `postio_ui::search_view::single_match_snippet`, which no row draws yet. (h) After splitting the shown message off, the window follows it into its new thread and keeps the Undo toast, instead of saying the message is gone.
 - [ ] T086 [P] Add a benchmark in `crates/postio-bench/benches/` for `thread_bar::chips` and `Thread` at 500 members (compiled on CI, timed by hand). Record p50/p95 in the step-4 note. Stop rule per plan.md.
 - [ ] T087 [P] Add the scope rule's boundary note to the `postio-ui` entry in `docs/ARCHITECTURE.md`: scope is resolved only by `postio_ui::scope::target`.
 - [ ] T088 [P] Check the logging added in this spec carries ids and counts only, by grepping new `tracing::` calls in the changed crates (FR-029).

@@ -77,8 +77,8 @@ pub use postio_ui::search_view::FilePreview;
 pub use results::{
     Chip, DatePresetView, FileCard, FileCopy, FilePurpose, FilesHeader, FilterButton, LabelPill,
     MatchCard, MonthBar, NoResultsView, PersonRow, PopoverRow, PopoverView, QueryView,
-    QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultsTabView, ResultsView, SaveView,
-    TermEdit, file_copies,
+    QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultSplice, ResultsTabView,
+    ResultsView, SaveView, TermEdit, file_copies,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
@@ -192,6 +192,14 @@ pub enum Input {
     /// The message window's width allows this many thread-bar chips (sent
     /// when it opens and on resize): the bar is composed again.
     BarRoom(u32),
+    /// The message window opened from a search has no more of its own find
+    /// matches in this direction (spec 013 US6): the controller goes on to
+    /// the next matched message, or says it is the last. Sent after
+    /// [`ReaderVerb::NextMatch`] / [`ReaderVerb::PrevMatch`] ran out.
+    MatchEdge {
+        /// Whether it was the next match (`false`: the previous).
+        forward: bool,
+    },
     /// A Thread ▾ menu entry was chosen by a click: it runs (spec 013 US5).
     ThreadMenuPick(CommandId),
     /// The outline's field, chips, arrows and Return (spec 013 US5).
@@ -668,6 +676,16 @@ pub enum Intent {
     /// The focus ring is on this result: draw it there and bring it into
     /// view.
     ResultsCursor(u64),
+    /// The results' expanded result: its matching messages and the lines
+    /// for the runs between them, drawn after its row; `None` takes them
+    /// away (spec 013 US6).
+    ResultSplice(Option<Box<ResultSplice>>),
+    /// The focus ring is on this child of the expanded result (an index into
+    /// [`ResultSplice::children`]), or back on the result's own row.
+    ResultChildFocus(Option<u32>),
+    /// Draw the match banner of a window opened from a search, or take it
+    /// away (spec 013 US6).
+    MatchBanner(Option<postio_ui::thread_bar::MatchBannerView>),
     /// The field's chips and words and the filter bar's buttons.
     Query(QueryView),
     /// Draw the filter popover, whole, hung from its button; `None` closes
@@ -1806,6 +1824,10 @@ impl FocusController {
             }
             Input::BarRoom(room) => {
                 let steps = self.bar_room(room);
+                self.effects(steps)
+            }
+            Input::MatchEdge { forward } => {
+                let steps = self.match_edge(forward);
                 self.effects(steps)
             }
             Input::Accounts(accounts) => {

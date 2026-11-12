@@ -374,11 +374,13 @@ impl FocusController {
                 return Vec::new();
             }
         };
+        // An expanded search result may be waiting for it too.
+        let mut steps = self.result_thread_read(thread, view.as_ref());
         // A window waiting for this thread begins its walk with it.
-        let mut steps = match &view {
+        steps.extend(match &view {
             Some(view) => self.walk_read(thread, view),
             None => self.walk_gone(thread),
-        };
+        });
         steps.extend(self.thread_read(thread, view, raw, rows));
         steps
     }
