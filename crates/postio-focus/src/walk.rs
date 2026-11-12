@@ -15,7 +15,7 @@ use postio_ui::thread_bar;
 use crate::cursor::Rows;
 use crate::feed::Step;
 use crate::surfaces::{Host, Origin};
-use crate::{Effect, FocusController, Intent, Request, SurfaceKind};
+use crate::{Effect, FocusController, Intent, Request, SurfaceKind, ToastKind};
 
 /// How many chips the bar is composed for until the window says (a 72-point
 /// chip each, in the narrowest window).
@@ -36,6 +36,9 @@ pub(crate) struct Walk {
     /// Replies that arrived while the window was open and have not been
     /// shown: the banner names the latest (FR-018).
     pub(crate) pending_new: Vec<MessageId>,
+    /// Messages deleted from the window: a read that still lists them (the
+    /// store has not caught up) does not bring them back.
+    pub(crate) gone: Vec<MessageId>,
 }
 
 impl Walk {
@@ -166,31 +169,57 @@ impl FocusController {
         }
     }
 
+    /// A thread was read and is gone: the window walking it has nothing left
+    /// to show.
+    pub(crate) fn walk_gone(&mut self, thread: ThreadId) -> Vec<Step> {
+        if self
+            .walk
+            .as_ref()
+            .is_some_and(|walk| walk.view.thread == thread)
+        {
+            return self.walk_close();
+        }
+        Vec::new()
+    }
+
     /// A thread the open window walks changed: its arrivals are pending
     /// until shown, and it is read again. The message on screen never
     /// changes here (FR-018).
     pub(crate) fn walk_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
-        let postio_core::Event::ThreadChanged {
-            thread,
-            members_added,
-            ..
-        } = event
-        else {
-            return Vec::new();
-        };
-        let Some(walk) = self
-            .walk
-            .as_mut()
-            .filter(|walk| walk.view.thread == *thread)
-        else {
-            return Vec::new();
-        };
-        for added in members_added {
-            if *added != walk.shown && !walk.pending_new.contains(added) {
-                walk.pending_new.push(*added);
+        let walk = self.walk.as_mut();
+        match event {
+            postio_core::Event::ThreadChanged {
+                thread,
+                members_added,
+                ..
+            } => {
+                let Some(walk) = walk.filter(|walk| walk.view.thread == *thread) else {
+                    return Vec::new();
+                };
+                for added in members_added {
+                    if *added != walk.shown && !walk.pending_new.contains(added) {
+                        walk.pending_new.push(*added);
+                    }
+                }
+                vec![Step::Ask(Request::ReadThread(*thread))]
             }
+            // A message of the thread left a folder: it may have left the
+            // thread (deleted elsewhere), so the thread is read again. One
+            // that is only filed elsewhere is still a member, and nothing
+            // moves.
+            postio_core::Event::MessagesRemoved { messages, .. } => {
+                let Some(walk) = walk.filter(|walk| {
+                    walk.view
+                        .members
+                        .iter()
+                        .any(|member| messages.contains(&member.id))
+                }) else {
+                    return Vec::new();
+                };
+                vec![Step::Ask(Request::ReadThread(walk.view.thread))]
+            }
+            _ => Vec::new(),
         }
-        vec![Step::Ask(Request::ReadThread(*thread))]
     }
 
     /// The open walk's thread, read again: the bar, kicker and banners are
@@ -207,8 +236,10 @@ impl FocusController {
                 member.seen |= old.seen;
             }
         }
+        view.members
+            .retain(|member| !walk.gone.contains(&member.id));
         if !view.members.iter().any(|member| member.id == walk.shown) {
-            return Vec::new();
+            return self.walk_displaced(view);
         }
         walk.view = view;
         let members = &walk.view.members;
@@ -216,6 +247,74 @@ impl FocusController {
             .retain(|id| members.iter().any(|member| member.id == *id));
         let mut steps = self.walk_intents();
         steps.push(Step::Show(Intent::NewReply(self.new_reply())));
+        steps
+    }
+
+    /// The message on screen is not in the thread any more (`view` is the
+    /// thread as it is): show the nearest member that remains, the next
+    /// newer one before the next older, and say so; with none left, the
+    /// window closes (spec 013, edge cases).
+    fn walk_displaced(&mut self, view: ThreadView) -> Vec<Step> {
+        let Some(walk) = self.walk.as_mut() else {
+            return Vec::new();
+        };
+        let kept = |id: MessageId| view.members.iter().any(|member| member.id == id);
+        let at = walk.at();
+        let old = &walk.view.members;
+        let newer = at.and_then(|at| old[at + 1..].iter().find(|member| kept(member.id)));
+        let older = at.and_then(|at| old[..at].iter().rev().find(|member| kept(member.id)));
+        let (target, is_newer) = match (newer, older) {
+            (Some(member), _) => (Some(member.id), true),
+            (None, Some(member)) => (Some(member.id), false),
+            // Nothing of the old thread is left; whatever it holds now.
+            (None, None) => (view.members.last().map(|member| member.id), true),
+        };
+        let Some(target) = target else {
+            return self.walk_close();
+        };
+        let index = view
+            .members
+            .iter()
+            .position(|member| member.id == target)
+            .expect("the target is a member");
+        walk.view = view;
+        walk.pending_new
+            .retain(|id| walk.view.members.iter().any(|member| member.id == *id));
+        let mut steps = self.walk_show(index);
+        steps.push(Step::Show(Intent::Toast {
+            text: thread_bar::gone_notice(is_newer).to_owned(),
+            kind: ToastKind::Notice,
+        }));
+        steps
+    }
+
+    /// The thread has no message left to show: the window closes.
+    fn walk_close(&mut self) -> Vec<Step> {
+        self.walk = None;
+        self.walk_asked = None;
+        self.surfaces.dismiss(SurfaceKind::Message);
+        let mut steps = vec![Step::Show(Intent::CloseSurface(SurfaceKind::Message))];
+        if !self.has_surface() {
+            steps.push(Step::Show(Intent::KeyboardHome));
+        }
+        steps
+    }
+
+    /// The message on screen was deleted from the window: the window moves
+    /// at once, as a deleted row does (local-first), and the thread is read
+    /// again to confirm.
+    pub(crate) fn walk_deleted_shown(&mut self) -> Vec<Step> {
+        let Some(walk) = self.walk.as_mut() else {
+            return Vec::new();
+        };
+        let (shown, thread) = (walk.shown, walk.view.thread);
+        walk.gone.push(shown);
+        let mut view = walk.view.clone();
+        view.members.retain(|member| member.id != shown);
+        let mut steps = self.walk_displaced(view);
+        if self.walk.is_some() {
+            steps.push(Step::Ask(Request::ReadThread(thread)));
+        }
         steps
     }
 
@@ -238,6 +337,7 @@ impl FocusController {
             row: opening.row,
             place: opening.place,
             pending_new: Vec::new(),
+            gone: Vec::new(),
         };
         if walk.at().is_none() {
             return Vec::new();

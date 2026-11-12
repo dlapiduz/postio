@@ -529,7 +529,10 @@ impl FocusController {
             // The selected messages, or the focused one alone: Filtered
             // lists messages, and the rest of a conversation may be in the
             // inbox, so the rows' conversations are not reached.
-            CommandId::Delete | CommandId::Flag | CommandId::ToggleRead => {
+            CommandId::Delete
+            | CommandId::DeleteThisMessage
+            | CommandId::Flag
+            | CommandId::ToggleRead => {
                 let filtered = self.filtered.as_mut()?;
                 let verbs = &mut self.verbs;
                 let steps = filtered

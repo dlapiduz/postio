@@ -805,6 +805,93 @@ fn move_or_delete_only_this_is_refused_on_a_collapsed_row() {
     }
 }
 
+/// D2: on a child, "move only this" opens the Move picker aimed at that
+/// message alone, and choosing a folder moves that message.
+#[test]
+fn move_only_this_on_a_child_opens_the_picker_aimed_at_that_message() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    on_child_four(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::MoveThisMessage, &rows);
+    assert!(
+        shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::OpenPicker(_))),
+        "the Move picker opens: {effects:?}"
+    );
+    let (ticket, stamp) = asks(&effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::Folders { stamp } => Some((ticket, stamp)),
+            _ => None,
+        })
+        .expect("the picker reads the folders");
+    let mut travel = postio_model::Mailbox::new(AccountId::new(1), "Travel", None);
+    travel.id = postio_model::MailboxId::new(3);
+    let _ = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::Folders {
+                stamp,
+                answer: Ok(postio_focus::FoldersRead {
+                    folders: vec![travel],
+                    recent: vec![postio_model::MailboxId::new(3)],
+                }),
+            },
+        ),
+        &rows,
+    );
+    let effects = run(&mut focus, CommandId::PickerChoose1, &rows);
+    let aims: Vec<_> = asks(&effects)
+        .into_iter()
+        .filter_map(|(_, request)| match request {
+            Request::Send { aims, .. } => Some(aims),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(
+        aims,
+        vec![postio_core::MessageTarget::Messages(vec![member_id(
+            ThreadId::new(500),
+            3
+        )])],
+        "only the child moves"
+    );
+}
+
+#[test]
+fn delete_only_this_on_a_child_deletes_that_message_and_the_cursor_stays_among_the_children() {
+    let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
+    on_child_four(&mut focus, &rows);
+    assert_eq!(
+        aimed_by(&mut focus, CommandId::DeleteThisMessage, &rows),
+        vec![postio_core::MessageTarget::Messages(vec![member_id(
+            ThreadId::new(500),
+            3
+        )])],
+        "only the child"
+    );
+    // The thread is read again without it.
+    let thread = ThreadId::new(500);
+    let effects = focus.handle_on(
+        Input::Event(Event::ThreadChanged {
+            account: AccountId::new(1),
+            thread,
+            members_added: Vec::new(),
+        }),
+        &rows,
+    );
+    let (ticket, _) = read_asked(&effects).expect("the expansion reads again");
+    let mut left = harbor(thread);
+    left.members.remove(3);
+    let effects = answer(&mut focus, ticket, left, &rows);
+    assert_eq!(
+        focus.cursor(),
+        Some(4),
+        "the cursor stays on the child that took its place, not the row: {effects:?}"
+    );
+}
+
 #[test]
 fn the_footer_names_the_thread_on_its_row_and_the_message_on_a_child() {
     let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);

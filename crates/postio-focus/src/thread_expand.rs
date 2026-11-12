@@ -377,7 +377,7 @@ impl FocusController {
         // A window waiting for this thread begins its walk with it.
         let mut steps = match &view {
             Some(view) => self.walk_read(thread, view),
-            None => Vec::new(),
+            None => self.walk_gone(thread),
         };
         steps.extend(self.thread_read(thread, view, raw, rows));
         steps
@@ -562,8 +562,12 @@ impl FocusController {
             Some(Slot::Child { .. }) => Some(match found {
                 Some(index) => child(index as u32),
                 None if on_draft && next.view.draft.is_some() => child(members),
-                // A message that left: back to the thread's row.
-                None => at,
+                // A message that left: the child that took its place (the
+                // next newer, else the last), or the row with none.
+                None => match slot {
+                    Some(Slot::Child { index, .. }) if members > 0 => child(index.min(members - 1)),
+                    _ => at,
+                },
             }),
             Some(Slot::Row(row)) => Some(after.display(Slot::Row(row))),
             None => None,

@@ -484,8 +484,19 @@ impl FocusController {
         id: postio_core::CommandId,
         rows: &dyn Rows,
     ) -> Option<Vec<Step>> {
-        let kind = PickerKind::of(id)?;
-        let selection = self.cursor.selection();
+        // "Move only this" is the one message the cursor is on, whatever is
+        // selected: a message verb never widens to a selection's threads.
+        let only_this = id == CommandId::MoveThisMessage;
+        let kind = if only_this {
+            PickerKind::Move
+        } else {
+            PickerKind::of(id)?
+        };
+        let selection = if only_this {
+            Selection::These(Vec::new())
+        } else {
+            self.cursor.selection()
+        };
         let at = self.cursor.aim_row(rows);
         let (aims, everything) =
             match postio_ui::focus_target::aim_by(&selection, self.cursor.reach(), at.as_ref(), id)
