@@ -517,6 +517,35 @@ fn read_back(
     )
 }
 
+/// A re-read that lacks the message shown, and the store saying it no longer
+/// exists: the window's answer to both together.
+fn read_back_deleted(
+    focus: &mut FocusController,
+    ticket: Ticket,
+    thread: ThreadId,
+    view: Option<ThreadView>,
+    rows: &List,
+) -> Vec<Effect> {
+    let effects = read_back(focus, ticket, thread, view, rows);
+    let (ticket, message) = asks(&effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::ThreadOf(message) => Some((ticket, message)),
+            _ => None,
+        })
+        .expect("asks where the message went");
+    focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::ThreadOf {
+                message,
+                thread: None,
+            },
+        ),
+        rows,
+    )
+}
+
 fn notice(effects: &[Effect]) -> Option<String> {
     shown(effects).into_iter().find_map(|intent| match intent {
         Intent::Toast {
@@ -578,7 +607,7 @@ fn a_message_deleted_elsewhere_moves_the_window_to_the_nearest_and_says_so() {
     let thread = ThreadId::new(500);
     let ticket = change(&mut focus, &rows, thread);
     let gone = member_id(thread, 4).get();
-    let effects = read_back(
+    let effects = read_back_deleted(
         &mut focus,
         ticket,
         thread,
@@ -595,7 +624,7 @@ fn the_nearest_remaining_is_older_when_nothing_newer_is_left() {
     let thread = ThreadId::new(500);
     let ticket = change(&mut focus, &rows, thread);
     let gone = [member_id(thread, 4).get(), member_id(thread, 5).get()];
-    let effects = read_back(
+    let effects = read_back_deleted(
         &mut focus,
         ticket,
         thread,
@@ -610,13 +639,13 @@ fn the_window_closes_when_no_message_of_the_thread_is_left() {
     let (mut focus, rows) = window();
     let thread = ThreadId::new(500);
     let ticket = change(&mut focus, &rows, thread);
-    let effects = read_back(&mut focus, ticket, thread, None, &rows);
+    let effects = read_back_deleted(&mut focus, ticket, thread, None, &rows);
     assert!(closed(&effects, SurfaceKind::Message), "{effects:?}");
     // An empty read says the same.
     let (mut focus, rows) = window();
     let ticket = change(&mut focus, &rows, thread);
     let gone: Vec<i64> = (0..6).map(|i| member_id(thread, i).get()).collect();
-    let effects = read_back(
+    let effects = read_back_deleted(
         &mut focus,
         ticket,
         thread,
@@ -637,4 +666,121 @@ fn a_change_that_leaves_the_message_shown_keeps_it_as_a_move_does() {
     assert_eq!(opened_message(&effects), None, "{effects:?}");
     assert!(notice(&effects).is_none());
     assert!(!closed(&effects, SurfaceKind::Message));
+}
+
+// ---------------------------------------------------------------------
+// Spec 013 US5: a split follows the message into its new thread.
+// ---------------------------------------------------------------------
+
+/// The new thread a split of message 5 (and the newer one after it) made.
+fn split_thread() -> ThreadId {
+    ThreadId::new(600)
+}
+
+/// `view(thread)` cut to the given members, as a split thread reads.
+fn only(thread: ThreadId, from: ThreadId, keep: &[usize]) -> ThreadView {
+    let mut cut = view(from);
+    cut.thread = thread;
+    cut.members
+        .retain(|member| keep.iter().any(|i| member.id == member_id(from, *i)));
+    cut
+}
+
+fn thread_asked(effects: &[Effect]) -> Option<(Ticket, MessageId)> {
+    asks(effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::ThreadOf(message) => Some((ticket, message)),
+            _ => None,
+        })
+}
+
+fn answer_thread_of(
+    focus: &mut FocusController,
+    rows: &List,
+    ticket: Ticket,
+    message: MessageId,
+    thread: Option<ThreadId>,
+) -> Vec<Effect> {
+    focus.handle_on(
+        Input::Reply(ticket, Reply::ThreadOf { message, thread }),
+        rows,
+    )
+}
+
+fn kicker_of(effects: &[Effect]) -> Option<String> {
+    shown(effects).into_iter().find_map(|intent| match intent {
+        Intent::Kicker(text) => Some(text),
+        _ => None,
+    })
+}
+
+#[test]
+fn splitting_the_shown_message_follows_it_into_its_new_thread_and_undo_follows_it_back() {
+    let (mut focus, rows) = window();
+    let old = ThreadId::new(500);
+    let new = split_thread();
+    let shown_message = member_id(old, 4);
+    let _ = focus.handle_on(Input::ThreadMenuPick(CommandId::SplitThread), &rows);
+
+    // The split lands: the old thread no longer holds the message.
+    let ticket = change(&mut focus, &rows, old);
+    let effects = read_back(
+        &mut focus,
+        ticket,
+        old,
+        Some(only(old, old, &[0, 1, 2, 3])),
+        &rows,
+    );
+    assert_eq!(opened_message(&effects), None, "{effects:?}");
+    assert!(notice(&effects).is_none(), "no 'gone' notice: {effects:?}");
+    let (ticket, asked) = thread_asked(&effects).expect("asks where the message went");
+    assert_eq!(asked, shown_message);
+    let effects = answer_thread_of(&mut focus, &rows, ticket, asked, Some(new));
+    let (ticket, thread) = read_asked(&effects).expect("reads the new thread");
+    assert_eq!(thread, new);
+    let two = ThreadView {
+        thread: new,
+        ..only(new, old, &[4, 5])
+    };
+    let effects = read_back(&mut focus, ticket, new, Some(two), &rows);
+    assert_eq!(opened_message(&effects), None, "{effects:?}");
+    assert!(
+        notice(&effects).is_none(),
+        "the Undo toast stays: {effects:?}"
+    );
+    assert!(thread_bar_of(&effects), "the bar is the new thread's");
+    assert!(
+        kicker_of(&effects).is_some_and(|text| text.starts_with("Message 1 of 2")),
+        "{effects:?}"
+    );
+
+    // Undo rejoins it: the new thread is gone, the old one holds it again.
+    let ticket = change(&mut focus, &rows, new);
+    let effects = read_back(&mut focus, ticket, new, None, &rows);
+    assert!(!closed(&effects, SurfaceKind::Message), "{effects:?}");
+    let (ticket, asked) = thread_asked(&effects).expect("asks where the message went");
+    let effects = answer_thread_of(&mut focus, &rows, ticket, asked, Some(old));
+    let (ticket, thread) = read_asked(&effects).expect("reads the old thread");
+    assert_eq!(thread, old);
+    let effects = read_back(&mut focus, ticket, old, Some(view(old)), &rows);
+    assert_eq!(opened_message(&effects), None, "{effects:?}");
+    assert!(notice(&effects).is_none(), "{effects:?}");
+    assert!(
+        kicker_of(&effects).is_some_and(|text| text.starts_with("Message 5 of 6")),
+        "back in the original thread: {effects:?}"
+    );
+}
+
+#[test]
+fn a_message_that_no_longer_exists_is_gone_as_before() {
+    let (mut focus, rows) = window();
+    let old = ThreadId::new(500);
+    let ticket = change(&mut focus, &rows, old);
+    let gone = member_id(old, 4).get();
+    let effects = read_back(&mut focus, ticket, old, Some(without(old, &[gone])), &rows);
+    let (ticket, asked) = thread_asked(&effects).expect("asks where the message went");
+    let effects = answer_thread_of(&mut focus, &rows, ticket, asked, None);
+    assert_eq!(opened_message(&effects), Some(member_id(old, 5)));
+    assert!(notice(&effects).is_some(), "{effects:?}");
 }
