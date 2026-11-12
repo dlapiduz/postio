@@ -675,3 +675,170 @@ async fn forty_opens_of_a_thread_draw_its_bar_forty_times_and_no_more() {
     assert_eq!(bars, 40, "one bar for each open, none from the replies");
     session.shutdown();
 }
+
+// -- Live replies, the Thread menu and the outline (spec 013 US4, US5) -------
+
+/// The message window open on Harbor, walked back to message 4 so a reply
+/// arriving is not the one on screen.
+async fn window_on_harbor() -> (Arc<Session>, Walked) {
+    let (session, harbor) = inbox_with_harbor().await;
+    session.focus_point(harbor);
+    session.invoke("open_message");
+    let mut walked = Walked::default();
+    assert!(walked_to(&session, &mut walked, 5).await, "{walked:?}");
+    session.focus_surface_opened(postio_ffi::SurfaceKindFfi::Message);
+    session.focus_bar_room(8);
+    (session, walked)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reply_arriving_while_reading_offers_itself_and_leaves_the_shown_message_alone() {
+    let (session, mut walked) = window_on_harbor().await;
+    session.invoke("prev_in_conversation");
+    assert!(walked_to(&session, &mut walked, 4).await, "{walked:?}");
+    let opened = walked.opened.len();
+
+    assert!(session.demo_arrive("reply".to_owned()), "the demo delivers");
+    let mut banner = None;
+    let mut reopened = false;
+    assert!(
+        heard(&session, 10, |event| {
+            match event {
+                UiEvent::FocusNewReply { banner: Some(b) } => banner = Some(b.clone()),
+                UiEvent::FocusOpenMessage { .. } => reopened = true,
+                _ => {}
+            }
+            banner.is_some()
+        })
+        .await,
+        "Swift is told to draw the new-reply banner"
+    );
+    let banner = banner.expect("a banner");
+    assert_eq!(banner.action, "Read it");
+    assert_eq!(banner.key.as_deref(), Some("}"));
+    assert!(!reopened, "the message on screen is not replaced");
+    assert_eq!(walked.opened.len(), opened);
+
+    session.invoke("latest_in_conversation");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusNewReply { banner: None }
+        ))
+        .await,
+        "reading it takes the banner away"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_thread_menu_has_two_groups_and_muting_badges_the_row() {
+    let (session, _) = window_on_harbor().await;
+    session.invoke("thread_menu");
+    let mut menu = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusThreadMenu { view } => {
+                menu = Some(view.clone());
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "alt+period opens the menu"
+    );
+    let menu = menu.expect("a menu");
+    assert_eq!(menu.groups.len(), 2, "{menu:?}");
+    assert_eq!(menu.groups[0].title, "Whole thread");
+    assert_eq!(menu.groups[1].title, "This message only");
+    let mute = menu.groups[0]
+        .entries
+        .iter()
+        .find(|entry| entry.title == "Mute thread")
+        .expect("a Mute entry");
+
+    session.focus_thread_menu_pick(mute.command.clone());
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusCloseSurface {
+                kind: postio_ffi::SurfaceKindFfi::ThreadMenu
+            }
+        ))
+        .await,
+        "picking closes the menu"
+    );
+    session.focus_surface_closed(postio_ffi::SurfaceKindFfi::ThreadMenu);
+
+    let mut badge = None;
+    for _ in 0..50 {
+        let total = session.focus_row_count();
+        badge = (0..total)
+            .filter_map(|position| session.focus_row_at(position))
+            .find(|row| row.subject.to_lowercase().contains("harbor api draft v3"))
+            .and_then(|row| row.thread_row)
+            .and_then(|thread| thread.muted_badge);
+        if badge.is_some() {
+            break;
+        }
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_millis(100), session.next_event()).await;
+    }
+    assert_eq!(badge.as_deref(), Some("muted"), "the row says so");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_outline_filters_by_typing_and_show_opens_that_message() {
+    let (session, _) = window_on_harbor().await;
+    session.invoke("thread_outline");
+    let mut first = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusOutline { view } => {
+                first = Some(view.clone());
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "alt+t opens the outline"
+    );
+    let first = first.expect("an outline");
+    assert_eq!(first.rows.len(), 6, "every message");
+    let word = first.rows[1]
+        .line
+        .split_whitespace()
+        .find(|word| word.len() > 4)
+        .expect("a word to type")
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_owned();
+
+    session.focus_outline_typed(word.clone());
+    let mut narrowed = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusOutline { view } if view.filter == word => {
+                narrowed = Some(view.clone());
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "typing redraws the outline"
+    );
+    let narrowed = narrowed.expect("a redraw");
+    assert!(!narrowed.rows.is_empty() && narrowed.rows.len() < 6);
+    let target = narrowed.rows[narrowed.cursor as usize].message;
+
+    session.focus_outline_show(None);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusOpenMessage { message, .. } if *message == target
+        ))
+        .await,
+        "Show opens the message the cursor is on"
+    );
+    session.shutdown();
+}

@@ -37,9 +37,12 @@ public enum ThreadBarMetrics {
 /// The bar. Nothing draws for a thread of one message.
 public struct ThreadBarView: View {
     let bar: ThreadBarFfi
+    let menu: () -> Void
 
-    public init(bar: ThreadBarFfi) {
+    /// `menu` opens Thread ▾'s menu: the command the key runs.
+    public init(bar: ThreadBarFfi, menu: @escaping () -> Void = {}) {
         self.bar = bar
+        self.menu = menu
     }
 
     public var body: some View {
@@ -61,9 +64,7 @@ public struct ThreadBarView: View {
             }
             .padding(.leading, ThreadBarMetrics.buttonGap)
             Spacer(minLength: ThreadBarMetrics.buttonGap)
-            // The thread menu is a later story (US5): the button is drawn
-            // and says so, and does nothing yet.
-            ThreadMenuButton(label: bar.menuLabel)
+            ThreadMenuButton(label: bar.menuLabel, action: menu)
         }
         .padding(.horizontal, ThreadBarMetrics.edge)
         .frame(height: ThreadBarMetrics.height)
@@ -136,31 +137,45 @@ struct ThreadChipView: View {
 /// "Thread ▾", on the right of the bar, outlined.
 struct ThreadMenuButton: View {
     let label: String
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
-            Text(label).font(.system(size: 13))
-            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(label).font(.system(size: 13))
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .frame(width: ThreadBarMetrics.button, height: 28)
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
+            .contentShape(Rectangle())
         }
-        .foregroundStyle(.primary)
-        .padding(.horizontal, 10)
-        .frame(width: ThreadBarMetrics.button, height: 28)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
-        .accessibilityElement(children: .ignore)
+        .buttonStyle(.plain)
         .accessibilityLabel(label)
+        // Where it is, for the menu and the outline to hang from.
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: MessageVerbFrames.self,
+                    value: [ThreadMenuCommand.menu: proxy.frame(in: .named(MessageVerbFrames.space))])
+            })
     }
 }
 
 /// The quiet banner on an older message: its words, and "Latest }".
 struct ThreadBannerView: View {
     let banner: ThreadBannerFfi
+    /// A new reply is tinted with the accent (screen 08); the older-message
+    /// banner is quiet.
+    var tinted = false
     let run: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Text(banner.text)
                 .font(.system(size: 12.5))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(tinted ? .primary : .secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Button(action: run) {
@@ -175,7 +190,9 @@ struct ThreadBannerView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6)))
+        .background(
+            RoundedRectangle(cornerRadius: 8).fill(
+                tinted ? AnyShapeStyle(Color.accentColor.opacity(0.12)) : AnyShapeStyle(.quaternary.opacity(0.6))))
         .accessibilityElement(children: .contain)
     }
 }

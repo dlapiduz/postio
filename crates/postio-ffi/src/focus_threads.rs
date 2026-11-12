@@ -27,6 +27,8 @@ pub struct ThreadRowFfi {
     pub new: Option<String>,
     /// The gutter's chevron; `None` for a thread of one.
     pub chevron: Option<ChevronFfi>,
+    /// "muted · 1" on a muted thread.
+    pub muted_badge: Option<String>,
 }
 
 /// The keys a focused child shows on its right.
@@ -115,6 +117,7 @@ impl From<&postio_ui::focus_row::ThreadRowView> for ThreadRowFfi {
             latest_line: view.latest_line.clone(),
             new: view.new.clone(),
             chevron: view.chevron.map(Into::into),
+            muted_badge: view.muted_badge.clone(),
         }
     }
 }

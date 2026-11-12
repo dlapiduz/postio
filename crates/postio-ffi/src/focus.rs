@@ -168,6 +168,49 @@ impl Session {
             .input(postio_focus::Input::BarRoom(chips));
     }
 
+    /// A Thread ▾ menu entry was clicked: `command` is its id.
+    pub fn focus_thread_menu_pick(&self, command: String) {
+        if let Ok(id) = command.parse::<postio_core::CommandId>() {
+            self.focus_driver()
+                .input(postio_focus::Input::ThreadMenuPick(id));
+        }
+    }
+
+    /// The outline's filter field holds `text` now.
+    pub fn focus_outline_typed(&self, text: String) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::Typed(text),
+        ));
+    }
+
+    /// A person chip of the outline was chosen, or cleared with `None`.
+    pub fn focus_outline_person(&self, name: Option<String>) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::Person(name),
+        ));
+    }
+
+    /// Up or down in the outline: by this many rows.
+    pub fn focus_outline_move(&self, by: i32) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::Move(by),
+        ));
+    }
+
+    /// Return, or a click on a row: show it. `None` is the cursor's row.
+    pub fn focus_outline_show(&self, row: Option<u32>) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::Show(row.map(|row| row as usize)),
+        ));
+    }
+
+    /// `/` in the outline: the keyboard goes to its field.
+    pub fn focus_outline_focus_filter(&self) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::FocusFilter,
+        ));
+    }
+
     /// What Undo would take back now, in the toast's words, or `None` when
     /// nothing can be: what the Edit menu names its Undo item with. Read,
     /// not taken; the engine's stack stays the only one (FR-041).

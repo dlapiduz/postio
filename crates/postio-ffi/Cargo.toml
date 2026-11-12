@@ -74,7 +74,7 @@ uniffi = { version = "0.32", features = ["cli"] }
 [dev-dependencies]
 # The crate's own testing feature, the way postio-storage does it: a test
 # needs the in-memory constructor, and making it a default would ship it.
-postio-ffi = { path = ".", features = ["testing"] }
+postio-ffi = { path = ".", features = ["testing", "demo"] }
 # A `SecretStore` double that refuses, so the locked-keyring path is tested
 # without going near the developer's own login keyring.
 async-trait = { workspace = true }

@@ -79,6 +79,10 @@ pub enum SurfaceKindFfi {
     ContactPopover,
     /// The Contacts view, in the list's place.
     Contacts,
+    /// Thread ▾'s menu, over the message window.
+    ThreadMenu,
+    /// The thread outline, over the message window.
+    Outline,
 }
 
 impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
@@ -98,6 +102,8 @@ impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
             SurfaceKindFfi::RowMenu => Kind::RowMenu,
             SurfaceKindFfi::ContactPopover => Kind::ContactPopover,
             SurfaceKindFfi::Contacts => Kind::Contacts,
+            SurfaceKindFfi::ThreadMenu => Kind::ThreadMenu,
+            SurfaceKindFfi::Outline => Kind::Outline,
         }
     }
 }
@@ -121,6 +127,8 @@ impl SurfaceKindFfi {
             Kind::RowMenu => SurfaceKindFfi::RowMenu,
             Kind::ContactPopover => SurfaceKindFfi::ContactPopover,
             Kind::Contacts => SurfaceKindFfi::Contacts,
+            Kind::ThreadMenu => SurfaceKindFfi::ThreadMenu,
+            Kind::Outline => SurfaceKindFfi::Outline,
             _ => return None,
         })
     }
@@ -1084,6 +1092,16 @@ impl FocusDriver {
             Intent::OlderBanner(banner) => self.say(UiEvent::FocusOlderBanner {
                 banner: banner.map(Into::into),
             }),
+            Intent::NewReply(banner) => self.say(UiEvent::FocusNewReply {
+                banner: banner.map(Into::into),
+            }),
+            Intent::ThreadMenu(view) => self.say(UiEvent::FocusThreadMenu {
+                view: (*view).into(),
+            }),
+            Intent::Outline(view) => self.say(UiEvent::FocusOutline {
+                view: (*view).into(),
+            }),
+            Intent::OutlineFocusFilter => self.say(UiEvent::FocusOutlineFocusFilter),
             Intent::ReplyTo(text) => self.say(UiEvent::FocusReplyTo { text }),
             Intent::KeyboardHome => self.say(UiEvent::FocusKeyboardHome),
             Intent::ListToTop => self.say(UiEvent::FocusListToTop),

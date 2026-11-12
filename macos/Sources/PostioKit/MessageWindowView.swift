@@ -307,7 +307,7 @@ public struct MessageWindowView<BodyView: View>: View {
                 Color.clear.frame(height: MessageActionRow.height)
             }
             if let bar = model.bar {
-                ThreadBarView(bar: bar)
+                ThreadBarView(bar: bar, menu: { run(ThreadMenuCommand.menu) })
                     .background(MessageSurface.chrome)
             }
             if model.find.isOpen {
@@ -362,7 +362,7 @@ public struct MessageWindowView<BodyView: View>: View {
                             view: layer.view,
                             thread: .init(
                                 kicker: model.kicker, banner: model.olderBanner,
-                                replyTo: model.replyTo),
+                                replyTo: model.replyTo, newReply: model.newReply),
                             binding: binding),
                         document: layer.document,
                         unsubscribe: model.unsubscribeState(of: layer.message),

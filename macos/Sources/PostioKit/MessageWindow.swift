@@ -107,6 +107,9 @@ public final class MessageWindowModel {
     public private(set) var kicker = ""
     /// The banner on a message that is not the latest.
     public private(set) var olderBanner: ThreadBannerFfi?
+    /// The accent-tinted banner a reply that arrived while reading puts
+    /// above the message (FR-018): the window never moves by itself.
+    public private(set) var newReply: ThreadBannerFfi?
     /// The Reply to row of the sender block.
     public private(set) var replyTo: String?
 
@@ -225,6 +228,7 @@ public final class MessageWindowModel {
         case let .bar(view): bar = view.chips.isEmpty ? nil : view
         case let .kicker(text): kicker = text
         case let .olderBanner(banner): olderBanner = banner
+        case let .newReply(banner): newReply = banner
         case let .replyTo(text): replyTo = text
         }
     }
@@ -234,6 +238,7 @@ public final class MessageWindowModel {
         bar = nil
         kicker = ""
         olderBanner = nil
+        newReply = nil
         replyTo = nil
         dwell?.stop()
         settledRead = nil

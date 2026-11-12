@@ -152,6 +152,27 @@ public final class PostioSession {
     /// it opens and on resize. The controller composes the bar again.
     public func focusBarRoom(_ chips: UInt32) { inner.focusBarRoom(chips: chips) }
 
+    /// Say a Thread ▾ menu entry was chosen: its command's id.
+    public func focusThreadMenuPick(command: String) { inner.focusThreadMenuPick(command: command) }
+
+    /// The outline's filter field holds `text` now.
+    public func focusOutlineTyped(text: String) { inner.focusOutlineTyped(text: text) }
+
+    /// A person chip of the outline was chosen, or cleared with `nil`.
+    public func focusOutlinePerson(name: String?) { inner.focusOutlinePerson(name: name) }
+
+    /// ↑ or ↓ in the outline.
+    public func focusOutlineMove(by step: Int32) { inner.focusOutlineMove(by: step) }
+
+    /// Return, or a click on a row of the outline; `nil` is the cursor's.
+    public func focusOutlineShow(row: UInt32?) { inner.focusOutlineShow(row: row) }
+
+    /// `/` in the outline: the keyboard goes to its field.
+    public func focusOutlineFocusFilter() { inner.focusOutlineFocusFilter() }
+
+    /// Let a reply arrive in the demo's Harbor thread (`@reply`).
+    public func demoArrive(what: String) -> Bool { inner.demoArrive(what: what) }
+
     /// What Undo would take back now, in the toast's words, or `nil`. A
     /// store read: off the main actor (`PostioUndoManager.refresh`).
     public nonisolated func undoDescription() -> String? { inner.undoDescription() }
