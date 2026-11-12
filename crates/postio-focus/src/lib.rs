@@ -1055,6 +1055,14 @@ pub enum Request {
         /// What it should carry.
         form: postio_model::ForwardForm,
     },
+    /// A forward of the whole of `thread` in `form`, built from the store
+    /// (`Client::forward_thread`); answered with [`Reply::Forwarded`].
+    ForwardThread {
+        /// The thread.
+        thread: ThreadId,
+        /// What it should carry.
+        form: postio_model::ForwardForm,
+    },
     /// The composer's reply, changed to answer the thread's latest received
     /// message (`Client::reply_to_latest`); answered with
     /// [`Reply::RepliedToLatest`].

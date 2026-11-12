@@ -309,15 +309,16 @@ impl FocusController {
             return Vec::new();
         }
         let mut steps = self.close_thread_surface(SurfaceKind::ThreadMenu);
-        let id = if id == CommandId::ForwardWhat2 {
-            CommandId::Forward
-        } else {
-            id
-        };
+        // "Forward the whole thread" is a forward that opens on that card.
+        let whole = id == CommandId::ForwardWhat2;
+        let id = if whole { CommandId::Forward } else { id };
+        self.compose
+            .forward_as(whole.then_some(postio_model::ForwardForm::Thread));
         let ran = self
             .thread_window_command(id, rows)
             .or_else(|| self.surfaces.reader_key(id))
             .or_else(|| self.compose_verb(id, rows));
+        self.compose.forward_as(None);
         steps.extend(ran.unwrap_or_default());
         steps
     }

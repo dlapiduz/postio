@@ -609,3 +609,76 @@ fn a_new_composition_starts_collapsed_and_without_the_old_bar() {
         intents(&effects)
     );
 }
+
+#[test]
+fn the_menus_forward_the_whole_thread_opens_the_chooser_on_whole_thread() {
+    let (mut focus, rows) = window_on_message_4();
+    let _ = run(&mut focus, CommandId::ThreadMenu, &rows);
+    let effects = focus.handle_on(Input::ThreadMenuPick(CommandId::ForwardWhat2), &rows);
+    assert_eq!(
+        composer_of(&effects).map(|(kind, _)| kind),
+        Some(ComposerKind::Forward {
+            form: ForwardForm::Thread
+        })
+    );
+    assert_eq!(
+        chooser_of(&effects).map(|c| c.selected),
+        Some(ForwardForm::Thread)
+    );
+}
+
+#[test]
+fn a_whole_thread_open_asks_for_the_thread_forward_and_a_this_open_does_not() {
+    let (mut focus, rows) = window_on_message_4();
+    let plain = run(&mut focus, CommandId::Forward, &rows);
+    assert!(requests(&plain).is_empty(), "f builds nothing itself");
+    let (mut focus, rows) = window_on_message_4();
+    let _ = run(&mut focus, CommandId::ThreadMenu, &rows);
+    let opened = focus.handle_on(Input::ThreadMenuPick(CommandId::ForwardWhat2), &rows);
+    assert_eq!(
+        requests(&opened)
+            .into_iter()
+            .map(|(_, r)| r)
+            .collect::<Vec<_>>(),
+        vec![Request::ForwardThread {
+            thread: ThreadId::new(500),
+            form: ForwardForm::Thread
+        }]
+    );
+    let whole = draft("Fwd: Harbor API draft v3 (6 messages)");
+    let done = answer(
+        &mut focus,
+        &rows,
+        &opened,
+        Reply::Forwarded {
+            form: ForwardForm::Thread,
+            answer: Ok(Forwarded::Draft(Box::new(whole.clone()))),
+        },
+    );
+    assert!(intents(&done).contains(&Intent::ComposerDraft(Box::new(whole))));
+}
+
+#[test]
+fn a_whole_thread_open_refused_for_messages_not_here_goes_back_to_this_message() {
+    let (mut focus, rows) = window_on_message_4();
+    let _ = run(&mut focus, CommandId::ThreadMenu, &rows);
+    let opened = focus.handle_on(Input::ThreadMenuPick(CommandId::ForwardWhat2), &rows);
+    let refused = answer(
+        &mut focus,
+        &rows,
+        &opened,
+        Reply::Forwarded {
+            form: ForwardForm::Thread,
+            answer: Ok(Forwarded::NotLocal(vec![MessageId::new(50000)])),
+        },
+    );
+    assert_eq!(
+        chooser_of(&refused).map(|c| c.selected),
+        Some(ForwardForm::This)
+    );
+    assert!(
+        intents(&refused)
+            .iter()
+            .any(|i| matches!(i, Intent::Toast { .. }))
+    );
+}
