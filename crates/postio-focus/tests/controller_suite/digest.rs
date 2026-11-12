@@ -92,6 +92,7 @@ impl Rows for List {
                     last_at: Utc::now(),
                     marker: None,
                     copies: Vec::new(),
+                    muted: None,
                 }))
             }
             _ => None,

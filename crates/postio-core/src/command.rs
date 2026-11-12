@@ -919,9 +919,27 @@ commands! {
     /// Reply to the thread's latest message, whatever message is shown.
     ReplyToLatest => "reply_to_latest",
     /// Stop a thread's new messages reaching the inbox, or start again.
-    MuteThread => "mute_thread",
+    ///
+    /// Frontends reach it through `Req::Mute` and `Req::Unmute`, which carry
+    /// the thread; this is the form undo replays, and the one a dispatcher
+    /// is handed. `thread: None` asks which.
+    MuteThread {
+        /// Which thread.
+        thread: Option<ThreadId> = None,
+        /// Whether it ends up muted.
+        muted: bool = true,
+    } => "mute_thread",
     /// Take the shown message out of its thread, into one of its own.
-    SplitThread => "split_thread",
+    ///
+    /// Frontends reach it through `Req::Split`. `message: None` asks which;
+    /// `rejoin` is undo's half: fold the split thread (first) back into the
+    /// thread it came out of (second), and forget the split.
+    SplitThread {
+        /// The message to split off, with the replies to it.
+        message: Option<MessageId> = None,
+        /// Undo's half: `(split thread, original thread)`.
+        rejoin: Option<(ThreadId, ThreadId)> = None,
+    } => "split_thread",
     /// Move the shown message alone, not its whole thread.
     MoveThisMessage => "move_this_message",
     /// Delete the shown message alone, not its whole thread.

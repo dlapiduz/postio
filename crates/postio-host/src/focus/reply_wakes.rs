@@ -49,6 +49,9 @@ impl FilingPass for ReplyWakes {
         transaction: &Connection,
         filed: &[FiledMessage<'_>],
     ) -> Result<FilingEffects, SyncError> {
+        // A muted thread's replies are archived first and judged by nothing
+        // else, and they wake no snooze (spec 013 FR-012).
+        let filed = &super::mute::archive_muted(transaction, filed).await?[..];
         let effects = self.inner.file(transaction, filed).await?;
         let threads = waking(filed);
         if !threads.is_empty() {
@@ -81,8 +84,7 @@ fn waking(filed: &[FiledMessage<'_>]) -> Vec<ThreadId> {
         // arrival is born awake.
         .filter(|message| message.message.snoozed_until.is_none())
         .filter_map(|message| message.thread)
-        // US5 (T056-T061): a muted conversation stays asleep. The check goes
-        // here, before the write: `.filter(|thread| !muted(thread))`.
+        // A muted reply never gets here: `mute::archive_muted` took it out.
         .collect();
     threads.sort_unstable();
     threads.dedup();
@@ -331,6 +333,12 @@ mod tests {
         })
         .await;
         // The counter sees reads; the wake is one write, which it does not.
-        assert_eq!((one.statements, one.rows), (0, 0), "it reads nothing");
+        // The one read is the mute check, for the batch (spec 013 FR-012),
+        // and it finds no mute: no rows.
+        assert_eq!(
+            (one.statements, one.rows),
+            (1, 0),
+            "it reads only the mutes"
+        );
     }
 }

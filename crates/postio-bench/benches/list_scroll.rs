@@ -88,6 +88,7 @@ fn conversation(id: i64) -> FocusRow {
         last_at: at,
         marker: None,
         copies: Vec::new(),
+        muted: None,
     })
 }
 

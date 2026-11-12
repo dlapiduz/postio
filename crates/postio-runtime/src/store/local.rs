@@ -1099,6 +1099,7 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
         // none to draw.
         marker: row.marker,
         copies: Vec::new(),
+        muted: row.muted,
         representative: MessageSummary {
             id: latest.id,
             thread: latest.thread_id,

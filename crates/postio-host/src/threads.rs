@@ -7,12 +7,12 @@ use postio_storage::repository::{LabelRepository, ThreadRepository};
 
 /// Thread `id`, or `None` when it is gone.
 ///
-/// Four statements however long the thread is: its subject (a rowid seek),
+/// Five statements however long the thread is: its subject (a rowid seek),
 /// its members with their lines (`ThreadRepository::members`), its unsent
 /// reply, and its labels. The labels come from
 /// `LabelRepository::for_threads`, the read Focus's list pages already use
-/// for a page of threads, asked here for one. Mute arrives with US5, so
-/// `muted` is `None` for now.
+/// for a page of threads, asked here for one. The mute is a
+/// fifth, a join through the thread's claims that reads only the mutes.
 pub async fn view(database: &Store, id: ThreadId) -> Result<Option<ThreadView>, StoreError> {
     let connection = database.read().await.map_err(StoreError::from)?;
     let threads = ThreadRepository::new(&connection);
@@ -21,6 +21,12 @@ pub async fn view(database: &Store, id: ThreadId) -> Result<Option<ThreadView>, 
     };
     let members = threads.members(id).await.map_err(StoreError::from)?;
     let draft = threads.draft(id).await.map_err(StoreError::from)?;
+    let muted = threads
+        .muted(&[id])
+        .await
+        .map_err(StoreError::from)?
+        .get(&id)
+        .copied();
     let labels = LabelRepository::new(&connection)
         .for_threads(&[id])
         .await
@@ -34,7 +40,20 @@ pub async fn view(database: &Store, id: ThreadId) -> Result<Option<ThreadView>, 
         subject,
         members,
         draft,
-        muted: None,
+        muted,
         labels,
     }))
+}
+
+/// Which of `threads` are muted, with the replies since: one statement.
+pub async fn muted_of(
+    database: &Store,
+    threads: &[ThreadId],
+) -> Result<Vec<(ThreadId, u32)>, StoreError> {
+    let connection = database.read().await.map_err(StoreError::from)?;
+    let muted = ThreadRepository::new(&connection)
+        .muted(threads)
+        .await
+        .map_err(StoreError::from)?;
+    Ok(muted.into_iter().collect())
 }

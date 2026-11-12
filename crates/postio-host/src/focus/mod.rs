@@ -33,6 +33,7 @@ pub(crate) mod digests;
 mod due;
 pub(crate) mod filtered;
 mod model;
+mod mute;
 mod reply_wakes;
 pub(crate) mod rules;
 mod summary;

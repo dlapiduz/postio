@@ -82,6 +82,7 @@ impl Rows for List {
                     cancelled: false,
                 }),
                 copies: Vec::new(),
+                muted: None,
             })
         })
     }

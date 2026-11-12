@@ -396,6 +396,7 @@ mod tests {
             last_at: Utc::now(),
             marker: None,
             copies: copies.iter().map(|id| ThreadId::new(*id)).collect(),
+            muted: None,
         })
     }
 

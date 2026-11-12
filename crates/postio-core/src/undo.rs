@@ -124,6 +124,15 @@ pub enum UndoKind {
     DeleteGroup,
     /// People were put in or taken out of a group.
     GroupMembers,
+    /// A thread was muted (specs/013-focus-threads FR-012).
+    Mute,
+    /// A thread was unmuted.
+    Unmute,
+    /// A message and the replies to it were split into a thread of their
+    /// own (FR-007).
+    Split,
+    /// A split was taken back: the messages rejoined their thread.
+    Unsplit,
 }
 
 impl UndoKind {
@@ -165,6 +174,11 @@ impl UndoKind {
             UndoKind::RenameGroup => "Renamed a group".to_owned(),
             UndoKind::DeleteGroup => "Deleted a group".to_owned(),
             UndoKind::GroupMembers => "Changed a group".to_owned(),
+            // About a thread, whichever of its messages the person was on.
+            UndoKind::Mute => "Muted the thread".to_owned(),
+            UndoKind::Unmute => "Unmuted the thread".to_owned(),
+            UndoKind::Split => "Split into its own thread".to_owned(),
+            UndoKind::Unsplit => "Joined the thread again".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
             // Counted in conversations: a reminder waits on a reply to the

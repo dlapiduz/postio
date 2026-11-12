@@ -192,6 +192,7 @@ pub fn conversation(
         last_at: when,
         marker: None,
         copies: Vec::new(),
+        muted: None,
     }
 }
 

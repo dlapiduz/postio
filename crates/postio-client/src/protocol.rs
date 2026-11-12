@@ -117,6 +117,17 @@ pub enum Req {
     /// A thread's members with their lines, its unsent reply and its labels
     /// (spec 013).
     Thread(postio_model::ThreadId),
+    /// Stop a thread's new replies reaching the inbox (spec 013 FR-012).
+    /// Undoable.
+    Mute(postio_model::ThreadId),
+    /// Let a muted thread's replies reach the inbox again. Undoable.
+    Unmute(postio_model::ThreadId),
+    /// Take a message, and every message that replies to it, out of its
+    /// thread into one of their own (spec 013 FR-007). Undoable by one undo.
+    Split(MessageId),
+    /// Which of these threads are muted, and the replies filed away since:
+    /// one statement for a page.
+    MutedOf(Vec<postio_model::ThreadId>),
     /// Leave the list this message came from: record the activation, and
     /// answer the list's name. Only ever on a person's deliberate act.
     Unsubscribe(MessageId),
@@ -829,6 +840,10 @@ pub enum Resp {
     /// A thread as a window or an expansion reads it, or none when it is
     /// gone.
     Thread(Option<Box<postio_model::ThreadView>>),
+    /// The thread a split made.
+    Split(postio_model::ThreadId),
+    /// The muted threads of a page, each with its replies since.
+    Muted(Vec<(postio_model::ThreadId, u32)>),
     /// Rows, in the scope's shape.
     ListRows(ListRows),
     /// Folders.

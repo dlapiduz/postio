@@ -47,7 +47,7 @@
 
 use chrono::{DateTime, TimeDelta, Utc};
 
-use crate::ids::{RfcMessageId, ThreadId};
+use crate::ids::{MessageId, RfcMessageId, ThreadId};
 use crate::message::Message;
 use crate::promoted::PRECEDENCE;
 use crate::subject::{is_reply, normalize_subject};
@@ -154,6 +154,65 @@ pub trait ThreadIndex {
         from: DateTime<Utc>,
         until: DateTime<Utc>,
     ) -> Option<ThreadId>;
+
+    /// Whether `thread` was made by splitting a message off another (spec
+    /// 013 FR-007): it claims the id of a message the person split.
+    fn is_split(&self, thread: ThreadId) -> bool;
+}
+
+/// What [`descendants`] needs to know of one message of a thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadNode {
+    /// The message.
+    pub id: MessageId,
+    /// Its own `Message-ID`, when it has one.
+    pub message_id: Option<RfcMessageId>,
+    /// What it answers: `References` with `In-Reply-To` appended, as
+    /// [`ThreadCue::references`] is.
+    pub references: Vec<RfcMessageId>,
+}
+
+/// `root` and every message that replies to it, directly or through other
+/// replies, in the order `nodes` gives them (date order, oldest first).
+///
+/// What a split moves (spec 013 FR-007). Pure and O(thread): one pass to
+/// index the ids, one walk down the replies.
+pub fn descendants(nodes: &[ThreadNode], root: MessageId) -> Vec<MessageId> {
+    use std::collections::HashSet;
+
+    // The ids of everything in the family so far, folded. Walking `nodes` in
+    // order is enough when a reply follows what it answers; a reply that
+    // sorts earlier than its parent (a clock that disagrees) is caught by
+    // going round again until nothing more joins.
+    let Some(start) = nodes.iter().find(|node| node.id == root) else {
+        return Vec::new();
+    };
+    let mut family: HashSet<MessageId> = HashSet::from([root]);
+    let mut ids: HashSet<String> = start.message_id.iter().map(RfcMessageId::folded).collect();
+    loop {
+        let before = family.len();
+        for node in nodes {
+            if family.contains(&node.id) {
+                continue;
+            }
+            if node
+                .references
+                .iter()
+                .any(|named| ids.contains(&named.folded()))
+            {
+                family.insert(node.id);
+                ids.extend(node.message_id.iter().map(RfcMessageId::folded));
+            }
+        }
+        if family.len() == before {
+            break;
+        }
+    }
+    nodes
+        .iter()
+        .map(|node| node.id)
+        .filter(|id| family.contains(id))
+        .collect()
 }
 
 /// Where a message goes.
@@ -213,6 +272,11 @@ pub fn assign(cue: &ThreadCue, index: &impl ThreadIndex) -> Assignment {
     match found.len() {
         0 => Assignment::New,
         1 => Assignment::Join(found[0]),
+        // A split thread is the person's own doing: it is not folded back
+        // into the thread it came out of by a message that names both. The
+        // message joins the thread of its nearest link (`found` is in link
+        // order), and nothing merges (spec 013 FR-007).
+        _ if found.iter().any(|thread| index.is_split(*thread)) => Assignment::Join(found[0]),
         _ => {
             // The oldest thread survives — lowest id is created first. The user
             // has been looking at it the longest, and picking by age rather
@@ -252,6 +316,7 @@ mod tests {
         by_subject: BTreeMap<String, Vec<ThreadId>>,
         last_at: BTreeMap<ThreadId, DateTime<Utc>>,
         first_at: BTreeMap<ThreadId, DateTime<Utc>>,
+        splits: Vec<ThreadId>,
     }
 
     impl Index {
@@ -307,6 +372,10 @@ mod tests {
                 .copied()
                 .filter(|thread| self.last_at[thread] >= from && self.first_at[thread] <= until)
                 .max_by_key(|thread| (self.last_at[thread], *thread))
+        }
+
+        fn is_split(&self, thread: ThreadId) -> bool {
+            self.splits.contains(&thread)
         }
     }
 
@@ -805,5 +874,138 @@ mod tests {
         });
         assert!(ThreadCue::of(&message).is_list, "bulk is what is:bulk says");
         assert!(cue.is_reply);
+    }
+
+    // -----------------------------------------------------------------------
+    // Split threads (spec 013 US5, FR-007)
+    // -----------------------------------------------------------------------
+
+    /// A conversation of five, with message 4 (and its reply 5) split off
+    /// into thread 2. The original keeps 1 to 3.
+    fn split_at_four() -> Index {
+        let mut index = Index::default();
+        let (one, two, three) = (
+            cue("<m1@example.com>", &[], "Plan"),
+            cue("<m2@example.com>", &["<m1@example.com>"], "Re: Plan"),
+            cue("<m3@example.com>", &["<m2@example.com>"], "Re: Plan"),
+        );
+        for cue in [&one, &two, &three] {
+            index.file(cue, ThreadId::new(1));
+        }
+        // What the split relinks: the claims of the moved messages' own ids.
+        index
+            .by_id
+            .insert("<m4@example.com>".to_owned(), ThreadId::new(2));
+        index
+            .by_id
+            .insert("<m5@example.com>".to_owned(), ThreadId::new(2));
+        index.splits.push(ThreadId::new(2));
+        index
+    }
+
+    #[test]
+    fn a_reply_to_a_split_message_joins_the_split_thread_and_merges_nothing() {
+        let index = split_at_four();
+        // Its References still run through the original: m1 .. m3, then m4.
+        let reply = cue(
+            "<m6@example.com>",
+            &[
+                "<m1@example.com>",
+                "<m2@example.com>",
+                "<m3@example.com>",
+                "<m4@example.com>",
+            ],
+            "Re: Plan",
+        );
+
+        assert_eq!(assign(&reply, &index), Assignment::Join(ThreadId::new(2)));
+    }
+
+    #[test]
+    fn a_reply_to_the_original_after_a_split_stays_in_the_original() {
+        let index = split_at_four();
+        let reply = cue(
+            "<m7@example.com>",
+            &["<m1@example.com>", "<m2@example.com>", "<m3@example.com>"],
+            "Re: Plan",
+        );
+
+        assert_eq!(assign(&reply, &index), Assignment::Join(ThreadId::new(1)));
+    }
+
+    #[test]
+    fn the_nearest_link_decides_when_a_split_thread_is_among_several() {
+        // Its parent is m3 (original) and it also cites m4 (split) earlier in
+        // the chain: the nearest link wins, and nothing merges.
+        let index = split_at_four();
+        let reply = cue(
+            "<m8@example.com>",
+            &["<m4@example.com>", "<m3@example.com>"],
+            "Re: Plan",
+        );
+
+        assert_eq!(assign(&reply, &index), Assignment::Join(ThreadId::new(1)));
+    }
+
+    #[test]
+    fn threads_that_are_not_split_still_merge() {
+        // Guard: the old rule, for two threads neither of which is split.
+        let mut index = split_at_four();
+        index.splits.clear();
+        let reply = cue(
+            "<m6@example.com>",
+            &["<m3@example.com>", "<m4@example.com>"],
+            "Re: Plan",
+        );
+
+        assert!(matches!(
+            assign(&reply, &index),
+            Assignment::Merge { into, .. } if into == ThreadId::new(1)
+        ));
+    }
+
+    fn node(id: i64, own: &str, answers: &[&str]) -> ThreadNode {
+        ThreadNode {
+            id: MessageId::new(id),
+            message_id: Some(id_of(own)),
+            references: answers.iter().map(|a| id_of(a)).collect(),
+        }
+    }
+
+    fn id_of(raw: &str) -> RfcMessageId {
+        RfcMessageId::new(raw)
+    }
+
+    #[test]
+    fn descendants_cover_transitive_replies_and_leave_siblings() {
+        let nodes = [
+            node(1, "<m1@example.com>", &[]),
+            node(2, "<m2@example.com>", &["<m1@example.com>"]),
+            node(
+                3,
+                "<m3@example.com>",
+                &["<m1@example.com>", "<m2@example.com>"],
+            ),
+            node(
+                4,
+                "<m4@example.com>",
+                &["<m1@example.com>", "<m2@example.com>", "<m3@example.com>"],
+            ),
+            // A reply to 4, and a reply to that reply, and a sibling of 4.
+            node(5, "<m5@example.com>", &["<M4@example.com>"]),
+            node(6, "<m6@example.com>", &["<m5@example.com>"]),
+            node(7, "<m7@example.com>", &["<m3@example.com>"]),
+        ];
+
+        assert_eq!(
+            descendants(&nodes, MessageId::new(4)),
+            vec![MessageId::new(4), MessageId::new(5), MessageId::new(6)],
+            "the root, its reply, and the reply to that, case folded"
+        );
+        assert_eq!(
+            descendants(&nodes, MessageId::new(7)),
+            vec![MessageId::new(7)],
+            "a leaf is only itself"
+        );
     }
 }

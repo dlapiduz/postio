@@ -140,6 +140,12 @@ pub struct ThreadSummary {
     /// to fold. Defaults on the way in, like [`Self::marker`].
     #[serde(default)]
     pub copies: Vec<ThreadId>,
+    /// Replies filed away since the person muted the conversation, when they
+    /// have (spec 013 FR-012): the row says "muted" and the count. Read with
+    /// the page, one statement for all its rows, and only for Focus's own
+    /// scopes. Defaults on the way in, like [`Self::marker`].
+    #[serde(default)]
+    pub muted: Option<u32>,
 }
 
 /// What a Focus row draws for its marker, and nothing that needs the body.
@@ -512,6 +518,7 @@ mod tests {
             last_at: at(9),
             marker,
             copies: Vec::new(),
+            muted: None,
         }
     }
 
