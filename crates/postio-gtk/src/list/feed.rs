@@ -88,6 +88,11 @@ impl Feed {
         }
     }
 
+    /// The client the rows are read through.
+    pub fn client(&self) -> Client {
+        self.inner.client.clone()
+    }
+
     /// The list model a view draws.
     pub fn list(&self) -> &FocusList {
         &self.inner.list

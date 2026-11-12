@@ -33,8 +33,8 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
 /// The find highlight (FR-005), light and dark: the design's yellow.
-const FIND_LIGHT: (&str, &str) = ("#ffcc00", "38%");
-const FIND_DARK: (&str, &str) = ("#ffd60a", "28%");
+pub(crate) const FIND_LIGHT: (&str, &str) = ("#ffcc00", "38%");
+pub(crate) const FIND_DARK: (&str, &str) = ("#ffd60a", "28%");
 
 /// Columns of the cheat sheet (design §2).
 const SHEET_COLUMNS: i32 = 4;
@@ -836,4 +836,14 @@ fn said(widget: &impl IsA<gtk::Widget>) -> String {
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The find highlight's yellow as the scheme has it, `#rrggbb`: what a mark
+/// that says "a search matched here" is drawn in.
+pub(crate) fn find_yellow() -> &'static str {
+    if adw::StyleManager::default().is_dark() {
+        FIND_DARK.0
+    } else {
+        FIND_LIGHT.0
+    }
 }

@@ -687,3 +687,134 @@ pub fn the_outline_filters_by_name_and_return_shows_that_message() {
 fn thread_button(reading: &postio_gtk::open::OpenMessage) -> gtk::Widget {
     support::only(&reading.dialog(), "focus-thread-bar-menu")
 }
+
+pub fn a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the_child() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 6, 10).await;
+        for n in [3, 5, 6] {
+            fixture
+                .write_searchable_body(
+                    ids[n - 1],
+                    "Please publish the rate limit headers on every reply.",
+                )
+                .await;
+        }
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("rate limit headers");
+        assert!(
+            crate::settle_until(async || bar
+                .dropdown()
+                .texts()
+                .iter()
+                .any(|text| text.contains("in the main window")))
+            .await,
+            "no Show all: {:?}",
+            bar.dropdown().texts()
+        );
+        bar.run_search_row();
+        assert!(crate::settle_until(async || window.results().is_some()).await);
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.results.children") == Some(serde_json::json!(4))
+            )
+            .await,
+            "the top result opened in place: three matches and the gap between them: {:?}",
+            said(&window, "focus.results.children")
+        );
+        support::keys(&window, &["j"]);
+        assert_eq!(
+            said(&window, "focus.results.child"),
+            Some(serde_json::json!(0))
+        );
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(2))
+            )
+            .await,
+            "the window opened on message 3"
+        );
+        assert_eq!(
+            reading_said(&window, "matched"),
+            Some(serde_json::json!("3, 5, 6"))
+        );
+        assert!(
+            reading_said(&window, "match_banner")
+                .and_then(|text| text.as_str().map(str::to_owned))
+                .is_some_and(|text| text.contains("match 1 of 3")),
+            "the banner says which match: {:?}",
+            reading_said(&window, "match_banner")
+        );
+        for chip in [4, 5] {
+            support::press(&window, "g", gtk::gdk::ModifierType::CONTROL_MASK);
+            assert!(
+                crate::settle_until(
+                    async || reading_said(&window, "chip") == Some(serde_json::json!(chip))
+                )
+                .await,
+                "find carried the window to chip {chip}: {:?}",
+                reading_said(&window, "chip")
+            );
+        }
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.results.child") == Some(serde_json::json!(0))
+            )
+            .await,
+            "Escape put the ring back on the child the window was opened from: {:?}",
+            said(&window, "focus.results.child")
+        );
+    });
+}
+
+/// Ordinary find in a window opened from the list still wraps: only a window
+/// a search opened stops at the ends and goes on to the next matched message.
+pub fn find_in_a_window_opened_from_the_list_still_wraps() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Echo",
+                "alpha beta alpha",
+                10,
+            )
+            .await;
+        fixture.write_body(message, "alpha beta alpha").await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        let reading = window.reading().expect("open");
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("alpha")).await,
+            "the body never drew"
+        );
+        let view = reading.reader().view().clone();
+        view.set_find_query("alpha");
+        assert!(
+            crate::settle_until(async || view.find_state() == (Some(0), 2)).await,
+            "two matches, the first current: {:?}",
+            view.find_state()
+        );
+        support::press(&window, "g", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert_eq!(view.find_state(), (Some(1), 2));
+        support::press(&window, "g", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert_eq!(
+            view.find_state(),
+            (Some(0), 2),
+            "find wrapped from the last match to the first"
+        );
+    });
+}

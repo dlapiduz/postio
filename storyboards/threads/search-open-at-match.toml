@@ -40,32 +40,34 @@ type    = "rate limit headers"
 [[step]]
 id      = "results"
 command = "show_all_results"
+check   = { app.focus.results.children = 4 }
 expect  = "The results group by thread. The top result, Harbor API draft v3, reads \"3 of 6 messages match\" in place of its snippet and is expanded: a child for message 3, one short line \"Message 4 doesn't match · Ben, Thu\", then children for messages 5 and 6, each tagged with its message and with the matched words highlighted."
 
 [[step]]
 command = "next_message"
+check   = { app.focus.results.child = 0 }
 expect  = "The ring moves from the result to its first child, message 3."
 
 [[step]]
 id      = "open"
 command = "open_message"
-check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 2, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 3 of 6 · ] newer · [ older" }
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 2, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 3 of 6 · ] newer · [ older", app.focus.reading.matched = "3, 5, 6", app.focus.reading.position = "Message 3 of 6 · ] newer · [ older", app.focus.reading.match_banner = "‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)" }
 expect  = "The window opens on message 3, not on the thread's latest. The bar marks messages 3, 5 and 6 with a yellow square and rings chip 3; the kicker says \"Message 3 of 6\"; a banner reads \"‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)\" with Next and Back to results, each with its key."
 
 [[step]]
 id      = "next"
 command = "find_next"
-check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 4 }
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 4, app.focus.reading.match_banner = "‘rate limit headers’ · match 2 of 3 in this thread (messages 3, 5 and 6)" }
 expect  = "Message 3 holds one match, so find carries the window on to message 5, skipping message 4: chip 5 is ringed and the banner reads \"match 2 of 3\"."
 
 [[step]]
 id      = "last"
 command = "find_next"
-check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 5 }
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 5, app.focus.reading.match_banner = "‘rate limit headers’ · match 3 of 3 in this thread (messages 3, 5 and 6)" }
 expect  = "Message 6 is shown, chip 6 ringed, and the banner reads \"match 3 of 3\"."
 
 [[step]]
 id      = "back"
 command = "back"
-check   = { view = "main", keyboard.region = "list" }
+check   = { view = "list", keyboard.region = "results", app.focus.results.child = 0 }
 expect  = "The window closes and the results are back with the ring on message 3's child, the one the window was opened from, not on message 6."

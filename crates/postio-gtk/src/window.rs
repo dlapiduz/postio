@@ -150,6 +150,12 @@ mod imp {
         pub scope_footer: RefCell<Option<Rc<crate::scope_footer::ScopeFooter>>>,
         /// The thread menu and the outline hung from the message window's
         /// Thread button (spec 013 US5).
+        /// The words of the search the results show: what a window opened
+        /// from it looks for in each message.
+        pub search_words: RefCell<String>,
+        /// Which way a find ran out of matches last, until the next message
+        /// is showing.
+        pub match_from_end: Cell<bool>,
         pub thread_menu: RefCell<Option<Rc<crate::thread_popovers::ThreadMenu>>>,
         pub outline: RefCell<Option<Rc<crate::thread_popovers::OutlinePopover>>>,
         /// The host's view of this window's aim: a whole-view selection is
@@ -319,6 +325,8 @@ mod imp {
                 picked: SelectionState::new(),
                 bulk: RefCell::default(),
                 scope_footer: RefCell::default(),
+                search_words: RefCell::default(),
+                match_from_end: Cell::new(false),
                 thread_menu: RefCell::default(),
                 outline: RefCell::default(),
                 state: RefCell::default(),
@@ -1270,6 +1278,18 @@ impl FocusWindow {
             ReaderVerb::FindInMessage => reading.reader().find_in_message(),
             ReaderVerb::FindNext => reading.reader().find_step(true),
             ReaderVerb::FindPrevious => reading.reader().find_step(false),
+            // The next or previous match of the search in this message; when
+            // there is none, the controller goes on to the next matched one.
+            ReaderVerb::NextMatch | ReaderVerb::PrevMatch => {
+                let forward = matches!(verb, ReaderVerb::NextMatch);
+                if !reading.reader().view().find_walk(forward) {
+                    self.imp().match_from_end.set(!forward);
+                    if let Some(pane) = self.pane() {
+                        pane.feed()
+                            .input(postio_focus::Input::MatchEdge { forward });
+                    }
+                }
+            }
             // App colours or the original, for this message (T213).
             ReaderVerb::SwitchTreatment => {
                 reading.reader().switch_treatment();
@@ -2409,7 +2429,37 @@ impl FocusWindow {
                     results.show_cursor(*position);
                 }
             }
+            Intent::ResultSplice(splice) => {
+                if let Some(results) = self.results() {
+                    results.show_splice(splice.as_deref());
+                }
+            }
+            Intent::ResultChildFocus(child) => {
+                if let Some(results) = self.results() {
+                    results.show_child_focus(*child);
+                }
+            }
+            Intent::MatchBanner(banner) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_match_banner(banner.as_ref());
+                    // The window looks for the search's words in each message
+                    // it shows: its own matches are stepped before the next
+                    // matched message is.
+                    let words = self.imp().search_words.borrow().clone();
+                    let from_end = self.imp().match_from_end.replace(false);
+                    let query = if banner.is_some() {
+                        words
+                    } else {
+                        String::new()
+                    };
+                    reading
+                        .reader()
+                        .view()
+                        .set_find_query_from(&query, from_end);
+                }
+            }
             Intent::Query(query) => {
+                self.imp().search_words.replace(query.words.clone());
                 if let Some(results) = self.results() {
                     results.show_query(query);
                 }
@@ -6459,6 +6509,21 @@ impl FocusWindow {
                 serde_json::json!(reading.thread_chip_said()),
             );
             app.insert(
+                "focus.reading.match_banner".to_owned(),
+                serde_json::json!(reading.match_banner_said()),
+            );
+            app.insert(
+                "focus.reading.matched".to_owned(),
+                serde_json::json!(
+                    reading
+                        .matched_chips()
+                        .iter()
+                        .map(|chip| (chip + 1).to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+            app.insert(
                 "focus.reading.new_reply".to_owned(),
                 serde_json::json!(reading.new_reply_up()),
             );
@@ -6469,6 +6534,16 @@ impl FocusWindow {
             app.insert(
                 "focus.reading.reply_to".to_owned(),
                 serde_json::json!(reading.reply_to_said()),
+            );
+        }
+        if let Some(results) = self.results() {
+            app.insert(
+                "focus.results.children".to_owned(),
+                serde_json::json!(results.child_count()),
+            );
+            app.insert(
+                "focus.results.child".to_owned(),
+                serde_json::json!(results.child_focus()),
             );
         }
         // The thread menu and the outline, while they are up.
