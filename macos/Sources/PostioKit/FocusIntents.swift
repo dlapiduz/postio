@@ -163,6 +163,8 @@ public final class FocusIntents {
         case bar(ThreadBarFfi)
         case kicker(String)
         case olderBanner(ThreadBannerFfi?)
+        /// A reply arrived while another message is shown: "Read it }".
+        case newReply(ThreadBannerFfi?)
         case replyTo(String?)
     }
 
@@ -187,6 +189,8 @@ public final class FocusIntents {
             return .thread(.kicker(text))
         case let .focusOlderBanner(banner):
             return .thread(.olderBanner(banner))
+        case let .focusNewReply(banner):
+            return .thread(.newReply(banner))
         case let .focusReplyTo(text):
             return .thread(.replyTo(text))
         default:

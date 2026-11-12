@@ -717,6 +717,9 @@ final class FocusRowCell: NSView {
                 new, Ink.newPill, colour: .textBackgroundColor, x: frame.minX + 8, middle: middle,
                 room: frame.width - 8)
         }
+        if let muted = row.mutedBadge, let at = trailing.muted {
+            Ink.draw(muted, Ink.body, colour: .secondaryLabelColor, x: at, middle: middle, room: width)
+        }
         if let state = row.sendState, let at = trailing.sendState {
             Ink.draw(state, Ink.body, colour: .secondaryLabelColor, x: at, middle: middle, room: width)
         }
@@ -852,8 +855,8 @@ final class FocusRowCell: NSView {
     /// the time, the count, the send state, the attachment's clip -- and
     /// where the middle of the line has to end.
     private func trailingColumn(of row: FocusRowModel, width: CGFloat) -> (
-        timeFont: NSFont, time: CGFloat, badge: NSRect?, newPill: NSRect?, sendState: CGFloat?,
-        clip: CGFloat?, end: CGFloat
+        timeFont: NSFont, time: CGFloat, badge: NSRect?, newPill: NSRect?, muted: CGFloat?,
+        sendState: CGFloat?, clip: CGFloat?, end: CGFloat
     ) {
         let gap = CGFloat(FocusRowMetrics.gap)
         let timeFont = row.bold || row.layout == .digest ? Ink.timeBold : Ink.time
@@ -876,13 +879,18 @@ final class FocusRowCell: NSView {
             x -= gap + 16
             clip = x
         }
+        var muted: CGFloat?
+        if let badge = row.mutedBadge {
+            x -= gap + Ink.width(badge, Ink.body)
+            muted = x
+        }
         var newPill: NSRect?
         if let new = row.newBadge {
             let boxed = Ink.width(new, Ink.newPill) + 16
             x -= gap + boxed
             newPill = NSRect(x: x, y: firstLine - 9, width: boxed, height: 18)
         }
-        return (timeFont, time, badge, newPill, sendState, clip, x - gap)
+        return (timeFont, time, badge, newPill, muted, sendState, clip, x - gap)
     }
 
     /// The marker's line: the chip outlined in the accent, the date bold in

@@ -222,6 +222,8 @@ public struct FocusRowModel: Equatable, Sendable {
     /// "2 new": drawn as a filled pill in the label colour, never the
     /// accent. Threads only.
     public let newBadge: String?
+    /// "muted \u{b7} 1": drawn quiet where the new pill would stand.
+    public let mutedBadge: String?
     /// The gutter's chevron; `nil` for a row that is not a thread.
     public let chevron: Chevron?
     /// What a child row says; `nil` for every other row.
@@ -242,6 +244,7 @@ public struct FocusRowModel: Equatable, Sendable {
         subject = row.subject
         preview = row.threadRow.map { $0.latestLine.isEmpty ? nil : $0.latestLine } ?? row.preview
         newBadge = row.threadRow?.new
+        mutedBadge = row.threadRow?.mutedBadge
         chevron = row.threadRow?.chevron.map { $0 == .expanded ? Chevron.expanded : .collapsed }
         child = row.child.map {
             Child(
@@ -307,6 +310,7 @@ public struct FocusRowModel: Equatable, Sendable {
         var parts = [sender, subject]
         if let count = countBadge, chevron != nil { parts.append("\(count) messages") }
         if let newBadge { parts.append(newBadge) }
+        if let mutedBadge { parts.append(mutedBadge) }
         if let preview, !preview.isEmpty { parts.append(preview) }
         if unread { parts.append("unread") }
         if let sendState { parts.append(sendState) }

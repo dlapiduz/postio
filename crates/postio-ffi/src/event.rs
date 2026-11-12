@@ -390,6 +390,27 @@ pub enum UiEvent {
         /// The banner.
         banner: Option<crate::focus_thread_bar::ThreadBannerFfi>,
     },
+    /// A reply arrived while the window is on another message, which stays
+    /// on screen: the accent-tinted banner with "Read it", or none.
+    FocusNewReply {
+        /// The banner.
+        banner: Option<crate::focus_thread_bar::ThreadBannerFfi>,
+    },
+    /// Open Thread ▾'s menu (a 340-point popover from the button). The controller has put it on
+    /// the stack; say `focus_surface_closed(ThreadMenu)` if it closes itself.
+    FocusThreadMenu {
+        /// The menu.
+        view: crate::focus_thread_bar::ThreadMenuFfi,
+    },
+    /// Open the thread outline (a 440-point popover), or redraw it whole. The
+    /// controller has put it on the stack; say `focus_surface_closed(Outline)`
+    /// if it closes itself.
+    FocusOutline {
+        /// The outline.
+        view: crate::focus_thread_bar::OutlineFfi,
+    },
+    /// Put the keyboard in the outline's filter field.
+    FocusOutlineFocusFilter,
     /// The sender block's Reply to row, or none.
     FocusReplyTo {
         /// "Ana Ruiz, Mon 21 Sep (message 1)".

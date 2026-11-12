@@ -135,6 +135,7 @@ final class Engine {
             ruleSheet = RuleSheetModel(engine: session)
             capture = CaptureModel(engine: session)
             makeContactPopover(session)
+            makeThreadPopovers(session)
             contactsView = ContactsModel(engine: session)
             contactsSettings = ContactsSettingsModel(
                 engine: session,
@@ -917,6 +918,65 @@ final class Engine {
         contactPresenter = presenter
     }
 
+    // MARK: Thread ▾'s menu and the outline (spec 013 US5, T066)
+
+    /// What the menu and the outline draw, and the popovers that hang them
+    /// from the thread bar's button.
+    @ObservationIgnored private(set) var threadMenu: ThreadMenuModel?
+    @ObservationIgnored private(set) var threadOutline: ThreadOutlineModel?
+    @ObservationIgnored private var threadMenuPopover: ThreadMenuPopover?
+    @ObservationIgnored private var threadOutlinePopover: ThreadOutlinePopover?
+
+    private func makeThreadPopovers(_ session: PostioSession) {
+        let menu = ThreadMenuModel(engine: session)
+        threadMenu = menu
+        threadMenuPopover = ThreadMenuPopover(model: menu) { [weak session] in
+            session?.focusSurfaceClosed(.threadMenu)
+        }
+        let outline = ThreadOutlineModel(engine: session)
+        threadOutline = outline
+        threadOutlinePopover = ThreadOutlinePopover(model: outline) { [weak session] in
+            session?.focusSurfaceClosed(.outline)
+        }
+    }
+
+    /// Where Thread ▾ is, in the message window's content: what both
+    /// popovers hang from.
+    private func threadButtonAnchor() -> (rect: NSRect, view: NSView)? {
+        guard let content = messageContent, content.window != nil else { return nil }
+        let frame = verbFrames[ThreadMenuCommand.menu]
+            ?? CGRect(x: content.bounds.width - 104, y: 136, width: 88, height: 28)
+        let rect = content.isFlipped
+            ? frame
+            : CGRect(x: frame.minX, y: content.bounds.height - frame.maxY, width: frame.width, height: frame.height)
+        return (rect, content)
+    }
+
+    /// Show what the controller said about the menu or the outline.
+    private func apply(_ change: ThreadMenuModel.Change) {
+        switch change {
+        case .open:
+            guard let (rect, view) = threadButtonAnchor() else { return }
+            threadMenuPopover?.show(relativeTo: rect, of: view)
+        case .close:
+            threadMenuPopover?.close()
+        }
+    }
+
+    private func apply(_ change: ThreadOutlineModel.Change) {
+        switch change {
+        case .open:
+            guard let (rect, view) = threadButtonAnchor() else { return }
+            threadOutlinePopover?.show(relativeTo: rect, of: view)
+        case .redraw:
+            threadOutlinePopover?.reload()
+        case .focusFilter:
+            threadOutlinePopover?.focusFilter()
+        case .close:
+            threadOutlinePopover?.close()
+        }
+    }
+
     // MARK: capture (T116)
 
     /// Capture, as the controller's intents leave it.
@@ -1571,6 +1631,16 @@ final class Engine {
             }
             return
         }
+        // Thread ▾'s menu and the outline (T066): drawn whole, closed when
+        // the controller says.
+        if let change = threadMenu?.apply(event) {
+            apply(change)
+            return
+        }
+        if let change = threadOutline?.apply(event) {
+            apply(change)
+            return
+        }
         if let surface = FocusIntents.surface(event) {
             apply(surface)
             return
@@ -1726,7 +1796,7 @@ final class Engine {
     }
 
     /// A demo's click on a filter button, named `@from`, `@to`, `@date`,
-    /// `@anywhere` or `@label` (screens 08 and 09): the format of
+    /// `@anywhere` or `@label` (screens 08 and 09), and `@reply`: the format of
     /// `POSTIO_DEMO_KEYS` has no pointer, and a popover opens from a click.
     /// `false` for any other key.
     private func replayClick(_ key: KeyEvent.Reduced) -> Bool {
@@ -1734,6 +1804,12 @@ final class Engine {
         let kinds: [String: FilterKindFfi] = [
             "@from": .from, "@to": .to, "@date": .date, "@anywhere": .anywhere, "@label": .label,
         ]
+        // `@reply`: Ana's reply arrives in the Harbor thread while the
+        // window is open (spec 013 US4, screen 08).
+        if word.lowercased() == "@reply" {
+            _ = session?.demoArrive(what: "reply")
+            return true
+        }
         guard let kind = kinds[word.lowercased()] else { return false }
         searchQuery?.tap(kind)
         return true
@@ -1760,6 +1836,27 @@ final class Engine {
                 guard typing else { return false }
                 popover.type(text)
             // Return, Tab and Escape resolve as a press does.
+            default: return false
+            }
+            return true
+        }
+        // Thread ▾'s menu and the outline, as a press there would be: the
+        // arrows and Return, and typing into the outline's filter.
+        if let menu = threadMenu, menu.isOpen {
+            switch key.name {
+            case "down": menu.move(by: 1)
+            case "up": menu.move(by: -1)
+            case "return": menu.confirm()
+            default: return false
+            }
+            return true
+        }
+        if let outline = threadOutline, outline.isOpen, let popover = threadOutlinePopover {
+            switch key.name {
+            case "down": outline.move(by: 1)
+            case "up": outline.move(by: -1)
+            case "return": outline.show()
+            case nil: popover.type(key.character ?? "")
             default: return false
             }
             return true

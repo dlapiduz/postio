@@ -252,7 +252,7 @@ and `}` shows it.
 - [x] T051 [P] [US4] Write the storyboard `storyboards/threads/live-reply.*`, red on `main` (an arrival key from the demo).
 - [x] T052 [US4] Add a live-reply key to `crates/postio-demo/src/lib.rs` (`POSTIO_DEMO_KEYS` token) that delivers a reply into Harbor through the real arrival path.
 - [x] T053 [US4] Implement `pending_new` and `NewReply` in `crates/postio-focus/src/surfaces.rs` and the row refresh in `crates/postio-focus/src/feed.rs`. Add `new_reply_banner` to `crates/postio-ui/src/thread_bar.rs`.
-- [ ] T054 [US4] Mac banner (accent-tinted, "Read it }") in `macos/Sources/PostioKit/MessageWindowView.swift`, with a Swift test that the scroll offset is unchanged after an arrival. GTK banner in `crates/postio-gtk/src/open.rs`, with a `focus_suite` case asserting that the shown message and its adjustment value are unchanged.
+- [x] T054 [US4] Mac banner (accent-tinted, "Read it }") in `macos/Sources/PostioKit/MessageWindowView.swift`, with a Swift test that the scroll offset is unchanged after an arrival. GTK banner in `crates/postio-gtk/src/open.rs`, with a `focus_suite` case asserting that the shown message and its adjustment value are unchanged.
 - [ ] T055 [US4] Screen 08 on both platforms; write the differences in the step-4 note. Commit step 4.
 
 ---
@@ -291,8 +291,8 @@ and `}` shows it.
   - `MoveThisMessage`/`DeleteThisMessage` aim `Messages([shown])`.
 - [x] T064 [P] [US5] Write the storyboards `storyboards/threads/menu.*`, `outline.*` and `mute.*`, red on `main`.
 - [x] T065 [US5] Implement `crates/postio-ui/src/thread_outline.rs`, the `Outline` and `ThreadMenu` surfaces in `crates/postio-focus/src/surfaces.rs`, and the "muted" badge and count on `ThreadRowView`.
-- [ ] T066 [US5] Mac: `macos/Sources/PostioKit/ThreadMenu.swift` (340 wide, two groups, explanations) and `macos/Sources/PostioKit/ThreadOutline.swift` (440 wide, filter field, person chips, 34-tall rows, footer) as `NSPopover`s from Thread ▾. Swift test for the outline's keyboard path.
-- [ ] T067 [US5] GTK: `crates/postio-gtk/src/thread_popovers.rs` (new) with the menu and outline `GtkPopover`s, and `focus_suite` cases for outline filter → `Return`, and for mute.
+- [x] T066 [US5] Mac: `macos/Sources/PostioKit/ThreadMenu.swift` (340 wide, two groups, explanations) and `macos/Sources/PostioKit/ThreadOutline.swift` (440 wide, filter field, person chips, 34-tall rows, footer) as `NSPopover`s from Thread ▾. Swift test for the outline's keyboard path.
+- [x] T067 [US5] GTK: `crates/postio-gtk/src/thread_popovers.rs` (new) with the menu and outline `GtkPopover`s, and `focus_suite` cases for outline filter → `Return`, and for mute.
 - [ ] T068 [US5] Screens 04 and 05 on both platforms; write the differences in the step-5 note. Commit step 5.
 
 ---

@@ -45,11 +45,16 @@ struct ThreadBarTests {
         let model: MessageWindowModel
         let heard: Heard
         var rooms: [UInt32] = []
+        /// The menu's and the outline's models, fed as the app feeds them.
+        let menu: ThreadMenuModel
+        let outline: ThreadOutlineModel
 
         init() throws {
             session = try PostioSession.openDemo("threads")
             model = MessageWindowModel(source: session, report: { _, _ in })
             heard = Heard(session)
+            menu = ThreadMenuModel(engine: session)
+            outline = ThreadOutlineModel(engine: session)
         }
 
         /// Wait until `done`, feeding the model as events arrive. A poll in
@@ -66,6 +71,8 @@ struct ThreadBarTests {
 
         @MainActor
         func take(_ event: UiEvent) {
+            menu.apply(event)
+            outline.apply(event)
             switch FocusIntents.surface(event) {
             case let .openMessage(message, index, total):
                 if model.open(message: message, index: index, total: total, mainWidth: 1440) {

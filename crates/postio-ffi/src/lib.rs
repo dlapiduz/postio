@@ -166,7 +166,10 @@ pub use focus_surfaces::{
     RuleScheduleFfi, RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi,
     focus_digest_geometry,
 };
-pub use focus_thread_bar::{ThreadBannerFfi, ThreadBarFfi, ThreadChipFfi};
+pub use focus_thread_bar::{
+    OutlineFfi, OutlinePersonFfi, OutlineRowFfi, ThreadBannerFfi, ThreadBarFfi, ThreadChipFfi,
+    ThreadMenuEntryFfi, ThreadMenuFfi, ThreadMenuGroupFfi,
+};
 pub use focus_threads::{
     ChevronFfi, ChildHintFfi, ChildRowFfi, FooterKeyFfi, FooterViewFfi, ThreadRowFfi,
 };

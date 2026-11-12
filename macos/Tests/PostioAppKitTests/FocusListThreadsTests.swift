@@ -43,7 +43,7 @@ struct FocusListThreadsTests {
             threadRow: thread
                 ? ThreadRowFfi(
                     participants: "Lena, Ben, Ana, you", count: "6",
-                    latestLine: "Ben: Looks good\u{2026}", new: "2 new", chevron: .collapsed)
+                    latestLine: "Ben: Looks good\u{2026}", new: "2 new", chevron: .collapsed, mutedBadge: nil)
                 : nil,
             child: nil)
     }

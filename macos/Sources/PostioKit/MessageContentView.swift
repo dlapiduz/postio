@@ -97,6 +97,8 @@ public struct MessageHeaderWords: Equatable {
         public var kicker: String
         public var banner: ThreadBannerFfi?
         public var replyTo: String?
+        /// A reply arrived while reading: the accent-tinted banner.
+        public var newReply: ThreadBannerFfi?
 
         public static let none = Thread(kicker: "", banner: nil, replyTo: nil)
     }
@@ -261,6 +263,8 @@ public struct MessageContentView<BodyView: View>: View {
     @ViewBuilder
     private func draw(_ block: MessageBlock) -> some View {
         switch block {
+        case let .newReply(banner):
+            ThreadBannerView(banner: banner, tinted: true) { run(Self.latest) }
         case let .olderBanner(banner):
             ThreadBannerView(banner: banner) { run(Self.latest) }
         case let .kicker(kicker):
@@ -315,6 +319,9 @@ public struct MessageContentView<BodyView: View>: View {
 /// leaves out is a test failure here rather than a gap nobody sees (#1585,
 /// where the unsubscribe banner had no call site at all).
 public enum MessageBlock: Equatable, Identifiable {
+    /// The accent-tinted banner a reply that arrived while reading puts
+    /// first: who replied, and "Read it }".
+    case newReply(ThreadBannerFfi)
     /// The quiet banner on a message that is not the latest.
     case olderBanner(ThreadBannerFfi)
     /// "Message 4 of 6 · ] newer · [ older".
@@ -344,6 +351,7 @@ public enum MessageBlock: Equatable, Identifiable {
 
     public var id: String {
         switch self {
+        case .newReply: "newReply"
         case .olderBanner: "olderBanner"
         case .kicker: "kicker"
         case .subject: "subject"
@@ -368,6 +376,7 @@ public enum MessageBlock: Equatable, Identifiable {
         unsubscribe: Unsubscribing.State
     ) -> [MessageBlock] {
         var blocks: [MessageBlock] = []
+        if let banner = words.thread.newReply { blocks.append(.newReply(banner)) }
         if let banner = words.thread.banner { blocks.append(.olderBanner(banner)) }
         if !words.thread.kicker.isEmpty { blocks.append(.kicker(words.thread.kicker)) }
         blocks += [.subject(words.subject), .labels, .sender]
@@ -388,7 +397,8 @@ public enum MessageBlock: Equatable, Identifiable {
     /// The rhythm's gap above `block` when `previous` is drawn above it.
     public static func gap(above block: MessageBlock, after previous: MessageBlock?) -> CGFloat {
         switch block {
-        case .olderBanner: 0
+        case .newReply: 0
+        case .olderBanner: previous == nil ? 0 : MessageRhythm.bannerToKicker
         case .kicker: previous == nil ? 0 : MessageRhythm.bannerToKicker
         case .subject:
             switch previous {
