@@ -38,11 +38,23 @@ public enum ThreadBarMetrics {
 public struct ThreadBarView: View {
     let bar: ThreadBarFfi
     let menu: () -> Void
+    let show: (UInt32) -> Void
+    let more: (UInt32) -> Void
 
-    /// `menu` opens Thread ▾'s menu: the command the key runs.
-    public init(bar: ThreadBarFfi, menu: @escaping () -> Void = {}) {
+    /// `menu` opens Thread ▾'s menu: the command the key runs. `show` hears
+    /// a click on a message's chip (its index), `more` a click on "... N
+    /// more" (the first member it stands for); the controller decides what
+    /// each does.
+    public init(
+        bar: ThreadBarFfi,
+        menu: @escaping () -> Void = {},
+        show: @escaping (UInt32) -> Void = { _ in },
+        more: @escaping (UInt32) -> Void = { _ in }
+    ) {
         self.bar = bar
         self.menu = menu
+        self.show = show
+        self.more = more
     }
 
     public var body: some View {
@@ -59,7 +71,7 @@ public struct ThreadBarView: View {
             .frame(width: ThreadBarMetrics.labelColumn, alignment: .leading)
             HStack(spacing: ThreadBarMetrics.chipGap) {
                 ForEach(Array(bar.chips.enumerated()), id: \.offset) { _, chip in
-                    ThreadChipView(chip: chip)
+                    ThreadChipView(chip: chip, show: show, more: more)
                 }
             }
             .padding(.leading, ThreadBarMetrics.buttonGap)
@@ -78,13 +90,22 @@ public struct ThreadBarView: View {
 /// One chip: an avatar over "Name · time".
 struct ThreadChipView: View {
     let chip: ThreadChipFfi
+    var show: (UInt32) -> Void = { _ in }
+    var more: (UInt32) -> Void = { _ in }
 
     var body: some View {
         switch chip {
-        case let .message(_, initials, label, current, unread, matched):
-            message(initials: initials, label: label, current: current, unread: unread, matched: matched)
-        case let .more(count, _, _):
-            more(count)
+        case let .message(index, initials, label, current, unread, matched):
+            Button { show(index) } label: {
+                message(initials: initials, label: label, current: current, unread: unread, matched: matched)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        case let .more(count, from, _):
+            Button { more(from) } label: {
+                moreLabel(count).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -125,7 +146,7 @@ struct ThreadChipView: View {
         .accessibilityAddTraits(current ? .isSelected : [])
     }
 
-    private func more(_ count: UInt32) -> some View {
+    private func moreLabel(_ count: UInt32) -> some View {
         Text("\u{2026} \(count) more")
             .font(.system(size: 10.5))
             .foregroundStyle(.secondary)

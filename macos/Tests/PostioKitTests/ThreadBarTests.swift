@@ -150,6 +150,26 @@ struct ThreadBarTests {
         }
     }
 
+    @Test func aClickOnAChipShowsThatMessageAndMoreOpensTheOutline() async throws {
+        let window = try Window()
+        defer { window.session.shutdown() }
+        try await window.openHarbor()
+        window.session.focusThreadBarChipClicked(1)
+        try await window.until("the click rings message 2") { window.ringed == 2 }
+
+        window.session.focusBarRoom(3)
+        var from: UInt32?
+        try await window.until("a narrow bar folds chips into More") {
+            from = window.model.bar?.chips.compactMap { chip -> UInt32? in
+                if case let .more(_, from, _) = chip { return from }
+                return nil
+            }.first
+            return from != nil
+        }
+        window.session.focusThreadBarMoreClicked(from: try #require(from))
+        try await window.until("More opens the outline") { window.outline.view != nil }
+    }
+
     @Test func theMessageStepsInPlaceInTheSameWindow() async throws {
         let window = try Window()
         defer { window.session.shutdown() }

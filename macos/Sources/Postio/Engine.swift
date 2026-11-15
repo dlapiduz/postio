@@ -299,6 +299,8 @@ final class Engine {
         case .threadDraft: draft = message.flatMap { session.draft($0) }
         // An unsent reply in a thread has no message: `message` is its id.
         case .threadDraft: draft = message.flatMap { session.draft($0) }
+        // An unsent reply in a thread has no message: `message` is its id.
+        case .threadDraft: draft = message.flatMap { session.draft($0) }
         }
         guard let draft else {
             NSSound.beep()
