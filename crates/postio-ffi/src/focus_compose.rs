@@ -25,6 +25,9 @@ pub enum ComposerKindFfi {
     /// The draft behind the message, to go on writing:
     /// `draftForMessage(message)`.
     Draft,
+    /// An unsent reply shown in a thread: the event's `message` is the
+    /// draft's own id, and `draft(id)` is what to show.
+    ThreadDraft,
 }
 
 impl ComposerKindFfi {
@@ -38,6 +41,7 @@ impl ComposerKindFfi {
             Kind::ReplyAll => ComposerKindFfi::ReplyAll,
             Kind::Forward { .. } => ComposerKindFfi::Forward,
             Kind::Draft => ComposerKindFfi::Draft,
+            Kind::ThreadDraft { .. } => ComposerKindFfi::ThreadDraft,
             _ => return None,
         })
     }

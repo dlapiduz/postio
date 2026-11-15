@@ -1269,11 +1269,14 @@ impl FocusDriver {
             }),
             Intent::ContactsFocusFilter => self.say(UiEvent::FocusContactsFocusFilter),
             Intent::Composer { kind, message } => {
+                // A thread's unsent reply has no message: its own id rides in
+                // `message`.
+                let message = match kind {
+                    postio_focus::ComposerKind::ThreadDraft { draft } => Some(draft.get()),
+                    _ => message.map(|message| message.get()),
+                };
                 if let Some(kind) = crate::focus_compose::ComposerKindFfi::of(kind) {
-                    self.say(UiEvent::FocusComposer {
-                        kind,
-                        message: message.map(|message| message.get()),
-                    });
+                    self.say(UiEvent::FocusComposer { kind, message });
                 }
             }
             Intent::ForwardChooser(view) => self.say(UiEvent::FocusForwardChooser {
