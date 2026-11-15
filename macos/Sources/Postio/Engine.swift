@@ -295,6 +295,10 @@ final class Engine {
         case .replyAll: draft = message.flatMap { session.replyDraft(to: $0, all: true) }
         case .forward: draft = message.flatMap { session.forwardDraft($0) }
         case .draft: draft = message.flatMap { session.draftForMessage($0) }
+        // An unsent reply in a thread has no message: `message` is its id.
+        case .threadDraft: draft = message.flatMap { session.draft($0) }
+        // An unsent reply in a thread has no message: `message` is its id.
+        case .threadDraft: draft = message.flatMap { session.draft($0) }
         }
         guard let draft else {
             NSSound.beep()
@@ -651,7 +655,9 @@ final class Engine {
                 model?.keepForSender { session?.alwaysTreatment(sender: $0, treatment: $1) }
             },
             verbFrames: { [weak self] in self?.verbFrames = $0 },
-            barRoom: { [weak session] in session?.focusBarRoom($0) }
+            barRoom: { [weak session] in session?.focusBarRoom($0) },
+            barChip: { [weak session] in session?.focusThreadBarChipClicked($0) },
+            barMore: { [weak session] in session?.focusThreadBarMoreClicked(from: $0) }
         ) { [weak session, weak model] message, document, card in
             MessageBodyView(
                 message: message,
