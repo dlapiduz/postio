@@ -266,12 +266,25 @@ struct ResultsModelTests {
                 children: [
                     .match(
                         message: 103, number: 3, tag: "message 3",
-                        passage: [RunFfi(text: "rate-limit headers", highlighted: true, style: .plain)]),
+                        passage: [RunFfi(text: "rate-limit headers", highlighted: true, style: .plain)],
+                        sender: "Tom\u{e1}s Reyes", initials: "TR", time: "Thu"),
                     .gap(text: "Message 4 doesn't match \u{b7} Ben, Thu"),
-                    .match(message: 105, number: 5, tag: "message 5 \u{b7} file", passage: []),
-                    .match(message: 106, number: 6, tag: "message 6", passage: []),
+                    .match(message: 105, number: 5, tag: "message 5 \u{b7} file", passage: [],
+                           sender: "You", initials: "Y", time: "Fri"),
+                    .match(message: 106, number: 6, tag: "message 6", passage: [],
+                           sender: "Ana Ruiz", initials: "AR", time: "Sat"),
                 ],
                 focused: focused))
+    }
+
+    @Test func aMatchLineIsReadWithWhoWroteItAndWhen() {
+        let child = ResultChildFfi.match(
+            message: 103, number: 3, tag: "message 3",
+            passage: [RunFfi(text: "rate-limit headers", highlighted: true, style: .plain)],
+            sender: "Tom\u{e1}s Reyes", initials: "TR", time: "Thu")
+        #expect(
+            ResultChildView.accessible(child)
+                == "Tom\u{e1}s Reyes, message 3, rate-limit headers, Thu")
     }
 
     @Test func anOpenedResultsLinesAreDrawnAfterItsRowAndPushTheRestDown() {

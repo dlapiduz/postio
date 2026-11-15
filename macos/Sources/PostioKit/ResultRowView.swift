@@ -190,7 +190,15 @@ public struct ResultChildView: View {
         HStack(spacing: ResultRowView.Columns.gap) {
             Color.clear.frame(width: ResultRowView.Columns.gutter)
             switch child {
-            case let .match(_, _, tag, passage):
+            case let .match(_, _, tag, passage, sender, initials, time):
+                Text(initials)
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: CGFloat(FocusRowMetrics.childAvatar), height: CGFloat(FocusRowMetrics.childAvatar))
+                    .background(Circle().fill(Color(nsColor: .tertiaryLabelColor)))
+                Text(sender)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
                 Text(tag)
                     .font(.system(size: 11))
                     .italic(tag.hasSuffix("file"))
@@ -202,6 +210,10 @@ public struct ResultChildView: View {
                 Text(SearchRuns.attributed(passage, size: 12.5, secondary: true, scheme: scheme))
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
+                Text(time)
+                    .font(.system(size: 12.5).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
             case let .gap(text):
                 Text(text).font(.system(size: 12)).foregroundStyle(.tertiary)
                 Spacer(minLength: 0)
@@ -220,7 +232,8 @@ public struct ResultChildView: View {
     /// What VoiceOver reads for a line.
     static func accessible(_ child: ResultChildFfi?) -> String {
         switch child {
-        case let .match(_, _, tag, passage): "\(tag), " + passage.map(\.text).joined()
+        case let .match(_, _, tag, passage, sender, _, time):
+            "\(sender), \(tag), " + passage.map(\.text).joined() + ", \(time)"
         case let .gap(text): text
         case nil: ""
         }
