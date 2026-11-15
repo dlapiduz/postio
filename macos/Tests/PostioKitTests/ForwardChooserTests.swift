@@ -57,16 +57,34 @@ import Testing
 
     @Test func theChooserAnswersFirstOnlyWhileNothingIsBeingTypedIn() {
         #expect(
-            ForwardChooserKeys.contexts(base: .composer, chooserShown: true, typing: false)
+            ForwardChooserKeys.contexts(base: .composer, chooserFocused: true, typing: false)
                 == [.forwardChooser, .composer], "1 2 3 are the chooser's, the rest falls through")
         #expect(
-            ForwardChooserKeys.contexts(base: .composer, chooserShown: true, typing: true)
+            ForwardChooserKeys.contexts(base: .composer, chooserFocused: true, typing: true)
                 == [.composer], "a 2 typed into To is a 2")
         #expect(
-            ForwardChooserKeys.contexts(base: .composer, chooserShown: false, typing: false) == [.composer])
+            ForwardChooserKeys.contexts(base: .composer, chooserFocused: false, typing: false) == [.composer])
         #expect(
-            ForwardChooserKeys.contexts(base: .list, chooserShown: true, typing: false) == [.list],
+            ForwardChooserKeys.contexts(base: .list, chooserFocused: true, typing: false) == [.list],
             "never outside the composer")
+    }
+
+    @Test func theChooserHoldsTheKeyboardUntilAFieldTakesIt() {
+        let model = ComposeModel(id: 1, draft: Self.draft())
+        #expect(!model.chooserHasKeyboard, "no chooser, no keys")
+        model.chooser = Self.chooser
+        #expect(model.chooserHasKeyboard, "it appears holding the keyboard")
+        model.chooser = ChooserFfi(
+            heading: Self.chooser.heading, cards: Self.chooser.cards, selected: .thread)
+        #expect(model.chooserHasKeyboard, "a redraw with another card ringed keeps it")
+        model.releaseChooser()
+        #expect(!model.chooserHasKeyboard, "Tab moved to To: a 2 is text")
+        model.chooser = ChooserFfi(
+            heading: Self.chooser.heading, cards: Self.chooser.cards, selected: .this)
+        #expect(!model.chooserHasKeyboard, "a redraw does not take it back")
+        model.chooser = nil
+        model.chooser = Self.chooser
+        #expect(model.chooserHasKeyboard, "a new chooser does")
     }
 
     @Test func theBarsTwoActionsAreShowThemAndReplyToLatest() {

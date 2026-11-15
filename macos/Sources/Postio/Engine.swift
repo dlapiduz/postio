@@ -297,10 +297,6 @@ final class Engine {
         case .draft: draft = message.flatMap { session.draftForMessage($0) }
         // An unsent reply in a thread has no message: `message` is its id.
         case .threadDraft: draft = message.flatMap { session.draft($0) }
-        // An unsent reply in a thread has no message: `message` is its id.
-        case .threadDraft: draft = message.flatMap { session.draft($0) }
-        // An unsent reply in a thread has no message: `message` is its id.
-        case .threadDraft: draft = message.flatMap { session.draft($0) }
         }
         guard let draft else {
             NSSound.beep()
@@ -2002,11 +1998,13 @@ final class Engine {
         let monitor = KeyMonitor(
             resolve: { [weak self] reduced, context, typing in
                 guard let self, let session = self.session else { return .unhandled }
-                // The forward chooser, while it holds the keyboard, answers
-                // first; what it does not bind is the composer's.
-                let shown = self.keyWindow.current == .compose && self.composer?.model?.chooser != nil
+                // The forward chooser, while it holds the keyboard (until Tab
+                // moves to To), answers first; what it does not bind is the
+                // composer's.
+                let shown = self.keyWindow.current == .compose
+                    && self.composer?.model?.chooserHasKeyboard == true
                 var outcome = KeyOutcomeFfi.unhandled
-                for asked in ForwardChooserKeys.contexts(base: context, chooserShown: shown, typing: typing) {
+                for asked in ForwardChooserKeys.contexts(base: context, chooserFocused: shown, typing: typing) {
                     outcome = session.key(reduced, in: asked, typing: typing)
                     if case .unhandled = outcome { continue }
                     break
