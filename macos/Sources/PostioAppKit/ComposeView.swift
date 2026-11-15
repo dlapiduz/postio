@@ -29,6 +29,9 @@ public struct ComposeView: View {
     private let close: () -> Void
 
     @FocusState private var focus: Field?
+    /// The forward chooser holds the keyboard (T085 j): `1` `2` `3` choose a
+    /// card until Tab moves to To.
+    @FocusState private var chooserFocus: Bool
     /// Asks the rich surface for the keyboard. A web view is not a SwiftUI
     /// field, so `focus = .body` reached only the plain editor: a rich
     /// reply opened with the keyboard nowhere, and typing did nothing.
@@ -118,6 +121,14 @@ public struct ComposeView: View {
             }
             if let chooser = model.chooser {
                 ForwardChooserView(chooser: chooser) { session.focusForwardFormClicked($0) }
+                    .focusable()
+                    .focused($chooserFocus)
+                    .focusEffectDisabled()
+                    .onKeyPress(keys: [.tab]) { press in
+                        guard !press.modifiers.contains(.shift) else { return .ignored }
+                        focus = .to
+                        return .handled
+                    }
                 Divider()
             }
             fromRow
@@ -166,8 +177,19 @@ public struct ComposeView: View {
             // AppKit gave the window's first field (To) the keyboard over
             // it, its text selected.
             try? await Task.sleep(for: .milliseconds(60))
+            // A forward's chooser holds the keyboard first; Tab goes to To.
+            if model.chooserHasKeyboard {
+                chooserFocus = true
+                return
+            }
             focus = model.to.isEmpty ? .to : .body
             if !model.to.isEmpty && model.rich { richKeyboard += 1 }
+        }
+        .onChange(of: model.chooserHasKeyboard) { _, holds in
+            if holds { chooserFocus = true }
+        }
+        .onChange(of: focus) { _, field in
+            if field != nil { model.releaseChooser() }
         }
         .onAppear {
             // Which editor the hand-off names, read now: this window may

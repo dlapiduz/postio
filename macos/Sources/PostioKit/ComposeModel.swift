@@ -122,7 +122,21 @@ public final class ComposeModel: Identifiable {
 
     /// The *What to forward* chooser, while a thread of two or more is
     /// forwarded: the controller sends it again with the chosen card ringed.
-    public var chooser: ChooserFfi?
+    public var chooser: ChooserFfi? {
+        didSet {
+            // It takes the keyboard when it appears, not each time it is
+            // redrawn with another card ringed (T085 j).
+            if chooser == nil { chooserHasKeyboard = false } else if oldValue == nil { chooserHasKeyboard = true }
+        }
+    }
+
+    /// Whether the chooser holds the keyboard: `1` `2` `3` choose a card
+    /// until a field takes it (Tab moves to To). The rule is the
+    /// controller's contract, not a count of what is typed.
+    public private(set) var chooserHasKeyboard = false
+
+    /// A field took the keyboard: the number keys are text again.
+    public func releaseChooser() { chooserHasKeyboard = false }
 
     /// The older-reply bar, while the reply is not to the latest message.
     public var olderReply: OlderReplyFfi?

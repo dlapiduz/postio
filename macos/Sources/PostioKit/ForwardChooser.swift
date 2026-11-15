@@ -34,12 +34,14 @@ public enum ForwardChooserKeys {
 
     /// The contexts a key in the compose window is asked in, first to last.
     ///
-    /// The chooser holds the keyboard while it is shown and no text field
-    /// does: a `2` typed into To or the body is a `2`. Its context answers
-    /// first, and anything it does not bind (Escape, Send) falls through to
-    /// the composer's, so a shown chooser takes nothing from the window.
-    public static func contexts(base: UiContext, chooserShown: Bool, typing: Bool) -> [UiContext] {
-        guard base == .composer, chooserShown, !typing else { return [base] }
+    /// The chooser answers while it holds the keyboard (`chooserFocused`:
+    /// it appeared and no field has taken the keyboard since; Tab moves to
+    /// To), and never while text is being typed: a `2` typed into To or the
+    /// body is a `2`. Its context answers first, and anything it does not
+    /// bind (Escape, Send) falls through to the composer's, so a chooser
+    /// takes nothing from the window.
+    public static func contexts(base: UiContext, chooserFocused: Bool, typing: Bool) -> [UiContext] {
+        guard base == .composer, chooserFocused, !typing else { return [base] }
         return [.forwardChooser, base]
     }
 }
