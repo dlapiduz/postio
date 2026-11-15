@@ -910,12 +910,19 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
         message: third,
         tag,
         passage,
+        sender,
+        initials,
+        time,
         ..
     } = &splice.children[0]
     else {
         panic!("the first line is message 3");
     };
     assert_eq!(tag, "message 3");
+    assert!(
+        !sender.is_empty() && !initials.is_empty() && !time.is_empty(),
+        "the child row says who wrote it and when: {sender:?} {initials:?} {time:?}"
+    );
     assert!(
         passage.iter().any(|run| run.highlighted),
         "the passage marks the match: {passage:?}"
@@ -1206,137 +1213,7 @@ async fn forwarding_a_thread_offers_the_chooser_and_two_forwards_the_whole_threa
     );
     session.shutdown();
 }
-// -- Return on the unsent reply (spec 013 T085 a) ---------------------------
 
-#[tokio::test(flavor = "multi_thread")]
-async fn return_on_the_unsent_reply_child_opens_that_draft_in_the_composer() {
-    let (session, harbor) = inbox_with_harbor().await;
-    session.focus_point(harbor);
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor
-        ))
-        .await
-    );
-    session.invoke("expand_thread");
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusSplice { .. }
-        ))
-        .await,
-        "the thread opens"
-    );
-    for _ in 0..7 {
-        session.invoke("next_message");
-    }
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor + 7
-        ))
-        .await,
-        "the cursor is on the draft child"
-    );
-    session.invoke("open_message");
-    let (kind, draft) = composer_said(&session, |event| match event {
-        UiEvent::FocusComposer { kind, message } => Some((*kind, *message)),
-        _ => None,
-    })
-    .await;
-    assert_eq!(kind, postio_ffi::ComposerKindFfi::ThreadDraft);
-    let draft = draft.expect("the draft's id rides in `message`");
-    let opened = session.draft_ffi(draft).expect("the store has that draft");
-    assert!(opened.body.starts_with("Thanks both."), "{opened:?}");
-    session.shutdown();
-}
-
-// -- A click on a thread-bar chip (spec 013 T085 d) --------------------------
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_click_on_a_chip_shows_that_message_and_a_click_on_more_opens_the_outline() {
-    let (session, mut walked) = window_on_harbor().await;
-    assert!(walked_to(&session, &mut walked, 5).await || walked.bar.is_some());
-
-    session.focus_thread_bar_chip_clicked(1);
-    assert!(
-        walked_to(&session, &mut walked, 2).await,
-        "the chip for message 2 is ringed: {walked:?}"
-    );
-
-    session.focus_bar_room(3);
-    let mut from = None;
-    assert!(
-        heard(&session, 10, |event| match event {
-            UiEvent::FocusThreadBar { view } => {
-                from = view.chips.iter().find_map(|chip| match chip {
-                    postio_ffi::ThreadChipFfi::More { from, .. } => Some(*from),
-                    _ => None,
-                });
-                from.is_some()
-            }
-            _ => false,
-        })
-        .await,
-        "a narrow window folds chips into More"
-    );
-    session.focus_thread_bar_more_clicked(from.expect("a More chip"));
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusOutline { .. }
-        ))
-        .await,
-        "More opens the outline"
-    );
-    session.shutdown();
-}
-// -- Return on the unsent reply (spec 013 T085 a) ---------------------------
-
-#[tokio::test(flavor = "multi_thread")]
-async fn return_on_the_unsent_reply_child_opens_that_draft_in_the_composer() {
-    let (session, harbor) = inbox_with_harbor().await;
-    session.focus_point(harbor);
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor
-        ))
-        .await
-    );
-    session.invoke("expand_thread");
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusSplice { .. }
-        ))
-        .await,
-        "the thread opens"
-    );
-    for _ in 0..7 {
-        session.invoke("next_message");
-    }
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor + 7
-        ))
-        .await,
-        "the cursor is on the draft child"
-    );
-    session.invoke("open_message");
-    let (kind, draft) = composer_said(&session, |event| match event {
-        UiEvent::FocusComposer { kind, message } => Some((*kind, *message)),
-        _ => None,
-    })
-    .await;
-    assert_eq!(kind, postio_ffi::ComposerKindFfi::ThreadDraft);
-    let draft = draft.expect("the draft's id rides in `message`");
-    let opened = session.draft_ffi(draft).expect("the store has that draft");
-    assert!(opened.body.starts_with("Thanks both."), "{opened:?}");
-    session.shutdown();
-}
 // -- Return on the unsent reply (spec 013 T085 a) ---------------------------
 
 #[tokio::test(flavor = "multi_thread")]

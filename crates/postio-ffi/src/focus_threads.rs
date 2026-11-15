@@ -161,6 +161,12 @@ pub enum ResultChildFfi {
         /// The words around the match, the matched ones marked; empty
         /// while no passage is cut.
         passage: Vec<RunFfi>,
+        /// Who wrote it: "Tomás Reyes", "You".
+        sender: String,
+        /// The avatar's letters.
+        initials: String,
+        /// When, as every row says it.
+        time: String,
     },
     /// Messages that did not match: a 30-point line to read.
     Gap {
@@ -256,9 +262,13 @@ impl From<&postio_ui::search_view::ResultChild> for ResultChildFfi {
                 number,
                 tag,
                 passage,
-                // The sender, initials and time are the Mac's to adopt.
-                ..
+                sender,
+                initials,
+                time,
             } => ResultChildFfi::Match {
+                sender: sender.clone(),
+                initials: initials.clone(),
+                time: time.clone(),
                 message: message.get(),
                 number: *number,
                 tag: tag.clone(),
