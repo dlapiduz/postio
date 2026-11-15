@@ -168,6 +168,20 @@ impl Session {
             .input(postio_focus::Input::BarRoom(chips));
     }
 
+    /// A click on the thread bar's chip for member `index` (from 0): that
+    /// message is shown, as `]` would show it.
+    pub fn focus_thread_bar_chip_clicked(&self, index: u32) {
+        self.focus_driver()
+            .input(postio_focus::Input::ThreadBarChipClicked(index));
+    }
+
+    /// A click on the bar's "... N more" chip, which stands for the members
+    /// from `from` on: the outline opens on the first of them.
+    pub fn focus_thread_bar_more_clicked(&self, from: u32) {
+        self.focus_driver()
+            .input(postio_focus::Input::ThreadBarMoreClicked { from });
+    }
+
     /// The message window opened from a search has no more of its own find
     /// matches in this direction: the controller goes on to the next matched
     /// message, or says it is the last. Swift then selects that message's

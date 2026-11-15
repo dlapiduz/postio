@@ -152,6 +152,18 @@ public final class PostioSession {
     /// it opens and on resize. The controller composes the bar again.
     public func focusBarRoom(_ chips: UInt32) { inner.focusBarRoom(chips: chips) }
 
+    /// A click on the thread bar's chip for member `index`: that message is
+    /// shown.
+    public func focusThreadBarChipClicked(_ index: UInt32) {
+        inner.focusThreadBarChipClicked(index: index)
+    }
+
+    /// A click on the "... N more" chip, which stands for the members from
+    /// `from` on: the outline opens on the first of them.
+    public func focusThreadBarMoreClicked(from: UInt32) {
+        inner.focusThreadBarMoreClicked(from: from)
+    }
+
     /// Say a Thread ▾ menu entry was chosen: its command's id.
     public func focusThreadMenuPick(command: String) { inner.focusThreadMenuPick(command: command) }
 

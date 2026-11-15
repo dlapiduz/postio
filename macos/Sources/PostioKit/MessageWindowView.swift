@@ -256,6 +256,8 @@ public struct MessageWindowView<BodyView: View>: View {
     let alwaysForSender: () -> Void
     let verbFrames: ([String: CGRect]) -> Void
     let barRoom: (UInt32) -> Void
+    let barChip: (UInt32) -> Void
+    let barMore: (UInt32) -> Void
     let bodyView: (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
     /// `verbFrames` hears where the action row's buttons are, by command,
@@ -268,6 +270,8 @@ public struct MessageWindowView<BodyView: View>: View {
         alwaysForSender: @escaping () -> Void,
         verbFrames: @escaping ([String: CGRect]) -> Void = { _ in },
         barRoom: @escaping (UInt32) -> Void = { _ in },
+        barChip: @escaping (UInt32) -> Void = { _ in },
+        barMore: @escaping (UInt32) -> Void = { _ in },
         @ViewBuilder body: @escaping (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
     ) {
         self.model = model
@@ -276,6 +280,8 @@ public struct MessageWindowView<BodyView: View>: View {
         self.alwaysForSender = alwaysForSender
         self.verbFrames = verbFrames
         self.barRoom = barRoom
+        self.barChip = barChip
+        self.barMore = barMore
         bodyView = body
     }
 
@@ -307,7 +313,7 @@ public struct MessageWindowView<BodyView: View>: View {
                 Color.clear.frame(height: MessageActionRow.height)
             }
             if let bar = model.bar {
-                ThreadBarView(bar: bar, menu: { run(ThreadMenuCommand.menu) })
+                ThreadBarView(bar: bar, menu: { run(ThreadMenuCommand.menu) }, show: barChip, more: barMore)
                     .background(MessageSurface.chrome)
             }
             if model.find.isOpen {
