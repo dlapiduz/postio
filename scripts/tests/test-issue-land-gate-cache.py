@@ -61,16 +61,7 @@ STUB_CHECKS = [
 FAILURES: list[str] = []
 
 
-def pinned_channel() -> str:
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
-def build_sandbox(root: Path, channel: str) -> None:
+def build_sandbox(root: Path) -> None:
     fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["crates/dummy"]\nresolver = "2"\n',
@@ -134,7 +125,6 @@ def main() -> int:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
 
-    channel = pinned_channel()
 
     # Inside the current worktree, for the same reason the commit-guard test
     # is: the shared-tree guard only lifts its refusals for worktree paths.
@@ -146,7 +136,7 @@ def main() -> int:
         root.mkdir()
         origin = base / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
-        build_sandbox(root, channel)
+        build_sandbox(root)
         # The real repository commits its Cargo.lock; without one here the
         # first gate run generates it, which changes the tree and makes the
         # second run look like new content -- a sandbox artifact, not the
@@ -257,7 +247,7 @@ def main() -> int:
         for failure in FAILURES:
             print(f"- {failure}", file=sys.stderr)
         return 1
-    print(f"issue-land gate-cache check passed ({channel}).")
+    print("issue-land gate-cache check passed.")
     return 0
 
 

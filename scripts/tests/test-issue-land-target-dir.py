@@ -73,18 +73,7 @@ STUB_CHECKS = [
 FAILURES: list[str] = []
 
 
-def pinned_channel() -> str:
-    """The version this repository actually pins, so the sandbox's own pin
-    names a toolchain that is genuinely installed on this machine."""
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
-def build_sandbox(root: Path, channel: str) -> None:
+def build_sandbox(root: Path) -> None:
     """A minimal git repo: one crate under `crates/`, the real pin, the script.
 
     The crate has to live at `crates/<name>/` because that is the shape
@@ -128,13 +117,13 @@ def git(*args: str, cwd: Path) -> None:
     )
 
 
-def make_repo(base: Path, channel: str) -> Path:
+def make_repo(base: Path) -> Path:
     """A sandbox worktree on an issue branch whose diff touches a crate."""
     root = base / "repo"
     origin = base / "origin.git"
     root.mkdir()
 
-    build_sandbox(root, channel)
+    build_sandbox(root)
     git("init", "-q", "-b", "main", cwd=root)
     git("add", "-A", cwd=root)
     git("commit", "-q", "-m", "init", cwd=root)
@@ -195,13 +184,13 @@ def check(name: str, result: subprocess.CompletedProcess[str]) -> None:
         )
 
 
-def test_no_default_to_the_shared_checkout(channel: str) -> None:
+def test_no_default_to_the_shared_checkout() -> None:
     """With nothing exported, the gates build in the worktree's own target."""
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         fake_main = base / "main-checkout"
         fake_main.mkdir()
-        root = make_repo(base, channel)
+        root = make_repo(base)
 
         name = "issue-land.sh: an unset CARGO_TARGET_DIR does not reach the shared checkout"
         result = gates_only(root, fake_main, target=None)
@@ -221,7 +210,7 @@ def test_no_default_to_the_shared_checkout(channel: str) -> None:
             )
 
 
-def test_an_explicit_setting_is_still_honoured(channel: str) -> None:
+def test_an_explicit_setting_is_still_honoured() -> None:
     """A caller staking a merge on a private target directory still gets one.
 
     `docs/archive/engineering-notes.md` advises exactly this for a result you are
@@ -233,7 +222,7 @@ def test_an_explicit_setting_is_still_honoured(channel: str) -> None:
         fake_main = base / "main-checkout"
         fake_main.mkdir()
         chosen = base / "chosen-target"
-        root = make_repo(base, channel)
+        root = make_repo(base)
 
         name = "issue-land.sh: an explicit CARGO_TARGET_DIR is honoured"
         result = gates_only(root, fake_main, target=chosen)
@@ -257,9 +246,8 @@ def main() -> int:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
 
-    channel = pinned_channel()
-    test_no_default_to_the_shared_checkout(channel)
-    test_an_explicit_setting_is_still_honoured(channel)
+    test_no_default_to_the_shared_checkout()
+    test_an_explicit_setting_is_still_honoured()
 
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed:\n", file=sys.stderr)

@@ -123,15 +123,6 @@ exit 0
 FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 
 
-def pinned_channel() -> str:
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
 def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
     """Run git in the sandbox, and say what went wrong when it will not.
 
@@ -156,7 +147,7 @@ def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
     return done
 
 
-def build_sandbox(root: Path, channel: str) -> None:
+def build_sandbox(root: Path) -> None:
     fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dummy"]\nresolver = "2"\n', encoding="utf-8"
@@ -266,7 +257,6 @@ def land(
 
 def run_case(
     base: Path,
-    channel: str,
     name: str,
     incoming: dict[str, str],
     extra_env: dict[str, str] | None = None,
@@ -286,7 +276,7 @@ def run_case(
         ["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True, capture_output=True
     )
     root.mkdir(parents=True)
-    build_sandbox(root, channel)
+    build_sandbox(root)
     git("init", "-q", "-b", "main", cwd=root)
     git("config", "user.email", "test@example.com", cwd=root)
     git("config", "user.name", "Test", cwd=root)
@@ -316,14 +306,13 @@ def main() -> int:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
 
-    channel = pinned_channel()
 
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
         # A: the rebase rewrites issue-land.sh itself.
         result, calls = run_case(
-            base, channel, "a", {"scripts/issue-land.sh": marked_issue_land()}
+            base, "a", {"scripts/issue-land.sh": marked_issue_land()}
         )
         if MARKER not in result.stdout:
             FAILURES.append(
@@ -345,7 +334,6 @@ def main() -> int:
         # B: the rebase changes a script issue-land.sh *calls*.
         result, calls = run_case(
             base,
-            channel,
             "b",
             {"scripts/checks/check-crate-boundaries.py": failing_boundary_check()},
         )
@@ -368,7 +356,7 @@ def main() -> int:
 
         # C: an ordinary rebase, nothing under scripts/.
         result, calls = run_case(
-            base, channel, "c", {"docs/notes.md": "main moved, harmlessly.\n"}
+            base, "c", {"docs/notes.md": "main moved, harmlessly.\n"}
         )
         if HANDOVER in result.stdout:
             FAILURES.append(
@@ -383,7 +371,6 @@ def main() -> int:
         # D: the handover has already happened as often as it may.
         result, calls = run_case(
             base,
-            channel,
             "d",
             {"scripts/issue-land.sh": marked_issue_land()},
             extra_env={REEXEC_DEPTH_ENV: "2"},
@@ -409,7 +396,7 @@ def main() -> int:
         for failure in FAILURES:
             print(f"- {failure}\n", file=sys.stderr)
         return 1
-    print(f"issue-land rebase-handover check passed ({channel}).")
+    print("issue-land rebase-handover check passed.")
     return 0
 
 

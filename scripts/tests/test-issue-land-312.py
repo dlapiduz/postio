@@ -115,16 +115,7 @@ exit 0
 """
 
 
-def pinned_channel() -> str:
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
-def build_sandbox(root: Path, channel: str) -> None:
+def build_sandbox(root: Path) -> None:
     fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dummy"]\nresolver = "2"\n', encoding="utf-8"
@@ -192,7 +183,7 @@ def land(root: Path, target: Path, stub_dir: Path, origin: Path):
     )
 
 
-def scenario(base: Path, channel: str, stub: str, name: str):
+def scenario(base: Path, stub: str, name: str):
     """One landing attempt in a repository of its own."""
     root = base / f"repo-{name}"
     origin = base / f"origin-{name}.git"
@@ -204,7 +195,7 @@ def scenario(base: Path, channel: str, stub: str, name: str):
 
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     root.mkdir()
-    build_sandbox(root, channel)
+    build_sandbox(root)
     git("init", "-q", "-b", "main", cwd=root)
     git("config", "user.email", "test@example.com", cwd=root)
     git("config", "user.name", "Test", cwd=root)
@@ -225,13 +216,12 @@ def main() -> int:
     if shutil.which("cargo") is None:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
-    channel = pinned_channel()
 
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
         # ── the control: a merge that really merges ──────────────────────
-        result, remotes, landed, _ = scenario(base, channel, GH_STUB_HEALTHY, "ok")
+        result, remotes, landed, _ = scenario(base, GH_STUB_HEALTHY, "ok")
         if result.returncode != 0:
             FAILURES.append(
                 "a genuine merge was rejected -- the verification is too "
@@ -246,7 +236,7 @@ def main() -> int:
 
         # ── the incident ────────────────────────────────────────────────
         result, remotes, landed, calls = scenario(
-            base, channel, GH_STUB_ALREADY_MERGED, "stale"
+            base, GH_STUB_ALREADY_MERGED, "stale"
         )
         if result.returncode == 0:
             FAILURES.append(

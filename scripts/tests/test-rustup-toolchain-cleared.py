@@ -79,18 +79,7 @@ STUB_CHECKS = [
 FAILURES: list[str] = []
 
 
-def pinned_channel() -> str:
-    """The version this repository actually pins, so the sandbox's own pin
-    names a toolchain that is genuinely installed on this machine."""
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
-def build_sandbox(root: Path, channel: str) -> None:
+def build_sandbox(root: Path) -> None:
     """A minimal git repo: one crate, the real pin, the fixed script."""
     fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
@@ -153,10 +142,7 @@ def case(name: str, root: Path, target: Path, *, rustup_toolchain: str | None) -
     return result
 
 
-def test_issue_land_clears_the_override() -> str:
-    """Returns the pinned channel, for the success message."""
-    channel = pinned_channel()
-
+def test_issue_land_clears_the_override() -> None:
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         root = base / "repo"
@@ -164,7 +150,7 @@ def test_issue_land_clears_the_override() -> str:
         target = base / "target"
         root.mkdir()
 
-        build_sandbox(root, channel)
+        build_sandbox(root)
         git("init", "-q", "-b", "main", cwd=root)
         git("add", "-A", cwd=root)
         git("commit", "-q", "-m", "init", cwd=root)
@@ -206,8 +192,6 @@ def test_issue_land_clears_the_override() -> str:
                 "issue-land.sh: an unset RUSTUP_TOOLCHAIN changes nothing: "
                 "the diagnostic mentioned it anyway"
             )
-
-    return channel
 
 
 def test_headless_sh_clears_the_override() -> None:
@@ -255,7 +239,7 @@ def main() -> int:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
 
-    channel = test_issue_land_clears_the_override()
+    test_issue_land_clears_the_override()
     test_headless_sh_clears_the_override()
 
     if FAILURES:
@@ -263,7 +247,7 @@ def main() -> int:
         for failure in FAILURES:
             print(f"- {failure}\n", file=sys.stderr)
         return 1
-    print(f"toolchain-clearing check passed ({channel}).")
+    print("toolchain-clearing check passed.")
     return 0
 
 
