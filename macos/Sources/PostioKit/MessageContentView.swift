@@ -236,6 +236,16 @@ public struct MessageContentView<BodyView: View>: View {
         GeometryReader { proxy in
             scroll(column: column(proxy.size.width))
         }
+        // A reply that arrives while reading lies over the foot of the
+        // message, not above it: nothing that moves or resizes the text
+        // being read may happen when one comes (spec 013 US4, FR-018).
+        .overlay(alignment: .bottom) {
+            if let banner = MessageBlock.foot(words: words) {
+                ThreadBannerView(banner: banner, tinted: true) { run(Self.latest) }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+            }
+        }
     }
 
     private func scroll(column: CGFloat) -> some View {
@@ -265,8 +275,6 @@ public struct MessageContentView<BodyView: View>: View {
     @ViewBuilder
     private func draw(_ block: MessageBlock) -> some View {
         switch block {
-        case let .newReply(banner):
-            ThreadBannerView(banner: banner, tinted: true) { run(Self.latest) }
         case let .olderBanner(banner):
             ThreadBannerView(banner: banner) { run(Self.latest) }
         case let .matchBanner(banner):
@@ -323,9 +331,6 @@ public struct MessageContentView<BodyView: View>: View {
 /// leaves out is a test failure here rather than a gap nobody sees (#1585,
 /// where the unsubscribe banner had no call site at all).
 public enum MessageBlock: Equatable, Identifiable {
-    /// The accent-tinted banner a reply that arrived while reading puts
-    /// first: who replied, and "Read it }".
-    case newReply(ThreadBannerFfi)
     /// The quiet banner on a message that is not the latest.
     case olderBanner(ThreadBannerFfi)
     /// Where the message is among the search's matches in its thread.
@@ -357,7 +362,6 @@ public enum MessageBlock: Equatable, Identifiable {
 
     public var id: String {
         switch self {
-        case .newReply: "newReply"
         case .olderBanner: "olderBanner"
         case .matchBanner: "matchBanner"
         case .kicker: "kicker"
@@ -374,6 +378,13 @@ public enum MessageBlock: Equatable, Identifiable {
         }
     }
 
+    /// The accent-tinted banner a reply that arrived while reading puts
+    /// over the foot of the column: who replied, and "Read it }". It is no
+    /// block of the column, which the text being read keeps whole.
+    public static func foot(words: MessageHeaderWords) -> ThreadBannerFfi? {
+        words.thread.newReply
+    }
+
     /// The column for a message whose header reads `words`, whose body is
     /// `document` (`nil` while it is being read), and whose banner is at
     /// `unsubscribe`.
@@ -383,7 +394,6 @@ public enum MessageBlock: Equatable, Identifiable {
         unsubscribe: Unsubscribing.State
     ) -> [MessageBlock] {
         var blocks: [MessageBlock] = []
-        if let banner = words.thread.newReply { blocks.append(.newReply(banner)) }
         if let banner = words.thread.banner { blocks.append(.olderBanner(banner)) }
         if let banner = words.thread.matchBanner { blocks.append(.matchBanner(banner)) }
         if !words.thread.kicker.isEmpty { blocks.append(.kicker(words.thread.kicker)) }
@@ -405,7 +415,6 @@ public enum MessageBlock: Equatable, Identifiable {
     /// The rhythm's gap above `block` when `previous` is drawn above it.
     public static func gap(above block: MessageBlock, after previous: MessageBlock?) -> CGFloat {
         switch block {
-        case .newReply: 0
         case .olderBanner: previous == nil ? 0 : MessageRhythm.bannerToKicker
         case .matchBanner: previous == nil ? 0 : MessageRhythm.bannerToKicker
         case .kicker: previous == nil ? 0 : MessageRhythm.bannerToKicker

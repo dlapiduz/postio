@@ -49,7 +49,7 @@ struct ThreadMenuOutlineTests {
         }
     }
 
-    @Test func theNewReplyBannerIsTheFirstBlockOfTheColumn() {
+    @Test func theNewReplyBannerLiesOverTheFootAndIsNoBlockOfTheColumn() {
         let words = MessageBlocksTests.words()
         var thread = MessageHeaderWords.Thread(
             kicker: "Message 5 of 7", banner: ThreadBannerFfi(text: "old", action: "Latest", key: "}"),
@@ -61,7 +61,10 @@ struct ThreadMenuOutlineTests {
             date: "", marker: nil, dismiss: action, actions: [], more: nil, attachments: [])
         let walking = MessageHeaderWords(view: view, thread: thread, binding: { _ in nil })
         let ids = MessageBlock.blocks(words: walking, document: nil, unsubscribe: .offered).map(\.id)
-        #expect(Array(ids.prefix(3)) == ["newReply", "olderBanner", "kicker"])
+        #expect(Array(ids.prefix(2)) == ["olderBanner", "kicker"], "the text never moves when a reply arrives")
+        #expect(!ids.contains("newReply"))
+        #expect(MessageBlock.foot(words: walking)?.text == "Ana replied")
+        #expect(MessageBlock.foot(words: words) == nil)
         #expect(words.thread.newReply == nil)
     }
 
