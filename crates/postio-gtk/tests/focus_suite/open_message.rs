@@ -265,7 +265,13 @@ pub fn brackets_step_through_the_thread() {
             "the thread did not open on its latest message: {:?}",
             reading.body_text()
         );
-        assert_eq!(reading.subtitle(), "Message 1 of 1 \u{b7} thread of 3");
+        // The title line says the message's place in its thread, as the
+        // kicker does (spec 013 review: one place, said one way).
+        assert!(
+            crate::settle_until(async || reading.subtitle() == "Message 3 of 3").await,
+            "the title line: {:?}",
+            reading.subtitle()
+        );
         assert!(
             crate::settle_until(async || reading.thread_known() == 3).await,
             "the conversation's messages were never read"
@@ -277,9 +283,10 @@ pub fn brackets_step_through_the_thread() {
             "p did not show the earlier message: {:?}",
             reading.body_text()
         );
-        assert_eq!(
-            reading.subtitle(),
-            "Message 1 of 1 \u{b7} 2 of 3 in the thread"
+        assert!(
+            crate::settle_until(async || reading.subtitle() == "Message 2 of 3").await,
+            "the title line after p: {:?}",
+            reading.subtitle()
         );
         assert_eq!(
             reading.thread_chip_said(),
@@ -291,7 +298,11 @@ pub fn brackets_step_through_the_thread() {
             crate::settle_until(async || reading.body_text().contains("Message 3")).await,
             "n did not step back"
         );
-        assert_eq!(reading.subtitle(), "Message 1 of 1 \u{b7} thread of 3");
+        assert!(
+            crate::settle_until(async || reading.subtitle() == "Message 3 of 3").await,
+            "the title line after n: {:?}",
+            reading.subtitle()
+        );
         assert_eq!(
             reading.thread_chip_said(),
             "Message 3 of 3 \u{b7} ] newer \u{b7} [ older"
