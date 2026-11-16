@@ -168,11 +168,14 @@ def instrumented_binaries(packages: list[str]) -> dict[str, Path]:
         ["cargo", "nextest", "list", "--message-format", "json", *[a for p in packages for a in ("-p", p)]],
         cwd=REPO, capture_output=True, text=True, check=True,
     )
-    deps = REPO / "target" / "llvm-cov-target" / "debug" / "deps"
+    debug = REPO / "target" / "llvm-cov-target" / "debug"
     found = {}
     for suite in json.loads(listed.stdout)["rust-suites"].values():
+        # `deps/` up to Cargo 1.99, each unit's `build/<package>/<hash>/out/`
+        # from 1.100.
+        name = suite["binary-name"]
         builds = [
-            p for p in deps.glob(f"{suite['binary-name']}-*")
+            p for p in (*debug.glob(f"deps/{name}-*"), *debug.glob(f"build/*/*/out/{name}-*"))
             if p.is_file() and not p.suffix and os.access(p, os.X_OK)
         ]
         if builds:

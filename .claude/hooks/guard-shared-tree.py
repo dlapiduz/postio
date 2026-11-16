@@ -193,9 +193,12 @@ ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
 LOOP_RULES: list[tuple[str, str]] = [
     (
         r"(?:POSTIO_WORKSPACE_TESTS=1\s+)?cargo\s+(?:nextest\s+run|test)\s+(?:[^|;&\n]*\s)?"
-        r"(?:--workspace|--all)\b(?![^|;&\n]*(?:--lib\b|--no-run\b|--doc\b))",
-        "Refusing a whole-workspace test run: it links every integration "
-        "binary and is what the transcripts show sessions waiting on most. "
+        r"(?:--workspace|--all)(?![-\w])(?![^|;&\n]*(?:--lib\b|--no-run\b|--doc\b))",
+        "Refusing a whole-workspace test run (--workspace or --all): it links "
+        "every integration binary and is what the transcripts show sessions "
+        "waiting on most. Naming crates with -p is not this rule, however "
+        "many. For several crates, loop over them: "
+        "`for c in postio-a postio-b; do cargo nextest run -p $c --test <suite>; done`. "
         "Between edits, scripts/test-fast.sh (changed crates, --lib); before "
         "landing, scripts/test-sanity.sh (workspace, --lib); one suite, "
         "`cargo nextest run -p <crate> --test <suite>`. issue-land.sh and CI "
@@ -665,8 +668,8 @@ def cd_destination(command: str, cwd: str) -> str:
     only quiet — in the shared checkout a commit message mentioning one would
     have exempted the command that carried it.
 
-    The last `cd` wins, because that is the directory the rest of the line
-    runs in.
+    The `cd`s chain, each resolved against the previous one, and the last is
+    the directory the rest of the line runs in.
     """
     text = strip_heredocs(command)
     quoted = quoted_spans(text)
@@ -678,13 +681,19 @@ def cd_destination(command: str, cwd: str) -> str:
         # be.
         if not any(start <= match.start() < end for start, end in quoted)
     ]
-    if not targets:
-        return ""
-    target = targets[-1].strip("\"'")
-    target = os.path.expandvars(os.path.expanduser(target))
-    if not target:
-        return ""
-    return target if os.path.isabs(target) else os.path.join(cwd or "", target)
+    # Each `cd` starts from where the previous one left the shell, not from the
+    # session's cwd: `cd <worktree> && cd crates/x && cargo fmt -p x` runs in
+    # the worktree, and resolving `crates/x` against the shared checkout is
+    # what refused it.
+    here = cwd or ""
+    moved = False
+    for raw in targets:
+        target = os.path.expandvars(os.path.expanduser(raw.strip("\"'")))
+        if not target or target == "-":
+            continue
+        here = target if os.path.isabs(target) else os.path.join(here, target)
+        moved = True
+    return here if moved else ""
 
 
 def strip_heredocs(command: str) -> str:

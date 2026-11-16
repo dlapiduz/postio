@@ -44,6 +44,16 @@ def case(name: str, files: list[str] | None, answer: str, rule: str = "") -> Non
         FAILURES.append(f"{name}\n    expected {answer!r} ~ {rule!r}, got exit {code} {out!r}")
 
 
+def forced(name: str, files: list[str], want: bool) -> None:
+    """Line three, `full-suite`, is the build environment: a toolchain bump
+    passed every local gate and the sanity tier, and only the full suite saw
+    Cargo move the test binaries."""
+    code, out = ask(files)
+    got = out.splitlines()[2:3] == ["full-suite"]
+    if code != 0 or got != want:
+        FAILURES.append(f"{name}\n    expected forced={want}, got exit {code} {out!r}")
+
+
 def main() -> int:
     if not SCRIPT.exists():
         print(f"missing {SCRIPT}", file=sys.stderr)
@@ -80,6 +90,15 @@ def main() -> int:
     case("non-crate paths do not count as crates",
          ["crates/postio-core/src/a.rs", "crates/postio-ui/src/b.rs", "docs/x.md", "Cargo.lock"],
          "normal")
+
+    for path in ["rust-toolchain.toml", "mise.toml", ".cargo/config.toml",
+                 "flatpak/dev.postio.Postio.json", "flatpak/dev.postio.PostioTui.json"]:
+        case(f"{path} is the build environment: high", [path], "high", "build environment")
+        forced(f"{path} forces the full suite", [path, "docs/x.md"], True)
+    forced("a crate source does not force it", ["crates/postio-core/src/lib.rs"], False)
+    forced("the flatpak README does not force it", ["flatpak/README.md"], False)
+    forced("a risky path alone does not force it", ["crates/postio-sync/src/a.rs"], False)
+    forced("an empty diff does not force it", [], False)
 
     # Fails safe the same direction ci-changes.sh does: no diff to read is not
     # evidence of a small one.
