@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Install the pinned `cargo-deny` into ~/.cargo/bin. Idempotent.
+# Install the pinned `cargo-deny` side by side with its other versions. Idempotent.
+#
+# Versions live in ~/.local/share/postio-tools/ and `cargo deny` resolves the
+# one the current checkout pins; scripts/lib/pinned-tool.sh says why. CI
+# installs plain into ~/.cargo/bin.
 #
 # `scripts/checks/check-dependency-policy.py` runs it when present, and the
 # two self-test cases that exercise that check need it too. They had never
@@ -16,16 +20,15 @@ set -euo pipefail
 
 VERSION="0.20.2"
 
-if command -v cargo-deny >/dev/null 2>&1; then
-    installed=$(cargo-deny --version 2>/dev/null | awk '{print $NF}')
-    if [ "$installed" = "$VERSION" ]; then
-        echo "cargo-deny $VERSION already installed"
-        exit 0
-    fi
-    echo "cargo-deny ${installed:-unknown} installed; replacing with $VERSION"
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/pinned-tool.sh
+. "$HERE/lib/pinned-tool.sh"
+pt_init cargo-deny "$VERSION"
+
+if pt_have; then
+    echo "cargo-deny $VERSION already installed"
+    pt_install_shim
+    exit 0
 fi
 
-# `--force`: a binary restored from a cache of another version is exactly
-# what the branch above found, and cargo refuses to overwrite it otherwise.
-cargo install cargo-deny --version "$VERSION" --locked --force
-echo "cargo-deny $VERSION installed"
+pt_cargo_install

@@ -97,6 +97,13 @@ Optional, and worth it on a machine that builds this workspace often:
   use it. It deliberately does not pin Rust or the system libraries.
 - **`cargo-nextest`** runs the integration tiers and cannot be pinned by
   mise; `scripts/install-nextest.sh` holds the pin and is what CI runs.
+  `cargo-hakari`, `cargo-machete` and `cargo-deny` work the same way
+  (`scripts/install-*.sh`). On a workstation each pinned version installs
+  under `~/.local/share/postio-tools/<tool>/<version>/`, and the
+  `~/.cargo/bin/cargo-<tool>` the script leaves is a shim that runs the
+  version the checkout you are in pins (installing it on first use), so
+  worktrees on different pins do not replace each other's binary. CI installs
+  plain into `~/.cargo/bin`.
   Without it `scripts/issue-land.sh` falls back to `cargo test` and reaches
   the same verdict, several times slower.
 - **`gh` 2.94.0 or newer** if you use the issue scripts: `issue-claim.sh`

@@ -73,7 +73,9 @@ sccache = "0.17.0"
 # installs in ~2s rather than one of the minutes-long builds — but mise has no
 # registry entry for it, under any backend. So the pin lives in
 # `scripts/install-nextest.sh`, which is what `ci.yml` runs and what the README
-# tells a workstation to run, and this note exists so the absence reads as a
+# tells a workstation to run (it installs each version side by side and
+# leaves a shim that resolves the checkout's own pin; see
+# `scripts/lib/pinned-tool.sh`), and this note exists so the absence reads as a
 # limitation rather than as the deliberate omission above.
 #
 # That distinction is not pedantry: it is exactly the gap that let the tool CI

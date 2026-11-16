@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Install the pinned `cargo-hakari` into ~/.cargo/bin. Idempotent.
+# Install the pinned `cargo-hakari` side by side with its other versions. Idempotent.
+#
+# Versions live in ~/.local/share/postio-tools/ and `cargo hakari` resolves the
+# one the current checkout pins; scripts/lib/pinned-tool.sh says why. CI
+# installs plain into ~/.cargo/bin.
 #
 # `scripts/checks/check-workspace-hack.py` runs it, and skips, saying so, when
 # it is absent on a workstation -- the trade `install-machete.sh` describes.
@@ -13,16 +17,15 @@ VERSION="0.9.39"
 
 # `cargo-hakari --version` prints `cargo-hakari 0.9.39`; the last field is
 # the version.
-if command -v cargo-hakari >/dev/null 2>&1; then
-    installed=$(cargo-hakari --version 2>/dev/null | awk '{print $NF}')
-    if [ "$installed" = "$VERSION" ]; then
-        echo "cargo-hakari $VERSION already installed"
-        exit 0
-    fi
-    echo "cargo-hakari ${installed:-unknown} installed; replacing with $VERSION"
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/pinned-tool.sh
+. "$HERE/lib/pinned-tool.sh"
+pt_init cargo-hakari "$VERSION"
+
+if pt_have; then
+    echo "cargo-hakari $VERSION already installed"
+    pt_install_shim
+    exit 0
 fi
 
-# `--force`: a binary restored from a cache of another version is exactly
-# what the branch above found, and cargo refuses to overwrite it otherwise.
-cargo install cargo-hakari --version "$VERSION" --locked --force
-echo "cargo-hakari $VERSION installed"
+pt_cargo_install
