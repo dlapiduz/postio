@@ -749,8 +749,19 @@ pub fn escape_gives_a_keyboard_on_nothing_to_the_results() {
             bar.is_open(),
             "/ did not open the dropdown over the results"
         );
+        // DIAGNOSTIC (temporary): every move of the keyboard, for CI.
+        let moves = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        {
+            use gtk::prelude::ObjectExt;
+            let moves = std::rc::Rc::clone(&moves);
+            window.connect_notify_local(Some("focus-widget"), move |window, _| {
+                moves.borrow_mut().push(window.observe().keyboard.widget);
+            });
+        }
         gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+        moves.borrow_mut().push("-- Escape".to_owned());
         assert!(support::deliver(&window, "Escape"), "Escape was dropped");
+        moves.borrow_mut().push("-- delivered".to_owned());
         assert!(!bar.is_open(), "Escape left the dropdown up");
         assert!(
             crate::settle_until(async || {
@@ -758,9 +769,11 @@ pub fn escape_gives_a_keyboard_on_nothing_to_the_results() {
                 seen.reachable && seen.widget.contains("GtkListView")
             })
             .await,
-            "the keyboard did not come back to the results' list: {}",
-            window.observe().keyboard.widget
+            "the keyboard did not come back to the results' list: {}\nmoves:\n{}",
+            window.observe().keyboard.widget,
+            moves.borrow().join("\n")
         );
+        eprintln!("DIAG moves:\n{}", moves.borrow().join("\n"));
     });
 }
 
