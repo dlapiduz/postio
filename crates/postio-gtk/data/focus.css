@@ -2587,6 +2587,12 @@ button.focus-filtered-tab.focus-filtered-tab-on {
   font-family: var(--postio-font-body);
 }
 
+/* The menu's entries are choices, in ink: a ghost button's chrome grey
+   made the whole menu read as disabled. */
+button.postio-button-ghost.focus-thread-menu-entry {
+  color: var(--postio-ink);
+}
+
 .focus-thread-menu-heading {
   font-weight: bold;
   font-size: var(--postio-text-label);

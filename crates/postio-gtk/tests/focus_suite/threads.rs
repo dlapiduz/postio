@@ -657,6 +657,19 @@ pub fn the_thread_menu_mutes_the_thread_and_its_row_says_so() {
                         .any(|text| text == "Mute thread")
             })
             .expect("a Mute entry");
+        // A menu's entries are choices, drawn in the window's ink: not the
+        // grey a ghost button wears in the chrome, which made the menu read
+        // as disabled.
+        let subject = support::descendants(window.upcast_ref::<gtk::Widget>())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+            .find(|label| label.has_css_class("focus-open-subject"))
+            .expect("the message's subject");
+        assert_eq!(
+            mute.color(),
+            subject.color(),
+            "a menu entry is drawn in the chrome's grey, not in ink"
+        );
         mute.emit_clicked();
         assert!(
             crate::settle_until(
