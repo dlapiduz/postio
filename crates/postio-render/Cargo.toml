@@ -76,3 +76,7 @@ unused_must_use = "deny"
 # lints, so the clippy floor's most load-bearing rule is restated here.
 [lints.clippy]
 let_underscore_future = "deny"
+
+# Restated from the workspace `[lints.cargo]`, for the same reason.
+[lints.cargo]
+unused_dependencies = "allow"

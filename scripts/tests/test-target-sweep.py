@@ -50,6 +50,11 @@ def app_manifest(features: str) -> str:
 def fixture(root: Path) -> Path:
     ws = root / "ws"
     write(ws / "Cargo.toml", '[workspace]\nresolver = "2"\nmembers = ["app"]\n')
+    # The repository's own compiler, not whatever rustup defaults to: where
+    # cargo puts its artifacts is the compiler's choice (1.100 moved every
+    # unit from deps/ to build/<package>/<hash>/), and a sweep tested
+    # against another cargo's layout is not tested at all.
+    write(ws / "rust-toolchain.toml", (HERE.parent / "rust-toolchain.toml").read_text())
     write(ws / "app" / "Cargo.toml", app_manifest('"f"'))
     write(ws / "app" / "build.rs", "fn main() { dep::hello(); }\n")
     # A binary and an example: cargo reports them by their uplifted,
@@ -71,8 +76,9 @@ def cargo(ws: Path, *args: str) -> None:
 
 
 def rlib_hashes(ws: Path) -> set[str]:
-    deps = ws / "target" / "debug" / "deps"
-    return {m[1] for n in os.listdir(deps) if (m := RLIB.match(n))}
+    """Every `dep` rlib's hash, wherever this cargo puts it."""
+    debug = ws / "target" / "debug"
+    return {m[1] for path in debug.rglob("libdep-*.rlib") if (m := RLIB.match(path.name))}
 
 
 def sweep(ws: Path, *args: str) -> subprocess.CompletedProcess:

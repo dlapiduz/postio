@@ -82,7 +82,7 @@ io-oauth = { version = "0.3", default-features = false, features = ["client"] }
 io-pim-discovery = { version = "0.9", default-features = false, features = ["autoconfig", "rfc6186", "rfc8414", "rustls-ring"] }
 io-sasl = { workspace = true, optional = true }
 log = { version = "0.4", features = ["std"], optional = true }
-oo7 = "0.6.0-alpha"
+oo7 = "0.6.0"
 
 pimalaya-stream = { workspace = true }
 postio-config.workspace = true
@@ -150,3 +150,7 @@ unsafe_code = "deny"
 # draft went on existing. See the workspace `[lints.clippy]`.
 [lints.clippy]
 let_underscore_future = "deny"
+
+# Restated from the workspace `[lints.cargo]`, for the same reason.
+[lints.cargo]
+unused_dependencies = "allow"

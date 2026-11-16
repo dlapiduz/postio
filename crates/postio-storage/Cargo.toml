@@ -94,4 +94,4 @@ workspace = true
 # GTK app polls the store on that loop, and GLib is not installed on the Macs
 # that build this crate for the FFI.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-glib = { version = "0.22.9", features = ["v2_72"] }
+glib = { version = "0.22.11", features = ["v2_72"] }

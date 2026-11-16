@@ -18,8 +18,7 @@ workspace = true
 [dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 arrayvec = { version = "0.7" }
-base64-2b5c6dc72f624058 = { package = "base64", version = "0.23" }
-base64-3c51e837cfc5589a = { package = "base64", version = "0.22" }
+base64 = { version = "0.23" }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
 bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
@@ -108,7 +107,7 @@ writeable = { version = "0.6", default-features = false, features = ["alloc"] }
 yoke = { version = "0.8", default-features = false, features = ["alloc", "derive"] }
 zerocopy = { version = "0.8", default-features = false, features = ["derive", "simd"] }
 zerofrom = { version = "0.1", default-features = false, features = ["alloc", "derive"] }
-zeroize = { version = "1", features = ["zeroize_derive"] }
+zeroize = { version = "1", features = ["derive"] }
 zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"] }
@@ -116,8 +115,7 @@ zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"]
 [build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 arrayvec = { version = "0.7" }
-base64-2b5c6dc72f624058 = { package = "base64", version = "0.23" }
-base64-3c51e837cfc5589a = { package = "base64", version = "0.22" }
+base64 = { version = "0.23" }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
 bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
@@ -209,7 +207,7 @@ writeable = { version = "0.6", default-features = false, features = ["alloc"] }
 yoke = { version = "0.8", default-features = false, features = ["alloc", "derive"] }
 zerocopy = { version = "0.8", default-features = false, features = ["derive", "simd"] }
 zerofrom = { version = "0.1", default-features = false, features = ["alloc", "derive"] }
-zeroize = { version = "1", features = ["zeroize_derive"] }
+zeroize = { version = "1", features = ["derive"] }
 zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"] }
