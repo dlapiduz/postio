@@ -1162,3 +1162,66 @@ pub fn a_search_childs_row_says_who_wrote_it_and_when() {
         }
     });
 }
+
+/// The chooser takes the keyboard when it opens, so `1` `2` `3` are its own
+/// there; Tab moves to To, where they are digits in an address again.
+pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboard() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.thread_of("Harbor plan", 6, 10).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["f"]);
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "chooser.open") == Some(serde_json::json!(true))
+            )
+            .await
+        );
+        let composer = window.composer().expect("the composer");
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "the forward opened"
+        );
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "chooser.focused") == Some(serde_json::json!(true))
+            )
+            .await,
+            "the keyboard is in the chooser: {:?}",
+            support::focus_path(&window)
+        );
+        support::keys(&window, &["2"]);
+        assert!(
+            crate::settle_until(async || compose_said(&window, "chooser.selected")
+                == Some(serde_json::json!("Whole thread")))
+            .await,
+            "3 chose As attachments"
+        );
+        // What a Tab does is GTK's own traversal, which the harness's key
+        // delivery cannot run: move the keyboard as the toolkit would.
+        assert!(window.child_focus(gtk::DirectionType::TabForward));
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "chooser.focused") == Some(serde_json::json!(false))
+            )
+            .await,
+            "Tab left the chooser: {}",
+            support::focus_path(&window)
+        );
+        assert_eq!(
+            composer.focused_field(),
+            Some(postio_widgets::composer::Field::To),
+            "Tab moved to To"
+        );
+        support::keys(&window, &["1"]);
+        assert_eq!(
+            compose_said(&window, "chooser.selected"),
+            Some(serde_json::json!("Whole thread")),
+            "1 in To is a character of an address, not the chooser's"
+        );
+    });
+}

@@ -918,22 +918,6 @@ impl FocusWindow {
         if top == Some(SurfaceKind::Composer)
             && let Some(compose) = self.compose()
         {
-            // `1`, `2` and `3` choose what a forward carries while To is
-            // empty and the chooser is up: no address starts with them.
-            if state.is_empty()
-                && compose.thread.chooser_open()
-                && compose.composer().focused_field() == Some(postio_widgets::composer::Field::To)
-                && compose.composer().draft().to.is_empty()
-                && let Some(choice) = match key {
-                    gdk::Key::_1 => Some(CommandId::ForwardWhat1),
-                    gdk::Key::_2 => Some(CommandId::ForwardWhat2),
-                    gdk::Key::_3 => Some(CommandId::ForwardWhat3),
-                    _ => None,
-                }
-            {
-                self.run_in_controller(choice);
-                return glib::Propagation::Stop;
-            }
             return match outcome {
                 Outcome::Command(id) => match id.parse::<CommandId>() {
                     // What a thread adds to the composer is the controller's.
@@ -1492,6 +1476,15 @@ impl FocusWindow {
             .map_or(KeyContext::List, |pane| pane.feed().key_context());
         if context != KeyContext::Composer && self.settings_on_an_account() {
             return KeyContext::Accounts;
+        }
+        // The forward chooser's number keys are its own while it holds the
+        // keyboard, and the composer's other keys still work from it.
+        if context == KeyContext::Composer
+            && self
+                .compose()
+                .is_some_and(|compose| compose.thread.chooser_has_focus())
+        {
+            return KeyContext::ForwardChooser;
         }
         context
     }
@@ -6775,6 +6768,10 @@ impl FocusWindow {
             app.insert(
                 "focus.compose.chooser.open".to_owned(),
                 serde_json::json!(parts.chooser_open()),
+            );
+            app.insert(
+                "focus.compose.chooser.focused".to_owned(),
+                serde_json::json!(parts.chooser_has_focus()),
             );
             if parts.chooser_open() {
                 app.insert(

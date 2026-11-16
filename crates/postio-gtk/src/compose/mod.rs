@@ -147,6 +147,12 @@ impl Compose {
                 window.say(&postio_ui::compose::kept_note(key.as_deref()));
             }
         });
+        // A forward of a thread opens with the keyboard in its chooser.
+        composer.connect_opened(glib::clone!(
+            #[weak]
+            thread,
+            move || thread.focus_chooser()
+        ));
         let (resume, resume_draft) = seams::wire(&composer, &frame, client, account, current, say);
         let remind = WhenPicker::new(&keymap, When::Remind);
         remind.connect_chosen(glib::clone!(
