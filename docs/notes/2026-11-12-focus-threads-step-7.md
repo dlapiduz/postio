@@ -36,8 +36,6 @@ which are not in the repository.
 | Difference | Platform | Why |
 |---|---|---|
 | The Mac's screen 10 shows the chooser on This | Mac | It was shot before the threads seed stored its attachment's bytes, so Whole thread was rightly refused. The seed is fixed (`5bd8c7035`) |
-| `1`/`2`/`3` choose a card while To is empty (GTK), or before the composer's own keys (Mac) | both, differently | Both should mean "while the chooser holds the keyboard". T085(j) |
-| `mod+shift+q` does not fold the forwarded messages | GTK | The composer has no way to fold quoted rows yet. T085(k) |
 | The composer shows a From row; the folded quote sits at the window's foot | Mac | The composer's existing layout, unchanged by this spec |
 | Forwarded rows read "n · Who · 2026-…"; the design reads "Mon 21 Sep" | Mac | The row uses the ISO date; to switch to the reader's date words |
 | Reply to latest leaves To and Cc as they are | both | The person may have edited them; the engine changes only the quote and the threading headers |
