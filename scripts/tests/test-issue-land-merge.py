@@ -44,6 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
+import fixture_toolchain  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
@@ -141,20 +142,8 @@ exit 0
 FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 
 
-def pinned_channel() -> str:
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
-def build_sandbox(root: Path, channel: str) -> None:
-    (root / "rust-toolchain.toml").write_text(
-        f'[toolchain]\nchannel = "{channel}"\nprofile = "minimal"\n',
-        encoding="utf-8",
-    )
+def build_sandbox(root: Path) -> None:
+    fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dummy"]\nresolver = "2"\n', encoding="utf-8"
     )
@@ -232,7 +221,7 @@ def land(
     )
 
 
-def run_case(channel: str, branch_name: str, delete_on_merge: bool) -> None:
+def run_case(branch_name: str, delete_on_merge: bool) -> None:
     """One landing, in its own sandbox and bare remote."""
     prefix = f"[{branch_name}, delete_on_merge={delete_on_merge}] "
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
@@ -249,7 +238,7 @@ def run_case(channel: str, branch_name: str, delete_on_merge: bool) -> None:
 
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
         root.mkdir()
-        build_sandbox(root, channel)
+        build_sandbox(root)
         git("init", "-q", "-b", "main", cwd=root)
         git("config", "user.email", "test@example.com", cwd=root)
         git("config", "user.name", "Test", cwd=root)
@@ -322,17 +311,16 @@ def main() -> int:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
 
-    channel = pinned_channel()
 
-    run_case(channel, "issue-1-x", delete_on_merge=False)
-    run_case(channel, "issue-2-y", delete_on_merge=True)
+    run_case("issue-1-x", delete_on_merge=False)
+    run_case("issue-2-y", delete_on_merge=True)
 
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed:\n", file=sys.stderr)
         for failure in FAILURES:
             print(f"- {failure}\n", file=sys.stderr)
         return 1
-    print(f"issue-land merge check passed ({channel}).")
+    print("issue-land merge check passed.")
     return 0
 
 

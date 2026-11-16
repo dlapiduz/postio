@@ -50,6 +50,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
+
+sys.path.insert(0, str(HERE / "lib"))
+
+import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
 ISSUE_LAND = HERE / "issue-land.sh"
 # Sandboxes go under `target/`, which git ignores: inside the worktree because
 # the shared-tree guard only lifts its refusals for worktree paths, and not in
@@ -71,19 +75,8 @@ STUB_CHECKS = [
 FAILURES: list[str] = []
 
 
-def pinned_channel() -> str:
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
-def build_sandbox(root: Path, channel: str) -> None:
-    (root / "rust-toolchain.toml").write_text(
-        f'[toolchain]\nchannel = "{channel}"\nprofile = "minimal"\n', encoding="utf-8"
-    )
+def build_sandbox(root: Path) -> None:
+    fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dummy"]\nresolver = "2"\n', encoding="utf-8"
     )
@@ -137,7 +130,6 @@ def main() -> int:
     if shutil.which("cargo") is None:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
-    channel = pinned_channel()
 
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
@@ -147,7 +139,7 @@ def main() -> int:
 
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
         root.mkdir()
-        build_sandbox(root, channel)
+        build_sandbox(root)
         git("init", "-q", "-b", "main", cwd=root)
         git("config", "user.email", "test@example.com", cwd=root)
         git("config", "user.name", "Test", cwd=root)

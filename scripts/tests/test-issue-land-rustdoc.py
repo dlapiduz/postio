@@ -39,6 +39,7 @@ from pathlib import Path
 # way the neighbouring tests do it.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import fixture_toolchain  # noqa: E402
 import patience  # noqa: E402  -- enabled by the sys.path line above
 
 SCRIPT = Path(__file__).resolve().parent.parent / "issue-land.sh"
@@ -92,6 +93,7 @@ def structural() -> None:
 
 def rustdoc_exit(doc_line: str, tmp: Path) -> subprocess.CompletedProcess[str]:
     """Build a one-file crate whose lib doc is `doc_line`, under the gate's flags."""
+    fixture_toolchain.write(tmp)
     (tmp / "Cargo.toml").write_text(MANIFEST, encoding="utf-8")
     (tmp / "lib.rs").write_text(
         f"//! {doc_line}\n\n/// A real item, so there is something to link to.\npub fn thing() {{}}\n",

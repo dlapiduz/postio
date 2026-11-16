@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
+import fixture_toolchain  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
@@ -157,19 +158,8 @@ GH_STUB_NEVER = GH_STUB_LATE.replace(
 )
 
 
-def pinned_channel() -> str:
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
-def build_sandbox(root: Path, channel: str) -> None:
-    (root / "rust-toolchain.toml").write_text(
-        f'[toolchain]\nchannel = "{channel}"\nprofile = "minimal"\n', encoding="utf-8"
-    )
+def build_sandbox(root: Path) -> None:
+    fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dummy"]\nresolver = "2"\n', encoding="utf-8"
     )
@@ -212,7 +202,6 @@ def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
 def run_landing(
     base: Path,
     name: str,
-    channel: str,
     stub: str,
     push_delay: str,
     merged_timeout: str,
@@ -234,7 +223,7 @@ def run_landing(
 
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     root.mkdir()
-    build_sandbox(root, channel)
+    build_sandbox(root)
     git("init", "-q", "-b", "main", cwd=root)
     git("config", "user.email", "test@example.com", cwd=root)
     git("config", "user.name", "Test", cwd=root)
@@ -275,13 +264,12 @@ def main() -> int:
     if shutil.which("cargo") is None:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
-    channel = pinned_channel()
 
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
         # ── 1. late, but it does arrive ──────────────────────────────────
-        result = run_landing(base, "late", channel, GH_STUB_LATE, "8", "90")
+        result = run_landing(base, "late", GH_STUB_LATE, "8", "90")
         if result.returncode != 0:
             FAILURES.append(
                 "a MERGED pull request whose ref arrived after the first "
@@ -309,7 +297,7 @@ def main() -> int:
         # Rather than keep guessing at a deadline, ask the side that knows.
         # No local ref is involved in the answer, so there is no race left to
         # lose.
-        result = run_landing(base, "remote-has-it", channel, GH_STUB_REMOTE_HAS_IT, "0", "5")
+        result = run_landing(base, "remote-has-it", GH_STUB_REMOTE_HAS_IT, "0", "5")
         if result.returncode != 0:
             FAILURES.append(
                 "a landing whose local ref never caught up was reported as a "
@@ -328,7 +316,7 @@ def main() -> int:
         # remote-tracking ref at the same moment. The wait polls; one failed
         # poll is a reason to poll again, not to abandon a merge that landed.
         result = run_landing(
-            base, "lost-lock", channel, GH_STUB_LATE_MARKED, "2", "90", git_shim=GIT_SHIM_ONE_LOCK_FAILURE
+            base, "lost-lock", GH_STUB_LATE_MARKED, "2", "90", git_shim=GIT_SHIM_ONE_LOCK_FAILURE
         )
         if not (base / "lost-lock-stub" / "lost-a-lock").exists():
             FAILURES.append("the shim never failed a fetch, so this case tested nothing")
@@ -343,7 +331,7 @@ def main() -> int:
         # The patience above must not become trust. This is #312's shape --
         # `gh` reporting a merge that put nothing anywhere -- and it has to
         # keep failing, or the guard is gone.
-        result = run_landing(base, "never", channel, GH_STUB_NEVER, "0", "5")
+        result = run_landing(base, "never", GH_STUB_NEVER, "0", "5")
         if result.returncode == 0:
             FAILURES.append(
                 "a pull request that says MERGED while its commits never "

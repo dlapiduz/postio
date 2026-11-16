@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
+import fixture_toolchain  # noqa: E402
 import prereq  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
@@ -111,17 +112,8 @@ def git(*args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProces
     )
 
 
-def pinned_channel() -> str:
-    for line in (HERE.parent / "rust-toolchain.toml").read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("no channel pinned")
-
-
-def build_repo(root: Path, channel: str) -> None:
-    (root / "rust-toolchain.toml").write_text(
-        f'[toolchain]\nchannel = "{channel}"\nprofile = "minimal"\n', encoding="utf-8"
-    )
+def build_repo(root: Path) -> None:
+    fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dummy"]\nresolver = "2"\n', encoding="utf-8"
     )
@@ -149,7 +141,7 @@ def build_repo(root: Path, channel: str) -> None:
         (scripts / "checks" / name).chmod(0o755)
 
 
-def world(base: Path, channel: str, issue: int) -> tuple[Path, Path, Path]:
+def world(base: Path, issue: int) -> tuple[Path, Path, Path]:
     """A bare remote with `main` and `feature/initiative`, plus a checkout."""
     origin = base / "origin.git"
     root = base / "repo"
@@ -172,7 +164,7 @@ def world(base: Path, channel: str, issue: int) -> tuple[Path, Path, Path]:
 
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True, capture_output=True)
     root.mkdir()
-    build_repo(root, channel)
+    build_repo(root)
     git("init", "-q", "-b", "main", cwd=root)
     # In the repo's own config, not via `-c`: `issue-land.sh` runs a plain
     # `git commit`, and worktrees inherit this.
@@ -232,12 +224,11 @@ def main() -> int:
     # Under CI a runner with no cargo is a broken runner, and returning 0
     # here made this test green having run nothing at all (#1151).
     prereq.require("cargo", present=prereq.have("cargo"))
-    channel = pinned_channel()
 
     # --- A: a worktree claimed with --base lands back onto that base --------
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
-        _origin, root, stub_dir = world(base, channel, 7)
+        _origin, root, stub_dir = world(base, 7)
         environment = env_for(root, base, stub_dir)
 
         claimed = run("issue-claim.sh", ["--base", "feature/initiative", "7"], root, environment)
@@ -272,7 +263,7 @@ def main() -> int:
     # --- B: no base given behaves exactly as it does today ------------------
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
-        _origin, root, stub_dir = world(base, channel, 8)
+        _origin, root, stub_dir = world(base, 8)
         environment = env_for(root, base, stub_dir)
 
         claimed = run("issue-claim.sh", ["8"], root, environment)
@@ -297,7 +288,7 @@ def main() -> int:
     # --- C: a base that does not exist is refused ---------------------------
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
-        _origin, root, stub_dir = world(base, channel, 9)
+        _origin, root, stub_dir = world(base, 9)
         environment = env_for(root, base, stub_dir)
 
         claimed = run("issue-claim.sh", ["--base", "feature/typo", "9"], root, environment)

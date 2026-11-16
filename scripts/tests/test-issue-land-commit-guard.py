@@ -29,6 +29,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
+
+sys.path.insert(0, str(HERE / "lib"))
+
+import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
 ISSUE_LAND = HERE / "issue-land.sh"
 # Sandboxes go under `target/`, which git ignores: inside the worktree because
 # the shared-tree guard only lifts its refusals for worktree paths, and not in
@@ -53,23 +57,9 @@ STUB_CHECKS = [
 FAILURES: list[str] = []
 
 
-def pinned_channel() -> str:
-    """The version this repository actually pins, so the sandbox's own pin
-    names a toolchain that is genuinely installed on this machine."""
-    text = (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("channel"):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("rust-toolchain.toml names no channel")
-
-
-def build_sandbox(root: Path, channel: str) -> None:
+def build_sandbox(root: Path) -> None:
     """A minimal git repo: one crate, the real pin, the fixed script."""
-    (root / "rust-toolchain.toml").write_text(
-        f'[toolchain]\nchannel = "{channel}"\nprofile = "minimal"\n',
-        encoding="utf-8",
-    )
+    fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dummy"]\nresolver = "2"\n', encoding="utf-8"
     )
@@ -161,7 +151,6 @@ def main() -> int:
         print("skip: no cargo on PATH", file=sys.stderr)
         return 0
 
-    channel = pinned_channel()
 
     # This test is about the sandbox in isolation from #112's fix; run it
     # inside the current worktree for the same reason that test does --
@@ -183,7 +172,7 @@ def main() -> int:
             root.mkdir()
             origin = base / f"{name}.git"
             subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
-            build_sandbox(root, channel)
+            build_sandbox(root)
             git("init", "-q", "-b", "main", cwd=root)
             # Local, not just the `-c` flags this helper passes on its own
             # calls: issue-land.sh runs `git commit` directly, with no
@@ -352,7 +341,7 @@ def main() -> int:
         for failure in FAILURES:
             print(f"- {failure}\n", file=sys.stderr)
         return 1
-    print(f"issue-land commit-guard check passed ({channel}).")
+    print("issue-land commit-guard check passed.")
     return 0
 
 
