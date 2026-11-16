@@ -149,6 +149,7 @@ jobs:
                  target/*/deps/libpostio_*.rmeta \
                  target/*/deps/postio_*.d \
                  target/*/deps/libpostio_*.d
-          rm -rf target/*/.fingerprint/postio-*
+          rm -rf target/*/.fingerprint/postio-* \
+                 target/*/build/postio-*
           echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"
 

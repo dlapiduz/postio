@@ -40,9 +40,9 @@ adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 # come back to the main loop over a channel both sides can wait on.
 async-channel = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
-gio = "0.22.9"
-glib = { version = "0.22.9", features = ["v2_72"] }
-gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+gio = "0.22.11"
+glib = { version = "0.22.11", features = ["v2_72"] }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_20"] }
 # The binary's allocator: `postio` is Focus now, and the engine's page cache
 # and fts index churn small allocations on the hot path, which is why the
 # shipped binary has used mimalloc. The memory

@@ -24,6 +24,14 @@
 #   postio-sync    the engine every account runs, with races no unit sees
 #   3+ crates      a change that wide crosses seams nobody tested together
 #
+#   build env      `rust-toolchain.toml`, `mise.toml`, `.cargo/config.toml`,
+#                  `flatpak/*.json`: the compiler, tools and runtime every
+#                  suite runs on. A Rust bump to 1.100 passed every local gate
+#                  and the sanity tier; only the full suite saw Cargo move
+#                  test binaries out of `deps/`. Unlike the rest, this one is
+#                  not left to the author: line three, `full-suite`, tells
+#                  `issue-land.sh` to ask for the whole nightly itself.
+#
 # Fails safe: an empty list is no evidence of a small diff, so it is `high`,
 # the same direction `ci-changes.sh` fails.
 #
@@ -33,6 +41,12 @@ set -euo pipefail
 files=$(cat)
 if [ -z "${files//[[:space:]]/}" ]; then
     printf 'high\nno diff to read: cannot show the change is small\n'
+    exit 0
+fi
+
+# The build environment wins over every other rule, so it is read first.
+if env_file=$(printf '%s\n' "$files" | grep -m1 -E '^(rust-toolchain\.toml|mise\.toml|\.cargo/config\.toml|flatpak/[^/]+\.json)$'); then
+    printf 'high\n%s: the build environment\nfull-suite\n' "$env_file"
     exit 0
 fi
 

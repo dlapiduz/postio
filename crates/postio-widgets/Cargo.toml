@@ -21,9 +21,9 @@ adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 async-channel = { workspace = true }
 blake3 = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
-gio = "0.22.9"
-glib = { version = "0.22.9", features = ["v2_72"] }
-gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+gio = "0.22.11"
+glib = { version = "0.22.11", features = ["v2_72"] }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_20"] }
 pango = { version = "0.22.9", features = ["v1_56"] }
 postio-body.workspace = true
 # The store's host, asked for everything a presenter shows (ADR 0041).
