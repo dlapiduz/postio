@@ -196,7 +196,7 @@ fn carries_styling(node: &Handle, name: &str) -> bool {
     };
     attrs.borrow().iter().any(|attribute| {
         matches!(
-            attribute.name.local.as_ref(),
+            &*attribute.name.local,
             "style" | "bgcolor" | "color" | "face" | "size"
         )
     })

@@ -16,7 +16,7 @@ chrono = { workspace = true, features = ["std"] }
 # "Pimalaya first"). `client` only: its TLS features are off, so nothing
 # here can speak to another machine's https, and there is no
 # pimalaya-stream underneath.
-io-http = { version = "0.5", default-features = false, features = ["client"] }
+io-http = { version = "0.8", default-features = false, features = ["client"] }
 # The seam this crate answers: the needs-action question's fixed schema.
 postio-classify.workspace = true
 # `ModelEndpoint`: `[focus.model]`'s address, which can only name this

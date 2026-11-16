@@ -284,6 +284,7 @@ pub async fn find_by_message_id(
             .await
             .map_err(|error| session.command_error("SEARCH", error))?;
         Ok(found
+            .data
             .into_iter()
             .max()
             .map(|uid| identity::remote_id(live, postio_model::Uid::new(uid.get()))))
@@ -311,6 +312,7 @@ async fn store(
     let condstore = session.capabilities().contains(Capability::CondStore);
 
     Ok(echoes
+        .data
         .into_values()
         .filter_map(|items| update_from(live, items.into_iter().collect(), condstore))
         .collect())
@@ -333,25 +335,28 @@ async fn copy(
 
 /// A `COPYUID`/`MOVEUID` triple, paired up.
 ///
-/// The two sequence sets are positionally matched per RFC 4315 §3, so a
-/// server that sent unequal lists is reporting something we cannot use;
-/// the shorter list wins rather than a mismatched pairing being invented.
-fn mapping_from(copied: ImapCopyUid) -> Vec<UidMapping> {
-    let Some((uid_validity, sources, destinations)) = copied else {
+/// The two sequence sets are positionally matched per RFC 4315 §3; io-imap
+/// pairs them and gives no code at all when their sizes differ, so a
+/// mismatched pairing is never invented.
+///
+/// A `COPYUID` whose UIDVALIDITY is `0` (RFC 4315 forbids it; Mailo sends
+/// it) yields nothing either. io-imap reads its sets, but a `0` names no
+/// generation, and an id built on it is an id nothing can find again: the
+/// caller falls back to looking the copies up, as for a server with no
+/// UIDPLUS.
+fn mapping_from(copied: Option<ImapCopyUid>) -> Vec<UidMapping> {
+    let Some(copied) = copied.filter(|copied| copied.uid_validity != 0) else {
         return Vec::new();
     };
+    let uid_validity = UidValidity::new(copied.uid_validity);
 
-    sources
-        .into_iter()
-        .zip(destinations)
+    copied
+        .pairs()
         .map(|(source, destination)| UidMapping {
-            source: Uid::new(source),
-            destination: Uid::new(destination),
-            uid_validity: UidValidity::new(uid_validity),
-            destination_remote_id: identity::remote_id(
-                UidValidity::new(uid_validity),
-                Uid::new(destination),
-            ),
+            source: Uid::new(source.get()),
+            destination: Uid::new(destination.get()),
+            uid_validity,
+            destination_remote_id: identity::remote_id(uid_validity, Uid::new(destination.get())),
         })
         .collect()
 }
@@ -491,14 +496,48 @@ mod tests {
         assert_eq!(update.mod_seq, None);
     }
 
-    #[test]
-    fn an_unequal_copyuid_pairs_only_what_lines_up() {
-        let mapping = mapping_from(Some((4_242, vec![1, 2, 3], vec![9, 10])));
+    fn uids(first: u32, last: u32) -> std::ops::RangeInclusive<NonZeroU32> {
+        NonZeroU32::new(first).unwrap()..=NonZeroU32::new(last).unwrap()
+    }
 
-        assert_eq!(mapping.len(), 2);
-        assert_eq!(mapping[0].source, Uid::new(1));
-        assert_eq!(mapping[0].destination, Uid::new(9));
-        assert_eq!(mapping[1].destination, Uid::new(10));
+    #[test]
+    fn a_copyuid_pairs_each_source_with_its_destination() {
+        let mapping = mapping_from(Some(ImapCopyUid {
+            uid_validity: 4_242,
+            source: vec![uids(1, 2), uids(7, 7)],
+            destination: vec![uids(9, 11)],
+        }));
+
+        let pairs: Vec<(Uid, Uid)> = mapping
+            .iter()
+            .map(|mapped| (mapped.source, mapped.destination))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                (Uid::new(1), Uid::new(9)),
+                (Uid::new(2), Uid::new(10)),
+                (Uid::new(7), Uid::new(11)),
+            ]
+        );
+        assert!(
+            mapping
+                .iter()
+                .all(|mapped| mapped.uid_validity == UidValidity::new(4_242))
+        );
+    }
+
+    #[test]
+    fn a_copyuid_naming_generation_zero_is_no_mapping() {
+        // RFC 4315 forbids it and Mailo sends it. An id built on a 0 is one
+        // nothing can find again.
+        let mapping = mapping_from(Some(ImapCopyUid {
+            uid_validity: 0,
+            source: vec![uids(1, 1)],
+            destination: vec![uids(9, 9)],
+        }));
+
+        assert!(mapping.is_empty());
     }
 
     #[test]

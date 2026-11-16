@@ -16,11 +16,11 @@ ammonia = "4.2.5"
 # Already in the tree: `ammonia` parses `style` attributes with it, so the
 # sender-CSS work shares one parser rather than adding a second. See #1326.
 cssparser = "0.38"
-html5ever = "0.39.0"
+html5ever = "0.40.1"
 # Sanitised HTML to Markdown, for the terminal's reader (docs/archive/specs/005-tui-frontend
 # research R5; spike T005 found it keeps every safety promise over the corpus).
 htmd = "0.5.6"
-markup5ever_rcdom = "0.39.0"
+markup5ever_rcdom = "0.40.1"
 postio-model = { workspace = true }
 # Markdown to the composer's document, for the terminal composer
 # (docs/archive/specs/005-tui-frontend research R6).

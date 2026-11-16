@@ -113,7 +113,7 @@ fn attribute(handle: &Handle, wanted: &str) -> Option<String> {
     attrs
         .borrow()
         .iter()
-        .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case(wanted))
+        .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, wanted))
         .map(|attr| attr.value.to_string())
 }
 

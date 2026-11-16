@@ -261,20 +261,17 @@ impl ImapSession {
             Vec::new()
         };
 
-        super::skip_counter::install();
-        if mode == SelectMode::ReadOnly {
+        let output = if mode == SelectMode::ReadOnly {
             let options = ImapMailboxExamineOptions { parameters };
-            let (data, skipped) =
-                super::skip_counter::measuring(self.examine(mailbox, options)).await;
-            let data = data.map_err(|error| self.command_error("EXAMINE", error))?;
-            Ok((data, skipped))
+            let output = self.examine(mailbox, options).await;
+            output.map_err(|error| self.command_error("EXAMINE", error))?
         } else {
             let options = ImapMailboxSelectOptions { parameters };
-            let (data, skipped) =
-                super::skip_counter::measuring(self.select(mailbox, options)).await;
-            let data = data.map_err(|error| self.command_error("SELECT", error))?;
-            Ok((data, skipped))
-        }
+            let output = self.select(mailbox, options).await;
+            output.map_err(|error| self.command_error("SELECT", error))?
+        };
+        let skipped = super::undecoded(&output);
+        Ok((output.data, skipped))
     }
 
     /// Issues `SELECT` or `EXAMINE` and checks what comes back against the
@@ -326,9 +323,9 @@ impl ImapSession {
                     // who marked a message read being told "Flags not changed
                     // -- the server sent a response Postio could not read".
                     //
-                    // Before `skip_counter::measuring` there was no way to
-                    // ask which had happened, so both got the permanent
-                    // answer. Now there is.
+                    // The response's own count of what did not decode
+                    // (`undecoded`) is what tells the two apart; without it
+                    // both got the permanent answer.
                     Err(_) if skipped > 0 => {
                         return Err(BackendError::Disconnected {
                             context: format!("SELECT {path}"),
@@ -527,7 +524,9 @@ pub async fn status(
 
         let mailbox = mailbox_argument(&path)?;
         let items = session.status(mailbox, Cow::Owned(wanted)).await;
-        let items = items.map_err(|error| session.command_error("STATUS", error))?;
+        let items = items
+            .map_err(|error| session.command_error("STATUS", error))?
+            .data;
 
         let mut status = MailboxStatus {
             path: path.clone(),

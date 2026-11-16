@@ -20,7 +20,7 @@
 //! opened, so a mistyped port cannot hand an app-specific password to
 //! whoever is listening.
 
-use std::borrow::Cow;
+use bounded_static::IntoBoundedStatic;
 use std::fmt;
 use std::io;
 use std::net::Ipv4Addr;
@@ -37,8 +37,8 @@ use io_smtp::rfc5321::mail::SmtpMailError;
 use io_smtp::rfc5321::quit::SmtpQuit;
 use io_smtp::rfc5321::rcpt::SmtpRcptError;
 use io_smtp::rfc5321::{
-    SmtpAtom, SmtpDomain, SmtpEhloDomain, SmtpForwardPath, SmtpLocalPart, SmtpMailbox,
-    SmtpParameter, SmtpReversePath,
+    SmtpDomain, SmtpEhloDomain, SmtpForwardPath, SmtpLocalPart, SmtpMailbox, SmtpParameter,
+    SmtpReversePath,
 };
 use io_smtp::sasl::auth_plain::SmtpAuthPlainError;
 use io_smtp::session::{
@@ -102,6 +102,7 @@ impl SmtpSession {
 
         let options = SmtpSessionOpenOptions {
             starttls: settings.security == TransportSecurity::StartTls,
+            ..SmtpSessionOpenOptions::default()
         };
 
         let credentials = sasl_for(settings, password);
@@ -267,15 +268,13 @@ impl SmtpSession {
         // be relying on an extension nobody asked for, which is the same
         // fault as not reading the capability at all.
         let parameters = match needs_utf8 {
-            // Through `parse`, because `SmtpAtom`'s field is private to
+            // Through `new`, because `SmtpParameter`'s fields are private to
             // `io-smtp` and this is the only public way to make one. The
             // input is a `&'static str` this file owns, so the failure is
             // impossible rather than merely unlikely.
-            Some(_) => vec![SmtpParameter {
-                keyword: SmtpAtom::parse(SMTPUTF8.as_bytes())
-                    .expect("SMTPUTF8 is a valid ESMTP keyword"),
-                value: None,
-            }],
+            Some(_) => {
+                vec![SmtpParameter::new(SMTPUTF8, None).expect("SMTPUTF8 is a valid ESMTP keyword")]
+            }
             None => Vec::new(),
         };
 
@@ -507,10 +506,17 @@ fn parse_mailbox(address: &str) -> SmtpResult<SmtpMailbox<'static>> {
     // this connection may carry it.
     let domain = idna::domain_to_ascii(domain).map_err(|_| invalid())?;
 
+    // Through `try_from`, the only public constructors: each checks its
+    // piece against RFC 5321's grammar (non-ASCII allowed, RFC 6531 §3.3),
+    // so an address that slipped past `is_safe_address_component` but is not
+    // a mailbox fails here, before a byte reaches the server.
+    let local_part = SmtpLocalPart::try_from(local).map_err(|_| invalid())?;
+    let domain = SmtpDomain::try_from(domain.as_str()).map_err(|_| invalid())?;
     Ok(SmtpMailbox {
-        local_part: SmtpLocalPart(Cow::Owned(local.to_owned())),
-        domain: SmtpEhloDomain::SmtpDomain(SmtpDomain(Cow::Owned(domain))),
-    })
+        local_part,
+        domain: SmtpEhloDomain::SmtpDomain(domain),
+    }
+    .into_static())
 }
 
 /// The `SMTPUTF8` keyword, as RFC 6531 spells it.

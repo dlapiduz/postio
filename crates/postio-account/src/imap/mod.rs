@@ -44,10 +44,11 @@ mod mutate;
 mod pool;
 mod selection;
 mod settings;
-mod skip_counter;
 mod transport;
 
+use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU32;
 
 use io_imap::client::{ImapClientAsync, ImapClientError};
 use io_imap::codec::fragmentizer::Fragmentizer;
@@ -59,10 +60,12 @@ use io_imap::rfc7628::auth_oauthbearer::ImapAuthOauthbearerError;
 use io_imap::sasl::auth_login::ImapAuthLoginError;
 use io_imap::sasl::auth_plain::ImapAuthPlainError;
 use io_imap::sasl::auth_xoauth2::ImapAuthXoauth2Error;
+use io_imap::send::ImapOutput;
 use io_imap::session::{
     ImapSessionOpen, ImapSessionOpenError, ImapSessionOpenOptions, ImapSessionOpenYield,
     ImapSessionTransport,
 };
+use io_imap::types::core::{Tag, TagGenerator};
 use io_imap::types::response::Capability as WireCapability;
 use io_sasl::mechanism::Sasl;
 use io_sasl::rfc4616::plain::SaslPlainCreds;
@@ -90,11 +93,6 @@ pub use self::pool::{
 pub use self::pool::{DEFAULT_COMMAND_TIMEOUT, DEFAULT_SELECTION_MAX_AGE};
 pub use self::selection::{select, status};
 pub use self::settings::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, IMAP_PORT, IMAPS_PORT};
-pub use self::skip_counter::{
-    exclusive_measurement as skip_counter_exclusive_measurement, install as install_skip_counter,
-    install_forwarding_to as install_skip_counter_forwarding_to,
-    is_counting as skip_counter_is_counting, skipped_untagged_responses,
-};
 pub use self::transport::{
     ConnectionLog, ImapConnector, ImapScript, ImapStream, RustlsConnector, ScriptedConnector,
     TransportError,
@@ -105,7 +103,7 @@ pub use self::transport::{
 /// A mailbox can legitimately hold a message far bigger than anything a client
 /// wants in one buffer, but a *response* this large is a server misbehaving or
 /// a fetch that should have been streamed.
-const MAX_MESSAGE_SIZE: u32 = 100 * 1024 * 1024;
+pub(crate) const MAX_MESSAGE_SIZE: u32 = 100 * 1024 * 1024;
 
 /// The tagged command that starts compression, and the start of its `OK`.
 const COMPRESS_COMMAND: &[u8] = b"pz1 COMPRESS DEFLATE\r\n";
@@ -122,6 +120,9 @@ const READ_BUFFER: usize = 16 * 1024;
 pub struct ImapSession {
     stream: Box<dyn ImapStream>,
     fragmentizer: Fragmentizer,
+    /// The tags of this connection's commands, handed to io-imap each time
+    /// a command asks for one (`WantsTag`).
+    tags: TagGenerator,
     capabilities: Capabilities,
     endpoint: String,
     account: String,
@@ -197,6 +198,11 @@ impl ImapSession {
         // `WantsTlsUpgrade` carries no payload, so the host of the plaintext
         // connect is kept for the certificate check the upgrade performs.
         let mut upgrade_host = settings.host.clone();
+        // io-imap asks for each command's tag (`WantsTag`) instead of
+        // numbering them itself; one generator per connection keeps them
+        // unique on it, and the session keeps it for every later command.
+        let mut tags = TagGenerator::new();
+        let mut tag: Tag<'static>;
 
         let opened = loop {
             match coroutine.resume(&mut fragmentizer, resume.take()) {
@@ -219,6 +225,10 @@ impl ImapSession {
                 }
                 ImapCoroutineState::Yielded(ImapSessionOpenYield::WantsUnixConnect(path)) => {
                     stream = Some(connector.connect_unix(&path).await?);
+                }
+                ImapCoroutineState::Yielded(ImapSessionOpenYield::WantsTag) => {
+                    tag = tags.generate();
+                    resume = Some(tag.as_ref().as_bytes());
                 }
                 ImapCoroutineState::Yielded(ImapSessionOpenYield::WantsTlsUpgrade) => {
                     // The STARTTLS exchange already completed cleanly; io-imap
@@ -254,6 +264,7 @@ impl ImapSession {
         let mut session = Self {
             stream,
             fragmentizer,
+            tags,
             capabilities,
             endpoint: settings.endpoint(),
             account: settings.username.clone(),
@@ -386,12 +397,17 @@ impl ImapClientAsync for ImapSession {
         async move {
             let mut buffer = [0u8; READ_BUFFER];
             let mut resume: Option<&[u8]> = None;
+            let mut tag: Tag<'static>;
             self.timed_out = None;
 
             loop {
                 match coroutine.resume(&mut self.fragmentizer, resume.take()) {
                     ImapCoroutineState::Complete(Ok(value)) => return Ok(value),
                     ImapCoroutineState::Complete(Err(error)) => return Err(error.into()),
+                    ImapCoroutineState::Yielded(ImapYield::WantsTag) => {
+                        tag = self.tags.generate();
+                        resume = Some(tag.as_ref().as_bytes());
+                    }
                     ImapCoroutineState::Yielded(ImapYield::WantsRead) => {
                         let timeout = self.command_timeout;
                         let read = match self
@@ -433,6 +449,40 @@ impl ImapClientAsync for ImapSession {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// What a response held that did not decode
+// ---------------------------------------------------------------------------
+
+/// How much of a command's response io-imap could not decode.
+///
+/// io-imap completes a command `Ok` whatever it failed to read: a line it
+/// could not scan is dropped whole (`skipped`), and a `FETCH` line one of
+/// whose items did not decode comes back with the rest (`partial`). Either
+/// way the result is short of what the server sent, and only this says so.
+/// iCloud has sent `FETCH` sequence numbers no decoder accepts under QRESYNC
+/// (Apple Developer Forums thread 694251), and a `* SEARCH` line it could
+/// not parse once made a 60,934-message Archive list nothing at all.
+pub(crate) fn undecoded<T>(output: &ImapOutput<T>) -> u64 {
+    (output.skipped.len() + output.partial.len()) as u64
+}
+
+/// A `FETCH` result holding only the messages that decoded whole, and how
+/// many lines did not ([`undecoded`]).
+///
+/// A message one of whose items did not decode is taken out. It is missing
+/// an item it was asked for -- its date, its envelope, its body -- and
+/// storing it as though it had none would be storing something the server
+/// did not say.
+pub(crate) fn whole_messages<T>(
+    mut output: ImapOutput<BTreeMap<NonZeroU32, T>>,
+) -> (BTreeMap<NonZeroU32, T>, u64) {
+    let undecoded = undecoded(&output);
+    for partial in &output.partial {
+        output.data.remove(&partial.seq);
+    }
+    (output.data, undecoded)
 }
 
 // ---------------------------------------------------------------------------
@@ -806,7 +856,11 @@ mod tests {
         let error = map_open_error(
             &settings,
             ImapSessionOpenError::AuthPlain(ImapAuthPlainError::No(
-                "[AUTHENTICATIONFAILED] Authentication failed".to_owned(),
+                io_imap::send::ImapStatusError {
+                    kind: io_imap::types::response::StatusKind::No,
+                    code: None,
+                    text: "[AUTHENTICATIONFAILED] Authentication failed".to_owned(),
+                },
             )),
         );
 

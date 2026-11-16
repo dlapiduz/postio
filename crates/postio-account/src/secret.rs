@@ -582,7 +582,7 @@ fn map_oo7_error(key: &AccountKey, err: oo7::Error) -> SecretError {
     };
 
     match err {
-        oo7::Error::File(oo7::file::Error::Locked) => locked("file"),
+        oo7::Error::File(error) if matches!(*error, oo7::file::Error::Locked) => locked("file"),
         oo7::Error::DBus(oo7::dbus::Error::Dismissed) => locked("login"),
         oo7::Error::DBus(oo7::dbus::Error::Service(oo7::dbus::ServiceError::IsLocked(_))) => {
             locked("login")

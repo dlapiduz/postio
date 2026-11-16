@@ -269,7 +269,7 @@ ever grows a home this is the second thing to report through it.
 ## RFC 3501 / RFC 9051 — IMAP, and the extensions in use
 
 **Reviewed:** 2026-10-16, against `postio-account`'s `imap` module
-(`selection`, `mutate`, `fetch`, `dispatch`, `skip_counter`) and
+(`selection`, `mutate`, `fetch`, `dispatch`) and
 `postio-sync`'s `resync`, with the RFC 6851, 7162 and 2919 text read rather
 than recalled. RFC 4315 (UIDPLUS) is its own section below. This closes
 [#681](https://github.com/dlapiduz/postio/issues/681).
@@ -294,7 +294,7 @@ in-process server, and by `MockBackend` in `crates/postio-sync/tests/sync_suite/
 | **6.3.1 / 6.3.2** `SELECT` vs `EXAMINE` | `EXAMINE` is read-only and cannot serve a write | **Compliant.** A cached selection is reused only if it is read-write (`selection.rs:232`), so a write never rides an `EXAMINE`. |
 | **6.4.5** `FETCH` and `\Seen` | Fetching `BODY[…]` sets `\Seen`; `BODY.PEEK` does not | **Compliant.** Every body, header and section fetch is `BODY.PEEK` (`body.rs:292,415`, `fetch.rs:290`); reading in the background never marks mail read. |
 | **7.4.2** Unsolicited `FETCH` | A server may report a flag change on any message at any time | **Compliant.** An entry with neither `INTERNALDATE` nor `ENVELOPE` is passed over, not treated as a malformed answer (`fetch.rs:368`; `an_unsolicited_flag_update_inside_the_reply_is_not_a_message_that_lost_its_date`). |
-| **7.4.2** Undecodable untagged line | (not a client rule) `io-imap` drops a line it cannot decode and completes `Ok` | **Compliant, with a named exception.** Counted around every `CHANGEDSINCE` fetch and `SELECT`; a nonzero count refuses the answer and rebuilds (`skip_counter.rs`; `a_line_io_imap_could_not_decode_forces_a_full_resync_not_a_silent_success`). |
+| **7.4.2** Undecodable untagged line | (not a client rule) `io-imap` drops a line it cannot decode, or the `FETCH` items of one it decodes only in part, and completes `Ok` | **Compliant, with a named exception.** Counted from the command's output on every `CHANGEDSINCE` fetch, flag sweep, `SEARCH` and `SELECT`; a nonzero count refuses the answer and rebuilds, and a message that decoded only in part is never stored (`imap/mod.rs` `undecoded`, `whole_messages`; `a_line_io_imap_could_not_decode_forces_a_full_resync_not_a_silent_success`, `a_fetch_line_that_decoded_only_in_part_forces_a_full_resync`). |
 | **2.3.2** `\Recent` | Only the server sets it | **Was a latent gap, fixed here.** Nothing in the tree asked for it, but `wire_flags` would have put a `\Recent` on a `STORE` or `APPEND` (`mutate.rs:397`); it is now dropped, asserted by `recent_is_never_put_on_the_wire`. |
 | **6.3.11** `APPEND` literal | A synchronising literal waits for `+` | **Compliant.** `non_sync: false` (`mutate.rs:227`): the server may refuse a message before all of it is sent, and `LITERAL+` is not assumed. |
 | **6.4.8 / 9051 §6.4.9** `n:*` | A range ending in `*` always includes the highest UID, even if it is below `n` | **Compliant, with a named exception.** The arrivals fetch `floor:*` (`resync.rs:575-580`, `unaccounted_arrivals`) can therefore return one message already held; it is upserted again and counted as "changed". Costs a spare row, never a wrong one. Not fixed because the extra row cannot alter local state. |
@@ -313,7 +313,7 @@ in-process server, and by `MockBackend` in `crates/postio-sync/tests/sync_suite/
 | **3.2 / 5** `VANISHED (EARLIER)` and `SELECT (QRESYNC …)` | A QRESYNC client learns deletions from the server | **Not used, by design.** Deletions are found by the arithmetic in `resync.rs`'s module docs: exact, and costs one extra fetch only when the count disagrees. The price is that a mailbox whose count disagrees re-fetches every known UID. |
 | **3.1.3** Conditional `STORE` | `UNCHANGEDSINCE` makes a flag write lose to a newer change | **Compliant, with a named exception.** Last writer wins (`mutate.rs:53`): `io-imap` cannot send the modifier (ADR 0001), and a flag lost to a race comes back on the next resync. |
 | **3.2.3 / 3.2.5** `ENABLE QRESYNC` | Enabling changes `EXPUNGE` into `VANISHED` and adds `MODSEQ` to `FETCH` | **Compliant.** Never enabled, so no response shape differs from what the parser expects; asserted by `enable_is_not_sent_to_a_server_that_does_not_advertise_it` for the gate in case it is ever wired. |
-| **Advertised but answered incompletely** | (not an RFC rule) | **Compliant.** A `CHANGEDSINCE` that lost a line is refused (`skip_counter.rs`) and the mailbox is re-enumerated without wiping it (`resync.rs:492`). |
+| **Advertised but answered incompletely** | (not an RFC rule) | **Compliant.** A `CHANGEDSINCE` that lost a line or an item is refused (`imap/mod.rs` `undecoded`) and the mailbox is re-enumerated without wiping it (`resync.rs:492`). |
 
 ### RFC 6851 — MOVE, and the fallback
 

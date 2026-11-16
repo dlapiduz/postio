@@ -11,7 +11,11 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 io-sasl = { workspace = true }
-io-smtp = { version = "0.6", default-features = false, features = ["client"] }
+# Its address types are `ToStatic`, and turning one parsed from a borrowed
+# `&str` into the `'static` the session keeps needs the trait in scope.
+# Already in the lock via io-smtp, so it costs no extra compile.
+bounded-static = "0.8"
+io-smtp = { version = "0.9", default-features = false, features = ["client"] }
 # IDNA, for RFC 6531's easy half: a non-ASCII *domain* is punycoded and needs
 # no extension at all. Already in the tree through `url`, so this adds a name
 # rather than a crate. `io-smtp` has modules for RFC 1870, 3207, 3461, 4954,

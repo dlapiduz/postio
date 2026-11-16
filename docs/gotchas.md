@@ -106,7 +106,7 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **Nothing under `postio-host` may print to stdout.** `postio-mcp` runs the host in its own process, and its stdout is the JSON-RPC channel to the agent. A stray `println!` there breaks the session for the agent and makes no error in Postio. Log through `tracing`, which writes to stderr.
 
-**Install tracing with `set_global_default`, never `.init()`.** `.init()` takes the process's only `log` slot and leaves io-imap's skip counter inert, so a fetch that dropped responses reports success (`crates/postio-session/src/logging.rs`).
+**io-imap completes a command `Ok` with part of the response missing.** A line it cannot scan is dropped and a `FETCH` item it cannot decode is left out; both are named only in the command's `ImapOutput` (`skipped`, `partial`). Read them through `postio_account::imap`'s `undecoded` and `whole_messages` rather than taking `.data` alone, or a resync that lost a delta reads as one where nothing changed.
 
 **Build one `TokenSource` per account, at the composition root.** A second source of the same type compiles, then splits rejections and refresh-token rotation between IMAP and SMTP. Only `postio_account::auth::with_credential` decides what a refused credential means.
 

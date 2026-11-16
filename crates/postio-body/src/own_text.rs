@@ -237,11 +237,11 @@ fn leave_out_the_undrawn(node: &Handle) {
     node.children.borrow_mut().retain(|child| !hidden(child));
     for child in node.children.borrow().iter() {
         if let NodeData::Element { name, attrs, .. } = &child.data
-            && name.local.as_ref() == "img"
+            && (&*name.local) == "img"
         {
             attrs
                 .borrow_mut()
-                .retain(|attribute| attribute.name.local.as_ref() != "alt");
+                .retain(|attribute| (&*attribute.name.local) != "alt");
         }
         leave_out_the_undrawn(child);
     }
@@ -255,7 +255,7 @@ fn hidden(node: &Handle) -> bool {
     attrs
         .borrow()
         .iter()
-        .any(|attribute| attribute.name.local.as_ref() == "style" && hides(&attribute.value))
+        .any(|attribute| (&*attribute.name.local) == "style" && hides(&attribute.value))
 }
 
 /// Whether a `style` attribute hides what it is on: `display: none`, or

@@ -116,8 +116,18 @@ impl LocalStore {
             .client()
             .list_maildirs()
             .map_err(|error| unreadable("listing the maildir's folders", error))?;
+        // A folder the walk could not read is left out rather than failing
+        // the listing: the rest are still the person's mail. Counted, never
+        // named, because a folder name is the person's own words.
+        if !listed.unreadable.is_empty() {
+            tracing::warn!(
+                unreadable = listed.unreadable.len(),
+                "maildir folders could not be read and were left out"
+            );
+        }
 
         let mut folders: Vec<Folder> = listed
+            .maildirs
             .into_iter()
             .filter_map(|maildir| {
                 let directory = PathBuf::from(maildir.path().to_string());
@@ -297,6 +307,7 @@ impl LocalStore {
     pub fn move_to(&self, folder: &Folder, id: &str, target: &Folder) -> Result<(), BackendError> {
         self.client()
             .r#move(id, self.maildir(folder), self.maildir(target), None)
+            .map(|_renamed| ())
             .map_err(|error| unreadable("moving a message between folders", error))
     }
 
@@ -304,6 +315,7 @@ impl LocalStore {
     pub fn copy_to(&self, folder: &Folder, id: &str, target: &Folder) -> Result<(), BackendError> {
         self.client()
             .copy(id, self.maildir(folder), self.maildir(target), None)
+            .map(|_copied| ())
             .map_err(|error| unreadable("copying a message between folders", error))
     }
 

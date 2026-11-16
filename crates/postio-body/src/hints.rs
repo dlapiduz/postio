@@ -47,12 +47,12 @@ pub(crate) fn apply(node: &Handle) -> bool {
 fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
     let mut inner = table;
     if let NodeData::Element { name, attrs, .. } = &node.data {
-        let element = name.local.as_ref().to_ascii_lowercase();
+        let element = name.local.to_ascii_lowercase();
         let get = |wanted: &str| {
             attrs
                 .borrow()
                 .iter()
-                .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case(wanted))
+                .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, wanted))
                 .map(|attr| attr.value.trim().to_owned())
         };
         let mut hint: Vec<String> = Vec::new();
@@ -156,7 +156,7 @@ fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
 fn prepend_style(attrs: &mut Vec<Attribute>, hint: &str) {
     if let Some(style) = attrs
         .iter_mut()
-        .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case("style"))
+        .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "style"))
     {
         let own = style.value.trim().to_owned();
         style.value = StrTendril::from(if own.is_empty() {

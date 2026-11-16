@@ -46,7 +46,8 @@
 //! # The other way to the same symptom
 //!
 //! `io-imap` also drops any untagged response it *cannot decode*, completing
-//! the command `Ok` (see `imap::skip_counter`). A `* SEARCH` line that fails
+//! the command `Ok`, saying so only in the output's `skipped` (see
+//! `imap::undecoded`). A `* SEARCH` line that fails
 //! to parse therefore removes its UIDs just as quietly. Both paths end in an
 //! empty listing, and `existing_uids` now refuses on either.
 
@@ -69,6 +70,9 @@ fn run_search(untagged: &[&str]) -> Vec<u32> {
     loop {
         let slice = arg.take();
         match coroutine.resume(&mut fragmentizer, slice.as_deref()) {
+            ImapCoroutineState::Yielded(ImapYield::WantsTag) => {
+                arg = Some(b"A1".to_vec());
+            }
             ImapCoroutineState::Yielded(ImapYield::WantsWrite(bytes)) => {
                 // The command carries the tag its response has to echo.
                 let sent = String::from_utf8_lossy(&bytes).to_string();
@@ -85,7 +89,7 @@ fn run_search(untagged: &[&str]) -> Vec<u32> {
                 arg = Some(feed.take().expect("the response is fed once"));
             }
             ImapCoroutineState::Complete(Ok(ids)) => {
-                return ids.into_iter().map(|id| id.get()).collect();
+                return ids.data.into_iter().map(|id| id.get()).collect();
             }
             ImapCoroutineState::Complete(Err(error)) => panic!("SEARCH failed: {error}"),
         }

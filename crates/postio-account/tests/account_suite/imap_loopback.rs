@@ -483,7 +483,12 @@ async fn a_qresync_select_reports_the_changes_and_the_vanishes_together() {
         .await
         .unwrap();
 
-    let vanished: Vec<u32> = data.vanished_earlier.iter().map(|uid| uid.get()).collect();
+    let data = data.data;
+    let vanished: Vec<u32> = data
+        .vanished_earlier
+        .iter()
+        .flat_map(|range| range.start().get()..=range.end().get())
+        .collect();
     assert_eq!(vanished, [3]);
     assert_eq!(data.changed.len(), 1);
     assert!(data.highest_mod_seq.unwrap() > baseline.get());

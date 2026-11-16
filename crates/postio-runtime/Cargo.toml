@@ -19,7 +19,7 @@ chrono = { workspace = true, features = ["std"] }
 futures-util = { workspace = true }
 # Remote images for consenting senders (spec 006 US5): io-http over
 # pimalaya-stream, as the OAuth exchange does -- no other HTTP stack.
-io-http = { version = "0.5", default-features = false }
+io-http = { version = "0.8", default-features = false }
 pimalaya-stream = { workspace = true }
 url = { workspace = true }
 postio-core.workspace = true
@@ -32,7 +32,7 @@ postio-storage.workspace = true
 postio-sync.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true }
-zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
+zbus = { version = "6.3.0", default-features = false, features = ["tokio"] }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]

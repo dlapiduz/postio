@@ -264,6 +264,7 @@ impl MailBackend for JmapBackend {
                         position: Some(u64::from(first.get().saturating_sub(1))),
                         limit: Some(u64::from(last.get() - first.get() + 1)),
                         properties: None,
+                        ..JmapEmailQueryOptions::default()
                     })
                     .map_err(|error| backend_error("Email/query", error))?;
                 Ok(out

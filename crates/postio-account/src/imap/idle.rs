@@ -44,6 +44,7 @@ use io_imap::coroutine::{ImapCoroutine, ImapCoroutineState};
 use io_imap::rfc2177::idle::{
     ImapIdle, ImapIdleError, ImapIdleEvent, ImapIdleOptions, ImapIdleYield,
 };
+use io_imap::types::core::Tag;
 use io_imap::types::response::Data;
 use postio_model::{FlagSet, Uid};
 
@@ -116,6 +117,7 @@ async fn round_of_idle(
 
     let mut buffer = [0u8; READ_BUFFER];
     let mut resume: Option<&[u8]> = None;
+    let mut tag: Tag<'static>;
     let mut events = Vec::new();
     let mut winding_down = false;
 
@@ -126,6 +128,10 @@ async fn round_of_idle(
         match coroutine.resume(&mut session.fragmentizer, resume.take()) {
             ImapCoroutineState::Complete(Ok(())) => return Ok(events),
             ImapCoroutineState::Complete(Err(error)) => return Err(map_idle_error(error)),
+            ImapCoroutineState::Yielded(ImapIdleYield::WantsTag) => {
+                tag = session.tags.generate();
+                resume = Some(tag.as_ref().as_bytes());
+            }
             ImapCoroutineState::Yielded(ImapIdleYield::WantsWrite(bytes)) => {
                 let timeout = session.command_timeout();
                 session.stream.write_within(&bytes, timeout, "IDLE").await?;
@@ -226,7 +232,7 @@ fn map_idle_error(error: ImapIdleError) -> BackendError {
     match error {
         ImapIdleError::No(reason) | ImapIdleError::Bad(reason) => BackendError::Rejected {
             command: "IDLE".to_owned(),
-            reason,
+            reason: reason.text,
         },
         // The server hung up on the watcher. Transient by nature: the watch is
         // re-established on a fresh connection rather than abandoned.
