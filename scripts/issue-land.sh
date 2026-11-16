@@ -354,7 +354,11 @@ BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
 # deleted on merge; the commits it cannot move. Nothing here runs for a
 # worktree whose base is `main`.
 STACKED_ON_OPEN=0
-if [ "$BASE" != main ]; then
+if [ "$BASE" != main ] && [ "$WIP" != 1 ]; then
+    # gh is first needed here for a stacked base, so its version is checked
+    # here too (the later source line serves every other landing; a WIP push
+    # never touches gh and skips this block).
+    . "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
     BASE_TIP=$(gh pr list --head "$BASE" --state merged \
         --json headRefOid,baseRefName \
         -q '[.[] | select(.baseRefName == "main")][0].headRefOid // empty' \
@@ -384,7 +388,7 @@ if [ "$BASE" != main ]; then
         fi
         printf 'main\n' > "$(git rev-parse --git-dir)/postio-base"
         BASE=main
-        if [ "$(gh pr view --json state -q .state 2>/dev/null || echo "")" = "OPEN" ]; then
+        if [ "$(gh pr list --head "$BRANCH" --state open --json number -q length 2>/dev/null || echo 0)" = 1 ]; then
             gh pr edit --base main >/dev/null
             echo "retargeted the open PR to main."
         fi

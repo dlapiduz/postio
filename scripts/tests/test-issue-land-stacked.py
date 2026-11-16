@@ -56,6 +56,10 @@ GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+    if printf '%s' "$*" | grep -q -- "--state open"; then
+        [ -e "$STUB_DIR/open.txt" ] && echo 1 || echo 0
+        exit 0
+    fi
     cat "$STUB_DIR/merged.txt" 2>/dev/null
     exit 0
 fi
