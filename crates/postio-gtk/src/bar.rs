@@ -407,10 +407,16 @@ impl Bar {
         // The keyboard leaves the entry with the bar: left in a hidden
         // entry, every single-letter key after it would be taken for typing.
         // Asked now, and handed over once the bar is down: what hiding it
-        // does to the focus is then done, and cannot move it on again.
+        // does to the focus is then done, and cannot move it on again. A
+        // keyboard on nothing goes home too -- the field could not take it
+        // on a busy window, or a popover let it go -- since on the window
+        // itself `j` and Escape reach nothing.
         let had_keyboard = self.entry.root().filter(|root| {
-            root.focus()
-                .is_some_and(|focus| focus.is_ancestor(&self.root) || focus == self.root)
+            root.focus().is_none_or(|focus| {
+                focus.is_ancestor(&self.root)
+                    || focus == self.root
+                    || focus == *root.upcast_ref::<gtk::Widget>()
+            })
         });
         self.over.set_visible(false);
         self.show_field(true);

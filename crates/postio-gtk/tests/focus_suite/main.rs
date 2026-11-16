@@ -539,6 +539,10 @@ const CASES: &[(&str, fn())] = &[
         results::escape_closes_a_dropdown_over_the_results_then_leaves_them as fn(),
     ),
     (
+        "results::escape_gives_a_keyboard_on_nothing_to_the_results",
+        results::escape_gives_a_keyboard_on_nothing_to_the_results as fn(),
+    ),
+    (
         "results::the_tabs_hold_still_when_the_sort_changes",
         results::the_tabs_hold_still_when_the_sort_changes as fn(),
     ),
