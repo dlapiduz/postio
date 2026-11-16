@@ -35,7 +35,7 @@ message 4, where the design's state needs two.
 
 | Difference | Platform | Why |
 |---|---|---|
-| The window's title line reads "Message 1 of 10"; the design reads "Thread of 6 · 2 unread" | Mac | The title line predates this spec's walk. GTK now says "Message 5 of 6" there (`postio_ui::thread_bar::place`, the kicker's own words); the Mac still needs `place` through the FFI for the same line |
+| The window's title line reads "Message 1 of 10"; the design reads "Thread of 6 · 2 unread" | Mac | The title line predates this spec's walk. GTK now says "Message 5 of 6" there (`postio_ui::thread_bar::place`, the kicker's own words); the Mac says it too: `ThreadBarFfi.place` carries it and the title line reads it while a walk is up |
 | Avatars are neutral; the design gives each person a colour | both | As in the list (step 2–3 note); settle once for both |
 | The banner sits slightly lower and lighter than the design | Mac | Spacing within the semantic fill; left as is |
 | The Reply to label column is 64 pt; the other sender rows use 44 | Mac | To align with the sender block's column |
