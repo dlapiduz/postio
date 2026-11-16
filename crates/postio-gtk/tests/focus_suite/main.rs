@@ -1749,6 +1749,10 @@ const CASES: &[(&str, fn())] = &[
         threads::mod_shift_q_folds_and_unfolds_the_forwarded_messages as fn(),
     ),
     (
+        "threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread",
+        threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread as fn(),
+    ),
+    (
         "threads::forwarding_the_whole_thread_says_so_in_the_subject",
         threads::forwarding_the_whole_thread_says_so_in_the_subject as fn(),
     ),

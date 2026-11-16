@@ -1302,3 +1302,59 @@ pub fn mod_shift_q_folds_and_unfolds_the_forwarded_messages() {
         assert_eq!(composer.draft().body.text.unwrap_or_default(), sent);
     });
 }
+
+/// Splitting the message on screen off its thread leaves it on screen, now
+/// the first of its own thread, and the toast that offers Undo stays up
+/// rather than giving way to a "that message is gone" notice.
+pub fn splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 6, 10).await;
+        fixture.read_first(&ids, 4).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(4))
+            )
+            .await,
+            "the window opened on message 5"
+        );
+        window.act(postio_core::CommandId::SplitThread);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chips") == Some(serde_json::json!(2))
+            )
+            .await,
+            "the bar is the new thread's two messages: {:?}",
+            reading_said(&window, "chips")
+        );
+        assert_eq!(
+            window.observe().reading.id,
+            Some(ids[4].get().to_string()),
+            "the same message is on screen"
+        );
+        assert_eq!(
+            reading_said(&window, "chip"),
+            Some(serde_json::json!(0)),
+            "now the first of its thread"
+        );
+        assert_eq!(
+            reading_said(&window, "kicker").and_then(|kicker| kicker
+                .as_str()
+                .map(|kicker| kicker.starts_with("Message 1 of 2"))),
+            Some(true),
+            "{:?}",
+            reading_said(&window, "kicker")
+        );
+        let toast = window.toast_showing().unwrap_or_default();
+        assert!(
+            toast.to_lowercase().contains("split") && !toast.contains("gone"),
+            "the Undo toast stays: {toast:?}"
+        );
+    });
+}
