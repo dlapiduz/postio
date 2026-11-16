@@ -92,11 +92,11 @@ with tempfile.TemporaryDirectory() as scratch:
     (stub / "flatpak").write_text(
         f"""#!/usr/bin/env bash
 case "$*" in
-  "info --show-runtime dev.postio.PostioTui") echo org.freedesktop.Platform/x86_64/25.08 ;;
+  "info --show-runtime dev.postio.PostioTui") echo org.freedesktop.Platform/x86_64/26.08 ;;
   "info --show-runtime dev.postio.Postio") echo org.gnome.Platform/x86_64/50 ;;
   "info --show-location dev.postio.PostioTui") echo {root}/apps/tui ;;
   "info --show-location dev.postio.Postio") echo {root}/apps/desktop ;;
-  "info --show-location org.freedesktop.Platform/x86_64/25.08") echo {root}/runtimes/freedesktop ;;
+  "info --show-location org.freedesktop.Platform/x86_64/26.08") echo {root}/runtimes/freedesktop ;;
   "info --show-location org.gnome.Platform/x86_64/50") echo {root}/runtimes/gnome ;;
   "info --show-runtime dev.test.FiftyEight") echo test.Platform58 ;;
   "info --show-location dev.test.FiftyEight") echo {root}/apps/tui ;;

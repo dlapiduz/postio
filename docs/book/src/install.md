@@ -24,7 +24,7 @@ flatpak run dev.postio.Postio
 ```
 
 The bundle names Flathub as its runtime source, so `flatpak` offers to add
-Flathub and fetch the GNOME 50 runtime if you don't have them yet. Postio
+Flathub and fetch the GNOME 51 runtime if you don't have them yet. Postio
 then appears in your app grid like anything else. A later release installs
 over this one the same way, and `flatpak uninstall --user dev.postio.Postio`
 removes it; your mail stays in `~/.var/app/dev.postio.Postio` until you
@@ -112,7 +112,7 @@ missing one at once. `scripts/install-local.sh --uninstall` removes exactly
 what it installed.
 
 Prefer a sandboxed build you made yourself? Postio ships a Flatpak manifest
-under `flatpak/` that builds against the GNOME 50 runtime — see
+under `flatpak/` that builds against the GNOME 51 runtime — see
 `flatpak/README.md` in the repository for the one-time SDK setup.
 
 ## Just try it

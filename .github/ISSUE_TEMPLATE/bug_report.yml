@@ -48,7 +48,7 @@ body:
     attributes:
       label: Environment
       description: Distro, desktop/compositor, and how you built or installed Postio. `rustc --version` if you built from source.
-      placeholder: Fedora 44, GNOME 50 on Wayland, built from main at <commit>.
+      placeholder: Fedora 44, GNOME 51 on Wayland, built from main at <commit>.
     validations:
       required: true
   - type: textarea

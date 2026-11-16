@@ -41,7 +41,7 @@
 # interpreter that decides whether the repository is well-formed. 3.11 is the
 # floor rather than a preference: the checks read `Cargo.toml` with `tomllib`,
 # which is stdlib from 3.11 and absent before it.
-python = "3.14.7"
+python = "3.15.2"
 
 # `scripts/issue-*.sh` are the whole workflow — claim, land, release — and
 # they are `gh` from end to end. A `gh` whose JSON output has moved does not

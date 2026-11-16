@@ -1,6 +1,6 @@
 # Flatpak packaging
 
-`dev.postio.Postio.json` builds Postio against the GNOME 50 runtime. It is
+`dev.postio.Postio.json` builds Postio against the GNOME 51 runtime. It is
 the manifest a Flathub submission would use as-is.
 
 The app it builds is Focus (`specs/007-postio-focus`, decision C27): the
@@ -41,8 +41,8 @@ old directory can be deleted.
 
 ```bash
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50 \
-    org.freedesktop.Sdk.Extension.rust-stable//25.08
+flatpak install -y flathub org.gnome.Platform//51 org.gnome.Sdk//51 \
+    org.freedesktop.Sdk.Extension.rust-stable//26.08
 sudo dnf install flatpak-builder   # or: flatpak install flathub org.flatpak.Builder
 ```
 

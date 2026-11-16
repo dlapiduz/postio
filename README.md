@@ -99,7 +99,7 @@ flatpak run dev.postio.Postio
 
 Postio then appears in your app grid like anything else. The bundle names
 Flathub as its runtime source, so `flatpak` offers to add Flathub and fetch
-the GNOME 50 runtime if you do not have them yet. A later release installs
+the GNOME 51 runtime if you do not have them yet. A later release installs
 over this one the same way, and `flatpak uninstall --user dev.postio.Postio`
 removes it (your mail stays in `~/.var/app/dev.postio.Postio` until you
 delete it).
