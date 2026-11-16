@@ -1199,7 +1199,7 @@ pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboar
             crate::settle_until(async || compose_said(&window, "chooser.selected")
                 == Some(serde_json::json!("Whole thread")))
             .await,
-            "3 chose As attachments"
+            "2 chose Whole thread"
         );
         // What a Tab does is GTK's own traversal, which the harness's key
         // delivery cannot run: move the keyboard as the toolkit would.
@@ -1212,10 +1212,15 @@ pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboar
             "Tab left the chooser: {}",
             support::focus_path(&window)
         );
-        assert_eq!(
-            composer.focused_field(),
-            Some(postio_widgets::composer::Field::To),
-            "Tab moved to To"
+        // The field learns it has the keyboard from its own focus signal,
+        // which a loaded machine delivers a beat after the chooser's.
+        assert!(
+            crate::settle_until(
+                async || composer.focused_field() == Some(postio_widgets::composer::Field::To)
+            )
+            .await,
+            "Tab moved to To: {}",
+            support::focus_path(&window)
         );
         support::keys(&window, &["1"]);
         assert_eq!(
