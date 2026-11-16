@@ -31,8 +31,9 @@
 # Exit status:
 #   0  passes idle and loaded
 #   1  fails only under load (load-sensitive)
-#   2  fails idle too (broken, not flaky)
+#   2  fails idle too: every idle run failed (broken, not flaky)
 #   3  usage error, or the build failed
+#   4  flaky even idle: some, not all, idle runs failed
 #
 # Test hooks (scripts/tests/test-flake-check.py): FLAKE_CHECK_CARGO replaces
 # `cargo`, FLAKE_CHECK_LOAD_CMD replaces one busy-loop process.
@@ -155,7 +156,11 @@ echo "loaded: $LOADED_PASSED/$RUNS passed; $(stats loaded)"
 echo "        load average before: $LOAD_LOADED_BEFORE; after: $LOAD_LOADED_AFTER"
 echo
 
-if [ "$IDLE_PASSED" -lt "$RUNS" ]; then
+if [ "$IDLE_PASSED" -lt "$RUNS" ] && [ "$IDLE_PASSED" -gt 0 ]; then
+    echo "verdict: flaky even idle ($((RUNS - IDLE_PASSED))/$RUNS idle failures)"
+    echo "  intermittent, not a plain regression: read the failing run's output for the race."
+    exit 4
+elif [ "$IDLE_PASSED" -lt "$RUNS" ]; then
     echo "verdict: fails idle too (broken, not flaky)"
     for f in "$WORK"/idle.*.log; do
         if ! grep -q "1 passed" "$f"; then echo "--- tail of $(basename "$f") ---"; tail -n 25 "$f"; break; fi

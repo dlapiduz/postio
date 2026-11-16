@@ -39,6 +39,7 @@ esac
 case "$STUB_MODE" in
     pass) exit 0 ;;
     broken) exit 100 ;;
+    flaky) [ -f "$STUB_DIR/ran" ] && exit 0; touch "$STUB_DIR/ran"; exit 100 ;;
     load) [ -f "$STUB_DIR/loaded" ] && exit 100; exit 0 ;;
 esac
 exit 0
@@ -124,6 +125,12 @@ def main() -> int:
     out = r.stdout + r.stderr
     check("fails idle: exit 2", r.returncode == 2, out)
     check("fails idle: verdict", "fails idle too" in out, out)
+
+    r, _, _ = run("flaky", "--runs", "3", "--load-cores", "1")
+    out = r.stdout + r.stderr
+    check("flaky idle: exit 4", r.returncode == 4, out)
+    check("flaky idle: verdict", "flaky even idle (1/3 idle failures)" in out, out)
+    check("flaky idle: not called broken", "broken, not flaky" not in out, out)
 
     r, calls, _ = run("pass", build_fails=True)
     check("build failure: exit 3, no runs",
