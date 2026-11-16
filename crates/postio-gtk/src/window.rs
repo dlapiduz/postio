@@ -267,6 +267,8 @@ mod imp {
         pub pending_mailto: RefCell<Option<postio_model::mailto::Mailto>>,
         /// The move picker, built the first time `v` opens it.
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
+        /// The move picker the controller drives, for one message alone.
+        pub driven_picker: RefCell<Option<Rc<crate::controller_picker::ControllerPicker>>>,
         /// The composer, in its dialog (US3), once an account is known.
         pub compose: RefCell<Option<Rc<crate::compose::Compose>>>,
         /// Whether the composer's editing surface should start as soon as
@@ -367,6 +369,7 @@ mod imp {
                 remind: RefCell::default(),
                 labels: RefCell::default(),
                 moves: RefCell::default(),
+                driven_picker: RefCell::default(),
                 pending_link: RefCell::default(),
                 pending_mailto: RefCell::default(),
                 compose: RefCell::default(),
@@ -1185,6 +1188,11 @@ impl FocusWindow {
             SurfaceKind::Bar => {
                 if let Some(bar) = self.bar() {
                     bar.close();
+                }
+            }
+            SurfaceKind::Picker => {
+                if let Some(driven) = self.imp().driven_picker.borrow().as_ref() {
+                    driven.close();
                 }
             }
             SurfaceKind::Filtered => self.hide_filtered(),
@@ -2616,6 +2624,16 @@ impl FocusWindow {
                 }
             }
             Intent::CloseSurface(kind) => self.close_surface(*kind),
+            // The picker the controller drives (`MoveThisMessage`); the
+            // others are GTK's own, opened by their keys.
+            Intent::OpenPicker(view) if view.kind == postio_focus::PickerKind::Move => {
+                self.open_driven_picker(view);
+            }
+            Intent::PickerRows(view) if view.kind == postio_focus::PickerKind::Move => {
+                if let Some(driven) = self.imp().driven_picker.borrow().as_ref() {
+                    driven.show_rows(view);
+                }
+            }
             // The Contacts view and what lies over it: the controller keeps
             // the state, this draws it (specs/011-focus-contacts S13).
             Intent::Contacts(view) => self.show_contacts(view),
@@ -6070,6 +6088,12 @@ impl FocusWindow {
                     .as_ref()
                     .map(|moves| Rc::clone(moves.picker())),
             )
+            .chain(
+                imp.driven_picker
+                    .borrow()
+                    .as_ref()
+                    .map(|driven| Rc::clone(driven.picker())),
+            )
             // The composer's remind picker, at its footer (US3).
             .chain(self.compose().and_then(|compose| compose.open_picker()))
             .find(|picker| picker.is_open())
@@ -6102,6 +6126,31 @@ impl FocusWindow {
                 move |command| window.send(command)
             ),
         );
+    }
+
+    /// Draw the move picker the controller opened, hung where it says: the
+    /// cursor's row, or the open message's action row.
+    fn open_driven_picker(&self, view: &postio_focus::PickerView) {
+        let imp = self.imp();
+        let picker = imp.driven_picker.borrow().clone();
+        let picker = picker.unwrap_or_else(|| {
+            let picker = crate::controller_picker::ControllerPicker::new(&self.keymap());
+            picker.connect_input(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |input| {
+                    if let Some(pane) = window.pane() {
+                        pane.feed().input(input);
+                    }
+                }
+            ));
+            imp.driven_picker.replace(Some(Rc::clone(&picker)));
+            picker
+        });
+        let Some((anchor, rect)) = self.at_the_row() else {
+            return;
+        };
+        picker.open(view, &anchor, Some(&rect));
     }
 
     /// Open the label picker at the cursor's row, over what a verb would
@@ -6215,11 +6264,19 @@ impl FocusWindow {
         }
         let pane = self.pane()?;
         let view = pane.view().clone();
-        let cursor = self.cursor_row()?;
-        let row = pane
-            .rows_on_screen()
-            .into_iter()
-            .find(|row| row.item().is_some_and(|item| item.id() == cursor.id()));
+        // The keyboard is on a child of an opened thread, or on a row.
+        let row = match self.cursor_row() {
+            Some(cursor) => pane
+                .rows_on_screen()
+                .into_iter()
+                .find(|row| row.item().is_some_and(|item| item.id() == cursor.id())),
+            None => {
+                let child = self.cursor_child()?;
+                pane.rows_on_screen()
+                    .into_iter()
+                    .find(|row| row.child().as_ref() == Some(&child))
+            }
+        };
         let rect = match row.and_then(|row| {
             row.compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0))
                 .map(|top| (top, row.height()))

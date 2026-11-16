@@ -99,11 +99,6 @@ command = "zoom_reset"
 context = "list"
 reason  = "bound, and act() has no arm for it; Focus has no zoom"
 
-[[gap]]
-command = "move_this_message"
-context = "list"
-reason  = "CANDIDATE: the controller opens its move picker on the child's message, but GTK's own move picker answers `move` alone and ignores the controller's"
-
 # -- search: `/` pressed: the bar open and empty, the keyboard in its field
 [[gap]]
 command = "show_all_results"

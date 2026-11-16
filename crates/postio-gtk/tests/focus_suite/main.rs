@@ -1753,6 +1753,10 @@ const CASES: &[(&str, fn())] = &[
         threads::the_outline_opens_from_the_list_over_an_expanded_thread as fn(),
     ),
     (
+        "threads::alt_v_on_a_child_moves_that_message_alone",
+        threads::alt_v_on_a_child_moves_that_message_alone as fn(),
+    ),
+    (
         "threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread",
         threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread as fn(),
     ),

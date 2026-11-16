@@ -17,6 +17,7 @@ pub mod chooser;
 pub mod chrome;
 pub mod compose;
 pub mod contacts;
+pub mod controller_picker;
 #[cfg(feature = "demo")]
 pub mod demo;
 pub mod digest;

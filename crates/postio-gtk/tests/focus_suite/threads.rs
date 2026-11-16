@@ -1517,3 +1517,53 @@ pub fn the_outline_opens_from_the_list_over_an_expanded_thread() {
         );
     });
 }
+
+/// `alt+v` on a child row draws the move picker for that message alone, and
+/// choosing a folder moves it and leaves the rest of its thread.
+pub fn alt_v_on_a_child_moves_that_message_alone() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (fixture, window, ids, pane) = harbor().await;
+        let receipts = fixture.folder("Receipts").await;
+        support::keys(&window, &["Right"]);
+        assert!(crate::settle_until(async || pane.cursor().n_items() == 6).await);
+        support::keys(&window, &["j"]);
+        support::press(&window, "v", gtk::gdk::ModifierType::ALT_MASK);
+        assert!(
+            crate::settle_until(async || window.open_picker().is_some()).await,
+            "alt+v drew no move picker on a child"
+        );
+        let picker = window.open_picker().expect("open");
+        assert!(
+            crate::settle_until(async || picker.texts().iter().any(|line| line == "Receipts"))
+                .await,
+            "the folders never listed: {:?}",
+            picker.texts()
+        );
+        let said = picker.texts();
+        assert!(said.iter().any(|line| line == "Move to folder"), "{said:?}");
+        support::keys(&window, &["Down", "Return"]);
+        let moved = async |message: MessageId| {
+            let connection = fixture.database.connect().await.expect("a connection");
+            postio_storage::repository::MessageRepository::new(&connection)
+                .get(message)
+                .await
+                .expect("a read")
+                .expect("the message")
+                .mailbox_id
+        };
+        assert!(
+            crate::settle_until(async || moved(ids[0]).await == receipts).await,
+            "the child did not move"
+        );
+        for other in &ids[1..] {
+            assert_ne!(
+                moved(*other).await,
+                receipts,
+                "the rest of its thread stays where it was"
+            );
+        }
+    });
+}
