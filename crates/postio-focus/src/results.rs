@@ -3331,14 +3331,17 @@ impl FocusController {
         Some(steps)
     }
 
-    /// A verb this client sent has landed, or was taken back: the results
-    /// are asked again, so a row says where its mail is now ("in:Archive")
-    /// and one deleted is gone. Search spans every folder, so an archived
+    /// A verb this client sent has landed, or was taken back, or messages
+    /// changed in place (one read by its dwell): the results are asked
+    /// again, so a row says where its mail is now ("in:Archive"), whether
+    /// it is unread, and one deleted is gone. Search spans every folder, so an archived
     /// result still matches; the focus ring stays where it was.
     pub(crate) fn results_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
         if !matches!(
             event,
-            postio_core::Event::ActionCompleted { .. } | postio_core::Event::UndoPerformed { .. }
+            postio_core::Event::ActionCompleted { .. }
+                | postio_core::Event::UndoPerformed { .. }
+                | postio_core::Event::MessagesChanged { .. }
         ) {
             return Vec::new();
         }

@@ -75,6 +75,22 @@ impl ScopeFooter {
         self.title.text().to_string()
     }
 
+    /// The words beside the keycaps, as drawn, in order: "move | open | ...".
+    pub fn labels(&self) -> String {
+        let mut said = Vec::new();
+        let mut pair = self.keys.first_child();
+        while let Some(widget) = pair {
+            if let Some(label) = widget
+                .last_child()
+                .and_then(|label| label.downcast::<gtk::Label>().ok())
+            {
+                said.push(label.text().to_string());
+            }
+            pair = widget.next_sibling();
+        }
+        said.join(" | ")
+    }
+
     /// The right-hand sentence, if there is one.
     pub fn note(&self) -> Option<String> {
         self.note

@@ -6912,6 +6912,10 @@ impl FocusWindow {
                 serde_json::json!(footer.title()),
             );
             app.insert(
+                "focus.footer.labels".to_owned(),
+                serde_json::json!(footer.labels()),
+            );
+            app.insert(
                 "focus.footer.note".to_owned(),
                 serde_json::json!(footer.note()),
             );

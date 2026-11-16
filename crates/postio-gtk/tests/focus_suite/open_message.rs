@@ -303,10 +303,7 @@ pub fn brackets_step_through_the_thread() {
             "the title line after n: {:?}",
             reading.subtitle()
         );
-        assert_eq!(
-            reading.thread_chip_said(),
-            "Message 3 of 3 \u{b7} ] newer \u{b7} [ older"
-        );
+        assert_eq!(reading.thread_chip_said(), "Message 3 of 3 \u{b7} [ older");
     });
 }
 

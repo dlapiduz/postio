@@ -15,9 +15,11 @@
 # label and move on the whole thread, and offers "Latest }".
 #
 # `[` `[` shows message 3 (ring on chip 3, kicker "Message 3 of 6"). `}`
-# shows the latest and marks it read: the ring moves to chip 6, its dot goes,
-# the banner goes, and the label column reads "6 · 1 new". `g u` then shows
-# message 5, the first unread, and marks it read: "6". The kicker and the
+# shows the latest: the ring moves to chip 6, the banner goes, and the label
+# column still reads "6 · 2 new", because a message is marked read by the
+# dwell (a second open) and never by being shown. `g u` then shows message 5,
+# the first unread. (The film's clock is real, so by now message 6 has been
+# open for its dwell: the count behind is not asserted here.) The kicker and the
 # bar are the controller's cases (postio-focus tests/controller_suite/
 # threads.rs); this film is their composition in the window. The window's
 # thread state is published as `app.focus.reading.chip` (the ringed chip,
@@ -34,7 +36,7 @@ check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3"
 [[step]]
 id      = "open"
 key     = "Return"
-check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 4, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 5 of 6 · ] newer · [ older", app.focus.reading.banner = true, app.focus.reading.reply_to = { absent = true } }
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.cursor.unread = 2, app.focus.reading.chip = 4, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 5 of 6 · ] newer · [ older", app.focus.reading.banner = true, app.focus.reading.reply_to = { absent = true } }
 expect  = "The window opens on message 5 of 6, the first unread. The thread bar sits under the action row with the ring on chip 5 and unread dots on chips 5 and 6; the kicker says \"Message 5 of 6\" with \"] newer · [ older\"; the older-message banner is up and offers Latest }."
 
 [[step]]
@@ -52,8 +54,8 @@ expect  = "Message 3 is shown, ringed, and the banner is still up. The sender bl
 [[step]]
 id      = "latest"
 key     = "}"
-check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 5, app.focus.reading.banner = false, app.focus.reading.reply_to = { absent = true } }
-expect  = "The latest message, 6, is shown: the ring is on the last chip, its unread dot is gone because showing it marked it read, the banner is gone, and the label column reads \"6 · 1 new\"."
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.cursor.unread = 2, app.focus.reading.chip = 5, app.focus.reading.kicker = "Message 6 of 6 · [ older", app.focus.reading.banner = false, app.focus.reading.reply_to = { absent = true } }
+expect  = "The latest message, 6, is shown: the ring is on the last chip, its unread dot is still there because it has not been open for the dwell, the banner is gone, the kicker offers only \"[ older\", and the label column still reads \"6 · 2 new\"."
 
 [[step]]
 key     = "g"
@@ -62,4 +64,4 @@ key     = "g"
 id      = "first-unread"
 key     = "u"
 check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 4, app.focus.reading.banner = true }
-expect  = "`g u` shows message 5, the first unread: it is ringed and marked read, the label column reads \"6\", and the banner is back because message 5 is not the latest."
+expect  = "`g u` shows message 5, the first unread: it is ringed, and the banner is back because message 5 is not the latest."

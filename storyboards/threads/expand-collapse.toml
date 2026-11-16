@@ -38,8 +38,8 @@ expect  = "The inbox is collapsed: Harbor API draft v3 is the ringed first row w
 [[step]]
 id      = "expand"
 key     = "Right"
-check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", rows.count = 17, reading.id = { absent = true }, view = "list", app.focus.cursor.kind = "row" }
-expect  = "Harbor opens in place and nothing is opened: Right expands, it no longer opens the message. Under the ringed thread row come six child rows, joined to it by a line, each with its sender, its own first line (message 4 reads \"to Ana\" as a tag, not the quote it carries), its time, and an unread dot on the two unread ones, then the draft reply in draft styling. The cursor is still on the thread row and the chevron points down."
+check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", rows.count = 17, reading.id = { absent = true }, view = "list", app.focus.cursor.kind = "row", app.focus.footer.labels = "move | open | reply to latest | forward latest | archive thread | collapse" }
+expect  = "Harbor opens in place and nothing is opened: Right expands, it no longer opens the message. Under the ringed thread row come six child rows, joined to it by a line, each with its sender, its own first line (message 4 reads \"to Ana\" as a tag, not the quote it carries), its time, and an unread dot on the two unread ones, then the draft reply in draft styling. The cursor is still on the thread row and the chevron points down; the footer now offers Left collapse where it offered Right expand."
 
 [[step]]
 id      = "into"

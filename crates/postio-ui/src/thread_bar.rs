@@ -193,13 +193,17 @@ pub fn place(index: usize, count: usize) -> String {
     format!("Message {} of {count}", index + 1)
 }
 
-/// "Message 4 of 6 · ] newer · [ older", the keys the keymap has.
+/// "Message 4 of 6 · ] newer · [ older", the keys the keymap has. Only the
+/// directions there is a message in: no "newer" on the latest.
 pub fn kicker(index: usize, count: usize, keymap: &Keymap) -> String {
     let mut said = place(index, count);
-    for (command, word) in [
-        (CommandId::NextInConversation, "newer"),
-        (CommandId::PrevInConversation, "older"),
+    for (command, word, there) in [
+        (CommandId::NextInConversation, "newer", index + 1 < count),
+        (CommandId::PrevInConversation, "older", index > 0),
     ] {
+        if !there {
+            continue;
+        }
         if let Some(key) = hints::key(keymap, command) {
             said.push_str(&format!(" \u{b7} {key} {word}"));
         }
@@ -540,9 +544,11 @@ mod tests {
             "L".to_owned(),
         );
         let rebound = Keymap::resolve(&overrides);
+        assert_eq!(kicker(0, 2, &rebound), "Message 1 of 2 \u{b7} L newer");
         assert_eq!(
-            kicker(0, 2, &rebound),
-            "Message 1 of 2 \u{b7} L newer \u{b7} [ older"
+            kicker(1, 2, &rebound),
+            "Message 2 of 2 \u{b7} [ older",
+            "the latest has nothing newer"
         );
     }
 

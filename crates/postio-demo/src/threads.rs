@@ -456,7 +456,7 @@ async fn file_thread(
             },
         );
         message.list_id = thread.list_id.map(str::to_owned);
-        message.preview = Some(turn.text.chars().take(110).collect());
+        message.preview = postio_model::mime::preview(&turn.text);
         let mut flags = FlagSet::new();
         if !turn.unread {
             flags.insert(Flag::Seen);
