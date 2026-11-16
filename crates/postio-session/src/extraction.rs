@@ -130,9 +130,9 @@ impl Extractor {
     /// The helper this application ships: `$POSTIO_EXTRACT_HELPER`, else
     /// [`HELPER_NAME`] beside the running executable (`Contents/MacOS` in
     /// the .app, `/app/bin` in the flatpak, `target/<profile>` in a
-    /// build), else in the directory above a test binary's `deps/`. When
-    /// none exists the first candidate is kept, and each extraction finds
-    /// it missing.
+    /// build), else in the `target/<profile>` a test binary was built
+    /// under ([`test_profile_dir`]). When none exists the first candidate
+    /// is kept, and each extraction finds it missing.
     pub fn locate() -> Self {
         if let Some(path) = std::env::var_os(HELPER_ENV).filter(|path| !path.is_empty()) {
             return Self::with_helper(path);
@@ -144,10 +144,8 @@ impl Extractor {
             .and_then(|exe| exe.parent().map(Path::to_path_buf))
         {
             candidates.push(directory.join(&name));
-            if directory.file_name().is_some_and(|last| last == "deps")
-                && let Some(above) = directory.parent()
-            {
-                candidates.push(above.join(&name));
+            if let Some(profile) = test_profile_dir(&directory) {
+                candidates.push(profile.join(&name));
             }
         }
         let helper = candidates
@@ -419,5 +417,55 @@ impl Write for RequestWriter {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+/// The `target/<profile>` directory a test binary in `directory` was built
+/// under, where cargo puts the crate's own binaries.
+///
+/// Cargo has put test binaries in two places: `<profile>/deps/` until 1.99,
+/// and `<profile>/build/<package>/<hash>/out/` from 1.100, whose build
+/// directory layout is no longer optional. Only those two shapes are read:
+/// any other directory is not a build, and walking up from an installed
+/// executable to whatever lies above it would offer a helper from a place
+/// nobody put one.
+fn test_profile_dir(directory: &Path) -> Option<PathBuf> {
+    let named = |path: &Path, name: &str| path.file_name().is_some_and(|last| last == name);
+    if named(directory, "deps") {
+        return directory.parent().map(Path::to_path_buf);
+    }
+    let build = directory.parent()?.parent()?.parent()?;
+    (named(directory, "out") && named(build, "build"))
+        .then(|| build.parent().map(Path::to_path_buf))
+        .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_test_binary_under_deps_finds_its_profile() {
+        assert_eq!(
+            test_profile_dir(Path::new("/w/target/debug/deps")),
+            Some(PathBuf::from("/w/target/debug"))
+        );
+    }
+
+    #[test]
+    fn a_test_binary_in_cargo_1_100s_build_directory_finds_its_profile() {
+        assert_eq!(
+            test_profile_dir(Path::new(
+                "/w/target/debug/build/postio-session/3cccfa3113b09911/out"
+            )),
+            Some(PathBuf::from("/w/target/debug"))
+        );
+    }
+
+    #[test]
+    fn an_installed_executable_is_not_taken_for_a_build() {
+        for installed in ["/app/bin", "/home/ada/build/bin", "/usr/bin", "/"] {
+            assert_eq!(test_profile_dir(Path::new(installed)), None, "{installed}");
+        }
     }
 }

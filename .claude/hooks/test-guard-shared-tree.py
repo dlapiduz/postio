@@ -217,6 +217,11 @@ worktree_cds = [
     "cd $HOME/src/postio-worktrees/issue-27 && git add -A",
     "cd ${HOME}/src/postio-worktrees/issue-27 && git stash",
     f"cd '{WORKTREE}' && cargo fmt --all",
+    # A relative `cd` after the worktree `cd` is resolved against the
+    # worktree, not against the session's cwd (the shared checkout here).
+    f"cd {WORKTREE} && cd crates/postio-core && cargo fmt -p postio-core",
+    f"cd {WORKTREE}/crates/postio-core && cargo fmt -p postio-core",
+    f"cd {WORKTREE} && python3 -c 'x' && cd crates && cd postio-core && cargo fmt --all",
     f'cd "{WORKTREE}" && git reset --hard',
     # Not the first thing on the line. The `cd` still decides where the
     # dangerous half runs, so the guard has to find it.
@@ -241,6 +246,8 @@ shared_cds = [
     # Relative: resolved against the cwd, which here is the shared tree.
     "cd crates && git add -A",
     "cd ./crates/postio-core && cargo fmt --all",
+    # A chain that leaves the worktree is the shared checkout again.
+    f"cd {WORKTREE} && cd ../../postio && cargo fmt --all",
     "cd .. && git reset --hard",
     # A `cd` to somewhere that is not a worktree at all.
     "cd ~/src/postio-worktrees && git add -A",
@@ -679,6 +686,9 @@ LOOP_DENY = [
     "cargo test --workspace --no-fail-fast",
     "cargo test --all",
     "cargo nextest run --workspace",
+    # --all-features is a feature switch, but --workspace beside it is still
+    # the whole workspace.
+    "cargo nextest run --workspace --all-features --no-fail-fast",
     "cd ~/src/postio-worktrees/issue-27 && cargo test --workspace",
     "scripts/issue-land.sh",
     "scripts/issue-land.sh -m 'feat(gtk): x'",
@@ -714,6 +724,10 @@ LOOP_ALLOW = [
     "cargo test --workspace --doc",
     "cargo check --workspace --all-targets",
     "cargo test -p postio-core",
+    # A flag that merely begins with --all is not --all: many -p crates are
+    # scoped by name, and what the rule guards is linking the whole workspace.
+    "cargo nextest run -p postio-account -p postio-smtp -p postio-body --all-features --no-fail-fast",
+    "cargo test -p postio-core --all-targets",
     "cargo nextest run -p postio-gtk --test focus_suite",
     "cargo nextest run -p postio-widgets --test widgets_suite",
     "POSTIO_WORKSPACE_TESTS=1 cargo test --workspace --no-fail-fast",
