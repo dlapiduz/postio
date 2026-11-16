@@ -35,8 +35,6 @@ message 4, where the design's state needs two.
 
 | Difference | Platform | Why |
 |---|---|---|
-| Chip clicks do nothing | both | The controller has no `ThreadBarChipClicked` input yet. T085(d) |
-| Thread ▾ is inert | both | The thread menu is US5 (T062–T068) |
 | The window's title line reads "Message 1 of 10"; the design reads "Thread of 6 · 2 unread" | Mac | The title line predates this spec's walk. To align with the kicker when US5 touches the window |
 | Avatars are neutral; the design gives each person a colour | both | As in the list (step 2–3 note); settle once for both |
 | The banner sits slightly lower and lighter than the design | Mac | Spacing within the semantic fill; left as is |
