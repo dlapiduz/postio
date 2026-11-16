@@ -203,7 +203,7 @@ pub fn header(from: &str, date: &str) -> String {
     format!("{from} · {date}")
 }
 
-/// "Fwd: <subject> (N messages)", with no second "Fwd:".
+/// `"Fwd: <subject> (N messages)"`, with no second "Fwd:".
 ///
 /// A subject that already ends in a count (a thread forwarded again, or the
 /// same call made twice) has it replaced rather than repeated.

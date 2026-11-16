@@ -59,7 +59,7 @@ pub fn own_text(body: &MessageBody) -> String {
 }
 
 /// A message's own words as one line for a thread's child row (spec 013,
-/// research R5): [`own_text`] flattened and cut to [`PREVIEW_CHARS`] with the
+/// research R5): [`own_text`] flattened and cut to [`PREVIEW_CHARS`](postio_model::mime::PREVIEW_CHARS) with the
 /// preview's ellipsis. Empty when the message says nothing of its own, which
 /// is how an all-quote reply is told from one whose body has not landed.
 pub fn own_line(body: &MessageBody) -> String {

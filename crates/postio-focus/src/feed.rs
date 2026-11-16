@@ -80,7 +80,7 @@ pub struct Opened {
     pub surfaced: Option<Result<Vec<Surfaced>, String>>,
 }
 
-/// The timer a sync pass's thread changes share: [`Input::Timer`] with this
+/// The timer a sync pass's thread changes share: [`Input::Timer`](crate::Input::Timer) with this
 /// token repaints the list once. Apart from the composer's small counts and
 /// the open message's high bit.
 pub(crate) const THREAD_REFRESH_TIMER: u64 = 1 << 62;
