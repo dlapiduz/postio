@@ -25,6 +25,9 @@ pub enum ScopeFocus {
         thread: ThreadId,
         /// Its latest message.
         latest: MessageId,
+        /// Its children are showing: Left folds it, Right has nothing
+        /// to do.
+        expanded: bool,
     },
     /// A child row of the expanded thread.
     Child {
@@ -62,7 +65,7 @@ pub enum Scope {
 /// and is only for the two "this message alone" verbs on a row.
 pub fn target(focus: ScopeFocus, action: CommandId) -> Scope {
     let (thread, row_message, child_message) = match focus {
-        ScopeFocus::Row { thread, latest } => (thread, Some(latest), None),
+        ScopeFocus::Row { thread, latest, .. } => (thread, Some(latest), None),
         ScopeFocus::Child { thread, message } | ScopeFocus::Window { thread, message } => {
             (thread, None, Some(message))
         }
@@ -135,12 +138,16 @@ pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> Fo
             Some((CommandId::OpenMessage, "open")),
             None,
         ),
-        ScopeFocus::Row { .. } => (
+        ScopeFocus::Row { expanded, .. } => (
             format!("{} \u{b7} {} messages", about.subject, about.count),
             "reply to latest",
             "forward latest",
             "archive thread",
-            Some((CommandId::ExpandThread, "expand")),
+            Some(if expanded {
+                (CommandId::CollapseThread, "collapse")
+            } else {
+                (CommandId::ExpandThread, "expand")
+            }),
             None,
         ),
         ScopeFocus::Child { .. } | ScopeFocus::Window { .. } => (
@@ -216,6 +223,7 @@ mod tests {
         ScopeFocus::Row {
             thread: T,
             latest: LATEST,
+            expanded: false,
         }
     }
 
@@ -247,6 +255,41 @@ mod tests {
         CommandId::RemindIfNoReply,
         CommandId::Delete,
     ];
+
+    #[test]
+    fn an_expanded_row_offers_collapse_and_a_collapsed_one_expand() {
+        let about = FooterAbout {
+            subject: "Harbor",
+            count: 6,
+            index: 0,
+            sender: "",
+        };
+        let keymap = Keymap::defaults();
+        let keys = |expanded| {
+            let focus = ScopeFocus::Row {
+                thread: T,
+                latest: LATEST,
+                expanded,
+            };
+            footer(focus, &about, keymap)
+                .keys
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            keys(false).contains(&"expand".to_owned()),
+            "{:?}",
+            keys(false)
+        );
+        assert!(!keys(false).contains(&"collapse".to_owned()));
+        assert!(
+            keys(true).contains(&"collapse".to_owned()),
+            "{:?}",
+            keys(true)
+        );
+        assert!(!keys(true).contains(&"expand".to_owned()));
+    }
 
     #[test]
     fn on_a_row_reply_reply_all_forward_and_flag_go_to_the_latest_message() {

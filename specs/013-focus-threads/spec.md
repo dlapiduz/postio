@@ -451,7 +451,9 @@ the body holds six headed messages and every attachment.
   visible however long the thread.
 - **FR-016**: `[` `]` `{` `}` and `g u` MUST move within the thread; `j`/`k`
   MUST keep moving between threads in the list.
-- **FR-017**: Showing a message MUST mark it read, as opening does today.
+- **FR-017**: A message shown in the window MUST be marked read by the dwell
+  (spec 007 FR-046), as opening is, however it was shown (`]`, `[`, `}`,
+  `g u`, a chip, the outline); showing it never marks it at once.
 - **FR-018**: A message joining the open thread MUST add a chip and the
   new-reply banner, MUST update the list row behind the window, and MUST NOT
   change the shown message, its scroll position or the focus.

@@ -205,6 +205,8 @@ pub fn aim_by(
                     ScopeFocus::Row {
                         thread: row.threads[0],
                         latest: row.id,
+                        // Aiming a verb does not care.
+                        expanded: false,
                     }
                 },
                 action,

@@ -1852,7 +1852,22 @@ impl FocusController {
         effects.extend(self.effects(steps));
         // The cursor moved: the footer says what its row or child is, and
         // what the keys reach from there.
-        if let Some(footer) = self.footer_after(&effects, raw) {
+        let footer = self.footer_after(&effects, raw).or_else(|| {
+            // An expansion opened or folded under the cursor: the row's
+            // footer offers the other of Right and Left now.
+            let respliced = effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    Effect::Show(Intent::Splice { .. } | Intent::Unsplice { .. })
+                )
+            });
+            let position = self
+                .cursor
+                .position()
+                .filter(|_| respliced && self.walk.is_none() && self.filtered.is_none())?;
+            thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
+        });
+        if let Some(footer) = footer {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
         effects

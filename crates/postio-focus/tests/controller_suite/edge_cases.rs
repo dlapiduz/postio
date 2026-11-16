@@ -179,12 +179,12 @@ fn a_click_on_a_chip_shows_that_message() {
         "it was read"
     );
 
-    // An unread one is marked read by showing it, as `]` does.
+    // An unread one is shown, not marked: the dwell does that.
     let effects = focus.handle_on(Input::ThreadBarChipClicked(5), &rows);
     assert_eq!(window_of(&effects).shown, Some(member_id(thread, 5)));
-    assert_eq!(
-        crate::threads::marked_read(&effects),
-        vec![member_id(thread, 5)]
+    assert!(
+        crate::threads::marked_read(&effects).is_empty(),
+        "{effects:?}"
     );
 
     // The one on screen, or one that is not there, does nothing.

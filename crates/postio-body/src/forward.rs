@@ -317,17 +317,29 @@ fn distinct_attachments(members: &[Member]) -> Vec<Attachment> {
 ///
 /// The attachments hold no bytes (`blob_id` is `None`): the caller stores
 /// `raw[n]` and sets the `n`th one's `blob_id`, because the blob store is not
-/// below this crate. Each is named by its `Subject:` when the source has a
-/// plain one, else "message N".
+/// below this crate. Each is named as a person would pick it out of a pile:
+/// "2 · Lena Park · Harbor API draft v3.eml", its place in the thread, who
+/// wrote it and its subject without the "Re:" and "Fwd:" every reply carries.
+/// A sender or subject that is absent or encoded is left out, and a message
+/// with neither is "message N".
 pub fn forward_as_attachments(raw: &[Vec<u8>]) -> Vec<Attachment> {
     let mut used: HashMap<String, u32> = HashMap::new();
     raw.iter()
         .enumerate()
         .map(|(n, bytes)| {
-            let stem = subject_of(bytes)
-                .map(|subject| safe_name(&subject))
-                .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| format!("message {}", n + 1));
+            let who = header_of(bytes, "from").and_then(|from| sender_name(&from));
+            let subject = header_of(bytes, "subject")
+                // An encoded word is not worth a half-decoded file name.
+                .filter(|subject| !subject.contains("=?"))
+                .map(|subject| bare_subject(&subject).to_owned())
+                .filter(|subject| !subject.is_empty());
+            let parts: Vec<String> = who.into_iter().chain(subject).collect();
+            let stem = if parts.is_empty() {
+                format!("message {}", n + 1)
+            } else {
+                format!("{} \u{b7} {}", n + 1, parts.join(" \u{b7} "))
+            };
+            let stem = safe_name(&stem);
             let times = used.entry(stem.to_lowercase()).or_insert(0);
             *times += 1;
             let name = if *times == 1 {
@@ -343,9 +355,44 @@ pub fn forward_as_attachments(raw: &[Vec<u8>]) -> Vec<Attachment> {
         .collect()
 }
 
-/// The `Subject:` of a raw message, unfolded; `None` when absent or encoded
-/// (an encoded word is not worth a half-decoded file name).
-fn subject_of(raw: &[u8]) -> Option<String> {
+/// `subject` without the reply and forward prefixes in front of it.
+fn bare_subject(subject: &str) -> &str {
+    let mut rest = subject.trim();
+    loop {
+        let lower = rest.to_ascii_lowercase();
+        let Some(prefix) = ["re:", "fwd:", "fw:"]
+            .into_iter()
+            .find(|prefix| lower.starts_with(prefix))
+        else {
+            return rest;
+        };
+        rest = rest[prefix.len()..].trim_start();
+    }
+}
+
+/// The name in a `From:` value ("Lena Park <lena@example.com>"), else the
+/// part of the address before the "@". `None` for an encoded name, which is
+/// not worth a half-decoded file name.
+fn sender_name(from: &str) -> Option<String> {
+    let from = from.trim();
+    let name = match from.split_once('<') {
+        Some((name, _)) => name.trim().trim_matches('"').trim(),
+        None => "",
+    };
+    if name.contains("=?") {
+        return None;
+    }
+    let name = if name.is_empty() {
+        let address = from.trim_matches(['<', '>']);
+        address.split('@').next().unwrap_or("").trim()
+    } else {
+        name
+    };
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// The header `wanted` of a raw message, unfolded; `None` when absent or empty.
+fn header_of(raw: &[u8], wanted: &str) -> Option<String> {
     let head_end = raw
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -357,7 +404,7 @@ fn subject_of(raw: &[u8]) -> Option<String> {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
-        if !name.eq_ignore_ascii_case("subject") {
+        if !name.eq_ignore_ascii_case(wanted) {
             continue;
         }
         let mut subject = value.trim().to_owned();
@@ -370,7 +417,7 @@ fn subject_of(raw: &[u8]) -> Option<String> {
                 break;
             }
         }
-        return (!subject.contains("=?")).then_some(subject);
+        return (!subject.is_empty()).then_some(subject);
     }
     None
 }
@@ -594,8 +641,8 @@ mod tests {
             assert_eq!(attachment.disposition, Disposition::Attachment);
             assert!(attachment.blob_id.is_none());
         }
-        assert_eq!(set[0].filename.as_deref(), Some("one.eml"));
-        assert_eq!(set[1].filename.as_deref(), Some("two.eml"));
+        assert_eq!(set[0].filename.as_deref(), Some("1 \u{b7} one.eml"));
+        assert_eq!(set[1].filename.as_deref(), Some("2 \u{b7} two.eml"));
     }
 
     #[test]
@@ -609,7 +656,35 @@ mod tests {
             .into_iter()
             .map(|a| a.filename.expect("a name"))
             .collect();
-        assert_eq!(names, ["a-b.eml", "a-b 2.eml", "message 3.eml"]);
+        assert_eq!(
+            names,
+            ["1 \u{b7} a-b.eml", "2 \u{b7} a-b.eml", "message 3.eml"]
+        );
+    }
+
+    #[test]
+    fn eml_names_say_the_place_the_sender_and_the_subject_without_re() {
+        let raw = vec![
+            b"From: Ana Ruiz <ana@example.com>\r\nSubject: Harbor API draft v3\r\n\r\n".to_vec(),
+            b"From: \"Lena Park\" <lena@example.com>\r\nSubject: Re: Harbor API draft v3\r\n\r\n"
+                .to_vec(),
+            b"From: ben@example.com\r\nSubject: RE: Fwd: Harbor: the plan?\r\n\r\n".to_vec(),
+            b"From: =?utf-8?q?L=C3=A9na?= <l@example.com>\r\nSubject: =?utf-8?q?x?=\r\n\r\n"
+                .to_vec(),
+        ];
+        let names: Vec<_> = forward_as_attachments(&raw)
+            .into_iter()
+            .map(|a| a.filename.expect("a name"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "1 \u{b7} Ana Ruiz \u{b7} Harbor API draft v3.eml",
+                "2 \u{b7} Lena Park \u{b7} Harbor API draft v3.eml",
+                "3 \u{b7} ben \u{b7} Harbor- the plan-.eml",
+                "message 4.eml",
+            ]
+        );
     }
 
     #[test]

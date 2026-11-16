@@ -4,11 +4,11 @@
 //! it belongs to, so `[` `]` `{` `}` and `g u` are decided here and both
 //! frontends only draw. A walk is made when a message opens, from the thread
 //! read that opened it (or one asked for), and ends with the window.
-//! Showing a message by stepping marks it read (FR-017); the message a
-//! window opens on is marked by the frontend's dwell, as opening always was.
+//! A message shown by stepping is marked read the way one opened is, by the
+//! frontend's dwell (FR-017, spec 007 FR-046): showing never marks at once.
 
 use chrono::Local;
-use postio_core::{Command, CommandId};
+use postio_core::CommandId;
 use postio_model::{MessageId, ThreadId, ThreadView};
 use postio_ui::scope::{self, FooterAbout, ScopeFocus};
 use postio_ui::thread_bar;
@@ -667,9 +667,9 @@ impl FocusController {
         let Some(walk) = self.walk.as_mut() else {
             return Vec::new();
         };
-        let member = &mut walk.view.members[target];
-        let (message, unread) = (member.id, !member.seen);
-        member.seen = true;
+        // Showing does not read: the frontend's dwell does, for whichever
+        // message is on screen (FR-017, spec 007 FR-046).
+        let message = walk.view.members[target].id;
         walk.shown = message;
         if let Some(matches) = walk.matches.as_mut()
             && let Some(at) = matches.messages.iter().position(|id| *id == message)
@@ -697,11 +697,6 @@ impl FocusController {
             total,
             host: Host::Own,
         })];
-        if unread {
-            steps.push(Step::Ask(Request::Post(Command::MarkReadOnDwell {
-                message,
-            })));
-        }
         steps.extend(self.walk_intents());
         if let Some(banner) = banner {
             steps.push(Step::Show(Intent::NewReply(banner)));

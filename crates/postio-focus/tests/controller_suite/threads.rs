@@ -952,6 +952,28 @@ fn the_footer_s_labels_say_this_on_a_child_and_latest_on_a_row() {
 }
 
 #[test]
+fn the_footer_on_an_expanded_row_offers_collapse_not_expand() {
+    let rows = List::of(&[6, 4, 1, 3]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read");
+    let effects = answer(&mut focus, ticket, harbor(thread), &rows);
+    let footer = footer_of(&effects).expect("expanding redraws the row's footer");
+    assert!(labels(&footer).contains(&"collapse"), "{footer:?}");
+    assert!(!labels(&footer).contains(&"expand"), "{footer:?}");
+
+    // Back on the row from its first child: still expanded.
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+    let footer = footer_of(&effects).expect("a footer on the row");
+    assert!(labels(&footer).contains(&"collapse"), "{footer:?}");
+}
+
+#[test]
 fn the_footer_s_keycaps_and_note_are_the_keymaps_not_the_designs() {
     let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
     for _ in 0..3 {
@@ -1182,19 +1204,18 @@ fn bracket_steps_older_and_newer_and_a_newer_unread_is_marked_read() {
 
     let effects = run(&mut focus, CommandId::NextInConversation, &rows);
     assert_eq!(window_of(&effects).shown, Some(member_id(thread, 4)));
-    assert_eq!(
-        marked_read(&effects),
-        vec![member_id(thread, 4)],
-        "showing an unread message marks it read (FR-017)"
+    assert!(
+        marked_read(&effects).is_empty(),
+        "showing an unread message does not mark it: the frontend's dwell does (FR-017)"
     );
     let effects = run(&mut focus, CommandId::NextInConversation, &rows);
     let window = window_of(&effects);
     assert_eq!(window.shown, Some(member_id(thread, 5)));
-    assert_eq!(marked_read(&effects), vec![member_id(thread, 5)]);
+    assert!(marked_read(&effects).is_empty(), "{effects:?}");
     assert_eq!(
         window.bar.as_ref().map(|bar| bar.count_line.as_str()),
-        Some("6"),
-        "both unread are read now"
+        Some("6 \u{b7} 2 new"),
+        "nothing is read until the dwell says so"
     );
     assert_eq!(window.banner, Some(None), "the latest has no banner");
 }
@@ -1220,7 +1241,15 @@ fn first_and_latest_go_to_the_ends() {
     let window = window_of(&effects);
     assert_eq!(window.shown, Some(member_id(thread, 5)));
     assert_eq!(window.banner, Some(None));
-    assert_eq!(marked_read(&effects), vec![member_id(thread, 5)]);
+    assert!(
+        marked_read(&effects).is_empty(),
+        "the latest is read by the dwell, not at once: {effects:?}"
+    );
+    assert_eq!(
+        window.bar.as_ref().map(|bar| bar.count_line.as_str()),
+        Some("6 \u{b7} 2 new"),
+        "the latest keeps its dot until the dwell"
+    );
 }
 
 #[test]

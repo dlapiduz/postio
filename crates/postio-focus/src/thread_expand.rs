@@ -155,6 +155,7 @@ pub(crate) fn footer_at(
             let focus = ScopeFocus::Row {
                 thread,
                 latest: facts.id,
+                expanded: expansion.is_some_and(|x| x.anchor == facts.id),
             };
             Some(scope::footer(focus, &about, keymap))
         }
