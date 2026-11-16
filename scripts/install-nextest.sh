@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Install the pinned `cargo-nextest` into ~/.cargo/bin. Idempotent.
+# Install the pinned `cargo-nextest` side by side with its other versions. Idempotent.
+#
+# Versions live in ~/.local/share/postio-tools/ and `cargo nextest` resolves the
+# one the current checkout pins, so a branch that bumps the pin does not
+# unseat everyone else's; scripts/lib/pinned-tool.sh says why. CI installs
+# plain into ~/.cargo/bin.
 #
 # # Why this exists as a script
 #
@@ -45,10 +50,14 @@ VERSION="0.9.152"
 SHA256_LINUX="d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a"
 SHA256_MAC="2fadf57df4243e691f088ee3bff4f4ab9af16da0c95a1db84b5cb1685e098a76"
 
-# `--version` rather than `command -v`: a cached or hand-installed copy at the
-# wrong version is the case that matters, and it looks identical on PATH.
-if cargo nextest --version 2>/dev/null | grep -qw "$VERSION"; then
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/pinned-tool.sh
+. "$HERE/lib/pinned-tool.sh"
+pt_init cargo-nextest "$VERSION" nextest
+
+if pt_have; then
     echo "cargo-nextest $VERSION already installed"
+    pt_install_shim
     exit 0
 fi
 
@@ -77,7 +86,9 @@ trap 'rm -f "$TARBALL"' EXIT
 curl -fsSL --retry 3 -o "$TARBALL" "https://get.nexte.st/$VERSION/$ASSET"
 echo "$SHA256  $TARBALL" | $CHECK
 
-mkdir -p "$HOME/.cargo/bin"
-tar -xzf "$TARBALL" -C "$HOME/.cargo/bin" cargo-nextest
+pt_stage
+trap 'rm -f "$TARBALL"; rm -rf "$PT_STAGE"' EXIT
+tar -xzf "$TARBALL" -C "$PT_STAGE/bin" cargo-nextest
+pt_commit
 
-cargo nextest --version
+"$PT_BIN/cargo-nextest" nextest --version

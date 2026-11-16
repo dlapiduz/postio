@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Install the pinned `cargo-machete` into ~/.cargo/bin. Idempotent.
+# Install the pinned `cargo-machete` side by side with its other versions. Idempotent.
+#
+# Versions live in ~/.local/share/postio-tools/ and `cargo machete` resolves the
+# one the current checkout pins; scripts/lib/pinned-tool.sh says why. CI
+# installs plain into ~/.cargo/bin.
 #
 # `scripts/checks/check-unused-deps.py` runs it and skips, saying so, when it
 # is absent -- the same trade `check-dependency-policy.py` makes for
@@ -16,16 +20,15 @@ VERSION="0.9.2"
 
 # `--version` prints the bare number (`0.9.2`), not `cargo-machete 0.9.2`:
 # the last field is the version whichever shape a release chooses.
-if command -v cargo-machete >/dev/null 2>&1; then
-    installed=$(cargo-machete --version 2>/dev/null | awk '{print $NF}')
-    if [ "$installed" = "$VERSION" ]; then
-        echo "cargo-machete $VERSION already installed"
-        exit 0
-    fi
-    echo "cargo-machete ${installed:-unknown} installed; replacing with $VERSION"
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/pinned-tool.sh
+. "$HERE/lib/pinned-tool.sh"
+pt_init cargo-machete "$VERSION"
+
+if pt_have; then
+    echo "cargo-machete $VERSION already installed"
+    pt_install_shim
+    exit 0
 fi
 
-# `--force`: a binary restored from a cache of another version is exactly
-# what the branch above found, and cargo refuses to overwrite it otherwise.
-cargo install cargo-machete --version "$VERSION" --locked --force
-echo "cargo-machete $VERSION installed"
+pt_cargo_install
