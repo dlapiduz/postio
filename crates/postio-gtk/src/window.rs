@@ -970,13 +970,14 @@ impl FocusWindow {
             self.act(command);
             return glib::Propagation::Stop;
         }
-        // Filtered's rows are selected by the view itself: the controller
-        // behind it holds the inbox's list, which `x` must not reach.
+        // Filtered's rows are walked, selected and opened by the
+        // controller's Filtered surface, which holds its own cursor: the
+        // inbox's list behind it is not what `x` or `j` mean here.
         if let Some(command) = command
-            && let Some(view) = self.filtered()
-            && view.runs(command)
+            && self.filtered().is_some()
+            && filtered_owns(command)
         {
-            view.run(command);
+            self.run_in_controller(command);
             return glib::Propagation::Stop;
         }
         if let Some(command) = command {
@@ -1202,7 +1203,7 @@ impl FocusWindow {
                     bar.close();
                 }
             }
-            SurfaceKind::Filtered => self.leave_filtered(),
+            SurfaceKind::Filtered => self.hide_filtered(),
             SurfaceKind::Contacts => self.leave_contacts(),
             SurfaceKind::ContactPopover => self.close_contact_popover(),
             SurfaceKind::ThreadMenu => {
@@ -2036,15 +2037,8 @@ impl FocusWindow {
         }
         // So does Filtered: its rows are walked and opened as the list's
         // are, and `g i` goes back (screen 21's footer).
-        if let Some(view) = self.filtered() {
-            match id {
-                CommandId::NextMessage => return view.step(1),
-                CommandId::PrevMessage => return view.step(-1),
-                CommandId::OpenMessage => return view.open_focused(),
-                CommandId::GoToInbox => return self.leave_filtered(),
-                id if view.runs(id) => return view.run(id),
-                _ => {}
-            }
+        if self.filtered().is_some() && filtered_owns(id) {
+            return self.run_in_controller(id);
         }
         match id {
             // The cursor's and the selection's, and `!`: the controller's
@@ -2068,10 +2062,9 @@ impl FocusWindow {
             CommandId::Back => {
                 if let Some(places) = self.places().filter(|places| places.is_open()) {
                     places.close();
-                } else if self.bar().is_some_and(|bar| bar.is_open()) {
+                } else if self.bar().is_some_and(|bar| bar.is_open()) || self.filtered().is_some()
+                {
                     self.run_in_controller(CommandId::Back);
-                } else if self.filtered().is_some() {
-                    self.leave_filtered();
                 } else {
                     self.cursor_command(CommandId::Back);
                 }
@@ -2117,16 +2110,6 @@ impl FocusWindow {
             // A toast with an Undo of its own -- a send, queued -- is the
             // last thing said, so Undo takes that back first (#1752).
             CommandId::Undo if self.imp().toast.activate_undo() => {}
-            // In Filtered, the message it has focused, never the list's row
-            // behind it nor its conversation (C4: never automatically).
-            CommandId::Delete | CommandId::ToggleRead | CommandId::Flag
-                if self.key_context() == KeyContext::Filtered =>
-            {
-                if let Some(view) = self.filtered() {
-                    self.filtered_verb(id, view.aimed());
-                    view.clear_selection();
-                }
-            }
             CommandId::Archive
             | CommandId::Delete
             | CommandId::ToggleRead
@@ -2217,26 +2200,6 @@ impl FocusWindow {
             CommandId::DigestRule => self.new_digest_rule(),
             CommandId::ToggleReadingPane => self.toggle_reading_pane(),
             CommandId::GoToDigestRules => self.show_rules(),
-            CommandId::RestoreFiltered => {
-                if let Some(view) = self.filtered() {
-                    self.restore_filtered(view.aimed());
-                    view.clear_selection();
-                }
-            }
-            CommandId::FilteredTab1
-            | CommandId::FilteredTab2
-            | CommandId::FilteredTab3
-            | CommandId::FilteredTab4
-            | CommandId::FilteredTab5
-            | CommandId::FilteredTab6
-            | CommandId::FilteredTab7 => {
-                let index = postio_ui::filtered::TAB_COMMANDS
-                    .iter()
-                    .position(|tab| *tab == id);
-                if let (Some(view), Some(index)) = (self.filtered(), index) {
-                    view.set_tab(index);
-                }
-            }
             CommandId::Snooze => self.open_when(When::Snooze),
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
             CommandId::AddLabel => self.open_labels(),
@@ -2482,6 +2445,11 @@ impl FocusWindow {
                     pane.to_top();
                 }
             }
+            Intent::Footer(footer) if self.filtered().is_some() => {
+                if let Some(view) = self.filtered() {
+                    view.show_scope(footer);
+                }
+            }
             Intent::Footer(footer) => {
                 if let Some(bar) = self.imp().scope_footer.borrow().as_ref() {
                     bar.set(footer);
@@ -2701,6 +2669,31 @@ impl FocusWindow {
                 }
             }
             Intent::ShowFiltered => self.show_filtered(),
+            Intent::Filtered(frame) => {
+                if let Some(view) = self.filtered() {
+                    view.show(frame);
+                }
+            }
+            Intent::FilteredFocus(position) => {
+                if let Some(view) = self.filtered() {
+                    view.show_focus(*position);
+                }
+            }
+            Intent::FilteredSplice { anchor, children } => {
+                if let Some(view) = self.filtered() {
+                    view.show_splice(*anchor, children);
+                }
+            }
+            Intent::FilteredUnsplice { anchor } => {
+                if let Some(view) = self.filtered() {
+                    view.show_unsplice(*anchor);
+                }
+            }
+            Intent::FilteredSelection { selected, bar } => {
+                if let Some(view) = self.filtered() {
+                    view.show_selection(selected, bar.as_ref());
+                }
+            }
             Intent::SaveSearch(save) => self.save_search(save),
             // The Save popover over the results (spec 010 §3.9).
             Intent::SavePopover(view) => {
@@ -3595,17 +3588,6 @@ impl FocusWindow {
             }
             pane.feed().handle(event);
         }
-        // What is filtered moves with a restore, its undo, and mail filed
-        // away while the view is open.
-        if matches!(
-            event,
-            Event::MessageListChanged { .. }
-                | Event::UndoPerformed { .. }
-                | Event::ActionCompleted { .. }
-        ) && let Some(view) = self.filtered()
-        {
-            view.refresh();
-        }
     }
 
     /// Hand every notification to `sink` instead of the desktop: what a
@@ -4301,15 +4283,25 @@ impl FocusWindow {
         imp.filtered.borrow().clone()
     }
 
-    /// `g f`: the Filtered view in place of the inbox (screen 21).
+    /// `g f`: the Filtered view in place of the inbox (screen 21). The
+    /// controller has opened its Filtered surface and says what to draw.
     fn show_filtered(&self) {
         let imp = self.imp();
-        let Some(client) = imp.client.borrow().clone() else {
+        let Some(pane) = self.pane() else {
             return;
         };
         let view = imp.filtered.borrow().clone();
         let view = view.unwrap_or_else(|| {
-            let view = crate::filtered::FilteredView::new(client, &self.keymap());
+            let feed = pane.feed().clone();
+            let view = crate::filtered::FilteredView::new(
+                &self.keymap(),
+                move |input| feed.input(input),
+                glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |command| window.run_in_controller(command)
+                ),
+            );
             view.connect_action(glib::clone!(
                 #[weak(rename_to = window)]
                 self,
@@ -4319,10 +4311,6 @@ impl FocusWindow {
             imp.filtered.replace(Some(Rc::clone(&view)));
             view
         });
-        // `FilteredView::show_rows` teaches its own caps: `open` reads
-        // its rows asynchronously, and a call only here would run before
-        // any row exists.
-        view.open();
         imp.pages.set_visible_child_name(FILTERED);
         view.focus_list();
     }
@@ -4671,7 +4659,7 @@ impl FocusWindow {
         self.focus_list();
     }
 
-    /// Back from Filtered to the inbox, as it was.
+    /// Back from the digest rules to the inbox, as it was.
     fn leave_filtered(&self) {
         self.imp().pages.set_visible_child_name(INBOX);
         // The list opens on its first row, as every list does.
@@ -4679,40 +4667,18 @@ impl FocusWindow {
         self.focus_list();
     }
 
+    /// Filtered is gone, as the controller says: the inbox is back, with
+    /// the keyboard where the controller put it.
+    fn hide_filtered(&self) {
+        self.imp().pages.set_visible_child_name(INBOX);
+        self.focus_list();
+    }
+
     /// What the Filtered view asked for.
     fn filtered_action(&self, action: crate::filtered::FilteredAction) {
-        use crate::filtered::FilteredAction;
         match action {
-            FilteredAction::Back => self.leave_filtered(),
-            FilteredAction::Open { message, subject } => {
-                if let Some(reading) = self.reading_dialog() {
-                    reading.show_found(self, message, &subject, None);
-                }
-            }
-            FilteredAction::Restore(message) => self.restore_filtered(vec![message]),
-            FilteredAction::Sweep => self.ask_sweep(),
-            FilteredAction::Verb(command) => self.act(command),
+            crate::filtered::FilteredAction::Sweep => self.ask_sweep(),
         }
-    }
-
-    /// Put `message` back in the inbox, and never filter its sender (FR-116).
-    fn filtered_verb(&self, id: CommandId, messages: Vec<MessageId>) {
-        if messages.is_empty() {
-            return;
-        }
-        self.post(Command::default_for(id).with_target(MessageTarget::Messages(messages)));
-    }
-
-    /// Put `messages` back in the inbox as one command, so one Undo takes
-    /// them all back.
-    fn restore_filtered(&self, messages: Vec<MessageId>) {
-        if messages.is_empty() {
-            return;
-        }
-        self.post(Command::RestoreFiltered {
-            target: MessageTarget::Messages(messages),
-            restored: true,
-        });
     }
 
     /// What sync said about an account: the banner and the label follow.
@@ -5228,6 +5194,17 @@ impl FocusWindow {
     /// Show `message`, which the controller opened, at `index` of `total`
     /// messages in the list: the open-email dialog, or the pane beside it.
     fn show_message(&self, message: MessageId, index: u32, total: u32) {
+        // Filtered's messages are not in the list behind it: the window
+        // opens one by its id, titled by the row it came from.
+        if let Some(view) = self.filtered()
+            && let Some(reading) = self.reading_dialog()
+        {
+            let subject = view.focused_subject().unwrap_or_default();
+            reading.show_found(self, message, &subject, None);
+            crate::a11y::teach_shortcuts(&reading.view());
+            crate::motion::keep_to_budget(&reading.view());
+            return;
+        }
         // A step of the thread the window is walking: the same window, the
         // message in place, and the list's cursor where it was.
         if let Some(reading) = self.reading_dialog()
@@ -7056,6 +7033,33 @@ impl FocusWindow {
 }
 
 /// The command a banner's button runs.
+/// The commands the controller's Filtered surface answers while it has the
+/// keyboard: walking, selecting, opening, restoring, the tabs, the verbs on
+/// the focused message, and the way out. The sweep is the window's (it asks
+/// first, in a dialog); everything else is the app's wherever it is.
+fn filtered_owns(id: CommandId) -> bool {
+    postio_ui::filtered::TAB_COMMANDS.contains(&id)
+        || matches!(
+            id,
+            CommandId::NextMessage
+                | CommandId::PrevMessage
+                | CommandId::OpenMessage
+                | CommandId::ToggleSelection
+                | CommandId::ExtendSelectionDown
+                | CommandId::ExtendSelectionUp
+                | CommandId::SelectAll
+                | CommandId::ExpandThread
+                | CommandId::CollapseThread
+                | CommandId::RestoreFiltered
+                | CommandId::Delete
+                | CommandId::DeleteThisMessage
+                | CommandId::Flag
+                | CommandId::ToggleRead
+                | CommandId::Back
+                | CommandId::GoToInbox
+        )
+}
+
 fn banner_command(action: postio_ui::focus_state::BannerAction) -> CommandId {
     match action {
         postio_ui::focus_state::BannerAction::Retry => CommandId::Refresh,
