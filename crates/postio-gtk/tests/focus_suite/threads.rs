@@ -1101,3 +1101,64 @@ pub fn clicking_the_more_chip_opens_the_outline() {
         );
     });
 }
+
+/// A search result's child row says who wrote the matching message, with
+/// their initials and the time, from what the controller sent with the row.
+pub fn a_search_childs_row_says_who_wrote_it_and_when() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 6, 10).await;
+        for n in [3, 5, 6] {
+            fixture
+                .write_searchable_body(
+                    ids[n - 1],
+                    "Please publish the rate limit headers on every reply.",
+                )
+                .await;
+        }
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("rate limit headers");
+        assert!(
+            crate::settle_until(async || bar
+                .dropdown()
+                .texts()
+                .iter()
+                .any(|text| text.contains("in the main window")))
+            .await
+        );
+        bar.run_search_row();
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.results.children") == Some(serde_json::json!(4))
+            )
+            .await
+        );
+        let rows = || {
+            support::with_class(&window, "focus-results-child")
+                .iter()
+                .map(support::texts)
+                .filter(|texts| texts.iter().any(|text| text.starts_with("message ")))
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            crate::settle_until(async || rows().len() == 3).await,
+            "three matching children are drawn: {:?}",
+            rows()
+        );
+        for row in rows() {
+            assert!(row.contains(&"AM".to_owned()), "initials: {row:?}");
+            assert!(row.contains(&"Ada Moreno".to_owned()), "sender: {row:?}");
+            assert!(
+                row.len() >= 5,
+                "avatar, sender, tag, passage and time: {row:?}"
+            );
+        }
+    });
+}

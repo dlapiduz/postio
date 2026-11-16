@@ -2651,3 +2651,7 @@ button.focus-filtered-tab.focus-filtered-tab-on {
   border-top: 1px solid var(--postio-hairline);
   background-color: var(--postio-raised-bg);
 }
+
+.focus-results-child-sender {
+  font-weight: bold;
+}

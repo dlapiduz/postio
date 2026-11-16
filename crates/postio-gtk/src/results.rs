@@ -282,8 +282,6 @@ pub struct ResultsPane {
     /// The expanded result's children, and the one with the ring.
     splice: RefCell<Option<postio_focus::ResultSplice>>,
     child_focus: Cell<Option<u32>>,
-    /// The initials of each message of the expanded thread, once read.
-    initials: RefCell<std::collections::HashMap<postio_model::MessageId, String>>,
     /// Positions asked for and not yet landed, so a redraw does not ask
     /// again.
     asked: RefCell<std::collections::HashSet<u64>>,
@@ -463,7 +461,6 @@ impl ResultsPane {
             cursor: Cell::new(None),
             splice: RefCell::default(),
             child_focus: Cell::new(None),
-            initials: RefCell::default(),
             asked: RefCell::default(),
             me: RefCell::default(),
         });
@@ -683,9 +680,6 @@ impl ResultsPane {
         self.child_focus
             .set(splice.and_then(|splice| splice.focused));
         self.items.set_splice(anchor);
-        if let Some(splice) = splice {
-            self.read_initials(splice.anchor);
-        }
         // The result wears its chevron's turn and loses a ring a child has.
         if let Some((anchor, _)) = anchor {
             self.items.rows_changed(anchor, 1);
@@ -715,36 +709,6 @@ impl ResultsPane {
         } else {
             self.reveal_cursor();
         }
-    }
-
-    /// Read who wrote the expanded thread's messages, for their avatars, and
-    /// draw the children again once they are known.
-    fn read_initials(&self, anchor: u64) {
-        let Some(thread) = self.feed.result_row(anchor).and_then(|row| row.thread) else {
-            return;
-        };
-        let client = self.feed.client();
-        let weak = self.me.borrow().clone();
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            let Ok(Some(view)) = client.thread(thread).await else {
-                return;
-            };
-            let Some(pane) = weak.upgrade() else {
-                return;
-            };
-            {
-                let mut held = pane.initials.borrow_mut();
-                for member in &view.members {
-                    held.insert(member.id, postio_ui::row::initials(member.from.as_ref()));
-                }
-            }
-            let count = pane.child_count() as u32;
-            for index in 0..count {
-                pane.items.child_changed(index);
-            }
-        });
     }
 
     /// How many children the expanded result has drawn.
@@ -1273,21 +1237,26 @@ impl ResultsPane {
         line.add_css_class("focus-results-child");
         match child {
             words::ResultChild::Match {
-                message,
                 tag,
                 passage,
+                sender,
+                initials,
+                time,
                 ..
             } => {
-                // The initials avatar the thread's rows wear.
-                let avatar = gtk::Label::new(Some(
-                    self.initials
-                        .borrow()
-                        .get(message)
-                        .map_or("", String::as_str),
-                ));
+                // The initials avatar the thread's rows wear, and who wrote
+                // it: both come with the row, so nothing is read to draw it.
+                let avatar = gtk::Label::new(Some(initials));
                 avatar.add_css_class("focus-thread-avatar");
                 avatar.set_valign(gtk::Align::Center);
                 line.append(&avatar);
+                let who = gtk::Label::new(Some(sender));
+                who.add_css_class("focus-results-child-sender");
+                who.set_width_chars(14);
+                who.set_max_width_chars(14);
+                who.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                who.set_xalign(0.0);
+                line.append(&who);
                 let tag = gtk::Label::new(Some(tag));
                 tag.add_css_class("focus-results-source");
                 tag.set_width_chars(14);
@@ -1298,6 +1267,11 @@ impl ResultsPane {
                 words.add_css_class("focus-results-passage");
                 words.set_hexpand(true);
                 line.append(&words);
+                let when = gtk::Label::new(Some(time));
+                when.add_css_class("dim-label");
+                when.add_css_class("focus-results-child-time");
+                when.set_xalign(1.0);
+                line.append(&when);
             }
             gap @ words::ResultChild::Gap { .. } => {
                 line.add_css_class("focus-results-gap");

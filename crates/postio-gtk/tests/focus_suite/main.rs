@@ -1736,6 +1736,10 @@ const CASES: &[(&str, fn())] = &[
         threads::clicking_the_more_chip_opens_the_outline as fn(),
     ),
     (
+        "threads::a_search_childs_row_says_who_wrote_it_and_when",
+        threads::a_search_childs_row_says_who_wrote_it_and_when as fn(),
+    ),
+    (
         "threads::forwarding_the_whole_thread_says_so_in_the_subject",
         threads::forwarding_the_whole_thread_says_so_in_the_subject as fn(),
     ),
