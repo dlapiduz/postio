@@ -64,6 +64,26 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.6.0" date="2026-11-16" type="development">
+      <description>
+        <p>Postio 0.6.0 is an alpha. It brings spec 010's search to Linux, so search works the same way on both platforms, and it moves Postio onto Rust 1.100 and the newest Pimalaya mail libraries, with the protocol and security fixes they carry.</p>
+        <ul>
+          <li>Search on Linux: the dropdown as you type, its suggestions and filter chips, and the results view with Quick Look are now on Linux, with the Mac's keys (Command read as Control).</li>
+          <li>The results' From, To, Date, Anywhere and Label filters open from the keyboard: alt+f, alt+t, alt+d, alt+w and alt+l, each shown as a keycap on its button and in the View menu.</li>
+          <li>Search reads more truthfully: a value nobody matches says so instead of showing an empty heading, People leaves you out of its count, a top hit's matches count toward Quick Look, and passages that arrive with the first page are no longer dropped.</li>
+          <li>A flag change made just before archiving a message now reaches the server, and Filtered's decisions carry to your other machines.</li>
+          <li>In the reader, Ctrl+C copies what you selected. A move's toast counts the messages you chose.</li>
+          <li>On the Mac, Shift+Tab steps back through the composer, the message's buttons show hover and press, and the sync label stays inside its capsule.</li>
+          <li>IMAP, SMTP, OAuth and JMAP move to the latest Pimalaya libraries:</li>
+          <li>After a MOVE or COPY, each message's new UID is paired with the right original.</li>
+          <li>A server's QRESYNC answer can no longer make Postio allocate gigabytes.</li>
+          <li>Passwords are SASLprep-prepared, and a SCRAM server's iteration count is bounded.</li>
+          <li>A FETCH line that decodes only in part is never stored as a message missing its date or envelope. An incremental resync that lost one rebuilds the folder instead.</li>
+          <li>Security: the HTML sanitizer is on ammonia 4.2.5 (RUSTSEC-2026-0533, mutation XSS through embedded SVG and MathML), and rustix on 1.1.6 (RUSTSEC-2026-0486).</li>
+          <li>Under the hood: Rust 1.100, html5ever 0.40, zbus 6 with oo7 0.7 for the keyring, and the Flatpak bundles on GNOME 51 and freedesktop 26.08.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-27" type="development">
       <description>
         <p>Postio 0.5.0 is an alpha, and the first release with a Mac app to download. It is the release where the one dense inbox, and the four things it does to mail, became the app on both platforms, over one engine.</p>
