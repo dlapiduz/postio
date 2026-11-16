@@ -19,8 +19,12 @@ struct ThreadMenuOutlineTests {
         defer { window.session.shutdown() }
         try await window.openHarbor()
         window.press("[")
+        // Landed, not mid-step: the read waits as `incoming` for at most
+        // `drawPatience`, and the bar's ring may follow it, so a wait for
+        // both at once races the clock.
         try await window.until("`[` shows the message before, read whole") {
-            window.ringed == 4 && window.model.incoming != nil
+            window.ringed == 4 && window.model.incoming == nil
+                && window.model.displayed != nil && window.model.displayed == window.model.shown
         }
         let shown = window.model.shown
         let displayed = window.model.displayed
