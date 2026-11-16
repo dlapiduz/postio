@@ -818,6 +818,10 @@ pub(crate) struct Results {
     default_done: bool,
     /// The matches of the window being opened on a child, for its walk.
     pub(crate) opening: Option<crate::walk::ThreadMatches>,
+    /// Mail changed while the first page was still being read: the answer
+    /// coming may predate it, so they are read once more when it lands. A
+    /// sync's burst of changes costs two reads, not one each.
+    stale: bool,
 }
 
 /// A copy of a file, asked for or handed to the system.
@@ -867,6 +871,7 @@ impl Results {
             listed: None,
             listed_asked: false,
             person_cursor: None,
+            stale: false,
             expansion: None,
             default_done: false,
             opening: None,
@@ -1089,6 +1094,7 @@ impl Results {
         self.listed = None;
         self.listed_asked = false;
         self.default_done = false;
+        self.stale = false;
         let mut steps = Vec::new();
         if self.expansion.take().is_some() {
             steps.push(Step::Show(Intent::ResultSplice(None)));
@@ -3347,6 +3353,11 @@ impl FocusController {
         }
         let stamp = self.stamp();
         match self.results.as_mut() {
+            // The first page is still out: one more read once it lands.
+            Some(results) if results.frame.is_none() && results.asked.contains(&0) => {
+                results.stale = true;
+                Vec::new()
+            }
             Some(results) => results.again(stamp),
             None => Vec::new(),
         }
@@ -4181,6 +4192,14 @@ impl FocusController {
                 // R11): asked beside the passages, so the default
                 // expansion costs no trip of its own.
                 steps.extend(self.default_expansion());
+                // Mail changed while this was read: read it once more.
+                let stamp = self.stamp();
+                if let Some(results) = self.results.as_mut()
+                    && results.stale
+                    && results.frame.is_some()
+                {
+                    steps.extend(results.again(stamp));
+                }
                 steps
             }
             Reply::ResultsPassages { stamp, answer } => results

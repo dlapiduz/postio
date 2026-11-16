@@ -732,6 +732,38 @@ pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
     });
 }
 
+/// The keyboard was on nothing when `/`'s dropdown over the results closed
+/// -- the bar's field could not take it while the window was busy, or a
+/// popover let it go: Escape still hands it to the results' list, not to
+/// the window, where `j` and a second Escape would reach nothing.
+pub fn escape_gives_a_keyboard_on_nothing_to_the_results() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let _results = show_all(&window).await;
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        assert!(
+            bar.is_open(),
+            "/ did not open the dropdown over the results"
+        );
+        gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+        assert!(support::deliver(&window, "Escape"), "Escape was dropped");
+        assert!(!bar.is_open(), "Escape left the dropdown up");
+        assert!(
+            crate::settle_until(async || {
+                let seen = window.observe().keyboard;
+                seen.reachable && seen.widget.contains("GtkListView")
+            })
+            .await,
+            "the keyboard did not come back to the results' list: {}",
+            window.observe().keyboard.widget
+        );
+    });
+}
+
 /// #1825: a search that found nothing, left, and then one that finds
 /// something: its rows are shown, not the first one's "Nothing matches".
 pub fn a_search_after_one_that_found_nothing_shows_its_rows() {

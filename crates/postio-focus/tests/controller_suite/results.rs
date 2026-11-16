@@ -2007,6 +2007,49 @@ fn the_results_are_asked_again_once_a_message_is_read_under_them() {
     );
 }
 
+#[test]
+fn a_burst_of_changes_reads_the_results_again_once_more_not_once_each() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let changed = |message: i64| {
+        Input::Event(postio_core::Event::MessagesChanged {
+            account: postio_model::AccountId::new(1),
+            messages: vec![postio_model::MessageId::new(message)],
+        })
+    };
+    let first = focus.handle_on(changed(5), &rows);
+    assert_eq!(
+        results_reads(&first).len(),
+        2,
+        "the first change reads them again"
+    );
+    // A sync files a batch: more changes while that read is out ask for
+    // nothing of their own...
+    for message in [6, 7] {
+        let more = focus.handle_on(changed(message), &rows);
+        assert_eq!(
+            results_reads(&more),
+            [],
+            "a change while a read is out waits for it"
+        );
+    }
+    // ...and once it lands, the results are read once more, for what
+    // changed after it was asked.
+    let landed = settle(&mut focus, first, &rows);
+    assert_eq!(
+        results_reads(&landed),
+        [
+            (ConversationOrder::BestMatch, 0, 3),
+            (ConversationOrder::Newest, 0, 50),
+            (ConversationOrder::BestMatch, 0, 3),
+            (ConversationOrder::Newest, 0, 50)
+        ],
+        "one read for the first change, one for the two behind it"
+    );
+    assert_eq!(focus.result_count(), 123, "and the results are all there");
+}
+
 /// "atlas budget", then From: Ada and Since 1 July, as screen 12's query.
 fn screen_twelve(focus: &mut FocusController, rows: &List) {
     let _ = search(focus, "atlas budget", rows);
