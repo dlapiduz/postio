@@ -1317,9 +1317,12 @@ pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboar
             .await,
             "2 chose Whole thread"
         );
-        // What a Tab does is GTK's own traversal, which the harness's key
-        // delivery cannot run: move the keyboard as the toolkit would.
-        assert!(window.child_focus(gtk::DirectionType::TabForward));
+        // A Tab is GTK's own traversal, which the harness's key delivery
+        // cannot run, and imitating it with `child_focus` started from the
+        // dialog's top on a loaded CI runner (PR #2124). This case asks what
+        // the number keys do once To has the keyboard, so it puts the
+        // keyboard there, as the Tab does.
+        assert!(composer.test_focus_field(postio_widgets::composer::Field::To));
         assert!(
             crate::settle_until(
                 async || compose_said(&window, "chooser.focused") == Some(serde_json::json!(false))
