@@ -162,7 +162,7 @@ import Testing
             FooterKeyFfi(cap: "e", label: "reply to this"),
             FooterKeyFfi(cap: "\u{21b5}", label: "open here"),
         ],
-        note: "Reply and forward act on this message; a, s, l, m act on the thread")
+        note: "e, b, l, v act on the thread")
 
     @Test func theFooterHoldsTheTitleTheKeysAndTheNote() {
         let states = FocusStates()
@@ -173,7 +173,7 @@ import Testing
         #expect(states.footer?.title == "Message 4 of 6 \u{b7} Ben Adeyemi")
         #expect(states.footer?.keys.map(\.cap) == ["j k", "e", "\u{21b5}"])
         #expect(states.footer?.keys.map(\.label) == ["move", "reply to this", "open here"])
-        #expect(states.footer?.note?.hasPrefix("Reply and forward") == true)
+        #expect(states.footer?.note?.hasSuffix(" act on the thread") == true)
     }
 
     @Test func aRowThatStandsForOneMessageHasNoNote() {
