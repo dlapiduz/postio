@@ -12,6 +12,7 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use postio_ui::compose::{ChooserView, OlderReplyView};
 use postio_widgets::widgets::keyhint;
+use postio_widgets::widgets::space;
 use postio_widgets::widgets::{Kind, Size};
 
 /// Told which card a click chose.
@@ -46,7 +47,7 @@ pub struct ThreadParts {
 impl ThreadParts {
     /// Hidden parts, drawn when the controller says.
     pub fn new() -> Rc<Self> {
-        let older = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let older = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         older.add_css_class("focus-older-reply");
         older.set_visible(false);
         let older_title = gtk::Label::new(None);
@@ -56,7 +57,7 @@ impl ThreadParts {
         older_detail.add_css_class("dim-label");
         older_detail.set_xalign(0.0);
         older_detail.set_wrap(true);
-        let words = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let words = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
         words.set_hexpand(true);
         words.append(&older_title);
         words.append(&older_detail);
@@ -71,22 +72,22 @@ impl ThreadParts {
         older.append(&older_buttons[0]);
         older.append(&older_buttons[1]);
 
-        let chooser = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let chooser = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
         chooser.add_css_class("focus-forward-chooser");
         chooser.set_visible(false);
         // One stop in the tab order, above To: `1` `2` `3` are its own while
         // it holds the keyboard (spec 013 FR-023), and Tab moves on to To.
         chooser.set_focusable(true);
         chooser.update_property(&[gtk::accessible::Property::Label("What to forward")]);
-        let cards = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let cards = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
         cards.set_homogeneous(true);
         chooser.append(&cards);
 
-        let newer = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let newer = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
         newer.add_css_class("focus-newer-messages");
         newer.set_visible(false);
 
-        let forwarded = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let forwarded = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
         forwarded.add_css_class("focus-forwarded");
         forwarded.set_visible(false);
 
@@ -147,8 +148,8 @@ impl ThreadParts {
             if card.form == view.selected {
                 button.add_css_class("focus-forward-card-selected");
             }
-            let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let column = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
+            let top = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
             let title = gtk::Label::new(Some(&card.title));
             title.add_css_class("focus-forward-card-title");
             title.set_xalign(0.0);
@@ -213,7 +214,7 @@ impl ThreadParts {
         }
         self.newer_count.set(lines.len());
         for (heading, words) in lines {
-            let block = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            let block = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
             block.add_css_class("focus-newer-message");
             let head = gtk::Label::new(Some(heading));
             head.add_css_class("dim-label");
@@ -254,7 +255,7 @@ impl ThreadParts {
         for row in rows {
             let button = gtk::Button::new();
             button.add_css_class("focus-forwarded-row");
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
             let words = if row.first.is_empty() {
                 row.words()
             } else {

@@ -359,6 +359,7 @@ pub fn install_resume(
                     return;
                 }
             };
+            // POSTIO-GLIB-SAFE: it awaits only client calls, oneshot receives.
             resume_found(draft, weak, client, last_id, on_note).await;
         });
     })
@@ -393,6 +394,7 @@ pub fn install_resume_draft(
                     return;
                 }
             };
+            // POSTIO-GLIB-SAFE: it awaits only client calls, oneshot receives.
             resume_found(draft, weak, client, last_id, on_note).await;
         });
     })

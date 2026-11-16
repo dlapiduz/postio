@@ -1255,6 +1255,7 @@ impl FocusWindow {
             let Some(thread) = rows.into_iter().next().and_then(|row| row.thread) else {
                 return;
             };
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
             let Ok(Some(view)) = client.thread(thread).await else {
                 return;
             };

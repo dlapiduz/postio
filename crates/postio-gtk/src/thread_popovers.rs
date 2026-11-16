@@ -16,6 +16,7 @@ use postio_core::CommandId;
 use postio_focus::OutlineInput;
 use postio_ui::thread_outline::{MenuEntry, OutlineView, ThreadMenuView};
 use postio_widgets::widgets::keyhint;
+use postio_widgets::widgets::space;
 use postio_widgets::widgets::{Kind, Size};
 
 /// The menu's width, in pixels.
@@ -113,7 +114,7 @@ impl ThreadMenu {
         button.add_css_class("focus-thread-menu-entry");
         button.set_sensitive(entry.enabled);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let top = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
         let title = gtk::Label::new(Some(&entry.title));
         title.set_xalign(0.0);
         title.set_hexpand(true);
@@ -199,7 +200,7 @@ impl OutlinePopover {
         let filter = gtk::Entry::new();
         filter.add_css_class("focus-outline-filter");
         filter.set_placeholder_text(Some("Filter this thread"));
-        let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let chips = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
         chips.add_css_class("focus-outline-people");
         let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
         rows.add_css_class("focus-outline-rows");
@@ -213,7 +214,7 @@ impl OutlinePopover {
         footer.add_css_class("dim-label");
         footer.add_css_class("focus-outline-footer");
         footer.set_xalign(0.0);
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let body = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
         body.add_css_class("focus-outline-body");
         body.append(&filter);
         body.append(&chips);
@@ -322,7 +323,7 @@ impl OutlinePopover {
             self.rows.remove(&child);
         }
         for (at, row) in view.rows.iter().enumerate() {
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
             line.add_css_class("focus-outline-row");
             line.set_size_request(-1, ROW_HEIGHT);
             if row.current {

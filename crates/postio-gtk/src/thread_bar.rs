@@ -17,6 +17,7 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use postio_ui::thread_bar::{BannerView, Chip, ThreadBarView};
 use postio_widgets::widgets::keyhint;
+use postio_widgets::widgets::space;
 use postio_widgets::widgets::{Kind, Size};
 
 /// A chip's width and its gap to the next, in pixels: what a bar's room is
@@ -63,7 +64,7 @@ pub struct ThreadBar {
 impl ThreadBar {
     /// An empty bar, drawn once a thread says it has chips.
     pub fn new() -> Rc<Self> {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-thread-bar");
         root.set_visible(false);
         let title = gtk::Label::new(None);
@@ -209,7 +210,7 @@ impl ThreadBar {
     }
 
     fn chip(&self, chip: &Chip) -> gtk::Widget {
-        let tile = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let tile = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
         tile.add_css_class("focus-thread-chip");
         tile.set_size_request(CHIP_WIDTH, 46);
         tile.set_valign(gtk::Align::Center);
@@ -303,7 +304,7 @@ impl OlderBanner {
 
     /// A banner of its own kind, styled by `class`.
     pub fn with_class(class: &str) -> Rc<Self> {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-banner-bar");
         root.add_css_class(class);
         root.set_visible(false);
@@ -378,7 +379,7 @@ pub struct MatchBanner {
 impl MatchBanner {
     /// A banner, hidden until a search opened the window.
     pub fn new() -> Rc<Self> {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-banner-bar");
         root.add_css_class("focus-match-banner");
         root.set_visible(false);

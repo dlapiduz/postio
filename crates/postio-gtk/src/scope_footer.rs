@@ -10,6 +10,7 @@
 use gtk::prelude::*;
 use postio_ui::scope::FooterView;
 use postio_widgets::widgets::keyhint;
+use postio_widgets::widgets::space;
 
 /// The footer bar.
 pub struct ScopeFooter {
@@ -22,14 +23,14 @@ pub struct ScopeFooter {
 impl ScopeFooter {
     /// An empty bar, drawn once there is something to say.
     pub fn new() -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-scope-footer");
         root.set_visible(false);
         let title = gtk::Label::new(None);
         title.add_css_class("focus-scope-footer-title");
         title.set_xalign(0.0);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        let keys = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let keys = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         let note = gtk::Label::new(None);
         note.add_css_class("dim-label");
         note.add_css_class("focus-scope-footer-note");
@@ -59,7 +60,7 @@ impl ScopeFooter {
             self.keys.remove(&child);
         }
         for (cap, label) in &view.keys {
-            let pair = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let pair = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
             pair.append(&keyhint::cap(cap));
             pair.append(&gtk::Label::new(Some(label)));
             self.keys.append(&pair);
