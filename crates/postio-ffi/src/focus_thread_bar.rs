@@ -47,6 +47,10 @@ pub struct ThreadBarFfi {
     pub chips: Vec<ThreadChipFfi>,
     /// The button on the right.
     pub menu_label: String,
+    /// "Message 4 of 6": where the message on screen is in its thread, as
+    /// the kicker says it without its keys. The window's title line says
+    /// this while a thread walk is up. Empty when no chip is on screen.
+    pub place: String,
 }
 
 /// A quiet banner: words and one button.
@@ -62,7 +66,33 @@ pub struct ThreadBannerFfi {
 
 impl From<ThreadBarView> for ThreadBarFfi {
     fn from(view: ThreadBarView) -> Self {
+        // The bar is a thread of two or more: its chips run to the last
+        // member (a trailing "more" chip counts up to its `to`), and one is
+        // the message on screen.
+        let count = view
+            .chips
+            .iter()
+            .map(|chip| match chip {
+                Chip::Message { index, .. } => *index + 1,
+                Chip::More { to, .. } => *to + 1,
+            })
+            .max();
+        let current = view.chips.iter().find_map(|chip| match chip {
+            Chip::Message {
+                index,
+                current: true,
+                ..
+            } => Some(*index),
+            _ => None,
+        });
+        let place = match (current, count) {
+            (Some(index), Some(count)) => {
+                postio_ui::thread_bar::place(index as usize, count as usize)
+            }
+            _ => String::new(),
+        };
         ThreadBarFfi {
+            place,
             title: view.title,
             count_line: view.count_line,
             chips: view

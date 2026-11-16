@@ -601,6 +601,10 @@ async fn the_window_walks_a_thread_and_the_controller_says_what_to_draw() {
     let bar = walked.bar.clone().expect("a bar");
     assert_eq!(bar.chips.len(), 6, "every member has a chip: {bar:?}");
     assert_eq!(bar.title, "Thread");
+    assert_eq!(
+        bar.place, "Message 4 of 6",
+        "the window's title line says the thread's place, not the list's"
+    );
     let kicker = walked.kicker.clone().expect("a kicker");
     assert!(kicker.starts_with("Message 4 of 6 \u{b7} "), "{kicker:?}");
     assert!(
@@ -626,6 +630,11 @@ async fn the_window_walks_a_thread_and_the_controller_says_what_to_draw() {
         "`}}` goes to the latest"
     );
     assert_eq!(walked.banner, Some(None), "`}}` clears the banner");
+    assert_eq!(
+        walked.bar.as_ref().map(|bar| bar.place.as_str()),
+        Some("Message 6 of 6"),
+        "the latest is the thread's last place"
+    );
     session.shutdown();
 }
 
