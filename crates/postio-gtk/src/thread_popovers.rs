@@ -412,6 +412,23 @@ impl OutlinePopover {
         self.popover.popdown();
     }
 
+    /// What it hangs from, while it is hung from anything.
+    pub fn parent(&self) -> Option<gtk::Widget> {
+        self.popover.parent()
+    }
+
+    /// Hang it under `rect` of its parent, rather than the parent's edge:
+    /// the list's row the outline is of.
+    pub fn point_at(&self, rect: Option<&gtk::gdk::Rectangle>) {
+        self.popover.set_pointing_to(rect);
+    }
+
+    /// Take it off its parent, for good.
+    pub fn discard(&self) {
+        self.popover.popdown();
+        self.popover.unparent();
+    }
+
     /// Whether it is up.
     pub fn is_open(&self) -> bool {
         self.popover.is_visible()

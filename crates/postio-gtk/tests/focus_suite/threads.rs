@@ -1491,3 +1491,29 @@ pub fn splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread() {
         );
     });
 }
+
+/// `alt+t` on a thread opened in place shows its outline from the list,
+/// with no message window to hang it from (specs/013-focus-threads US5).
+pub fn the_outline_opens_from_the_list_over_an_expanded_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _ids, pane) = harbor().await;
+        support::keys(&window, &["Right"]);
+        assert!(crate::settle_until(async || pane.cursor().n_items() == 6).await);
+        support::press(&window, "t", gtk::gdk::ModifierType::ALT_MASK);
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.outline.open") == Some(serde_json::json!(true))
+            )
+            .await,
+            "alt+t opened no outline from the list"
+        );
+        assert_eq!(
+            said(&window, "focus.outline.rows"),
+            Some(serde_json::json!(4)),
+            "the outline lists the four messages"
+        );
+    });
+}

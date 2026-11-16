@@ -1339,13 +1339,24 @@ impl FocusWindow {
 
     /// Draw the outline, whole, hung from the Thread button.
     fn show_outline(&self, view: &postio_ui::thread_outline::OutlineView) {
-        let Some(reading) = self.reading() else {
-            return;
-        };
-        let outline = {
-            let held = self.imp().outline.borrow().clone();
-            held.unwrap_or_else(|| {
-                let outline = crate::thread_popovers::OutlinePopover::new(&reading.thread_button());
+        // Over a message it hangs from that window's Thread button; from the
+        // list, with no message open, under the row the thread is on.
+        let (parent, rect): (gtk::Widget, Option<gdk::Rectangle>) =
+            match self.reading().filter(|reading| reading.is_open()) {
+                Some(reading) => (reading.thread_button().upcast(), None),
+                None => match self.at_the_row() {
+                    Some((anchor, rect)) => (anchor, Some(rect)),
+                    None => return,
+                },
+            };
+        let held = self.imp().outline.borrow().clone();
+        let outline = match held {
+            Some(held) if held.parent().as_ref() == Some(&parent) => held,
+            stale => {
+                if let Some(stale) = stale {
+                    stale.discard();
+                }
+                let outline = crate::thread_popovers::OutlinePopover::new(&parent);
                 outline.connect_input(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -1362,8 +1373,9 @@ impl FocusWindow {
                 ));
                 self.imp().outline.replace(Some(Rc::clone(&outline)));
                 outline
-            })
+            }
         };
+        outline.point_at(rect.as_ref());
         let was_open = outline.is_open();
         outline.show(view);
         if !was_open {

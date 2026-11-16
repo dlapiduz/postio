@@ -1749,6 +1749,10 @@ const CASES: &[(&str, fn())] = &[
         threads::mod_shift_q_folds_and_unfolds_the_forwarded_messages as fn(),
     ),
     (
+        "threads::the_outline_opens_from_the_list_over_an_expanded_thread",
+        threads::the_outline_opens_from_the_list_over_an_expanded_thread as fn(),
+    ),
+    (
         "threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread",
         threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread as fn(),
     ),
