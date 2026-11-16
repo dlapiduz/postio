@@ -13,7 +13,8 @@
 # ~470 dependencies carry no such path and stay.
 #
 # Matched by name prefix, which is the workspace's own convention: every
-# member is `postio-*`, and rustc spells that `postio_*` in deps/.
+# member is `postio-*`: since Cargo 1.100 everything a crate builds is under
+# build/postio-*/, and the deps/ lines catch what an older cargo left.
 drop_workspace_artifacts() { # <target-dir>
     local target="$1"
     [ -d "$target" ] || return 0

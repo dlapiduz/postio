@@ -88,8 +88,9 @@ and the PR's checks as the judge about five minutes later. `--full` (those
 crates' suites, locally) needs a specific reason. Ask for
 `--full-suite` when the default tier does not give you confidence in a
 change: a new feature, a storage migration, a change across several crates.
-`issue-land.sh` names a high-risk diff (`scripts/risk-of-diff.sh`) but never
-adds the label by itself; the full suite runs on `main` after every merge
+`issue-land.sh` names a high-risk diff (`scripts/risk-of-diff.sh`) but adds
+the label by itself only for a change to the build environment
+(`rust-toolchain.toml`, `mise.toml`, `.cargo/config.toml`, `flatpak/*.json`); the full suite runs on `main` after every merge
 regardless. The `Frontends` check fails on any GTK suite failure, with no
 bypass. A CI
 failure on your PR is yours, on the same branch (`issue-claim.sh --resume
