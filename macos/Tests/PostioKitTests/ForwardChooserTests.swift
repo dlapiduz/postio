@@ -58,7 +58,7 @@ import Testing
     @Test func theChooserAnswersFirstOnlyWhileNothingIsBeingTypedIn() {
         #expect(
             ForwardChooserKeys.contexts(base: .composer, chooserFocused: true, typing: false)
-                == [.forwardChooser, .composer], "1 2 3 are the chooser's, the rest falls through")
+                == [.forwardChooser], "the chooser's chain reaches the composer's keys")
         #expect(
             ForwardChooserKeys.contexts(base: .composer, chooserFocused: true, typing: true)
                 == [.composer], "a 2 typed into To is a 2")
