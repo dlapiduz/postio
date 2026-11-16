@@ -164,3 +164,39 @@ fn another_threads_change_changes_nothing_in_the_window() {
     assert!(new_reply(&effects).is_none(), "{effects:?}");
     assert!(window_of(&effects).bar.is_none(), "{effects:?}");
 }
+
+#[test]
+fn the_message_a_window_opened_on_is_read_in_its_bar_once_the_store_says_so() {
+    // The window opens on message 5, the first unread, and the dwell marks
+    // it read. The list row says "1 new"; the bar must say it too, and the
+    // chip lose its dot, or two surfaces disagree about one message.
+    let (mut focus, rows, window) = window_on_harbor(2);
+    assert_eq!(window.bar.expect("bar").count_line, "6 \u{b7} 2 new");
+    let effects = focus.handle_on(
+        Input::Event(Event::MessagesChanged {
+            account: AccountId::new(1),
+            messages: vec![member_id(THREAD, 4)],
+        }),
+        &rows,
+    );
+    let (ticket, asked) = read_asked(&effects).expect("the window reads its thread again");
+    assert_eq!(asked, THREAD);
+    let effects = answer(&mut focus, ticket, view(THREAD, 6, 1, false), &rows);
+    let bar = window_of(&effects).bar.expect("the bar is drawn again");
+    assert_eq!(bar.count_line, "6 \u{b7} 1 new");
+    assert_eq!(unread_chips(&bar), vec![5]);
+    assert_eq!(ringed(&bar), Some(4), "and the ring stays");
+}
+
+#[test]
+fn another_threads_read_state_changes_nothing_in_the_window() {
+    let (mut focus, rows, _) = window_on_harbor(2);
+    let effects = focus.handle_on(
+        Input::Event(Event::MessagesChanged {
+            account: AccountId::new(1),
+            messages: vec![MessageId::new(999)],
+        }),
+        &rows,
+    );
+    assert!(read_asked(&effects).is_none(), "{effects:?}");
+}

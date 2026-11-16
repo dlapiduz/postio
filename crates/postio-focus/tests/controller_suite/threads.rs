@@ -976,13 +976,11 @@ fn the_footer_s_keycaps_and_note_are_the_keymaps_not_the_designs() {
         CommandId::Move,
     ]
     .map(|id| keymap.binding(id).expect("bound").to_owned());
-    let note = format!(
-        "Reply and forward act on this message; {archive}, {snooze}, {label}, {mv} act on the thread"
-    );
+    let note = format!("{archive}, {snooze}, {label}, {mv} act on the thread");
     assert_eq!(footer.note.as_deref(), Some(note.as_str()));
     assert_ne!(
         footer.note.as_deref(),
-        Some("Reply and forward act on this message; a, s, l, m act on the thread"),
+        Some("a, s, l, m act on the thread"),
         "the design's keys are not the registry's"
     );
 
@@ -1067,6 +1065,7 @@ pub(crate) struct Window {
     pub(crate) kicker: Option<String>,
     pub(crate) banner: Option<Option<postio_ui::thread_bar::BannerView>>,
     pub(crate) reply_to: Option<Option<String>>,
+    pub(crate) footer: Option<postio_ui::scope::FooterView>,
 }
 
 pub(crate) fn window_of(effects: &[Effect]) -> Window {
@@ -1078,6 +1077,7 @@ pub(crate) fn window_of(effects: &[Effect]) -> Window {
             Intent::Kicker(kicker) => window.kicker = Some(kicker),
             Intent::OlderBanner(banner) => window.banner = Some(banner),
             Intent::ReplyTo(reply_to) => window.reply_to = Some(reply_to),
+            Intent::Footer(footer) => window.footer = Some(footer),
             _ => {}
         }
     }
@@ -1142,6 +1142,27 @@ fn opening_a_thread_draws_the_bar_the_kicker_and_the_banner() {
         "message 5 of 6 is not the latest"
     );
     assert_eq!(window.reply_to, Some(None));
+}
+
+#[test]
+fn the_footer_behind_a_window_says_what_reply_acts_on_there() {
+    // The window shows message 5 of 6, so r is "reply to this" and the row's
+    // "reply to latest" would contradict the banner in front of it.
+    let (mut focus, rows, window) = window_on_harbor(2);
+    let footer = window.footer.expect("opening the window says its scope");
+    assert_eq!(footer.title, "Message 5 of 6 \u{b7} Ben Ortiz");
+    assert!(labels(&footer).contains(&"reply to this"), "{footer:?}");
+    assert!(!labels(&footer).contains(&"reply to latest"), "{footer:?}");
+
+    let effects = run(&mut focus, CommandId::PrevInConversation, &rows);
+    let footer = window_of(&effects).footer.expect("stepping says it again");
+    assert!(footer.title.starts_with("Message 4 of 6"), "{footer:?}");
+
+    // Closing the window gives the footer back to the row under the cursor.
+    let effects = run(&mut focus, CommandId::Back, &rows);
+    let footer = footer_of(&effects).expect("closing restores the row's footer");
+    assert!(footer.title.ends_with("\u{b7} 6 messages"), "{footer:?}");
+    assert!(labels(&footer).contains(&"reply to latest"), "{footer:?}");
 }
 
 #[test]

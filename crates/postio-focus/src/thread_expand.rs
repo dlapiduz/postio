@@ -178,11 +178,7 @@ pub(crate) fn footer_at(
                 );
                 return Some(footer);
             };
-            let sender = match (&member.from, member.own) {
-                (_, true) => "You",
-                (Some(from), false) => from.display(),
-                (None, false) => "Unknown sender",
-            };
+            let sender = sender_of(member);
             let about = FooterAbout {
                 subject,
                 count: view.members.len(),
@@ -195,6 +191,15 @@ pub(crate) fn footer_at(
             };
             Some(scope::footer(focus, &about, keymap))
         }
+    }
+}
+
+/// Who wrote `member`, as the footer says it: "You" for the person's own.
+pub(crate) fn sender_of(member: &postio_model::ThreadMember) -> &str {
+    match (&member.from, member.own) {
+        (_, true) => "You",
+        (Some(from), false) => from.display(),
+        (None, false) => "Unknown sender",
     }
 }
 

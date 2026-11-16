@@ -1833,8 +1833,19 @@ impl FocusController {
             effects.extend(self.effects(steps));
         }
         // A message put up in the window begins its thread's walk.
+        let was_walking = self.walk.is_some();
         let steps = self.walk_after(&effects, rows);
         effects.extend(self.effects(steps));
+        // The window closed: the footer behind it was the window's, and is
+        // the cursor's row's again.
+        if was_walking
+            && self.walk.is_none()
+            && let Some(position) = self.cursor.position()
+            && let Some(footer) =
+                thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
+        {
+            effects.push(Effect::Show(Intent::Footer(footer)));
+        }
         // The composer gone however it went -- its window's close button,
         // another window in its place (M4) -- ends its composition, saved.
         let steps = self.composer_gone();
