@@ -108,7 +108,7 @@ host can: `scripts/check.sh`, the suites you touched, and
 A red PR is still yours: the next claim and `/steward` both report it, and
 `scripts/issue-claim.sh --resume <n>` takes you back to fix it on the same
 PR. A gate failure in code you did not touch is probably someone else's —
-reproduce it alone and search the issues before re-running.
+reproduce it alone and search the issues before re-running. If you think it is a flake, `scripts/flake-check.sh -p <crate> --test <suite> <test>` runs it idle and under load and says which it is.
 
 ## 4. Is it reachable?
 
