@@ -33,6 +33,21 @@ pub const NAME: &str = "Postio";
 /// entry and the binary's bundled theme all use this name.
 pub const ICON_NAME: &str = "dev.postio.Postio";
 
+/// The commit this binary was built from, abbreviated, when the build was
+/// told it: a release build sets `POSTIO_COMMIT` (release.yml, and
+/// `scripts/install-local.sh`). An everyday build leaves it unset, so a new
+/// commit does not rebuild this crate in every worktree sharing the cache.
+pub const COMMIT: Option<&str> = option_env!("POSTIO_COMMIT");
+
+/// What About says for the version: `0.6.1 (1eeec0e8d)` when the commit is
+/// known, `0.6.1` when it is not.
+pub fn version_line(version: &str, commit: Option<&str>) -> String {
+    match commit.filter(|commit| !commit.is_empty()) {
+        Some(commit) => format!("{version} ({commit})"),
+        None => version.to_owned(),
+    }
+}
+
 /// Focus's application, as `run` starts it.
 pub fn application() -> adw::Application {
     // Tell the compositor which application this is: GNOME matches a
@@ -178,4 +193,23 @@ pub fn run() -> glib::ExitCode {
         session.stop();
     }
     code
+}
+
+#[cfg(test)]
+mod about_tests {
+    use super::version_line;
+
+    #[test]
+    fn a_release_build_says_its_commit_beside_its_version() {
+        assert_eq!(
+            version_line("0.6.1", Some("1eeec0e8d")),
+            "0.6.1 (1eeec0e8d)"
+        );
+    }
+
+    #[test]
+    fn a_build_with_no_commit_says_its_version_alone() {
+        assert_eq!(version_line("0.6.1", None), "0.6.1");
+        assert_eq!(version_line("0.6.1", Some("")), "0.6.1");
+    }
 }

@@ -114,6 +114,9 @@ fi
 "$here/scripts/install-shims.sh"
 
 echo "Building postio (release) — the first build takes a while..."
+# About says the commit beside the version when the build is told it
+# (postio-gtk's app::COMMIT); a copy without .git builds without one.
+POSTIO_COMMIT="$(git -C "$here" rev-parse --short=9 HEAD 2>/dev/null || true)" \
 cargo build --release --package postio-gtk --bin postio \
     --manifest-path "$here/Cargo.toml"
 
