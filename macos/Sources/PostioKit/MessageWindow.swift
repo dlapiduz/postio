@@ -105,6 +105,13 @@ public final class MessageWindowModel {
     /// The line above the subject, "Message 4 of 6 · ] newer · [ older";
     /// empty when the message is alone.
     public private(set) var kicker = ""
+    /// The thread's place for the title line ("Message 5 of 6") while a
+    /// walk is up, the bar's own words; `nil` when the message is alone,
+    /// and the list's position stands.
+    public var walkPlace: String? {
+        guard !kicker.isEmpty, let place = bar?.place, !place.isEmpty else { return nil }
+        return place
+    }
     /// The banner on a message that is not the latest.
     public private(set) var olderBanner: ThreadBannerFfi?
     /// The accent-tinted banner a reply that arrived while reading puts

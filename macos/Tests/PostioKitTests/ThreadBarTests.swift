@@ -185,7 +185,7 @@ struct ThreadBarTests {
     @Test func aThreadOfOneDrawsNoBar() {
         let window = try? Window()
         defer { window?.session.shutdown() }
-        window?.model.said(.bar(ThreadBarFfi(title: "Thread", countLine: "1", chips: [], menuLabel: "Thread")))
+        window?.model.said(.bar(ThreadBarFfi(title: "Thread", countLine: "1", chips: [], menuLabel: "Thread", place: "")))
         #expect(window?.model.bar == nil)
     }
 
