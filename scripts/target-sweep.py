@@ -60,6 +60,12 @@ COMMANDS = [
 # `<name>-<16 hex>` with an optional extension: how cargo names every unit's
 # files, fingerprints, build-script dirs and incremental sessions.
 HASHED = re.compile(r"^(?P<stem>.+?)-(?P<hash>[0-9a-f]{16})(?:[.].*)?$")
+
+# Cargo 1.100's build directory: each unit in `build/<package>/<hash>/`,
+# its fingerprint and its outputs inside, where cargo up to 1.99 spread one
+# unit over `deps/`, `.fingerprint/` and `build/` by `<name>-<hash>`. Both
+# are swept, because a seeded or reused tree can hold either.
+UNIT_DIR = re.compile(r"^[0-9a-f]{16}$")
 # Not `incremental/`: rustc names a session directory after the crate's
 # stable id (13 base-36 characters), not the unit hash cargo reports, so
 # nothing here can tell a live one from a dead one -- and deleting a live one
@@ -102,6 +108,7 @@ def measure(tree: Path, excludes: list[str]) -> tuple[set[str], int]:
                 paths = [msg.get("out_dir") or ""]
             for path in paths:
                 hashes = [m["hash"] for part in Path(path).parts if (m := HASHED.match(part))]
+                hashes += [part for part in Path(path).parts if UNIT_DIR.match(part)]
                 live.update(hashes)
                 if not hashes:
                     uplifted.append(Path(path))
@@ -114,7 +121,8 @@ def uplifted_hashes(debug: Path, uplifted: list[Path]) -> set[str]:
 
     A binary or an example is reported as its uplifted copy --
     `target/debug/postio`, `target/debug/examples/shot` -- which cargo hard
-    links to the hashed original in `deps/` or `examples/`. Match by inode.
+    links to the hashed original in `deps/` or `examples/`, or since 1.100
+    in its unit's `build/<package>/<hash>/out/`. Match by inode.
     Where cargo had to copy instead, keep every hashed file of that name:
     keeping too much costs disk, deleting a live one costs a rebuild.
     """
@@ -128,8 +136,21 @@ def uplifted_hashes(debug: Path, uplifted: list[Path]) -> set[str]:
     hashes: set[str] = set()
     found: set[str] = set()
     by_name: dict[str, set[str]] = {}
-    for name in ("deps", "examples"):
-        root = debug / name
+    # 1.100 names the original after its target, unhashed, inside the
+    # unit's own directory: the directory's name is the hash.
+    for unit in unit_dirs(debug):
+        out = unit / "out"
+        if not out.is_dir():
+            continue
+        for entry in out.iterdir():
+            if not entry.is_file():
+                continue
+            by_name.setdefault(entry.name, set()).add(unit.name)
+            st = entry.stat()
+            if (st.st_dev, st.st_ino) in wanted:
+                hashes.add(unit.name)
+                found.add(wanted[(st.st_dev, st.st_ino)])
+    for root in (debug / "deps", debug / "examples"):
         if not root.is_dir():
             continue
         for entry in root.iterdir():
@@ -144,6 +165,20 @@ def uplifted_hashes(debug: Path, uplifted: list[Path]) -> set[str]:
     for name in set(wanted.values()) - found:
         hashes |= by_name.get(name.replace("-", "_"), set()) | by_name.get(name, set())
     return hashes
+
+
+def unit_dirs(debug: Path) -> list[Path]:
+    """Cargo 1.100's per-unit directories, `build/<package>/<hash>`."""
+    build = debug / "build"
+    if not build.is_dir():
+        return []
+    return [
+        unit
+        for package in build.iterdir()
+        if package.is_dir() and not package.is_symlink() and not HASHED.match(package.name)
+        for unit in package.iterdir()
+        if UNIT_DIR.match(unit.name)
+    ]
 
 
 def size(path: Path) -> int:
@@ -171,6 +206,16 @@ def sweep(debug: Path, live: set[str], dry_run: bool) -> tuple[int, int]:
                 shutil.rmtree(entry)
             else:
                 entry.unlink()
+    for unit in unit_dirs(debug):
+        if unit.name in live:
+            continue
+        freed += size(unit)
+        count += 1
+        if dry_run:
+            continue
+        shutil.rmtree(unit)
+        if not any(unit.parent.iterdir()):
+            unit.parent.rmdir()
     return count, freed
 
 
