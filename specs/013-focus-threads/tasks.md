@@ -364,7 +364,7 @@ the text and quotes message 6. Then `f`, `2` gives "Fwd: Harbor API draft v3
 - [x] T086 [P] Add a benchmark in `crates/postio-bench/benches/` for `thread_bar::chips` and `Thread` at 500 members (compiled on CI, timed by hand). Record p50/p95 in the step-4 note. Stop rule per plan.md.
 - [x] T087 [P] Add the scope rule's boundary note to the `postio-ui` entry in `docs/ARCHITECTURE.md`: scope is resolved only by `postio_ui::scope::target`.
 - [x] T088 [P] Check the logging added in this spec carries ids and counts only, by grepping new `tracing::` calls in the changed crates (FR-029).
-- [ ] T089 Run `/ux-review` over `storyboards/threads/`, fix or contest each failure, and attach the summary to the PR.
+- [x] T089 Run `/ux-review` over `storyboards/threads/`, fix or contest each failure, and attach the summary to the PR.
 - [ ] T090 Walk `quickstart.md` by hand on both platforms, then land with `scripts/issue-land.sh --detach --full-suite --title 'feat(focus): threads in Focus, Mac and Linux'`, with `Closes #2099` in the PR body.
 
 ---
