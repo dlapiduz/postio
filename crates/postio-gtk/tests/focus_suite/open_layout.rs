@@ -499,6 +499,18 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             .await,
             "the thread's bar never arrived"
         );
+        // The bar's arrival lays the column out again; measure the blocks
+        // where that pass puts them, not where the frame before had them.
+        let below_the_bar = || {
+            let bar = edges(&shown(&dialog, "focus-thread-bar"), &dialog);
+            let thread = edges(&shown(&dialog, "focus-open-thread"), &dialog);
+            thread.1 - bar.3
+        };
+        assert!(
+            crate::settle_until(async || below_the_bar() >= 0.0).await,
+            "the column was never laid out under the bar: the kicker sits {} below it",
+            below_the_bar()
+        );
         let at = |class: &str| edges(&shown(&dialog, class), &dialog);
         let toolbar = at("focus-open-toolbar");
         let header = at("focus-open-header");
