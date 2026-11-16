@@ -31,6 +31,7 @@ REPO_ROOT = HERE.parent
 
 sys.path.insert(0, str(HERE / "lib"))
 
+import fixture_toolchain  # noqa: E402
 import prereq  # noqa: E402  -- enabled by the sys.path line above
 
 HACK = "fixture-hack"
@@ -59,6 +60,7 @@ def hakari(root: Path, *args: str) -> None:
 
 def fixture(root: Path) -> Path:
     """A workspace whose hack is in step: `a` asks for `one`, `b` for `two`."""
+    fixture_toolchain.write(root)
     write(root / "Cargo.toml",
           '[workspace]\nresolver = "2"\nmembers = ["crates/*"]\nexclude = ["shared"]\n')
     write(root / "shared" / "src" / "lib.rs", "")

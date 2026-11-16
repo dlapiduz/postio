@@ -36,6 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
+import fixture_toolchain  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
@@ -153,10 +154,7 @@ def pinned_channel() -> str:
 
 
 def build_sandbox(root: Path, channel: str) -> None:
-    (root / "rust-toolchain.toml").write_text(
-        f'[toolchain]\nchannel = "{channel}"\nprofile = "minimal"\n',
-        encoding="utf-8",
-    )
+    fixture_toolchain.write(root)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dummy"]\nresolver = "2"\n', encoding="utf-8"
     )

@@ -28,6 +28,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "restore-mtimes.py"
 
+sys.path.insert(0, str(HERE / "lib"))
+
+import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
+
 GIT = ["git", "-c", "user.email=t@example.com", "-c", "user.name=Test"]
 
 FAILURES: list[str] = []
@@ -170,6 +174,7 @@ def test_a_changed_file_always_rebuilds() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         subprocess.run([*GIT, "init", "-q"], cwd=root, check=True)
+        fixture_toolchain.write(root)  # untracked: cargo needs the pinned compiler
 
         # No pinned dates for these two: real time is always safely *before*
         # the build that follows, which is the property this fixture needs
