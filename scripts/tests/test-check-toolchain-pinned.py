@@ -73,9 +73,103 @@ jobs:
 """
 
 
+# Rule 5: the interpreter. A job that runs the repository's scripts must set up
+# the Python mise.toml names, through the one composite action.
+PYTHON_ACTION = """\
+runs:
+  using: composite
+  steps:
+    - id: version
+      shell: bash
+      run: sed -n 's/^python = "\\(.*\\)"/\\1/p' mise.toml
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: ${{ steps.version.outputs.version }}
+"""
+
+# A literal version in the action is a second pin: it never reads mise.toml.
+PYTHON_ACTION_LITERAL = """\
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.14.7"
+"""
+
+WORKFLOW_PYTHON_BARE = """\
+jobs:
+  checks:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checks
+        run: scripts/check.sh
+"""
+
+WORKFLOW_PYTHON_DIRECT = """\
+jobs:
+  checks:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checks
+        run: python3 scripts/commit-msg.py --title "$T"
+"""
+
+WORKFLOW_PYTHON_SET_UP = """\
+jobs:
+  checks:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+      - name: Checks
+        run: |
+          scripts/check.sh
+          python3 scripts/commit-msg.py --title "$T"
+"""
+
+# The action before the checkout reads a mise.toml that is not there yet.
+WORKFLOW_PYTHON_BEFORE_CHECKOUT = """\
+jobs:
+  checks:
+    steps:
+      - uses: ./.github/actions/python
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checks
+        run: scripts/check.sh
+"""
+
+# `scripts/` in a cache key or a comment is not a script being run.
+WORKFLOW_PYTHON_NOT_RUN = """\
+jobs:
+  build:
+    steps:
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ hashFiles('scripts/install-nextest.sh') }}
+      - name: Build
+        run: |
+          # scripts/check.sh runs elsewhere
+          cargo build
+"""
+
+# Only the composite action may name setup-python; a job doing it itself
+# carries its own version, which is the drift this rule exists to stop.
+WORKFLOW_SETUP_PYTHON_DIRECT = """\
+jobs:
+  checks:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Checks
+        run: scripts/check.sh
+"""
+
+
 def build_tree(
     root: Path, *, toolchain: str | None, workflow: str, manifest: str | None = None,
-    mise: str | None = None,
+    mise: str | None = None, python_action: str | None = None,
 ) -> None:
     """A git repository with an optional rust-toolchain.toml and one workflow.
 
@@ -91,6 +185,10 @@ def build_tree(
         (root / "mise.toml").write_text(mise, encoding="utf-8")
     workflows = root / ".github" / "workflows"
     workflows.mkdir(parents=True)
+    if python_action is not None:
+        action = root / ".github" / "actions" / "python"
+        action.mkdir(parents=True)
+        (action / "action.yml").write_text(python_action, encoding="utf-8")
     (workflows / "ci.yml").write_text(workflow, encoding="utf-8")
 
 
@@ -104,11 +202,13 @@ def case(
     strict: bool = False,
     manifest: str | None = None,
     mise: str | None = None,
+    python_action: str | None = None,
 ) -> None:
     """Assert the check's verdict on one tree."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        build_tree(root, toolchain=toolchain, workflow=workflow, manifest=manifest, mise=mise)
+        build_tree(root, toolchain=toolchain, workflow=workflow, manifest=manifest, mise=mise,
+                   python_action=python_action)
         # The check finds its root from its own location, not the cwd, so it
         # has to be run from a copy that lives inside the throwaway tree.
         scripts = root / "scripts"
@@ -262,6 +362,21 @@ def main() -> int:
         strict=True,
         expected=0,
     )
+
+    # ── rule 5: CI runs the Python mise.toml names ───────────────────────
+    mise_py = '[tools]\npython = "3.14.7"\n'
+    for label, workflow, action, expected in (
+        ("a job running scripts/ without the python action fails", WORKFLOW_PYTHON_BARE, PYTHON_ACTION, 1),
+        ("a job running python3 without the python action fails", WORKFLOW_PYTHON_DIRECT, PYTHON_ACTION, 1),
+        ("a job that sets the python action up passes", WORKFLOW_PYTHON_SET_UP, PYTHON_ACTION, 0),
+        ("the python action before the checkout fails", WORKFLOW_PYTHON_BEFORE_CHECKOUT, PYTHON_ACTION, 1),
+        ("scripts/ in a cache key or a comment needs nothing", WORKFLOW_PYTHON_NOT_RUN, None, 0),
+        ("a job using actions/setup-python itself fails", WORKFLOW_SETUP_PYTHON_DIRECT, PYTHON_ACTION, 1),
+        ("a python action with a literal version fails", WORKFLOW_PYTHON_SET_UP, PYTHON_ACTION_LITERAL, 1),
+        ("a workflow using the action when it is missing fails", WORKFLOW_PYTHON_SET_UP, None, 1),
+    ):
+        case(label, toolchain=exact, workflow=workflow, expected=expected,
+             mise=mise_py, python_action=action)
 
     for failure in FAILURES:
         print(f"FAIL {failure}", file=sys.stderr)

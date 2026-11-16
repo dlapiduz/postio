@@ -125,7 +125,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: scripts
+          sparse-checkout: |
+            scripts
+            mise.toml
+            .github/actions/python
+      - uses: ./.github/actions/python
 
       - name: Compare against the last run
         id: decide
@@ -142,6 +146,7 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # None of scripts/coverage-floors.json's crates need GTK -- postio-model,
       # postio-search and postio-config are pure leaves, and postio-storage /
@@ -258,6 +263,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       - uses: ./.github/actions/rust-workspace
 
       - name: Give the GTK suites a runtime directory
@@ -418,6 +425,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       - uses: ./.github/actions/rust-workspace
 
       - name: Give the GTK suites a runtime directory

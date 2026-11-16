@@ -9,10 +9,13 @@
 #   mise install     # once, and on every bump below
 #   mise ls          # what you are actually running
 #
-# mise is optional. Nothing in the build, the test suite or CI reads this
-# file — the scripts call `python3`, `gh` and `jq` off `PATH` as they always
-# have, and a box without mise resolves them the way it did yesterday. What
-# this buys is that everyone who *does* use it resolves them the same way.
+# mise is optional, and nothing in the build or the test suite reads this
+# file. The one reader is CI's `.github/actions/python`, which takes the
+# `python` pin below and installs exactly that, so a workflow job runs the
+# checks on the interpreter a session does
+# (`scripts/checks/check-toolchain-pinned.py` fails a job that does not). The
+# scripts still call `python3`, `gh` and `jq` off `PATH` as they always have,
+# and a box without mise resolves them the way it did yesterday.
 #
 # # What this deliberately does not pin
 #

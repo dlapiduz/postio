@@ -72,6 +72,7 @@ jobs:
       # (`git ls-remote`) rather than trusting this clone, which has none at
       # this depth whatever `fetch-tags` says.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       - name: Decide
         id: plan
@@ -120,6 +121,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       - uses: ./.github/actions/rust-workspace
 
       - name: Give the GTK suites a runtime directory
@@ -164,6 +167,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       - uses: ./.github/actions/rust-workspace
 
       - name: Give the GTK suites a runtime directory
@@ -211,6 +216,7 @@ jobs:
       SBOM: ${{ matrix.variant.sbom }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # A cold debug build already ran a runner out of disk once and killed
       # lld with SIGBUS mid-link. This build is --release and additionally
@@ -455,6 +461,7 @@ jobs:
       APP: macos/build/${{ matrix.variant.app }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # The pin decides; see ci.yml's `fmt` job.
       - name: Install Rust toolchain
@@ -539,6 +546,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/python
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -622,6 +630,8 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       - uses: ./.github/actions/rust-workspace
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

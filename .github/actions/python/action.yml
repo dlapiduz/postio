@@ -1,0 +1,30 @@
+name: Python
+description: >
+  The interpreter the repository's checks run on: the version `mise.toml`
+  pins, read from there so it is written once.
+
+  `mise.toml` pins Python for every local session, but a workflow that calls
+  `python3` gets whatever the runner image ships, so CI and a session could
+  disagree about the language the gates are written in. Every job that runs a
+  repository script uses this after its checkout, and
+  `scripts/checks/check-toolchain-pinned.py` fails a job that does not. This
+  is the only place allowed to name `actions/setup-python`.
+
+runs:
+  using: composite
+  steps:
+    - name: Read the pinned version from mise.toml
+      id: version
+      shell: bash
+      run: |
+        version=$(sed -n 's/^python[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' mise.toml | head -n 1)
+        if [ -z "$version" ]; then
+          echo "mise.toml pins no python" >&2
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Python ${{ steps.version.outputs.version }}
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: ${{ steps.version.outputs.version }}

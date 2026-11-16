@@ -53,7 +53,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: scripts
+          sparse-checkout: |
+            scripts
+            mise.toml
+            .github/actions/python
+      - uses: ./.github/actions/python
 
       - name: Compare against the last run
         id: decide
@@ -96,6 +100,7 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # cargo-mutants gives each parallel job its own scratch copy of the
       # source tree and builds a fresh target/ inside it -- with no --jobs
