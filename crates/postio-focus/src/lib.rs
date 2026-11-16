@@ -2359,8 +2359,15 @@ impl FocusController {
         steps.extend(self.show_empty());
         let mut effects = self.effects(steps);
         // The cursor went to a row as the list landed: the footer says what
-        // it is.
-        if let Some(footer) = self.footer_after(&effects, raw) {
+        // it is. A landing that did not move it may still be the first with
+        // its row read (the page arrived after the cursor did), so the
+        // footer is said again from where it is, unless a message window
+        // owns the footer.
+        let footer = self.footer_after(&effects, raw).or_else(|| {
+            let position = self.cursor.position().filter(|_| self.walk.is_none())?;
+            thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
+        });
+        if let Some(footer) = footer {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
         effects.push(self.refresh_counts());

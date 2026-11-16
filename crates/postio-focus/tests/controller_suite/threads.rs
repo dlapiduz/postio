@@ -1330,3 +1330,40 @@ fn a_row_of_one_message_asks_for_no_thread_read() {
     );
     assert_eq!(reads_asked(&effects), 0, "{effects:?}");
 }
+
+/// A list whose rows are counted but not yet read: the window's first
+/// landing, before its page arrives.
+struct Unread<'a>(&'a List);
+
+impl Rows for Unread<'_> {
+    fn len(&self) -> u32 {
+        self.0.len()
+    }
+    fn facts(&self, _: u32) -> Option<RowFacts> {
+        None
+    }
+    fn position_of(&self, _: MessageId) -> Option<u32> {
+        None
+    }
+    fn row(&self, _: u32) -> Option<FocusRow> {
+        None
+    }
+}
+
+#[test]
+fn the_footer_names_the_cursors_row_once_its_page_arrives() {
+    let rows = List::of(&[6, 4, 1]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    // Landed before the page: there is nothing yet to say about the row.
+    let early = focus.landed(&Unread(&rows), true);
+    assert!(footer_of(&early).is_none(), "no footer from a row not read");
+    assert_eq!(focus.cursor(), Some(0));
+    // The page arrives and the cursor has not moved: the footer still has
+    // to say what the row is, or it stays blank until a key is pressed.
+    let effects = focus.landed(&rows, false);
+    let footer = footer_of(&effects).expect("the footer, once the row is read");
+    assert_eq!(footer.title, "Harbor API draft v3 \u{b7} 6 messages");
+}
