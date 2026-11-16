@@ -1,0 +1,51 @@
+# Crates that only move together, and what they wait on.
+#
+# `scripts/deps-survey.py` shows each group once, with its blocker, instead
+# of one line per crate: a bump of one member that the others cannot follow
+# is not an upgrade, it is a fight with the resolver. A group appears in the
+# report only while at least one member is behind.
+#
+#   name      what the report calls the group
+#   members   crates.io package names (the `package = ".."` name, if renamed)
+#   waits_on  the one sentence that says when the group can move
+#
+# Delete a group when its blocker is gone; a stale entry hides real work.
+
+# The Pimalaya protocol stack. The io-* crates share sans-I/O types and are
+# released as a set, so a lone bump of one fails to resolve against the rest.
+[[group]]
+name = "pimalaya"
+members = [
+    "io-imap", "io-smtp", "io-oauth", "io-http", "io-sasl",
+    "io-pim-discovery", "io-maildir", "io-gmail", "io-jmap",
+    "pimalaya-stream",
+]
+waits_on = "the whole stack: bump them in one change, when each has a release that accepts the others"
+
+# The text and SVG stack the vendored Blitz (`vendor/blitz-*`) is built on.
+# Blitz's own manifest names these versions, and `postio-render` shares them
+# with it, so they cannot move ahead of it. `patches/blitz/upstream.toml`
+# names the Blitz release we start from. The blitz-* and anyrender* crates are
+# pinned `=` to that same release in `postio-render`.
+[[group]]
+name = "blitz-stack"
+members = [
+    "parley", "skrifa", "usvg", "stylo",
+    "blitz-dom", "blitz-html", "blitz-paint", "blitz-traits",
+    "anyrender", "anyrender_vello_cpu",
+]
+waits_on = "a Blitz release that moves them (compare patches/blitz/upstream.toml with the latest blitz-dom)"
+
+# HTML parsing. Blitz and htmd both build on these, and postio-body hands
+# their trees to each other.
+[[group]]
+name = "html-parsing"
+members = ["html5ever", "markup5ever_rcdom"]
+waits_on = "a Blitz release and an htmd release that agree on them"
+
+# oo7 (the Secret Service client) is built on zbus; two zbus versions in
+# one binary means two D-Bus connections.
+[[group]]
+name = "dbus"
+members = ["zbus", "oo7"]
+waits_on = "oo7 releasing against the newer zbus"

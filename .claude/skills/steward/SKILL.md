@@ -108,6 +108,15 @@ run have hung more than once — the headless runner kills a binary's process
 group after `POSTIO_TEST_WATCHDOG` and dumps thread wchans first, so a hang
 you find in `pgrep` is news worth pasting into the relevant issue.
 
+## What has fallen behind
+
+Weekly, not every pass: `scripts/deps-survey.py` (a couple of minutes;
+`--json` for machines). One report of the crates, toolchain, tool pins,
+Actions, Flatpak runtimes and Blitz that upstream has passed. Fix what is
+within semver, file what is major (`scripts/issue-file.sh`), and leave a
+coupled group (`scripts/deps-groups.toml`) to whoever clears its blocker.
+An `unknown` is a source that did not answer, not a clean bill: run it again.
+
 ## The reconcile pass
 
 This is the whole-workspace proof that ordinary sessions deliberately skip.
