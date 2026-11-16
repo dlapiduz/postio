@@ -40,12 +40,16 @@ public struct MessageChromeWords: Equatable {
 
     /// `view`'s chrome, in a window that `folds` (narrower than the fold,
     /// as the engine said), with keys spelled from `binding`.
-    public init(view: FocusMessageViewFfi, folds: Bool, binding: (String) -> String?) {
+    /// `place`, while a thread walk is up, is the thread's place ("Message
+    /// 5 of 6"), said in the position line instead of the list's.
+    public init(
+        view: FocusMessageViewFfi, folds: Bool, place: String? = nil, binding: (String) -> String?
+    ) {
         func verb(_ command: String, _ label: String) -> Verb {
             Verb(command: command, label: label, cap: KeyCapSpelling.cap(binding(command)))
         }
         title = view.subject
-        position = view.position
+        position = place ?? view.position
         let caps = [previous, next].compactMap { KeyCapSpelling.cap(binding($0)) }
         stepCap = caps.isEmpty ? nil : caps.joined(separator: " ")
         let all = view.actions.map { (verb($0.command, $0.label), $0.folds) }
@@ -304,7 +308,7 @@ public struct MessageWindowView<BodyView: View>: View {
         VStack(spacing: 0) {
             if let view = model.view {
                 MessageActionRow(
-                    words: MessageChromeWords(view: view, folds: folds(width), binding: binding),
+                    words: MessageChromeWords(view: view, folds: folds(width), place: model.walkPlace, binding: binding),
                     moreOpen: model.moreOpen,
                     run: run,
                     setMore: { model.apply($0 ? .showMore : .closeMore) })
@@ -484,7 +488,7 @@ public struct MessageWindowTitle: View {
 
     public var body: some View {
         if let view = model.view {
-            MessageTitleView(words: MessageChromeWords(view: view, folds: false, binding: binding))
+            MessageTitleView(words: MessageChromeWords(view: view, folds: false, place: model.walkPlace, binding: binding))
         }
     }
 }
@@ -507,7 +511,7 @@ public struct MessageWindowStepper: View {
     public var body: some View {
         if let view = model.view {
             MessageStepperView(
-                words: MessageChromeWords(view: view, folds: false, binding: binding), run: run)
+                words: MessageChromeWords(view: view, folds: false, place: model.walkPlace, binding: binding), run: run)
         }
     }
 }
