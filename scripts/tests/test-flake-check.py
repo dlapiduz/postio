@@ -25,6 +25,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "flake-check.sh"
 
+sys.path.insert(0, str(HERE / "lib"))
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 FAILURES: list[str] = []
 
 CARGO_STUB = """#!/usr/bin/env bash
@@ -72,7 +75,7 @@ def run(mode: str, *args: str, build_fails: bool = False):
             FLAKE_CHECK_CARGO=str(stub / "cargo"),
             FLAKE_CHECK_LOAD_CMD=str(stub / "load"),
         )
-        r = subprocess.run(
+        r = patience.run(
             [str(SCRIPT), "-p", "some-crate", "--test", "some_suite", "a::b",
              *args],
             env=env, capture_output=True, text=True, timeout=60,
