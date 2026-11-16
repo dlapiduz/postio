@@ -41,9 +41,9 @@
 # `sha256sum` here. Nothing else names them.
 set -euo pipefail
 
-VERSION="0.9.143"
-SHA256_LINUX="66786b9abe23920d022a182d1416b1bbc8130dd4872a9553d76985a1708dcd1e"
-SHA256_MAC="4830d430411148d17602a75cc880bfb4dc8dac153dea59a48a2ef4cc93577f07"
+VERSION="0.9.152"
+SHA256_LINUX="d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a"
+SHA256_MAC="2fadf57df4243e691f088ee3bff4f4ab9af16da0c95a1db84b5cb1685e098a76"
 
 # `--version` rather than `command -v`: a cached or hand-installed copy at the
 # wrong version is the case that matters, and it looks identical on PATH.
