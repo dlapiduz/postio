@@ -110,7 +110,7 @@ edition = "2024"
 #
 # When Postio is published, this stops being free: supporting an older compiler
 # then means a CI job that proves it, not a lower number here.
-rust-version = "1.99"
+rust-version = "1.100"
 license = "MIT"
 repository = "https://github.com/dlapiduz/postio"
 # Postio is an application, and these crates are its internals. None of them is
@@ -145,6 +145,14 @@ missing_docs = "warn"
 # compiled, warned, and did nothing. Warning-grade is not enough for a failure
 # mode whose only symptom is the absence of one.
 unused_must_use = "deny"
+
+# Cargo 1.100 turned on `cargo::unused_dependencies`, and every member's
+# `postio-workspace-hack` line and every line of the hack itself is "unused"
+# by design: the hack only unifies features (ADR 0047). Unused dependencies
+# are gated by `cargo machete` (`scripts/checks/check-unused-deps.py`), which
+# knows that, so this lint would only say the same thing worse.
+[workspace.lints.cargo]
+unused_dependencies = "allow"
 
 [workspace.lints.clippy]
 # `let _ = some_async_call();` is the hole `unused_must_use` cannot see: the
@@ -217,17 +225,17 @@ rustls-platform-verifier = "0.7"
 secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde-xml-rs = "0.8"
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 tempfile = "3.27.0"
-thiserror = "2.0.20"
-tokio = "1.53.1"
+thiserror = "2.0.21"
+tokio = "1.54.1"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
-toml = "1.1.4"
+toml = "1.2.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 turso = { version = "=0.8.3", default-features = false, features = ["fts"] }
 url = "2.5.8"
-zeroize = "1.9.0"
+zeroize = "1.9.1"
 
 [profile.release]
 lto = "thin"
@@ -316,18 +324,20 @@ opt-level = 2
 # unmerged, ported) and a per-word `~N` opt-in, on tantivy 0.27 so the index's
 # zstd is 0.14 (0.26's 0.13 is named by RUSTSEC-2026-0391, -0398, -0403). Search uses it only for the words it
 # offers when a query finds nothing; every query it runs is quoted, and a
-# quoted query is parsed exactly as upstream parses it. Every turso crate
-# comes from the one commit, so no two copies of a type meet.
+# quoted query is parsed exactly as upstream parses it. It also names
+# `TursoVecInExt::new_in` in full where Rust 1.100's inherent `Vec::new_in`
+# would otherwise win. Every turso crate comes from the one commit, so no
+# two copies of a type meet.
 [patch.crates-io]
-turso = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
-turso_core = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
-turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
-turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
-turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
-turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
-turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
-turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
-turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "96fe392347f88fe5121e2c54c721cfbdd2eadd5d" }
+turso = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
+turso_core = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
+turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
+turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
+turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
+turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
+turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
+turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
+turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
 
 # Blitz 0.3.0-beta.4 with Postio's patch queue applied (`patches/blitz/`,
 # checked by `scripts/blitz-patches.sh verify`): the reading renderer's

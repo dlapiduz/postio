@@ -92,7 +92,7 @@ postio-model = { workspace = true, features = ["test-corpus"] }
 # `main` is Swift's, which does not ignore the signal as Rust's does. The
 # version already in the graph; `net` is the only feature it needs.
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.5", default-features = false, features = ["std", "net"] }
+rustix = { version = "1.1.6", default-features = false, features = ["std", "net"] }
 
 [lints]
 workspace = true
