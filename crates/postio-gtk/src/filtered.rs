@@ -306,6 +306,17 @@ impl FilteredView {
         ));
     }
 
+    /// Forget what the last visit drew, so that coming back shows nothing
+    /// until the controller's first frame lands rather than rows it has
+    /// since moved on from.
+    pub fn clear(&self) {
+        self.frame.replace(None);
+        self.show_tabs();
+        self.show_rows();
+        self.show_empty();
+        self.show_bar();
+    }
+
     /// Draw `frame`, whole: `Intent::Filtered`.
     pub fn show(&self, frame: &Frame) {
         self.frame.replace(Some(frame.clone()));

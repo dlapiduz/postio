@@ -222,6 +222,8 @@ impl OpenMessage {
                 CommandId::PrevMessage,
                 CommandId::NextMessage,
                 CommandId::DismissMarker,
+                // The thread bar's Thread button (spec 013 FR-019).
+                CommandId::ThreadMenu,
                 // The render-mode line's switch, over an HTML body (T213).
                 CommandId::SwitchTreatment,
                 // The shared banner's two buttons, over held-back images.

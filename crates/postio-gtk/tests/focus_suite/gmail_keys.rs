@@ -815,6 +815,18 @@ fn thread_back(window: &Window) {
     crate::settle();
 }
 
+/// Step the open message one on through its thread, so that a step back has
+/// somewhere to go whichever message the window opened on.
+fn thread_forward(window: &Window) {
+    if let Some(reading) = window.reading() {
+        reading.step_thread(1);
+        crate::settle();
+        reading.step_thread(1);
+        crate::settle();
+    }
+    crate::settle();
+}
+
 /// Step a digest's or Filtered's cursor down a row.
 fn step_down(window: &Window) {
     if let Some(digest) = window.digest() {
@@ -960,6 +972,7 @@ fn probe(command: CommandId, surface: Surface) -> Result<Probe, &'static str> {
                 )
             })
             .on(Flavor::Thread)
+            .once_up(thread_forward)
         }
         (C::ToggleFold | C::ExpandAll, _) => {
             return Err("Conversation is a stacked-pane context; GTK has no such surface");
@@ -1254,12 +1267,6 @@ const EXCUSED: &[(Surface, CommandId, &str, &str)] = &[
         CommandId::MoreActions,
         ".",
         "More exists only where the dialog is folded; open_layout presses it there",
-    ),
-    (
-        Surface::List,
-        CommandId::PrevView,
-        "Left",
-        "nothing is open to go back from in the list",
     ),
     (
         Surface::List,
@@ -1744,8 +1751,6 @@ const RETIRED: &[(CommandId, &str)] = &[
     (CommandId::ViewSource, "v"),
     (CommandId::OpenAttachmentOrLink, "o"),
     (CommandId::Unsubscribe, "U"),
-    (CommandId::NextInConversation, "]"),
-    (CommandId::PrevInConversation, "["),
     (CommandId::ToggleFold, "z"),
     (CommandId::ExpandAll, "O"),
     (CommandId::CaptureTask, "t"),

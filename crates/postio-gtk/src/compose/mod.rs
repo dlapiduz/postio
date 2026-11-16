@@ -295,6 +295,14 @@ impl Compose {
             CommandId::InsertLink,
             CommandId::InsertImage,
             CommandId::CopyFields,
+            // The thread's own, over the quote (spec 013): the older-reply
+            // bar's two buttons, its unfold, and the forward chooser's cards.
+            CommandId::ShowNewer,
+            CommandId::ReplyToLatest,
+            CommandId::ExpandQuoted,
+            CommandId::ForwardWhat1,
+            CommandId::ForwardWhat2,
+            CommandId::ForwardWhat3,
         ]);
         commands
     }

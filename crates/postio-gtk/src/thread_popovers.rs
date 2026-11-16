@@ -58,6 +58,18 @@ pub struct ThreadMenu {
 }
 
 impl ThreadMenu {
+    /// The commands the menu has an entry for: read from the table that
+    /// builds it, for a thread muted or not and a message that can split.
+    pub fn controls() -> Vec<CommandId> {
+        let keymap = postio_core::Keymap::defaults();
+        [false, true]
+            .into_iter()
+            .flat_map(|muted| postio_ui::thread_outline::menu(keymap, muted, true).groups)
+            .flat_map(|group| group.entries)
+            .map(|entry| entry.command)
+            .collect()
+    }
+
     /// A menu hung from `parent`.
     pub fn new(parent: &impl IsA<gtk::Widget>) -> Rc<Self> {
         let popover = popover(parent, "focus-thread-menu", MENU_WIDTH);

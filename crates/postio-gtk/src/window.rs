@@ -2291,7 +2291,23 @@ impl FocusWindow {
             CommandId::Reply
             | CommandId::ReplyAll
             | CommandId::Forward
-            | CommandId::ReplyToLatest => self.run_in_controller(id),
+            | CommandId::ReplyToLatest
+            // The thread's own steps and the composer's thread rows, which
+            // the keys reach the same way (spec 013 FR-016, FR-020): the
+            // controller knows the walk and does nothing with none.
+            | CommandId::NextInConversation
+            | CommandId::PrevInConversation
+            | CommandId::FirstInConversation
+            | CommandId::LatestInConversation
+            | CommandId::FirstUnreadInConversation
+            | CommandId::OutlineFirstUnread
+            | CommandId::MoveThisMessage
+            | CommandId::DeleteThisMessage
+            | CommandId::ForwardWhat1
+            | CommandId::ForwardWhat2
+            | CommandId::ForwardWhat3
+            | CommandId::ShowNewer
+            | CommandId::ExpandQuoted => self.run_in_controller(id),
             // Focus's first run (T171), and what `c` offers with no
             // account (T172).
             CommandId::AddAccount => self.open_add_account(),
@@ -4322,6 +4338,11 @@ impl FocusWindow {
             return;
         };
         let view = imp.filtered.borrow().clone();
+        // A view that is still here from the last visit is shown empty: its
+        // rows were the controller's then, not now.
+        if let Some(view) = &view {
+            view.clear();
+        }
         let view = view.unwrap_or_else(|| {
             let feed = pane.feed().clone();
             let view = crate::filtered::FilteredView::new(
@@ -5918,6 +5939,10 @@ impl FocusWindow {
         );
         commands.extend(crate::places::Places::controls());
         commands.extend(crate::row_menu::RowMenu::commands());
+        // The thread menu's entries, and the chevron on a thread's row
+        // (the list's and Filtered's), which opens or folds it.
+        commands.extend(crate::thread_popovers::ThreadMenu::controls());
+        commands.extend([CommandId::ExpandThread, CommandId::CollapseThread]);
         commands.extend(crate::bar::Bar::controls());
         commands.extend(crate::filtered::FilteredView::controls());
         commands.extend(crate::contacts::ContactsView::controls());

@@ -30,6 +30,23 @@ const NOT_YET: &[&str] = &[
     "toggle_result_order",
     "next_in_conversation",
     "prev_in_conversation",
+    // The thread's own, in the open message and its outline (spec 013): each
+    // has its key, and the thread bar's chips and Thread menu are the
+    // controls for stepping, but the command bar lists what the list reaches
+    // and these contexts are the message's, the outline's and the
+    // composer's. First, latest and first unread have no button of their own
+    // (the chips step to any message); the outline's `u` is a footer hint.
+    "first_in_conversation",
+    "latest_in_conversation",
+    "first_unread_in_conversation",
+    "outline_first_unread",
+    "thread_menu",
+    "split_thread",
+    "forward_what_1",
+    "forward_what_2",
+    "forward_what_3",
+    "show_newer",
+    "expand_quoted",
     "toggle_fold",
     "view_original",
     "toggle_reader_view",
