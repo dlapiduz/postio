@@ -121,6 +121,83 @@ pub fn with_typed(typed: &MessageBody, content: &MessageBody) -> MessageBody {
     MessageBody { text, html }
 }
 
+/// One forwarded message, as the collapsed row that stands for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForwardedRow {
+    /// Its place in the thread, from 1.
+    pub number: usize,
+    /// "Who · 2026-09-21 09:12": [`header`].
+    pub header: String,
+    /// Its first line of words; empty when it has none.
+    pub first: String,
+}
+
+impl ForwardedRow {
+    /// What the row says: "2 · Ben · 2026-09-21 09:12".
+    pub fn words(&self) -> String {
+        format!("{} \u{b7} {}", self.number, self.header)
+    }
+}
+
+/// The block a forwarded thread begins at in `document`: the
+/// [`THREAD_MARKER`] line. Everything from it on is the forwarded content,
+/// and everything before it is the person's own words.
+pub fn thread_start(document: &Document) -> Option<usize> {
+    document.blocks.iter().position(|block| {
+        matches!(block, Block::Paragraph(_)) && block_text(block).trim() == THREAD_MARKER
+    })
+}
+
+/// The forwarded messages in `blocks` (what [`thread_start`] cut from the
+/// marker on), one row each: a member is a bold [`header`] line and what
+/// follows it.
+pub fn thread_rows(blocks: &[Block]) -> Vec<ForwardedRow> {
+    let mut rows: Vec<ForwardedRow> = Vec::new();
+    for block in blocks.iter().skip(1) {
+        if let Some(header) = member_header(block) {
+            rows.push(ForwardedRow {
+                number: rows.len() + 1,
+                header,
+                first: String::new(),
+            });
+        } else if let Some(row) = rows.last_mut().filter(|row| row.first.is_empty()) {
+            row.first = block_text(block)
+                .lines()
+                .map(|line| line.trim_start_matches(['>', ' ']).trim())
+                .find(|line| !line.is_empty())
+                .unwrap_or_default()
+                .to_owned();
+        }
+    }
+    rows
+}
+
+/// A member's header paragraph: "Who · 2026-09-21 09:12", bold in the html
+/// half and plain in the text half, which is what a plain-text composer
+/// loads.
+fn member_header(block: &Block) -> Option<String> {
+    if !matches!(block, Block::Paragraph(_)) {
+        return None;
+    }
+    let text = block_text(block);
+    let text = text.trim();
+    let (who, when) = text.rsplit_once(" \u{b7} ")?;
+    let shape = b"dddd-dd-dd dd:dd";
+    let fits = when.len() == shape.len()
+        && when.bytes().zip(shape).all(|(byte, shape)| match shape {
+            b'd' => byte.is_ascii_digit(),
+            other => byte == *other,
+        });
+    (fits && !who.is_empty()).then(|| text.to_owned())
+}
+
+fn block_text(block: &Block) -> String {
+    Document {
+        blocks: vec![block.clone()],
+    }
+    .to_text()
+}
+
 /// The line a member is headed by: who, then when (`date` already spelled).
 pub fn header(from: &str, date: &str) -> String {
     format!("{from} · {date}")
@@ -369,6 +446,34 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn a_forwarded_thread_is_cut_at_its_marker_and_read_as_one_row_a_message() {
+        let body = forward_thread(&six(), "Plan");
+        let mut document = crate::parse(body.body.html.as_deref().expect("an html half"));
+        document.blocks.insert(
+            0,
+            Block::Paragraph(vec![Inline::Text("Typed above.".to_owned())]),
+        );
+        let start = thread_start(&document).expect("the marker is found");
+        assert_eq!(start, 1, "the typed words stay above it");
+        let rows = thread_rows(&document.blocks[start..]);
+        assert_eq!(rows.len(), 6);
+        assert_eq!(
+            rows[1].words(),
+            format!("2 \u{b7} Sender 2 \u{b7} {}", at(2))
+        );
+        assert_eq!(rows[0].first, "words 1");
+        // The text half, which a plain-text composer loads, reads the same.
+        let plain = Document::from_text(body.body.text.as_deref().expect("a text half"));
+        let rows = thread_rows(&plain.blocks[thread_start(&plain).expect("a marker")..]);
+        assert_eq!(rows.len(), 6);
+        assert_eq!(rows[5].header, format!("Sender 6 \u{b7} {}", at(6)));
+        assert_eq!(
+            thread_start(&Document::from_text("Nothing forwarded")),
+            None
+        );
     }
 
     #[test]

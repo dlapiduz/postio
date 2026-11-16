@@ -1749,6 +1749,11 @@ impl FocusWindow {
                 CommandId::ReplyToLatest
             })
         ));
+        compose.thread.connect_unfold(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.run_in_controller(CommandId::ExpandQuoted)
+        ));
         if self.imp().warm.get() {
             compose.warm();
         }
@@ -1982,6 +1987,12 @@ impl FocusWindow {
         if let Some(compose) = self.compose() {
             compose.open_draft(message);
         }
+    }
+
+    /// The key that shows a forwarded thread's messages, as the keymap in
+    /// force spells it.
+    fn expand_quoted_cap(&self) -> Option<String> {
+        postio_ui::hints::key(&self.keymap(), CommandId::ExpandQuoted)
     }
 
     /// Open the unsent reply a thread shows, by its draft's id.
@@ -2532,6 +2543,7 @@ impl FocusWindow {
             Intent::QuotedExpanded(expanded) => {
                 if let Some(compose) = self.compose() {
                     compose.thread.set_quoted_expanded(*expanded);
+                    compose.sync_forwarded(self.expand_quoted_cap().as_deref());
                 }
             }
             Intent::ComposerDraftWanted(edit) => {
@@ -2546,6 +2558,7 @@ impl FocusWindow {
                 if let Some(compose) = self.compose() {
                     let in_reply_to = draft.in_reply_to;
                     compose.composer().resume(draft.as_ref().clone());
+                    compose.sync_forwarded(self.expand_quoted_cap().as_deref());
                     self.note_replying_to(in_reply_to);
                 }
             }
@@ -6808,6 +6821,10 @@ impl FocusWindow {
                         .is_some_and(|name| name.ends_with(".eml"))
                 })
                 .count();
+            app.insert(
+                "focus.compose.forwarded.rows".to_owned(),
+                serde_json::json!(parts.forwarded_rows()),
+            );
             app.insert(
                 "focus.compose.forwarded.eml".to_owned(),
                 serde_json::json!(eml),

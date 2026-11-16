@@ -2655,3 +2655,15 @@ button.focus-filtered-tab.focus-filtered-tab-on {
 .focus-results-child-sender {
   font-weight: bold;
 }
+
+/* The forwarded messages, folded to a row each under what is typed. */
+.focus-forwarded {
+  padding: var(--postio-space-2) var(--postio-space-4) var(--postio-space-3);
+}
+
+.focus-forwarded-row {
+  min-height: 28px;
+  padding: 0 var(--postio-space-3);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-raised-bg);
+}

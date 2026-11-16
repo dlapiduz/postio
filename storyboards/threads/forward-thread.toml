@@ -40,13 +40,13 @@ expect  = "The forward opens with the keyboard in the chooser, not in To. Above 
 [[step]]
 id      = "whole"
 key     = "2"
-check   = { composer.open = true, app.focus.compose.chooser.selected = "Whole thread", app.focus.compose.subject = "Fwd: Harbor API draft v3 (6 messages)", app.focus.compose.forwarded.messages = 6 }
+check   = { composer.open = true, app.focus.compose.chooser.selected = "Whole thread", app.focus.compose.subject = "Fwd: Harbor API draft v3 (6 messages)", app.focus.compose.forwarded.messages = 6, app.focus.compose.forwarded.rows = 6 }
 expect  = "Whole thread is ringed. The subject reads Fwd: Harbor API draft v3 (6 messages) and the body holds the six messages, oldest first, each headed by who wrote it and when, as collapsed rows under the caret; the attachments are listed once."
 
 [[step]]
 id      = "expand"
 key     = "mod+shift+q"
-check   = { composer.open = true, app.focus.compose.quoted_expanded = true }
+check   = { composer.open = true, app.focus.compose.quoted_expanded = true, app.focus.compose.forwarded.rows = 0 }
 expect  = "The collapsed rows open into the messages they stand for; nothing above them moved."
 
 [[step]]

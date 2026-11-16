@@ -111,6 +111,7 @@ impl Compose {
             layout.clone().upcast(),
         ));
         composer.mount_on(Rc::clone(&host) as Rc<dyn postio_widgets::composer::ComposerHost>);
+        host.slot.append(&thread.forwarded);
         host.slot.append(&thread.newer);
         // The dialog's own ways out -- Escape reaching it, a click outside
         // -- mean what `Esc` means: close, keeping the draft.
@@ -195,6 +196,20 @@ impl Compose {
         };
         self.remind
             .open(&self.frame.remind, None, &target, postio_ui::clock::now());
+    }
+
+    /// Fold the forwarded thread into its rows, or show it in the body: as
+    /// the controller says (`Intent::QuotedExpanded`), and again whenever a
+    /// new body arrives (the chooser's choice). `cap` is the key that
+    /// unfolds.
+    pub fn sync_forwarded(&self, cap: Option<&str>) {
+        if self.thread.quoted_expanded() {
+            self.composer.unfold_forwarded();
+            self.thread.show_forwarded(&[], None);
+        } else {
+            let rows = self.composer.fold_forwarded();
+            self.thread.show_forwarded(&rows, cap);
+        }
     }
 
     /// The composer.

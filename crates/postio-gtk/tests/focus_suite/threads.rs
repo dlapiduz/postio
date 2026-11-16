@@ -1225,3 +1225,80 @@ pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboar
         );
     });
 }
+
+/// A forwarded thread sits under what is typed as one row a message, and
+/// `mod+shift+q` opens them into the body and folds them again; what is
+/// sent is the same either way.
+pub fn mod_shift_q_folds_and_unfolds_the_forwarded_messages() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.thread_of("Harbor plan", 6, 10).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["f"]);
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "chooser.open") == Some(serde_json::json!(true))
+            )
+            .await
+        );
+        let composer = window.composer().expect("the composer");
+        assert!(crate::settle_until(async || composer.is_open()).await);
+        support::keys(&window, &["2"]);
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "forwarded.rows") == Some(serde_json::json!(6))
+            )
+            .await,
+            "six messages fold to six rows: {:?}",
+            compose_said(&window, "forwarded.rows")
+        );
+        let seen = || composer.test_body_eval("document.body.innerText");
+        assert!(
+            !seen().contains("Forwarded messages"),
+            "folded, the body shows only what is typed: {:?}",
+            seen()
+        );
+        let sent = composer.draft().body.text.unwrap_or_default();
+        assert!(
+            sent.contains("Forwarded messages") && sent.contains("Message 6"),
+            "and the draft still carries every message: {sent:?}"
+        );
+
+        support::press(
+            &window,
+            "q",
+            gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
+        );
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "forwarded.rows") == Some(serde_json::json!(0))
+            )
+            .await,
+            "the rows open into the body"
+        );
+        assert!(
+            crate::settle_until(async || seen().contains("Forwarded messages")).await,
+            "the messages are in the body: {:?}",
+            seen()
+        );
+        assert_eq!(composer.draft().body.text.unwrap_or_default(), sent);
+
+        support::press(
+            &window,
+            "q",
+            gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
+        );
+        assert!(
+            crate::settle_until(
+                async || compose_said(&window, "forwarded.rows") == Some(serde_json::json!(6))
+            )
+            .await,
+            "and fold again"
+        );
+        assert_eq!(composer.draft().body.text.unwrap_or_default(), sent);
+    });
+}
