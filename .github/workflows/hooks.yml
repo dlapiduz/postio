@@ -42,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       - name: Prove the guard denies what it must and allows what it must
         # The suite creates a stand-in worktree under $HOME and asserts both
@@ -56,6 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       - name: Prove the session start fetches, reports and never fails
         # A sandbox origin, shared checkout and private worktree: the shared
@@ -68,6 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       - name: Prove an edited file is formatted and nothing else is touched
         # Child modules, target/, vendor/, the shared checkout and a file

@@ -49,6 +49,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       - name: Install the fuzzing toolchain
         run: rustup toolchain install nightly-2026-08-24 --profile minimal
 
@@ -72,6 +74,7 @@ jobs:
         target: [parse_message, sanitize_html, parse_query]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # The one place in this repository that installs a toolchain rather than
       # letting rust-toolchain.toml decide, and the reason is not preference:

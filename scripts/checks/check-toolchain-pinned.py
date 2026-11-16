@@ -38,6 +38,15 @@ CI, on a lint nobody wrote.
    resolved to the 1.98 that was installed, and kept every session on 1.98
    after the 1.99 bump. mise.toml's own header already said it must not.
 
+5. CI runs the repository's Python from ``mise.toml``. The checks are Python
+   scripts and ``mise.toml`` pins the interpreter, but a workflow that calls
+   ``python3`` gets whatever the runner image ships, so local and CI could
+   disagree about the language the gates are written in -- the compiler bug
+   again, one layer up. Every job that runs a repository script or ``python``
+   must use ``./.github/actions/python`` after its checkout; that composite
+   action reads the version from ``mise.toml`` and is the only place allowed
+   to name ``actions/setup-python``, so the version is written once.
+
 # What this check cannot see, and what to do about it
 
 ``RUSTUP_TOOLCHAIN`` in the environment **overrides rust-toolchain.toml**.
@@ -165,6 +174,101 @@ def floating_workflows(root: Path) -> list[str]:
     return offenders
 
 
+PYTHON_ACTION = "./.github/actions/python"
+
+# What running the repository's Python looks like inside a `run:` body: the
+# interpreter, a `.py` script, or any script under `scripts/` (most of which
+# call python3). A cache key or `with:` value is not a run body.
+RUNS_PYTHON = re.compile(
+    r"\bpython3?\b|\.py\b|(?<![\w./-])scripts/\w|\.claude/hooks"
+)
+JOB_HEAD = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+RUN_LINE = re.compile(r"^(\s*)(?:-\s+)?run:\s*(.*)$")
+
+
+def jobs_of(text: str) -> list[tuple[str, int, list[str]]]:
+    """`(name, first line number, lines)` for each job in a workflow."""
+    lines = text.splitlines()
+    jobs: list[tuple[str, int, list[str]]] = []
+    in_jobs = False
+    for number, line in enumerate(lines, start=1):
+        if line.startswith("jobs:"):
+            in_jobs = True
+        elif in_jobs and line and not line.startswith((" ", "#")):
+            in_jobs = False
+        head = JOB_HEAD.match(line) if in_jobs else None
+        if head:
+            jobs.append((head.group(1), number, []))
+        elif jobs and in_jobs:
+            jobs[-1][2].append(line)
+    return jobs
+
+
+def run_bodies(lines: list[str]) -> str:
+    """The text of every `run:` step in a job, comment lines dropped."""
+    bodies: list[str] = []
+    index = 0
+    while index < len(lines):
+        found = RUN_LINE.match(lines[index])
+        index += 1
+        if not found:
+            continue
+        indent, rest = len(found.group(1)), found.group(2)
+        if rest.strip() and rest.strip()[0] not in "|>":
+            bodies.append(rest)
+            continue
+        while index < len(lines) and (
+            not lines[index].strip() or len(lines[index]) - len(lines[index].lstrip()) > indent
+        ):
+            bodies.append(lines[index])
+            index += 1
+    return "\n".join(b for b in bodies if not b.lstrip().startswith("#"))
+
+
+def python_problems(root: Path) -> list[str]:
+    """Rule 5: workflow jobs that run Python must set it up from mise.toml."""
+    problems: list[str] = []
+    workflows = root / ".github" / "workflows"
+    uses_action = False
+    for path in sorted(workflows.glob("*.yml")) + sorted(workflows.glob("*.yaml")):
+        rel = path.relative_to(root)
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"^\s*(?:-\s+)?uses:\s*actions/setup-python@", text, re.MULTILINE):
+            line = text[: match.start()].count("\n") + 1
+            problems.append(
+                f"{rel}:{line}: names actions/setup-python; use {PYTHON_ACTION}, "
+                f"which reads the version from mise.toml"
+            )
+        for name, first, lines in jobs_of(text):
+            body = "\n".join(lines)
+            has_action = PYTHON_ACTION in body
+            uses_action = uses_action or has_action
+            if has_action:
+                at = body.index(PYTHON_ACTION)
+                checkout = body.find("actions/checkout@")
+                if checkout > at:
+                    problems.append(
+                        f"{rel}: job `{name}` sets Python up before its checkout, "
+                        f"so mise.toml is not there to read"
+                    )
+            elif RUNS_PYTHON.search(run_bodies(lines)):
+                problems.append(
+                    f"{rel}:{first}: job `{name}` runs Python from the runner image; "
+                    f"add `- uses: {PYTHON_ACTION}` after its checkout"
+                )
+    action = root / PYTHON_ACTION[2:] / "action.yml"
+    if uses_action and not action.is_file():
+        problems.append(f"{action.relative_to(root)} is missing")
+    elif action.is_file():
+        text = action.read_text(encoding="utf-8")
+        if "mise.toml" not in text or re.search(r"python-version:\s*[\"']?\d", text):
+            problems.append(
+                f"{action.relative_to(root)} must read the version from mise.toml, "
+                f"not carry one of its own"
+            )
+    return problems
+
+
 def report_environment_skew(pinned: str) -> None:
     """Say so when this shell will ignore the pin. Never fatal -- see the docs."""
     override = os.environ.get("RUSTUP_TOOLCHAIN")
@@ -234,6 +338,18 @@ def main() -> int:
             f"repository. Delete the line: the pin is rust-toolchain.toml's.",
             file=sys.stderr,
         )
+        return 1
+
+    python = python_problems(root)
+    if python:
+        print(
+            f"toolchain check FAILED: {len(python)} workflow Python problem(s). "
+            f"mise.toml pins the interpreter the checks run on, and CI must "
+            f"use it:",
+            file=sys.stderr,
+        )
+        for problem in python:
+            print(f"  {problem}", file=sys.stderr)
         return 1
 
     override = os.environ.get("RUSTUP_TOOLCHAIN")

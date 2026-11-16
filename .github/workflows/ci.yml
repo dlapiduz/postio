@@ -94,6 +94,7 @@ jobs:
       tooling: ${{ steps.tooling.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # The diff comes from the API rather than from a deep clone: a pull
       # request's base..head and a push's before..after are both one
@@ -155,6 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # Only `cargo metadata` is needed here: it resolves the dependency graph
       # without compiling anything, so this job needs no GTK system libraries
@@ -454,6 +456,7 @@ jobs:
     if: needs.changes.outputs.docs == 'yes'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
@@ -561,6 +564,7 @@ jobs:
     if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # Its own cache, not the test job's. Clippy emits *check* units through
       # `clippy-driver` and `cargo test` emits *build* units; cargo
@@ -605,6 +609,7 @@ jobs:
     if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       - name: Which crates changed
         id: crates
@@ -663,6 +668,7 @@ jobs:
     if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # This job's own cache, keyed `build` -- the artifacts `cargo test`
       # produces. The clippy job keeps a separate one; they cannot share.
@@ -925,6 +931,8 @@ jobs:
     if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       - uses: ./.github/actions/rust-workspace
         with:
           cache-name: "build-app"
@@ -964,6 +972,8 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       # The system libraries and the toolchain, and nothing to build.
       - uses: ./.github/actions/rust-workspace
         with:
@@ -1024,6 +1034,8 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
       - name: Decide
         env:
           RUST: ${{ needs.changes.outputs.rust }}
@@ -1057,6 +1069,7 @@ jobs:
     if: needs.changes.outputs.macos == 'yes'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # The pin decides; see the note in the `fmt` job. `rust-toolchain.toml`
       # is honoured by rustup on every platform, so there is no toolchain
@@ -1162,6 +1175,7 @@ jobs:
     if: needs.changes.outputs.tooling == 'yes'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
 
       # The pin decides; see the note in the `fmt` job. Several self-tests
       # build a cargo sandbox, so this job needs a toolchain even though it
