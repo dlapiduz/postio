@@ -1066,6 +1066,19 @@ impl Inner {
         entry.verbs.dispatch(queued.command, sink).await;
     }
 
+    /// Mute or unmute a thread for `client`, through its undo stack.
+    async fn mute(&self, client: ClientId, thread: postio_model::ThreadId, muted: bool) -> Resp {
+        let Some(entry) = self.entry(client) else {
+            return Resp::Stopped;
+        };
+        match entry.actions.mute_thread(thread, muted, &entry.sink).await {
+            Ok(()) => Resp::Done,
+            Err(error) => Resp::Failed(postio_model::listing::StoreError::new(
+                error.message().to_owned(),
+            )),
+        }
+    }
+
     /// Answer one request from local state. Nothing here waits on the
     /// network: a remote effect is a command, queued.
     async fn answer(&self, client: ClientId, request: Req) -> Resp {
@@ -1258,6 +1271,11 @@ impl Inner {
             ),
             Req::DraftBehind(message) => Resp::Draft(
                 compose::draft_behind(&self.wiring.database, message)
+                    .await
+                    .map(Box::new),
+            ),
+            Req::DraftById(draft) => Resp::Draft(
+                compose::draft_by_id(&self.wiring.database, draft)
                     .await
                     .map(Box::new),
             ),
@@ -1540,6 +1558,52 @@ impl Inner {
             },
             Req::Body(message) => self.body(message).await,
             Req::Conversation(thread) => self.conversation(thread).await,
+            Req::Thread(thread) => match threads::view(&self.wiring.database, thread).await {
+                Ok(view) => Resp::Thread(view.map(Box::new)),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::Mute(thread) => self.mute(client, thread, true).await,
+            Req::Unmute(thread) => self.mute(client, thread, false).await,
+            Req::Split(message) => match self.entry(client) {
+                Some(entry) => match entry.actions.split_thread(message, &entry.sink).await {
+                    Ok(thread) => Resp::Split(thread),
+                    Err(error) => Resp::Failed(postio_model::listing::StoreError::new(
+                        error.message().to_owned(),
+                    )),
+                },
+                None => Resp::Stopped,
+            },
+            Req::MutedOf(threads) => match threads::muted_of(&self.wiring.database, &threads).await
+            {
+                Ok(muted) => Resp::Muted(muted),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::ForwardThread { thread, form } => forwarded(
+                postio_session::thread_compose::forward_thread(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    thread,
+                    form,
+                )
+                .await,
+            ),
+            Req::SetForwardForm { draft, form } => forwarded(
+                postio_session::thread_compose::set_forward_form(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    *draft,
+                    form,
+                )
+                .await,
+            ),
+            Req::ReplyToLatest { draft } => {
+                match postio_session::thread_compose::reply_to_latest(&self.wiring.database, *draft)
+                    .await
+                {
+                    Ok(draft) => Resp::Draft(Some(Box::new(draft))),
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
             Req::Unsubscribe(message) => self.unsubscribe(message).await,
             Req::ListMail(message) => self.list_mail(message).await,
             Req::Parts(message) => {
@@ -2474,6 +2538,7 @@ pub mod reading;
 pub mod search;
 pub mod settings;
 pub mod startup;
+pub mod threads;
 
 #[cfg(test)]
 mod model_tests;
@@ -2481,3 +2546,11 @@ mod model_tests;
 mod tests;
 #[cfg(test)]
 mod verbs_tests;
+
+/// A thread forward's answer, on the wire.
+fn forwarded(built: Result<postio_model::Forwarded, String>) -> Resp {
+    match built {
+        Ok(forwarded) => Resp::Forwarded(forwarded),
+        Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+    }
+}

@@ -131,9 +131,13 @@ reason  = "an empty query has nothing to save"
 
 # -- filtered: `g f`: the Filtered view on its first tab
 [[gap]]
-command = "filtered_tab_1"
+command = "expand_thread"
 context = "filtered"
-reason  = "the view is already on its first tab"
+reason  = "the small seed files no conversation of more than one message"
+[[gap]]
+command = "collapse_thread"
+context = "filtered"
+reason  = "the small seed files no conversation of more than one message"
 [[gap]]
 command = "prev_message"
 context = "filtered"

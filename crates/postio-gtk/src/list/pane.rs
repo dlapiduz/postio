@@ -7,12 +7,12 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{glib, graphene};
 
-use postio_widgets::list_model::WindowedModel;
-
 use super::feed::Feed;
 use super::heading::DayHeading;
 use super::model::RowObject;
-use super::row::{ActionHandler, Pick, PickHandler, RowWidget, SharedKeymap};
+use super::row::{
+    ActionHandler, ChevronHandler, Pick, PickHandler, RowWidget, SharedKeymap, SharedMe,
+};
 
 /// The list pane: what scrolls, what draws, and where its rows come from.
 #[derive(Clone)]
@@ -30,6 +30,10 @@ pub struct ListPane {
     on_pick: Rc<std::cell::RefCell<Option<PickHandler>>>,
     /// Whether a to-do's row offers Task: once a vault is configured.
     capture: Rc<Cell<bool>>,
+    /// What a click on a thread row's chevron runs, once the window says.
+    on_chevron: Rc<std::cell::RefCell<Option<ChevronHandler>>>,
+    /// Who "you" is, for the participants a thread row names.
+    me: SharedMe,
 }
 
 /// The selection a list's rows draw their boxes from.
@@ -43,6 +47,8 @@ impl ListPane {
         let on_action: Rc<std::cell::RefCell<Option<ActionHandler>>> = Rc::default();
         let on_pick: Rc<std::cell::RefCell<Option<PickHandler>>> = Rc::default();
         let capture: Rc<Cell<bool>> = Rc::default();
+        let on_chevron: Rc<std::cell::RefCell<Option<ChevronHandler>>> = Rc::default();
+        let me: SharedMe = Rc::default();
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup({
             let keymap = keymap.clone();
@@ -50,6 +56,8 @@ impl ListPane {
             let picked = picked.clone();
             let on_action = Rc::clone(&on_action);
             let on_pick = Rc::clone(&on_pick);
+            let on_chevron = Rc::clone(&on_chevron);
+            let me = Rc::clone(&me);
             move |_, item| {
                 let item = item
                     .downcast_ref::<gtk::ListItem>()
@@ -72,7 +80,21 @@ impl ListPane {
                         handler(item, pick);
                     }
                 }));
+                row.set_identities(Rc::clone(&me));
+                let on_chevron = Rc::clone(&on_chevron);
+                row.set_on_chevron(Rc::new(move |item, expanded| {
+                    let handler = on_chevron.borrow().clone();
+                    if let Some(handler) = handler {
+                        handler(item, expanded);
+                    }
+                }));
                 item.set_child(Some(&row));
+                // A child shows its keys while the cursor is on it.
+                item.connect_selected_notify(|item| {
+                    if let Some(widget) = item.child().and_downcast::<RowWidget>() {
+                        widget.set_cursor_here(item.is_selected());
+                    }
+                });
             }
         });
         factory.connect_bind(|_, item| {
@@ -84,6 +106,7 @@ impl ListPane {
                 item.child().and_downcast::<RowWidget>(),
             ) {
                 widget.bind(&row);
+                widget.set_cursor_here(item.is_selected());
             }
         });
         factory.connect_unbind(|_, item| {
@@ -97,7 +120,7 @@ impl ListPane {
 
         // The cursor, not the selection: GTK's name, Postio's meaning
         // (`postio_ui::selection`). What `e` would archive is kept apart.
-        let cursor = keep_the_cursor(feed.list());
+        let cursor = keep_the_cursor(feed.shown());
         let view = gtk::ListView::new(Some(cursor.clone()), Some(factory));
         view.set_header_factory(Some(&day_headings(feed.list())));
         // A page landing may move where a day starts.
@@ -129,6 +152,8 @@ impl ListPane {
             on_action,
             on_pick,
             capture,
+            on_chevron,
+            me,
         }
     }
 
@@ -147,6 +172,19 @@ impl ListPane {
         handler: impl Fn(&super::FocusRow, postio_core::CommandId) + 'static,
     ) {
         self.on_action.replace(Some(Rc::new(handler)));
+    }
+
+    /// Run `handler` when a thread row's chevron is clicked, with the row
+    /// and whether its thread is open.
+    pub fn connect_row_chevron(&self, handler: impl Fn(&super::FocusRow, bool) + 'static) {
+        self.on_chevron.replace(Some(Rc::new(handler)));
+    }
+
+    /// Who "you" is: the addresses a thread row's participants say as "you".
+    pub fn set_identities(&self, me: Vec<postio_model::EmailAddress>) {
+        if self.me.replace(me.clone()) != me {
+            self.redraw_rows();
+        }
     }
 
     /// Run `handler` when a Ctrl- or Shift-click picks a row (T198).
@@ -169,7 +207,7 @@ impl ListPane {
         let drag = gtk::DragSource::new();
         drag.set_actions(gtk::gdk::DragAction::COPY);
         let view = self.view.downgrade();
-        let list = self.feed.list().downgrade();
+        let list = self.feed.shown().downgrade();
         drag.connect_prepare(move |_, x, y| {
             let (view, list) = (view.upgrade()?, list.upgrade()?);
             offer(row_position_at(&view, &list, x, y)?)
@@ -184,7 +222,7 @@ impl ListPane {
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_SECONDARY);
         let view = self.view.downgrade();
-        let list = self.feed.list().downgrade();
+        let list = self.feed.shown().downgrade();
         click.connect_pressed(move |gesture, _, x, y| {
             let (Some(view), Some(list)) = (view.upgrade(), list.upgrade()) else {
                 return;
@@ -265,7 +303,7 @@ impl ListPane {
             let Some(row) = widget.first_child().and_downcast::<RowWidget>() else {
                 continue;
             };
-            if !row.is_mapped() || row.item().is_none() {
+            if !row.is_mapped() || (row.item().is_none() && row.child().is_none()) {
                 continue;
             }
             let Some(top) = row.compute_point(&self.scrolled, &graphene::Point::new(0.0, 0.0))
@@ -403,7 +441,7 @@ fn hold_the_top(
 /// A signal's handlers run in the order they were connected, so the one
 /// connected to `list` before the selection exists sees the cursor as it was
 /// before the change, and the selection's own `items-changed` after it.
-fn keep_the_cursor(list: &super::model::FocusList) -> gtk::SingleSelection {
+fn keep_the_cursor(list: &super::spliced::SplicedList) -> gtk::SingleSelection {
     let weak: Rc<glib::WeakRef<gtk::SingleSelection>> = Rc::default();
     let before = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
     list.connect_items_changed({
@@ -456,7 +494,7 @@ fn first_heading_height(view: &gtk::ListView) -> Option<f64> {
 /// `None` over a day's heading or the empty space between.
 fn row_position_at(
     view: &gtk::ListView,
-    list: &super::model::FocusList,
+    list: &super::spliced::SplicedList,
     x: f64,
     y: f64,
 ) -> Option<u32> {

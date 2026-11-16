@@ -122,6 +122,17 @@ pub enum UiEvent {
         /// The newly delivered messages.
         messages: Vec<i64>,
     },
+    /// Messages joined a thread (spec 013): an open thread window or an
+    /// expansion reads its `ThreadView` again, and `members_added` drives the
+    /// new-reply banner. Once per thread per pass.
+    ThreadChanged {
+        /// The account the thread belongs to.
+        account: i64,
+        /// The thread.
+        thread: i64,
+        /// The messages that joined it.
+        members_added: Vec<i64>,
+    },
     /// The conversation asked for has been read and can now be drawn.
     ///
     /// Boundary-local: the reading pane's read is this frontend's, and the
@@ -244,6 +255,27 @@ pub enum UiEvent {
     },
     /// Scroll the list back to its very top.
     FocusListToTop,
+    /// A thread opened in place: draw `children` after the row at `anchor`
+    /// (a row position), replacing any it had. No animation under Reduce
+    /// Motion (spec 013).
+    FocusSplice {
+        /// The expanded row's position among the rows.
+        anchor: u32,
+        /// One per message, oldest first, then the unsent reply.
+        children: Vec<crate::ChildRowFfi>,
+    },
+    /// Draw the footer under the list (spec 013 FR-014): the scope in
+    /// words, the keys that matter there, and a sentence on what acts on
+    /// what. Sent after every cursor move, in the list and in Filtered.
+    FocusFooter {
+        /// What to draw.
+        view: crate::FooterViewFfi,
+    },
+    /// The thread at `anchor` folded: remove its children.
+    FocusUnsplice {
+        /// The collapsed row's position among the rows.
+        anchor: u32,
+    },
     /// Say something in the toast: the host's words.
     FocusToast {
         /// What to say.
@@ -340,6 +372,49 @@ pub enum UiEvent {
     FocusReader {
         /// What.
         verb: crate::focus_list::ReaderVerbFfi,
+    },
+    /// The message window's thread bar, when it opens and on every step.
+    /// No chips means a thread of one: draw no bar.
+    FocusThreadBar {
+        /// The bar.
+        view: crate::focus_thread_bar::ThreadBarFfi,
+    },
+    /// The line above the subject, "Message 4 of 6 · ] newer · [ older";
+    /// empty for none.
+    FocusKicker {
+        /// What it says.
+        text: String,
+    },
+    /// The quiet banner on a message that is not the latest, or none.
+    FocusOlderBanner {
+        /// The banner.
+        banner: Option<crate::focus_thread_bar::ThreadBannerFfi>,
+    },
+    /// A reply arrived while the window is on another message, which stays
+    /// on screen: the accent-tinted banner with "Read it", or none.
+    FocusNewReply {
+        /// The banner.
+        banner: Option<crate::focus_thread_bar::ThreadBannerFfi>,
+    },
+    /// Open Thread ▾'s menu (a 340-point popover from the button). The controller has put it on
+    /// the stack; say `focus_surface_closed(ThreadMenu)` if it closes itself.
+    FocusThreadMenu {
+        /// The menu.
+        view: crate::focus_thread_bar::ThreadMenuFfi,
+    },
+    /// Open the thread outline (a 440-point popover), or redraw it whole. The
+    /// controller has put it on the stack; say `focus_surface_closed(Outline)`
+    /// if it closes itself.
+    FocusOutline {
+        /// The outline.
+        view: crate::focus_thread_bar::OutlineFfi,
+    },
+    /// Put the keyboard in the outline's filter field.
+    FocusOutlineFocusFilter,
+    /// The sender block's Reply to row, or none.
+    FocusReplyTo {
+        /// "Ana Ruiz, Mon 21 Sep (message 1)".
+        text: Option<String>,
     },
     /// Nothing is over the list: the keyboard goes back to it, on the
     /// cursor's row.
@@ -446,7 +521,22 @@ pub enum UiEvent {
         /// What it draws.
         view: crate::focus_surfaces::FilteredViewFfi,
     },
-    /// Filtered's keyboard moved to the row at `index` (`j`/`k`, a click).
+    /// A thread opened under Filtered's row at `anchor` (an index into its
+    /// rows): draw `children` after it, replacing any it had. The keyboard's
+    /// `FocusFilteredFocus` counts them (spec 013 FR-009).
+    FocusFilteredSplice {
+        /// The expanded row.
+        anchor: u32,
+        /// One per message, oldest first, then the unsent reply.
+        children: Vec<crate::ChildRowFfi>,
+    },
+    /// The thread at `anchor` folded: remove its children.
+    FocusFilteredUnsplice {
+        /// The collapsed row.
+        anchor: u32,
+    },
+    /// Filtered's keyboard moved to the row at `index` (`j`/`k`, a click):
+    /// a display position, an open thread's children counted.
     FocusFilteredFocus {
         /// The row, an index into the view's `rows`.
         index: Option<u32>,
@@ -512,6 +602,45 @@ pub enum UiEvent {
         /// The message it answers, or the draft's own message.
         message: Option<i64>,
     },
+    /// Draw the *What to forward* chooser above To, or redraw it with the
+    /// card now chosen ringed (spec 013 FR-023). While it holds the
+    /// keyboard, `1` `2` `3` resolve in `UiContext::ForwardChooser`.
+    FocusForwardChooser {
+        /// The three cards and the chosen one.
+        view: crate::focus_compose::ChooserFfi,
+    },
+    /// Draw the older-reply bar under the composer's title, redraw it, or
+    /// (`None`) take it away (FR-022).
+    FocusOlderReply {
+        /// What the bar says; `None` removes it.
+        view: Option<crate::focus_compose::OlderReplyFfi>,
+    },
+    /// Show these messages, newer than the one answered, read-only in the
+    /// composer; `None` puts them away.
+    FocusNewerMessages {
+        /// The messages, oldest first.
+        ids: Option<Vec<i64>>,
+    },
+    /// The forwarded or quoted messages as collapsed rows (`false`) or
+    /// expanded (`true`).
+    FocusQuotedExpanded {
+        /// Whether they are expanded.
+        expanded: bool,
+    },
+    /// The engine is about to change the composer's draft: answer with
+    /// `focus_composer_draft(edit, draft)`, the draft as it is now with
+    /// what was typed.
+    FocusComposerDraftWanted {
+        /// What will change.
+        edit: crate::focus_compose::DraftEditFfi,
+    },
+    /// Put this draft in the composer in place of its own, keeping the
+    /// caret where it can be kept. Its `from` and `path` are empty: the
+    /// composer keeps its own.
+    FocusComposerDraft {
+        /// The draft as the engine changed it.
+        draft: crate::DraftFfi,
+    },
     /// Save what the composer holds -- open, or just closed -- now, and say
     /// how it went with `focus_draft_saved(composition, …)`.
     FocusSaveDraft {
@@ -560,6 +689,24 @@ pub enum UiEvent {
     FocusResultsCursor {
         /// The row.
         position: u64,
+    },
+    /// A result opened in place (spec 013 US6): draw its matching messages
+    /// and the lines between them after the row at `anchor`, or none to
+    /// take them away. Results after it keep their positions.
+    FocusResultSplice {
+        /// The children, or none.
+        splice: Option<crate::ResultSpliceFfi>,
+    },
+    /// The focus ring is on this child of the opened result, or back on
+    /// the result's own row.
+    FocusResultChildFocus {
+        /// An index into the splice's children.
+        child: Option<u32>,
+    },
+    /// The message window was opened from a search: its banner, or none.
+    FocusMatchBanner {
+        /// The banner.
+        banner: Option<crate::MatchBannerFfi>,
     },
     /// Back to the inbox: Esc's last rung, or ⌘[. The list's own cursor and
     /// selection follow.
@@ -715,6 +862,15 @@ impl From<postio_core::Event> for UiEvent {
                 account: account.into(),
                 mailbox: mailbox.into(),
                 messages: messages.into_iter().map(Into::into).collect(),
+            },
+            Event::ThreadChanged {
+                account,
+                thread,
+                members_added,
+            } => UiEvent::ThreadChanged {
+                account: account.into(),
+                thread: thread.into(),
+                members_added: members_added.into_iter().map(Into::into).collect(),
             },
             Event::ConnectionChanged { account, state } => UiEvent::ConnectionChanged {
                 account: account.into(),
@@ -917,19 +1073,32 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_changing_crosses_with_the_messages_that_joined_it() {
+        assert_eq!(
+            UiEvent::from(postio_core::Event::ThreadChanged {
+                account: 1.into(),
+                thread: 2.into(),
+                members_added: vec![3.into(), 4.into()],
+            }),
+            UiEvent::ThreadChanged {
+                account: 1,
+                thread: 2,
+                members_added: vec![3, 4],
+            }
+        );
+    }
+
+    #[test]
     fn an_unmodelled_variant_keeps_its_name_and_loses_its_payload() {
         // Rule 3: the name crosses so the far side can log it; the payload
         // does not, because a subject line in a crash report is exactly the
         // thing the logging rules exist to prevent.
-        let event = postio_core::Event::ThreadChanged {
-            account: 1.into(),
-            thread: 2.into(),
-        };
+        let event = postio_core::Event::ComposerClosed { draft: 2.into() };
         let crossed = UiEvent::from(event);
         match crossed {
             UiEvent::Other { kind } => {
-                assert_eq!(kind, "ThreadChanged");
-                assert!(!kind.contains('1') && !kind.contains('2'));
+                assert_eq!(kind, "ComposerClosed");
+                assert!(!kind.contains('2'));
             }
             other => panic!("expected Other, got {other:?}"),
         }

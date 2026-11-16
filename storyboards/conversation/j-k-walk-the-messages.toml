@@ -8,8 +8,10 @@
 #
 # Re-expressed for Focus (T265): Focus shows one message at a time and steps
 # the thread with `p` and `n` (C2, FR-037), so the open message names the
-# message it shows. The seven-message long-thread opens on its newest,
-# message 7; `p` steps back, `n` forward, and `r` replies to the one shown.
+# message it shows. The seven-message long-thread opens on its first unread,
+# message 6, the first of its two unread, as spec 013 opens a thread on its
+# first unread (FR-013); `p` steps back, `n` forward, and `r` replies to the
+# one shown.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1386" }
 proof  = "pinned"
@@ -21,24 +23,24 @@ command = "next_message"
 [[step]]
 id      = "open"
 command = "open_message"
-check   = { view = "reader", keyboard.region = "reader", reading.id = "7" }
-expect  = "The thread opens on its newest message."
-
-[[step]]
-command = "prev_in_conversation"
-check   = { reading.id = "6" }
-expect  = "The open message steps back one, to the one before it in the thread."
+check   = { view = "reader", keyboard.region = "reader", reading.id = "6" }
+expect  = "The thread opens on its first unread message."
 
 [[step]]
 command = "prev_in_conversation"
 check   = { reading.id = "5" }
+expect  = "The open message steps back one, to the one before it in the thread."
+
+[[step]]
+command = "prev_in_conversation"
+check   = { reading.id = "4" }
 
 [[step]]
 command = "next_in_conversation"
-check   = { reading.id = "6" }
+check   = { reading.id = "5" }
 expect  = "`n` steps forward again."
 
 [[step]]
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }
-expect  = "The composer opens as a reply to the message shown (message 6), not the newest, and the caret is in the body. Message 6 was sent by the person, so the reply is addressed to the people it was written to rather than left empty."
+expect  = "The composer opens as a reply to the message shown (message 5), not the first unread, and the caret is in the body."

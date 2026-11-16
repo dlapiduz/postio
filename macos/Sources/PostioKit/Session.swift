@@ -123,6 +123,13 @@ public final class PostioSession {
         inner.focusPoint(position: row)
     }
 
+    /// A click on the chevron of the thread row at `position`: the cursor goes
+    /// there and the thread opens in place, or folds if it is the open one.
+    /// Answered with `FocusSplice` or `FocusUnsplice`.
+    public func focusChevronClicked(_ position: UInt32) {
+        inner.focusChevronClicked(position: position)
+    }
+
     /// A double-click on `position`: the cursor goes there and its message
     /// opens, as Return does. The controller decides both.
     public func focusActivate(_ position: Int) {
@@ -140,6 +147,43 @@ public final class PostioSession {
     /// Whether the list stands scrolled to its very top: where an undo
     /// that brings rows in above leaves it.
     public func focusAtTop(_ atTop: Bool) { inner.focusAtTop(atTop: atTop) }
+
+    /// How many thread-bar chips the message window has room for: sent when
+    /// it opens and on resize. The controller composes the bar again.
+    public func focusBarRoom(_ chips: UInt32) { inner.focusBarRoom(chips: chips) }
+
+    /// A click on the thread bar's chip for member `index`: that message is
+    /// shown.
+    public func focusThreadBarChipClicked(_ index: UInt32) {
+        inner.focusThreadBarChipClicked(index: index)
+    }
+
+    /// A click on the "... N more" chip, which stands for the members from
+    /// `from` on: the outline opens on the first of them.
+    public func focusThreadBarMoreClicked(from: UInt32) {
+        inner.focusThreadBarMoreClicked(from: from)
+    }
+
+    /// Say a Thread ▾ menu entry was chosen: its command's id.
+    public func focusThreadMenuPick(command: String) { inner.focusThreadMenuPick(command: command) }
+
+    /// The outline's filter field holds `text` now.
+    public func focusOutlineTyped(text: String) { inner.focusOutlineTyped(text: text) }
+
+    /// A person chip of the outline was chosen, or cleared with `nil`.
+    public func focusOutlinePerson(name: String?) { inner.focusOutlinePerson(name: name) }
+
+    /// ↑ or ↓ in the outline.
+    public func focusOutlineMove(by step: Int32) { inner.focusOutlineMove(by: step) }
+
+    /// Return, or a click on a row of the outline; `nil` is the cursor's.
+    public func focusOutlineShow(row: UInt32?) { inner.focusOutlineShow(row: row) }
+
+    /// `/` in the outline: the keyboard goes to its field.
+    public func focusOutlineFocusFilter() { inner.focusOutlineFocusFilter() }
+
+    /// Let a reply arrive in the demo's Harbor thread (`@reply`).
+    public func demoArrive(what: String) -> Bool { inner.demoArrive(what: what) }
 
     /// What Undo would take back now, in the toast's words, or `nil`. A
     /// store read: off the main actor (`PostioUndoManager.refresh`).
@@ -170,6 +214,24 @@ public final class PostioSession {
 
     /// Something was written in the composer: said on every edit.
     public func focusComposerEdited() { inner.focusComposerEdited() }
+
+    /// The composer's draft, with what was typed, as `FocusComposerDraftWanted`
+    /// asked: the controller has the engine change it and answers with
+    /// `FocusComposerDraft`.
+    public func focusComposerDraft(edit: DraftEditFfi, draft: DraftFfi) {
+        inner.focusComposerDraft(edit: edit, draft: draft)
+    }
+
+    /// A chooser card was clicked: as its number key.
+    public func focusForwardFormClicked(_ form: ForwardFormFfi) {
+        inner.focusForwardFormClicked(form: form)
+    }
+
+    /// The messages newer than the one a reply answers, for the composer's
+    /// read-only block. Read from the store; nothing is fetched.
+    public func focusNewerMessages(_ ids: [Int64]) -> [NewerMessageFfi] {
+        inner.focusNewerMessages(ids: ids)
+    }
 
     /// How the save `FocusSaveDraft { composition }` asked for went.
     public func focusDraftSaved(_ composition: UInt64, kept: Bool, error: String?) {
@@ -457,6 +519,11 @@ public final class PostioSession {
     public func focusReaderState(moreOpen: Bool, finding: Bool) {
         inner.focusReaderState(moreOpen: moreOpen, finding: finding)
     }
+
+    /// The message's own find ran out in a window opened from a search:
+    /// the controller goes on to the next matched message, or says this
+    /// was the last.
+    public func focusMatchEdge(forward: Bool) { inner.focusMatchEdge(forward: forward) }
 
     /// Always draw `sender`'s mail in `treatment`, or forget the choice
     /// with `nil`: "Always for this sender", in the file GTK keeps it in.

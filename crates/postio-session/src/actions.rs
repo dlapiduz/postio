@@ -76,7 +76,6 @@ fn now() -> chrono::DateTime<Utc> {
 /// (`postio-tui`'s parity test).
 pub const WIRED: &[CommandId] = &[
     CommandId::Archive,
-    CommandId::ArchiveThread,
     CommandId::Delete,
     CommandId::Move,
     CommandId::Flag,
@@ -114,6 +113,9 @@ pub const WIRED: &[CommandId] = &[
     CommandId::ContactGroupRename,
     CommandId::ContactGroupAdd,
     CommandId::ContactGroupRemove,
+    // Spec 013 US5: on the undo stack, each its own way back.
+    CommandId::MuteThread,
+    CommandId::SplitThread,
 ];
 
 /// How long [`Command::Snooze`] hides a message for when it names no time:
@@ -386,18 +388,6 @@ impl Actions {
                 )
                 .await?
             }
-            Command::ArchiveThread { thread } => {
-                let thread = match thread {
-                    Some(thread) => *thread,
-                    None => self.thread_in_view().await?,
-                };
-                self.relocate(
-                    &MessageTarget::Thread(thread),
-                    Destination::Role(MailboxRole::Archive),
-                    UndoKind::Archive,
-                )
-                .await?
-            }
             Command::Delete { target } => {
                 self.relocate(
                     target,
@@ -561,6 +551,22 @@ impl Actions {
             Command::ContactGroupRemove { group, people } => {
                 let group = group.ok_or_else(|| CommandError::rejected("Choose a group"))?;
                 vec![self.group_members(group, people, false).await?]
+            }
+            Command::MuteThread { thread, muted } => {
+                let thread =
+                    thread.ok_or_else(|| CommandError::rejected("Choose a conversation"))?;
+                vec![self.mute(thread, *muted, events).await?]
+            }
+            Command::SplitThread {
+                rejoin: Some((split, original)),
+                ..
+            } => vec![self.unsplit(*split, *original, events).await?],
+            Command::SplitThread {
+                message: Some(message),
+                rejoin: None,
+            } => vec![self.split(*message, events).await?.0],
+            Command::SplitThread { .. } => {
+                return Err(CommandError::rejected("Choose a message to split off"));
             }
             Command::MarkReadOnDwell { message } => {
                 self.set_flag(
@@ -2040,26 +2046,6 @@ impl Actions {
         Ok(Aim::Bulk(units))
     }
 
-    /// The thread `A` means: the one the focused message belongs to.
-    ///
-    /// A whole-mailbox selection has no such message — `Ctrl+A` then `A` is a
-    /// gesture with no answer rather than a bulk one, because "the thread of
-    /// everything" is not a thing — so it is asked for rather than guessed at.
-    async fn thread_in_view(&self) -> Result<ThreadId, CommandError> {
-        let (connection, _permit) = self.connect().await?;
-        let rows = match self.aim(&connection, &MessageTarget::Selection).await? {
-            Aim::Rows(rows) => rows,
-            Aim::Bulk(_) => {
-                return Err(CommandError::rejected(
-                    "Pick a message, and `A` archives its thread",
-                ));
-            }
-        };
-        rows[0]
-            .thread_id
-            .ok_or_else(|| CommandError::rejected("That message is not in a thread"))
-    }
-
     /// Settle a draft whose send could not be confirmed: it did arrive.
     ///
     /// ADR 0021 Decision 3, #674. Postio resolves most of these by itself --
@@ -3030,7 +3016,7 @@ impl Actions {
     /// the permit or a permit-holder can end up waiting on the pool for a
     /// connection a permit-waiter is holding. Both rules are satisfied by
     /// scoping the pair to one call: the two verbs that resolve a target
-    /// before acting on it (`ArchiveThread`, `Undo`) do so in sequence, never
+    /// before acting on it (`Undo`) do so in sequence, never
     /// nested, so each step takes its own permit and releases it.
     ///
     /// The permit covers this module's reads as well as its writes. That costs
@@ -4028,11 +4014,13 @@ mod tests {
             }
             thread.id
         };
-        // `A` with the cursor on one of them, and no thread named.
+        // Archive with the cursor on one of them, aimed at the thread.
         world.looking_at(world.inbox, &[], Some(first)).await;
 
         world
-            .run(Command::ArchiveThread { thread: None })
+            .run(Command::Archive {
+                target: MessageTarget::Thread(thread),
+            })
             .await
             .expect("archive the thread");
 
@@ -4043,7 +4031,6 @@ mod tests {
             "the message the cursor was not on has to move too"
         );
         assert_eq!(world.queued().await.len(), 2);
-        let _ = thread;
         assert_eq!(
             completion(&world.drained().await).await,
             Some(("Archived 1 message", true)),
@@ -7478,5 +7465,249 @@ mod tests {
             world.run(Command::Undo).await.expect("undo the create");
             assert_eq!(members("Family").await, None);
         }
+    }
+
+    // ── Mute and split (specs/013-focus-threads US5) ─────────────────────
+
+    /// Files a message the way a sync pass does: stored, then threaded.
+    async fn threaded(
+        world: &World,
+        rfc: &str,
+        references: &[&str],
+        minutes: i64,
+    ) -> (MessageId, postio_model::ThreadId) {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut message = Message::new(
+            world.account.id,
+            world.inbox,
+            Utc::now() + chrono::TimeDelta::minutes(minutes),
+        );
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<{rfc}@example.com>"
+        )));
+        message.references = references
+            .iter()
+            .map(|id| postio_model::RfcMessageId::new(format!("<{id}@example.com>")))
+            .collect();
+        message.in_reply_to = message.references.last().cloned();
+        message.subject = Some("Re: Harbor API".to_owned());
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        let thread =
+            postio_storage::repository::ThreadingRepository::new(&connection, world.account.id)
+                .thread(&message)
+                .await
+                .expect("threaded")
+                .thread_id;
+        (id, thread)
+    }
+
+    async fn muted(world: &World, thread: postio_model::ThreadId) -> bool {
+        let connection = world.database.connect().await.expect("a connection");
+        !ThreadRepository::new(&connection)
+            .muted(&[thread])
+            .await
+            .expect("a read")
+            .is_empty()
+    }
+
+    #[tokio::test]
+    async fn muting_a_thread_is_one_undo_and_says_the_thread_changed() {
+        let world = world().await;
+        let (_, thread) = threaded(&world, "m1", &[], 1).await;
+
+        world
+            .actions
+            .mute_thread(thread, true, &world.sink)
+            .await
+            .expect("mute");
+
+        assert!(muted(&world, thread).await);
+        let events = world.drained().await;
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::ThreadChanged { thread: changed, .. } if *changed == thread
+            )),
+            "an open window re-reads the thread: {events:?}"
+        );
+        assert_eq!(completion(&events).await, Some(("Muted the thread", true)));
+        assert_eq!(
+            world.actions.peek_description().as_deref(),
+            Some("Muted the thread")
+        );
+
+        world.run(Command::Undo).await.expect("undo");
+
+        assert!(!muted(&world, thread).await, "one undo unmutes");
+        assert_eq!(
+            undone(&world.drained().await).as_deref(),
+            Some("Muted the thread, undone")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_bus_answers_mute_and_split() {
+        // A frontend posts `Command::MuteThread` and `SplitThread` as it posts
+        // every verb; a command `WIRED` does not name is "not wired up" to
+        // it, and nothing reaches the undo stack.
+        let world = world().await;
+        let bus = dispatcher(world.actions.clone()).await;
+        let wired: Vec<_> = bus.wired().collect();
+        for id in [CommandId::MuteThread, CommandId::SplitThread] {
+            assert!(wired.contains(&id), "{id} is not on the bus");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_posted_mute_is_one_undo_that_unmutes() {
+        let world = world().await;
+        let (_, thread) = threaded(&world, "m1", &[], 1).await;
+
+        world
+            .run(Command::MuteThread {
+                thread: Some(thread),
+                muted: true,
+            })
+            .await
+            .expect("mute");
+
+        assert!(muted(&world, thread).await);
+        assert_eq!(
+            world.actions.peek_description().as_deref(),
+            Some("Muted the thread"),
+            "the command left an undo behind"
+        );
+        world.run(Command::Undo).await.expect("undo");
+        assert!(!muted(&world, thread).await, "one undo unmutes");
+    }
+
+    #[tokio::test]
+    async fn a_posted_split_is_one_undo_that_rejoins() {
+        let world = world().await;
+        let (m1, original) = threaded(&world, "m1", &[], 1).await;
+        let (m2, _) = threaded(&world, "m2", &["m1"], 2).await;
+
+        world
+            .run(Command::SplitThread {
+                message: Some(m2),
+                rejoin: None,
+            })
+            .await
+            .expect("split");
+
+        let connection = world.database.connect().await.expect("a connection");
+        let members = ThreadRepository::new(&connection)
+            .member_ids(original)
+            .await
+            .expect("members");
+        assert_eq!(members, vec![m1]);
+        assert!(
+            world.actions.peek_description().is_some(),
+            "an undo is waiting"
+        );
+        world.run(Command::Undo).await.expect("one undo");
+        let members = ThreadRepository::new(&connection)
+            .member_ids(original)
+            .await
+            .expect("members");
+        assert_eq!(members, vec![m1, m2]);
+    }
+
+    #[tokio::test]
+    async fn unmuting_is_undone_by_muting_again() {
+        let world = world().await;
+        let (_, thread) = threaded(&world, "m1", &[], 1).await;
+        world
+            .actions
+            .mute_thread(thread, true, &world.sink)
+            .await
+            .expect("mute");
+        world
+            .actions
+            .mute_thread(thread, false, &world.sink)
+            .await
+            .expect("unmute");
+        assert!(!muted(&world, thread).await);
+
+        world.run(Command::Undo).await.expect("undo");
+
+        assert!(muted(&world, thread).await);
+    }
+
+    #[tokio::test]
+    async fn one_undo_of_a_split_rejoins_the_messages_and_a_reply_follows_the_original() {
+        let world = world().await;
+        let (m1, original) = threaded(&world, "m1", &[], 1).await;
+        let (m2, _) = threaded(&world, "m2", &["m1"], 2).await;
+        let (m3, _) = threaded(&world, "m3", &["m1", "m2"], 3).await;
+        let (m4, _) = threaded(&world, "m4", &["m1", "m2", "m3"], 4).await;
+
+        let split = world
+            .actions
+            .split_thread(m3, &world.sink)
+            .await
+            .expect("split");
+
+        assert_ne!(split, original);
+        let events = world.drained().await;
+        let changed: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::ThreadChanged { thread, .. } => Some(*thread),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            changed.contains(&split) && changed.contains(&original),
+            "{changed:?}"
+        );
+        let members = |thread| {
+            let database = world.database.clone();
+            async move {
+                let connection = database.connect().await.expect("a connection");
+                ThreadRepository::new(&connection)
+                    .member_ids(thread)
+                    .await
+                    .expect("members")
+            }
+        };
+        assert_eq!(members(split).await, vec![m3, m4]);
+        assert_eq!(members(original).await, vec![m1, m2]);
+
+        world.run(Command::Undo).await.expect("one undo");
+
+        assert_eq!(
+            members(original).await,
+            vec![m1, m2, m3, m4],
+            "all four are back"
+        );
+        let (_, joined) = threaded(&world, "m5", &["m1", "m2", "m3"], 5).await;
+        assert_eq!(
+            joined, original,
+            "a reply to the split message follows the original"
+        );
+        assert_eq!(
+            world.actions.peek_description(),
+            None,
+            "nothing more to take back"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_first_message_cannot_be_split_off_and_nothing_is_recorded() {
+        let world = world().await;
+        let (m1, _) = threaded(&world, "m1", &[], 1).await;
+        threaded(&world, "m2", &["m1"], 2).await;
+
+        let refused = world.actions.split_thread(m1, &world.sink).await;
+
+        assert!(
+            matches!(refused, Err(CommandError::Rejected(_))),
+            "{refused:?}"
+        );
+        assert_eq!(world.actions.peek_description(), None);
     }
 }

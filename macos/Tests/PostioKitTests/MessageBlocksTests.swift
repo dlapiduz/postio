@@ -21,7 +21,7 @@ import Testing
         let action = FocusRowActionFfi(command: "dismiss_marker", label: "Dismiss")
         let view = FocusMessageViewFfi(
             message: 7, subject: "Harbor API draft v3", position: "Message 1 of 3",
-            thread: nil, earlier: nil, later: nil, labels: [], addLabel: action,
+            labels: [], addLabel: action,
             fields: [
                 FocusFieldFfi(
                     field: "From",

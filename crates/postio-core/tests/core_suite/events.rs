@@ -34,6 +34,7 @@ fn events_cover_the_repaint_surface() {
         Event::ThreadChanged {
             account: AccountId::new(1),
             thread: ThreadId::new(5),
+            members_added: vec![MessageId::new(4)],
         },
         Event::BodyLoaded {
             account: AccountId::new(1),

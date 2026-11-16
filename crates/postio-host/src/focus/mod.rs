@@ -33,6 +33,8 @@ pub(crate) mod digests;
 mod due;
 pub(crate) mod filtered;
 mod model;
+mod mute;
+mod reply_wakes;
 pub(crate) mod rules;
 mod summary;
 mod surfaced;
@@ -122,12 +124,45 @@ impl FocusSetup {
         self
     }
 
+    /// Files `message`, just stored in the inbox and threaded into `thread`,
+    /// with the pass the engines file with: what a demo or a test that stores
+    /// mail itself calls so the arrival takes the path every arrival takes --
+    /// a muted thread's reply is archived, a snoozed one wakes. Answers what
+    /// the pass did.
+    pub async fn file_stored(
+        &self,
+        database: &postio_storage::Store,
+        message: postio_model::MessageId,
+        thread: postio_model::ThreadId,
+    ) -> Result<postio_sync::FilingEffects, postio_sync::SyncError> {
+        let connection = database.connect().await?;
+        let stored = postio_storage::repository::MessageRepository::new(&connection)
+            .get(message)
+            .await?
+            .ok_or(postio_storage::Error::NotFound {
+                entity: "message",
+                id: message.get(),
+            })?;
+        let filed = postio_sync::FiledMessage {
+            message: &stored,
+            thread: Some(thread),
+            role: postio_model::MailboxRole::Inbox,
+        };
+        let pass = self.pass();
+        postio_storage::transaction(&connection, move |scope| async move {
+            pass.file(&scope, &[filed]).await
+        })
+        .await
+    }
+
     /// The pass the engines file with: the one given, or Focus's own as
     /// the config sets it.
     fn pass(&self) -> Arc<dyn FilingPass> {
-        self.filing
+        let own = self
+            .filing
             .clone()
-            .unwrap_or_else(|| Arc::new(FocusFiling::from_config(&self.config)))
+            .unwrap_or_else(|| Arc::new(FocusFiling::from_config(&self.config)));
+        reply_wakes::ReplyWakes::wrapping(own)
     }
 }
 
@@ -300,9 +335,11 @@ impl Host {
             raw,
             Arc::new(move |written: &FocusConfig| {
                 *tasks.write().expect("never poisoned") = written.clone();
-                filing.set(Some(chosen.clone().unwrap_or_else(|| {
-                    Arc::new(FocusFiling::from_config(written)) as Arc<dyn FilingPass>
-                })));
+                filing.set(Some(reply_wakes::ReplyWakes::wrapping(
+                    chosen.clone().unwrap_or_else(|| {
+                        Arc::new(FocusFiling::from_config(written)) as Arc<dyn FilingPass>
+                    }),
+                )));
             }),
         );
         handle

@@ -114,6 +114,43 @@ pub enum Req {
     Body(MessageId),
     /// A conversation's messages, oldest first, as list rows.
     Conversation(postio_model::ThreadId),
+    /// A thread's members with their lines, its unsent reply and its labels
+    /// (spec 013).
+    Thread(postio_model::ThreadId),
+    /// Stop a thread's new replies reaching the inbox (spec 013 FR-012).
+    /// Undoable.
+    Mute(postio_model::ThreadId),
+    /// Let a muted thread's replies reach the inbox again. Undoable.
+    Unmute(postio_model::ThreadId),
+    /// Take a message, and every message that replies to it, out of its
+    /// thread into one of their own (spec 013 FR-007). Undoable by one undo.
+    Split(MessageId),
+    /// Which of these threads are muted, and the replies filed away since:
+    /// one statement for a page.
+    MutedOf(Vec<postio_model::ThreadId>),
+    /// A new forward of a thread (spec 013 FR-023): of its latest message
+    /// for `This`, of every message for `Thread`, each as an `.eml` for
+    /// `Attachments`. Reads the local store only.
+    ForwardThread {
+        /// The thread.
+        thread: postio_model::ThreadId,
+        /// What to carry.
+        form: postio_model::ForwardForm,
+    },
+    /// The forward in `draft` changed to carry `form`, its typed text kept.
+    SetForwardForm {
+        /// The draft as it stands.
+        draft: Box<Draft>,
+        /// What to carry now.
+        form: postio_model::ForwardForm,
+    },
+    /// The reply in `draft` changed to answer the thread's latest received
+    /// message: the quote and `In-Reply-To` move, the typed text stays
+    /// (spec 013 FR-022).
+    ReplyToLatest {
+        /// The draft as it stands.
+        draft: Box<Draft>,
+    },
     /// Leave the list this message came from: record the activation, and
     /// answer the list's name. Only ever on a person's deliberate act.
     Unsubscribe(MessageId),
@@ -323,6 +360,9 @@ pub enum Req {
     ReplySource(MessageId),
     /// The local draft behind a Drafts row, if there is one.
     DraftBehind(MessageId),
+    /// The local draft with this id, if there is one: a thread's unsent
+    /// reply, which has no message of its own to name.
+    DraftById(DraftId),
     /// Take a queued draft back to edit it, if it has not started sending.
     CancelSend(DraftId),
     /// Why a draft's last send attempt gave up.
@@ -823,6 +863,15 @@ pub enum Resp {
     Count(u32),
     /// Rows.
     Rows(Vec<MessageSummary>),
+    /// A thread as a window or an expansion reads it, or none when it is
+    /// gone.
+    Thread(Option<Box<postio_model::ThreadView>>),
+    /// The thread a split made.
+    Split(postio_model::ThreadId),
+    /// A forward built, or why it was refused.
+    Forwarded(postio_model::Forwarded),
+    /// The muted threads of a page, each with its replies since.
+    Muted(Vec<(postio_model::ThreadId, u32)>),
     /// Rows, in the scope's shape.
     ListRows(ListRows),
     /// Folders.

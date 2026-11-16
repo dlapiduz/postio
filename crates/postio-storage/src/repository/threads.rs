@@ -26,8 +26,11 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use postio_model::listing::{MarkerSummary, MarkerWhen};
+use postio_model::mime::preview;
+use postio_model::thread_view::before_attribution;
 use postio_model::{
-    AccountId, EmailAddress, LabelId, MailboxId, MessageId, Thread, ThreadId, normalize_subject,
+    AccountId, DraftId, EmailAddress, LabelId, Line, MailboxId, MessageId, RfcMessageId, Thread,
+    ThreadDraft, ThreadId, ThreadMember, ThreadNode, descendants, normalize_subject,
 };
 
 use super::messages::{
@@ -273,6 +276,10 @@ pub struct ThreadListRow {
     /// list the classic app and the terminal read leaves it `None` and
     /// reads nothing to find that out.
     pub marker: Option<MarkerSummary>,
+    /// Replies filed away since the person muted the conversation, when
+    /// they have (spec 013 FR-012). Read by Focus's pages only, in one
+    /// statement for the page ([`ThreadRepository::muted`]).
+    pub muted: Option<u32>,
 }
 
 impl ThreadListRow {
@@ -482,6 +489,7 @@ fn read_focus_row(row: &Row) -> Result<(AccountId, ThreadListRow)> {
             latest: Some(read_list_row_at(row, FOCUS_REPRESENTATIVE)?),
             sort_id: row.col(9)?,
             marker: None,
+            muted: None,
         },
     ))
 }
@@ -746,7 +754,10 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// A thread's messages as list rows, in either direction.
+    /// A thread's messages as list rows, in either direction. A draft of
+    /// the thread is not one of them: this is what a verb on the thread
+    /// acts on, and archiving a conversation leaves its unsent reply in
+    /// Drafts (spec 013, edge cases).
     pub async fn messages(&self, id: ThreadId, order: ThreadOrder) -> Result<Vec<MessageListRow>> {
         sql::all(
             self.connection,
@@ -781,7 +792,7 @@ impl<'a> ThreadRepository<'a> {
         };
         format!(
             "SELECT {LIST_COLUMNS} FROM messages
-              WHERE messages.thread_id = ?1 AND messages.{MEMBER}
+              WHERE messages.thread_id = ?1 AND messages.{MEMBER} AND messages.draft = 0
               ORDER BY messages.received_at {direction}, messages.id {direction}"
         )
     }
@@ -1604,7 +1615,32 @@ impl<'a> ThreadRepository<'a> {
             }
         }
         self.mark(&query.inboxes, &mut groups).await?;
+        self.mute_marks(&mut groups).await?;
         Ok(groups)
+    }
+
+    /// Gives each row of a Focus page its mute, in one statement for the
+    /// page ([`Self::muted`]) and none when the page has no conversation. A
+    /// folded row is muted when any copy of it is.
+    async fn mute_marks(&self, groups: &mut [ThreadGroup]) -> Result<()> {
+        let mut threads: Vec<ThreadId> = groups
+            .iter()
+            .flat_map(|group| group.members.iter().map(|(_, thread)| *thread))
+            .collect();
+        threads.sort_unstable();
+        threads.dedup();
+        let muted = self.muted(&threads).await?;
+        if muted.is_empty() {
+            return Ok(());
+        }
+        for ThreadGroup { row, members } in groups {
+            let replies: Vec<u32> = members
+                .iter()
+                .filter_map(|(_, thread)| muted.get(thread).copied())
+                .collect();
+            row.muted = (!replies.is_empty()).then(|| replies.iter().sum());
+        }
+        Ok(())
     }
 
     /// Gives each row of a Focus page its marker, in one statement for the
@@ -2334,6 +2370,7 @@ impl<'a> ThreadRepository<'a> {
                     latest: None,
                     sort_id: if scoped { row.col(9)? } else { thread },
                     marker: None,
+                    muted: None,
                 },
                 // The representative's id, which the folder window already
                 // knows and the account window has to look up.
@@ -2581,6 +2618,462 @@ impl<'a> ThreadRepository<'a> {
             |row| Ok(MessageId::new(row.col(0)?)),
         )
         .await
+    }
+
+    /// The members of a thread as a child row draws them, oldest first
+    /// (spec 013 R6): one statement, a seek on `idx_messages_thread` and a
+    /// primary-key seek per member for what a row needs, whatever the
+    /// thread's length.
+    ///
+    /// `line` is the sender's own words when the body stage has cut them,
+    /// [`Line::Quoted`] when they are empty, and the stored preview, cut where
+    /// an attribution begins, while no body is here. `answers` is resolved
+    /// here over the members' own `Message-ID`s, folded as
+    /// [`RfcMessageId::folded`] folds them, and is set only for a parent that
+    /// is not the member just before.
+    pub async fn members(&self, id: ThreadId) -> Result<Vec<ThreadMember>> {
+        let rows = sql::all(
+            self.connection,
+            &Self::explain_members(),
+            [id.get()],
+            |row| {
+                let listed = read_list_row(row)?;
+                let own_line: Option<String> = row.col(17)?;
+                let rfc: Option<String> = row.col(18)?;
+                let parent: Option<String> = row.col(19)?;
+                let line = match own_line {
+                    Some(line) if line.is_empty() => Line::Quoted,
+                    Some(line) => Line::Own(line),
+                    None => Line::Preview(
+                        before_attribution(listed.preview.as_deref().unwrap_or("")).to_owned(),
+                    ),
+                };
+                let member = ThreadMember {
+                    id: listed.id,
+                    from: listed.from,
+                    own: row.col(21)?,
+                    at: listed.received_at,
+                    seen: listed.seen,
+                    has_attachments: listed.has_attachments,
+                    line,
+                    answers: None,
+                    marker: row.col(20)?,
+                };
+                Ok((member, rfc, parent))
+            },
+        )
+        .await?;
+        let mut at: HashMap<String, usize> = HashMap::with_capacity(rows.len());
+        for (index, (_, rfc, _)) in rows.iter().enumerate() {
+            if let Some(rfc) = rfc {
+                at.entry(RfcMessageId::new(rfc).folded()).or_insert(index);
+            }
+        }
+        let parents: Vec<Option<usize>> = rows
+            .iter()
+            .map(|(_, _, parent)| {
+                parent
+                    .as_ref()
+                    .and_then(|parent| at.get(&RfcMessageId::new(parent).folded()).copied())
+            })
+            .collect();
+        Ok(rows
+            .into_iter()
+            .zip(parents)
+            .enumerate()
+            .map(|(index, ((mut member, _, _), parent))| {
+                member.answers = parent
+                    .filter(|&parent| parent != index && parent + 1 != index)
+                    .and_then(|parent| u32::try_from(parent).ok());
+                member
+            })
+            .collect())
+    }
+
+    /// The SQL [`Self::members`] runs.
+    pub fn explain_members() -> String {
+        format!(
+            "SELECT {LIST_COLUMNS}, messages.own_line, messages.rfc_message_id, messages.in_reply_to,
+                EXISTS (SELECT 1 FROM markers k
+                         WHERE k.message_id = messages.id AND k.dismissed_at IS NULL),
+                EXISTS (SELECT 1 FROM recipients r JOIN addresses a ON a.id = r.address_id
+                         WHERE r.message_id = messages.id AND r.kind = 'from'
+                           AND (a.address_normalized IN
+                                  (SELECT lower(i.address) FROM identities i
+                                    WHERE i.account_id = messages.account_id)
+                                OR a.address_normalized =
+                                  (SELECT lower(c.address) FROM accounts c
+                                    WHERE c.id = messages.account_id)))
+               FROM messages
+              WHERE messages.thread_id = ?1 AND messages.{MEMBER} AND messages.draft = 0
+              ORDER BY messages.received_at, messages.id"
+        )
+    }
+
+    /// The account thread `id` belongs to, or `None` when it is gone. One
+    /// rowid seek.
+    pub async fn account_of(&self, id: ThreadId) -> Result<Option<AccountId>> {
+        sql::first(
+            self.connection,
+            "SELECT account_id FROM threads WHERE id = ?1",
+            [id.get()],
+            |row| Ok(AccountId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// The thread message `id` is in, if it is in one. One rowid seek.
+    pub async fn thread_id_of(&self, id: MessageId) -> Result<Option<ThreadId>> {
+        thread_of(self.connection, id).await
+    }
+
+    /// The claim a mute or a split of thread `id` is keyed by, folded, with
+    /// the thread's account: its oldest message's `Message-ID` (the root, as
+    /// research R3 has it), or any claim of the thread when no message
+    /// carries one. `None` when the thread has nothing to be keyed by.
+    async fn root_claim(&self, id: ThreadId) -> Result<Option<(AccountId, String)>> {
+        let Some(account) = sql::first(
+            self.connection,
+            "SELECT account_id FROM threads WHERE id = ?1",
+            [id.get()],
+            |row| Ok(AccountId::new(row.col(0)?)),
+        )
+        .await?
+        else {
+            return Err(Error::NotFound {
+                entity: "thread",
+                id: id.get(),
+            });
+        };
+        // The claim must be one the thread holds, or `muted` would never find
+        // it: the oldest message's id, when the thread claims it.
+        let claim = sql::first(
+            self.connection,
+            "SELECT l.rfc_message_id FROM messages m
+               JOIN thread_links l ON l.account_id = m.account_id
+                                  AND l.rfc_message_id = lower(trim(m.rfc_message_id))
+              WHERE m.thread_id = ?1 AND l.thread_id = ?1
+              ORDER BY m.received_at, m.id LIMIT 1",
+            [id.get()],
+            |row| row.col::<String>(0),
+        )
+        .await?;
+        let claim = match claim {
+            Some(claim) => Some(claim),
+            None => {
+                sql::first(
+                    self.connection,
+                    "SELECT rfc_message_id FROM thread_links WHERE thread_id = ?1
+                      ORDER BY rfc_message_id LIMIT 1",
+                    [id.get()],
+                    |row| row.col::<String>(0),
+                )
+                .await?
+            }
+        };
+        Ok(claim.map(|claim| (account, claim)))
+    }
+
+    /// Mutes thread `id` (spec 013 FR-012): its new replies are archived on
+    /// arrival from now on. Muting a muted thread changes nothing.
+    ///
+    /// Written against a `Message-ID` the thread claims, not against the
+    /// thread, so the mute survives a merge and a renumbering (research R3).
+    pub async fn mute(&self, id: ThreadId) -> Result<()> {
+        if !self.muted(&[id]).await?.is_empty() {
+            return Ok(());
+        }
+        let Some((account, claim)) = self.root_claim(id).await? else {
+            return Err(Error::ForbiddenTransition {
+                what: "mute",
+                reason: "the thread claims no Message-ID to remember the mute by".to_owned(),
+            });
+        };
+        sql::execute(
+            self.connection,
+            "INSERT OR REPLACE INTO thread_mutes (account_id, rfc_message_id, muted_at, replies_since)
+             VALUES (?1, ?2, ?3, 0)",
+            bind![account.get(), claim, to_millis(Utc::now())],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Unmutes thread `id`: every mute any of its claims holds is forgotten.
+    pub async fn unmute(&self, id: ThreadId) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "DELETE FROM thread_mutes
+              WHERE account_id = (SELECT account_id FROM threads WHERE id = ?1)
+                AND rfc_message_id IN
+                    (SELECT rfc_message_id FROM thread_links WHERE thread_id = ?1)",
+            [id.get()],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Which of `ids` are muted, with the replies filed away since (spec 013
+    /// FR-012): one statement for the page, none for an empty one.
+    ///
+    /// Driven from `thread_mutes`, a table of the few threads a person has
+    /// muted, into `thread_links` by its unique key: the rows it reads are
+    /// the mutes, however long the page's threads are. A thread holding two
+    /// mutes (two muted halves that merged) answers their sum.
+    pub async fn muted(&self, ids: &[ThreadId]) -> Result<HashMap<ThreadId, u32>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let found = sql::all(
+            self.connection,
+            &Self::explain_muted(ids.len()),
+            ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
+            |row| Ok((ThreadId::new(row.col(0)?), row.col::<u32>(1)?)),
+        )
+        .await?;
+        let mut muted = HashMap::with_capacity(found.len());
+        for (thread, replies) in found {
+            *muted.entry(thread).or_insert(0) += replies;
+        }
+        Ok(muted)
+    }
+
+    /// The SQL [`Self::muted`] runs for a page of `threads`.
+    pub fn explain_muted(threads: usize) -> String {
+        format!(
+            "SELECT l.thread_id, m.replies_since
+               FROM thread_mutes m
+               CROSS JOIN thread_links l
+                 ON l.account_id = m.account_id AND l.rfc_message_id = m.rfc_message_id
+              WHERE l.thread_id IN ({})",
+            placeholders(threads, 1)
+        )
+    }
+
+    /// Adds `replies` to the count of replies filed away in muted thread
+    /// `id`: what the row says beside "muted". Nothing when it is not muted.
+    pub async fn note_muted_replies(&self, id: ThreadId, replies: u32) -> Result<()> {
+        let key = sql::first(
+            self.connection,
+            "SELECT m.account_id, m.rfc_message_id
+               FROM thread_mutes m
+               CROSS JOIN thread_links l
+                 ON l.account_id = m.account_id AND l.rfc_message_id = m.rfc_message_id
+              WHERE l.thread_id = ?1 LIMIT 1",
+            [id.get()],
+            |row| Ok((row.col::<i64>(0)?, row.col::<String>(1)?)),
+        )
+        .await?;
+        if let Some((account, claim)) = key {
+            sql::execute(
+                self.connection,
+                "UPDATE thread_mutes SET replies_since = replies_since + ?3
+                  WHERE account_id = ?1 AND rfc_message_id = ?2",
+                bind![account, claim, replies],
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Takes message `message` and every message that replies to it,
+    /// directly or not, out of its thread into a new one of their own, and
+    /// remembers it (spec 013 FR-007): a later message naming one of them
+    /// joins the new thread, and nothing merges them back.
+    ///
+    /// One transaction: the new thread, the messages moved, the claims of
+    /// their own `Message-ID`s relinked, both threads' aggregates recomputed,
+    /// and the `thread_splits` row. The thread's members are read once (their
+    /// ids and references, no bodies); nothing else of the mailbox is.
+    ///
+    /// Refused when `message` has no `Message-ID` to be remembered by, and
+    /// when everything in the thread answers it (the first message: nothing
+    /// would stay).
+    pub async fn split(&self, message: MessageId) -> Result<ThreadId> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let Some((original, account, own)) = sql::first(
+                &transaction,
+                "SELECT thread_id, account_id, rfc_message_id FROM messages WHERE id = ?1",
+                [message.get()],
+                |row| {
+                    Ok((
+                        row.col::<Option<i64>>(0)?.map(ThreadId::new),
+                        AccountId::new(row.col(1)?),
+                        row.col::<Option<String>>(2)?,
+                    ))
+                },
+            )
+            .await?
+            else {
+                return Err(Error::NotFound {
+                    entity: "message",
+                    id: message.get(),
+                });
+            };
+            let (Some(original), Some(own)) = (original, own) else {
+                return Err(Error::ForbiddenTransition {
+                    what: "split",
+                    reason: "the message has no thread, or no Message-ID to remember a split by"
+                        .to_owned(),
+                });
+            };
+            let nodes = sql::all(
+                &transaction,
+                "SELECT id, rfc_message_id, in_reply_to, reference_ids FROM messages
+                  WHERE thread_id = ?1 AND draft = 0 ORDER BY received_at, id",
+                [original.get()],
+                |row| {
+                    let id: Option<String> = row.col(1)?;
+                    let in_reply_to: Option<String> = row.col(2)?;
+                    let references: String = row.col(3)?;
+                    let mut named: Vec<RfcMessageId> = references
+                        .split_whitespace()
+                        .map(RfcMessageId::new)
+                        .collect();
+                    named.extend(in_reply_to.map(RfcMessageId::new));
+                    Ok(ThreadNode {
+                        id: MessageId::new(row.col(0)?),
+                        message_id: id.map(RfcMessageId::new),
+                        references: named,
+                    })
+                },
+            )
+            .await?;
+            let moved = descendants(&nodes, message);
+            if moved.len() == nodes.len() {
+                return Err(Error::ForbiddenTransition {
+                    what: "split",
+                    reason: "every message of the thread answers it, so none would stay".to_owned(),
+                });
+            }
+
+            let mut thread = Thread::new(account);
+            let threads = ThreadRepository::new(&transaction);
+            thread.subject = threads.subject(original).await?.flatten();
+            let split = threads.create(&mut thread).await?;
+
+            let ids: Vec<i64> = moved.iter().map(|id| id.get()).collect();
+            let mut parameters = vec![turso::Value::from(split.get())];
+            parameters.extend(ids.iter().map(|id| turso::Value::from(*id)));
+            sql::execute(
+                &transaction,
+                &format!(
+                    "UPDATE messages SET thread_id = ?1 WHERE id IN ({})",
+                    placeholders(ids.len(), 2)
+                ),
+                parameters,
+            )
+            .await?;
+
+            // Their own ids move with them; the ids they merely name stay
+            // with the thread they answer.
+            let claims: Vec<String> = nodes
+                .iter()
+                .filter(|node| moved.contains(&node.id))
+                .filter_map(|node| node.message_id.as_ref().map(RfcMessageId::folded))
+                .collect();
+            let mut parameters = vec![
+                turso::Value::from(split.get()),
+                turso::Value::from(account.get()),
+                turso::Value::from(original.get()),
+            ];
+            parameters.extend(claims.iter().cloned().map(turso::Value::from));
+            sql::execute(
+                &transaction,
+                &format!(
+                    "UPDATE thread_links SET thread_id = ?1
+                      WHERE account_id = ?2 AND thread_id = ?3 AND rfc_message_id IN ({})",
+                    placeholders(claims.len(), 4)
+                ),
+                parameters,
+            )
+            .await?;
+            sql::execute(
+                &transaction,
+                "INSERT OR REPLACE INTO thread_splits (account_id, rfc_message_id, split_at)
+                 VALUES (?1, ?2, ?3)",
+                bind![
+                    account.get(),
+                    RfcMessageId::new(&own).folded(),
+                    to_millis(Utc::now())
+                ],
+            )
+            .await?;
+
+            recompute_in(&transaction, split).await?;
+            recompute_in(&transaction, original).await?;
+            Ok(split)
+        })
+        .await
+    }
+
+    /// Takes a split back: thread `split` is folded into `into`, the thread
+    /// it came out of, and the record of the split is forgotten, so a later
+    /// reply to the message joins `into` again. What `z` does after a split.
+    pub async fn unsplit(&self, split: ThreadId, into: ThreadId) -> Result<()> {
+        if split == into {
+            return Ok(());
+        }
+        sql::in_scope(self.connection, |transaction| async move {
+            sql::execute(
+                &transaction,
+                "DELETE FROM thread_splits
+                  WHERE account_id = (SELECT account_id FROM threads WHERE id = ?1)
+                    AND rfc_message_id IN
+                        (SELECT rfc_message_id FROM thread_links WHERE thread_id = ?1)",
+                [split.get()],
+            )
+            .await?;
+            // Relink before the merge deletes the thread, as threading does.
+            sql::execute(
+                &transaction,
+                "UPDATE OR REPLACE thread_links SET thread_id = ?2 WHERE thread_id = ?1",
+                bind![split.get(), into.get()],
+            )
+            .await?;
+            ThreadRepository::new(&transaction).merge(into, split).await
+        })
+        .await
+    }
+
+    /// Thread `id`'s subject: `None` when there is no such thread, and
+    /// `Some(None)` when it has no subject. One statement, a rowid seek, with
+    /// none of [`Self::get`]'s reads of the members.
+    pub async fn subject(&self, id: ThreadId) -> Result<Option<Option<String>>> {
+        sql::first(
+            self.connection,
+            "SELECT subject FROM threads WHERE id = ?1",
+            [id.get()],
+            |row| row.col(0),
+        )
+        .await
+    }
+
+    /// The unsent reply in thread `id`, found by `drafts.thread_id`: its
+    /// newest, when it has more than one. One statement, a seek on
+    /// `idx_drafts_thread`.
+    pub async fn draft(&self, id: ThreadId) -> Result<Option<ThreadDraft>> {
+        sql::first(self.connection, Self::explain_draft(), [id.get()], |row| {
+            let text: Option<String> = row.col(1)?;
+            let html: Option<String> = row.col(2)?;
+            let words = text
+                .filter(|text| !text.trim().is_empty())
+                .or(html)
+                .unwrap_or_default();
+            Ok(ThreadDraft {
+                id: DraftId::new(row.col(0)?),
+                first_words: preview(&words).unwrap_or_default(),
+                updated_at: from_millis(row.col(3)?),
+            })
+        })
+        .await
+    }
+
+    /// The SQL [`Self::draft`] runs.
+    pub fn explain_draft() -> &'static str {
+        "SELECT id, body_text, body_html, updated_at FROM drafts
+          WHERE thread_id = ?1 AND state <> 'sent'
+          ORDER BY updated_at DESC, id DESC LIMIT 1"
     }
 
     /// Everyone who has written in each of `ids`, in first-seen order.

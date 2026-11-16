@@ -63,6 +63,8 @@ fn where_available(contexts: ContextSet) -> String {
             Context::Results => "search results",
             Context::Contacts => "contacts",
             Context::ContactPopover => "contact popover",
+            Context::Outline => "thread outline",
+            Context::ForwardChooser => "forward chooser",
         })
         .collect();
     let mut sentence = names.join(", ");

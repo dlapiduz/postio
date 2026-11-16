@@ -1078,3 +1078,194 @@ fn attendee_among<'a>(
             .map(|identity| (identity, attendee.address.clone()))
     })
 }
+
+// -- Mute and split (specs/013-focus-threads US5) -----------------------------
+
+impl Actions {
+    /// Mutes or unmutes `thread` as a person's act: written, announced, and
+    /// on the undo stack with the other direction as its way back.
+    pub async fn mute_thread(
+        &self,
+        thread: ThreadId,
+        muted: bool,
+        events: &postio_core::bridge::EventSink,
+    ) -> Result<(), CommandError> {
+        let applied = self.mute(thread, muted, events).await?;
+        self.announce(applied, events, super::Recording::Record)
+            .await;
+        Ok(())
+    }
+
+    /// Splits `message`, and the replies to it, off into a thread of their
+    /// own as a person's act, and answers the new thread. One undo folds it
+    /// back (`Command::SplitThread { rejoin }`).
+    pub async fn split_thread(
+        &self,
+        message: MessageId,
+        events: &postio_core::bridge::EventSink,
+    ) -> Result<ThreadId, CommandError> {
+        let (applied, split) = self.split(message, events).await?;
+        self.announce(applied, events, super::Recording::Record)
+            .await;
+        Ok(split)
+    }
+
+    pub(super) async fn mute(
+        &self,
+        thread: ThreadId,
+        muted: bool,
+        events: &postio_core::bridge::EventSink,
+    ) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let threads = ThreadRepository::new(&connection);
+        let account = threads
+            .account_of(thread)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That conversation is gone"))?;
+        let done = if muted {
+            threads.mute(thread).await
+        } else {
+            threads.unmute(thread).await
+        };
+        done.map_err(|error| match error {
+            postio_storage::Error::ForbiddenTransition { .. } => {
+                CommandError::rejected("That conversation has no message id to remember a mute by")
+            }
+            other => store_failure(other),
+        })?;
+        drop(connection);
+        events.emit(postio_core::Event::ThreadChanged {
+            account,
+            thread,
+            members_added: Vec::new(),
+        });
+        tracing::debug!(thread = thread.get(), muted, "a thread's mute changed");
+        Ok(thread_applied(
+            if muted {
+                UndoKind::Mute
+            } else {
+                UndoKind::Unmute
+            },
+            account,
+            Vec::new(),
+            vec![Command::MuteThread {
+                thread: Some(thread),
+                muted: !muted,
+            }],
+        ))
+    }
+
+    pub(super) async fn split(
+        &self,
+        message: MessageId,
+        events: &postio_core::bridge::EventSink,
+    ) -> Result<(Applied, ThreadId), CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let threads = ThreadRepository::new(&connection);
+        let original = threads
+            .thread_id_of(message)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That message is not in a conversation yet"))?;
+        let account = threads
+            .account_of(original)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That conversation is gone"))?;
+        let split = threads.split(message).await.map_err(|error| match error {
+            postio_storage::Error::ForbiddenTransition { reason, .. } => {
+                CommandError::rejected(format!("That message cannot be split off: {reason}"))
+            }
+            other => store_failure(other),
+        })?;
+        drop(connection);
+        for thread in [original, split] {
+            events.emit(postio_core::Event::ThreadChanged {
+                account,
+                thread,
+                members_added: Vec::new(),
+            });
+        }
+        tracing::debug!(
+            split_from = original.get(),
+            thread = split.get(),
+            "a message was split into a thread of its own"
+        );
+        Ok((
+            thread_applied(
+                UndoKind::Split,
+                account,
+                vec![message],
+                vec![Command::SplitThread {
+                    message: None,
+                    rejoin: Some((split, original)),
+                }],
+            ),
+            split,
+        ))
+    }
+
+    /// Undo's half of a split: fold `split` back into `original`.
+    pub(super) async fn unsplit(
+        &self,
+        split: ThreadId,
+        original: ThreadId,
+        events: &postio_core::bridge::EventSink,
+    ) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let threads = ThreadRepository::new(&connection);
+        let account = threads
+            .account_of(original)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That conversation is gone"))?;
+        // The messages the split thread holds now, replies that arrived
+        // since included: they are what rejoins, and what is asked of again
+        // if the undo is itself undone.
+        let moved = threads.member_ids(split).await.map_err(store_failure)?;
+        threads
+            .unsplit(split, original)
+            .await
+            .map_err(store_failure)?;
+        drop(connection);
+        events.emit(postio_core::Event::ThreadChanged {
+            account,
+            thread: original,
+            members_added: Vec::new(),
+        });
+        // Not re-splittable by undo of undo: the split thread no longer
+        // exists, so the entry has no way back.
+        Ok(thread_applied(
+            UndoKind::Unsplit,
+            account,
+            moved,
+            Vec::new(),
+        ))
+    }
+}
+
+/// A verb that changed a thread and nothing a list repaints by message.
+fn thread_applied(
+    kind: UndoKind,
+    account: AccountId,
+    messages: Vec<MessageId>,
+    inverse: Vec<Command>,
+) -> Applied {
+    Applied {
+        kind,
+        account,
+        count: messages.len(),
+        messages,
+        rows: None,
+        removed: Vec::new(),
+        arrived: None,
+        reloaded: Vec::new(),
+        changed: Vec::new(),
+        mailboxes_changed: false,
+        contacts_changed: None,
+        inverse,
+        lasts: None,
+        surfaced: false,
+    }
+}

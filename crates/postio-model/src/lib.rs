@@ -80,6 +80,7 @@ pub mod sync;
 #[cfg(feature = "test-corpus")]
 pub mod test_corpus;
 pub mod thread;
+pub mod thread_view;
 pub mod threading;
 pub mod unsubscribe;
 
@@ -127,5 +128,8 @@ pub use subject::{is_reply, normalize_subject};
 pub use sweep::{ChangeFeed, FlagPass, SweepPolicy};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
 pub use thread::Thread;
-pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};
+pub use thread_view::{ForwardForm, Forwarded, Line, ThreadDraft, ThreadMember, ThreadView};
+pub use threading::{
+    Assignment, ThreadCue, ThreadIndex, ThreadNode, assign, claimed_ids, descendants,
+};
 pub use unsubscribe::UnsubscribeActivation;

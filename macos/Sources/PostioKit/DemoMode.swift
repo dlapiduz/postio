@@ -92,7 +92,7 @@ public enum DemoMode {
     /// The glyphs a replay may name a key by.
     static let namedKeys = [
         "⏎": "return", "↩": "return", "⎋": "escape", "⇥": "tab", "⌫": "backspace",
-        "↓": "down", "↑": "up",
+        "↓": "down", "↑": "up", "→": "right", "←": "left",
     ]
 
     /// Where to draw the main window once the demo's keys are pressed, from

@@ -1963,6 +1963,192 @@ pub fn plain_hints(keymap: &Keymap) -> Vec<Hint> {
     hints
 }
 
+// ---------------------------------------------------------------------------
+// Search answers in threads (spec 013 US6, research R11)
+// ---------------------------------------------------------------------------
+
+/// One line under an expanded result: a message that matched, or the run of
+/// messages between matches that did not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResultChild {
+    /// A message that matched.
+    Match {
+        /// The message.
+        message: postio_model::MessageId,
+        /// Its place in the thread, from 1.
+        number: u32,
+        /// "message 5", "message 5 \u{b7} file": which message and where.
+        tag: String,
+        /// The words around the match; one that names the file for a match
+        /// in an attachment. `None` while no passage is cut.
+        passage: Option<postio_search::results::Passage>,
+        /// Who wrote it, as a thread's child row says it: "Tom\u{e1}s Reyes",
+        /// "You".
+        sender: String,
+        /// The avatar's letters.
+        initials: String,
+        /// When, as every row says it.
+        time: String,
+    },
+    /// Messages `from..=to` (from 1) that did not match.
+    Gap {
+        /// The first message of the run.
+        from: u32,
+        /// The last.
+        to: u32,
+        /// Who wrote them, first names: "Ben".
+        senders: String,
+        /// The first one's day: "Thu".
+        day: String,
+    },
+}
+
+/// The children of an expanded result: the messages of `view` that
+/// `matches` name, oldest first, with one [`ResultChild::Gap`] for each run
+/// of messages between two of them that did not match. `now` is what the
+/// times are said against.
+pub fn children(
+    view: &postio_model::ThreadView,
+    matches: &[postio_search::results::ConversationMatch],
+    now: DateTime<chrono::Local>,
+) -> Vec<ResultChild> {
+    use chrono::Local;
+    // The first match of each message names it: a subject match is the
+    // thread's, and a message the view does not hold is not shown.
+    let mut found: Vec<(usize, &postio_search::results::ConversationMatch)> = Vec::new();
+    for each in matches {
+        let Some(message) = each.message else {
+            continue;
+        };
+        let Some(at) = view.members.iter().position(|member| member.id == message) else {
+            continue;
+        };
+        if !found.iter().any(|(seen, _)| *seen == at) {
+            found.push((at, each));
+        }
+    }
+    found.sort_by_key(|(at, _)| *at);
+    let mut out = Vec::new();
+    let mut previous: Option<usize> = None;
+    for (at, each) in found {
+        if let Some(before) = previous
+            && at > before + 1
+        {
+            let run = &view.members[before + 1..at];
+            let mut senders: Vec<String> = Vec::new();
+            for member in run {
+                let who = match (&member.from, member.own) {
+                    (_, true) => "You".to_owned(),
+                    (Some(from), false) => crate::focus_row::first_name(from).to_owned(),
+                    (None, false) => "?".to_owned(),
+                };
+                if !senders.contains(&who) {
+                    senders.push(who);
+                }
+            }
+            out.push(ResultChild::Gap {
+                from: (before + 2) as u32,
+                to: at as u32,
+                senders: senders.join(", "),
+                day: run[0].at.with_timezone(&Local).format("%a").to_string(),
+            });
+        }
+        previous = Some(at);
+        let member = &view.members[at];
+        out.push(ResultChild::Match {
+            message: member.id,
+            number: (at + 1) as u32,
+            tag: match_tag(at + 1, &each.found.source),
+            passage: child_passage(&each.found),
+            sender: match (&member.from, member.own) {
+                (_, true) => "You".to_owned(),
+                (Some(from), false) => from.display().to_owned(),
+                (None, false) => "Unknown sender".to_owned(),
+            },
+            initials: crate::row::initials(member.from.as_ref()),
+            time: crate::row::timestamp(member.at, now),
+        });
+    }
+    out
+}
+
+/// "message 5", or "message 5 \u{b7} file" for a match in an attachment.
+fn match_tag(number: usize, source: &Source) -> String {
+    match source {
+        Source::FileName { .. } | Source::FileContent { .. } => {
+            format!("message {number} \u{b7} file")
+        }
+        Source::Quoted => format!("message {number} \u{b7} quoted"),
+        Source::Subject | Source::Body => format!("message {number}"),
+    }
+}
+
+/// The match's passage; for a file's content, led by the file's name and
+/// where in it, with the marks moved to follow the words.
+fn child_passage(found: &postio_search::results::Match) -> Option<postio_search::results::Passage> {
+    let Source::FileContent {
+        name, location: at, ..
+    } = &found.source
+    else {
+        // A file's name is its own passage, and the rest say their words.
+        return found.passage.clone().or_else(|| match &found.source {
+            Source::FileName { name, .. } => Some(postio_search::results::Passage {
+                text: name.clone(),
+                ranges: Vec::new(),
+                elided_start: false,
+                elided_end: false,
+            }),
+            _ => None,
+        });
+    };
+    let lead = format!("{name} \u{b7} {}: ", location(at));
+    let cut = found.passage.clone()?;
+    let shift = lead.len();
+    Some(postio_search::results::Passage {
+        text: format!("{lead}{}", cut.text),
+        ranges: cut
+            .ranges
+            .iter()
+            .map(|range| range.start + shift..range.end + shift)
+            .collect(),
+        elided_start: false,
+        elided_end: cut.elided_end,
+    })
+}
+
+/// What a gap says: "Message 4 doesn't match \u{b7} Ben, Thu".
+pub fn gap_line(child: &ResultChild) -> String {
+    let ResultChild::Gap {
+        from,
+        to,
+        senders,
+        day,
+    } = child
+    else {
+        return String::new();
+    };
+    if from == to {
+        format!("Message {from} doesn't match \u{b7} {senders}, {day}")
+    } else {
+        format!("Messages {from}\u{2013}{to} don't match \u{b7} {senders}, {day}")
+    }
+}
+
+/// The line in place of a multi-match result's snippet: "3 of 6 messages
+/// match".
+pub fn match_summary(matched: usize, total: usize) -> String {
+    format!("{matched} of {total} messages match")
+}
+
+/// A single-match thread's snippet: "Message 5 of 8 \u{b7} Tom\u{e1}s: the words",
+/// or "Message 5 of 8 \u{b7} Tom\u{e1}s" while the words are not cut yet.
+pub fn single_match_snippet(number: usize, total: usize, who: &str, words: &str) -> String {
+    if words.trim().is_empty() {
+        return format!("Message {number} of {total} \u{b7} {who}");
+    }
+    format!("Message {number} of {total} \u{b7} {who}: {words}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3351,5 +3537,215 @@ mod tests {
                 "cmd+Return all results"
             ]
         );
+    }
+
+    // -- Search answers in threads (spec 013 US6) --
+
+    mod in_threads {
+        use super::super::*;
+        use chrono::TimeZone;
+        use postio_model::thread_view::{Line, ThreadMember, ThreadView};
+        use postio_model::{EmailAddress, MessageId, ThreadId};
+        use postio_search::results::{ConversationMatch, Match, Passage, Source};
+
+        /// Harbor: eight messages, Mon 21 Sep on, one a day, Ben on the
+        /// even-numbered ones.
+        fn harbor() -> ThreadView {
+            let members = (1..=8u32)
+                .map(|number| ThreadMember {
+                    id: MessageId::new(i64::from(number)),
+                    from: Some(if number % 2 == 0 {
+                        EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com")
+                    } else {
+                        EmailAddress::new(Some("Tom\u{e1}s Reyes"), "tomas@example.com")
+                    }),
+                    own: false,
+                    at: chrono::Utc
+                        .with_ymd_and_hms(2026, 9, 20 + number, 12, 0, 0)
+                        .unwrap(),
+                    seen: true,
+                    has_attachments: false,
+                    line: Line::Own(format!("message {number}")),
+                    answers: None,
+                    marker: false,
+                })
+                .collect();
+            ThreadView {
+                thread: ThreadId::new(7),
+                subject: Some("Harbor API draft v3".to_owned()),
+                members,
+                draft: None,
+                muted: None,
+                labels: Vec::new(),
+            }
+        }
+
+        /// Thursday 24 September 2026, the afternoon.
+        fn now() -> DateTime<chrono::Local> {
+            chrono::Local
+                .with_ymd_and_hms(2026, 9, 24, 15, 0, 0)
+                .unwrap()
+        }
+
+        #[test]
+        fn a_match_child_says_who_wrote_it_and_when_as_every_row_does() {
+            let mut view = harbor();
+            view.members[4].own = true;
+            let kids = children(
+                &view,
+                &[
+                    found(3, Source::Body, "rate limit"),
+                    found(5, Source::Body, "rate limit"),
+                ],
+                now(),
+            );
+            let people: Vec<_> = kids
+                .iter()
+                .filter_map(|kid| match kid {
+                    ResultChild::Match {
+                        sender,
+                        initials,
+                        time,
+                        ..
+                    } => Some((sender.as_str(), initials.as_str(), time.as_str())),
+                    ResultChild::Gap { .. } => None,
+                })
+                .collect();
+            let said = |number: usize| crate::row::timestamp(view.members[number - 1].at, now());
+            assert_eq!(
+                people,
+                [
+                    ("Tom\u{e1}s Reyes", "TR", said(3).as_str()),
+                    ("You", "TR", said(5).as_str()),
+                ]
+            );
+            assert_ne!(said(3), "", "the time is said");
+        }
+
+        fn found(message: i64, source: Source, text: &str) -> ConversationMatch {
+            ConversationMatch {
+                message: Some(MessageId::new(message)),
+                from: None,
+                found: Match {
+                    source,
+                    passage: Some(Passage {
+                        text: text.to_owned(),
+                        ranges: std::iter::once(0..4).collect(),
+                        elided_start: false,
+                        elided_end: false,
+                    }),
+                    when: None,
+                },
+                to: Vec::new(),
+            }
+        }
+
+        fn matches_3_5_6() -> Vec<ConversationMatch> {
+            vec![
+                found(3, Source::Body, "rate limit headers on every reply"),
+                found(5, Source::Body, "rate limit headers again"),
+                found(6, Source::Quoted, "rate limit headers, quoted"),
+            ]
+        }
+
+        #[test]
+        fn matches_one_child_each_and_a_gap_where_a_message_did_not() {
+            let kids = children(&harbor(), &matches_3_5_6(), now());
+            assert_eq!(kids.len(), 4, "{kids:?}");
+            let numbers: Vec<_> = kids
+                .iter()
+                .map(|kid| match kid {
+                    ResultChild::Match { number, .. } => Some(*number),
+                    ResultChild::Gap { .. } => None,
+                })
+                .collect();
+            assert_eq!(numbers, [Some(3), None, Some(5), Some(6)]);
+            assert_eq!(
+                gap_line(&kids[1]),
+                "Message 4 doesn't match \u{b7} Ben, Thu"
+            );
+            let ResultChild::Match { message, tag, .. } = &kids[0] else {
+                panic!("first is a match");
+            };
+            assert_eq!((*message, tag.as_str()), (MessageId::new(3), "message 3"));
+        }
+
+        #[test]
+        fn a_file_match_is_tagged_and_its_passage_names_the_file() {
+            let file = found(
+                5,
+                Source::FileContent {
+                    attachment: postio_model::AttachmentId::new(1),
+                    name: "limits.pdf".to_owned(),
+                    location: Location::Page(2),
+                },
+                "rate limit headers table",
+            );
+            let kids = children(&harbor(), &[file], now());
+            let [ResultChild::Match { tag, passage, .. }] = kids.as_slice() else {
+                panic!("one match: {kids:?}");
+            };
+            assert_eq!(tag, "message 5 \u{b7} file");
+            let passage = passage.as_ref().expect("a passage");
+            assert!(passage.text.contains("limits.pdf"), "{passage:?}");
+            assert!(passage.text.ends_with("rate limit headers table"));
+            let marked = &passage.text[passage.ranges[0].clone()];
+            assert_eq!(marked, "rate", "the marks moved with the words");
+        }
+
+        #[test]
+        fn a_run_of_non_matches_is_one_gap() {
+            let kids = children(
+                &harbor(),
+                &[
+                    found(2, Source::Body, "rate limit"),
+                    found(6, Source::Body, "rate limit"),
+                ],
+                now(),
+            );
+            assert_eq!(kids.len(), 3);
+            assert_eq!(
+                gap_line(&kids[1]),
+                "Messages 3\u{2013}5 don't match \u{b7} Tom\u{e1}s, Ben, Wed"
+            );
+        }
+
+        #[test]
+        fn the_subject_and_strangers_are_no_children() {
+            let subject = ConversationMatch {
+                message: None,
+                from: None,
+                found: Match {
+                    source: Source::Subject,
+                    passage: None,
+                    when: None,
+                },
+                to: Vec::new(),
+            };
+            let kids = children(
+                &harbor(),
+                &[
+                    subject,
+                    found(99, Source::Body, "rate"),
+                    found(4, Source::Body, "rate"),
+                ],
+                now(),
+            );
+            assert_eq!(kids.len(), 1, "{kids:?}");
+        }
+
+        #[test]
+        fn the_summary_and_the_single_match_snippet() {
+            assert_eq!(match_summary(3, 6), "3 of 6 messages match");
+            assert_eq!(
+                single_match_snippet(5, 8, "Tom\u{e1}s", "the rate limit"),
+                "Message 5 of 8 \u{b7} Tom\u{e1}s: the rate limit"
+            );
+            assert_eq!(
+                single_match_snippet(5, 8, "Tom\u{e1}s", " "),
+                "Message 5 of 8 \u{b7} Tom\u{e1}s",
+                "no words yet, no colon"
+            );
+        }
     }
 }

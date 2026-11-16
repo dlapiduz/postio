@@ -106,6 +106,10 @@ pub struct DraftFfi {
     pub rich: bool,
     /// The message this answers, when it answers one.
     pub in_reply_to: Option<i64>,
+    /// The message a forward was made from (spec 013): what the forward
+    /// chooser rebuilds the draft from, so it must come back with it.
+    #[uniffi(default = None)]
+    pub forwarded_from: Option<i64>,
     /// Where the draft lives on this disk, for the footer.
     pub path: String,
     /// What is attached to it.
@@ -200,6 +204,7 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
         // part and is not rich.
         rich: draft.rich,
         in_reply_to: draft.in_reply_to.map(|id| id.get()),
+        forwarded_from: draft.forwarded_from.map(|id| id.get()),
         path,
         attachments: draft
             .attachments

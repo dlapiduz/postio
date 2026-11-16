@@ -59,6 +59,11 @@ pub trait Rows {
     fn facts(&self, position: u32) -> Option<RowFacts>;
     /// Where `message`'s row is, when it is in a landed page.
     fn position_of(&self, message: MessageId) -> Option<u32>;
+    /// Whether the row at `position` is a child of an expanded thread, so a
+    /// message verb reaches that message and not the thread's latest.
+    fn is_child(&self, _position: u32) -> bool {
+        false
+    }
     /// The row at `position` as a picker names what it acts on: its
     /// sender and its subject. `None` -- the default -- for a frontend
     /// with no words for it, and the picker names nothing.
@@ -133,6 +138,18 @@ impl Cursor {
     /// The cursor's row, once its page has landed.
     pub(crate) fn row(&self, rows: &dyn Rows) -> Option<RowFacts> {
         self.cursor_row(rows)
+    }
+
+    /// The cursor's row as a verb aims at it: a child is its own message.
+    pub(crate) fn aim_row(&self, rows: &dyn Rows) -> Option<postio_ui::focus_target::AimRow> {
+        let position = self.position?;
+        self.cursor_row(rows)
+            .map(|row| postio_ui::focus_target::AimRow {
+                id: row.id,
+                threads: row.threads,
+                digest: row.digest,
+                child: rows.is_child(position),
+            })
     }
 
     /// Put the cursor on `position`.

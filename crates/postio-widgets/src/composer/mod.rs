@@ -656,6 +656,9 @@ mod imp {
         /// nothing to show — a bare "no attachments" line is clutter the Cc
         /// row already taught this composer not to add.
         pub attachments_box: gtk::Box,
+        /// Under the body and above the attachments: what a host has to say
+        /// about the text, as the folded messages of a forwarded thread.
+        pub below_body: gtk::Box,
         pub attachments_list: gtk::ListBox,
         /// Everything about the draft that is not in a field: its id, account,
         /// kind, attachments, and what it is a reply to.
@@ -716,6 +719,9 @@ mod imp {
         /// before the closed handlers run.
         pub previous_generation: Cell<u64>,
         pub filling: Cell<bool>,
+        /// The forwarded messages folded out of the editor: what the body
+        /// still holds, below what is typed, until they are shown again.
+        pub held: RefCell<Vec<postio_body::Block>>,
         /// The composition as the last fill left it, once signed and
         /// quoted: what "untouched" is measured against on closing.
         pub began_as: RefCell<Option<Draft>>,
@@ -781,6 +787,7 @@ mod imp {
                 warning: gtk::Label::new(None),
                 tracking_notice: gtk::Label::new(None),
                 attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                below_body: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 attachments_list: gtk::ListBox::new(),
                 draft: RefCell::new(Draft::new(AccountId::UNASSIGNED)),
                 composing_from: Cell::new(AccountId::UNASSIGNED),
@@ -803,6 +810,7 @@ mod imp {
                 previous_generation: Cell::new(0),
                 generation: Cell::new(0),
                 filling: Cell::new(false),
+                held: RefCell::default(),
                 began_as: RefCell::new(None),
                 autosave_source: Cell::new(None),
                 to_completion: RefCell::new(None),
@@ -1188,7 +1196,59 @@ impl Composer {
     /// this, never the other way round — ADR 0004, unchanged by the surface
     /// swap that retired the `GtkTextView` (#347).
     pub fn document(&self) -> postio_body::Document {
-        self.imp().body.document()
+        let mut document = self.imp().body.document();
+        // What is folded away is still the message: it is sent, saved and
+        // measured with the rest.
+        document
+            .blocks
+            .extend(self.imp().held.borrow().iter().cloned());
+        document
+    }
+
+    /// Fold the forwarded thread under what is typed into one row a message
+    /// (spec 013 FR-023, `mod+shift+q` unfolds it), answering the rows; empty
+    /// when the body forwards no thread. The folded messages stay part of
+    /// the draft.
+    pub fn fold_forwarded(&self) -> Vec<postio_body::forward::ForwardedRow> {
+        let imp = self.imp();
+        if imp.held.borrow().is_empty() {
+            let mut document = imp.body.document();
+            let Some(start) = postio_body::forward::thread_start(&document) else {
+                return Vec::new();
+            };
+            let held = document.blocks.split_off(start);
+            imp.held.replace(held);
+            let was = imp.filling.replace(true);
+            imp.body.load(document);
+            imp.filling.set(was);
+        }
+        postio_body::forward::thread_rows(&imp.held.borrow())
+    }
+
+    /// The place under the body, above the attachments, for what a host
+    /// has to say about the text: the forwarded thread's folded rows sit
+    /// here, so they read as the text being forwarded.
+    pub fn below_body(&self) -> gtk::Box {
+        self.imp().below_body.clone()
+    }
+
+    /// Show the folded forwarded messages in the body again.
+    pub fn unfold_forwarded(&self) {
+        let imp = self.imp();
+        let held = imp.held.take();
+        if held.is_empty() {
+            return;
+        }
+        let mut document = imp.body.document();
+        document.blocks.extend(held);
+        let was = imp.filling.replace(true);
+        imp.body.load(document);
+        imp.filling.set(was);
+    }
+
+    /// Whether the forwarded messages are folded away.
+    pub fn forwarded_folded(&self) -> bool {
+        !self.imp().held.borrow().is_empty()
     }
 
     /// What the composer will send from, once identities are set.
@@ -2683,6 +2743,7 @@ impl Composer {
         // A different draft is a different history: `load` clears the
         // Editor's, so undoing across the swap cannot put one message's
         // words into another's.
+        imp.held.take();
         imp.body.load(document);
         imp.heading.set_text(heading(draft.kind));
 
@@ -3076,6 +3137,7 @@ impl Composer {
         column.append(&imp.tracking_notice);
         column.append(&self.build_toolbar());
         column.append(imp.body.widget());
+        column.append(&imp.below_body);
         column.append(&imp.warning);
         column.append(&self.build_attachments());
         let actions = self.build_actions();

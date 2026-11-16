@@ -193,7 +193,7 @@ pub struct Entry {
 
 /// Penalty for matching the stable id rather than the title.
 ///
-/// `archive_thread` is findable by typing `archive_th`, but a title match for
+/// `reply_to_latest` is findable by typing `reply_to_l`, but a title match for
 /// the same query should always rank above it.
 const ID_PENALTY: i32 = 40;
 
@@ -401,11 +401,11 @@ mod tests {
 
     #[test]
     fn a_command_is_findable_by_its_id_as_well_as_its_title() {
-        let found = entries(&defaults(), Context::List, an_account(), "archive_th");
+        let found = entries(&defaults(), Context::List, an_account(), "reply_to_l");
 
         assert_eq!(
             found.first().map(|entry| entry.id),
-            Some(ActionId::Builtin(CommandId::ArchiveThread))
+            Some(ActionId::Builtin(CommandId::ReplyToLatest))
         );
     }
 

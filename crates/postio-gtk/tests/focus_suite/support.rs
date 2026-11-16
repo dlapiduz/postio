@@ -479,6 +479,70 @@ impl Fixture {
         id
     }
 
+    /// A conversation of `count` messages about `subject` in the archive,
+    /// only the newest of them filtered (for `reason`), so Filtered lists it
+    /// as one row that stands for a thread. Answers its messages, oldest
+    /// first.
+    pub async fn filtered_thread(
+        &self,
+        subject: &str,
+        count: usize,
+        reason: &str,
+        minutes: i64,
+    ) -> Vec<MessageId> {
+        let connection = self.database.connect().await.expect("a connection");
+        let archive: i64 = postio_storage::sql::scalar(
+            &connection,
+            "SELECT id FROM mailboxes WHERE account_id = ?1 AND name = 'Archive'",
+            [self.account.id.get()],
+        )
+        .await
+        .expect("the archive");
+        let mut previous: Option<postio_model::RfcMessageId> = None;
+        let mut ids = Vec::new();
+        for n in 1..=count {
+            let at = now() - Duration::minutes(minutes + 60 * (count - n) as i64);
+            let mut message = Message::new(self.account.id, MailboxId::new(archive), at);
+            message.from = vec![EmailAddress::new(Some("Forge"), "noreply@forge.test")];
+            message.subject = Some(if n == 1 {
+                subject.to_owned()
+            } else {
+                format!("Re: {subject}")
+            });
+            message.preview = Some(format!("Message {n}"));
+            let id =
+                postio_model::RfcMessageId::new(format!("<filtered.{subject}.{n}@example.test>"));
+            message.rfc_message_id = Some(id.clone());
+            if let Some(parent) = previous.replace(id) {
+                message.in_reply_to = Some(parent.clone());
+                message.references = vec![parent];
+            }
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+            ThreadingRepository::new(&connection, self.account.id)
+                .thread(&message)
+                .await
+                .expect("threaded");
+            if n == count {
+                postio_storage::repository::FilterDecisionRepository::new(&connection)
+                    .record(&postio_storage::repository::FilterDecision {
+                        message: message.id,
+                        reason: postio_storage::repository::FilterReason::from_name(reason)
+                            .expect("a reason the store has"),
+                        source: Some("Forge".to_owned()),
+                        layer: postio_storage::repository::FilterLayer::Header,
+                        decided_at: at,
+                    })
+                    .await
+                    .expect("a decision");
+            }
+            ids.push(message.id);
+        }
+        ids
+    }
+
     /// A second account, enabled, with an inbox of its own.
     pub async fn second_account(&self) -> (Account, MailboxId) {
         let connection = self.database.connect().await.expect("a connection");
@@ -717,6 +781,144 @@ impl Fixture {
             self.write_body(*id, &format!("Message {}", n + 1)).await;
         }
         ids
+    }
+
+    /// A conversation of two about `subject`: Ada's message, then the
+    /// account's own reply to it, newest `minutes` ago. Answers both.
+    pub async fn thread_with_you(&self, subject: &str, minutes: i64) -> Vec<MessageId> {
+        let connection = self.database.connect().await.expect("a connection");
+        let first = postio_model::RfcMessageId::new(format!("<with-you.{subject}.1@example.test>"));
+        let mut ids = Vec::new();
+        for (n, from) in [
+            EmailAddress::new(Some("Ada Moreno"), "ada@example.com"),
+            self.account.address.clone(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = now() - Duration::minutes(minutes + 60 * (1 - n as i64));
+            let mut message = Message::new(self.account.id, self.inbox, at);
+            message.from = vec![from];
+            message.subject = Some(if n == 0 {
+                subject.to_owned()
+            } else {
+                format!("Re: {subject}")
+            });
+            message.preview = Some(format!("Message {}", n + 1));
+            if n == 0 {
+                message.rfc_message_id = Some(first.clone());
+            } else {
+                message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+                    "<with-you.{subject}.2@example.test>"
+                )));
+                message.in_reply_to = Some(first.clone());
+                message.references = vec![first.clone()];
+            }
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+            ThreadingRepository::new(&connection, self.account.id)
+                .thread(&message)
+                .await
+                .expect("threaded");
+            ids.push(message.id);
+        }
+        ids
+    }
+
+    /// A reply to `parent`, filed into the same thread as a sync pass would:
+    /// its id and its thread's.
+    pub async fn reply_to(&self, parent: MessageId, text: &str) -> (MessageId, ThreadId) {
+        let connection = self.database.connect().await.expect("a connection");
+        let parent = MessageRepository::new(&connection)
+            .get(parent)
+            .await
+            .expect("a read")
+            .expect("the parent");
+        let rfc = parent.rfc_message_id.clone().expect("a Message-ID");
+        let mut message = Message::new(self.account.id, self.inbox, now());
+        message.from = vec![EmailAddress::new(Some("Ana Ruiz"), "ana@example.com")];
+        message.subject = Some(format!(
+            "Re: {}",
+            parent.subject.clone().unwrap_or_default()
+        ));
+        message.preview = Some(text.to_owned());
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<reply.{}@example.test>",
+            parent.id.get()
+        )));
+        message.in_reply_to = Some(rfc.clone());
+        message.references = vec![rfc];
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        let threaded = ThreadingRepository::new(&connection, self.account.id)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        (message.id, threaded.thread_id)
+    }
+
+    /// An unsent reply in `member`'s thread, saying `words`: what a thread
+    /// shows as its last child. Answers the draft.
+    pub async fn thread_draft(&self, member: MessageId, words: &str) -> postio_model::DraftId {
+        let connection = self.database.connect().await.expect("a connection");
+        let thread = MessageRepository::new(&connection)
+            .get(member)
+            .await
+            .expect("a read")
+            .expect("the member")
+            .thread_id
+            .expect("threaded");
+        let mut draft = postio_model::Draft::new(self.account.id);
+        draft.thread_id = Some(thread);
+        draft.subject = "Re: Harbor plan".to_owned();
+        draft.body = postio_model::MessageBody {
+            text: Some(words.to_owned()),
+            html: None,
+        };
+        postio_storage::repository::DraftRepository::new(&connection)
+            .save(&mut draft)
+            .await
+            .expect("a draft")
+    }
+
+    /// Mark the first `count` messages of `thread` read.
+    pub async fn read_first(&self, thread: &[MessageId], count: usize) {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut seen = postio_model::FlagSet::new();
+        seen.insert(postio_model::Flag::Seen);
+        for message in &thread[..count.min(thread.len())] {
+            MessageRepository::new(&connection)
+                .set_flags(
+                    *message,
+                    &seen,
+                    postio_storage::repository::FlagSource::Server,
+                )
+                .await
+                .expect("the message is read");
+        }
+    }
+
+    /// Mark every message of `thread` but the newest read, so the thread
+    /// opens on its newest: a thread opens at its first unread message
+    /// (spec 013 FR-013), and `thread_of` leaves every message unread.
+    pub async fn read_all_but_last(&self, thread: &[MessageId]) {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut seen = postio_model::FlagSet::new();
+        seen.insert(postio_model::Flag::Seen);
+        for message in &thread[..thread.len().saturating_sub(1)] {
+            MessageRepository::new(&connection)
+                .set_flags(
+                    *message,
+                    &seen,
+                    postio_storage::repository::FlagSource::Server,
+                )
+                .await
+                .expect("the earlier message is read");
+        }
     }
 
     /// Store `text` as `message`'s body, fetched in full.

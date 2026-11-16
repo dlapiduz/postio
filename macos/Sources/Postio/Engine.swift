@@ -120,6 +120,7 @@ final class Engine {
                     session?.focusReaderState(moreOpen: more, finding: finding)
                 },
                 markRead: { [weak session] message in session?.markReadOnDwell(message) },
+                matchEdge: { [weak session] forward in session?.focusMatchEdge(forward: forward) },
                 handOff: { file in
                     // POSTIO-CONSENT: runs only when a person clicked an
                     // attachment's chip or chose it from the menu `o` offers,
@@ -135,6 +136,7 @@ final class Engine {
             ruleSheet = RuleSheetModel(engine: session)
             capture = CaptureModel(engine: session)
             makeContactPopover(session)
+            makeThreadPopovers(session)
             contactsView = ContactsModel(engine: session)
             contactsSettings = ContactsSettingsModel(
                 engine: session,
@@ -275,6 +277,9 @@ final class Engine {
             composer?.save(composition) { session.saveDraft($0) }
         case .close:
             secondary.close(.composer)
+        case .threadChanged:
+            // The model holds it; the composer's view reads the model.
+            break
         }
     }
 
@@ -290,6 +295,8 @@ final class Engine {
         case .replyAll: draft = message.flatMap { session.replyDraft(to: $0, all: true) }
         case .forward: draft = message.flatMap { session.forwardDraft($0) }
         case .draft: draft = message.flatMap { session.draftForMessage($0) }
+        // An unsent reply in a thread has no message: `message` is its id.
+        case .threadDraft: draft = message.flatMap { session.draft($0) }
         }
         guard let draft else {
             NSSound.beep()
@@ -444,6 +451,7 @@ final class Engine {
         // when its intents come back, never here.
         table.onPoint = { [weak session] row in session?.focusPoint(row) }
         table.onActivate = { [weak session] row in session?.focusActivate(row) }
+        table.onChevron = { [weak session] row in session?.focusChevronClicked(UInt32(max(0, row))) }
         table.onPick = { [weak session] row, range in session?.focusPick(row, range: range) }
         // A click on a sender's name hangs the known-sender popover from it.
         table.onContactName = { [weak self, weak session] row, address in
@@ -586,6 +594,8 @@ final class Engine {
             }
         case let .reader(verb):
             messageWindow?.apply(verb)
+        case let .thread(said):
+            messageWindow?.said(said)
         case .keyboardHome where results?.isOpen == true:
             // In the results, home is the results table, or the Files
             // tab's grid.
@@ -642,7 +652,10 @@ final class Engine {
             alwaysForSender: { [weak session, weak model] in
                 model?.keepForSender { session?.alwaysTreatment(sender: $0, treatment: $1) }
             },
-            verbFrames: { [weak self] in self?.verbFrames = $0 }
+            verbFrames: { [weak self] in self?.verbFrames = $0 },
+            barRoom: { [weak session] in session?.focusBarRoom($0) },
+            barChip: { [weak session] in session?.focusThreadBarChipClicked($0) },
+            barMore: { [weak session] in session?.focusThreadBarMoreClicked(from: $0) }
         ) { [weak session, weak model] message, document, card in
             MessageBodyView(
                 message: message,
@@ -911,6 +924,65 @@ final class Engine {
         }
         contactPopover = model
         contactPresenter = presenter
+    }
+
+    // MARK: Thread ▾'s menu and the outline (spec 013 US5, T066)
+
+    /// What the menu and the outline draw, and the popovers that hang them
+    /// from the thread bar's button.
+    @ObservationIgnored private(set) var threadMenu: ThreadMenuModel?
+    @ObservationIgnored private(set) var threadOutline: ThreadOutlineModel?
+    @ObservationIgnored private var threadMenuPopover: ThreadMenuPopover?
+    @ObservationIgnored private var threadOutlinePopover: ThreadOutlinePopover?
+
+    private func makeThreadPopovers(_ session: PostioSession) {
+        let menu = ThreadMenuModel(engine: session)
+        threadMenu = menu
+        threadMenuPopover = ThreadMenuPopover(model: menu) { [weak session] in
+            session?.focusSurfaceClosed(.threadMenu)
+        }
+        let outline = ThreadOutlineModel(engine: session)
+        threadOutline = outline
+        threadOutlinePopover = ThreadOutlinePopover(model: outline) { [weak session] in
+            session?.focusSurfaceClosed(.outline)
+        }
+    }
+
+    /// Where Thread ▾ is, in the message window's content: what both
+    /// popovers hang from.
+    private func threadButtonAnchor() -> (rect: NSRect, view: NSView)? {
+        guard let content = messageContent, content.window != nil else { return nil }
+        let frame = verbFrames[ThreadMenuCommand.menu]
+            ?? CGRect(x: content.bounds.width - 104, y: 136, width: 88, height: 28)
+        let rect = content.isFlipped
+            ? frame
+            : CGRect(x: frame.minX, y: content.bounds.height - frame.maxY, width: frame.width, height: frame.height)
+        return (rect, content)
+    }
+
+    /// Show what the controller said about the menu or the outline.
+    private func apply(_ change: ThreadMenuModel.Change) {
+        switch change {
+        case .open:
+            guard let (rect, view) = threadButtonAnchor() else { return }
+            threadMenuPopover?.show(relativeTo: rect, of: view)
+        case .close:
+            threadMenuPopover?.close()
+        }
+    }
+
+    private func apply(_ change: ThreadOutlineModel.Change) {
+        switch change {
+        case .open:
+            guard let (rect, view) = threadButtonAnchor() else { return }
+            threadOutlinePopover?.show(relativeTo: rect, of: view)
+        case .redraw:
+            threadOutlinePopover?.reload()
+        case .focusFilter:
+            threadOutlinePopover?.focusFilter()
+        case .close:
+            threadOutlinePopover?.close()
+        }
     }
 
     // MARK: capture (T116)
@@ -1247,7 +1319,7 @@ final class Engine {
                     self.resultsTable?.takeKeyboard()
                 }
             }
-        case .rows, .cursor:
+        case .rows, .cursor, .spliced:
             break
         }
     }
@@ -1503,7 +1575,9 @@ final class Engine {
         // The results view (specs/010-focus-search step 3): its query, its
         // frame, its pages and its focus ring, and leaving it. The list's
         // own cursor and selection follow `FocusLeaveResults` as intents.
-        if case .focusQuery = event {
+        if case let .focusQuery(view) = event {
+            // The words the window opened from this search finds in a message.
+            messageWindow?.searchWords = view.words
             searchQuery?.apply(event)
             redrawQuery()
             return
@@ -1567,6 +1641,16 @@ final class Engine {
             }
             return
         }
+        // Thread ▾'s menu and the outline (T066): drawn whole, closed when
+        // the controller says.
+        if let change = threadMenu?.apply(event) {
+            apply(change)
+            return
+        }
+        if let change = threadOutline?.apply(event) {
+            apply(change)
+            return
+        }
         if let surface = FocusIntents.surface(event) {
             apply(surface)
             return
@@ -1575,6 +1659,12 @@ final class Engine {
         case let .focusListChanged(total):
             focusTable?.listChanged(total: total)
             refreshCounts()
+        case let .focusSplice(anchor, children):
+            // A thread opened in place (or was read again): its children
+            // are rows of the table, drawn from the session.
+            focusTable?.splice(anchor: Int(anchor), children: children.count)
+        case .focusUnsplice:
+            focusTable?.unsplice()
         case let .focusPageReady(page):
             focusTable?.pageArrived(page)
             listTakesTheKeyboard()
@@ -1716,7 +1806,7 @@ final class Engine {
     }
 
     /// A demo's click on a filter button, named `@from`, `@to`, `@date`,
-    /// `@anywhere` or `@label` (screens 08 and 09): the format of
+    /// `@anywhere` or `@label` (screens 08 and 09), and `@reply`: the format of
     /// `POSTIO_DEMO_KEYS` has no pointer, and a popover opens from a click.
     /// `false` for any other key.
     private func replayClick(_ key: KeyEvent.Reduced) -> Bool {
@@ -1724,6 +1814,12 @@ final class Engine {
         let kinds: [String: FilterKindFfi] = [
             "@from": .from, "@to": .to, "@date": .date, "@anywhere": .anywhere, "@label": .label,
         ]
+        // `@reply`: Ana's reply arrives in the Harbor thread while the
+        // window is open (spec 013 US4, screen 08).
+        if word.lowercased() == "@reply" {
+            _ = session?.demoArrive(what: "reply")
+            return true
+        }
         guard let kind = kinds[word.lowercased()] else { return false }
         searchQuery?.tap(kind)
         return true
@@ -1750,6 +1846,27 @@ final class Engine {
                 guard typing else { return false }
                 popover.type(text)
             // Return, Tab and Escape resolve as a press does.
+            default: return false
+            }
+            return true
+        }
+        // Thread ▾'s menu and the outline, as a press there would be: the
+        // arrows and Return, and typing into the outline's filter.
+        if let menu = threadMenu, menu.isOpen {
+            switch key.name {
+            case "down": menu.move(by: 1)
+            case "up": menu.move(by: -1)
+            case "return": menu.confirm()
+            default: return false
+            }
+            return true
+        }
+        if let outline = threadOutline, outline.isOpen, let popover = threadOutlinePopover {
+            switch key.name {
+            case "down": outline.move(by: 1)
+            case "up": outline.move(by: -1)
+            case "return": outline.show()
+            case nil: popover.type(key.character ?? "")
             default: return false
             }
             return true
@@ -1880,7 +1997,19 @@ final class Engine {
     private func installKeyboard(_ session: PostioSession) {
         let monitor = KeyMonitor(
             resolve: { [weak self] reduced, context, typing in
-                self?.session?.key(reduced, in: context, typing: typing) ?? .unhandled
+                guard let self, let session = self.session else { return .unhandled }
+                // The forward chooser, while it holds the keyboard (until Tab
+                // moves to To), answers first; what it does not bind is the
+                // composer's.
+                let shown = self.keyWindow.current == .compose
+                    && self.composer?.model?.chooserHasKeyboard == true
+                var outcome = KeyOutcomeFfi.unhandled
+                for asked in ForwardChooserKeys.contexts(base: context, chooserFocused: shown, typing: typing) {
+                    outcome = session.key(reduced, in: asked, typing: typing)
+                    if case .unhandled = outcome { continue }
+                    break
+                }
+                return outcome
             },
             run: { [weak self] id in self?.run(id) ?? false },
             pending: { [weak self] description in self?.pendingChord = description },

@@ -815,12 +815,24 @@ fn thread_back(window: &Window) {
     crate::settle();
 }
 
+/// Step the open message one on through its thread, so that a step back has
+/// somewhere to go whichever message the window opened on.
+fn thread_forward(window: &Window) {
+    if let Some(reading) = window.reading() {
+        reading.step_thread(1);
+        crate::settle();
+        reading.step_thread(1);
+        crate::settle();
+    }
+    crate::settle();
+}
+
 /// Step a digest's or Filtered's cursor down a row.
 fn step_down(window: &Window) {
     if let Some(digest) = window.digest() {
         digest.step(1);
-    } else if let Some(view) = window.filtered() {
-        view.step(1);
+    } else if window.filtered().is_some() {
+        window.act(CommandId::NextMessage);
     }
     crate::settle();
 }
@@ -960,23 +972,21 @@ fn probe(command: CommandId, surface: Surface) -> Result<Probe, &'static str> {
                 )
             })
             .on(Flavor::Thread)
+            .once_up(thread_forward)
         }
         (C::ToggleFold | C::ExpandAll, _) => {
             return Err("Conversation is a stacked-pane context; GTK has no such surface");
         }
         // -- Verbs ---------------------------------------------------------
-        (C::Archive, S::List | S::Reader | S::Pane | S::Menu)
-        | (C::ArchiveThread, S::List | S::Reader | S::Pane) => {
+        (C::Archive, S::List | S::Reader | S::Pane | S::Menu) => {
             Probe::new("the message leaves the inbox for the archive", |s| {
                 ok_if(s.after.mailbox() == s.archive && s.archive.is_some(), s)
             })
         }
-        (C::ArchiveThread, S::Digest) => {
-            Probe::new("everything the digest holds is archived", |s| {
-                ok_if(s.after.mailbox() == s.archive && s.archive.is_some(), s)
-            })
-            .fresh()
-        }
+        (C::Archive, S::Digest) => Probe::new("everything the digest holds is archived", |s| {
+            ok_if(s.after.mailbox() == s.archive && s.archive.is_some(), s)
+        })
+        .fresh(),
         (C::Delete, S::List | S::Menu | S::Reader | S::Pane | S::Filtered) => {
             let probe = Probe::new("the message goes to the trash", |s| {
                 ok_if(s.after.mailbox() == s.trash && s.trash.is_some(), s)
@@ -1188,7 +1198,6 @@ const GMAIL: &[CommandId] = &[
     CommandId::Forward,
     CommandId::Compose,
     CommandId::Archive,
-    CommandId::ArchiveThread,
     CommandId::Delete,
     CommandId::Move,
     CommandId::AddLabel,
@@ -1258,12 +1267,6 @@ const EXCUSED: &[(Surface, CommandId, &str, &str)] = &[
         CommandId::MoreActions,
         ".",
         "More exists only where the dialog is folded; open_layout presses it there",
-    ),
-    (
-        Surface::List,
-        CommandId::PrevView,
-        "Left",
-        "nothing is open to go back from in the list",
     ),
     (
         Surface::List,
@@ -1371,7 +1374,6 @@ impl Group {
             | C::ExtendSelectionUp
             | C::SelectAll => Group::Walk,
             C::Archive
-            | C::ArchiveThread
             | C::Delete
             | C::Move
             | C::AddLabel
@@ -1701,7 +1703,6 @@ pub fn every_gmail_command_is_probed_or_excused() {
         ("x", CommandId::ToggleSelection),
         ("* a", CommandId::SelectAll),
         ("T", CommandId::CaptureTask),
-        ("E", CommandId::ArchiveThread),
         ("V", CommandId::ViewSource),
         ("A", CommandId::OpenAttachmentOrLink),
         ("N", CommandId::CaptureNote),
@@ -1741,7 +1742,6 @@ pub fn every_gmail_command_is_probed_or_excused() {
 /// for that command.
 const RETIRED: &[(CommandId, &str)] = &[
     (CommandId::Archive, "a"),
-    (CommandId::ArchiveThread, "A"),
     (CommandId::Reply, "e"),
     (CommandId::ReplyAll, "E"),
     (CommandId::Move, "m"),
@@ -1751,8 +1751,6 @@ const RETIRED: &[(CommandId, &str)] = &[
     (CommandId::ViewSource, "v"),
     (CommandId::OpenAttachmentOrLink, "o"),
     (CommandId::Unsubscribe, "U"),
-    (CommandId::NextInConversation, "]"),
-    (CommandId::PrevInConversation, "["),
     (CommandId::ToggleFold, "z"),
     (CommandId::ExpandAll, "O"),
     (CommandId::CaptureTask, "t"),

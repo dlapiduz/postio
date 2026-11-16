@@ -112,5 +112,10 @@ harness = false
 name = "event_hub"
 harness = false
 
+# The message window's thread bar at 500 members (spec 013 T086).
+[[bench]]
+name = "thread_bar"
+harness = false
+
 [dependencies]
 postio-workspace-hack.workspace = true

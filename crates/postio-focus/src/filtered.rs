@@ -27,11 +27,14 @@ use postio_core::state::Selection;
 use postio_core::{Command, CommandId};
 use postio_model::MessageId;
 use postio_ui::filtered as words;
+use postio_ui::focus_list::FocusRow;
 use postio_ui::hints;
+use postio_ui::thread_list::{ChildRowView, Slot};
 
 use crate::cursor::{Cursor, RowFacts, Rows};
 use crate::feed::Step;
 use crate::surfaces::Origin;
+use crate::thread_expand::{Expansion, Pending};
 use crate::verbs::Verbs;
 use crate::{FocusController, Intent, Reply, Request, SurfaceKind, ToastKind};
 
@@ -67,6 +70,18 @@ pub struct FilteredView {
     /// What to say in place of the rows when the tab has none, once it has
     /// been counted.
     pub empty: Option<String>,
+    /// The thread open under one of the rows (spec 013 FR-009). When it
+    /// is, `focused` is a display position, the children counted.
+    pub expanded: Option<FilteredSplice>,
+}
+
+/// The children of Filtered's expanded thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilteredSplice {
+    /// The expanded row, an index into the view's `rows`.
+    pub anchor: u32,
+    /// One per member, oldest first, then the unsent reply.
+    pub children: Vec<ChildRowView>,
 }
 
 /// What the bar over Filtered says while anything is selected: the count,
@@ -126,6 +141,9 @@ pub struct FilteredLine {
     pub heading: Option<String>,
     /// Whether it is in the selection: its box is checked.
     pub selected: bool,
+    /// How many messages its conversation holds: more than one and `Right`
+    /// opens it in place (spec 013 FR-009).
+    pub messages: u32,
 }
 
 /// What the controller keeps of Filtered.
@@ -146,147 +164,17 @@ pub(crate) struct Filtered {
     more: bool,
     /// The read current now: a page for another is dropped.
     stamp: u64,
-}
-
-/// The list's cursor and selection rules over rows that are only
-/// messages, for a frontend that draws Filtered itself and keeps its own
-/// rows (GTK's Filtered reads its pages directly). It is [`Cursor`] and
-/// nothing else: the controller's Filtered holds the same one, so `x`,
-/// `J`/`K`, select all, the modified clicks and Back's first rung cannot
-/// differ between the two.
-#[derive(Debug, Default)]
-pub struct RowPicker {
-    cursor: Cursor,
-    ids: Vec<MessageId>,
-}
-
-/// What a [`RowPicker`] call changed.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PickChange {
-    /// The row the keyboard went to.
-    pub focus: Option<u32>,
-    /// The messages selected now, when the selection changed.
-    pub selection: Option<Vec<MessageId>>,
-}
-
-struct IdRows<'a>(&'a [MessageId]);
-
-impl Rows for IdRows<'_> {
-    fn len(&self) -> u32 {
-        self.0.len() as u32
-    }
-
-    fn facts(&self, position: u32) -> Option<RowFacts> {
-        self.0.get(position as usize).map(|id| RowFacts {
-            id: *id,
-            digest: false,
-            threads: Vec::new(),
-            writes: false,
-        })
-    }
-
-    fn position_of(&self, message: MessageId) -> Option<u32> {
-        self.0
-            .iter()
-            .position(|id| *id == message)
-            .map(|at| at as u32)
-    }
-}
-
-impl RowPicker {
-    /// A picker over no rows.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The rows are these now. The keyboard stays on its message, or goes
-    /// to the first row when that one is gone; the selection is kept.
-    pub fn set_rows(&mut self, ids: Vec<MessageId>) {
-        let kept = self
-            .focused()
-            .and_then(|at| self.ids.get(at as usize).copied());
-        self.ids = ids;
-        let at = kept
-            .and_then(|message| IdRows(&self.ids).position_of(message))
-            .or((!self.ids.is_empty()).then_some(0));
-        self.cursor.moved_to(at);
-    }
-
-    /// The row with the keyboard.
-    pub fn focused(&self) -> Option<u32> {
-        self.cursor.position()
-    }
-
-    /// The frontend's own list put the keyboard on `position`.
-    pub fn focus(&mut self, position: Option<u32>) {
-        self.cursor.moved_to(position);
-    }
-
-    /// The messages selected, in the order they were taken.
-    pub fn selected(&self) -> Vec<MessageId> {
-        self.cursor
-            .selection()
-            .ids()
-            .map(<[_]>::to_vec)
-            .unwrap_or_default()
-    }
-
-    /// What a verb is about: the selection, or the focused row alone.
-    pub fn aimed(&self) -> Vec<MessageId> {
-        let selected = self.selected();
-        if !selected.is_empty() {
-            return selected;
-        }
-        self.focused()
-            .and_then(|at| self.ids.get(at as usize).copied())
-            .into_iter()
-            .collect()
-    }
-
-    /// `j`, `k`, `x`, `J`, `K`, select all, and Back's first rung: the
-    /// list's rules. Any other command changes nothing.
-    pub fn run(&mut self, id: CommandId) -> PickChange {
-        let total = self.ids.len() as u32;
-        let steps = match id {
-            CommandId::SelectAll => self.cursor.select_rows(&IdRows(&self.ids), total),
-            CommandId::Back => self.cursor.clear(total),
-            _ => self
-                .cursor
-                .command(id, &IdRows(&self.ids), None, total, None)
-                .unwrap_or_default(),
-        };
-        Self::changed(steps)
-    }
-
-    /// A modified click: `range` for Shift, a toggle otherwise.
-    pub fn pick(&mut self, position: u32, range: bool) -> PickChange {
-        let total = self.ids.len() as u32;
-        let steps = self.cursor.pick(position, range, &IdRows(&self.ids), total);
-        Self::changed(steps)
-    }
-
-    /// Drop the selection; the keyboard stays.
-    pub fn clear(&mut self) -> PickChange {
-        self.run(CommandId::Back)
-    }
-
-    fn changed(steps: Vec<Step>) -> PickChange {
-        let mut change = PickChange::default();
-        for step in steps {
-            match step {
-                Step::Show(Intent::Cursor { position, .. }) => change.focus = Some(position),
-                Step::Show(Intent::Selection { selection, .. }) => {
-                    change.selection = Some(selection.ids().map(<[_]>::to_vec).unwrap_or_default());
-                }
-                _ => {}
-            }
-        }
-        change
-    }
+    /// The one thread open in place (spec 013 FR-009), with the read in
+    /// flight for it: the controller's `expansion` and `pending` while
+    /// Filtered has the keyboard.
+    expansion: Option<Expansion>,
+    pending: Option<Pending>,
 }
 
 /// Filtered's rows as the cursor reads them: messages, never conversations.
-struct FilteredRows<'a>(&'a [FilteredRow]);
+/// `threaded` names each row's thread, which only an expansion needs: a
+/// verb must never reach the rest of a conversation.
+struct FilteredRows<'a>(&'a [FilteredRow], bool);
 
 impl Rows for FilteredRows<'_> {
     fn len(&self) -> u32 {
@@ -297,7 +185,11 @@ impl Rows for FilteredRows<'_> {
         self.0.get(position as usize).map(|row| RowFacts {
             id: row.message.id,
             digest: false,
-            threads: Vec::new(),
+            threads: if self.1 {
+                row.message.thread.into_iter().collect()
+            } else {
+                Vec::new()
+            },
             writes: false,
         })
     }
@@ -308,45 +200,99 @@ impl Rows for FilteredRows<'_> {
             .position(|row| row.message.id == message)
             .map(|at| at as u32)
     }
+
+    fn row(&self, position: u32) -> Option<FocusRow> {
+        let message = self.0.get(position as usize)?.message.clone();
+        let count = message.thread_count;
+        let mut summary = postio_ui::focus_list::lone(message);
+        summary.message_count = count;
+        Some(FocusRow::conversation(summary))
+    }
 }
 
 impl Filtered {
-    /// Run `f` with the cursor and the rows it reads, and the count a
-    /// selection's words use.
-    fn with_cursor<T>(&mut self, f: impl FnOnce(&mut Cursor, &FilteredRows<'_>, u32) -> T) -> T {
+    /// Run `f` with the cursor and the rows it reads (an expanded
+    /// thread's children among them), and the count a selection's words
+    /// use.
+    fn with_cursor<T>(&mut self, f: impl FnOnce(&mut Cursor, &dyn Rows, u32) -> T) -> T {
         let mut cursor = std::mem::take(&mut self.cursor);
-        let out = f(
-            &mut cursor,
-            &FilteredRows(&self.rows),
-            self.rows.len() as u32,
-        );
+        let raw = FilteredRows(&self.rows, false);
+        let through = self
+            .expansion
+            .as_ref()
+            .and_then(|expansion| expansion.through(&raw, true));
+        let rows: &dyn Rows = through.as_ref().map_or(&raw, |through| through);
+        let out = f(&mut cursor, rows, rows.len());
         self.cursor = cursor;
         out
     }
 
-    /// The row with the keyboard.
+    /// The row with the keyboard, a display position.
     pub(crate) fn focused(&self) -> Option<usize> {
         self.cursor.position().map(|at| at as usize)
     }
 
-    /// The message at `index`, as a verb or the open message sees it.
-    pub(crate) fn facts(&self, index: usize) -> Option<RowFacts> {
-        self.rows.get(index).map(|row| RowFacts {
-            id: row.message.id,
-            digest: false,
-            threads: row.message.thread.into_iter().collect(),
-            writes: false,
-        })
+    /// The row the display position `index` stands for, and whether it is a
+    /// child's.
+    fn row_at(&self, index: usize) -> Option<(usize, bool)> {
+        let Some(expansion) = &self.expansion else {
+            return Some((index, false)).filter(|(at, _)| *at < self.rows.len());
+        };
+        let anchor = self.index_of_row(expansion.anchor)?;
+        match expansion.splice(anchor as u32).slot(index as u32) {
+            Slot::Row(row) => Some((row as usize, false)),
+            Slot::Child { row, .. } => Some((row as usize, true)),
+        }
     }
 
-    /// Where `message` is among the rows read.
-    pub(crate) fn index_of(&self, message: MessageId) -> Option<usize> {
+    fn index_of_row(&self, message: MessageId) -> Option<usize> {
         self.rows.iter().position(|row| row.message.id == message)
     }
 
-    /// How many rows are read.
+    /// The message at display position `index`, as a verb or the open
+    /// message sees it.
+    pub(crate) fn facts(&self, index: usize) -> Option<RowFacts> {
+        let (row, child) = self.row_at(index)?;
+        if !child {
+            let row = self.rows.get(row)?;
+            return Some(RowFacts {
+                id: row.message.id,
+                digest: false,
+                threads: row.message.thread.into_iter().collect(),
+                writes: false,
+            });
+        }
+        let raw = FilteredRows(&self.rows, true);
+        let through = self.expansion.as_ref()?.through(&raw, true)?;
+        through.facts(index as u32)
+    }
+
+    /// The footer for the row or child at display `index`.
+    pub(crate) fn footer_at(
+        &self,
+        index: u32,
+        keymap: &postio_core::Keymap,
+    ) -> Option<postio_ui::scope::FooterView> {
+        let raw = FilteredRows(&self.rows, true);
+        crate::thread_expand::footer_at(self.expansion.as_ref(), index, &raw, keymap)
+    }
+
+    /// Where `message` is among the rows read, children counted.
+    pub(crate) fn index_of(&self, message: MessageId) -> Option<usize> {
+        let raw = FilteredRows(&self.rows, true);
+        let through = self
+            .expansion
+            .as_ref()
+            .and_then(|expansion| expansion.through(&raw, true));
+        match through {
+            Some(through) => through.position_of(message).map(|at| at as usize),
+            None => self.index_of_row(message),
+        }
+    }
+
+    /// How many rows are read, children counted.
     pub(crate) fn len(&self) -> usize {
-        self.rows.len()
+        self.rows.len() + self.expansion.as_ref().map_or(0, |e| e.children() as usize)
     }
 
     /// The subject of the row at `index`.
@@ -379,6 +325,8 @@ impl FocusController {
             cursor: Cursor::default(),
             more: false,
             stamp,
+            expansion: None,
+            pending: None,
         });
         steps.push(Step::Show(Intent::ShowFiltered));
         steps.push(Step::Ask(Request::FilteredTabs));
@@ -444,7 +392,10 @@ impl FocusController {
             // The selected messages, or the focused one alone: Filtered
             // lists messages, and the rest of a conversation may be in the
             // inbox, so the rows' conversations are not reached.
-            CommandId::Delete | CommandId::Flag | CommandId::ToggleRead => {
+            CommandId::Delete
+            | CommandId::DeleteThisMessage
+            | CommandId::Flag
+            | CommandId::ToggleRead => {
                 let filtered = self.filtered.as_mut()?;
                 let verbs = &mut self.verbs;
                 let steps = filtered
@@ -534,6 +485,13 @@ impl FocusController {
                         bar: summary.map(|summary| self.filtered_bar(summary)),
                     })
                 }
+                // Filtered has its own table: the list's splice is not it.
+                Step::Show(Intent::Splice { anchor, children }) => {
+                    Step::Show(Intent::FilteredSplice { anchor, children })
+                }
+                Step::Show(Intent::Unsplice { anchor }) => {
+                    Step::Show(Intent::FilteredUnsplice { anchor })
+                }
                 other => other,
             })
             .collect()
@@ -567,7 +525,7 @@ impl FocusController {
             return Vec::new();
         };
         let (aims, steps) = filtered.with_cursor(|cursor, rows, total| {
-            let aims = Verbs::aimed(cursor, rows).aims;
+            let aims = Verbs::aimed(cursor, rows, CommandId::Archive).aims;
             let gone = match cursor.selection() {
                 Selection::These(ids) if !ids.is_empty() => ids,
                 _ => cursor.row(rows).map(|row| row.id).into_iter().collect(),
@@ -598,7 +556,7 @@ impl FocusController {
             return Vec::new();
         };
         filtered.cursor.moved_to(Some(index as u32));
-        let total = filtered.rows.len() as u32;
+        let total = filtered.len() as u32;
         let mut steps = self
             .surfaces
             .open(&row, index as u32, total, self.policy.caps.stacking);
@@ -622,12 +580,75 @@ impl FocusController {
         steps
     }
 
+    /// The thread inputs while Filtered has the keyboard: `Right`, `Left`,
+    /// the read's answer, a change to the open thread. They are the list's
+    /// own (`thread_expand.rs`) run over Filtered's rows, cursor and
+    /// expansion, which stand in for the list's while it does; what comes
+    /// out is Filtered's intents. `None` when the input is not one.
+    pub(crate) fn filtered_thread_input(&mut self, input: &crate::Input) -> Option<Vec<Step>> {
+        use crate::Input;
+        use postio_core::Event;
+        if self.surfaces.top() != Some(SurfaceKind::Filtered) {
+            return None;
+        }
+        let filtered = self.filtered.as_ref()?;
+        let open = |thread: &postio_model::ThreadId| {
+            filtered
+                .expansion
+                .as_ref()
+                .is_some_and(|expansion| expansion.thread == *thread)
+        };
+        match input {
+            Input::Command(CommandId::ExpandThread | CommandId::CollapseThread) => {}
+            Input::Reply(_, Reply::ThreadRead { thread, .. })
+                if open(thread)
+                    || filtered
+                        .pending
+                        .is_some_and(|pending| pending.thread() == *thread) => {}
+            Input::Event(Event::ThreadChanged { thread, .. }) if open(thread) => {
+                return Some(vec![Step::Ask(Request::ReadThread(*thread))]);
+            }
+            _ => return None,
+        }
+        // Filtered's state stands in for the list's for this one input.
+        let mut rows = std::mem::take(&mut self.filtered.as_mut()?.rows);
+        self.swap_filtered_state();
+        let steps = {
+            let raw = FilteredRows(&rows, true);
+            let through = self.through(&raw);
+            let seen: &dyn Rows = through.as_ref().map_or(&raw, |through| through);
+            match input {
+                Input::Command(CommandId::ExpandThread) => self.expand(&raw),
+                Input::Command(_) => self.collapse(&raw),
+                Input::Reply(ticket, Reply::ThreadRead { thread, view }) => {
+                    self.thread_replied(*ticket, *thread, view, &raw, seen)
+                }
+                _ => Vec::new(),
+            }
+        };
+        self.swap_filtered_state();
+        if let Some(filtered) = self.filtered.as_mut() {
+            std::mem::swap(&mut filtered.rows, &mut rows);
+        }
+        Some(self.filtered_drawn(steps))
+    }
+
+    /// Exchange the list's cursor, expansion and pending read with
+    /// Filtered's.
+    fn swap_filtered_state(&mut self) {
+        if let Some(filtered) = self.filtered.as_mut() {
+            std::mem::swap(&mut self.cursor, &mut filtered.cursor);
+            std::mem::swap(&mut self.expansion, &mut filtered.expansion);
+            std::mem::swap(&mut self.pending, &mut filtered.pending);
+        }
+    }
+
     /// A click on Filtered's row at `index`.
     pub(crate) fn filtered_point(&mut self, index: u32) -> Vec<Step> {
         let Some(filtered) = self.filtered.as_mut() else {
             return Vec::new();
         };
-        if index as usize >= filtered.rows.len() || filtered.focused() == Some(index as usize) {
+        if index as usize >= filtered.len() || filtered.focused() == Some(index as usize) {
             return Vec::new();
         }
         filtered.cursor.moved_to(Some(index));
@@ -720,16 +741,51 @@ impl FocusController {
                     }
                 };
                 filtered.more = words::page_is_full(page.len());
+                // The keyboard's row, children left out: the message it
+                // names, or the thread it is under.
+                let on_child = filtered
+                    .focused()
+                    .and_then(|at| filtered.row_at(at))
+                    .is_some_and(|(_, child)| child);
                 let kept = filtered
                     .focused()
-                    .and_then(|at| filtered.rows.get(at))
+                    .and_then(|at| filtered.row_at(at))
+                    .and_then(|(row, _)| filtered.rows.get(row))
                     .map(|row| row.message.id);
+                let anchor_at = filtered
+                    .expansion
+                    .as_ref()
+                    .and_then(|expansion| filtered.index_of_row(expansion.anchor));
+                let was_focused = filtered.focused();
                 if offset == 0 {
                     filtered.rows.clear();
                 }
                 filtered.rows.extend(page);
-                let focused = match kept.and_then(|message| filtered.index_of(message)) {
-                    Some(at) => Some(at),
+                // The thread stays open if its row is where it was;
+                // otherwise it folds with the list that held it.
+                if filtered.expansion.as_ref().is_some_and(|expansion| {
+                    filtered.index_of_row(expansion.anchor) != anchor_at || anchor_at.is_none()
+                }) {
+                    filtered.expansion = None;
+                }
+                let focused = match kept.and_then(|message| filtered.index_of_row(message)) {
+                    // A child keeps its place under a row that did not move.
+                    Some(_) if on_child && filtered.expansion.is_some() => was_focused,
+                    Some(at) => Some(
+                        filtered
+                            .expansion
+                            .as_ref()
+                            .and_then(|expansion| {
+                                let anchor = filtered.index_of_row(expansion.anchor)?;
+                                Some(
+                                    expansion
+                                        .splice(anchor as u32)
+                                        .display(Slot::Row(at as u32))
+                                        as usize,
+                                )
+                            })
+                            .unwrap_or(at),
+                    ),
                     None if offset > 0 => filtered.focused(),
                     None => (!filtered.rows.is_empty()).then_some(0),
                 };
@@ -810,6 +866,7 @@ impl FocusController {
                     time: postio_ui::row::timestamp(row.at, now),
                     heading,
                     selected: selection.contains(row.message.id),
+                    messages: row.message.thread_count.max(1),
                 })
                 .collect(),
             focused: filtered.focused().map(|at| at as u32),
@@ -818,6 +875,12 @@ impl FocusController {
             bar,
             empty: (filtered.counted && filtered.rows.is_empty() && !filtered.more)
                 .then(|| words::EMPTY.to_owned()),
+            expanded: filtered.expansion.as_ref().and_then(|expansion| {
+                Some(FilteredSplice {
+                    anchor: filtered.index_of_row(expansion.anchor)? as u32,
+                    children: self.child_views(&expansion.view),
+                })
+            }),
         })
     }
 }

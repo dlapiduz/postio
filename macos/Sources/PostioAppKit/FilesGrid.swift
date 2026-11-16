@@ -77,7 +77,7 @@ public final class FilesGrid: NSObject {
     public func apply(_ change: ResultsModel.Change) {
         guard model.isFiles else { return }
         switch change {
-        case .open, .redraw, .close, .rows:
+        case .open, .redraw, .close, .rows, .spliced:
             collectionView.reloadData()
             scrollToCursor()
         case let .cursor(previous):

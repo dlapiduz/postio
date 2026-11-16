@@ -36,6 +36,7 @@
 //! question later, for exactly the messages that could not have gotten a
 //! better answer at insertion time. See postio-tn9.2.
 
+use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Assignment, MailboxId, Message, RfcMessageId, Thread, ThreadCue, ThreadId,
     ThreadIndex, assign, claimed_ids,
@@ -94,7 +95,15 @@ impl<'a> ThreadingRepository<'a> {
             let index = LoadedIndex::load(&scope, self.account_id, &cue, None).await?;
             let assignment = assign(&cue, &index);
 
-            let result = self.apply(&scope, message, &cue, assignment).await?;
+            let result = self
+                .apply(
+                    &scope,
+                    message,
+                    &cue,
+                    assignment,
+                    index.joined_across_a_split(),
+                )
+                .await?;
             Ok(result)
         })
         .await
@@ -110,6 +119,7 @@ impl<'a> ThreadingRepository<'a> {
         message: &Message,
         cue: &ThreadCue,
         assignment: Assignment,
+        across_a_split: bool,
     ) -> Result<Threaded> {
         let threads = ThreadRepository::new(connection);
 
@@ -136,7 +146,13 @@ impl<'a> ThreadingRepository<'a> {
 
         threads.add_message(thread_id, message.id).await?;
         for id in claimed_ids(cue) {
-            self.claim(connection, id, thread_id).await?;
+            if across_a_split {
+                // Joined the split thread by its nearest link: the ids its
+                // References name in the original stay the original's.
+                self.claim_if_free(connection, id, thread_id).await?;
+            } else {
+                self.claim(connection, id, thread_id).await?;
+            }
         }
 
         Ok(Threaded {
@@ -166,6 +182,25 @@ impl<'a> ThreadingRepository<'a> {
              VALUES (?1, ?2, ?3)
              ON CONFLICT (account_id, rfc_message_id) DO UPDATE
                 SET thread_id = excluded.thread_id",
+        )
+        .await?
+        .execute(bind![self.account_id.get(), id.folded(), thread_id.get()])
+        .await?;
+        Ok(())
+    }
+
+    /// Records that `thread_id` claims `id`, unless a thread already does.
+    async fn claim_if_free(
+        &self,
+        connection: &Connection,
+        id: &RfcMessageId,
+        thread_id: ThreadId,
+    ) -> Result<()> {
+        sql::statement(
+            connection,
+            "INSERT INTO thread_links (account_id, rfc_message_id, thread_id)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT (account_id, rfc_message_id) DO NOTHING",
         )
         .await?
         .execute(bind![self.account_id.get(), id.folded(), thread_id.get()])
@@ -266,7 +301,15 @@ impl<'a> ThreadingRepository<'a> {
                 return Ok(None);
             }
 
-            let mut result = self.apply(&scope, message, &cue, assignment).await?;
+            let mut result = self
+                .apply(
+                    &scope,
+                    message,
+                    &cue,
+                    assignment,
+                    index.joined_across_a_split(),
+                )
+                .await?;
             // This message was `current`'s only member, so `apply` (via
             // `add_message`) just emptied it. Fold the now-empty thread away
             // properly — claims included — rather than leaving a zero-message row
@@ -327,7 +370,13 @@ impl<'a> ThreadingRepository<'a> {
 #[derive(Debug, Default)]
 struct LoadedIndex {
     by_id: std::collections::HashMap<String, ThreadId>,
-    by_subject: Vec<ThreadId>,
+    /// Which of the threads the links found were made by a split (spec 013
+    /// FR-007). Read only when the links found more than one thread, which
+    /// is the one case the answer matters in: the common message pays
+    /// nothing for it.
+    splits: std::collections::HashSet<ThreadId>,
+    /// The newest thread in the subject window, if any.
+    by_subject: Option<ThreadId>,
     /// A thread to pretend does not exist. [`ThreadingRepository::reconsider`]
     /// asks "does anything *besides* the thread this message is already in
     /// explain it better", and a thread born from this exact message always
@@ -400,26 +449,89 @@ impl LoadedIndex {
             }
         }
 
+        // A split thread is one claiming the id of a message the person
+        // split off. Only asked when the links name several threads, where
+        // `assign` has to choose between joining and merging.
+        let mut found: Vec<ThreadId> = by_id.values().copied().collect();
+        found.sort_unstable();
+        found.dedup();
+        let splits = if found.len() > 1 {
+            let mut parameters = vec![turso::Value::from(account_id.get())];
+            parameters.extend(found.iter().map(|thread| turso::Value::from(thread.get())));
+            // Driven from the splits (a handful of rows) into the links by
+            // their unique key, never from the threads' links, which are as
+            // many as a long thread has messages.
+            let placeholders = (0..found.len())
+                .map(|n| format!("?{}", n + 2))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sql::all(
+                connection,
+                &format!(
+                    "SELECT l.thread_id FROM thread_splits s
+                       CROSS JOIN thread_links l
+                         ON l.account_id = s.account_id AND l.rfc_message_id = s.rfc_message_id
+                      WHERE s.account_id = ?1 AND l.thread_id IN ({placeholders})"
+                ),
+                parameters,
+                |row| Ok(ThreadId::new(row.col(0)?)),
+            )
+            .await?
+            .into_iter()
+            .collect()
+        } else {
+            Default::default()
+        };
+
         // Only consulted when nothing linked, and only for a usable subject —
         // the same condition `assign` applies, so a subject it would never ask
         // about is never queried for.
+        //
+        // Bounded twice over (spec 013, research R2): to threads whose latest
+        // message is inside the window, and to the newest of them. The model
+        // joins one thread and never merges on this path, so one row is all it
+        // can use, however many threads share a subject.
+        //
+        // No `id DESC` tie-break in the order: it makes the planner prefer
+        // `idx_threads_account_last_at`, which binds one column fewer and
+        // walks every thread in the window. Two threads with the same latest
+        // millisecond and the same subject are equally good answers. The
+        // The thread being reconsidered is excluded here, not after, so that
+        // it cannot crowd out the second-best answer.
         let by_subject = if cue.subject_is_usable() {
-            sql::all(
+            let (from, until) = cue.subject_window();
+            sql::first(
                 connection,
-                "SELECT id FROM threads WHERE account_id = ?1 AND subject = ?2 ORDER BY id",
-                bind![account_id.get(), cue.subject.as_str()],
+                "SELECT id FROM threads
+                  WHERE account_id = ?1 AND subject = ?2 AND last_at >= ?3 AND first_at <= ?4 AND id IS NOT ?5
+                  ORDER BY last_at DESC LIMIT 1",
+                bind![
+                    account_id.get(),
+                    cue.subject.as_str(),
+                    super::to_millis(from),
+                    super::to_millis(until),
+                    exclude.map(ThreadId::get)
+                ],
                 |row| Ok(ThreadId::new(row.col(0)?)),
             )
             .await?
         } else {
-            Vec::new()
+            None
         };
 
         Ok(Self {
             by_id,
+            splits,
             by_subject,
             exclude,
         })
+    }
+
+    /// Whether `assign` joined the nearest link's thread rather than merging
+    /// because one of several threads is a split. Then the message must not
+    /// take over the ids its References name in the other thread.
+    fn joined_across_a_split(&self) -> bool {
+        !self.splits.is_empty()
     }
 
     fn allowed(&self, thread: ThreadId) -> bool {
@@ -435,13 +547,16 @@ impl ThreadIndex for LoadedIndex {
             .filter(|found| self.allowed(*found))
     }
 
-    fn threads_with_subject(&self, _subject: &str) -> Vec<ThreadId> {
-        // The subject was fixed when this was loaded -- it is the cue's own,
-        // and `assign` asks about no other.
-        self.by_subject
-            .iter()
-            .copied()
-            .filter(|found| self.allowed(*found))
-            .collect()
+    fn threads_with_subject(
+        &self,
+        _subject: &str,
+        _from: DateTime<Utc>,
+        _until: DateTime<Utc>,
+    ) -> Option<ThreadId> {
+        self.by_subject.filter(|found| self.allowed(*found))
+    }
+
+    fn is_split(&self, thread: ThreadId) -> bool {
+        self.splits.contains(&thread)
     }
 }

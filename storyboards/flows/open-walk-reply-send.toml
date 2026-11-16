@@ -19,17 +19,17 @@ command = "next_message"
 [[step]]
 id      = "open"
 command = "open_message"
-check   = { view = "reader", reading.id = "7", composer.open = false }
-expect  = "The thread is open over the list on its newest message."
+check   = { view = "reader", reading.id = "6", composer.open = false }
+expect  = "The thread is open over the list on its first unread message."
 
 [[step]]
 command = "prev_in_conversation"
-check   = { reading.id = "6" }
+check   = { reading.id = "5" }
 expect  = "`p` shows the message before it."
 
 [[step]]
 command = "next_in_conversation"
-check   = { reading.id = "7" }
+check   = { reading.id = "6" }
 expect  = "`n` moves back."
 
 [[step]]

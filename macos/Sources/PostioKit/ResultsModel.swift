@@ -56,6 +56,9 @@ public final class ResultsModel {
         case rows(IndexSet)
         /// The focus ring moved off the table row `previous`.
         case cursor(previous: Int?)
+        /// An expanded result's lines came or went (spec 013 US6): the
+        /// table rows that were removed, and those inserted, as ranges.
+        case spliced(removed: Range<Int>?, inserted: Range<Int>?)
         /// The results are gone; the inbox is back.
         case close
     }
@@ -66,6 +69,9 @@ public final class ResultsModel {
         case header(Int)
         /// The result at this position.
         case row(UInt64)
+        /// Line `index` of the expanded result's children: a match, or the
+        /// run of messages between matches that did not.
+        case child(Int)
     }
 
     /// The heights of design §3.4.
@@ -73,6 +79,10 @@ public final class ResultsModel {
         public static let header: Double = 32
         public static let topHit: Double = 66
         public static let row: Double = 58
+        /// A matching message under its result (screen 06).
+        public static let child: Double = 38
+        /// The line that stands for messages that did not match.
+        public static let gap: Double = 30
     }
 
     /// One footer or bulk-bar hint.
@@ -103,6 +113,9 @@ public final class ResultsModel {
     public private(set) var results: UInt64 = 0
     /// The result with the focus ring.
     public private(set) var cursor: UInt64?
+    /// The result opened in place, with the lines drawn after its row
+    /// (spec 013 US6), and the child with the ring, an index into them.
+    public private(set) var splice: ResultSpliceFfi?
     public private(set) var footerHints: [Hint] = []
     /// "48 conversations · local index · 41 ms".
     public private(set) var footerRight = ""
@@ -168,6 +181,14 @@ public final class ResultsModel {
             let previous = cursorRow
             cursor = position
             return .cursor(previous: previous)
+        case let .focusResultSplice(next):
+            guard isOpen else { return nil }
+            return spliced(to: next)
+        case let .focusResultChildFocus(child):
+            guard isOpen, splice != nil else { return nil }
+            let previous = cursorRow
+            splice?.focused = child
+            return .cursor(previous: previous)
         case .focusLeaveResults:
             guard isOpen else { return nil }
             close()
@@ -179,16 +200,32 @@ public final class ResultsModel {
 
     // MARK: the table's shape
 
-    /// How many table rows: every result and a header for each group;
-    /// none while the grid or the People list is shown.
+    /// How many lines the opened result has under it.
+    private var childCount: Int { splice?.children.count ?? 0 }
+
+    /// The table row the expanded result is drawn in, before its lines.
+    private var anchorBase: Int? { splice.flatMap { baseRow(of: $0.anchor) } }
+
+    /// How many table rows: every result and a header for each group, and
+    /// the opened result's lines; none while the grid or the People list is
+    /// shown.
     public var count: Int {
         guard isOpen, !isFiles, !isPeople else { return 0 }
-        return Int(results) + groups.count
+        return Int(results) + groups.count + childCount
     }
 
     /// What table row `tableRow` shows; `nil` past the end.
     public func item(at tableRow: Int) -> Item? {
         guard tableRow >= 0, tableRow < count else { return nil }
+        if let anchor = anchorBase, childCount > 0 {
+            if tableRow > anchor, tableRow <= anchor + childCount { return .child(tableRow - anchor - 1) }
+            if tableRow > anchor + childCount { return baseItem(at: tableRow - childCount) }
+        }
+        return baseItem(at: tableRow)
+    }
+
+    /// What the table would show with no lines opened.
+    private func baseItem(at tableRow: Int) -> Item? {
         // The last group whose header is at or above the row.
         guard let index = starts.lastIndex(where: { $0 <= tableRow }) else {
             // Results before any group: none are drawn so, but stay sane.
@@ -199,31 +236,56 @@ public final class ResultsModel {
         return .row(groups[index].first + UInt64(offset - 1))
     }
 
-    /// The table row the result at `position` is drawn in.
-    public func tableRow(of position: UInt64) -> Int? {
+    private func baseRow(of position: UInt64) -> Int? {
         guard position < results else { return nil }
         guard let index = groups.lastIndex(where: { $0.first <= position }) else { return Int(position) }
         return starts[index] + 1 + Int(position - groups[index].first)
     }
 
-    /// The table row the focus ring is in.
-    public var cursorRow: Int? { cursor.flatMap(tableRow(of:)) }
+    /// The table row the result at `position` is drawn in.
+    public func tableRow(of position: UInt64) -> Int? {
+        guard let base = baseRow(of: position) else { return nil }
+        if let anchor = anchorBase, base > anchor { return base + childCount }
+        return base
+    }
 
-    /// Table row `tableRow`'s height: a header's, a top hit's, or a row's.
+    /// The table row the focus ring is in: the child's, while it has it.
+    public var cursorRow: Int? {
+        if let focused = splice?.focused, let anchor = anchorBase, Int(focused) < childCount {
+            return anchor + 1 + Int(focused)
+        }
+        return cursor.flatMap(tableRow(of:))
+    }
+
+    /// Table row `tableRow`'s height: a header's, a top hit's, a row's, or
+    /// a child's.
     public func height(at tableRow: Int) -> Double {
         switch item(at: tableRow) {
         case .header: return Metrics.header
         case let .row(position):
             let group = groups.last { $0.first <= position }
             return group?.topHits == true ? Metrics.topHit : Metrics.row
+        case let .child(index):
+            if case .gap = splice?.children[index] { return Metrics.gap }
+            return Metrics.child
         case nil: return Metrics.row
         }
     }
 
     /// The group `tableRow` belongs to.
     public func group(at tableRow: Int) -> ResultGroupFfi? {
-        guard let index = starts.lastIndex(where: { $0 <= tableRow }) else { return nil }
+        var base = tableRow
+        if let anchor = anchorBase, childCount > 0 {
+            if tableRow > anchor + childCount { base -= childCount } else if tableRow > anchor { base = anchor }
+        }
+        guard let index = starts.lastIndex(where: { $0 <= base }) else { return nil }
         return groups[index]
+    }
+
+    /// The line `index` of the opened result.
+    public func child(at index: Int) -> ResultChildFfi? {
+        guard let children = splice?.children, children.indices.contains(index) else { return nil }
+        return children[index]
     }
 
     /// The result at `position`: read once, then remembered until its page
@@ -281,7 +343,8 @@ public final class ResultsModel {
     // MARK: the pointer
 
     /// A click on table row `tableRow`: the controller is told; a header
-    /// is not a result.
+    /// is not a result, and a line under one has no click of its own (the
+    /// keys reach it).
     public func point(tableRow: Int) {
         guard case let .row(position) = item(at: tableRow) else { return }
         engine.focusSearchPoint(position)
@@ -331,8 +394,22 @@ public final class ResultsModel {
         frame += 1
     }
 
+    /// The opened result's lines were drawn, or taken away: which table rows
+    /// went and which came.
+    private func spliced(to next: ResultSpliceFfi?) -> Change {
+        var removed: Range<Int>?
+        if let anchor = anchorBase, childCount > 0 { removed = (anchor + 1)..<(anchor + 1 + childCount) }
+        splice = next
+        var inserted: Range<Int>?
+        if let next, let anchor = baseRow(of: next.anchor), !next.children.isEmpty {
+            inserted = (anchor + 1)..<(anchor + 1 + next.children.count)
+        }
+        return .spliced(removed: removed, inserted: inserted)
+    }
+
     private func close() {
         isOpen = false
+        splice = nil
         tabs = []
         countLine = ""
         subLine = ""

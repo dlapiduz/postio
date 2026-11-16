@@ -1367,7 +1367,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{needle} missing:\n{drawn}"))
         };
         let thread = at("Latest of 6 in this thread");
-        assert!(text[thread].contains("p earlier message"), "{drawn}");
+        assert!(text[thread].contains("[ earlier message"), "{drawn}");
         let subject = text
             .iter()
             .enumerate()
@@ -1774,7 +1774,7 @@ mod tests {
             "the card goes"
         );
         // The thread chip steps back.
-        let (x, y) = find(&app, size, "p earlier message", 6);
+        let (x, y) = find(&app, size, "[ earlier message", 6);
         click_at(&mut app, size, x, y);
         assert_eq!(app.reading().unwrap().current, 4);
         // The down step key opens the next row.

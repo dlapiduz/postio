@@ -23,6 +23,7 @@
 //! A hole in that gate is a hole in the reader too, which is the point: one
 //! policy, one place, tested once.
 
+use postio_model::MessageBody;
 use postio_model::account::Signature;
 
 use crate::document::{Block, Document, Inline};
@@ -288,6 +289,124 @@ pub fn forwarded(source: &Quoted, header_lines: &[String]) -> Document {
         blocks.push(Block::Quoted(source.clone().carried()));
     }
     Document { blocks }
+}
+
+/// `old`, the body of a reply in progress, with the message it quotes
+/// swapped for `source`: what "Reply to latest" does to the text (spec 013
+/// FR-022).
+///
+/// The person's words are the stretches the reader would not fold -- what
+/// sits above the quote, less the line that introduced it -- and they are
+/// kept byte for byte, in both halves. Whatever follows the quote (a
+/// signature placed below it) is kept too. What goes is the old attribution
+/// and the old quote; the new ones take their place, in the shape the reply
+/// started with: the attribution, then the quote, as `> ` lines in the plain
+/// half and a `<blockquote>` in the rich one.
+///
+/// A body with no quote in it (the person deleted it) gets the new one at the
+/// end, after their words.
+pub fn requote(old: &MessageBody, attribution: &str, source: &Quoted) -> MessageBody {
+    MessageBody {
+        text: old
+            .text
+            .as_deref()
+            .map(|text| requote_text(text, attribution, source)),
+        html: old
+            .html
+            .as_deref()
+            .map(|html| requote_html(html, attribution, source)),
+    }
+}
+
+fn requote_text(text: &str, attribution: &str, source: &Quoted) -> String {
+    use crate::quote::{Stretch, text_stretches, without_attribution};
+    let stretches = text_stretches(text);
+    let first = stretches
+        .iter()
+        .position(|stretch| matches!(stretch, Stretch::Quoted(_)));
+    let last = stretches
+        .iter()
+        .rposition(|stretch| matches!(stretch, Stretch::Quoted(_)));
+    let (mut typed, after) = match (first, last) {
+        (Some(first), Some(last)) => {
+            let own = |range: &[Stretch<'_>]| {
+                range
+                    .iter()
+                    .map(|stretch| match stretch {
+                        Stretch::Own(words) | Stretch::Quoted(words) => *words,
+                    })
+                    .collect::<String>()
+            };
+            let before = own(&stretches[..first]);
+            (
+                without_attribution(&before).to_owned(),
+                own(&stretches[last + 1..]),
+            )
+        }
+        _ => (text.to_owned(), String::new()),
+    };
+    // Their words, then one blank line, then the attribution. A caret line
+    // the person never used stays as the blank line it was.
+    if !typed.is_empty() && !typed.ends_with("\n\n") {
+        typed.push_str(if typed.ends_with('\n') { "\n" } else { "\n\n" });
+    }
+    let mut out = typed;
+    out.push_str(attribution);
+    out.push('\n');
+    let quoted: Vec<String> = source
+        .text()
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                ">".to_owned()
+            } else {
+                format!("> {line}")
+            }
+        })
+        .collect();
+    out.push_str(&quoted.join("\n"));
+    if quoted.is_empty() {
+        out.pop();
+    }
+    if !after.is_empty() {
+        out.push('\n');
+        out.push_str(&after);
+    }
+    out
+}
+
+fn requote_html(html: &str, attribution: &str, source: &Quoted) -> String {
+    use crate::quote::{Stretch, html_stretches, html_without_attribution};
+    let stretches = html_stretches(html);
+    let first = stretches
+        .iter()
+        .position(|stretch| matches!(stretch, Stretch::Quoted(_)));
+    let last = stretches
+        .iter()
+        .rposition(|stretch| matches!(stretch, Stretch::Quoted(_)));
+    let join = |range: &[Stretch<'_>]| {
+        range
+            .iter()
+            .map(|stretch| match stretch {
+                Stretch::Own(markup) | Stretch::Quoted(markup) => *markup,
+            })
+            .collect::<String>()
+    };
+    let (typed, after) = match (first, last) {
+        (Some(first), Some(last)) => {
+            let before = join(&stretches[..first]);
+            (
+                html_without_attribution(&before).to_owned(),
+                join(&stretches[last + 1..]),
+            )
+        }
+        _ => (html.to_owned(), String::new()),
+    };
+    let mut blocks = vec![Block::Paragraph(vec![Inline::Text(attribution.to_owned())])];
+    if !source.is_empty() {
+        blocks.push(Block::Quoted(source.clone()));
+    }
+    format!("{typed}{}{after}", Document { blocks }.to_html())
 }
 
 /// Where a signature sits relative to the quoted message (#12).

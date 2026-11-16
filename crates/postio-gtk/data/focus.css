@@ -1235,6 +1235,16 @@ button.focus-results-filter.focus-results-filter-applied {
   outline-color: var(--postio-hairline-strong);
 }
 
+/* A thread's message under a search result carries the same ring. */
+.focus-results-child.focus-results-cursor {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+.focus-keyboard-away .focus-results-child.focus-results-cursor {
+  outline-color: var(--postio-hairline-strong);
+}
+
 .focus-results-gutter {
   min-width: 28px;
   color: var(--postio-ink-secondary);
@@ -2472,4 +2482,215 @@ button.focus-filtered-tab.focus-filtered-tab-on {
 .focus-digest-summary-statement.focus-digest-summary-focused {
   outline: 2px solid var(--postio-accent);
   outline-offset: -2px;
+}
+
+/* ── The scope footer (specs/013-focus-threads US2; screens 02, 03) ───── */
+.focus-scope-footer {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-header);
+}
+
+.focus-scope-footer-title {
+  font-weight: bold;
+}
+
+/* ── The thread bar and the older-message banner (spec 013 US3; screen 03) ── */
+.focus-thread-bar {
+  min-height: 60px;
+  padding: 0 var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+.focus-thread-bar-title {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+}
+
+.focus-thread-bar-count {
+  font-size: var(--postio-text-label);
+}
+
+.focus-thread-chip {
+  border-radius: var(--postio-radius-lg);
+  border: 1px solid transparent;
+  padding: 3px 4px;
+}
+
+.focus-thread-chip-current {
+  background-color: var(--postio-accent-soft);
+  border-color: var(--postio-accent);
+}
+
+.focus-thread-avatar {
+  min-width: 20px;
+  min-height: 20px;
+  border-radius: 10px;
+  background-color: var(--postio-raised-bg);
+  font-size: 0.6rem;
+  font-weight: bold;
+}
+
+.focus-thread-chip-name {
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-thread-chip-unread .focus-thread-chip-name {
+  font-weight: bold;
+  color: var(--postio-ink);
+}
+
+.focus-thread-dot,
+.focus-thread-match {
+  font-size: 0.5rem;
+  color: var(--postio-ink);
+}
+
+/* The unread dot is the accent, as an unread row's is. */
+.focus-thread-dot {
+  color: var(--postio-accent);
+}
+
+.focus-older-banner {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-raised-bg);
+}
+
+/* ── A reply that arrived while reading (spec 013 US4; screen 08) ──────── */
+.focus-banner-bar {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+}
+
+/* Over the foot of the message, so the soft tint is laid on the surface and
+   never on the text under it. */
+.focus-new-reply-banner {
+  background-color: var(--postio-surface);
+  background-image: linear-gradient(var(--postio-accent-soft), var(--postio-accent-soft));
+  border: 1px solid var(--postio-accent);
+}
+
+/* ── The thread menu and the outline (spec 013 US5; screens 04, 05) ───── */
+.focus-thread-menu-body,
+.focus-outline-body {
+  padding: var(--postio-space-2);
+}
+
+/* A popover is a surface of its own and does not inherit the window's
+   face: names, lines and headings are the interface's, not the mono
+   face the keys and counts keep. */
+.focus-thread-menu > contents,
+.focus-outline > contents {
+  font-family: var(--postio-font-body);
+}
+
+/* The menu's entries are choices, in ink: a ghost button's chrome grey
+   made the whole menu read as disabled. */
+button.postio-button-ghost.focus-thread-menu-entry {
+  color: var(--postio-ink);
+}
+
+.focus-thread-menu-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+  padding: var(--postio-space-2) var(--postio-space-3) 0;
+}
+
+.focus-thread-menu-note {
+  font-size: var(--postio-text-label);
+}
+
+.focus-outline-row {
+  padding: 0 var(--postio-space-2);
+  border-radius: var(--postio-radius-lg);
+  border: 1px solid transparent;
+}
+
+.focus-outline-cursor {
+  background-color: var(--postio-selected-bg);
+}
+
+.focus-outline-current {
+  border-color: var(--postio-accent);
+}
+
+.focus-outline-unread {
+  font-weight: bold;
+}
+
+.focus-outline-footer {
+  font-size: var(--postio-text-label);
+}
+
+/* ── Thread children under a search result (spec 013 US6; screens 06, 07) ── */
+.focus-results-child {
+  min-height: 30px;
+  padding: 0 var(--postio-space-4) 0 calc(var(--postio-space-4) * 3);
+  background-color: var(--postio-raised-bg);
+}
+
+.focus-results-gap {
+  min-height: 30px;
+}
+
+.focus-match-banner {
+  background-color: var(--postio-raised-bg);
+}
+
+/* ── A thread in the composer (spec 013 US7; screens 09, 10) ──────────── */
+.focus-older-reply {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-accent-soft);
+}
+
+.focus-older-reply-title {
+  font-weight: bold;
+}
+
+.focus-forward-chooser {
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-forward-card {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  border: 1px solid var(--postio-hairline);
+  background: none;
+}
+
+.focus-forward-card-selected {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-accent-soft);
+}
+
+.focus-forward-card-title {
+  font-weight: bold;
+}
+
+.focus-newer-messages {
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-raised-bg);
+}
+
+.focus-results-child-sender {
+  font-weight: bold;
+}
+
+/* The forwarded messages, folded to a row each under what is typed. */
+.focus-forwarded {
+  padding: var(--postio-space-2) var(--postio-space-4) var(--postio-space-3);
+}
+
+.focus-forwarded-row {
+  min-height: 28px;
+  padding: 0 var(--postio-space-3);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-raised-bg);
 }

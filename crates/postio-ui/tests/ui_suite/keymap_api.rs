@@ -203,14 +203,25 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
     };
 
     assert_eq!(
-        press(Frontend::Focus, Context::Composer, "alt+e"),
+        press(Frontend::Focus, Context::Composer, "alt+shift+e"),
         Outcome::Unhandled,
-        "Focus answered the terminal composer's `alt+e`"
+        "Focus answered the terminal composer's `alt+shift+e`"
+    );
+    assert_eq!(
+        press(Frontend::Terminal, Context::Composer, "alt+shift+e"),
+        Outcome::Command("edit_externally".to_owned()),
+        "the terminal lost its editor key"
+    );
+    // `alt+e` was the terminal's editor key until `reply_to_latest` took it
+    // (specs/013-focus-threads R10): Focus answers it, and the terminal,
+    // which does not offer that command, leaves it free.
+    assert_eq!(
+        press(Frontend::Focus, Context::Composer, "alt+e"),
+        Outcome::Command("reply_to_latest".to_owned())
     );
     assert_eq!(
         press(Frontend::Terminal, Context::Composer, "alt+e"),
-        Outcome::Command("edit_externally".to_owned()),
-        "the terminal lost its editor key"
+        Outcome::Unhandled
     );
     for app in [Frontend::Terminal, Frontend::Focus] {
         assert_eq!(

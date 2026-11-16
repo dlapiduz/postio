@@ -435,6 +435,15 @@ database engine in the graph of every crate depending on `postio-core` the momen
 it on — the view layer included. `postio-core` therefore has **no optional
 dependencies at all.**
 
+**What a verb acts on is decided in one place.** Since spec 013 a Focus list
+can expand a thread in place, so a key can mean one message or the whole
+thread. `postio_ui::scope::target` resolves it from the focus (a collapsed
+row, a child row, or the message window) and the command, as the spec's D2
+table says, and `postio_ui::scope::footer` says it in the footer. No
+frontend, and no other module of the controller, decides scope for itself:
+the Mac and GTK draw what it answers. A new verb that acts on mail gets its
+row in that table, with a test per cell.
+
 **The macOS frontend is built** ([#15](https://github.com/dlapiduz/postio/issues/15),
 [ADR 0019](decisions/0019-macos-frontend.md)) — a native Swift frontend in
 `macos/` over the same engine, through a UniFFI boundary in `postio-ffi`, with

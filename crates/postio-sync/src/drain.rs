@@ -158,6 +158,9 @@ pub struct DrainReport {
     pub uncertain: Vec<FailedOperation>,
     /// Mailboxes whose local state is now known to disagree with the server.
     pub needs_resync: Vec<MailboxId>,
+    /// Which thread each Sent copy this drain filed joined, for
+    /// `Event::ThreadChanged`.
+    pub thread_arrivals: crate::threaded::ThreadArrivals,
 }
 
 impl DrainReport {
@@ -295,6 +298,7 @@ impl<'a> Drainer<'a> {
 
         let capabilities = self.backend.capabilities().await?;
         let mut resync: BTreeSet<i64> = BTreeSet::new();
+        let mut threaded = crate::threaded::ThreadArrivals::default();
 
         for step in &plan.steps {
             // One span per operation: the op type and the row it acts on, so a
@@ -314,8 +318,14 @@ impl<'a> Drainer<'a> {
                 Ok::<_, crate::drain::SyncError>(match outcome {
                     Pending::Settled(outcome) => outcome,
                     Pending::Send(context) => {
-                        self.send(connection, &context, &capabilities, &mut resync)
-                            .await
+                        self.send(
+                            connection,
+                            &context,
+                            &capabilities,
+                            &mut resync,
+                            &mut threaded,
+                        )
+                        .await
                     }
                 })
             };
@@ -328,6 +338,7 @@ impl<'a> Drainer<'a> {
         }
 
         report.needs_resync = resync.into_iter().map(MailboxId::new).collect();
+        report.thread_arrivals = threaded;
         Ok(report)
     }
 
@@ -367,6 +378,7 @@ impl<'a> Drainer<'a> {
         context: &Context,
         capabilities: &Capabilities,
         resync: &mut BTreeSet<i64>,
+        threaded: &mut crate::threaded::ThreadArrivals,
     ) -> Outcome {
         if let Operation::CrossAccountCopy { saga } = &context.operation {
             return crate::cross_account::copy(self.backend, self.blobs, connection, *saga).await;
@@ -475,7 +487,8 @@ impl<'a> Drainer<'a> {
                     .smtp
                     .as_ref()
                     .expect("resolve() only returns Ready for Send when smtp is configured");
-                return crate::send::send(connection, self.backend, smtp, resync, job).await;
+                return crate::send::send(connection, self.backend, smtp, resync, threaded, job)
+                    .await;
             }
         };
 

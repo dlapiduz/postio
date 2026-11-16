@@ -20,7 +20,15 @@ import Testing
         var opened: [SurfaceKindFfi] = []
         var closed: [SurfaceKindFfi] = []
 
+        var asked: [(DraftEditFfi, DraftFfi)] = []
+        var newerAsked: [[Int64]] = []
+
         func focusComposerEdited() { edits += 1 }
+        func focusComposerDraft(edit: DraftEditFfi, draft: DraftFfi) { asked.append((edit, draft)) }
+        func focusNewerMessages(_ ids: [Int64]) -> [NewerMessageFfi] {
+            newerAsked.append(ids)
+            return ids.map { NewerMessageFfi(id: $0, who: "Lena Park", when: "Tue 22 Sep 15:22", text: "Six.") }
+        }
         func focusDraftSaved(_ composition: UInt64, kept: Bool, error: String?) {
             saved.append((composition, kept, error))
         }

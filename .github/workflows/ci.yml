@@ -1161,6 +1161,13 @@ jobs:
       - name: Build the macOS application
         # `--with-tests`: the test bundle is built here, in the same pass, so
         # the step below only runs it. It used to build the package twice.
+        # With the library `macos-test.sh` builds -- the demo stores in, which
+        # the Swift tests open: `swift test` does not relink a bundle when
+        # only a `-Xlinker` library changed, so a bundle linked here without
+        # them ran without them on a warm cache (PR #2124, "This build of
+        # Postio has no demo stores").
+        env:
+          POSTIO_FFI_FEATURES: demo
         run: scripts/macos-build.sh --with-tests
 
       # Runs `macos-build.sh --lib-only` itself first, so this cannot test

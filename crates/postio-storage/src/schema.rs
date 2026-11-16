@@ -760,7 +760,7 @@ CREATE TABLE contact_suggestions (
     // and an address-book record, with the fields as of the last sync.
     Migration {
         from: stamp(0x5689_ec6b),
-        to: FINGERPRINT,
+        to: stamp(0xf0d2_3b2a),
         statements: r#"
 CREATE TABLE contact_sync_links (
     contact_id   INTEGER PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
@@ -771,6 +771,46 @@ CREATE TABLE contact_sync_links (
     title        TEXT    NOT NULL,
     emails       TEXT    NOT NULL,
     phones       TEXT    NOT NULL
+);
+"#,
+    },
+    // `feature/focus-threads`: spec 013 (specs/013-focus-threads), the whole of
+    // it in this one step. A store at the previous stamp has never met spec
+    // 013, so every change the spec makes to the schema belongs here and not
+    // in a step of its own: add them to this statement list and to `HEAD`,
+    // and leave `from` alone.
+    //
+    // - `idx_threads_subject_recent`: the bounded subject fallback of
+    //   research R2 (`last_at >= ? ORDER BY last_at DESC LIMIT 1`).
+    // - `messages.own_line`: the sender's own words, cut to a line (R5).
+    // - `thread_mutes` and `thread_splits`: the person's mute and split of a
+    //   thread, keyed by a claimed `Message-ID` so they survive a merge and a
+    //   renumbering (R3).
+    Migration {
+        from: stamp(0xf0d2_3b2a),
+        to: FINGERPRINT,
+        statements: r#"
+ALTER TABLE messages ADD COLUMN own_line TEXT;
+CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
+-- A thread the person muted: new replies are archived on arrival (spec 013
+-- FR-012). Keyed by a folded Message-ID the thread claims, so it survives
+-- merges and the renumbering a rethread does (research R3): a thread is
+-- muted when any of its `thread_links` claims is here.
+CREATE TABLE thread_mutes (
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    rfc_message_id TEXT    NOT NULL,
+    muted_at       INTEGER NOT NULL,
+    replies_since  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, rfc_message_id)
+);
+
+-- A message the person split into its own thread, with the replies to it
+-- (FR-007). Later mail that names it joins the split thread, never merges.
+CREATE TABLE thread_splits (
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    rfc_message_id TEXT    NOT NULL,
+    split_at       INTEGER NOT NULL,
+    PRIMARY KEY (account_id, rfc_message_id)
 );
 "#,
     },
@@ -1665,7 +1705,11 @@ CREATE TABLE messages (
     -- here yet, kept by the triggers in `footprint.sql` so an account's
     -- weight is a maintained row rather than a walk of its mail (#1508).
     attachment_bytes            INTEGER NOT NULL DEFAULT 0,
-    attachment_bytes_unfetched  INTEGER NOT NULL DEFAULT 0
+    attachment_bytes_unfetched  INTEGER NOT NULL DEFAULT 0,
+    -- The sender's own words, cut to a line: what a child row of a thread
+    -- shows (spec 013, research R5). NULL until the body is local; '' when
+    -- the message is all quote.
+    own_line                    TEXT
 );
 
 -- The body folded for the full-text index, one row per indexed message.
@@ -1838,6 +1882,27 @@ CREATE TABLE thread_links (
     -- on `messages` keep original case; this table never reaches the wire.
     rfc_message_id TEXT    NOT NULL,
     thread_id      INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    PRIMARY KEY (account_id, rfc_message_id)
+);
+
+-- A thread the person muted: new replies are archived on arrival (spec 013
+-- FR-012). Keyed by a folded Message-ID the thread claims, so it survives
+-- merges and the renumbering a rethread does (research R3): a thread is
+-- muted when any of its `thread_links` claims is here.
+CREATE TABLE thread_mutes (
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    rfc_message_id TEXT    NOT NULL,
+    muted_at       INTEGER NOT NULL,
+    replies_since  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, rfc_message_id)
+);
+
+-- A message the person split into its own thread, with the replies to it
+-- (FR-007). Later mail that names it joins the split thread, never merges.
+CREATE TABLE thread_splits (
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    rfc_message_id TEXT    NOT NULL,
+    split_at       INTEGER NOT NULL,
     PRIMARY KEY (account_id, rfc_message_id)
 );
 
@@ -2075,6 +2140,10 @@ CREATE INDEX idx_threads_account_subject ON threads (account_id, subject);
 CREATE INDEX idx_threads_last_at ON threads (last_at DESC, id DESC);
 
 CREATE INDEX idx_threads_subject ON threads (subject);
+
+-- Spec 013: the subject fallback asks for the newest thread with a subject
+-- inside a window, which this serves as one seek with no sort.
+CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
 
 CREATE INDEX idx_unsubscribe_activations_account
     ON unsubscribe_activations (account_id, activated_at DESC);
@@ -2355,6 +2424,7 @@ mod tests {
         "idx_threads_account_subject",
         "idx_threads_last_at",
         "idx_threads_subject",
+        "idx_threads_subject_recent",
         "idx_unsubscribe_activations_account",
         // 4 triggers
         "messages_bodies_owed_update",

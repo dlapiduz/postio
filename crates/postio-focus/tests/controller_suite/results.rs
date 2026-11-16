@@ -1983,6 +1983,30 @@ fn the_results_are_asked_again_once_a_verb_on_them_lands() {
     assert_eq!(focus.result_count(), 123, "and the ring stays where it was");
 }
 
+#[test]
+fn the_results_are_asked_again_once_a_message_is_read_under_them() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    // A message opened from a result was open for its dwell: the rows
+    // behind it must not go on saying it is unread.
+    let effects = focus.handle_on(
+        Input::Event(postio_core::Event::MessagesChanged {
+            account: postio_model::AccountId::new(1),
+            messages: vec![postio_model::MessageId::new(5)],
+        }),
+        &rows,
+    );
+    assert_eq!(
+        results_reads(&effects),
+        [
+            (ConversationOrder::BestMatch, 0, 3),
+            (ConversationOrder::Newest, 0, 50)
+        ],
+        "the results are read again"
+    );
+}
+
 /// "atlas budget", then From: Ada and Since 1 July, as screen 12's query.
 fn screen_twelve(focus: &mut FocusController, rows: &List) {
     let _ = search(focus, "atlas budget", rows);

@@ -60,7 +60,7 @@ struct MainWindow: View {
             // so its scroll and its cursor are where they were on the way
             // back.
             if let filtered = engine.filtered, filtered.isOpen {
-                FilteredView(model: filtered)
+                FilteredView(model: filtered, scope: engine.states.footer)
             }
             // The results (specs/010-focus-search step 3): a mode of the
             // window, in the inbox's place, the inbox kept under it -- its
@@ -164,6 +164,10 @@ struct MainWindow: View {
             if let words = engine.actionBarWords {
                 ActionBar(words: words) { engine.run($0) }
                     .transition(.opacity)
+            }
+            // What the cursor is on, and what acts on what (spec 013).
+            if let footer = engine.states.footer {
+                ScopeFooter(words: ScopeFooterWords(footer))
             }
         }
     }

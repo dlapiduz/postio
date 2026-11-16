@@ -18,7 +18,7 @@ use postio_config::paths::Platform;
 use postio_core::state::Selection;
 use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::listing::{PageRequest, Surfaced};
-use postio_model::{AccountId, ListScope, MailboxId, MailboxRole, MessageId};
+use postio_model::{AccountId, ListScope, MailboxId, MailboxRole, MessageId, ThreadId, ThreadView};
 use postio_ui::focus_list::FocusRow;
 
 mod bar;
@@ -42,7 +42,10 @@ mod pickers;
 mod results;
 mod states;
 mod surfaces;
+mod thread_expand;
+mod thread_menu;
 mod verbs;
+mod walk;
 
 pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRead};
 pub use capture::{CaptureProject, CaptureView};
@@ -61,7 +64,7 @@ pub use dropdown::{
 };
 pub use feed::{Opened, PageAnswer};
 pub use filtered::{
-    FilteredBar, FilteredBarAction, FilteredLine, FilteredTab, FilteredView, PickChange, RowPicker,
+    FilteredBar, FilteredBarAction, FilteredLine, FilteredSplice, FilteredTab, FilteredView,
 };
 pub use perform::{perform, perform_now};
 pub use pickers::{
@@ -73,11 +76,12 @@ pub use postio_ui::search_view::FilePreview;
 pub use results::{
     Chip, DatePresetView, FileCard, FileCopy, FilePurpose, FilesHeader, FilterButton, LabelPill,
     MatchCard, MonthBar, NoResultsView, PersonRow, PopoverRow, PopoverView, QueryView,
-    QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultsTabView, ResultsView, SaveView,
-    TermEdit, file_copies,
+    QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultSplice, ResultsTabView,
+    ResultsView, SaveView, TermEdit, file_copies,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
+pub use thread_menu::OutlineInput;
 pub use verbs::{Aimed, Everything, ToastKind};
 
 /// What differs between platforms, as policy rather than as a fork
@@ -184,6 +188,38 @@ pub enum Input {
     /// under a message it opened itself (a hit, a digest's email). Nothing
     /// happens with no message open, or when it shows the cursor's row.
     Follow,
+    /// The message window's width allows this many thread-bar chips (sent
+    /// when it opens and on resize): the bar is composed again.
+    BarRoom(u32),
+    /// The message window opened from a search has no more of its own find
+    /// matches in this direction (spec 013 US6): the controller goes on to
+    /// the next matched message, or says it is the last. Sent after
+    /// [`ReaderVerb::NextMatch`] / [`ReaderVerb::PrevMatch`] ran out.
+    MatchEdge {
+        /// Whether it was the next match (`false`: the previous).
+        forward: bool,
+    },
+    /// A Thread ▾ menu entry was chosen by a click: it runs (spec 013 US5).
+    ThreadMenuPick(CommandId),
+    /// A chooser card was clicked (spec 013 FR-023): as `1` `2` `3`.
+    ForwardFormClicked(postio_model::ForwardForm),
+    /// The composer's draft, as it is now: the answer to
+    /// [`Intent::ComposerDraftWanted`].
+    ComposerDraft(DraftEdit, Box<postio_model::Draft>),
+    /// The outline's field, chips, arrows and Return (spec 013 US5).
+    Outline(thread_menu::OutlineInput),
+    /// A click on the thread bar's chip for the member at this index (a
+    /// [`postio_ui::thread_bar::Chip::Message`]'s `index`): that message is
+    /// shown, as `]` and `[` would have shown it (spec 013 US3).
+    ThreadBarChipClicked(u32),
+    /// A click on the thread bar's "... N more" chip, which stands for the
+    /// members from `from`: the outline opens with the ring on the first of
+    /// them (spec 013 US3).
+    ThreadBarMoreClicked {
+        /// The first member the chip stands for
+        /// ([`postio_ui::thread_bar::Chip::More`]'s `from`).
+        from: u32,
+    },
     /// The bar's words, as they are now.
     Typed {
         /// The field's text.
@@ -482,6 +518,23 @@ pub fn save_search(
 pub enum Intent {
     /// The header strip's counts changed.
     Counts(FocusCounts),
+    /// Insert `children` after the row at `anchor` (a row position, not a
+    /// display position). When that row already has children, they are
+    /// replaced. No animation under reduced motion.
+    Splice {
+        /// The expanded row's position among the rows.
+        anchor: u32,
+        /// One per member, oldest first, then the unsent reply.
+        children: Vec<postio_ui::thread_list::ChildRowView>,
+    },
+    /// The footer under the list, redrawn: the scope of the row or child the
+    /// cursor is on, the keys that matter there, and what acts on what.
+    Footer(postio_ui::scope::FooterView),
+    /// Remove the children after the row at `anchor`.
+    Unsplice {
+        /// The collapsed row's position among the rows.
+        anchor: u32,
+    },
     /// The cursor is on `position`: draw it there and bring it into view.
     Cursor {
         /// The row.
@@ -592,6 +645,20 @@ pub enum Intent {
     CloseSurface(SurfaceKind),
     /// The open message does this.
     Reader(ReaderVerb),
+    /// Draw the message window's thread bar: the label column, the chips and
+    /// the Thread menu button. Said on every message the window shows, with
+    /// no chips for a thread of one (spec 013 US3).
+    ThreadBar(postio_ui::thread_bar::ThreadBarView),
+    /// Draw the kicker above the subject ("Message 4 of 6 · ] newer · [
+    /// older"); empty for a thread of one.
+    Kicker(String),
+    /// Draw the older-message banner, or take it away.
+    OlderBanner(Option<postio_ui::thread_bar::BannerView>),
+    /// Draw the new-reply banner, or take it away: a reply arrived while
+    /// the window was on another message, which stays on screen (FR-018).
+    NewReply(Option<postio_ui::thread_bar::BannerView>),
+    /// Draw the sender block's Reply to row, or take it away.
+    ReplyTo(Option<String>),
     /// Nothing is over the list any more: the keyboard goes back to it, on
     /// the cursor's row.
     KeyboardHome,
@@ -625,6 +692,16 @@ pub enum Intent {
     /// The focus ring is on this result: draw it there and bring it into
     /// view.
     ResultsCursor(u64),
+    /// The results' expanded result: its matching messages and the lines
+    /// for the runs between them, drawn after its row; `None` takes them
+    /// away (spec 013 US6).
+    ResultSplice(Option<Box<ResultSplice>>),
+    /// The focus ring is on this child of the expanded result (an index into
+    /// [`ResultSplice::children`]), or back on the result's own row.
+    ResultChildFocus(Option<u32>),
+    /// Draw the match banner of a window opened from a search, or take it
+    /// away (spec 013 US6).
+    MatchBanner(Option<postio_ui::thread_bar::MatchBannerView>),
     /// The field's chips and words and the filter bar's buttons.
     Query(QueryView),
     /// Draw the filter popover, whole, hung from its button; `None` closes
@@ -686,6 +763,20 @@ pub enum Intent {
     Filtered(Box<FilteredView>),
     /// The keyboard is on Filtered's row at this index now.
     FilteredFocus(Option<u32>),
+    /// Insert `children` after Filtered's row at `anchor` (an index into
+    /// its rows), replacing any it has: the list's [`Intent::Splice`] for
+    /// the Filtered view's own table.
+    FilteredSplice {
+        /// The expanded row.
+        anchor: u32,
+        /// One per member, oldest first, then the unsent reply.
+        children: Vec<postio_ui::thread_list::ChildRowView>,
+    },
+    /// Remove the children after Filtered's row at `anchor`.
+    FilteredUnsplice {
+        /// The collapsed row.
+        anchor: u32,
+    },
     /// Filtered's selection changed: draw the boxes of `selected`, and the
     /// bar (or take it down with `None`).
     FilteredSelection {
@@ -712,6 +803,14 @@ pub enum Intent {
     /// put it on the stack as a [`SurfaceKind::ContactPopover`]; the frontend
     /// anchors it to the sender's name.
     ContactPopover(Box<postio_ui::contact_popover::PopoverView>),
+    /// Open Thread ▾'s menu, over the window (a 340-point popover). The
+    /// controller has put it on the stack as a [`SurfaceKind::ThreadMenu`].
+    ThreadMenu(Box<postio_ui::thread_outline::ThreadMenuView>),
+    /// Open the thread outline, or redraw it, whole (a 440-point popover).
+    /// The controller has put it on the stack as a [`SurfaceKind::Outline`].
+    Outline(Box<postio_ui::thread_outline::OutlineView>),
+    /// Put the keyboard in the outline's filter field.
+    OutlineFocusFilter,
     /// Open a composer to this address, as a `mailto:` link would.
     WriteTo(String),
     /// Draw the Contacts view's frame, whole. The controller has put it on
@@ -737,6 +836,37 @@ pub enum Intent {
     ContactsSettings(Box<postio_ui::contacts_settings::SuggestionsView>),
     /// Put the keyboard in the Contacts filter.
     ContactsFocusFilter,
+    /// Draw the *What to forward* chooser above To, or redraw it with the
+    /// chosen card (spec 013 FR-023). Said after the [`Intent::Composer`]
+    /// of a forward in a thread of two or more; keys `1` `2` `3` are
+    /// [`postio_core::Context::ForwardChooser`]'s while it holds the keyboard.
+    ForwardChooser(Box<postio_ui::compose::ChooserView>),
+    /// Draw the bar under the composer's title on a reply to a message that
+    /// is not the latest, or take it away (spec 013 FR-022).
+    OlderReply(Option<Box<postio_ui::compose::OlderReplyView>>),
+    /// Show the messages newer than the one the reply answers, read-only,
+    /// in the composer, or hide them: `Some` with their ids, oldest first.
+    NewerMessages(Option<Vec<MessageId>>),
+    /// Draw the quoted messages as their collapsed rows (`false`), or
+    /// expanded (`true`).
+    QuotedExpanded(bool),
+    /// The controller needs the composer's draft as it is now, typed text
+    /// included, to change it: answer with [`Input::ComposerDraft`].
+    ComposerDraftWanted(DraftEdit),
+    /// Put this draft in the composer in place of the one it holds: the
+    /// subject, the body, the attachments, the recipients. What was typed
+    /// above the quote is in it already.
+    ComposerDraft(Box<postio_model::Draft>),
+}
+
+/// A change to the composer's draft that the engine makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DraftEdit {
+    /// The forward carries this form (a chooser card).
+    ForwardForm(postio_model::ForwardForm),
+    /// The reply answers the thread's latest received message.
+    ReplyToLatest,
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -924,6 +1054,32 @@ pub enum Request {
         address: String,
         /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
+    },
+    /// A thread's members and unsent reply: an expansion, or opening a
+    /// thread row.
+    ReadThread(ThreadId),
+    /// The composer's forward, changed to carry `form`
+    /// (`Client::set_forward_form`); answered with [`Reply::Forwarded`].
+    SetForwardForm {
+        /// The draft, as the composer holds it.
+        draft: Box<postio_model::Draft>,
+        /// What it should carry.
+        form: postio_model::ForwardForm,
+    },
+    /// A forward of the whole of `thread` in `form`, built from the store
+    /// (`Client::forward_thread`); answered with [`Reply::Forwarded`].
+    ForwardThread {
+        /// The thread.
+        thread: ThreadId,
+        /// What it should carry.
+        form: postio_model::ForwardForm,
+    },
+    /// The composer's reply, changed to answer the thread's latest received
+    /// message (`Client::reply_to_latest`); answered with
+    /// [`Reply::RepliedToLatest`].
+    ReplyToLatest {
+        /// The draft, as the composer holds it.
+        draft: Box<postio_model::Draft>,
     },
     /// The searches run lately, newest first.
     RecentSearches,
@@ -1144,6 +1300,9 @@ pub enum Request {
     },
     /// Whether this store holds `message`, and its row: what a link opens.
     FindMessage(MessageId),
+    /// The thread `message` is in now, for a window whose thread no longer
+    /// holds the message it shows (a split moved it; a delete removed it).
+    ThreadOf(MessageId),
     /// The draft behind `message`, for the send verb `command` to settle.
     DraftBehind {
         /// The message aimed at.
@@ -1322,6 +1481,22 @@ pub enum Reply {
         /// Their latest conversations.
         answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
+    /// The answer to [`Request::ReadThread`].
+    ThreadRead {
+        /// The thread asked for.
+        thread: ThreadId,
+        /// Its view, `None` when it is gone, or why it could not be read.
+        view: Result<Option<ThreadView>, String>,
+    },
+    /// The answer to [`Request::SetForwardForm`].
+    Forwarded {
+        /// The form asked for.
+        form: postio_model::ForwardForm,
+        /// The draft in that form, or the messages that are not here.
+        answer: Result<postio_model::Forwarded, String>,
+    },
+    /// The answer to [`Request::ReplyToLatest`].
+    RepliedToLatest(Result<Box<postio_model::Draft>, String>),
     /// The answer to [`Request::RecentSearches`] and
     /// [`Request::ForgetSearch`].
     RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
@@ -1479,6 +1654,13 @@ pub enum Reply {
         /// Its row, or `None` when the store does not hold it.
         row: Option<postio_model::listing::MessageSummary>,
     },
+    /// The answer to [`Request::ThreadOf`].
+    ThreadOf {
+        /// The message asked about.
+        message: MessageId,
+        /// Its thread, `None` when the store no longer holds it.
+        thread: Option<ThreadId>,
+    },
     /// The answer to [`Request::DraftBehind`].
     DraftBehind {
         /// The message asked about.
@@ -1535,6 +1717,28 @@ pub struct FocusController {
     results: Option<results::Results>,
     /// What the main window showed before, and after (spec 010 R9).
     history: history::History,
+    /// The thread expanded in place, when one is (spec 013 US1).
+    expansion: Option<thread_expand::Expansion>,
+    /// A thread read that something waits on.
+    pending: Option<thread_expand::Pending>,
+    /// A thread row and the message opening it opened: the row is not
+    /// opened again for showing a message other than its own.
+    opened_from: Option<(MessageId, MessageId)>,
+    /// The thread of the message on screen, while a window is up (spec 013
+    /// US3).
+    walk: Option<walk::Walk>,
+    /// A window opened whose thread read has not come back.
+    walk_asked: Option<walk::Opening>,
+    /// The thread a read in hand gave to the message just opened, so its
+    /// walk begins without a second read.
+    walk_seed: Option<ThreadView>,
+    /// The window has a thread bar up, which something must take away when
+    /// no walk is left to own it.
+    bar_up: bool,
+    /// How many thread-bar chips the window has room for.
+    bar_room: u32,
+    /// The thread menu and outline over the window (spec 013 US5).
+    thread_ui: thread_menu::ThreadUi,
 }
 
 impl FocusController {
@@ -1573,6 +1777,15 @@ impl FocusController {
             stamps: 0,
             results: None,
             history: history::History::default(),
+            expansion: None,
+            pending: None,
+            opened_from: None,
+            walk: None,
+            walk_asked: None,
+            walk_seed: None,
+            bar_up: false,
+            bar_room: walk::DEFAULT_ROOM,
+            thread_ui: thread_menu::ThreadUi::default(),
         }
     }
 
@@ -1593,16 +1806,81 @@ impl FocusController {
         // A message a hit opened, closed however it was: the bar comes back
         // on its words.
         let reading = self.surfaces.has(SurfaceKind::Message);
-        let mut effects = self.handle_input(input, rows);
+        // An expanded thread's children are rows to everything below.
+        let raw = rows;
+        let through = self.through(raw);
+        let rows: &dyn Rows = through.as_ref().map_or(raw, |through| through);
+        let mut stepped = self.filtered_thread_input(&input);
+        if stepped.is_none() || Self::also_for_the_rest(&input) {
+            // A change to a thread is news to both lists' expansions.
+            if let Some(steps) = self.thread_input(&input, raw, rows) {
+                stepped.get_or_insert_with(Vec::new).extend(steps);
+            }
+        }
+        let mut effects = match stepped {
+            Some(steps) => {
+                let mut effects = self.effects(steps);
+                // A thread change is also news to the rest of the list.
+                if Self::also_for_the_rest(&input) {
+                    effects.extend(self.handle_input(input, rows));
+                }
+                effects
+            }
+            None => self.handle_input(input, rows),
+        };
         if reading && !self.surfaces.has(SurfaceKind::Message) {
             let steps = self.hit_closed(rows);
             effects.extend(self.effects(steps));
+        }
+        // A message put up in the window begins its thread's walk.
+        let was_walking = self.walk.is_some();
+        let steps = self.walk_after(&effects, rows);
+        effects.extend(self.effects(steps));
+        // The window closed: the footer behind it was the window's, and is
+        // the cursor's row's again.
+        if was_walking
+            && self.walk.is_none()
+            && let Some(position) = self.cursor.position()
+            && let Some(footer) =
+                thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
+        {
+            effects.push(Effect::Show(Intent::Footer(footer)));
         }
         // The composer gone however it went -- its window's close button,
         // another window in its place (M4) -- ends its composition, saved.
         let steps = self.composer_gone();
         effects.extend(self.effects(steps));
+        // The cursor moved: the footer says what its row or child is, and
+        // what the keys reach from there.
+        let footer = self.footer_after(&effects, raw).or_else(|| {
+            // An expansion opened or folded under the cursor: the row's
+            // footer offers the other of Right and Left now.
+            let respliced = effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    Effect::Show(Intent::Splice { .. } | Intent::Unsplice { .. })
+                )
+            });
+            let position = self
+                .cursor
+                .position()
+                .filter(|_| respliced && self.walk.is_none() && self.filtered.is_none())?;
+            thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
+        });
+        if let Some(footer) = footer {
+            effects.push(Effect::Show(Intent::Footer(footer)));
+        }
         effects
+    }
+
+    /// An input a thread surface takes part in and the rest of the controller
+    /// hears as well: an event, and the answer to "where is this message's
+    /// thread", which a window's walk asks as well.
+    fn also_for_the_rest(input: &Input) -> bool {
+        matches!(
+            input,
+            Input::Event(_) | Input::Reply(_, Reply::ThreadOf { .. })
+        )
     }
 
     fn handle_input(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
@@ -1673,6 +1951,14 @@ impl FocusController {
                 self.surfaces.reader_state(more_open, finding);
                 Vec::new()
             }
+            Input::BarRoom(room) => {
+                let steps = self.bar_room(room);
+                self.effects(steps)
+            }
+            Input::MatchEdge { forward } => {
+                let steps = self.match_edge(forward);
+                self.effects(steps)
+            }
             Input::Accounts(accounts) => {
                 self.compose.set_no_account(accounts.is_empty());
                 self.cursor.set_accounts(accounts);
@@ -1740,7 +2026,10 @@ impl FocusController {
                 | Reply::ContactSeen(_)
                 | Reply::ContactSuggestions(_)
                 | Reply::FoundMessage { .. }
-                | Reply::DraftBehind { .. }),
+                | Reply::ThreadOf { .. }
+                | Reply::DraftBehind { .. }
+                | Reply::Forwarded { .. }
+                | Reply::RepliedToLatest(_)),
             ) => {
                 let steps = self.surface_reply(reply, rows);
                 self.effects(steps)
@@ -1798,6 +2087,8 @@ impl FocusController {
                 let steps = self.feed.resurfaced(surfaced);
                 self.effects(steps)
             }
+            // Read by `thread_input` before it gets here.
+            Input::Reply(_, Reply::ThreadRead { .. }) => Vec::new(),
             Input::Reply(_, Reply::Noted) => Vec::new(),
             Input::Reply(_, Reply::Sent(result)) => {
                 if let Err(error) = result {
@@ -1826,6 +2117,7 @@ impl FocusController {
                 steps.extend(self.results_heard(&event));
                 steps.extend(self.bar.heard(&event));
                 steps.extend(self.feed.event(&event));
+                steps.extend(self.walk_heard(&event));
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
                 steps.extend(self.contacts_heard(&event));
@@ -1925,6 +2217,30 @@ impl FocusController {
                 let steps = self.open_link(&uri);
                 self.effects(steps)
             }
+            Input::ThreadMenuPick(id) => {
+                let steps = self.thread_menu_pick(id, rows);
+                self.effects(steps)
+            }
+            Input::Outline(input) => {
+                let steps = self.outline_input(input, rows);
+                self.effects(steps)
+            }
+            Input::ThreadBarChipClicked(index) => {
+                let steps = self.chip_clicked(index);
+                self.effects(steps)
+            }
+            Input::ThreadBarMoreClicked { from } => {
+                let steps = self.more_chip_clicked(from);
+                self.effects(steps)
+            }
+            Input::ForwardFormClicked(form) => {
+                let steps = self.forward_form_chosen(form);
+                self.effects(steps)
+            }
+            Input::ComposerDraft(edit, draft) => {
+                let steps = self.composer_draft(edit, draft);
+                self.effects(steps)
+            }
             Input::ContactPopoverAt(address) => {
                 let steps = self.open_contact_popover(Some(address), rows);
                 self.effects(steps)
@@ -1981,6 +2297,10 @@ impl FocusController {
                 let steps = self.draft_saved(composition, saved);
                 self.effects(steps)
             }
+            Input::Timer(token) if token == feed::THREAD_REFRESH_TIMER => {
+                let steps = self.feed.thread_refresh_due();
+                self.effects(steps)
+            }
             Input::Timer(token) if surfaces::is_reader_timer(token) => {
                 self.surfaces.timed_out(token);
                 Vec::new()
@@ -2032,7 +2352,13 @@ impl FocusController {
     /// the first row, or back to the message `!` kept, and the strip's
     /// counts are asked for again.
     pub fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Effect> {
-        let mut steps = self.cursor.landed(rows, opened);
+        // An expanded row that left the list folds first, and the cursor
+        // settles on the rows as they now are.
+        let raw = rows;
+        let mut steps = self.expansion_followed(rows);
+        let through = self.through(rows);
+        let rows: &dyn Rows = through.as_ref().map_or(rows, |through| through);
+        steps.extend(self.cursor.landed(rows, opened));
         steps.extend(self.verbs.landed(&mut self.cursor, rows));
         match self.surfaces.landed(rows) {
             Some(surfaces::Landing::Open(index)) => {
@@ -2047,6 +2373,18 @@ impl FocusController {
         }
         steps.extend(self.show_empty());
         let mut effects = self.effects(steps);
+        // The cursor went to a row as the list landed: the footer says what
+        // it is. A landing that did not move it may still be the first with
+        // its row read (the page arrived after the cursor did), so the
+        // footer is said again from where it is, unless a message window
+        // owns the footer.
+        let footer = self.footer_after(&effects, raw).or_else(|| {
+            let position = self.cursor.position().filter(|_| self.walk.is_none())?;
+            thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
+        });
+        if let Some(footer) = footer {
+            effects.push(Effect::Show(Intent::Footer(footer)));
+        }
         effects.push(self.refresh_counts());
         effects
     }
@@ -2148,6 +2486,9 @@ impl FocusController {
                 return self.open_capture(postio_ui::capture::Mode::Note, rows);
             }
             CommandId::DigestRule => return self.new_rule(rows),
+            CommandId::MuteThread | CommandId::ThreadOutline => {
+                return self.thread_list_command(id, rows);
+            }
             CommandId::ContactPopover => return self.open_contact_popover(None, rows),
             CommandId::OpenContacts => {
                 let mut steps = self.open_contacts();
@@ -2223,9 +2564,19 @@ impl FocusController {
     }
 
     /// Where a verb would go now: the selection when there is one, the
-    /// cursor's row otherwise.
+    /// cursor's row otherwise. The whole-thread aim, which is what the
+    /// thread verbs (archive and the like) reach; a message verb on a row
+    /// is aimed by its own command (spec 013 D2).
     pub fn aim(&self, rows: &dyn Rows) -> Aimed {
-        verbs::Verbs::aimed(&self.cursor, rows)
+        self.aim_for(rows, CommandId::Archive)
+    }
+
+    /// Where `action` would go now: a child is its own message for a reply
+    /// or a forward, and its thread for an archive.
+    pub fn aim_for(&self, rows: &dyn Rows, action: CommandId) -> Aimed {
+        let through = self.through(rows);
+        let rows: &dyn Rows = through.as_ref().map_or(rows, |through| through);
+        verbs::Verbs::aimed(&self.cursor, rows, action)
     }
 
     /// Whether an undo is waiting for the rows it brings back to be in the
@@ -2253,7 +2604,7 @@ impl FocusController {
         if row.writes {
             return self.write(ComposerKind::Draft, Some(row.id));
         }
-        let (index, total) = self.feed.message_place(position, rows.len());
+        let (index, total) = self.place_of(position, rows);
         self.surfaces
             .open(&row, index, total, self.policy.caps.stacking)
     }
@@ -2293,6 +2644,9 @@ impl FocusController {
             Some(SurfaceKind::Contacts) if self.contacts.is_some() => {
                 return self.contacts_command(id, rows);
             }
+            Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
+                return self.thread_surface_command(id, rows);
+            }
             _ => {}
         }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
@@ -2304,6 +2658,12 @@ impl FocusController {
                 // close them does nothing (GTK's dialog close rule).
                 (self.surfaces.takes_keyboard() && keys::key_map_takes(id)).then(Vec::new)
             });
+        }
+        if let Some(steps) = self.walk_command(id) {
+            return Some(steps);
+        }
+        if let Some(steps) = self.thread_window_command(id, rows) {
+            return Some(steps);
         }
         if let Some(steps) = self.surfaces.reader_key(id) {
             return Some(steps);
@@ -2393,7 +2753,9 @@ impl FocusController {
         let Some(row) = rows.facts(at) else {
             return Vec::new();
         };
-        if self.surfaces.reading() == Some(row.id) {
+        if self.surfaces.reading() == Some(row.id)
+            || self.opened_for(row.id, self.surfaces.reading())
+        {
             return Vec::new();
         }
         if row.digest || row.writes {
@@ -2448,6 +2810,9 @@ impl FocusController {
             Some(SurfaceKind::Capture) => Self::capture_answers(id),
             Some(SurfaceKind::ContactPopover) => Self::contact_popover_answers(id),
             Some(SurfaceKind::Contacts) => Self::contacts_answers(id),
+            Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
+                Self::thread_surface_answers(id)
+            }
             _ => false,
         };
         if own {
@@ -2472,11 +2837,19 @@ impl FocusController {
                 | CommandId::DeclineInvite
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage
+                | CommandId::ExpandThread
+                | CommandId::CollapseThread
                 | CommandId::CheatSheet
                 | CommandId::CaptureTask
                 | CommandId::CaptureNote
                 | CommandId::DigestRule
                 | CommandId::ContactPopover
+                | CommandId::ThreadMenu
+                | CommandId::ThreadOutline
+                | CommandId::MuteThread
+                | CommandId::SplitThread
+                | CommandId::MoveThisMessage
+                | CommandId::DeleteThisMessage
                 | CommandId::OpenContacts
                 | CommandId::ContactsSuggestions
         ) || bar::goes(id)
@@ -2529,6 +2902,7 @@ impl FocusController {
     /// selection goes, `!` is off, a heading a day comes back. The caller
     /// opens the place and names it ([`Self::note_place`]).
     pub fn leave_list(&mut self) -> Vec<Effect> {
+        self.expansion = None;
         let mut steps = self.cursor.leave(self.feed.total());
         steps.push(feed::Step::Show(Intent::SingleHeading(None)));
         self.effects(steps)
@@ -2547,6 +2921,7 @@ impl FocusController {
 
     /// Show `scope` in the list: counted first, then the list changes over.
     pub fn open(&mut self, scope: ListScope) -> Vec<Effect> {
+        self.expansion = None;
         self.cursor.opening();
         let request = self.feed.open(scope);
         vec![Effect::Ask(self.ticket(), request)]
@@ -2619,6 +2994,7 @@ impl FocusController {
                 }
                 feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
                 feed::Step::Open(scope) => {
+                    self.expansion = None;
                     self.cursor.opening();
                     let request = self.feed.open(scope);
                     Effect::Ask(self.ticket(), request)
@@ -2651,6 +3027,7 @@ impl FocusController {
     /// list replaced.
     pub fn invalidate(&mut self) {
         self.generation += 1;
+        self.pending = None;
     }
 
     /// What a surface no longer on the stack held is forgotten: the Mac's
@@ -2674,6 +3051,7 @@ impl FocusController {
         if !self.surfaces.has(SurfaceKind::Contacts) {
             self.contacts = None;
         }
+        self.forget_thread_surfaces();
     }
 
     /// An answer for one of the surfaces over the list.
@@ -2699,7 +3077,10 @@ impl FocusController {
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
             Reply::ContactSuggestions(answer) => self.contacts_suggestions_read(answer),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
+            Reply::ThreadOf { message, thread } => self.walk_followed(message, thread),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
+            Reply::Forwarded { form, answer } => self.forwarded(form, answer),
+            Reply::RepliedToLatest(answer) => self.replied_to_latest(answer),
             _ => Vec::new(),
         }
     }

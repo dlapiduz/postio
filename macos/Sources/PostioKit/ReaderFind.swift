@@ -31,7 +31,7 @@ public final class ReaderFind {
         let configuration = WKFindConfiguration()
         configuration.backwards = request.backwards
         configuration.caseSensitive = false
-        configuration.wraps = true
+        configuration.wraps = !request.bounded
         view.find(request.query, configuration: configuration) { result in
             onFound(result.matchFound)
         }

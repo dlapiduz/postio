@@ -100,6 +100,14 @@ impl Req {
             Req::Accounts => "Accounts",
             Req::Body(_) => "Body",
             Req::Conversation(_) => "Conversation",
+            Req::Thread(_) => "Thread",
+            Req::Mute(_) => "Mute",
+            Req::Unmute(_) => "Unmute",
+            Req::Split(_) => "Split",
+            Req::MutedOf(_) => "MutedOf",
+            Req::ForwardThread { .. } => "ForwardThread",
+            Req::SetForwardForm { .. } => "SetForwardForm",
+            Req::ReplyToLatest { .. } => "ReplyToLatest",
             Req::Unsubscribe(_) => "Unsubscribe",
             Req::ListMail(_) => "ListMail",
             Req::Parts(_) => "Parts",
@@ -140,6 +148,7 @@ impl Req {
             Req::UndoTop => "UndoTop",
             Req::ReplySource(_) => "ReplySource",
             Req::DraftBehind(_) => "DraftBehind",
+            Req::DraftById(_) => "DraftById",
             Req::CancelSend(_) => "CancelSend",
             Req::SendFailure(_) => "SendFailure",
             Req::DefaultSignature { .. } => "DefaultSignature",
@@ -324,6 +333,124 @@ impl Client {
             "a conversation",
             |answer| match answer {
                 Resp::Rows(rows) => Some(rows),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// A thread's members in date order, its unsent reply and its labels, or
+    /// none when it is gone.
+    pub async fn thread(
+        &self,
+        thread: postio_model::ThreadId,
+    ) -> Result<Option<postio_model::ThreadView>, StoreError> {
+        self.read(Req::Thread(thread), "a thread", |answer| match answer {
+            Resp::Thread(view) => Some(view.map(|view| *view)),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Mutes `thread`: its new replies are archived on arrival, except one
+    /// addressed to the person alone (spec 013 FR-012). One undo takes it
+    /// back.
+    pub async fn mute(&self, thread: postio_model::ThreadId) -> Result<(), StoreError> {
+        self.read(Req::Mute(thread), "a mute", |answer| match answer {
+            Resp::Done => Some(()),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Lets `thread`'s replies reach the inbox again. One undo takes it
+    /// back.
+    pub async fn unmute(&self, thread: postio_model::ThreadId) -> Result<(), StoreError> {
+        self.read(Req::Unmute(thread), "an unmute", |answer| match answer {
+            Resp::Done => Some(()),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Splits `message` and the replies to it off into a new thread of their
+    /// own, and answers it (spec 013 FR-007). One undo takes it back.
+    pub async fn split(&self, message: MessageId) -> Result<postio_model::ThreadId, StoreError> {
+        self.read(Req::Split(message), "a split", |answer| match answer {
+            Resp::Split(thread) => Some(thread),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Which of `threads` are muted, with the replies since muting: one
+    /// statement for the page.
+    pub async fn muted_of(
+        &self,
+        threads: Vec<postio_model::ThreadId>,
+    ) -> Result<Vec<(postio_model::ThreadId, u32)>, StoreError> {
+        self.read(
+            Req::MutedOf(threads),
+            "the muted threads",
+            |answer| match answer {
+                Resp::Muted(muted) => Some(muted),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// A forward of `thread` in `form`: a draft to compose in, or the
+    /// messages that are not on this machine (spec 013 FR-023). Reads the
+    /// local store; nothing is fetched.
+    pub async fn forward_thread(
+        &self,
+        thread: postio_model::ThreadId,
+        form: postio_model::ForwardForm,
+    ) -> Result<postio_model::Forwarded, StoreError> {
+        self.read(
+            Req::ForwardThread { thread, form },
+            "a thread forward",
+            |answer| match answer {
+                Resp::Forwarded(forwarded) => Some(forwarded),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `draft`, a forward, changed to carry `form`; what was typed above the
+    /// forwarded content stays.
+    pub async fn set_forward_form(
+        &self,
+        draft: Draft,
+        form: postio_model::ForwardForm,
+    ) -> Result<postio_model::Forwarded, StoreError> {
+        self.read(
+            Req::SetForwardForm {
+                draft: Box::new(draft),
+                form,
+            },
+            "a forward form",
+            |answer| match answer {
+                Resp::Forwarded(forwarded) => Some(forwarded),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `draft`, a reply, changed to answer its thread's latest received
+    /// message: the quote and the threading move there, what was typed
+    /// stays.
+    pub async fn reply_to_latest(&self, draft: Draft) -> Result<Draft, StoreError> {
+        self.read(
+            Req::ReplyToLatest {
+                draft: Box::new(draft),
+            },
+            "a reply to the latest",
+            |answer| match answer {
+                Resp::Draft(Some(draft)) => Some(*draft),
                 _ => None,
             },
         )
@@ -1044,6 +1171,15 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// The local draft with this id: a thread's unsent reply.
+    pub async fn draft_by_id(&self, draft: DraftId) -> Result<Option<Draft>, StoreError> {
+        self.read(Req::DraftById(draft), "a draft", |answer| match answer {
+            Resp::Draft(found) => Some(found.map(|found| *found)),
+            _ => None,
+        })
         .await
     }
 

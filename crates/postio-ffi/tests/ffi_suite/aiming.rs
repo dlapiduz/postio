@@ -234,7 +234,11 @@ mod through_the_boundary {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn invoking_a_verb_on_a_conversation_row_acts_on_the_conversation() {
+    async fn flagging_a_conversation_row_flags_its_latest_message_only() {
+        // Spec 013 D2: on a collapsed row, flag acts like reply -- on the
+        // latest message, the one the row draws -- while archive, label and
+        // the rest act on the whole thread. Driven through `invoke` against
+        // the real handlers, so the scope rule is proven to reach the bus.
         let (session, members, database) = conversation().await;
         let row = first_row(&session).await;
         assert!(
@@ -242,34 +246,26 @@ mod through_the_boundary {
             "the fixture's inbox row should stand for the conversation, or \
              this test is not about aiming at one"
         );
+        let latest = row.id;
+        assert!(
+            members.contains(&latest),
+            "the row draws one of the conversation's messages"
+        );
 
         // The cursor on the row -- the list opens with it there (C30) --
-        // and nothing marked: the gesture is about the row, and the row
-        // stands for a conversation (ADR 0015 Q3).
+        // and nothing marked.
         session.invoke("flag");
 
-        let flagged = settle_until(async || {
-            for id in &members {
-                if !is_flagged(&database, *id).await {
-                    return false;
-                }
-            }
-            true
-        })
-        .await;
-        // Counted before the assertion rather than inside it: the message is
-        // only built on failure, and it cannot await there.
-        let mut acted_on = 0usize;
-        for id in &members {
-            acted_on += usize::from(is_flagged(&database, *id).await);
+        let flagged = settle_until(async || is_flagged(&database, latest).await).await;
+        assert!(flagged, "flag on the row never reached its latest message");
+        for id in members.iter().filter(|id| **id != latest) {
+            assert!(
+                !is_flagged(&database, *id).await,
+                "flag on a collapsed row reached message {id} as well as the \
+                 latest: it aimed at the whole thread, which D2 keeps for \
+                 archive, label and the other thread verbs"
+            );
         }
-        assert!(
-            flagged,
-            "flagging a conversation row reached the bus but acted on \
-             {acted_on} of its {} messages -- the boundary aimed at the row's \
-             own message instead of the thread it stands for",
-            members.len()
-        );
         session.shutdown();
     }
 

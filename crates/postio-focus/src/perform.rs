@@ -315,6 +315,34 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                     .map(Box::new),
             }
         }
+        Request::ReadThread(thread) => Reply::ThreadRead {
+            thread,
+            view: client
+                .thread(thread)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::SetForwardForm { draft, form } => Reply::Forwarded {
+            form,
+            answer: client
+                .set_forward_form(*draft, form)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::ForwardThread { thread, form } => Reply::Forwarded {
+            form,
+            answer: client
+                .forward_thread(thread, form)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::ReplyToLatest { draft } => Reply::RepliedToLatest(
+            client
+                .reply_to_latest(*draft)
+                .await
+                .map(Box::new)
+                .map_err(|error| error.to_string()),
+        ),
         Request::RecentSearches => Reply::RecentSearches(
             client
                 .recent_searches()
@@ -605,6 +633,15 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .ok()
                 .and_then(|rows| rows.into_iter().find(|row| row.id == message)),
+        },
+        Request::ThreadOf(message) => Reply::ThreadOf {
+            message,
+            thread: client
+                .message_rows(vec![message])
+                .await
+                .ok()
+                .and_then(|rows| rows.into_iter().find(|row| row.id == message))
+                .and_then(|row| row.thread),
         },
         // A message that is no draft, or one the store cannot say, is
         // answered alike: there is nothing to settle.

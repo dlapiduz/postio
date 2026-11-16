@@ -47,6 +47,10 @@ pub enum SurfaceKind {
     Picker,
     /// A row's menu.
     RowMenu,
+    /// Thread ▾'s menu, over the message window (spec 013 US5).
+    ThreadMenu,
+    /// The thread outline, over the message window (spec 013 US5).
+    Outline,
 }
 
 impl SurfaceKind {
@@ -73,6 +77,8 @@ impl SurfaceKind {
             SurfaceKind::Picker => KeyContext::Picker,
             SurfaceKind::ContactPopover => KeyContext::ContactPopover,
             SurfaceKind::Contacts => KeyContext::Contacts,
+            SurfaceKind::ThreadMenu => KeyContext::Reader,
+            SurfaceKind::Outline => KeyContext::Outline,
             // Their keys are the list's context, and only the ones that
             // close them are the window's (GTK's dialog close rule).
             SurfaceKind::Settings
@@ -99,6 +105,8 @@ impl SurfaceKind {
                 | SurfaceKind::Filtered
                 | SurfaceKind::ContactPopover
                 | SurfaceKind::Contacts
+                | SurfaceKind::ThreadMenu
+                | SurfaceKind::Outline
         )
     }
 }
@@ -149,14 +157,32 @@ pub enum ReaderVerb {
     FindNext,
     /// The previous match.
     FindPrevious,
+    /// The next match of the shown message's own find, in a window opened
+    /// from a search; when there is none, say [`crate::Input::MatchEdge`].
+    NextMatch,
+    /// The previous match of the shown message's own find, in a window
+    /// opened from a search; when there is none, say
+    /// [`crate::Input::MatchEdge`].
+    PrevMatch,
     /// App colours or the original, for this message.
     SwitchTreatment,
     /// The message's raw source, in place of its content (M4).
     ViewSource,
     /// The More menu.
     ShowMore,
-    /// Step through the conversation, by this many messages.
+    /// Step through the conversation, by this many messages. The controller
+    /// walks a thread it holds itself and says what to show; this is said
+    /// only when it holds none.
     StepThread(i32),
+    /// Show the thread's first message (`{`), when the controller holds no
+    /// walk.
+    FirstInThread,
+    /// Show the thread's latest message (`}`), when the controller holds no
+    /// walk.
+    LatestInThread,
+    /// Show the thread's first unread message (`g u`), when the controller
+    /// holds no walk.
+    FirstUnread,
 }
 
 /// Which list the open message came from: what `j`/`k` in it walk, and
@@ -235,6 +261,13 @@ impl Surfaces {
         self.top().map_or(KeyContext::List, SurfaceKind::context)
     }
 
+    /// `message` is on screen now, in place of the one the window opened on:
+    /// a step through its thread.
+    pub(crate) fn show(&mut self, message: MessageId) {
+        self.reading = Some(message);
+        self.stepping = None;
+    }
+
     /// The message on screen, when the open message is on top.
     pub(crate) fn reading(&self) -> Option<MessageId> {
         (self.top() == Some(SurfaceKind::Message))
@@ -292,7 +325,10 @@ impl Surfaces {
                     Route::Surface(top)
                 }
             }
-            SurfaceKind::ContactPopover | SurfaceKind::Contacts => Route::Controller,
+            SurfaceKind::ContactPopover
+            | SurfaceKind::Contacts
+            | SurfaceKind::ThreadMenu
+            | SurfaceKind::Outline => Route::Controller,
             SurfaceKind::Digest
             | SurfaceKind::Capture
             | SurfaceKind::Composer
@@ -533,6 +569,9 @@ fn reader_verb(id: CommandId) -> Option<ReaderVerb> {
         CommandId::MoreActions => ReaderVerb::ShowMore,
         CommandId::NextInConversation => ReaderVerb::StepThread(1),
         CommandId::PrevInConversation => ReaderVerb::StepThread(-1),
+        CommandId::FirstInConversation => ReaderVerb::FirstInThread,
+        CommandId::LatestInConversation => ReaderVerb::LatestInThread,
+        CommandId::FirstUnreadInConversation => ReaderVerb::FirstUnread,
         _ => return None,
     })
 }

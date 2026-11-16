@@ -62,6 +62,8 @@ mod focus_reader;
 mod focus_search;
 mod focus_states;
 mod focus_surfaces;
+mod focus_thread_bar;
+mod focus_threads;
 mod keys;
 mod links;
 mod list;
@@ -107,7 +109,10 @@ pub use focus::{FocusCountsFfi, FocusStripFfi, NoticesFfi};
 pub use focus_bar::{
     BarLineFfi, BarLineKindFfi, BarModeFfi, BarSelectFfi, BarViewFfi, PlaceEntryFfi, PlaceMarkFfi,
 };
-pub use focus_compose::ComposerKindFfi;
+pub use focus_compose::{
+    BarActionFfi, ChooserCardFfi, ChooserFfi, ComposerKindFfi, DraftEditFfi, ForwardFormFfi,
+    NewerMessageFfi, OlderReplyFfi,
+};
 pub use focus_contact_edit::{
     AddressLabelFfi, ContactEditViewFfi, EditAddressFfi, EditButtonFfi, EditChangeFfi, EditHintFfi,
     EditSeenFfi, EditSegmentFfi, FormFieldFfi, GroupOptionFfi, GroupPickerFfi, ShowAsFfi,
@@ -136,8 +141,8 @@ pub use focus_list::{
     ReaderVerbFfi, SurfaceKindFfi,
 };
 pub use focus_message::{
-    FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusThreadChipFfi,
-    FocusVerbFfi, OpenChoicesFfi,
+    FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusVerbFfi,
+    OpenChoicesFfi,
 };
 pub use focus_pickers::{
     PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
@@ -159,9 +164,18 @@ pub use focus_states::{
 pub use focus_surfaces::{
     CaptureModeFfi, CapturePickFfi, CaptureProjectFfi, CaptureViewFfi, CapturedFfi, ConfirmFfi,
     DigestCardFfi, DigestEmailFfi, DigestLineFfi, DigestPageFfi, DigestStatementFfi,
-    DigestSummaryFfi, DigestTopicFfi, DigestViewFfi, FilteredLineFfi, FilteredTabFfi,
-    FilteredViewFfi, FocusDigestGeometryFfi, FocusHintFfi, RulePreviewLineFfi, RuleScheduleFfi,
-    RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi, focus_digest_geometry,
+    DigestSummaryFfi, DigestTopicFfi, DigestViewFfi, FilteredLineFfi, FilteredSpliceFfi,
+    FilteredTabFfi, FilteredViewFfi, FocusDigestGeometryFfi, FocusHintFfi, RulePreviewLineFfi,
+    RuleScheduleFfi, RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi,
+    focus_digest_geometry,
+};
+pub use focus_thread_bar::{
+    OutlineFfi, OutlinePersonFfi, OutlineRowFfi, ThreadBannerFfi, ThreadBarFfi, ThreadChipFfi,
+    ThreadMenuEntryFfi, ThreadMenuFfi, ThreadMenuGroupFfi,
+};
+pub use focus_threads::{
+    ChevronFfi, ChildHintFfi, ChildRowFfi, FooterKeyFfi, FooterViewFfi, MatchBannerFfi,
+    ResultChildFfi, ResultSpliceFfi, ThreadRowFfi,
 };
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use links::{link_gone, link_unknown, message_link, parse_message_link};

@@ -148,6 +148,9 @@ mod tests {
     /// An unread result's dot is the inbox row's: its snapshot draws the
     /// accent dot, and a result is the same conversation in another list.
     ///
+    /// The thread bar's current chip, which is the focus there, and an unread
+    /// chip's dot, the inbox row's (spec 013 US3; SPEC section 4).
+    ///
     /// And one more that paints nothing of Focus's: the open message's
     /// accent probe, an invisible widget whose colour is read to hand a body
     /// in app colours its link colour -- links in the accent are the
@@ -163,11 +166,18 @@ mod tests {
             || rule.starts_with(".focus-filtered-list > row:selected ")
             || rule.starts_with(".focus-contacts-list > row:selected ")
             || rule.starts_with(".focus-results-row.focus-results-cursor ")
+            || rule.starts_with(".focus-results-child.focus-results-cursor ")
             || rule == ".focus-results-gutter.focus-results-dot { color }"
             || rule.starts_with(".focus-file-card.focus-file-focused ")
             || rule.starts_with(".focus-quicklook-card.focus-quicklook-current ")
             || rule.starts_with("button.focus-nothing-row.focus-nothing-focused ")
             || rule.starts_with(".focus-digest-summary-statement.focus-digest-summary-focused ")
+            || rule.starts_with(".focus-thread-chip-current ")
+            || rule.starts_with(".focus-new-reply-banner ")
+            || rule.starts_with(".focus-older-reply ")
+            || rule.starts_with(".focus-forward-card-selected ")
+            || rule.starts_with(".focus-outline-current ")
+            || rule == ".focus-thread-dot { color }"
             || rule.contains(".focus-marker")
             || rule.contains(".focus-has-action:checked")
     }
@@ -225,6 +235,24 @@ mod tests {
             bar,
             "the folders popover leaves its highlighted row in the accent tint"
         );
+    }
+
+    /// Where the keyboard is in a search's results is a ring, on a result and
+    /// on a thread's message under it alike: the ring moves to the child and
+    /// a child that does not draw it leaves the person nowhere to look.
+    #[test]
+    fn a_result_and_the_thread_message_under_it_draw_the_same_ring() {
+        let sheets = [SHARED, COLOURS, SURFACES];
+        for selector in [
+            ".focus-results-row.focus-results-cursor",
+            ".focus-results-child.focus-results-cursor",
+        ] {
+            assert_eq!(
+                winning(&sheets, selector, "outline").as_deref(),
+                Some("2px solid var(--postio-accent)"),
+                "{selector}"
+            );
+        }
     }
 
     /// A selector's specificity, in this stylesheet's own narrow subset: one

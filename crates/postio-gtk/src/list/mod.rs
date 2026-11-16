@@ -1,11 +1,13 @@
 //! Focus's list: the model over the paged store, where its pages come from,
 //! and the rows a person reads.
 
+pub mod child;
 pub mod feed;
 pub mod heading;
 pub mod model;
 pub mod pane;
 pub mod row;
+pub mod spliced;
 
 pub use feed::Feed;
 pub use model::{FocusList, RowObject};

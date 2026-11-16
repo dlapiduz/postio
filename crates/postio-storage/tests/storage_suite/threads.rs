@@ -1427,6 +1427,61 @@ async fn a_conversation_knows_its_newest_message_whether_the_person_wrote_in_it_
 }
 
 #[tokio::test]
+async fn unsnoozing_by_thread_wakes_that_conversations_sleepers_and_no_other() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let threads = ThreadRepository::new(&connection);
+    let messages = MessageRepository::new(&connection);
+    let ours = a_thread(&connection, account.id).await;
+    let other = a_thread(&connection, account.id).await;
+    let mine = message(&connection, account.id, inbox, "ada", 10).await;
+    let theirs = message(&connection, account.id, inbox, "grace", 20).await;
+    threads.add_message(ours.id, mine.id).await.expect("joined");
+    threads
+        .add_message(other.id, theirs.id)
+        .await
+        .expect("joined");
+    messages
+        .snooze(&[mine.id, theirs.id], at(1_000))
+        .await
+        .expect("snoozed");
+
+    assert_eq!(messages.unsnooze_threads(&[]).await.expect("a write"), 0);
+    assert_eq!(
+        messages
+            .unsnooze_threads(&[ours.id])
+            .await
+            .expect("a write"),
+        1
+    );
+    assert!(
+        threads
+            .snoozed_messages(ours.id)
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+    assert_eq!(
+        threads
+            .snoozed_messages(other.id)
+            .await
+            .expect("a read")
+            .len(),
+        1,
+        "another conversation's sleeper is left alone"
+    );
+    assert_eq!(
+        messages
+            .unsnooze_threads(&[ours.id])
+            .await
+            .expect("a write"),
+        0,
+        "nothing asleep, nothing to wake"
+    );
+}
+
+#[tokio::test]
 async fn a_conversation_with_no_copies_elsewhere_folds_into_itself() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -1452,5 +1507,532 @@ async fn a_conversation_with_no_copies_elsewhere_folds_into_itself() {
             .await
             .expect("a read"),
         vec![thread.id]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Mute and split (spec 013 US5, research R3)
+// ---------------------------------------------------------------------------
+//
+// `counting` sees statements and the rows they return. It does not see
+// trigger firings (they run inside the engine), so the budgets below are
+// statements and rows; the mailbox-count triggers are covered by the
+// aggregates being right after each write.
+
+mod mute_and_split {
+    use std::collections::HashMap;
+
+    use postio_model::{RfcMessageId, ThreadId};
+    use postio_storage::repository::ThreadingRepository;
+    use postio_storage::test_support::counting::counted_async;
+
+    use super::*;
+
+    struct Scene<'a> {
+        connection: &'a Connection,
+        account: AccountId,
+        inbox: MailboxId,
+    }
+
+    impl Scene<'_> {
+        /// Files a message the way a sync pass does: stored, then threaded.
+        async fn file(
+            &self,
+            rfc: &str,
+            references: &[&str],
+            minutes: i64,
+        ) -> (MessageId, ThreadId) {
+            let mut message = Message::new(self.account, self.inbox, at(minutes * 60));
+            message.rfc_message_id = Some(RfcMessageId::new(format!("<{rfc}@example.com>")));
+            message.references = references
+                .iter()
+                .map(|id| RfcMessageId::new(format!("<{id}@example.com>")))
+                .collect();
+            message.in_reply_to = message.references.last().cloned();
+            // `m…` are one conversation; any other is a subject of its own, so
+            // the subject fallback never joins what a test keeps apart.
+            message.subject = Some(if rfc.starts_with('m') {
+                "Re: Harbor API".to_owned()
+            } else {
+                format!("Re: {rfc}")
+            });
+            message.from = vec![EmailAddress::new(None::<String>, "ben@example.com")];
+            message.flags = [Flag::Seen].into_iter().collect();
+            let id = MessageRepository::new(self.connection)
+                .create(&mut message)
+                .await
+                .expect("create");
+            let threaded = ThreadingRepository::new(self.connection, self.account)
+                .thread(&message)
+                .await
+                .expect("thread");
+            (id, threaded.thread_id)
+        }
+
+        async fn claims(&self, thread: ThreadId) -> Vec<String> {
+            ThreadingRepository::new(self.connection, self.account)
+                .claims(thread)
+                .await
+                .expect("claims")
+                .iter()
+                .map(|id| {
+                    id.as_str()
+                        .trim_matches(['<', '>'])
+                        .replace("@example.com", "")
+                })
+                .collect()
+        }
+
+        async fn members(&self, thread: ThreadId) -> Vec<MessageId> {
+            ThreadRepository::new(self.connection)
+                .member_ids(thread)
+                .await
+                .expect("members")
+        }
+
+        async fn count(&self, thread: ThreadId) -> u32 {
+            ThreadRepository::new(self.connection)
+                .get(thread)
+                .await
+                .expect("get")
+                .expect("there")
+                .message_count
+        }
+    }
+
+    async fn scene(connection: &Connection) -> Scene<'_> {
+        let (account, inbox) = test_support::account_with_inbox(connection).await;
+        Scene {
+            connection,
+            account: account.id,
+            inbox,
+        }
+    }
+
+    /// m1 <- m2 <- m3 <- m4 <- m5, and m6 also answers m3.
+    async fn a_conversation(scene: &Scene<'_>) -> (Vec<MessageId>, ThreadId) {
+        let (m1, thread) = scene.file("m1", &[], 1).await;
+        let (m2, a) = scene.file("m2", &["m1"], 2).await;
+        let (m3, b) = scene.file("m3", &["m1", "m2"], 3).await;
+        let (m4, c) = scene.file("m4", &["m1", "m2", "m3"], 4).await;
+        let (m5, d) = scene.file("m5", &["m1", "m2", "m3", "m4"], 5).await;
+        let (m6, e) = scene.file("m6", &["m1", "m2", "m3"], 6).await;
+        assert!([a, b, c, d, e].iter().all(|t| *t == thread), "one thread");
+        (vec![m1, m2, m3, m4, m5, m6], thread)
+    }
+
+    /// Spec 013 US5: "the row stays in place". A reply archived into a muted
+    /// thread is the newest message of the conversation, and the inbox row is
+    /// drawn from the newest message *in the inbox*, so the page does not move
+    /// the thread up. A guard: it held when written.
+    #[tokio::test]
+    async fn an_archived_reply_to_a_muted_thread_does_not_move_its_row() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("a connection");
+        let scene = scene(&connection).await;
+        let mut archive = postio_model::Mailbox::new(scene.account, "Archive", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut archive)
+            .await
+            .expect("an archive");
+        let archive = archive.id;
+        let (m1, muted) = scene.file("m1", &[], 1).await;
+        let (_, other) = scene.file("b1", &[], 5).await;
+        ThreadRepository::new(&connection)
+            .mute(muted)
+            .await
+            .expect("mute");
+        let order = || async {
+            ThreadRepository::new(&connection)
+                .page(&ThreadListQuery {
+                    account_id: scene.account,
+                    mailbox: Some(scene.inbox),
+                    limit: 10,
+                    after: None,
+                })
+                .await
+                .expect("a page")
+                .iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order().await, [Some(other), Some(muted)]);
+
+        let (reply, joined) = scene.file("m2", &["m1"], 10).await;
+        assert_eq!(joined, muted);
+        postio_storage::actions::relocate(
+            &connection,
+            scene.account,
+            &std::collections::BTreeMap::from([(scene.inbox, vec![reply])]),
+            archive,
+            postio_storage::actions::Relocation::Move,
+            Utc::now(),
+        )
+        .await
+        .expect("archived");
+
+        assert_eq!(
+            order().await,
+            [Some(other), Some(muted)],
+            "the muted thread stays below the newer inbox thread"
+        );
+        let _ = m1;
+    }
+
+    #[tokio::test]
+    async fn a_mute_survives_a_merge_and_a_renumbering() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let scene = scene(&connection).await;
+        let threads = ThreadRepository::new(&connection);
+
+        // Two halves of a conversation, and the later one is muted.
+        let (_, early) = scene.file("a1", &[], 1).await;
+        let (_, late) = scene.file("b2", &["b1"], 3).await;
+        assert_ne!(early, late);
+        threads.mute(late).await.expect("mute");
+        assert_eq!(threads.muted(&[late]).await.expect("muted")[&late], 0);
+        assert!(threads.muted(&[early]).await.expect("muted").is_empty());
+
+        // The missing parent arrives and links both: the later thread is
+        // absorbed, and the mute follows its claims.
+        let (_, merged) = scene.file("b1", &["a1"], 2).await;
+        let (_, merged_again) = scene.file("b3", &["a1", "b1", "b2"], 4).await;
+        assert_eq!(merged, early, "the older thread survives");
+        assert_eq!(merged_again, early);
+        assert_eq!(
+            threads.muted(&[early]).await.expect("muted").get(&early),
+            Some(&0),
+            "still muted after the merge, under the surviving id"
+        );
+
+        // A resync renumbers: the thread is deleted and its messages are
+        // threaded again, under a new id.
+        let members = scene.members(early).await;
+        threads.delete(early).await.expect("delete");
+        let messages = MessageRepository::new(&connection);
+        let mut renumbered = None;
+        for id in members {
+            let message = messages.get(id).await.expect("read").expect("there");
+            let threaded = ThreadingRepository::new(&connection, scene.account)
+                .thread(&message)
+                .await
+                .expect("rethread");
+            renumbered = Some(threaded.thread_id);
+        }
+        let renumbered = renumbered.expect("a thread");
+        assert_ne!(renumbered, early);
+        assert!(
+            threads
+                .muted(&[renumbered])
+                .await
+                .expect("muted")
+                .contains_key(&renumbered),
+            "still muted under the new id: the key is a claimed Message-ID"
+        );
+
+        threads.unmute(renumbered).await.expect("unmute");
+        assert!(
+            threads
+                .muted(&[renumbered])
+                .await
+                .expect("muted")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn replies_since_counts_up_and_is_read_with_the_mute() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let scene = scene(&connection).await;
+        let threads = ThreadRepository::new(&connection);
+        let (_, thread) = scene.file("a1", &[], 1).await;
+
+        threads.mute(thread).await.expect("mute");
+        threads.note_muted_replies(thread, 1).await.expect("one");
+        threads
+            .note_muted_replies(thread, 2)
+            .await
+            .expect("two more");
+
+        assert_eq!(threads.muted(&[thread]).await.expect("muted")[&thread], 3);
+        // Muting again starts nothing over: the count is the person's.
+        threads.mute(thread).await.expect("mute again");
+        assert_eq!(threads.muted(&[thread]).await.expect("muted")[&thread], 3);
+        threads.unmute(thread).await.expect("unmute");
+        threads.mute(thread).await.expect("mute afresh");
+        assert_eq!(
+            threads.muted(&[thread]).await.expect("muted")[&thread],
+            0,
+            "a fresh mute starts at none"
+        );
+    }
+
+    #[tokio::test]
+    async fn which_threads_of_a_page_are_muted_is_one_statement() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let scene = scene(&connection).await;
+        let threads = ThreadRepository::new(&connection);
+        let mut page = Vec::new();
+        for n in 0..8 {
+            let (_, thread) = scene.file(&format!("t{n}"), &[], n).await;
+            page.push(thread);
+        }
+        threads.mute(page[2]).await.expect("mute");
+        threads.mute(page[5]).await.expect("mute");
+        // Warm: the shape, not a cold statement cache.
+        let _ = threads.muted(&page).await.expect("warm");
+
+        let mut found = HashMap::new();
+        let counts = counted_async(|| async {
+            found = threads.muted(&page).await.expect("muted");
+        })
+        .await;
+
+        assert_eq!(found.len(), 2);
+        assert_eq!(counts.statements, 1, "one statement for the whole page");
+        assert_eq!(
+            counts.rows, 2,
+            "it returns the muted rows and no others (trigger firings are not \
+             exposed by `counting`)"
+        );
+        let none = counted_async(|| async {
+            threads.muted(&[]).await.expect("an empty page");
+        })
+        .await;
+        assert_eq!(none.statements, 0, "an empty page asks nothing");
+    }
+
+    #[tokio::test]
+    async fn a_split_moves_the_message_and_its_replies_and_relinks_their_claims() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let scene = scene(&connection).await;
+        let threads = ThreadRepository::new(&connection);
+        let (ids, original) = a_conversation(&scene).await;
+        assert_eq!(scene.count(original).await, 6);
+
+        let split = threads.split(ids[3]).await.expect("split");
+
+        assert_ne!(split, original);
+        assert_eq!(
+            scene.members(split).await,
+            vec![ids[3], ids[4]],
+            "m4 and m5"
+        );
+        assert_eq!(
+            scene.members(original).await,
+            vec![ids[0], ids[1], ids[2], ids[5]],
+            "the sibling stays"
+        );
+        assert_eq!(scene.count(split).await, 2, "its aggregate is recomputed");
+        assert_eq!(scene.count(original).await, 4, "and so is the original's");
+        let mut moved = scene.claims(split).await;
+        moved.sort();
+        assert_eq!(moved, vec!["m4", "m5"], "the moved messages' own claims");
+        assert!(scene.claims(original).await.contains(&"m3".to_owned()));
+        assert!(!scene.claims(original).await.contains(&"m4".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn a_split_costs_its_threads_reads_and_writes_and_no_mailbox_scan() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let scene = scene(&connection).await;
+        let threads = ThreadRepository::new(&connection);
+        // A mailbox of unrelated conversations beside it.
+        for n in 0..30 {
+            scene.file(&format!("other{n}"), &[], 100 + n).await;
+        }
+        let (ids, _) = a_conversation(&scene).await;
+
+        let counts = counted_async(|| async {
+            threads.split(ids[3]).await.expect("split");
+        })
+        .await;
+
+        // Reads: the message's row (1), the thread's nodes (6), its subject
+        // (1), and the aggregates of the two threads (2). Everything else is
+        // a write, which `counting` does not count (nor trigger firings).
+        // The thirty unrelated conversations beside it are not read.
+        assert_eq!(
+            (counts.statements, counts.rows),
+            SPLIT_BUDGET,
+            "a split reads the one thread's members and nothing else: {counts:?}"
+        );
+    }
+
+    /// (statements, rows) a split of a six-message thread costs.
+    const SPLIT_BUDGET: (usize, usize) = (5, 10);
+
+    #[tokio::test]
+    async fn a_later_reply_to_the_split_message_joins_the_split_thread() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let scene = scene(&connection).await;
+        let threads = ThreadRepository::new(&connection);
+        let (ids, original) = a_conversation(&scene).await;
+        let split = threads.split(ids[3]).await.expect("split");
+
+        // Its References still run through the original: m1 .. m3, then m4.
+        let (reply, joined) = scene.file("m7", &["m1", "m2", "m3", "m4"], 7).await;
+
+        assert_eq!(joined, split, "the nearest link's thread");
+        assert!(scene.members(split).await.contains(&reply));
+        assert_eq!(scene.count(original).await, 4, "nothing merged back");
+        assert!(
+            !scene.claims(split).await.contains(&"m3".to_owned()),
+            "joining the split does not steal the original's claims"
+        );
+        // A reply to the original goes on joining the original.
+        let (_, stays) = scene.file("m8", &["m1", "m2", "m3"], 8).await;
+        assert_eq!(stays, original);
+    }
+
+    #[tokio::test]
+    async fn one_undo_of_a_split_rejoins_the_messages_and_forgets_the_record() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let scene = scene(&connection).await;
+        let threads = ThreadRepository::new(&connection);
+        let (ids, original) = a_conversation(&scene).await;
+        let split = threads.split(ids[3]).await.expect("split");
+
+        threads.unsplit(split, original).await.expect("undo");
+
+        assert_eq!(scene.count(original).await, 6, "all six are back");
+        let mut back = scene.members(original).await;
+        back.sort();
+        let mut all = ids.clone();
+        all.sort();
+        assert_eq!(back, all);
+        assert!(
+            threads.get(split).await.expect("get").is_none(),
+            "the split thread is gone"
+        );
+        let (_, joined) = scene.file("m7", &["m1", "m2", "m3", "m4"], 7).await;
+        assert_eq!(
+            joined, original,
+            "the record is forgotten: back to the original"
+        );
+        for claim in ["m4", "m5"] {
+            assert!(scene.claims(original).await.contains(&claim.to_owned()));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_first_message_of_a_thread_cannot_be_split_off_it() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let scene = scene(&connection).await;
+        let (ids, original) = a_conversation(&scene).await;
+
+        let refused = ThreadRepository::new(&connection).split(ids[0]).await;
+
+        assert!(
+            refused.is_err(),
+            "everything replies to m1: nothing would stay"
+        );
+        assert_eq!(scene.count(original).await, 6, "and nothing moved");
+    }
+}
+
+#[tokio::test]
+async fn the_muted_lookup_reads_the_mutes_and_seeks_the_links_by_their_key() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let sql = ThreadRepository::explain_muted(5);
+
+    let plan = test_support::plan(&connection, &sql).await;
+    let scans = postio_storage::test_support::counting::scans(&connection, &sql).await;
+
+    assert!(
+        scans.iter().all(|step| step.contains("thread_mutes")),
+        "only the table of mutes is walked, never the links of a long thread:\n{plan}"
+    );
+    assert!(
+        plan.contains("idx_thread_links_lookup") || plan.contains("thread_links"),
+        "{plan}"
+    );
+    assert!(
+        plan.contains("account_id=? AND rfc_message_id=?") || plan.contains("account_id=? AND"),
+        "the links are sought with both columns of their key bound:\n{plan}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Spec 013 T085: the edge cases of a thread across folders
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_thread_across_archive_sent_and_the_inbox_counts_every_message_on_its_inbox_row() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
+    let sent = test_support::mailbox(&connection, &account, "Sent")
+        .await
+        .id;
+
+    let thread = a_thread(&connection, account.id).await;
+    unread_in(&connection, account.id, archive, thread.id, 10).await;
+    unread_in(&connection, account.id, archive, thread.id, 11).await;
+    unread_in(&connection, account.id, sent, thread.id, 20).await;
+    unread_in(&connection, account.id, sent, thread.id, 21).await;
+    unread_in(&connection, account.id, inbox, thread.id, 30).await;
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
+        .expect("a page of threads");
+
+    assert_eq!(page.len(), 1, "one conversation");
+    assert_eq!(
+        page[0].message_count, 5,
+        "the sent replies and the archived mail are the conversation's too"
+    );
+    let members = ThreadRepository::new(&connection)
+        .members(thread.id)
+        .await
+        .expect("members");
+    assert_eq!(members.len(), 5, "and every one of them is a child");
+}
+
+/// A draft the server holds is a message of its thread to the threading, and
+/// it is listed in Drafts. Archiving the thread acts on the messages
+/// `ThreadRepository::messages` names, so it must not name the draft: the
+/// draft stays in Drafts (spec 013, edge cases).
+#[tokio::test]
+async fn the_messages_a_thread_verb_acts_on_leave_a_draft_of_the_thread_out() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let drafts = test_support::mailbox(&connection, &account, "Drafts")
+        .await
+        .id;
+    let thread = a_thread(&connection, account.id).await;
+    let received = unread_in(&connection, account.id, inbox, thread.id, 10).await;
+    let draft = unread_in(&connection, account.id, drafts, thread.id, 20).await;
+    connection
+        .execute("UPDATE messages SET draft = 1 WHERE id = ?1", [draft.get()])
+        .await
+        .expect("mark it a draft");
+
+    let acted_on: Vec<MessageId> = ThreadRepository::new(&connection)
+        .messages(thread.id, ThreadOrder::Oldest)
+        .await
+        .expect("the thread's messages")
+        .iter()
+        .map(|row| row.id)
+        .collect();
+
+    assert_eq!(
+        acted_on,
+        vec![received],
+        "the draft is not archived with it"
     );
 }

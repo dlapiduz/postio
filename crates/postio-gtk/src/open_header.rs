@@ -28,6 +28,10 @@ pub struct HeaderCard {
     /// ordinary mail.
     warning_row: gtk::Box,
     warning: gtk::Label,
+    /// "Reply to": the message this one answers, when it is not the one
+    /// before it (spec 013 US3).
+    reply_label: gtk::Label,
+    reply: gtk::Label,
 }
 
 /// A field's name: small and dim, in a column of its own.
@@ -115,6 +119,14 @@ impl HeaderCard {
         warning.add_css_class("warning");
         warning_row.append(&warning);
         root.attach(&warning_row, 1, 3, 2, 1);
+        let reply_label = field("Reply to");
+        reply_label.set_visible(false);
+        let reply = gtk::Label::new(None);
+        reply.add_css_class("focus-open-recipient");
+        reply.set_xalign(0.0);
+        reply.set_visible(false);
+        root.attach(&reply_label, 0, 4, 1, 1);
+        root.attach(&reply, 1, 4, 2, 1);
         let card = HeaderCard {
             root,
             from,
@@ -125,6 +137,8 @@ impl HeaderCard {
             cc,
             warning_row,
             warning,
+            reply_label,
+            reply,
         };
         card.clear();
         card
@@ -185,6 +199,20 @@ impl HeaderCard {
     pub fn set_warning(&self, line: Option<&str>) {
         self.warning.set_text(line.unwrap_or(""));
         self.warning_row.set_visible(line.is_some());
+    }
+
+    /// The Reply to row, or none.
+    pub fn set_reply_to(&self, text: Option<&str>) {
+        self.reply.set_text(text.unwrap_or(""));
+        self.reply.set_visible(text.is_some());
+        self.reply_label.set_visible(text.is_some());
+    }
+
+    /// The Reply to row, while it is drawn.
+    pub fn reply_to(&self) -> Option<String> {
+        self.reply
+            .is_visible()
+            .then(|| self.reply.text().to_string())
     }
 
     /// Nothing drawn: no message yet.

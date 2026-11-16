@@ -114,7 +114,7 @@ struct DigestModelTests {
         model.editRule()
         model.toggleTab()
         model.back()
-        #expect(engine.invoked == ["archive_thread", "digest_rule", "toggle_digest_summary", "back"])
+        #expect(engine.invoked == ["archive", "digest_rule", "toggle_digest_summary", "back"])
     }
 
     @Test func anEmailOpenedInPlaceIsReadAndItsPassageIsTheHighlight() async {

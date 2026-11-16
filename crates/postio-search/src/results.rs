@@ -325,6 +325,9 @@ pub struct ConversationHit {
     pub key: ConversationKey,
     /// The message the row shows and opens: its best match.
     pub best: MessageId,
+    /// The best message's place among its conversation's messages, oldest
+    /// first, from 1: "Message 5 of 8". A lone message is 1.
+    pub best_number: u32,
     /// The best message's folder.
     pub mailbox_id: MailboxId,
     /// The best message's subject.

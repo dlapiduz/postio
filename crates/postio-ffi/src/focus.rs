@@ -111,6 +111,13 @@ impl Session {
             .input(postio_focus::Input::Point(position));
     }
 
+    /// A click on the chevron of the thread row at `position`: the cursor
+    /// goes there and the thread opens in place, or folds when it is the one
+    /// open (`FocusSplice` / `FocusUnsplice` say which).
+    pub fn focus_chevron_clicked(&self, position: u32) {
+        self.focus_driver().chevron_clicked(position);
+    }
+
     /// A double-click on `position`: the cursor goes to the row and its
     /// message opens, as Return does there. GTK's `activate` on its list is
     /// the same two steps.
@@ -152,6 +159,79 @@ impl Session {
     pub fn focus_reader_state(&self, more_open: bool, finding: bool) {
         self.focus_driver()
             .input(postio_focus::Input::ReaderState { more_open, finding });
+    }
+
+    /// The message window's width allows `chips` thread-bar chips: sent
+    /// when it opens and on resize. The controller composes the bar again.
+    pub fn focus_bar_room(&self, chips: u32) {
+        self.focus_driver()
+            .input(postio_focus::Input::BarRoom(chips));
+    }
+
+    /// A click on the thread bar's chip for member `index` (from 0): that
+    /// message is shown, as `]` would show it.
+    pub fn focus_thread_bar_chip_clicked(&self, index: u32) {
+        self.focus_driver()
+            .input(postio_focus::Input::ThreadBarChipClicked(index));
+    }
+
+    /// A click on the bar's "... N more" chip, which stands for the members
+    /// from `from` on: the outline opens on the first of them.
+    pub fn focus_thread_bar_more_clicked(&self, from: u32) {
+        self.focus_driver()
+            .input(postio_focus::Input::ThreadBarMoreClicked { from });
+    }
+
+    /// The message window opened from a search has no more of its own find
+    /// matches in this direction: the controller goes on to the next matched
+    /// message, or says it is the last. Swift then selects that message's
+    /// first match going forward, or its last going back.
+    pub fn focus_match_edge(&self, forward: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::MatchEdge { forward });
+    }
+
+    /// A Thread ▾ menu entry was clicked: `command` is its id.
+    pub fn focus_thread_menu_pick(&self, command: String) {
+        if let Ok(id) = command.parse::<postio_core::CommandId>() {
+            self.focus_driver()
+                .input(postio_focus::Input::ThreadMenuPick(id));
+        }
+    }
+
+    /// The outline's filter field holds `text` now.
+    pub fn focus_outline_typed(&self, text: String) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::Typed(text),
+        ));
+    }
+
+    /// A person chip of the outline was chosen, or cleared with `None`.
+    pub fn focus_outline_person(&self, name: Option<String>) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::Person(name),
+        ));
+    }
+
+    /// Up or down in the outline: by this many rows.
+    pub fn focus_outline_move(&self, by: i32) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::Move(by),
+        ));
+    }
+
+    /// Return, or a click on a row: show it. `None` is the cursor's row.
+    pub fn focus_outline_show(&self, row: Option<u32>) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::Show(row.map(|row| row as usize)),
+        ));
+    }
+
+    /// `/` in the outline: the keyboard goes to its field.
+    pub fn focus_outline_focus_filter(&self) {
+        self.focus_driver().input(postio_focus::Input::Outline(
+            postio_focus::OutlineInput::FocusFilter,
+        ));
     }
 
     /// What Undo would take back now, in the toast's words, or `None` when

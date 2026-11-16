@@ -1,0 +1,130 @@
+# A thread opens in place and closes again (specs/013-focus-threads US1 #2,
+# #3, #5; issue #2099).
+#
+# The defect: a conversation row shows one message, the latest, and the other
+# five are unreachable from the list. Today `Right` is "open message" in the
+# list and there are no child rows at all, so every step that expects rows to
+# appear fails on `main`.
+#
+# On the `threads` seed the cursor starts on "Harbor API draft v3": six
+# messages, two unread, message 4 answering message 1, and an unsent draft
+# reply. `Right` splices its six messages and the draft in under the row
+# (rows.count grows), each child showing its own text, never its quote.
+# `j` walks into the children (the cursor leaves the thread row) and `Left`
+# on a child collapses the thread and returns the cursor to its row. `Right`
+# on a one-message row does nothing. Expanding a second thread collapses
+# the first, and the ring stays on that second thread's row.
+#
+# The seed's rows, newest first: Harbor (6, expanded here), "lost cat" (41),
+# "Offsite planning" (23), the design-review invitation (1), the Atlas
+# staffing plan (1), dinner (2), the SOW (3), the Atlas budget (4), the SLOs
+# (8) and the gateway defaults (1). Harbor's subject reads "Re: ..." because
+# the list's row says its newest message's subject.
+#
+# The controller's half is postio-focus tests/controller_suite/threads.rs;
+# the row words are postio-ui's focus_row and thread_list.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/013-focus-threads US1" }
+seed   = "threads"
+vary   = { scheme = ["light", "dark"] }
+design = "02-thread-expanded"
+
+[[step]]
+id      = "start"
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3", rows.count = 10, app.focus.cursor.kind = "row" }
+expect  = "The inbox is collapsed: Harbor API draft v3 is the ringed first row with a badge of 6 and \"2 new\", and a chevron pointing right. Every other row is one line."
+
+[[step]]
+id      = "expand"
+key     = "Right"
+check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", rows.count = 17, reading.id = { absent = true }, view = "list", app.focus.cursor.kind = "row", app.focus.footer.labels = "move | open | reply to latest | forward latest | archive thread | collapse" }
+expect  = "Harbor opens in place and nothing is opened: Right expands, it no longer opens the message. Under the ringed thread row come six child rows, joined to it by a line, each with its sender, its own first line (message 4 reads \"to Ana\" as a tag, not the quote it carries), its time, and an unread dot on the two unread ones, then the draft reply in draft styling. The cursor is still on the thread row and the chevron points down; the footer now offers Left collapse where it offered Right expand."
+
+[[step]]
+id      = "into"
+key     = "j"
+check   = { keyboard.region = "list", cursor.index = 1, view = "list", app.focus.cursor.kind = "child", app.focus.cursor.tag = { absent = true }, app.focus.cursor.line = "Here is the first cut of the Harbor API draft. Auth, pagination and errors are in; webhooks are still open." }
+expect  = "The ring leaves the thread row and lands on child 1, Ana Ruiz's first message, which shows its own text. The rows around it have not moved."
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 2 }
+expect  = "The ring walks down to child 2, one row at a time through the children, not to the next thread."
+
+[[step]]
+id      = "collapse"
+key     = "Left"
+check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", rows.count = { same_as = "start" }, view = "list" }
+expect  = "Left on a child folds the thread: the six children and the draft are gone, the list is as many rows as it began with, and the ring is back on the Harbor thread row with its chevron pointing right."
+
+[[step]]
+id      = "reopen"
+key     = "Right"
+check   = { cursor.index = 0, rows.count = { same_as = "expand" } }
+expect  = "Right again opens Harbor to the same six children and draft."
+
+[[step]]
+key     = "Left"
+check   = { cursor.index = 0, rows.count = { same_as = "start" } }
+expect  = "Left on the thread row itself also folds it, ring still on the row."
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 1, cursor.subject = "Re: lost cat", app.focus.cursor.kind = "row" }
+expect  = "j moves to the next thread, \"lost cat\", a long thread with a chevron."
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 2, cursor.subject = "Re: Offsite planning" }
+
+[[step]]
+id      = "single"
+command = "next_message"
+check   = { cursor.index = 3, cursor.subject = "Invitation: Harbor design review" }
+expect  = "The next row is a one-message thread: the sender's full name, and no chevron."
+
+[[step]]
+id      = "single-right"
+key     = "Right"
+check   = { keyboard.region = "list", cursor.index = 3, rows.count = { same_as = "start" }, view = "list", reading.id = { absent = true }, app.focus.cursor.kind = "row" }
+expect  = "Right on a one-message row does nothing: no children, no message opened, the ring where it was."
+
+[[step]]
+command = "first_message"
+check   = { cursor.index = 0, cursor.subject = "Re: Harbor API draft v3" }
+
+[[step]]
+key     = "Right"
+check   = { cursor.index = 0, rows.count = { same_as = "expand" } }
+expect  = "Harbor is open again."
+
+[[step]]
+command = "last_message"
+check   = { cursor.index = 16, cursor.subject = "Gateway defaults", app.focus.cursor.kind = "row" }
+expect  = "G goes to the last row, below Harbor's children."
+
+[[step]]
+command = "prev_message"
+check   = { cursor.index = 15 }
+
+[[step]]
+command = "prev_message"
+check   = { cursor.index = 14, cursor.subject = "Re: Atlas Q3 budget, final numbers", app.focus.cursor.kind = "row" }
+expect  = "Two rows up is the Atlas budget thread, four messages, below Harbor's open children."
+
+[[step]]
+id      = "second"
+key     = "Right"
+check   = { keyboard.region = "list", cursor.index = 7, cursor.subject = "Re: Atlas Q3 budget, final numbers", rows.count = 14, view = "list", app.focus.cursor.kind = "row" }
+expect  = "Expanding another thread folds the first: Harbor's seven children are gone, the budget thread's four are drawn under its row, and the ring is still on the budget row, which slid up into Harbor's place."
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 8, app.focus.cursor.kind = "child" }
+expect  = "j goes into the budget thread's first message."
+
+[[step]]
+key     = "Left"
+check   = { cursor.index = 7, rows.count = { same_as = "start" }, app.focus.cursor.kind = "row" }
+expect  = "Left folds it: back to the ten rows, the ring on the budget row."

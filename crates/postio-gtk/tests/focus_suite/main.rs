@@ -118,6 +118,7 @@ mod storyboard_determinism;
 mod storyboards;
 mod support;
 mod surfaced;
+mod threads;
 mod treatments;
 mod undo;
 mod unsubscribe;
@@ -775,8 +776,8 @@ const CASES: &[(&str, fn())] = &[
         filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
     ),
     (
-        "digest::enter_opens_a_digest_and_shift_a_archives_all_of_it",
-        digest::enter_opens_a_digest_and_shift_a_archives_all_of_it as fn(),
+        "digest::enter_opens_a_digest_and_e_archives_all_of_it",
+        digest::enter_opens_a_digest_and_e_archives_all_of_it as fn(),
     ),
     (
         "digest::e_on_a_digests_row_archives_its_delivery_and_undo_brings_the_cursor_back",
@@ -1364,6 +1365,10 @@ const CASES: &[(&str, fn())] = &[
         open_message::a_hundredth_open_builds_no_second_message_view as fn(),
     ),
     (
+        "open_message::a_hundredth_open_of_a_thread_builds_no_second_message_view",
+        open_message::a_hundredth_open_of_a_thread_builds_no_second_message_view as fn(),
+    ),
+    (
         "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
     ),
@@ -1480,8 +1485,8 @@ const CASES: &[(&str, fn())] = &[
         commands::the_row_menu_flags_and_unflags as fn(),
     ),
     (
-        "commands::capital_a_archives_the_conversation",
-        commands::capital_a_archives_the_conversation as fn(),
+        "commands::e_archives_the_whole_conversation",
+        commands::e_archives_the_whole_conversation as fn(),
     ),
     (
         "commands::g_z_and_g_star_span_every_account",
@@ -1606,6 +1611,10 @@ const CASES: &[(&str, fn())] = &[
     ),
     ("harness::an_empty_case", harness::an_empty_case as fn()),
     (
+        "harness::settle_outlasts_the_runtimes_budget",
+        harness::settle_outlasts_the_runtimes_budget as fn(),
+    ),
+    (
         "harness::an_empty_case_is_listed_and_runs",
         harness::an_empty_case_is_listed_and_runs as fn(),
     ),
@@ -1648,6 +1657,112 @@ const CASES: &[(&str, fn())] = &[
     (
         "rows::a_selected_digest_row_is_drawn_selected",
         rows::a_selected_digest_row_is_drawn_selected as fn(),
+    ),
+    (
+        "threads::right_opens_a_thread_in_place",
+        threads::right_opens_a_thread_in_place as fn(),
+    ),
+    (
+        "threads::j_walks_the_children_and_on_to_the_next_thread",
+        threads::j_walks_the_children_and_on_to_the_next_thread as fn(),
+    ),
+    (
+        "threads::left_folds_the_thread_from_a_child",
+        threads::left_folds_the_thread_from_a_child as fn(),
+    ),
+    (
+        "threads::return_on_a_child_opens_that_message",
+        threads::return_on_a_child_opens_that_message as fn(),
+    ),
+    (
+        "threads::participants_say_you_for_the_account",
+        threads::participants_say_you_for_the_account as fn(),
+    ),
+    (
+        "threads::the_count_follows_the_participants",
+        threads::the_count_follows_the_participants as fn(),
+    ),
+    (
+        "threads::clicking_the_chevron_opens_and_folds_a_thread",
+        threads::clicking_the_chevron_opens_and_folds_a_thread as fn(),
+    ),
+    (
+        "threads::filtered_opens_a_thread_in_place_and_restores_it_whole",
+        threads::filtered_opens_a_thread_in_place_and_restores_it_whole as fn(),
+    ),
+    (
+        "threads::the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it",
+        threads::the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it as fn(),
+    ),
+    (
+        "threads::the_window_walks_its_thread",
+        threads::the_window_walks_its_thread as fn(),
+    ),
+    (
+        "threads::a_reply_while_reading_changes_nothing_on_screen_until_read_it",
+        threads::a_reply_while_reading_changes_nothing_on_screen_until_read_it as fn(),
+    ),
+    (
+        "threads::the_thread_menu_mutes_the_thread_and_its_row_says_so",
+        threads::the_thread_menu_mutes_the_thread_and_its_row_says_so as fn(),
+    ),
+    (
+        "threads::the_outline_filters_by_name_and_return_shows_that_message",
+        threads::the_outline_filters_by_name_and_return_shows_that_message as fn(),
+    ),
+    (
+        "threads::a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the_child",
+        threads::a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the_child
+            as fn(),
+    ),
+    (
+        "threads::find_in_a_window_opened_from_the_list_still_wraps",
+        threads::find_in_a_window_opened_from_the_list_still_wraps as fn(),
+    ),
+    (
+        "threads::a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed",
+        threads::a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed as fn(),
+    ),
+    (
+        "threads::return_on_the_draft_child_opens_the_draft_in_the_composer",
+        threads::return_on_the_draft_child_opens_the_draft_in_the_composer as fn(),
+    ),
+    (
+        "threads::clicking_a_thread_bar_chip_shows_that_message",
+        threads::clicking_a_thread_bar_chip_shows_that_message as fn(),
+    ),
+    (
+        "threads::clicking_the_more_chip_opens_the_outline",
+        threads::clicking_the_more_chip_opens_the_outline as fn(),
+    ),
+    (
+        "threads::a_search_childs_row_says_who_wrote_it_and_when",
+        threads::a_search_childs_row_says_who_wrote_it_and_when as fn(),
+    ),
+    (
+        "threads::the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboard",
+        threads::the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboard
+            as fn(),
+    ),
+    (
+        "threads::mod_shift_q_folds_and_unfolds_the_forwarded_messages",
+        threads::mod_shift_q_folds_and_unfolds_the_forwarded_messages as fn(),
+    ),
+    (
+        "threads::the_outline_opens_from_the_list_over_an_expanded_thread",
+        threads::the_outline_opens_from_the_list_over_an_expanded_thread as fn(),
+    ),
+    (
+        "threads::alt_v_on_a_child_moves_that_message_alone",
+        threads::alt_v_on_a_child_moves_that_message_alone as fn(),
+    ),
+    (
+        "threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread",
+        threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread as fn(),
+    ),
+    (
+        "threads::forwarding_the_whole_thread_says_so_in_the_subject",
+        threads::forwarding_the_whole_thread_says_so_in_the_subject as fn(),
     ),
     (
         "cursor::j_and_k_move_only_the_cursor",
@@ -1940,8 +2055,28 @@ const CASES: &[(&str, fn())] = &[
 use gtk::glib;
 
 /// Turn the GTK main loop until there is nothing left to do.
+///
+/// The loop is turned inside one poll of the case's future (`gtk_case` is a
+/// `block_on`), so every future it dispatches that awaits a tokio resource
+/// spends that poll's budget of 128 operations. A case that never yields to
+/// its runtime between opens spent it after a few dozen, and from then on
+/// each such future returned `Pending` and woke itself at once, for as long
+/// as the loop was turned: `settle` never went idle, at 100% CPU. A real
+/// window has no such budget -- GTK's loop is not inside a tokio poll -- so
+/// the turn runs where tokio does not count, as a blocking section does.
 pub fn settle() {
-    while glib::MainContext::default().iteration(false) {}
+    // A loop that has not gone idle in this long is not settling.
+    let patience = postio_test_support::scaled(std::time::Duration::from_secs(10));
+    tokio::task::block_in_place(|| {
+        let started = std::time::Instant::now();
+        while glib::MainContext::default().iteration(false) {
+            assert!(
+                started.elapsed() < patience,
+                "the main loop never went idle: a future it polls is woken the moment \
+                 it returns Pending"
+            );
+        }
+    });
 }
 
 /// Let the main loop run for at least `least`: a dwell a case must outlast,

@@ -177,7 +177,7 @@ fn an_override_rebinds_the_command_and_keeps_its_alternates() {
     assert!(
         keymap
             .bindings(CommandId::OpenMessage)
-            .contains(&"Right".into()),
+            .contains(&"o".into()),
         "the registry's alternates are not the file's to replace"
     );
     assert_eq!(
@@ -188,6 +188,27 @@ fn an_override_rebinds_the_command_and_keeps_its_alternates() {
         keymap.command_for(Context::List, "Return"),
         None,
         "the old key is free again"
+    );
+}
+
+#[test]
+fn a_leftover_archive_thread_binding_is_reported_and_ignored() {
+    // `archive_thread` is gone (specs/013-focus-threads FR-006): a `[keys]`
+    // line from before is a warning naming the id and nothing else, and the
+    // rest of the keymap resolves as if it were absent.
+    let keymap = Keymap::resolve_on(
+        &bindings(&[("archive_thread", "E"), ("archive", "w")]),
+        Platform::Freedesktop,
+    );
+    assert_eq!(
+        keymap.problems(),
+        ["`archive_thread` is not a command in this build"]
+    );
+    assert_eq!(keymap.binding(CommandId::Archive), Some("w"));
+    assert_eq!(
+        keymap.command_for(Context::List, "E"),
+        None,
+        "the leftover key binds nothing"
     );
 }
 

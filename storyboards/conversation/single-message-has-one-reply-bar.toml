@@ -27,7 +27,7 @@ command = "next_message"
 [[step]]
 id      = "single"
 command = "open_message"
-check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.position = "Message 3 of 59" }
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.position = "Message 3 of 60" }
 expect  = "A single message is open. Its verbs are one row, with one Reply; nothing is drawn twice."
 
 [[step]]

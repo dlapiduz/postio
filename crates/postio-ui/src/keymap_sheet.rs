@@ -113,6 +113,11 @@ pub fn group(command: CommandId) -> Option<Group> {
         // The reading dialog steps through the thread on these.
         | C::NextInConversation
         | C::PrevInConversation
+        | C::FirstInConversation
+        | C::LatestInConversation
+        | C::FirstUnreadInConversation
+        | C::ExpandThread
+        | C::CollapseThread
         | C::ScrollReaderDown
         | C::ScrollReaderUp => Some(G::MoveAndSelect),
 
@@ -120,6 +125,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         C::OpenMessage
         // The sender's popover, a view of who wrote.
         | C::ContactPopover
+        | C::ThreadOutline
+        | C::ThreadMenu
         | C::ViewSource
         | C::OpenAttachmentOrLink
         | C::ViewOriginal
@@ -143,7 +150,11 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::Forward
         | C::Compose
         | C::Archive
-        | C::ArchiveThread
+        | C::MuteThread
+        | C::SplitThread
+        | C::ReplyToLatest
+        | C::MoveThisMessage
+        | C::DeleteThisMessage
         | C::Delete
         | C::Move
         | C::ToggleRead
@@ -307,7 +318,15 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::BulletList
         | C::NumberedList
         | C::InsertLink
-        | C::QuoteBlock => None,
+        | C::QuoteBlock
+        // The composer's footer, and the forward chooser's own three rows,
+        // each of which shows its key beside it (specs/013-focus-threads).
+        | C::ShowNewer
+        | C::ExpandQuoted
+        | C::OutlineFirstUnread
+        | C::ForwardWhat1
+        | C::ForwardWhat2
+        | C::ForwardWhat3 => None,
         // The terminal composer's (`Requirement::Terminal`).
         C::EditExternally | C::TogglePreview => None,
         // A stacked conversation pane's, which Focus's dialog is not.

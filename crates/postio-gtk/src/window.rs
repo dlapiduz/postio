@@ -146,6 +146,23 @@ mod imp {
         /// is applied (ADR 0045).
         pub picked: SelectionState,
         pub bulk: RefCell<Option<Rc<Bulk>>>,
+        /// The bar under the list that says what the keys act on.
+        pub scope_footer: RefCell<Option<Rc<crate::scope_footer::ScopeFooter>>>,
+        /// The thread menu and the outline hung from the message window's
+        /// Thread button (spec 013 US5).
+        /// The words of the search the results show: what a window opened
+        /// from it looks for in each message.
+        pub search_words: RefCell<String>,
+        /// The message the composer answers, as the controller named it: a
+        /// reply to the latest is not the message the cursor is on.
+        pub compose_message: Cell<Option<MessageId>>,
+        /// Which message of its thread the reply answers, from 1.
+        pub replying_to: Cell<Option<u32>>,
+        /// Which way a find ran out of matches last, until the next message
+        /// is showing.
+        pub match_from_end: Cell<bool>,
+        pub thread_menu: RefCell<Option<Rc<crate::thread_popovers::ThreadMenu>>>,
+        pub outline: RefCell<Option<Rc<crate::thread_popovers::OutlinePopover>>>,
         /// The host's view of this window's aim: a whole-view selection is
         /// a predicate the host resolves, and it reads it from here.
         pub state: RefCell<Option<SharedState>>,
@@ -250,6 +267,8 @@ mod imp {
         pub pending_mailto: RefCell<Option<postio_model::mailto::Mailto>>,
         /// The move picker, built the first time `v` opens it.
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
+        /// The move picker the controller drives, for one message alone.
+        pub driven_picker: RefCell<Option<Rc<crate::controller_picker::ControllerPicker>>>,
         /// The composer, in its dialog (US3), once an account is known.
         pub compose: RefCell<Option<Rc<crate::compose::Compose>>>,
         /// Whether the composer's editing surface should start as soon as
@@ -312,6 +331,13 @@ mod imp {
                 resolver: RefCell::default(),
                 picked: SelectionState::new(),
                 bulk: RefCell::default(),
+                scope_footer: RefCell::default(),
+                search_words: RefCell::default(),
+                compose_message: Cell::new(None),
+                replying_to: Cell::new(None),
+                match_from_end: Cell::new(false),
+                thread_menu: RefCell::default(),
+                outline: RefCell::default(),
                 state: RefCell::default(),
                 accounts: RefCell::default(),
                 placing_cursor: Cell::default(),
@@ -343,6 +369,7 @@ mod imp {
                 remind: RefCell::default(),
                 labels: RefCell::default(),
                 moves: RefCell::default(),
+                driven_picker: RefCell::default(),
                 pending_link: RefCell::default(),
                 pending_mailto: RefCell::default(),
                 compose: RefCell::default(),
@@ -896,6 +923,18 @@ impl FocusWindow {
         {
             return match outcome {
                 Outcome::Command(id) => match id.parse::<CommandId>() {
+                    // What a thread adds to the composer is the controller's.
+                    Ok(
+                        id @ (CommandId::ReplyToLatest
+                        | CommandId::ShowNewer
+                        | CommandId::ExpandQuoted
+                        | CommandId::ForwardWhat1
+                        | CommandId::ForwardWhat2
+                        | CommandId::ForwardWhat3),
+                    ) => {
+                        self.run_in_controller(id);
+                        glib::Propagation::Stop
+                    }
                     Ok(id) => {
                         compose.dispatch(id);
                         glib::Propagation::Stop
@@ -918,13 +957,14 @@ impl FocusWindow {
             self.act(command);
             return glib::Propagation::Stop;
         }
-        // Filtered's rows are selected by the view itself: the controller
-        // behind it holds the inbox's list, which `x` must not reach.
+        // Filtered's rows are walked, selected and opened by the
+        // controller's Filtered surface, which holds its own cursor: the
+        // inbox's list behind it is not what `x` or `j` mean here.
         if let Some(command) = command
-            && let Some(view) = self.filtered()
-            && view.runs(command)
+            && self.filtered().is_some()
+            && filtered_owns(command)
         {
-            view.run(command);
+            self.run_in_controller(command);
             return glib::Propagation::Stop;
         }
         if let Some(command) = command {
@@ -1012,6 +1052,31 @@ impl FocusWindow {
         }
         if self.reading_beside() {
             now.push(SurfaceKind::Message);
+        }
+        // The popovers from the message window's Thread button are over it.
+        let over_message = self.reading().is_some_and(|reading| reading.is_open());
+        if over_message {
+            if !now.contains(&SurfaceKind::Message) {
+                now.push(SurfaceKind::Message);
+            }
+            if self
+                .imp()
+                .thread_menu
+                .borrow()
+                .as_ref()
+                .is_some_and(|menu| menu.is_open())
+            {
+                now.push(SurfaceKind::ThreadMenu);
+            }
+            if self
+                .imp()
+                .outline
+                .borrow()
+                .as_ref()
+                .is_some_and(|outline| outline.is_open())
+            {
+                now.push(SurfaceKind::Outline);
+            }
         }
         if self.compose().is_some_and(|compose| compose.is_showing()) {
             // On Linux the composer stacks over the open message, which is
@@ -1125,10 +1190,242 @@ impl FocusWindow {
                     bar.close();
                 }
             }
-            SurfaceKind::Filtered => self.leave_filtered(),
+            SurfaceKind::Picker => {
+                if let Some(driven) = self.imp().driven_picker.borrow().as_ref() {
+                    driven.close();
+                }
+            }
+            SurfaceKind::Filtered => self.hide_filtered(),
             SurfaceKind::Contacts => self.leave_contacts(),
             SurfaceKind::ContactPopover => self.close_contact_popover(),
+            SurfaceKind::ThreadMenu => {
+                if let Some(menu) = self.imp().thread_menu.borrow().as_ref() {
+                    menu.close();
+                }
+            }
+            SurfaceKind::Outline => {
+                if let Some(outline) = self.imp().outline.borrow().as_ref() {
+                    outline.close();
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// The composer opens to answer `message`, as the controller says: a
+    /// reply, a reply to all or a forward, of that message and not the one
+    /// the cursor is on.
+    fn begin_answer(&self, kind: postio_focus::ComposerKind, message: Option<MessageId>) {
+        use postio_focus::ComposerKind;
+        let Some(compose) = self.compose() else {
+            return;
+        };
+        self.imp().compose_message.set(message);
+        // The controller put the composer on its stack itself: saying it
+        // opened again would begin a second composition and forget the
+        // chooser and the bar it is about to draw.
+        {
+            let mut surfaces = self.imp().surfaces.borrow_mut();
+            if !surfaces.contains(&SurfaceKind::Composer) {
+                surfaces.push(SurfaceKind::Composer);
+            }
+        }
+        compose.thread.clear();
+        self.imp().replying_to.set(None);
+        compose.dispatch(match kind {
+            ComposerKind::ReplyAll => CommandId::ReplyAll,
+            ComposerKind::Forward { .. } => CommandId::Forward,
+            _ => CommandId::Reply,
+        });
+        self.note_replying_to(
+            matches!(kind, ComposerKind::Reply | ComposerKind::ReplyAll)
+                .then_some(message)
+                .flatten(),
+        );
+    }
+
+    /// Read where `message` is in its thread, from 1, for the observation of
+    /// which message the reply answers.
+    fn note_replying_to(&self, message: Option<MessageId>) {
+        let Some(message) = message else {
+            return;
+        };
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let weak = self.downgrade();
+        glib::spawn_future_local(async move {
+            use postio_model::listing::MailStore as _;
+            // POSTIO-GLIB-SAFE: client calls are oneshot receives.
+            let Ok(rows) = client.message_rows(vec![message]).await else {
+                return;
+            };
+            let Some(thread) = rows.into_iter().next().and_then(|row| row.thread) else {
+                return;
+            };
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+            let Ok(Some(view)) = client.thread(thread).await else {
+                return;
+            };
+            let Some(at) = view.members.iter().position(|member| member.id == message) else {
+                return;
+            };
+            if let Some(window) = weak.upgrade() {
+                window.imp().replying_to.set(Some(at as u32 + 1));
+            }
+        });
+    }
+
+    /// The messages newer than the one answered, read-only in the composer.
+    fn show_newer(&self, ids: Option<&[MessageId]>) {
+        let Some(compose) = self.compose() else {
+            return;
+        };
+        let (Some(ids), Some(client)) = (ids, self.imp().client.borrow().clone()) else {
+            compose.thread.show_newer(&[]);
+            return;
+        };
+        let (ids, weak) = (ids.to_vec(), self.downgrade());
+        glib::spawn_future_local(async move {
+            use postio_model::listing::MailStore as _;
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+            let Ok(rows) = client.message_rows(ids).await else {
+                return;
+            };
+            let lines: Vec<(String, String)> = rows
+                .iter()
+                .map(|row| {
+                    (
+                        format!(
+                            "{} \u{b7} {}",
+                            row.from.as_ref().map_or("", |from| from.display()),
+                            postio_ui::row::timestamp(row.received_at, postio_ui::clock::now())
+                        ),
+                        row.preview.clone().unwrap_or_default(),
+                    )
+                })
+                .collect();
+            if let Some(compose) = weak.upgrade().and_then(|window| window.compose()) {
+                compose.thread.show_newer(&lines);
+            }
+        });
+    }
+
+    /// Open the thread menu from the Thread button, drawn from `view`.
+    fn show_thread_menu(&self, view: &postio_ui::thread_outline::ThreadMenuView) {
+        let Some(reading) = self.reading() else {
+            return;
+        };
+        let menu = {
+            let held = self.imp().thread_menu.borrow().clone();
+            held.unwrap_or_else(|| {
+                let menu = crate::thread_popovers::ThreadMenu::new(&reading.thread_button());
+                menu.connect_pick(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |id| {
+                        if let Some(pane) = window.pane() {
+                            pane.feed().input(postio_focus::Input::ThreadMenuPick(id));
+                        }
+                    }
+                ));
+                menu.connect_closed(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move || window.thread_surface_closed(SurfaceKind::ThreadMenu)
+                ));
+                self.imp().thread_menu.replace(Some(Rc::clone(&menu)));
+                menu
+            })
+        };
+        menu.show(view);
+        self.imp()
+            .surfaces
+            .borrow_mut()
+            .push(SurfaceKind::ThreadMenu);
+    }
+
+    /// Draw the outline, whole, hung from the Thread button.
+    fn show_outline(&self, view: &postio_ui::thread_outline::OutlineView) {
+        // Over a message it hangs from that window's Thread button; from the
+        // list, with no message open, under the row the thread is on.
+        let (parent, rect): (gtk::Widget, Option<gdk::Rectangle>) =
+            match self.reading().filter(|reading| reading.is_open()) {
+                Some(reading) => (reading.thread_button().upcast(), None),
+                None => match self.at_the_row() {
+                    Some((anchor, rect)) => (anchor, Some(rect)),
+                    None => return,
+                },
+            };
+        let held = self.imp().outline.borrow().clone();
+        let outline = match held {
+            Some(held) if held.parent().as_ref() == Some(&parent) => held,
+            stale => {
+                if let Some(stale) = stale {
+                    stale.discard();
+                }
+                let outline = crate::thread_popovers::OutlinePopover::new(&parent);
+                outline.connect_input(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |input| {
+                        if let Some(pane) = window.pane() {
+                            pane.feed().input(postio_focus::Input::Outline(input));
+                        }
+                    }
+                ));
+                outline.connect_closed(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move || window.thread_surface_closed(SurfaceKind::Outline)
+                ));
+                self.imp().outline.replace(Some(Rc::clone(&outline)));
+                outline
+            }
+        };
+        outline.point_at(rect.as_ref());
+        let was_open = outline.is_open();
+        outline.show(view);
+        if !was_open {
+            self.imp().surfaces.borrow_mut().push(SurfaceKind::Outline);
+        }
+    }
+
+    /// A popover from the Thread button has closed, by whatever way: the
+    /// controller is told, once.
+    fn thread_surface_closed(&self, kind: SurfaceKind) {
+        let known = {
+            let mut surfaces = self.imp().surfaces.borrow_mut();
+            let before = surfaces.len();
+            surfaces.retain(|held| *held != kind);
+            before != surfaces.len()
+        };
+        if known && let Some(pane) = self.pane() {
+            pane.feed().input(postio_focus::Input::SurfaceClosed(kind));
+        }
+        // The keyboard was in the popover; the message under it is where it
+        // goes, so the next key reads the message instead of nothing.
+        // GTK hands the focus back to the button the popover hung from as
+        // it closes, and does so after this signal: the message takes it
+        // once the loop is idle, and again a beat later if the toolkit was
+        // slower than that.
+        if known && kind == SurfaceKind::Outline {
+            for delay in [0u64, 60] {
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(delay),
+                    glib::clone!(
+                        #[weak(rename_to = window)]
+                        self,
+                        move || {
+                            if let Some(reading) =
+                                window.reading().filter(|reading| reading.is_open())
+                            {
+                                reading.focus_message();
+                            }
+                        }
+                    ),
+                );
+            }
         }
     }
 
@@ -1144,13 +1441,24 @@ impl FocusWindow {
             ReaderVerb::FindInMessage => reading.reader().find_in_message(),
             ReaderVerb::FindNext => reading.reader().find_step(true),
             ReaderVerb::FindPrevious => reading.reader().find_step(false),
+            // The next or previous match of the search in this message; when
+            // there is none, the controller goes on to the next matched one.
+            ReaderVerb::NextMatch | ReaderVerb::PrevMatch => {
+                let forward = matches!(verb, ReaderVerb::NextMatch);
+                if !reading.reader().view().find_walk(forward) {
+                    self.imp().match_from_end.set(!forward);
+                    if let Some(pane) = self.pane() {
+                        pane.feed()
+                            .input(postio_focus::Input::MatchEdge { forward });
+                    }
+                }
+            }
             // App colours or the original, for this message (T213).
             ReaderVerb::SwitchTreatment => {
                 reading.reader().switch_treatment();
             }
             ReaderVerb::ViewSource => self.view_source(),
             ReaderVerb::ShowMore => reading.show_more(),
-            ReaderVerb::StepThread(by) => reading.step_thread(by as isize),
             _ => {}
         }
     }
@@ -1213,6 +1521,15 @@ impl FocusWindow {
             .map_or(KeyContext::List, |pane| pane.feed().key_context());
         if context != KeyContext::Composer && self.settings_on_an_account() {
             return KeyContext::Accounts;
+        }
+        // The forward chooser's number keys are its own while it holds the
+        // keyboard, and the composer's other keys still work from it.
+        if context == KeyContext::Composer
+            && self
+                .compose()
+                .is_some_and(|compose| compose.thread.chooser_has_focus())
+        {
+            return KeyContext::ForwardChooser;
         }
         context
     }
@@ -1449,9 +1766,39 @@ impl FocusWindow {
             return;
         }
         let window = self.downgrade();
-        let current: crate::compose::Current =
-            Rc::new(move || window.upgrade().and_then(|window| window.aimed_message()));
+        let current: crate::compose::Current = Rc::new(move || {
+            let window = window.upgrade()?;
+            window
+                .imp()
+                .compose_message
+                .get()
+                .or_else(|| window.aimed_message())
+        });
         let compose = crate::compose::Compose::new(self, client, account, current);
+        compose.thread.connect_card(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |form| {
+                if let Some(pane) = window.pane() {
+                    pane.feed()
+                        .input(postio_focus::Input::ForwardFormClicked(form));
+                }
+            }
+        ));
+        compose.thread.connect_action(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |at| window.run_in_controller(if at == 0 {
+                CommandId::ShowNewer
+            } else {
+                CommandId::ReplyToLatest
+            })
+        ));
+        compose.thread.connect_unfold(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.run_in_controller(CommandId::ExpandQuoted)
+        ));
         if self.imp().warm.get() {
             compose.warm();
         }
@@ -1489,6 +1836,18 @@ impl FocusWindow {
                 .imp()
                 .accounts
                 .replace(enabled.iter().map(|account| account.id).collect());
+            // Who "you" is, for the participants a thread row names.
+            if let Some(pane) = window.pane() {
+                pane.set_identities(
+                    accounts
+                        .iter()
+                        .flat_map(|account| {
+                            std::iter::once(account.address.clone())
+                                .chain(account.identities.iter().map(|id| id.address.clone()))
+                        })
+                        .collect(),
+                );
+            }
             // What a select-all reaches.
             if let Some(pane) = window.pane() {
                 pane.feed().input(postio_focus::Input::Accounts(
@@ -1675,6 +2034,19 @@ impl FocusWindow {
         }
     }
 
+    /// The key that shows a forwarded thread's messages, as the keymap in
+    /// force spells it.
+    fn expand_quoted_cap(&self) -> Option<String> {
+        postio_ui::hints::key(&self.keymap(), CommandId::ExpandQuoted)
+    }
+
+    /// Open the unsent reply a thread shows, by its draft's id.
+    pub fn open_thread_draft(&self, draft: postio_model::DraftId) {
+        if let Some(compose) = self.compose() {
+            compose.open_thread_draft(draft);
+        }
+    }
+
     /// Start the composer's editing surface, while nobody is waiting on it.
     pub fn warm_composer(&self) {
         self.imp().warm.set(true);
@@ -1714,15 +2086,8 @@ impl FocusWindow {
         }
         // So does Filtered: its rows are walked and opened as the list's
         // are, and `g i` goes back (screen 21's footer).
-        if let Some(view) = self.filtered() {
-            match id {
-                CommandId::NextMessage => return view.step(1),
-                CommandId::PrevMessage => return view.step(-1),
-                CommandId::OpenMessage => return view.open_focused(),
-                CommandId::GoToInbox => return self.leave_filtered(),
-                id if view.runs(id) => return view.run(id),
-                _ => {}
-            }
+        if self.filtered().is_some() && filtered_owns(id) {
+            return self.run_in_controller(id);
         }
         match id {
             // The cursor's and the selection's, and `!`: the controller's
@@ -1736,14 +2101,19 @@ impl FocusWindow {
             | CommandId::ExtendSelectionDown
             | CommandId::ExtendSelectionUp
             | CommandId::SelectAll
+            | CommandId::ExpandThread
+            | CommandId::CollapseThread
+            | CommandId::MuteThread
+            | CommandId::ThreadOutline
+            | CommandId::ThreadMenu
+            | CommandId::SplitThread
             | CommandId::ToggleHasAction => self.cursor_command(id),
             CommandId::Back => {
                 if let Some(places) = self.places().filter(|places| places.is_open()) {
                     places.close();
-                } else if self.bar().is_some_and(|bar| bar.is_open()) {
+                } else if self.bar().is_some_and(|bar| bar.is_open()) || self.filtered().is_some()
+                {
                     self.run_in_controller(CommandId::Back);
-                } else if self.filtered().is_some() {
-                    self.leave_filtered();
                 } else {
                     self.cursor_command(CommandId::Back);
                 }
@@ -1789,16 +2159,6 @@ impl FocusWindow {
             // A toast with an Undo of its own -- a send, queued -- is the
             // last thing said, so Undo takes that back first (#1752).
             CommandId::Undo if self.imp().toast.activate_undo() => {}
-            // In Filtered, the message it has focused, never the list's row
-            // behind it nor its conversation (C4: never automatically).
-            CommandId::Delete | CommandId::ToggleRead | CommandId::Flag
-                if self.key_context() == KeyContext::Filtered =>
-            {
-                if let Some(view) = self.filtered() {
-                    self.filtered_verb(id, view.aimed());
-                    view.clear_selection();
-                }
-            }
             CommandId::Archive
             | CommandId::Delete
             | CommandId::ToggleRead
@@ -1889,26 +2249,6 @@ impl FocusWindow {
             CommandId::DigestRule => self.new_digest_rule(),
             CommandId::ToggleReadingPane => self.toggle_reading_pane(),
             CommandId::GoToDigestRules => self.show_rules(),
-            CommandId::RestoreFiltered => {
-                if let Some(view) = self.filtered() {
-                    self.restore_filtered(view.aimed());
-                    view.clear_selection();
-                }
-            }
-            CommandId::FilteredTab1
-            | CommandId::FilteredTab2
-            | CommandId::FilteredTab3
-            | CommandId::FilteredTab4
-            | CommandId::FilteredTab5
-            | CommandId::FilteredTab6
-            | CommandId::FilteredTab7 => {
-                let index = postio_ui::filtered::TAB_COMMANDS
-                    .iter()
-                    .position(|tab| *tab == id);
-                if let (Some(view), Some(index)) = (self.filtered(), index) {
-                    view.set_tab(index);
-                }
-            }
             CommandId::Snooze => self.open_when(When::Snooze),
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
             CommandId::AddLabel => self.open_labels(),
@@ -1919,8 +2259,6 @@ impl FocusWindow {
                     self.answer(message, id);
                 }
             }
-            // A Focus row is a whole conversation, so `E` is `e` here.
-            CommandId::ArchiveThread => self.act(CommandId::Archive),
             // A send on its way or stopped, from the list or the open
             // message (T239): the draft behind the message aimed at.
             CommandId::CancelSend | CommandId::RetrySend | CommandId::MarkSent => {
@@ -1968,11 +2306,28 @@ impl FocusWindow {
                     .show_notice(postio_ui::focus_target::NO_REPLY_TO_OUTGOING);
                 self.follow_toast();
             }
-            CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
-                if let Some(compose) = self.compose() {
-                    compose.dispatch(id);
-                }
-            }
+            // Writing an answer is the controller's: it knows the thread, and
+            // says what the composer is for (spec 013 US7).
+            CommandId::Reply
+            | CommandId::ReplyAll
+            | CommandId::Forward
+            | CommandId::ReplyToLatest
+            // The thread's own steps and the composer's thread rows, which
+            // the keys reach the same way (spec 013 FR-016, FR-020): the
+            // controller knows the walk and does nothing with none.
+            | CommandId::NextInConversation
+            | CommandId::PrevInConversation
+            | CommandId::FirstInConversation
+            | CommandId::LatestInConversation
+            | CommandId::FirstUnreadInConversation
+            | CommandId::OutlineFirstUnread
+            | CommandId::MoveThisMessage
+            | CommandId::DeleteThisMessage
+            | CommandId::ForwardWhat1
+            | CommandId::ForwardWhat2
+            | CommandId::ForwardWhat3
+            | CommandId::ShowNewer
+            | CommandId::ExpandQuoted => self.run_in_controller(id),
             // Focus's first run (T171), and what `c` offers with no
             // account (T172).
             CommandId::AddAccount => self.open_add_account(),
@@ -2118,7 +2473,7 @@ impl FocusWindow {
         let on_a_row = gtk::prelude::GtkWindowExt::focus(self).is_some_and(|focus| {
             focus != *pane.view().upcast_ref::<gtk::Widget>() && focus.is_ancestor(pane.view())
         });
-        if position >= pane.feed().list().n_items() {
+        if position >= pane.feed().shown().n_items() {
             return;
         }
         pane.cursor().set_selected(position);
@@ -2155,6 +2510,48 @@ impl FocusWindow {
                     pane.to_top();
                 }
             }
+            Intent::Footer(footer) if self.filtered().is_some() => {
+                if let Some(view) = self.filtered() {
+                    view.show_scope(footer);
+                }
+            }
+            Intent::Footer(footer) => {
+                if let Some(bar) = self.imp().scope_footer.borrow().as_ref() {
+                    bar.set(footer);
+                }
+            }
+            Intent::ThreadBar(bar) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_thread_bar(bar);
+                }
+            }
+            Intent::Kicker(kicker) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_kicker(kicker);
+                }
+            }
+            Intent::OlderBanner(banner) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_older_banner(banner.as_ref());
+                }
+            }
+            Intent::ReplyTo(text) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_reply_to(text.as_deref());
+                }
+            }
+            Intent::NewReply(banner) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_new_reply(banner.as_ref());
+                }
+            }
+            Intent::ThreadMenu(view) => self.show_thread_menu(view),
+            Intent::Outline(view) => self.show_outline(view),
+            Intent::OutlineFocusFilter => {
+                if let Some(outline) = self.imp().outline.borrow().as_ref() {
+                    outline.focus_filter();
+                }
+            }
             Intent::Counts(_) => self.show_counts(),
             Intent::Empty(page) => self.show_empty(page.as_ref()),
             Intent::Toast { text, kind } => self.show_toast(text, kind),
@@ -2182,7 +2579,61 @@ impl FocusWindow {
                 kind: postio_focus::ComposerKind::Draft,
                 message: Some(message),
             } => self.open_draft(*message),
+            Intent::Composer {
+                kind: postio_focus::ComposerKind::ThreadDraft { draft },
+                message: None,
+            } => self.open_thread_draft(*draft),
+            Intent::Composer {
+                kind:
+                    kind @ (postio_focus::ComposerKind::Reply
+                    | postio_focus::ComposerKind::ReplyAll
+                    | postio_focus::ComposerKind::Forward { .. }),
+                message,
+            } => self.begin_answer(*kind, *message),
+            Intent::ForwardChooser(view) => {
+                if let Some(compose) = self.compose() {
+                    compose.thread.show_chooser(view);
+                }
+            }
+            Intent::OlderReply(bar) => {
+                if let Some(compose) = self.compose() {
+                    compose.thread.show_older(bar.as_deref());
+                }
+            }
+            Intent::NewerMessages(ids) => self.show_newer(ids.as_deref()),
+            Intent::QuotedExpanded(expanded) => {
+                if let Some(compose) = self.compose() {
+                    compose.thread.set_quoted_expanded(*expanded);
+                    compose.sync_forwarded(self.expand_quoted_cap().as_deref());
+                }
+            }
+            Intent::ComposerDraftWanted(edit) => {
+                if let (Some(compose), Some(pane)) = (self.compose(), self.pane()) {
+                    pane.feed().input(postio_focus::Input::ComposerDraft(
+                        *edit,
+                        Box::new(compose.composer().draft()),
+                    ));
+                }
+            }
+            Intent::ComposerDraft(draft) => {
+                if let Some(compose) = self.compose() {
+                    let in_reply_to = draft.in_reply_to;
+                    compose.composer().resume(draft.as_ref().clone());
+                    compose.sync_forwarded(self.expand_quoted_cap().as_deref());
+                    self.note_replying_to(in_reply_to);
+                }
+            }
             Intent::CloseSurface(kind) => self.close_surface(*kind),
+            // The picker the controller drives (`MoveThisMessage`); the
+            // others are GTK's own, opened by their keys.
+            Intent::OpenPicker(view) if view.kind == postio_focus::PickerKind::Move => {
+                self.open_driven_picker(view);
+            }
+            Intent::PickerRows(view) if view.kind == postio_focus::PickerKind::Move => {
+                if let Some(driven) = self.imp().driven_picker.borrow().as_ref() {
+                    driven.show_rows(view);
+                }
+            }
             // The Contacts view and what lies over it: the controller keeps
             // the state, this draws it (specs/011-focus-contacts S13).
             Intent::Contacts(view) => self.show_contacts(view),
@@ -2231,7 +2682,37 @@ impl FocusWindow {
                     results.show_cursor(*position);
                 }
             }
+            Intent::ResultSplice(splice) => {
+                if let Some(results) = self.results() {
+                    results.show_splice(splice.as_deref());
+                }
+            }
+            Intent::ResultChildFocus(child) => {
+                if let Some(results) = self.results() {
+                    results.show_child_focus(*child);
+                }
+            }
+            Intent::MatchBanner(banner) => {
+                if let Some(reading) = self.reading() {
+                    reading.set_match_banner(banner.as_ref());
+                    // The window looks for the search's words in each message
+                    // it shows: its own matches are stepped before the next
+                    // matched message is.
+                    let words = self.imp().search_words.borrow().clone();
+                    let from_end = self.imp().match_from_end.replace(false);
+                    let query = if banner.is_some() {
+                        words
+                    } else {
+                        String::new()
+                    };
+                    reading
+                        .reader()
+                        .view()
+                        .set_find_query_from(&query, from_end);
+                }
+            }
             Intent::Query(query) => {
+                self.imp().search_words.replace(query.words.clone());
                 if let Some(results) = self.results() {
                     results.show_query(query);
                 }
@@ -2265,6 +2746,31 @@ impl FocusWindow {
                 }
             }
             Intent::ShowFiltered => self.show_filtered(),
+            Intent::Filtered(frame) => {
+                if let Some(view) = self.filtered() {
+                    view.show(frame);
+                }
+            }
+            Intent::FilteredFocus(position) => {
+                if let Some(view) = self.filtered() {
+                    view.show_focus(*position);
+                }
+            }
+            Intent::FilteredSplice { anchor, children } => {
+                if let Some(view) = self.filtered() {
+                    view.show_splice(*anchor, children);
+                }
+            }
+            Intent::FilteredUnsplice { anchor } => {
+                if let Some(view) = self.filtered() {
+                    view.show_unsplice(*anchor);
+                }
+            }
+            Intent::FilteredSelection { selected, bar } => {
+                if let Some(view) = self.filtered() {
+                    view.show_selection(selected, bar.as_ref());
+                }
+            }
             Intent::SaveSearch(save) => self.save_search(save),
             // The Save popover over the results (spec 010 §3.9).
             Intent::SavePopover(view) => {
@@ -2342,7 +2848,7 @@ impl FocusWindow {
         let Some(pane) = self.pane() else {
             return;
         };
-        if let Some(target) = pane.feed().list().position_of(row.id()) {
+        if let Some(target) = pane.feed().shown().position_of(row.id()) {
             pane.feed().pick(target, pick == Pick::Range);
         }
     }
@@ -2370,10 +2876,21 @@ impl FocusWindow {
             return None;
         }
         pane.feed()
-            .list()
+            .shown()
             .item(at)
             .and_downcast::<RowObject>()
             .and_then(|row| row.item())
+    }
+
+    /// What the cursor is on when it is a child of the open thread rather
+    /// than a row of the list.
+    pub fn cursor_child(&self) -> Option<postio_ui::thread_list::ChildRowView> {
+        let pane = self.pane()?;
+        let at = pane.cursor().selected();
+        if at == gtk::INVALID_LIST_POSITION {
+            return None;
+        }
+        pane.feed().shown().child_at(at)
     }
 
     /// Where a verb goes, for the label picker, which sends its own: the
@@ -2650,7 +3167,7 @@ impl FocusWindow {
                 _ => {
                     if let Some(position) = window
                         .pane()
-                        .and_then(|pane| pane.feed().list().position_of(row.id()))
+                        .and_then(|pane| pane.feed().shown().position_of(row.id()))
                     {
                         window.point_cursor(position);
                     }
@@ -2664,6 +3181,26 @@ impl FocusWindow {
             #[weak(rename_to = window)]
             self,
             move |row, pick| window.pick(row, pick)
+        ));
+        // A click on a thread row's chevron puts the cursor on the row and
+        // opens or folds it, as the Mac does: `Point`, then the command.
+        pane.connect_row_chevron(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |row, expanded| {
+                let Some(position) = window
+                    .pane()
+                    .and_then(|pane| pane.feed().shown().position_of(row.id()))
+                else {
+                    return;
+                };
+                window.point_cursor(position);
+                window.cursor_command(if expanded {
+                    CommandId::CollapseThread
+                } else {
+                    CommandId::ExpandThread
+                });
+            }
         ));
         // Double-click (GTK's `activate` on the list) opens the row, as Enter
         // does: the cursor goes to it and the one `OpenMessage` command runs.
@@ -2782,6 +3319,9 @@ impl FocusWindow {
         // want the window's width, not the list's.
         imp.mail.append(bulk.widget());
         imp.bulk.replace(Some(Rc::clone(&bulk)));
+        let scope_footer = Rc::new(crate::scope_footer::ScopeFooter::new());
+        imp.mail.append(scope_footer.widget());
+        imp.scope_footer.replace(Some(scope_footer));
         // The accounts a whole-view selection spans.
         self.refresh_accounts(client.clone());
         pane.set_capture(imp.focus_config.borrow().vault.is_some());
@@ -2883,6 +3423,22 @@ impl FocusWindow {
             .reading()
             .filter(|reading| reading.is_open())
             .map(|reading| reading.shown());
+        if open.is_none()
+            && self.cursor_row().is_none()
+            && self.cursor_child().is_some()
+            && let Some(pane) = self.pane()
+            && let Some(MessageTarget::Messages(messages)) = pane
+                .feed()
+                .aim_for(CommandId::Reply)
+                .aims
+                .into_iter()
+                .next()
+            && let [message] = messages.as_slice()
+        {
+            // A child is a message of its own: a reply or a forward on it
+            // is about that message, not its thread's latest.
+            return Some(*message);
+        }
         postio_ui::focus_target::aimed_message(open, self.cursor_row().as_ref())
     }
 
@@ -3109,17 +3665,6 @@ impl FocusWindow {
             }
             pane.feed().handle(event);
         }
-        // What is filtered moves with a restore, its undo, and mail filed
-        // away while the view is open.
-        if matches!(
-            event,
-            Event::MessageListChanged { .. }
-                | Event::UndoPerformed { .. }
-                | Event::ActionCompleted { .. }
-        ) && let Some(view) = self.filtered()
-        {
-            view.refresh();
-        }
     }
 
     /// Hand every notification to `sink` instead of the desktop: what a
@@ -3317,9 +3862,7 @@ impl FocusWindow {
                     window.close();
                 }
             }
-            Ok(CommandId::ArchiveThread) => {
-                self.digest_action(crate::digest::DigestAction::ArchiveAll)
-            }
+            Ok(CommandId::Archive) => self.digest_action(crate::digest::DigestAction::ArchiveAll),
             Ok(CommandId::DigestRule) => self.digest_action(crate::digest::DigestAction::EditRule),
             Ok(CommandId::NextReference) => window.step_reference(1),
             Ok(CommandId::PrevReference) => window.step_reference(-1),
@@ -3817,15 +4360,30 @@ impl FocusWindow {
         imp.filtered.borrow().clone()
     }
 
-    /// `g f`: the Filtered view in place of the inbox (screen 21).
+    /// `g f`: the Filtered view in place of the inbox (screen 21). The
+    /// controller has opened its Filtered surface and says what to draw.
     fn show_filtered(&self) {
         let imp = self.imp();
-        let Some(client) = imp.client.borrow().clone() else {
+        let Some(pane) = self.pane() else {
             return;
         };
         let view = imp.filtered.borrow().clone();
+        // A view that is still here from the last visit is shown empty: its
+        // rows were the controller's then, not now.
+        if let Some(view) = &view {
+            view.clear();
+        }
         let view = view.unwrap_or_else(|| {
-            let view = crate::filtered::FilteredView::new(client, &self.keymap());
+            let feed = pane.feed().clone();
+            let view = crate::filtered::FilteredView::new(
+                &self.keymap(),
+                move |input| feed.input(input),
+                glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |command| window.run_in_controller(command)
+                ),
+            );
             view.connect_action(glib::clone!(
                 #[weak(rename_to = window)]
                 self,
@@ -3835,10 +4393,6 @@ impl FocusWindow {
             imp.filtered.replace(Some(Rc::clone(&view)));
             view
         });
-        // `FilteredView::show_rows` teaches its own caps: `open` reads
-        // its rows asynchronously, and a call only here would run before
-        // any row exists.
-        view.open();
         imp.pages.set_visible_child_name(FILTERED);
         view.focus_list();
     }
@@ -4187,7 +4741,7 @@ impl FocusWindow {
         self.focus_list();
     }
 
-    /// Back from Filtered to the inbox, as it was.
+    /// Back from the digest rules to the inbox, as it was.
     fn leave_filtered(&self) {
         self.imp().pages.set_visible_child_name(INBOX);
         // The list opens on its first row, as every list does.
@@ -4195,40 +4749,18 @@ impl FocusWindow {
         self.focus_list();
     }
 
+    /// Filtered is gone, as the controller says: the inbox is back, with
+    /// the keyboard where the controller put it.
+    fn hide_filtered(&self) {
+        self.imp().pages.set_visible_child_name(INBOX);
+        self.focus_list();
+    }
+
     /// What the Filtered view asked for.
     fn filtered_action(&self, action: crate::filtered::FilteredAction) {
-        use crate::filtered::FilteredAction;
         match action {
-            FilteredAction::Back => self.leave_filtered(),
-            FilteredAction::Open { message, subject } => {
-                if let Some(reading) = self.reading_dialog() {
-                    reading.show_found(self, message, &subject, None);
-                }
-            }
-            FilteredAction::Restore(message) => self.restore_filtered(vec![message]),
-            FilteredAction::Sweep => self.ask_sweep(),
-            FilteredAction::Verb(command) => self.act(command),
+            crate::filtered::FilteredAction::Sweep => self.ask_sweep(),
         }
-    }
-
-    /// Put `message` back in the inbox, and never filter its sender (FR-116).
-    fn filtered_verb(&self, id: CommandId, messages: Vec<MessageId>) {
-        if messages.is_empty() {
-            return;
-        }
-        self.post(Command::default_for(id).with_target(MessageTarget::Messages(messages)));
-    }
-
-    /// Put `messages` back in the inbox as one command, so one Undo takes
-    /// them all back.
-    fn restore_filtered(&self, messages: Vec<MessageId>) {
-        if messages.is_empty() {
-            return;
-        }
-        self.post(Command::RestoreFiltered {
-            target: MessageTarget::Messages(messages),
-            restored: true,
-        });
     }
 
     /// What sync said about an account: the banner and the label follow.
@@ -4584,6 +5116,39 @@ impl FocusWindow {
                 ));
                 // Open for the dwell, it counts as read (T237): the host
                 // marks it without an undo entry.
+                // The bar says how many chips fit; the controller composes it
+                // again for that many.
+                reading.connect_bar_room(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |room| {
+                        if let Some(pane) = window.pane() {
+                            pane.feed().input(postio_focus::Input::BarRoom(room));
+                        }
+                    }
+                ));
+                reading.connect_thread_chip(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |click| {
+                        let Some(pane) = window.pane() else {
+                            return;
+                        };
+                        pane.feed().input(match click {
+                            crate::thread_bar::ChipClick::Message(index) => {
+                                postio_focus::Input::ThreadBarChipClicked(index)
+                            }
+                            crate::thread_bar::ChipClick::More(from) => {
+                                postio_focus::Input::ThreadBarMoreClicked { from }
+                            }
+                        });
+                    }
+                ));
+                reading.connect_thread_menu(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move || window.act(CommandId::ThreadMenu)
+                ));
                 reading.connect_read(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -4711,6 +5276,28 @@ impl FocusWindow {
     /// Show `message`, which the controller opened, at `index` of `total`
     /// messages in the list: the open-email dialog, or the pane beside it.
     fn show_message(&self, message: MessageId, index: u32, total: u32) {
+        // Filtered's messages are not in the list behind it: the window
+        // opens one by its id, titled by the row it came from.
+        if let Some(view) = self.filtered()
+            && let Some(reading) = self.reading_dialog()
+        {
+            let subject = view.focused_subject().unwrap_or_default();
+            reading.show_found(self, message, &subject, None);
+            crate::a11y::teach_shortcuts(&reading.view());
+            crate::motion::keep_to_budget(&reading.view());
+            return;
+        }
+        // A step of the thread the window is walking: the same window, the
+        // message in place, and the list's cursor where it was.
+        if let Some(reading) = self.reading_dialog()
+            && reading.is_open()
+            && self
+                .pane()
+                .is_some_and(|pane| pane.feed().walking(message, reading.row()))
+        {
+            reading.show_in_place(message);
+            return;
+        }
         let row = self.pane().and_then(|pane| {
             let at = pane.feed().list().position_of(message)?;
             pane.feed()
@@ -4737,6 +5324,34 @@ impl FocusWindow {
                 .unwrap_or_default();
             let hit = crate::open::Position { index, total };
             reading.show_found(self, message, &subject, Some(hit));
+            crate::a11y::teach_shortcuts(&reading.view());
+            crate::motion::keep_to_budget(&reading.view());
+            return;
+        }
+        // A message of a thread that is not its newest has no row of the
+        // list: it opens as a hit does, by its id, titled by the row the
+        // cursor is on, or by the open thread's row when it is on a child.
+        if row.is_none()
+            && let Some(pane) = self.pane()
+            && let Some(reading) = self.reading_dialog()
+        {
+            let on_row = self.cursor_row().or_else(|| {
+                let open = pane.feed().shown().open_thread()?;
+                pane.feed()
+                    .list()
+                    .item(open.anchor)
+                    .and_downcast::<RowObject>()
+                    .and_then(|row| row.item())
+            });
+            let subject = on_row
+                .and_then(|row| {
+                    row.as_conversation()
+                        .and_then(|conversation| conversation.summary.subject.clone())
+                })
+                .unwrap_or_default();
+            // The header is the thread's, not a result's: no hit.
+            let _ = (index, total);
+            reading.show_found(self, message, &subject, None);
             crate::a11y::teach_shortcuts(&reading.view());
             crate::motion::keep_to_budget(&reading.view());
             return;
@@ -5354,6 +5969,10 @@ impl FocusWindow {
         );
         commands.extend(crate::places::Places::controls());
         commands.extend(crate::row_menu::RowMenu::commands());
+        // The thread menu's entries, and the chevron on a thread's row
+        // (the list's and Filtered's), which opens or folds it.
+        commands.extend(crate::thread_popovers::ThreadMenu::controls());
+        commands.extend([CommandId::ExpandThread, CommandId::CollapseThread]);
         commands.extend(crate::bar::Bar::controls());
         commands.extend(crate::filtered::FilteredView::controls());
         commands.extend(crate::contacts::ContactsView::controls());
@@ -5469,6 +6088,12 @@ impl FocusWindow {
                     .as_ref()
                     .map(|moves| Rc::clone(moves.picker())),
             )
+            .chain(
+                imp.driven_picker
+                    .borrow()
+                    .as_ref()
+                    .map(|driven| Rc::clone(driven.picker())),
+            )
             // The composer's remind picker, at its footer (US3).
             .chain(self.compose().and_then(|compose| compose.open_picker()))
             .find(|picker| picker.is_open())
@@ -5501,6 +6126,31 @@ impl FocusWindow {
                 move |command| window.send(command)
             ),
         );
+    }
+
+    /// Draw the move picker the controller opened, hung where it says: the
+    /// cursor's row, or the open message's action row.
+    fn open_driven_picker(&self, view: &postio_focus::PickerView) {
+        let imp = self.imp();
+        let picker = imp.driven_picker.borrow().clone();
+        let picker = picker.unwrap_or_else(|| {
+            let picker = crate::controller_picker::ControllerPicker::new(&self.keymap());
+            picker.connect_input(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |input| {
+                    if let Some(pane) = window.pane() {
+                        pane.feed().input(input);
+                    }
+                }
+            ));
+            imp.driven_picker.replace(Some(Rc::clone(&picker)));
+            picker
+        });
+        let Some((anchor, rect)) = self.at_the_row() else {
+            return;
+        };
+        picker.open(view, &anchor, Some(&rect));
     }
 
     /// Open the label picker at the cursor's row, over what a verb would
@@ -5614,11 +6264,19 @@ impl FocusWindow {
         }
         let pane = self.pane()?;
         let view = pane.view().clone();
-        let cursor = self.cursor_row()?;
-        let row = pane
-            .rows_on_screen()
-            .into_iter()
-            .find(|row| row.item().is_some_and(|item| item.id() == cursor.id()));
+        // The keyboard is on a child of an opened thread, or on a row.
+        let row = match self.cursor_row() {
+            Some(cursor) => pane
+                .rows_on_screen()
+                .into_iter()
+                .find(|row| row.item().is_some_and(|item| item.id() == cursor.id())),
+            None => {
+                let child = self.cursor_child()?;
+                pane.rows_on_screen()
+                    .into_iter()
+                    .find(|row| row.child().as_ref() == Some(&child))
+            }
+        };
         let rect = match row.and_then(|row| {
             row.compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0))
                 .map(|top| (top, row.height()))
@@ -5911,13 +6569,16 @@ impl FocusWindow {
             .map(|pane| pane.cursor().selected())
             .filter(|at| *at != gtk::INVALID_LIST_POSITION);
         let row = self.cursor_row();
-        let count = pane.as_ref().map(|pane| pane.feed().list().n_items());
+        let count = pane.as_ref().map(|pane| pane.feed().shown().n_items());
+        // The rows a whole-view selection spans: children are not among
+        // them.
+        let row_count = pane.as_ref().map(|pane| pane.feed().list().n_items());
         let selected = match self.selection() {
             // Filtered's rows are selected apart from the list behind them.
             _ if let Some(view) = self.filtered() => view.selected().len() as u32,
             Selection::These(ids) => ids.len() as u32,
             Selection::Everything { except } => {
-                count.unwrap_or(0).saturating_sub(except.len() as u32)
+                row_count.unwrap_or(0).saturating_sub(except.len() as u32)
             }
         };
 
@@ -6163,6 +6824,219 @@ impl FocusWindow {
                 serde_json::json!(conversation.summary.unread_count),
             );
         }
+        // What the window says of the thread it is walking.
+        if let Some(reading) = reading.as_ref()
+            && view == View::Reader
+        {
+            let (chip, chips) = reading.thread_bar_state();
+            app.insert("focus.reading.chip".to_owned(), serde_json::json!(chip));
+            app.insert("focus.reading.chips".to_owned(), serde_json::json!(chips));
+            app.insert(
+                "focus.reading.kicker".to_owned(),
+                serde_json::json!(reading.thread_chip_said()),
+            );
+            app.insert(
+                "focus.reading.match_banner".to_owned(),
+                serde_json::json!(reading.match_banner_said()),
+            );
+            app.insert(
+                "focus.reading.matched".to_owned(),
+                serde_json::json!(
+                    reading
+                        .matched_chips()
+                        .iter()
+                        .map(|chip| (chip + 1).to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+            app.insert(
+                "focus.reading.new_reply".to_owned(),
+                serde_json::json!(reading.new_reply_up()),
+            );
+            app.insert(
+                "focus.reading.banner".to_owned(),
+                serde_json::json!(reading.banner_said().is_some()),
+            );
+            app.insert(
+                "focus.reading.reply_to".to_owned(),
+                serde_json::json!(reading.reply_to_said()),
+            );
+        }
+        if let Some(results) = self.results() {
+            app.insert(
+                "focus.results.children".to_owned(),
+                serde_json::json!(results.child_count()),
+            );
+            app.insert(
+                "focus.results.child".to_owned(),
+                serde_json::json!(results.child_focus()),
+            );
+        }
+        // What the composer holds of a thread (spec 013 US7).
+        if let Some(compose) = self.compose()
+            && compose.is_showing()
+        {
+            let parts = &compose.thread;
+            let draft = compose.composer().draft();
+            app.insert(
+                "focus.compose.older.open".to_owned(),
+                serde_json::json!(parts.older_title().is_some()),
+            );
+            if let Some(title) = parts.older_title() {
+                app.insert(
+                    "focus.compose.older.title".to_owned(),
+                    serde_json::json!(title),
+                );
+            }
+            app.insert(
+                "focus.compose.older.actions".to_owned(),
+                serde_json::json!(parts.older_actions()),
+            );
+            app.insert(
+                "focus.compose.newer.count".to_owned(),
+                serde_json::json!(parts.newer_count()),
+            );
+            app.insert(
+                "focus.compose.chooser.open".to_owned(),
+                serde_json::json!(parts.chooser_open()),
+            );
+            app.insert(
+                "focus.compose.chooser.focused".to_owned(),
+                serde_json::json!(parts.chooser_has_focus()),
+            );
+            if parts.chooser_open() {
+                app.insert(
+                    "focus.compose.chooser.selected".to_owned(),
+                    serde_json::json!(parts.chooser_selected()),
+                );
+                app.insert(
+                    "focus.compose.chooser.cards".to_owned(),
+                    serde_json::json!(parts.chooser_cards()),
+                );
+            }
+            app.insert(
+                "focus.compose.quoted_expanded".to_owned(),
+                serde_json::json!(parts.quoted_expanded()),
+            );
+            app.insert(
+                "focus.compose.replying_to".to_owned(),
+                serde_json::json!(self.imp().replying_to.get()),
+            );
+            app.insert(
+                "focus.compose.subject".to_owned(),
+                serde_json::json!(draft.subject),
+            );
+            app.insert(
+                "focus.compose.typed".to_owned(),
+                serde_json::json!(draft.body.text.as_deref().map(typed_part)),
+            );
+            let eml = draft
+                .attachments
+                .iter()
+                .filter(|file| {
+                    file.filename
+                        .as_deref()
+                        .is_some_and(|name| name.ends_with(".eml"))
+                })
+                .count();
+            app.insert(
+                "focus.compose.forwarded.rows".to_owned(),
+                serde_json::json!(parts.forwarded_rows()),
+            );
+            app.insert(
+                "focus.compose.forwarded.eml".to_owned(),
+                serde_json::json!(eml),
+            );
+            app.insert(
+                "focus.compose.forwarded.messages".to_owned(),
+                serde_json::json!(forwarded_count(&draft.subject)),
+            );
+        }
+        // The thread menu and the outline, while they are up.
+        let (menu, outline) = (
+            self.imp().thread_menu.borrow().clone(),
+            self.imp().outline.borrow().clone(),
+        );
+        if let Some(menu) = menu {
+            app.insert(
+                "focus.menu.open".to_owned(),
+                serde_json::json!(menu.is_open()),
+            );
+            if menu.is_open() {
+                app.insert(
+                    "focus.menu.groups".to_owned(),
+                    serde_json::json!(menu.groups_said()),
+                );
+                app.insert(
+                    "focus.menu.keycaps".to_owned(),
+                    serde_json::json!(menu.keycaps_said()),
+                );
+            }
+        }
+        if let Some(outline) = outline {
+            app.insert(
+                "focus.outline.open".to_owned(),
+                serde_json::json!(outline.is_open()),
+            );
+            if outline.is_open() {
+                app.insert(
+                    "focus.outline.rows".to_owned(),
+                    serde_json::json!(outline.row_count()),
+                );
+                app.insert(
+                    "focus.outline.cursor".to_owned(),
+                    serde_json::json!(outline.cursor()),
+                );
+                app.insert(
+                    "focus.outline.filtering".to_owned(),
+                    serde_json::json!(outline.filtering()),
+                );
+            }
+        }
+        // What the footer says: the scope of the keys under the list, or
+        // under Filtered's rows.
+        let footer = match self.filtered() {
+            Some(view) => Some(view.scope_footer().clone()),
+            None => self.imp().scope_footer.borrow().clone(),
+        };
+        if let Some(footer) = footer {
+            app.insert(
+                "focus.footer.title".to_owned(),
+                serde_json::json!(footer.title()),
+            );
+            app.insert(
+                "focus.footer.labels".to_owned(),
+                serde_json::json!(footer.labels()),
+            );
+            app.insert(
+                "focus.footer.note".to_owned(),
+                serde_json::json!(footer.note()),
+            );
+        }
+        // What the cursor is on: a row of the list, or one message of the
+        // open thread, with the tag and the words that child says.
+        let child = self.cursor_child();
+        if child.is_some() || row.is_some() {
+            app.insert(
+                "focus.cursor.kind".to_owned(),
+                serde_json::json!(if child.is_some() { "child" } else { "row" }),
+            );
+        }
+        if let Some(conversation) = row.as_ref().and_then(|row| row.as_conversation()) {
+            let badge = conversation
+                .summary
+                .muted
+                .map(postio_ui::thread_outline::muted_badge);
+            app.insert("focus.row.muted".to_owned(), serde_json::json!(badge));
+        }
+        if let Some(child) = &child {
+            app.insert("focus.cursor.tag".to_owned(), serde_json::json!(child.tag));
+            app.insert(
+                "focus.cursor.line".to_owned(),
+                serde_json::json!(child.line),
+            );
+        }
         if let Some(bar) = &bar {
             // What the bar lists, which the list behind it never shows: its
             // heading, how many messages it found and the row Return runs.
@@ -6296,9 +7170,54 @@ impl FocusWindow {
 }
 
 /// The command a banner's button runs.
+/// The commands the controller's Filtered surface answers while it has the
+/// keyboard: walking, selecting, opening, restoring, the tabs, the verbs on
+/// the focused message, and the way out. The sweep is the window's (it asks
+/// first, in a dialog); everything else is the app's wherever it is.
+fn filtered_owns(id: CommandId) -> bool {
+    postio_ui::filtered::TAB_COMMANDS.contains(&id)
+        || matches!(
+            id,
+            CommandId::NextMessage
+                | CommandId::PrevMessage
+                | CommandId::OpenMessage
+                | CommandId::ToggleSelection
+                | CommandId::ExtendSelectionDown
+                | CommandId::ExtendSelectionUp
+                | CommandId::SelectAll
+                | CommandId::ExpandThread
+                | CommandId::CollapseThread
+                | CommandId::RestoreFiltered
+                | CommandId::Delete
+                | CommandId::DeleteThisMessage
+                | CommandId::Flag
+                | CommandId::ToggleRead
+                | CommandId::Back
+                | CommandId::GoToInbox
+        )
+}
+
 fn banner_command(action: postio_ui::focus_state::BannerAction) -> CommandId {
     match action {
         postio_ui::focus_state::BannerAction::Retry => CommandId::Refresh,
         postio_ui::focus_state::BannerAction::UpdatePassword => CommandId::UpdateCredential,
     }
+}
+
+/// What was typed in a reply's body: the words above its quote.
+fn typed_part(body: &str) -> String {
+    match body.find("\n\nOn ") {
+        Some(at) => body[..at].to_owned(),
+        None => body.trim_end().to_owned(),
+    }
+}
+
+/// How many messages a whole-thread forward's subject says it holds: "(6
+/// messages)".
+fn forwarded_count(subject: &str) -> Option<u32> {
+    let open = subject.rfind('(')?;
+    subject[open + 1..]
+        .split_whitespace()
+        .next()
+        .and_then(|count| count.parse().ok())
 }

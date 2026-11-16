@@ -10,6 +10,7 @@
 mod frame;
 mod host;
 mod seams;
+pub mod thread;
 
 use std::rc::Rc;
 
@@ -36,12 +37,16 @@ pub struct Compose {
     frame: Rc<frame::Frame>,
     host: Rc<host::DialogHost>,
     resume: seams::Resume,
+    resume_draft: seams::ResumeDraft,
     /// The account a new message is written from.
     account: AccountId,
     /// "Remind if no reply", opened at the action row by `mod+h` or a click
     /// (US3 scenario 5): the remind picker the row uses, choosing for the
     /// draft instead of for a conversation.
     remind: Rc<WhenPicker>,
+    /// The chooser, the older-reply bar and the newer messages (spec 013
+    /// US7).
+    pub thread: Rc<thread::ThreadParts>,
 }
 
 impl Compose {
@@ -84,6 +89,9 @@ impl Compose {
         layout.add_css_class("focus-compose-surface");
         layout.add_top_bar(&frame.header);
         layout.add_top_bar(&frame.actions);
+        let thread = thread::ThreadParts::new();
+        layout.add_top_bar(&thread.older);
+        layout.add_top_bar(&thread.chooser);
         layout.set_content(Some(&column));
         // The message dialog's size rule (T205), fitted to the window as it
         // is presented and as it is resized (`host`).
@@ -103,6 +111,8 @@ impl Compose {
             layout.clone().upcast(),
         ));
         composer.mount_on(Rc::clone(&host) as Rc<dyn postio_widgets::composer::ComposerHost>);
+        composer.below_body().append(&thread.forwarded);
+        host.slot.append(&thread.newer);
         // The dialog's own ways out -- Escape reaching it, a click outside
         // -- mean what `Esc` means: close, keeping the draft.
         dialog.set_can_close(false);
@@ -138,7 +148,13 @@ impl Compose {
                 window.say(&postio_ui::compose::kept_note(key.as_deref()));
             }
         });
-        let resume = seams::wire(&composer, &frame, client, account, current, say);
+        // A forward of a thread opens with the keyboard in its chooser.
+        composer.connect_opened(glib::clone!(
+            #[weak]
+            thread,
+            move || thread.focus_chooser()
+        ));
+        let (resume, resume_draft) = seams::wire(&composer, &frame, client, account, current, say);
         let remind = WhenPicker::new(&keymap, When::Remind);
         remind.connect_chosen(glib::clone!(
             #[weak]
@@ -150,8 +166,10 @@ impl Compose {
             frame,
             host,
             resume,
+            resume_draft,
             account,
             remind,
+            thread,
         });
         let weak = Rc::downgrade(&compose);
         compose.frame.remind.connect_clicked(move |_| {
@@ -178,6 +196,20 @@ impl Compose {
         };
         self.remind
             .open(&self.frame.remind, None, &target, postio_ui::clock::now());
+    }
+
+    /// Fold the forwarded thread into its rows, or show it in the body: as
+    /// the controller says (`Intent::QuotedExpanded`), and again whenever a
+    /// new body arrives (the chooser's choice). `cap` is the key that
+    /// unfolds.
+    pub fn sync_forwarded(&self, cap: Option<&str>) {
+        if self.thread.quoted_expanded() {
+            self.composer.unfold_forwarded();
+            self.thread.show_forwarded(&[], None);
+        } else {
+            let rows = self.composer.fold_forwarded();
+            self.thread.show_forwarded(&rows, cap);
+        }
     }
 
     /// The composer.
@@ -221,6 +253,12 @@ impl Compose {
         (self.resume)(message);
     }
 
+    /// Open the unsent reply `draft`, which a thread shows and which has no
+    /// message of its own, for editing.
+    pub fn open_thread_draft(&self, draft: postio_model::DraftId) {
+        (self.resume_draft)(draft);
+    }
+
     /// A new message from a `mailto:` link: its recipients, subject and body
     /// filled in. The composer's rule holds: one composition at a time, so a
     /// link arriving mid-composition puts the keyboard back in the draft
@@ -257,6 +295,14 @@ impl Compose {
             CommandId::InsertLink,
             CommandId::InsertImage,
             CommandId::CopyFields,
+            // The thread's own, over the quote (spec 013): the older-reply
+            // bar's two buttons, its unfold, and the forward chooser's cards.
+            CommandId::ShowNewer,
+            CommandId::ReplyToLatest,
+            CommandId::ExpandQuoted,
+            CommandId::ForwardWhat1,
+            CommandId::ForwardWhat2,
+            CommandId::ForwardWhat3,
         ]);
         commands
     }

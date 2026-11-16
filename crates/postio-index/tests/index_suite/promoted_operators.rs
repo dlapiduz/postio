@@ -83,6 +83,13 @@ async fn is_bulk_and_is_automated_find_what_the_corpus_s_headers_say() {
         "list-thread-05-reply-no-references",
         "list-thread-06-reply-subject-only",
         "list-thread-07-subject-change",
+        // Spec 013's threading fixtures: list and newsletter mail by its
+        // List-Id, which is also why the subject never groups them.
+        "thread-list-1-root",
+        "thread-list-2-reply",
+        "thread-list-3-reply",
+        "thread-newsletter-1-issue",
+        "thread-newsletter-2-issue",
         "transactional-shipping-notice",
     ];
     let mut bulk = bulk;

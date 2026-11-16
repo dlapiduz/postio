@@ -924,6 +924,43 @@ fn deliver_input(
                         messages: vec![message],
                     })
                 }
+                // As `NewMail` is, and then the thread said changed, as a
+                // sync pass says it (spec 013 US4).
+                EnvEvent::Reply => {
+                    let store = acting.store.clone();
+                    let arrival = off_thread(async move {
+                        let arrival = postio_demo::deliver_harbor_reply(&store, account).await?;
+                        // Through the filing pass every arrival takes: a muted
+                        // thread's reply is archived there, not here.
+                        postio_host::FocusSetup::default()
+                            .file_stored(&store, arrival.message, arrival.thread)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        let connection = store.connect().await.map_err(|e| e.to_string())?;
+                        let filed = postio_storage::repository::MessageRepository::new(&connection)
+                            .get(arrival.message)
+                            .await
+                            .map_err(|e| e.to_string())?
+                            .ok_or("the reply is gone")?;
+                        Ok::<_, String>((arrival, filed.mailbox_id))
+                    })
+                    .map_err(|error| format!("the reply could not be filed: {error}"))?;
+                    let (arrival, landed) = arrival;
+                    // Sync says an arrival to the inbox; a reply the filing
+                    // pass archived (a muted thread's) is none, and only the
+                    // thread changed.
+                    (landed != arrival.mailbox
+                        || acting.sink.emit(Event::NewMail {
+                            account,
+                            mailbox: arrival.mailbox,
+                            messages: vec![arrival.message],
+                        }))
+                        && acting.sink.emit(Event::ThreadChanged {
+                            account,
+                            thread: arrival.thread,
+                            members_added: vec![arrival.message],
+                        })
+                }
                 EnvEvent::BodyArrived => {
                     let store = acting.store.clone();
                     let message =
@@ -1336,6 +1373,41 @@ pub const CONTEXTS: &[(&str, &[&str])] = &[
     ("composer", &["compose"]),
 ];
 
+/// Commands that act on a thread of more than one message, which the small
+/// seed's inbox has none of: each is pressed in its context over the long
+/// thread's seed (one conversation of seven messages, the last two unread),
+/// from the setup given, so that there is something for it to do: the
+/// outline reads a thread opened under the cursor, and the "this message"
+/// verbs refuse a row that stands for a whole thread. A reply
+/// is opened to the thread's first message, so that a newer one is behind it;
+/// `expand_quoted` unfolds a forwarded thread, so it is pressed over one.
+const THREAD_COMMANDS: &[(&str, &str, &[&str])] = &[
+    ("list", "expand_thread", &[]),
+    ("list", "collapse_thread", &["expand_thread"]),
+    ("list", "thread_outline", &["expand_thread"]),
+    (
+        "list",
+        "move_this_message",
+        &["expand_thread", "next_message"],
+    ),
+    (
+        "list",
+        "delete_this_message",
+        &["expand_thread", "next_message"],
+    ),
+    (
+        "composer",
+        "reply_to_latest",
+        &["open_message", "first_in_conversation", "reply"],
+    ),
+    (
+        "composer",
+        "show_newer",
+        &["open_message", "first_in_conversation", "reply"],
+    ),
+    ("composer", "expand_quoted", &["forward", "forward_what_2"]),
+];
+
 /// One context's coverage, or why it could not be reached.
 #[derive(Debug, Clone)]
 pub struct ContextCoverage {
@@ -1415,7 +1487,21 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
                 coverage.skipped.push((command, (*why).to_owned()));
                 continue;
             }
-            let Some(started) = fresh(setup).await else {
+            let thread = THREAD_COMMANDS
+                .iter()
+                .find(|(here, id, _)| here == context && *id == command);
+            let started = match thread {
+                Some((_, _, setup)) => {
+                    let started = fresh_over(Seed::LongThread, setup).await;
+                    // What the setup opened -- the thread read for a reply's
+                    // quote or a forward's messages -- lands a moment after
+                    // the key that asked for it.
+                    pump(Duration::from_millis(1500));
+                    started
+                }
+                None => fresh(setup).await,
+            };
+            let Some(started) = started else {
                 continue;
             };
             let window = started.window.clone();
@@ -1489,6 +1575,11 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
 
 /// A fresh, seeded, acting window, with `setup` pressed.
 async fn fresh(setup: &[&str]) -> Option<Started> {
+    fresh_over(Seed::Small, setup).await
+}
+
+/// As [`fresh`], over `seed`.
+async fn fresh_over(seed: Seed, setup: &[&str]) -> Option<Started> {
     postio_ui::clock::freeze(
         chrono::DateTime::parse_from_rfc3339(FROZEN_AT)
             .expect("a fixed instant")
@@ -1496,9 +1587,7 @@ async fn fresh(setup: &[&str]) -> Option<Started> {
     );
     hold_still();
     let (size, _) = apply_variant(&BTreeMap::new());
-    let started = acting(Seed::Small, size, "every-command", false)
-        .await
-        .ok()?;
+    let started = acting(seed, size, "every-command", false).await.ok()?;
     deliver::drain();
     for command in setup {
         let _ = deliver_input(

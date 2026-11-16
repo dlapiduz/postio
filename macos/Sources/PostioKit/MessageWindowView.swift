@@ -23,7 +23,7 @@ public struct MessageChromeWords: Equatable {
 
     /// The subject.
     public let title: String
-    /// "Message 5 of 60 · thread of 6".
+    /// "Message 5 of 60".
     public let position: String
     /// The one cap beside the pair: previous then next, "k j".
     public let stepCap: String?
@@ -40,12 +40,16 @@ public struct MessageChromeWords: Equatable {
 
     /// `view`'s chrome, in a window that `folds` (narrower than the fold,
     /// as the engine said), with keys spelled from `binding`.
-    public init(view: FocusMessageViewFfi, folds: Bool, binding: (String) -> String?) {
+    /// `place`, while a thread walk is up, is the thread's place ("Message
+    /// 5 of 6"), said in the position line instead of the list's.
+    public init(
+        view: FocusMessageViewFfi, folds: Bool, place: String? = nil, binding: (String) -> String?
+    ) {
         func verb(_ command: String, _ label: String) -> Verb {
             Verb(command: command, label: label, cap: KeyCapSpelling.cap(binding(command)))
         }
         title = view.subject
-        position = view.position
+        position = place ?? view.position
         let caps = [previous, next].compactMap { KeyCapSpelling.cap(binding($0)) }
         stepCap = caps.isEmpty ? nil : caps.joined(separator: " ")
         let all = view.actions.map { (verb($0.command, $0.label), $0.folds) }
@@ -255,16 +259,23 @@ public struct MessageWindowView<BodyView: View>: View {
     let run: (String) -> Void
     let alwaysForSender: () -> Void
     let verbFrames: ([String: CGRect]) -> Void
+    let barRoom: (UInt32) -> Void
+    let barChip: (UInt32) -> Void
+    let barMore: (UInt32) -> Void
     let bodyView: (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
     /// `verbFrames` hears where the action row's buttons are, by command,
-    /// whenever they move. `body` draws a message's body, given which.
+    /// whenever they move. `barRoom` hears how many thread-bar chips the
+    /// window's width has room for, when it opens and on every resize. `body` draws a message's body, given which.
     public init(
         model: MessageWindowModel,
         binding: @escaping (String) -> String?,
         run: @escaping (String) -> Void,
         alwaysForSender: @escaping () -> Void,
         verbFrames: @escaping ([String: CGRect]) -> Void = { _ in },
+        barRoom: @escaping (UInt32) -> Void = { _ in },
+        barChip: @escaping (UInt32) -> Void = { _ in },
+        barMore: @escaping (UInt32) -> Void = { _ in },
         @ViewBuilder body: @escaping (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
     ) {
         self.model = model
@@ -272,12 +283,18 @@ public struct MessageWindowView<BodyView: View>: View {
         self.run = run
         self.alwaysForSender = alwaysForSender
         self.verbFrames = verbFrames
+        self.barRoom = barRoom
+        self.barChip = barChip
+        self.barMore = barMore
         bodyView = body
     }
 
     public var body: some View {
         GeometryReader { proxy in
             window(width: proxy.size.width)
+                .onChange(of: ThreadBarMetrics.room(window: proxy.size.width), initial: true) {
+                    barRoom($1)
+                }
         }
     }
 
@@ -291,13 +308,17 @@ public struct MessageWindowView<BodyView: View>: View {
         VStack(spacing: 0) {
             if let view = model.view {
                 MessageActionRow(
-                    words: MessageChromeWords(view: view, folds: folds(width), binding: binding),
+                    words: MessageChromeWords(view: view, folds: folds(width), place: model.walkPlace, binding: binding),
                     moreOpen: model.moreOpen,
                     run: run,
                     setMore: { model.apply($0 ? .showMore : .closeMore) })
                     .background(MessageSurface.chrome)
             } else {
                 Color.clear.frame(height: MessageActionRow.height)
+            }
+            if let bar = model.bar {
+                ThreadBarView(bar: bar, menu: { run(ThreadMenuCommand.menu) }, show: barChip, more: barMore)
+                    .background(MessageSurface.chrome)
             }
             if model.find.isOpen {
                 FindBar(
@@ -347,7 +368,13 @@ public struct MessageWindowView<BodyView: View>: View {
                 ForEach(layers(displayed: displayed, view: view), id: \.message) { layer in
                     let front = layer.message == displayed
                     MessageContentView(
-                        words: MessageHeaderWords(view: layer.view, binding: binding),
+                        words: MessageHeaderWords(
+                            view: layer.view,
+                            thread: .init(
+                                kicker: model.kicker, banner: model.olderBanner,
+                                replyTo: model.replyTo, newReply: model.newReply,
+                                matchBanner: model.matchBanner),
+                            binding: binding),
                         document: layer.document,
                         unsubscribe: model.unsubscribeState(of: layer.message),
                         binding: binding,
@@ -461,7 +488,7 @@ public struct MessageWindowTitle: View {
 
     public var body: some View {
         if let view = model.view {
-            MessageTitleView(words: MessageChromeWords(view: view, folds: false, binding: binding))
+            MessageTitleView(words: MessageChromeWords(view: view, folds: false, place: model.walkPlace, binding: binding))
         }
     }
 }
@@ -484,7 +511,7 @@ public struct MessageWindowStepper: View {
     public var body: some View {
         if let view = model.view {
             MessageStepperView(
-                words: MessageChromeWords(view: view, folds: false, binding: binding), run: run)
+                words: MessageChromeWords(view: view, folds: false, place: model.walkPlace, binding: binding), run: run)
         }
     }
 }

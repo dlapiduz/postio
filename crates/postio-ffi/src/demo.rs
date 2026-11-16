@@ -54,6 +54,56 @@ impl Session {
     }
 }
 
+#[uniffi::export]
+impl Session {
+    /// Deliver an arrival into the demo's store, and say what sync would
+    /// have said (spec 013 US4): `reply` files Ana's reply in the Harbor
+    /// thread, through the engine's own threading, then announces
+    /// `NewMail` and `ThreadChanged`. `false` for any other word, and
+    /// always in a build without demos.
+    pub fn demo_arrive(&self, what: String) -> bool {
+        arrive(self, &what)
+    }
+}
+
+#[cfg(feature = "demo")]
+fn arrive(session: &Session, what: &str) -> bool {
+    use postio_core::Event;
+    if what != "reply" {
+        return false;
+    }
+    let Some(account) = crate::session::blocking(session.accounts())
+        .first()
+        .map(|account| postio_model::AccountId::from(account.id))
+    else {
+        return false;
+    };
+    let Some((database, _)) = session.store_and_blobs() else {
+        return false;
+    };
+    let Ok(arrival) =
+        crate::session::blocking(postio_demo::deliver_harbor_reply(&database, account))
+    else {
+        return false;
+    };
+    session.emit_for_test(Event::NewMail {
+        account,
+        mailbox: arrival.mailbox,
+        messages: vec![arrival.message],
+    });
+    session.emit_for_test(Event::ThreadChanged {
+        account,
+        thread: arrival.thread,
+        members_added: vec![arrival.message],
+    });
+    true
+}
+
+#[cfg(not(feature = "demo"))]
+fn arrive(_session: &Session, _what: &str) -> bool {
+    false
+}
+
 /// The events `state` stands for, emitted for the demo's first account.
 #[cfg(feature = "demo")]
 fn show(session: &Session, state: &str) -> bool {

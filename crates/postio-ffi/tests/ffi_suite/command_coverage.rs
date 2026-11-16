@@ -73,6 +73,21 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
         "specs/011-focus-contacts",
     ),
     (CommandId::ContactsToggleDeleted, "specs/011-focus-contacts"),
+    // Threads in Focus (specs/013-focus-threads): the registry holds the
+    // keys first (T022-T023); the tasks that build each surface delete its
+    // line.
+    (CommandId::FirstInConversation, "specs/013-focus-threads"),
+    (CommandId::LatestInConversation, "specs/013-focus-threads"),
+    (
+        CommandId::FirstUnreadInConversation,
+        "specs/013-focus-threads",
+    ),
+    (CommandId::OutlineFirstUnread, "specs/013-focus-threads"),
+    (CommandId::ForwardWhat1, "specs/013-focus-threads"),
+    (CommandId::ForwardWhat2, "specs/013-focus-threads"),
+    (CommandId::ForwardWhat3, "specs/013-focus-threads"),
+    (CommandId::ShowNewer, "specs/013-focus-threads"),
+    (CommandId::ExpandQuoted, "specs/013-focus-threads"),
 ];
 
 /// Whether Focus's controller answers `id` on the Mac: on the list with

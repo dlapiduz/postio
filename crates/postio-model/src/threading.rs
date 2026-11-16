@@ -39,9 +39,17 @@
 //! message anyone titled "Hello" ends up in one conversation. [`assign`] applies
 //! the fallback only when there is no reference link at all *and* the subject
 //! carries reply decoration ([`is_reply`](crate::subject::is_reply())).
+//!
+//! Spec 013 narrowed it further. The fallback joins the one newest thread
+//! whose latest message is within [`SUBJECT_WINDOW`] of the message, never
+//! merges, and is skipped for list and bulk mail ([`ThreadCue::is_list`]): a
+//! newsletter's issues share a subject without being one conversation.
 
-use crate::ids::{RfcMessageId, ThreadId};
+use chrono::{DateTime, TimeDelta, Utc};
+
+use crate::ids::{MessageId, RfcMessageId, ThreadId};
 use crate::message::Message;
+use crate::promoted::PRECEDENCE;
 use crate::subject::{is_reply, normalize_subject};
 
 /// Everything about a message that bears on which thread it belongs to.
@@ -60,7 +68,19 @@ pub struct ThreadCue {
     pub subject: String,
     /// Whether the subject carried reply or forward decoration.
     pub is_reply: bool,
+    /// When the message was received (what a thread's `last_at` is made of),
+    /// for the subject window ([`SUBJECT_WINDOW`]).
+    pub date: DateTime<Utc>,
+    /// Whether it is list or bulk mail: a `List-Id`, or the same test
+    /// `is:bulk` applies (`List-Unsubscribe`, `Precedence`). List mail is
+    /// grouped by references only; the subject fallback skips it.
+    pub is_list: bool,
 }
+
+/// How far back the subject fallback looks: a thread joins by subject only
+/// when its latest message is within this of the new message's date
+/// (spec 013, research R2).
+pub const SUBJECT_WINDOW: TimeDelta = TimeDelta::days(7);
 
 impl ThreadCue {
     /// Reads the cue out of a message.
@@ -71,6 +91,13 @@ impl ThreadCue {
             references: message.reference_chain().cloned().collect(),
             subject: normalize_subject(subject),
             is_reply: is_reply(subject),
+            // Received times on both sides: a thread's `first_at` and `last_at`
+            // are received times, so the window compares like with like.
+            date: message.received_at,
+            is_list: message.list_id.is_some()
+                || message
+                    .promoted
+                    .is_some_and(|p| p.unsubscribe_offered || p.automation & PRECEDENCE != 0),
         }
     }
 
@@ -92,7 +119,17 @@ impl ThreadCue {
     /// eagerly would otherwise query by subject for every message, including
     /// the ones `assign` would never have asked about.
     pub fn subject_is_usable(&self) -> bool {
-        self.is_reply && !self.subject.is_empty()
+        self.is_reply && !self.subject.is_empty() && !self.is_list
+    }
+
+    /// The span a thread must overlap to be joined by subject: its first
+    /// message no later than the end, its last no earlier than the start.
+    ///
+    /// Both ends, because an initial sync files newest first: the thread
+    /// already stored may begin after this message, and a month-later
+    /// conversation is not this one.
+    pub fn subject_window(&self) -> (DateTime<Utc>, DateTime<Utc>) {
+        (self.date - SUBJECT_WINDOW, self.date + SUBJECT_WINDOW)
     }
 }
 
@@ -105,12 +142,77 @@ pub trait ThreadIndex {
     /// The thread that holds — or is waiting for — a message with this id.
     fn thread_of(&self, id: &RfcMessageId) -> Option<ThreadId>;
 
-    /// Threads whose root subject normalizes to this, oldest first.
+    /// The newest thread whose subject normalizes to this and whose span
+    /// (first to latest message) overlaps `from..=until`, if any.
     ///
     /// Only consulted for the fallback, so an implementation that cannot
     /// answer cheaply may return nothing and lose only the repair of a broken
     /// `References` chain.
-    fn threads_with_subject(&self, subject: &str) -> Vec<ThreadId>;
+    fn threads_with_subject(
+        &self,
+        subject: &str,
+        from: DateTime<Utc>,
+        until: DateTime<Utc>,
+    ) -> Option<ThreadId>;
+
+    /// Whether `thread` was made by splitting a message off another (spec
+    /// 013 FR-007): it claims the id of a message the person split.
+    fn is_split(&self, thread: ThreadId) -> bool;
+}
+
+/// What [`descendants`] needs to know of one message of a thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadNode {
+    /// The message.
+    pub id: MessageId,
+    /// Its own `Message-ID`, when it has one.
+    pub message_id: Option<RfcMessageId>,
+    /// What it answers: `References` with `In-Reply-To` appended, as
+    /// [`ThreadCue::references`] is.
+    pub references: Vec<RfcMessageId>,
+}
+
+/// `root` and every message that replies to it, directly or through other
+/// replies, in the order `nodes` gives them (date order, oldest first).
+///
+/// What a split moves (spec 013 FR-007). Pure and O(thread): one pass to
+/// index the ids, one walk down the replies.
+pub fn descendants(nodes: &[ThreadNode], root: MessageId) -> Vec<MessageId> {
+    use std::collections::HashSet;
+
+    // The ids of everything in the family so far, folded. Walking `nodes` in
+    // order is enough when a reply follows what it answers; a reply that
+    // sorts earlier than its parent (a clock that disagrees) is caught by
+    // going round again until nothing more joins.
+    let Some(start) = nodes.iter().find(|node| node.id == root) else {
+        return Vec::new();
+    };
+    let mut family: HashSet<MessageId> = HashSet::from([root]);
+    let mut ids: HashSet<String> = start.message_id.iter().map(RfcMessageId::folded).collect();
+    loop {
+        let before = family.len();
+        for node in nodes {
+            if family.contains(&node.id) {
+                continue;
+            }
+            if node
+                .references
+                .iter()
+                .any(|named| ids.contains(&named.folded()))
+            {
+                family.insert(node.id);
+                ids.extend(node.message_id.iter().map(RfcMessageId::folded));
+            }
+        }
+        if family.len() == before {
+            break;
+        }
+    }
+    nodes
+        .iter()
+        .map(|node| node.id)
+        .filter(|id| family.contains(id))
+        .collect()
 }
 
 /// Where a message goes.
@@ -155,17 +257,26 @@ pub fn assign(cue: &ThreadCue, index: &impl ThreadIndex) -> Assignment {
         }
     }
 
-    if found.is_empty() && cue.subject_is_usable() {
-        for thread in index.threads_with_subject(&cue.subject) {
-            if !found.contains(&thread) {
-                found.push(thread);
-            }
+    // The subject path only ever joins one thread: two conversations that
+    // happen to share a subject are not one conversation, so it never merges.
+    if found.is_empty()
+        && cue.subject_is_usable()
+        && let Some(thread) = {
+            let (from, until) = cue.subject_window();
+            index.threads_with_subject(&cue.subject, from, until)
         }
+    {
+        return Assignment::Join(thread);
     }
 
     match found.len() {
         0 => Assignment::New,
         1 => Assignment::Join(found[0]),
+        // A split thread is the person's own doing: it is not folded back
+        // into the thread it came out of by a message that names both. The
+        // message joins the thread of its nearest link (`found` is in link
+        // order), and nothing merges (spec 013 FR-007).
+        _ if found.iter().any(|thread| index.is_split(*thread)) => Assignment::Join(found[0]),
         _ => {
             // The oldest thread survives — lowest id is created first. The user
             // has been looking at it the longest, and picking by age rather
@@ -203,6 +314,9 @@ mod tests {
     struct Index {
         by_id: BTreeMap<String, ThreadId>,
         by_subject: BTreeMap<String, Vec<ThreadId>>,
+        last_at: BTreeMap<ThreadId, DateTime<Utc>>,
+        first_at: BTreeMap<ThreadId, DateTime<Utc>>,
+        splits: Vec<ThreadId>,
     }
 
     impl Index {
@@ -218,6 +332,10 @@ mod tests {
                     threads.push(thread);
                 }
             }
+            let last = self.last_at.entry(thread).or_insert(cue.date);
+            *last = (*last).max(cue.date);
+            let first = self.first_at.entry(thread).or_insert(cue.date);
+            *first = (*first).min(cue.date);
         }
 
         fn merge(&mut self, into: ThreadId, absorb: &[ThreadId]) {
@@ -242,8 +360,22 @@ mod tests {
             self.by_id.get(&id.as_str().to_lowercase()).copied()
         }
 
-        fn threads_with_subject(&self, subject: &str) -> Vec<ThreadId> {
-            self.by_subject.get(subject).cloned().unwrap_or_default()
+        fn threads_with_subject(
+            &self,
+            subject: &str,
+            from: DateTime<Utc>,
+            until: DateTime<Utc>,
+        ) -> Option<ThreadId> {
+            self.by_subject
+                .get(subject)?
+                .iter()
+                .copied()
+                .filter(|thread| self.last_at[thread] >= from && self.first_at[thread] <= until)
+                .max_by_key(|thread| (self.last_at[thread], *thread))
+        }
+
+        fn is_split(&self, thread: ThreadId) -> bool {
+            self.splits.contains(&thread)
         }
     }
 
@@ -257,7 +389,19 @@ mod tests {
             references: references.iter().map(|r| id(r)).collect(),
             subject: normalize_subject(subject),
             is_reply: is_reply(subject),
+            date: DateTime::<Utc>::default(),
+            is_list: false,
         }
+    }
+
+    fn on_day(day: i64, mut cue: ThreadCue) -> ThreadCue {
+        cue.date = DateTime::<Utc>::default() + TimeDelta::days(day);
+        cue
+    }
+
+    fn listed(mut cue: ThreadCue) -> ThreadCue {
+        cue.is_list = true;
+        cue
     }
 
     /// Files a run of cues in order, as they would arrive.
@@ -497,6 +641,7 @@ mod tests {
             references: Vec::new(),
             subject: normalize_subject("Re: Contract"),
             is_reply: true,
+            ..ThreadCue::default()
         };
 
         assert_eq!(
@@ -538,6 +683,131 @@ mod tests {
                 "<c@example.com>",
                 &["<a@example.com>", "<missing@example.com>"],
                 "Re: Contract",
+            ),
+        ]);
+
+        assert_eq!(threads, vec![ThreadId::new(1); 2]);
+    }
+
+    // -----------------------------------------------------------------------
+    // The subject fallback: a window, one thread, no list mail (spec 013, R2)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn the_subject_fallback_joins_the_newest_thread_in_the_window_and_never_merges() {
+        // Two "Hello" threads, three and one days old. A reply with no
+        // references joins the newer one and leaves the older one alone.
+        let mut index = Index::default();
+        index.file(
+            &on_day(0, cue("<a@example.com>", &[], "Hello")),
+            ThreadId::new(1),
+        );
+        index.file(
+            &on_day(2, cue("<b@example.com>", &[], "Hello")),
+            ThreadId::new(2),
+        );
+
+        let reply = on_day(3, cue("<c@example.com>", &[], "Re: Hello"));
+
+        assert_eq!(assign(&reply, &index), Assignment::Join(ThreadId::new(2)));
+    }
+
+    #[test]
+    fn the_newest_thread_wins_whatever_its_id() {
+        let mut index = Index::default();
+        index.file(
+            &on_day(2, cue("<a@example.com>", &[], "Hello")),
+            ThreadId::new(1),
+        );
+        index.file(
+            &on_day(0, cue("<b@example.com>", &[], "Hello")),
+            ThreadId::new(2),
+        );
+
+        let reply = on_day(3, cue("<c@example.com>", &[], "Re: Hello"));
+
+        assert_eq!(assign(&reply, &index), Assignment::Join(ThreadId::new(1)));
+    }
+
+    #[test]
+    fn an_eight_day_gap_starts_a_new_thread() {
+        let (_, threads) = thread_them(&[
+            on_day(0, cue("<a@example.com>", &[], "Re: Hello")),
+            on_day(8, cue("<b@example.com>", &[], "Re: Hello")),
+        ]);
+
+        assert_eq!(threads, vec![ThreadId::new(1), ThreadId::new(2)]);
+    }
+
+    #[test]
+    fn a_seven_day_gap_still_joins() {
+        let (_, threads) = thread_them(&[
+            on_day(0, cue("<a@example.com>", &[], "Re: Hello")),
+            on_day(7, cue("<b@example.com>", &[], "Re: Hello")),
+        ]);
+
+        assert_eq!(threads, vec![ThreadId::new(1); 2]);
+    }
+
+    #[test]
+    fn the_window_runs_from_the_threads_latest_message() {
+        // Day 0, day 6, day 12: each is within a week of the one before it,
+        // though the last is twelve days from the first.
+        let (_, threads) = thread_them(&[
+            on_day(0, cue("<a@example.com>", &[], "Re: Hello")),
+            on_day(6, cue("<b@example.com>", &[], "Re: Hello")),
+            on_day(12, cue("<c@example.com>", &[], "Re: Hello")),
+        ]);
+
+        assert_eq!(threads, vec![ThreadId::new(1); 3]);
+    }
+
+    #[test]
+    fn the_window_applies_in_both_directions() {
+        // Newest-first arrival: the thread already stored spans Nov 1-5, and
+        // an Oct 6 message turns up afterwards. It is a month before the
+        // thread, so it is not the same conversation.
+        let mut index = Index::default();
+        index.file(
+            &on_day(31, cue("<a@example.com>", &[], "Hello")),
+            ThreadId::new(1),
+        );
+        index.file(
+            &on_day(35, cue("<b@example.com>", &[], "Re: Hello")),
+            ThreadId::new(1),
+        );
+
+        let earlier = on_day(5, cue("<c@example.com>", &[], "Re: Hello"));
+        assert_eq!(assign(&earlier, &index), Assignment::New);
+
+        let later = on_day(40, cue("<d@example.com>", &[], "Re: Hello"));
+        assert_eq!(assign(&later, &index), Assignment::Join(ThreadId::new(1)));
+
+        let just_before = on_day(25, cue("<e@example.com>", &[], "Re: Hello"));
+        assert_eq!(
+            assign(&just_before, &index),
+            Assignment::Join(ThreadId::new(1)),
+            "six days before the thread began is still inside the window"
+        );
+    }
+
+    #[test]
+    fn list_mail_never_groups_by_subject() {
+        let (_, threads) = thread_them(&[
+            on_day(0, listed(cue("<a@example.com>", &[], "Re: Weekly"))),
+            on_day(1, listed(cue("<b@example.com>", &[], "Re: Weekly"))),
+        ]);
+
+        assert_eq!(threads, vec![ThreadId::new(1), ThreadId::new(2)]);
+    }
+
+    #[test]
+    fn list_mail_still_threads_by_references() {
+        let (_, threads) = thread_them(&[
+            on_day(0, listed(cue("<a@example.com>", &[], "Topic"))),
+            on_day(
+                1,
+                listed(cue("<b@example.com>", &["<a@example.com>"], "Re: Topic")),
             ),
         ]);
 
@@ -591,6 +861,151 @@ mod tests {
             "In-Reply-To appended, as `reference_chain` gives it"
         );
         assert_eq!(cue.subject, "contract");
+        assert_eq!(cue.date, message.received_at);
+        assert!(!cue.is_list);
+
+        message.list_id = Some("dev.example.com".to_owned());
+        assert!(ThreadCue::of(&message).is_list, "a List-Id is list mail");
+
+        message.list_id = None;
+        message.promoted = Some(crate::promoted::PromotedHeaders {
+            unsubscribe_offered: false,
+            automation: crate::promoted::PRECEDENCE_BULK,
+        });
+        assert!(ThreadCue::of(&message).is_list, "bulk is what is:bulk says");
         assert!(cue.is_reply);
+    }
+
+    // -----------------------------------------------------------------------
+    // Split threads (spec 013 US5, FR-007)
+    // -----------------------------------------------------------------------
+
+    /// A conversation of five, with message 4 (and its reply 5) split off
+    /// into thread 2. The original keeps 1 to 3.
+    fn split_at_four() -> Index {
+        let mut index = Index::default();
+        let (one, two, three) = (
+            cue("<m1@example.com>", &[], "Plan"),
+            cue("<m2@example.com>", &["<m1@example.com>"], "Re: Plan"),
+            cue("<m3@example.com>", &["<m2@example.com>"], "Re: Plan"),
+        );
+        for cue in [&one, &two, &three] {
+            index.file(cue, ThreadId::new(1));
+        }
+        // What the split relinks: the claims of the moved messages' own ids.
+        index
+            .by_id
+            .insert("<m4@example.com>".to_owned(), ThreadId::new(2));
+        index
+            .by_id
+            .insert("<m5@example.com>".to_owned(), ThreadId::new(2));
+        index.splits.push(ThreadId::new(2));
+        index
+    }
+
+    #[test]
+    fn a_reply_to_a_split_message_joins_the_split_thread_and_merges_nothing() {
+        let index = split_at_four();
+        // Its References still run through the original: m1 .. m3, then m4.
+        let reply = cue(
+            "<m6@example.com>",
+            &[
+                "<m1@example.com>",
+                "<m2@example.com>",
+                "<m3@example.com>",
+                "<m4@example.com>",
+            ],
+            "Re: Plan",
+        );
+
+        assert_eq!(assign(&reply, &index), Assignment::Join(ThreadId::new(2)));
+    }
+
+    #[test]
+    fn a_reply_to_the_original_after_a_split_stays_in_the_original() {
+        let index = split_at_four();
+        let reply = cue(
+            "<m7@example.com>",
+            &["<m1@example.com>", "<m2@example.com>", "<m3@example.com>"],
+            "Re: Plan",
+        );
+
+        assert_eq!(assign(&reply, &index), Assignment::Join(ThreadId::new(1)));
+    }
+
+    #[test]
+    fn the_nearest_link_decides_when_a_split_thread_is_among_several() {
+        // Its parent is m3 (original) and it also cites m4 (split) earlier in
+        // the chain: the nearest link wins, and nothing merges.
+        let index = split_at_four();
+        let reply = cue(
+            "<m8@example.com>",
+            &["<m4@example.com>", "<m3@example.com>"],
+            "Re: Plan",
+        );
+
+        assert_eq!(assign(&reply, &index), Assignment::Join(ThreadId::new(1)));
+    }
+
+    #[test]
+    fn threads_that_are_not_split_still_merge() {
+        // Guard: the old rule, for two threads neither of which is split.
+        let mut index = split_at_four();
+        index.splits.clear();
+        let reply = cue(
+            "<m6@example.com>",
+            &["<m3@example.com>", "<m4@example.com>"],
+            "Re: Plan",
+        );
+
+        assert!(matches!(
+            assign(&reply, &index),
+            Assignment::Merge { into, .. } if into == ThreadId::new(1)
+        ));
+    }
+
+    fn node(id: i64, own: &str, answers: &[&str]) -> ThreadNode {
+        ThreadNode {
+            id: MessageId::new(id),
+            message_id: Some(id_of(own)),
+            references: answers.iter().map(|a| id_of(a)).collect(),
+        }
+    }
+
+    fn id_of(raw: &str) -> RfcMessageId {
+        RfcMessageId::new(raw)
+    }
+
+    #[test]
+    fn descendants_cover_transitive_replies_and_leave_siblings() {
+        let nodes = [
+            node(1, "<m1@example.com>", &[]),
+            node(2, "<m2@example.com>", &["<m1@example.com>"]),
+            node(
+                3,
+                "<m3@example.com>",
+                &["<m1@example.com>", "<m2@example.com>"],
+            ),
+            node(
+                4,
+                "<m4@example.com>",
+                &["<m1@example.com>", "<m2@example.com>", "<m3@example.com>"],
+            ),
+            // A reply to 4, and a reply to that reply, and a sibling of 4.
+            node(5, "<m5@example.com>", &["<M4@example.com>"]),
+            node(6, "<m6@example.com>", &["<m5@example.com>"]),
+            node(7, "<m7@example.com>", &["<m3@example.com>"]),
+        ];
+
+        assert_eq!(
+            descendants(&nodes, MessageId::new(4)),
+            vec![MessageId::new(4), MessageId::new(5), MessageId::new(6)],
+            "the root, its reply, and the reply to that, case folded"
+        );
+        assert_eq!(
+            descendants(&nodes, MessageId::new(7)),
+            vec![MessageId::new(7)],
+            "a leaf is only itself"
+        );
     }
 }

@@ -28,6 +28,7 @@ const BODY: &str = "Hi all,\n\nUploaded v3 of the Harbor API draft with the \
 /// question marker and two attachments. Answers the message.
 async fn every_block(fixture: &Fixture) -> MessageId {
     let ids = fixture.thread_of("Harbor API draft v3", 2, 10).await;
+    fixture.read_all_but_last(&ids).await;
     let latest = *ids.last().expect("a thread");
     dress(fixture, latest, true).await;
     fixture.write_body(latest, BODY).await;
@@ -132,6 +133,11 @@ async fn opened_at(
     );
     support::keys(&window, &["j"]);
     support::press(&window, "Return", gdk::ModifierType::empty());
+    // A thread's row opens once the thread has been read.
+    assert!(
+        crate::settle_until(async || window.reading().is_some()).await,
+        "Enter opened the message"
+    );
     let reading = window.reading().expect("Enter opened the message");
     assert!(
         crate::settle_until(async || reading.reader().view().document().is_some()
@@ -484,9 +490,51 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             crate::settle_until(async || support::only(&dialog, "postio-attachments").is_mapped())
                 .await
         );
+        // The thread bar and the kicker are the controller's, drawn once the
+        // thread has been read.
+        assert!(
+            crate::settle_until(
+                async || !reading.thread_chip_said().is_empty() && reading.thread_bar_state().1 > 0
+            )
+            .await,
+            "the thread's bar never arrived"
+        );
+        // This asks about the column's rhythm, not where it is scrolled to:
+        // the bar sits above the scroller, so a column opened scrolled down
+        // (as it can under load, #2125) moves
+        // every block under it. Read it from its top.
+        let scroller = shown(&dialog, "focus-open-scroller")
+            .downcast::<gtk::ScrolledWindow>()
+            .expect("the message's scroller");
+        // The bar's arrival lays the column out again, and on a slow machine
+        // over more than one pass: measure once two looks agree.
+        let blocks = || {
+            [
+                "focus-thread-bar",
+                "focus-open-thread",
+                "focus-open-subject",
+                "focus-open-header-card",
+                "postio-attachments",
+            ]
+            .map(|class| edges(&shown(&dialog, class), &dialog))
+        };
+        let last = std::cell::RefCell::new(None);
+        assert!(
+            crate::settle_until(async || {
+                scroller.vadjustment().set_value(0.0);
+                let now = blocks();
+                let still = last.borrow().as_ref() == Some(&now);
+                last.replace(Some(now));
+                still
+            })
+            .await,
+            "the column never came to rest: {:?}",
+            blocks()
+        );
         let at = |class: &str| edges(&shown(&dialog, class), &dialog);
         let toolbar = at("focus-open-toolbar");
         let header = at("focus-open-header");
+        let bar = at("focus-thread-bar");
         let thread = at("focus-open-thread");
         let subject = at("focus-open-subject");
         let labels = at("focus-open-labels");
@@ -500,11 +548,9 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
         let checks = [
             ("header bar height", height(header), 52),
             ("action row height", height(toolbar), 44),
-            (
-                "action row -> thread marker",
-                gap(toolbar, thread),
-                rhythm::TOP,
-            ),
+            ("thread bar height", height(bar), 60),
+            ("action row -> thread bar", gap(toolbar, bar), 0),
+            ("thread bar -> thread marker", gap(bar, thread), rhythm::TOP),
             (
                 "thread marker -> subject",
                 gap(thread, subject),

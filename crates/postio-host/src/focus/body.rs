@@ -267,6 +267,8 @@ async fn classify(
     // beside the rest of the batch (specs/011-focus-contacts S10).
     let mut bounced = Vec::new();
     let mut noticed = Vec::new();
+    // Each message's own line, for a thread's child row (spec 013 R5).
+    let mut lines = Vec::new();
     // Settings > Contacts: whether this stage looks at a sender's signature
     // and forwarding headers at all. Read once per batch.
     let suggestions = postio_storage::repository::ContactSuggestionRepository::new(connection)
@@ -291,6 +293,11 @@ async fn classify(
             if !found.is_empty() {
                 noticed.push((message, found));
             }
+        }
+    }
+    for &message in batch {
+        if let Some(line) = own_line_of(connection, message).await {
+            lines.push((message, line));
         }
     }
     for &message in batch {
@@ -321,6 +328,11 @@ async fn classify(
             // part only when the server described the structure.
             digests.release_waiting(*message).await?;
         }
+        for (message, line) in &lines {
+            MessageRepository::new(&transaction)
+                .set_own_line(*message, line)
+                .await?;
+        }
         let written = MarkerRepository::new(&transaction);
         for marker in &asks {
             written.insert(marker).await?;
@@ -343,6 +355,24 @@ async fn classify(
             .await
     })
     .await
+}
+
+/// `message`'s own words as one line, read from the body on this machine,
+/// never fetched. `None` when no body is here, which leaves the column NULL.
+/// Cutting it parses and sanitises HTML, so it runs off the runtime's own
+/// threads.
+async fn own_line_of(connection: &Checkout, message: MessageId) -> Option<String> {
+    let stored = MessageRepository::new(connection)
+        .body(message)
+        .await
+        .ok()??;
+    let body = MessageBody {
+        text: stored.text,
+        html: stored.html,
+    };
+    tokio::task::spawn_blocking(move || postio_body::own_line(&body))
+        .await
+        .ok()
 }
 
 /// The delivery failure `row`'s report part names, when the part is on this

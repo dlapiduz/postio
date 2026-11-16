@@ -14,7 +14,11 @@ import SwiftUI
 public enum MessageRhythm {
     /// The action row to the first block: the content's top padding.
     public static let top: CGFloat = 28
-    /// The thread chip to the subject.
+    /// The older-message banner to the kicker.
+    public static let bannerToKicker: CGFloat = 16
+    /// The kicker to the subject.
+    public static let kickerToSubject: CGFloat = 6
+    /// Whatever stands above the subject to it.
     public static let markerToSubject: CGFloat = 12
     /// The subject to the labels.
     public static let subjectToLabels: CGFloat = 10
@@ -26,6 +30,8 @@ public enum MessageRhythm {
     public static let senderRow: CGFloat = 22
     /// The sender block's label column.
     public static let senderLabelColumn: CGFloat = 44
+    /// The same, in a block that has a Reply to row.
+    public static let senderLabelColumnReplying: CGFloat = 64
     /// The sender block to the action card.
     public static let senderToCard: CGFloat = 12
     /// The last block above the body to the notice (the unsubscribe
@@ -85,11 +91,18 @@ public struct MessageHeaderWords: Equatable {
         public let cap: String?
     }
 
-    /// "Latest of 6 in this thread  [ earlier message".
-    public struct Thread: Equatable {
-        public let text: String
-        public let earlier: Key?
-        public let later: Key?
+    /// What the controller's walk says around the subject: the kicker, the
+    /// older-message banner and the Reply to row.
+    public struct Thread: Equatable, Sendable {
+        public var kicker: String
+        public var banner: ThreadBannerFfi?
+        public var replyTo: String?
+        /// A reply arrived while reading: the accent-tinted banner.
+        public var newReply: ThreadBannerFfi?
+        /// The window was opened from a search: its match banner.
+        public var matchBanner: MatchBannerFfi?
+
+        public static let none = Thread(kicker: "", banner: nil, replyTo: nil)
     }
 
     /// A label pill.
@@ -116,7 +129,7 @@ public struct MessageHeaderWords: Equatable {
         public let dismiss: Key
     }
 
-    public let thread: Thread?
+    public let thread: Thread
     public let subject: String
     public let labels: [Pill]
     public let addLabel: Key
@@ -125,13 +138,13 @@ public struct MessageHeaderWords: Equatable {
     public let card: Card?
     public let attachments: [FocusAttachmentFfi]
 
-    public init(view: FocusMessageViewFfi, binding: (String) -> String?) {
+    public init(
+        view: FocusMessageViewFfi, thread: Thread = .none, binding: (String) -> String?
+    ) {
         func key(_ action: FocusRowActionFfi) -> Key {
             Key(command: action.command, label: action.label, cap: KeyCapSpelling.cap(binding(action.command)))
         }
-        thread = view.thread.map {
-            Thread(text: $0.text, earlier: $0.earlier.map(key), later: $0.later.map(key))
-        }
+        self.thread = thread
         subject = view.subject
         labels = view.labels.map { Pill(name: $0.name, colour: LabelColour.of(name: $0.name, stored: $0.color)) }
         addLabel = key(view.addLabel)
@@ -223,6 +236,16 @@ public struct MessageContentView<BodyView: View>: View {
         GeometryReader { proxy in
             scroll(column: column(proxy.size.width))
         }
+        // A reply that arrives while reading lies over the foot of the
+        // message, not above it: nothing that moves or resizes the text
+        // being read may happen when one comes (spec 013 US4, FR-018).
+        .overlay(alignment: .bottom) {
+            if let banner = MessageBlock.foot(words: words) {
+                ThreadBannerView(banner: banner, tinted: true) { run(Self.latest) }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+            }
+        }
     }
 
     private func scroll(column: CGFloat) -> some View {
@@ -246,11 +269,20 @@ public struct MessageContentView<BodyView: View>: View {
         }
     }
 
+    /// The command `Latest }` runs: the controller's walk, as the key does.
+    private static var latest: String { "latest_in_conversation" }
+
     @ViewBuilder
     private func draw(_ block: MessageBlock) -> some View {
         switch block {
-        case let .thread(thread):
-            MessageThreadLine(thread: thread, run: run)
+        case let .olderBanner(banner):
+            ThreadBannerView(banner: banner) { run(Self.latest) }
+        case let .matchBanner(banner):
+            MatchBannerView(banner: banner, next: { run("find_next") }, back: { run("back") })
+        case let .kicker(kicker):
+            Text(kicker)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
         case let .subject(subject):
             Text(subject)
                 .font(.system(size: MessageRhythm.subjectSize, weight: .bold))
@@ -262,7 +294,8 @@ public struct MessageContentView<BodyView: View>: View {
         case .labels:
             MessageLabelsLine(labels: words.labels, add: words.addLabel, run: run)
         case .sender:
-            MessageSenderBlock(fields: words.fields, date: words.date)
+            MessageSenderBlock(
+                fields: words.fields, date: words.date, replyTo: words.thread.replyTo)
         case let .senderWarning(warning):
             // A sentence, not a badge: only when the host doubts the sender.
             Label(warning, systemImage: "exclamationmark.triangle")
@@ -298,8 +331,12 @@ public struct MessageContentView<BodyView: View>: View {
 /// leaves out is a test failure here rather than a gap nobody sees (#1585,
 /// where the unsubscribe banner had no call site at all).
 public enum MessageBlock: Equatable, Identifiable {
-    /// "Latest of 6 in this thread  [ earlier message".
-    case thread(MessageHeaderWords.Thread)
+    /// The quiet banner on a message that is not the latest.
+    case olderBanner(ThreadBannerFfi)
+    /// Where the message is among the search's matches in its thread.
+    case matchBanner(MatchBannerFfi)
+    /// "Message 4 of 6 · ] newer · [ older".
+    case kicker(String)
     /// The subject, the largest text in the window.
     case subject(String)
     /// The label pills, then "+ Label".
@@ -325,7 +362,9 @@ public enum MessageBlock: Equatable, Identifiable {
 
     public var id: String {
         switch self {
-        case .thread: "thread"
+        case .olderBanner: "olderBanner"
+        case .matchBanner: "matchBanner"
+        case .kicker: "kicker"
         case .subject: "subject"
         case .labels: "labels"
         case .sender: "sender"
@@ -339,6 +378,13 @@ public enum MessageBlock: Equatable, Identifiable {
         }
     }
 
+    /// The accent-tinted banner a reply that arrived while reading puts
+    /// over the foot of the column: who replied, and "Read it }". It is no
+    /// block of the column, which the text being read keeps whole.
+    public static func foot(words: MessageHeaderWords) -> ThreadBannerFfi? {
+        words.thread.newReply
+    }
+
     /// The column for a message whose header reads `words`, whose body is
     /// `document` (`nil` while it is being read), and whose banner is at
     /// `unsubscribe`.
@@ -348,7 +394,9 @@ public enum MessageBlock: Equatable, Identifiable {
         unsubscribe: Unsubscribing.State
     ) -> [MessageBlock] {
         var blocks: [MessageBlock] = []
-        if let thread = words.thread { blocks.append(.thread(thread)) }
+        if let banner = words.thread.banner { blocks.append(.olderBanner(banner)) }
+        if let banner = words.thread.matchBanner { blocks.append(.matchBanner(banner)) }
+        if !words.thread.kicker.isEmpty { blocks.append(.kicker(words.thread.kicker)) }
         blocks += [.subject(words.subject), .labels, .sender]
         if let warning = document?.senderWarning { blocks.append(.senderWarning(warning)) }
         if let card = words.card { blocks.append(.card(card)) }
@@ -367,8 +415,15 @@ public enum MessageBlock: Equatable, Identifiable {
     /// The rhythm's gap above `block` when `previous` is drawn above it.
     public static func gap(above block: MessageBlock, after previous: MessageBlock?) -> CGFloat {
         switch block {
-        case .thread: 0
-        case .subject: previous == nil ? 0 : MessageRhythm.markerToSubject
+        case .olderBanner: previous == nil ? 0 : MessageRhythm.bannerToKicker
+        case .matchBanner: previous == nil ? 0 : MessageRhythm.bannerToKicker
+        case .kicker: previous == nil ? 0 : MessageRhythm.bannerToKicker
+        case .subject:
+            switch previous {
+            case nil: 0
+            case .kicker: MessageRhythm.kickerToSubject
+            default: MessageRhythm.markerToSubject
+            }
         case .labels: MessageRhythm.subjectToLabels
         case .sender: MessageRhythm.labelsToSender
         case .senderWarning: MessageRhythm.senderToCard
@@ -380,29 +435,6 @@ public enum MessageBlock: Equatable, Identifiable {
         case .caveat: MessageRhythm.modeLineToBody
         case .attachments: MessageRhythm.bodyToAttachments
         }
-    }
-}
-
-/// "Latest of 6 in this thread  [ earlier message".
-struct MessageThreadLine: View {
-    let thread: MessageHeaderWords.Thread
-    let run: (String) -> Void
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(thread.text).foregroundStyle(.secondary)
-            ForEach([thread.earlier, thread.later].compactMap { $0 }, id: \.command) { key in
-                Button { run(key.command) } label: {
-                    HStack(spacing: 5) {
-                        if let cap = key.cap { KeyCap(cap) }
-                        Text(key.label).foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .font(.system(size: 13))
     }
 }
 
@@ -445,6 +477,15 @@ struct MessageLabelsLine: View {
 struct MessageSenderBlock: View {
     let fields: [FocusFieldFfi]
     let date: String
+    /// "Ana Ruiz, Mon 21 Sep (message 1)": the message this one answers,
+    /// when it is not the one just before it.
+    var replyTo: String?
+
+    /// "Reply to" does not fit the usual 44pt column, and the rows keep to
+    /// one column, so the column widens for the block that has it.
+    private var labelColumn: CGFloat {
+        replyTo == nil ? MessageRhythm.senderLabelColumn : MessageRhythm.senderLabelColumnReplying
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -453,7 +494,7 @@ struct MessageSenderBlock: View {
                     Text(field.field)
                         .font(.system(size: 13))
                         .foregroundStyle(.tertiary)
-                        .frame(width: MessageRhythm.senderLabelColumn, alignment: .leading)
+                        .frame(width: labelColumn, alignment: .leading)
                     people(field, first: index == 0)
                         .help(field.all)
                     Spacer(minLength: 12)
@@ -464,6 +505,20 @@ struct MessageSenderBlock: View {
                             .lineLimit(1)
                             .fixedSize()
                     }
+                }
+                .frame(minHeight: MessageRhythm.senderRow)
+            }
+            if let replyTo {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text("Reply to")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: labelColumn, alignment: .leading)
+                    Text(replyTo)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Spacer(minLength: 12)
                 }
                 .frame(minHeight: MessageRhythm.senderRow)
             }

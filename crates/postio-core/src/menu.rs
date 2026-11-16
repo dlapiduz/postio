@@ -139,6 +139,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // focused row, and a global menu cannot say which person.
         C::OpenContacts => Some(M::Go),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
+        C::FirstInConversation | C::LatestInConversation | C::FirstUnreadInConversation => {
+            Some(M::Go)
+        }
         C::Back | C::PrevView => Some(M::Go),
 
         // ── File ─────────────────────────────────────────────────────────
@@ -172,6 +175,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         // ── View ─────────────────────────────────────────────────────────
         C::ToggleFold | C::ExpandAll => Some(M::View),
+        // The thread's own views: its rows in the list, its outline, and the
+        // composer's older and newer quoted text.
+        C::ExpandThread | C::CollapseThread | C::ThreadOutline => Some(M::View),
+        C::ShowNewer | C::ExpandQuoted => Some(M::View),
         // With the other two show/hide toggles rather than under File
         // beside the composer's verbs: this raises and lowers rows, it
         // does not do anything to the draft.
@@ -204,10 +211,13 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         // ── Message ──────────────────────────────────────────────────────
         C::Reply | C::ReplyAll | C::Forward => Some(M::Message),
-        C::Archive | C::ArchiveThread | C::Delete | C::Move => Some(M::Message),
+        C::Archive | C::Delete | C::Move => Some(M::Message),
         C::Flag | C::ToggleRead | C::AddLabel => Some(M::Message),
         C::Snooze | C::Unsnooze => Some(M::Message),
         C::OpenMessage => Some(M::Message),
+        // A thread's verbs, and the two that act on one message of it.
+        C::ReplyToLatest | C::MuteThread | C::SplitThread => Some(M::Message),
+        C::MoveThisMessage | C::DeleteThisMessage => Some(M::Message),
 
         // ── Format ───────────────────────────────────────────────────────
         C::Bold | C::Italic | C::BulletList | C::NumberedList => Some(M::Format),
@@ -291,6 +301,11 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::PickerTypeDate
         | C::PickerToggle
         | C::PickerConfirm
+        | C::OutlineFirstUnread
+        | C::ThreadMenu
+        | C::ForwardWhat1
+        | C::ForwardWhat2
+        | C::ForwardWhat3
         | C::NextReference
         | C::PrevReference
         | C::ToggleDigestSummary

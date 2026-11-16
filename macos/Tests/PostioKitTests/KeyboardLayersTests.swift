@@ -33,12 +33,12 @@ import Testing
         ("reply_all", "⇧⌘R", "a"),
         ("forward", "⇧⌘F", "f"),
         ("archive", "⇧⌘A", "e"),
-        ("archive_thread", "", "E"),
         ("compose", "⌘N", "c"),
         ("search", "⌥⌘F", "/"),
-        // Gmail's `n` and `p`; `J`/`K` extend the list's selection.
-        ("next_in_conversation", "⌥↓", "n"),
-        ("prev_in_conversation", "⌥↑", "p"),
+        // `]` and `[` (spec 013), `n` and `p` beside them; `J`/`K` extend the
+        // list's selection.
+        ("next_in_conversation", "⌥↓", "]"),
+        ("prev_in_conversation", "⌥↑", "["),
         ("next_message", "↓", "j"),
         ("prev_message", "↑", "k"),
         ("expand_all", "⇧⌘E", ";"),
@@ -85,9 +85,9 @@ import Testing
     }
 
     @Test func aCommandWithNoChordDrawsItsMnemonicRatherThanNothing() {
-        // Archive-thread is `E` and nothing else — the canvas says so with a
-        // dash. A menu item with no accelerator at all is worse than one
-        // naming the key that does work.
-        #expect(MenuPlan.accelerator(among: bindings("archive_thread")) == "⇧E")
+        // Mute is `m` and nothing else — the canvas has no chord for it. A
+        // menu item with no accelerator at all is worse than one naming the
+        // key that does work.
+        #expect(MenuPlan.accelerator(among: bindings("mute_thread")) == "M")
     }
 }

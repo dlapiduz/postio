@@ -214,6 +214,8 @@ const PUNCTUATION_NAMES: &[(&str, char)] = &[
     ("greater", '>'),
     ("bracketleft", '['),
     ("bracketright", ']'),
+    ("braceleft", '{'),
+    ("braceright", '}'),
     ("grave", '`'),
     ("apostrophe", '\''),
     ("quotedbl", '"'),
@@ -567,6 +569,10 @@ pub enum KeyContext {
     Contacts,
     /// The contact popover (specs/011-focus-contacts S6).
     ContactPopover,
+    /// The thread outline (specs/013-focus-threads D5).
+    Outline,
+    /// The "Forward what?" chooser (specs/013-focus-threads D7).
+    ForwardChooser,
 }
 
 impl KeyContext {
@@ -625,6 +631,13 @@ impl KeyContext {
             // user cannot see.
             Self::Contacts => &[Self::Contacts, Self::Global],
             Self::ContactPopover => &[Self::ContactPopover, Self::Global],
+            // Over the reader, as a picker is over a row: `u` is `prev_view`
+            // in the reader and "first unread" here, and the digits are the
+            // chooser's, not `picker_choose_n`. Neither falls through.
+            Self::Outline => &[Self::Outline, Self::Global],
+            // Over the composer: the digits are the chooser's, and send and
+            // Esc still work while the keyboard is on it.
+            Self::ForwardChooser => &[Self::ForwardChooser, Self::Composer, Self::Global],
         }
     }
 }
@@ -655,6 +668,8 @@ impl From<Context> for KeyContext {
             Context::Results => Self::Results,
             Context::Contacts => Self::Contacts,
             Context::ContactPopover => Self::ContactPopover,
+            Context::Outline => Self::Outline,
+            Context::ForwardChooser => Self::ForwardChooser,
         }
     }
 }
@@ -1458,6 +1473,20 @@ mod tests {
             resolver.press(&chord("ctrl+Return"), KeyContext::Composer, true, now),
             Outcome::Command("send".to_owned())
         );
+    }
+
+    #[test]
+    fn the_composer_keeps_its_own_keys_while_the_forward_chooser_holds_the_keyboard() {
+        let mut resolver = resolver();
+        let now = Instant::now();
+
+        for (key, command) in [("Escape", "close_composer"), ("ctrl+Return", "send")] {
+            assert_eq!(
+                resolver.press(&chord(key), KeyContext::ForwardChooser, false, now),
+                Outcome::Command(command.to_owned()),
+                "{key} still reaches the composer from the chooser"
+            );
+        }
     }
 
     #[test]

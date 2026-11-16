@@ -484,15 +484,23 @@ impl FocusController {
         id: postio_core::CommandId,
         rows: &dyn Rows,
     ) -> Option<Vec<Step>> {
-        let kind = PickerKind::of(id)?;
-        let selection = self.cursor.selection();
-        let at = self.cursor.row(rows).map(|row| AimRow {
-            id: row.id,
-            threads: row.threads,
-            digest: row.digest,
-        });
+        // "Move only this" is the one message the cursor is on, whatever is
+        // selected: a message verb never widens to a selection's threads.
+        let only_this = id == CommandId::MoveThisMessage;
+        let kind = if only_this {
+            PickerKind::Move
+        } else {
+            PickerKind::of(id)?
+        };
+        let selection = if only_this {
+            Selection::These(Vec::new())
+        } else {
+            self.cursor.selection()
+        };
+        let at = self.cursor.aim_row(rows);
         let (aims, everything) =
-            match postio_ui::focus_target::aim_by(&selection, self.cursor.reach(), at.as_ref()) {
+            match postio_ui::focus_target::aim_by(&selection, self.cursor.reach(), at.as_ref(), id)
+            {
                 Aim::Everything { except } => (
                     Vec::new(),
                     Some(Everything {
@@ -538,11 +546,13 @@ impl FocusController {
             id: row.id,
             threads: row.threads,
             digest: row.digest,
+            child: false,
         };
         let Aim::Targets(aims) = postio_ui::focus_target::aim_by(
             &Selection::These(Vec::new()),
             &Default::default(),
             Some(&at),
+            id,
         ) else {
             return Some(Vec::new());
         };
@@ -612,6 +622,24 @@ impl FocusController {
             from_results: true,
         };
         Some(self.open_picker(kind, Anchor::Result(position), target, aimed))
+    }
+
+    /// The Move picker over the open message, aimed at that message alone
+    /// (`MoveThisMessage`, spec 013 D2): the rest of its thread stays.
+    pub(crate) fn picker_on_shown(&mut self, shown: MessageId) -> Vec<Step> {
+        let aimed = Aimed {
+            aims: vec![MessageTarget::Messages(vec![shown])],
+            everything: None,
+            message: Some(shown),
+            from_list: false,
+            from_results: false,
+        };
+        self.open_picker(
+            PickerKind::Move,
+            Anchor::OpenMessage,
+            "This message".to_owned(),
+            aimed,
+        )
     }
 
     /// Put the picker up, and ask for what it lists.
