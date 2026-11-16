@@ -35,6 +35,10 @@ pub struct ThreadParts {
     pub newer: gtk::Box,
     newer_count: Cell<usize>,
     quoted_expanded: Cell<bool>,
+    /// The folded forwarded messages, a row each, below what is typed.
+    pub forwarded: gtk::Box,
+    forwarded_count: Cell<usize>,
+    on_unfold: RefCell<Option<Rc<dyn Fn()>>>,
     on_card: RefCell<Option<CardHandler>>,
     on_action: RefCell<Option<ActionHandler>>,
 }
@@ -82,6 +86,10 @@ impl ThreadParts {
         newer.add_css_class("focus-newer-messages");
         newer.set_visible(false);
 
+        let forwarded = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        forwarded.add_css_class("focus-forwarded");
+        forwarded.set_visible(false);
+
         let parts = Rc::new(ThreadParts {
             older,
             older_title,
@@ -94,6 +102,9 @@ impl ThreadParts {
             newer,
             newer_count: Cell::new(0),
             quoted_expanded: Cell::new(false),
+            forwarded,
+            forwarded_count: Cell::new(0),
+            on_unfold: RefCell::default(),
             on_card: RefCell::default(),
             on_action: RefCell::default(),
         });
@@ -224,10 +235,72 @@ impl ThreadParts {
         self.quoted_expanded.set(expanded);
     }
 
+    /// Run `handler` when a folded forwarded message's row is pressed.
+    pub fn connect_unfold(&self, handler: impl Fn() + 'static) {
+        self.on_unfold.replace(Some(Rc::new(handler)));
+    }
+
+    /// Draw the forwarded messages as their collapsed rows, one each, the
+    /// last with the key that opens them all; none takes the rows away.
+    pub fn show_forwarded(
+        self: &Rc<Self>,
+        rows: &[postio_body::forward::ForwardedRow],
+        cap: Option<&str>,
+    ) {
+        while let Some(child) = self.forwarded.first_child() {
+            self.forwarded.remove(&child);
+        }
+        self.forwarded_count.set(rows.len());
+        for row in rows {
+            let button = gtk::Button::new();
+            button.add_css_class("focus-forwarded-row");
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let words = if row.first.is_empty() {
+                row.words()
+            } else {
+                format!("{} \u{b7} {}", row.words(), row.first)
+            };
+            let said = gtk::Label::new(Some(&words));
+            said.add_css_class("dim-label");
+            said.set_xalign(0.0);
+            said.set_hexpand(true);
+            said.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            line.append(&said);
+            if row.number == rows.len()
+                && let Some(cap) = cap
+            {
+                line.append(&keyhint::cap(cap));
+            }
+            button.set_child(Some(&line));
+            button.update_property(&[gtk::accessible::Property::Label(&format!(
+                "{}. Show the forwarded messages",
+                row.words()
+            ))]);
+            let weak = Rc::downgrade(self);
+            button.connect_clicked(move |_| {
+                if let Some(parts) = weak.upgrade() {
+                    let handler = parts.on_unfold.borrow().clone();
+                    if let Some(handler) = handler {
+                        handler();
+                    }
+                }
+            });
+            self.forwarded.append(&button);
+        }
+        self.forwarded.set_visible(!rows.is_empty());
+    }
+
+    /// How many forwarded messages are folded into rows.
+    pub fn forwarded_rows(&self) -> usize {
+        self.forwarded_count.get()
+    }
+
     /// Take everything away: a composition ended or a new one began.
     pub fn clear(&self) {
         self.show_older(None);
         self.show_newer(&[]);
+        self.forwarded_count.set(0);
+        self.forwarded.set_visible(false);
         self.chooser.set_visible(false);
         self.chooser_view.replace(None);
         self.quoted_expanded.set(false);

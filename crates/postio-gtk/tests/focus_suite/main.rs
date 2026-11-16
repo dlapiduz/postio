@@ -1745,6 +1745,10 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "threads::mod_shift_q_folds_and_unfolds_the_forwarded_messages",
+        threads::mod_shift_q_folds_and_unfolds_the_forwarded_messages as fn(),
+    ),
+    (
         "threads::forwarding_the_whole_thread_says_so_in_the_subject",
         threads::forwarding_the_whole_thread_says_so_in_the_subject as fn(),
     ),
