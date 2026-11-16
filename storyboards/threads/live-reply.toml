@@ -47,4 +47,4 @@ expect  = "Message 4 is still shown and still ringed; nothing scrolled. The bar 
 id      = "read-it"
 key     = "}"
 check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 6, app.focus.reading.new_reply = false }
-expect  = "The reply, message 7, is shown and ringed, its dot is gone, and the banner is gone."
+expect  = "The reply, message 7, is shown and ringed, and the banner is gone. Its dot stays until it has been on screen for the dwell (a second): showing a message does not mark it read at once."

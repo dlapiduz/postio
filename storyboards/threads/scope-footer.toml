@@ -6,7 +6,7 @@
 # that expect the footer's words and a reply to message 4 fail there.
 #
 # On the `threads` seed the cursor starts on "Harbor API draft v3". On its
-# collapsed row the footer reads "Harbor API draft v3 · 6 messages" and its
+# collapsed row the footer reads "Re: Harbor API draft v3 · 6 messages" and its
 # keys say "reply to latest", "forward latest" and "archive thread": `r`
 # answers the latest message. After `Right` and four `j`, the ring is on
 # child 4, Ben Adeyemi's reply, and the footer reads "Message 4 of 6 · Ben
@@ -28,7 +28,7 @@ design = "02-thread-expanded-in-place"
 id      = "row"
 wait    = { until = { cursor.index = 0 } }
 check   = { keyboard.region = "list", cursor.index = 0, cursor.subject = "Re: Harbor API draft v3", app.focus.cursor.kind = "row", app.focus.footer.title = "Re: Harbor API draft v3 · 6 messages", app.focus.footer.note = { absent = true } }
-expect  = "The cursor is on the collapsed Harbor row. The footer under the list reads \"Harbor API draft v3 · 6 messages\" and offers reply to latest, forward latest and archive thread, each beside its key, with no sentence on the right."
+expect  = "The cursor is on the collapsed Harbor row. The footer under the list reads \"Re: Harbor API draft v3 · 6 messages\" and offers reply to latest, forward latest and archive thread, each beside its key, with no sentence on the right."
 
 [[step]]
 id      = "reply-latest"

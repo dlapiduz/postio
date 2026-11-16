@@ -53,4 +53,4 @@ expect  = "The ring moves one row down."
 id      = "show"
 key     = "Return"
 check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.outline.open = false, app.focus.reading.chip = 5 }
-expect  = "The outline closes and the window shows that message of Ben's, ringed in the bar; it is marked read if it was not. The keyboard is on the message (the next j or Space scrolls it), not on the dialog's frame; the title line says \"Message 6 of 6\", as the kicker below it."
+expect  = "The outline closes and the window shows that message of Ben's, ringed in the bar; it is marked read once it has been on screen for the dwell (a second), not at once. The keyboard is on the message (the next j or Space scrolls it), not on the dialog's frame; the title line says \"Message 6 of 6\", as the kicker below it."
