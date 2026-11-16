@@ -1379,7 +1379,8 @@ pub const CONTEXTS: &[(&str, &[&str])] = &[
 /// from the setup given, so that there is something for it to do: the
 /// outline reads a thread opened under the cursor, and the "this message"
 /// verbs refuse a row that stands for a whole thread. A reply
-/// is opened to the thread's first message, so that a newer one is behind it.
+/// is opened to the thread's first message, so that a newer one is behind it;
+/// `expand_quoted` unfolds a forwarded thread, so it is pressed over one.
 const THREAD_COMMANDS: &[(&str, &str, &[&str])] = &[
     ("list", "expand_thread", &[]),
     ("list", "collapse_thread", &["expand_thread"]),
@@ -1404,11 +1405,7 @@ const THREAD_COMMANDS: &[(&str, &str, &[&str])] = &[
         "show_newer",
         &["open_message", "first_in_conversation", "reply"],
     ),
-    (
-        "composer",
-        "expand_quoted",
-        &["open_message", "first_in_conversation", "reply"],
-    ),
+    ("composer", "expand_quoted", &["forward", "forward_what_2"]),
 ];
 
 /// One context's coverage, or why it could not be reached.
@@ -1494,7 +1491,14 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
                 .iter()
                 .find(|(here, id, _)| here == context && *id == command);
             let started = match thread {
-                Some((_, _, setup)) => fresh_over(Seed::LongThread, setup).await,
+                Some((_, _, setup)) => {
+                    let started = fresh_over(Seed::LongThread, setup).await;
+                    // What the setup opened -- the thread read for a reply's
+                    // quote or a forward's messages -- lands a moment after
+                    // the key that asked for it.
+                    pump(Duration::from_millis(1500));
+                    started
+                }
                 None => fresh(setup).await,
             };
             let Some(started) = started else {
