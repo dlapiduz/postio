@@ -187,8 +187,10 @@ pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> Fo
     FooterView { title, keys, note }
 }
 
-/// "Reply and forward act on this message; e, b, l, v act on the thread",
-/// with the keys the keymap binds to archive, snooze, label and move.
+/// "e, b, l, v act on the thread", with the keys the keymap binds to
+/// archive, snooze, label and move. That reply and forward act on this
+/// message is said by their own labels ("reply to this"); the note is only
+/// what does not fit in a label, and short enough to share the line.
 fn thread_note(keymap: &Keymap) -> String {
     let keys: Vec<&str> = [
         CommandId::Archive,
@@ -199,10 +201,7 @@ fn thread_note(keymap: &Keymap) -> String {
     .into_iter()
     .filter_map(|command| keymap.binding(command))
     .collect();
-    format!(
-        "Reply and forward act on this message; {} act on the thread",
-        keys.join(", ")
-    )
+    format!("{} act on the thread", keys.join(", "))
 }
 
 #[cfg(test)]
@@ -340,8 +339,11 @@ mod tests {
                 assert!(said.contains(&want), "{want} in {said:?}");
             }
             let note = view.note.expect("a note below a row");
-            assert!(note.starts_with("Reply and forward act on this message; "));
-            assert!(note.ends_with(" act on the thread"));
+            assert!(note.ends_with(" act on the thread"), "{note}");
+            assert!(
+                note.chars().count() <= 36,
+                "the note shares a line with six keys and must fit beside them: {note}"
+            );
         }
     }
 

@@ -186,9 +186,16 @@ pub fn bar(
     }
 }
 
+/// "Message 4 of 6": where the message on screen is in its thread. The
+/// window's title line and the kicker both say it this way, and never the
+/// message's place in the inbox beside it.
+pub fn place(index: usize, count: usize) -> String {
+    format!("Message {} of {count}", index + 1)
+}
+
 /// "Message 4 of 6 · ] newer · [ older", the keys the keymap has.
 pub fn kicker(index: usize, count: usize, keymap: &Keymap) -> String {
-    let mut said = format!("Message {} of {count}", index + 1);
+    let mut said = place(index, count);
     for (command, word) in [
         (CommandId::NextInConversation, "newer"),
         (CommandId::PrevInConversation, "older"),
