@@ -11,7 +11,7 @@ repository.workspace = true
 [dependencies]
 # A digest rule's day and time (spec 007 T132): types only, no clock.
 chrono = { workspace = true }
-notify = "8.2.0"
+notify = "8.2.2"
 postio-model.workspace = true
 serde = { workspace = true }
 thiserror = { workspace = true }
@@ -36,3 +36,7 @@ missing_docs = "warn"
 # draft went on existing. See the workspace `[lints.clippy]`.
 [lints.clippy]
 let_underscore_future = "deny"
+
+# Restated from the workspace `[lints.cargo]`, for the same reason.
+[lints.cargo]
+unused_dependencies = "allow"
