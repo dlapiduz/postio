@@ -10,6 +10,7 @@
 use chrono::Local;
 use postio_core::{Command, CommandId};
 use postio_model::{MessageId, ThreadId, ThreadView};
+use postio_ui::scope::{self, FooterAbout, ScopeFocus};
 use postio_ui::thread_bar;
 
 use crate::cursor::Rows;
@@ -336,6 +337,20 @@ impl FocusController {
                 };
                 vec![Step::Ask(Request::ReadThread(walk.view.thread))]
             }
+            // A member of the thread changed in place -- the message the
+            // window opened on was marked read by the dwell: the bar's
+            // count and dots say what the list's row says.
+            postio_core::Event::MessagesChanged { messages, .. } => {
+                let Some(walk) = walk.filter(|walk| {
+                    walk.view
+                        .members
+                        .iter()
+                        .any(|member| messages.contains(&member.id))
+                }) else {
+                    return Vec::new();
+                };
+                vec![Step::Ask(Request::ReadThread(walk.view.thread))]
+            }
             _ => Vec::new(),
         }
     }
@@ -536,6 +551,24 @@ impl FocusController {
         ];
         if let Some(banner) = self.match_banner(walk) {
             steps.push(Step::Show(Intent::MatchBanner(Some(banner))));
+        }
+        // The footer behind the window says what r acts on from here: the
+        // message on screen, whatever row the window came from.
+        if many {
+            let member = &walk.view.members[at];
+            let about = FooterAbout {
+                subject: walk.view.subject.as_deref().unwrap_or("(no subject)"),
+                count: walk.view.members.len(),
+                index: at,
+                sender: crate::thread_expand::sender_of(member),
+            };
+            let focus = ScopeFocus::Window {
+                thread: walk.view.thread,
+                message: member.id,
+            };
+            steps.push(Step::Show(Intent::Footer(scope::footer(
+                focus, &about, keymap,
+            ))));
         }
         steps
     }
