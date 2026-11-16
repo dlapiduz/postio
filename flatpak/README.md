@@ -46,6 +46,19 @@ flatpak install -y flathub org.gnome.Platform//51 org.gnome.Sdk//51 \
 sudo dnf install flatpak-builder   # or: flatpak install flathub org.flatpak.Builder
 ```
 
+## Checking the refs before a release
+
+The manifests are only built by the release workflow, so CI's `Flatpak refs`
+job runs `scripts/flatpak-refs-check.py` whenever `flatpak/**` changes. It
+confirms the runtime, the SDK and each SDK extension exist on Flathub without
+installing anything. An extension's branch is its SDK's freedesktop base (GNOME
+50 is on 25.08), read from `flatpak remote-info --show-metadata`, not the
+manifest's `runtime-version`. Run it by hand the same way:
+
+```bash
+scripts/flatpak-refs-check.py flatpak/dev.postio.Postio.json flatpak/dev.postio.PostioTui.json
+```
+
 ## Regenerating `cargo-sources.json`
 
 Flatpak builds offline, so every crate Cargo would otherwise fetch has to be

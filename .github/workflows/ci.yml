@@ -92,6 +92,8 @@ jobs:
       # that the Linux job is unchanged in what it runs and how long it
       # takes, and both callers run the same `ci-tooling-needed.sh`.
       tooling: ${{ steps.tooling.outputs.run }}
+      # Whether `flatpak/**` changed, so the `flatpak` job can be gated.
+      flatpak: ${{ steps.flatpak.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
@@ -132,6 +134,55 @@ jobs:
                      < "$RUNNER_TEMP/changed-files")
           echo "run=$answer" >> "$GITHUB_OUTPUT"
           echo "tooling self-tests on macOS: $answer"
+
+      # The manifests are built only by the release workflow, so a runtime
+      # bump would first be exercised there. `scripts/flatpak-refs-check.py`
+      # is the cheap PR-time version. Fails safe like the classifier: an
+      # empty file list (a range GitHub could not answer) runs it.
+      - name: Decide whether the Flatpak manifests need checking
+        id: flatpak
+        run: |
+          if [ ! -s "$RUNNER_TEMP/changed-files" ] \
+             || grep -q '^flatpak/' "$RUNNER_TEMP/changed-files"; then
+            answer=yes
+          else
+            answer=no
+          fi
+          echo "run=$answer" >> "$GITHUB_OUTPUT"
+          echo "flatpak manifest check: $answer"
+
+  # The two Flatpak manifests are built only by the release workflow, so a
+  # runtime bump would otherwise be first tried at release time. This asks
+  # Flathub, without installing anything, whether every runtime, SDK and SDK
+  # extension ref the manifests name exists -- the extensions on the branch of
+  # the SDK's freedesktop base, which is not the manifest's runtime-version
+  # for GNOME. A full `flatpak-builder` run of the TUI bundle is left to the
+  # release: it compiles the whole dependency tree offline with no warm cache,
+  # which is far past what a pull request check should cost.
+  # `scripts/tests/test-flatpak-refs-check.py` tests the script offline.
+  flatpak:
+    name: Flatpak refs
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.flatpak == 'yes'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # `remote-info --show-metadata` reads a remote's summary and needs a
+      # runtime directory, as the release job gives flatpak.
+      - name: Install flatpak and add Flathub
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y flatpak
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Check the manifests' refs exist on Flathub
+        run: scripts/flatpak-refs-check.py flatpak/dev.postio.Postio.json flatpak/dev.postio.PostioTui.json
 
   fmt:
     name: rustfmt
