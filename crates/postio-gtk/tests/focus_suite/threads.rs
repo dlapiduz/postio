@@ -979,6 +979,17 @@ pub fn a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed() {
             crate::settle_until(async || composer.is_open()).await,
             "the reply opened"
         );
+        // Typing into an editor whose document is still loading is lost:
+        // wait until it holds the quote. (Where the keyboard lands is the
+        // reply-older storyboard's question, asked of the real window.)
+        assert!(
+            crate::settle_until(async || composer
+                .test_body_eval("document.body.innerText.includes('wrote')")
+                == "true")
+            .await,
+            "the reply's body never loaded with its quote: {:?}",
+            composer.test_body_eval("document.body.innerText")
+        );
         // Typed at the caret, above the quote, as a person does.
         composer.test_body_eval("document.execCommand('insertText', false, 'Agreed on exports.')");
         assert!(
