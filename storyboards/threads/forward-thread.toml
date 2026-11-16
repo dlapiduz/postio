@@ -28,26 +28,26 @@ check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3"
 [[step]]
 id      = "open"
 key     = "Return"
-check   = { view = "reader", app.focus.reading.chip = 4 }
-expect  = "Harbor opens on message 5 of 6, the first unread."
+check   = { view = "reader", app.focus.reading.chip = 4, app.focus.footer.title = "Message 5 of 6 · Lena Park" }
+expect  = "Harbor opens on message 5 of 6, the first unread. The footer behind the window now says Message 5 of 6 with reply to this, forward this: what r and f act on."
 
 [[step]]
 id      = "forward"
 command = "forward"
 check   = { composer.open = true, app.focus.compose.chooser.focused = true, app.focus.compose.chooser.open = true, app.focus.compose.chooser.selected = "This message", app.focus.compose.chooser.cards = "This message 1 | Whole thread 2 | As attachments 3" }
-expect  = "The forward opens with the keyboard in the chooser, not in To. Above To, under the title, a What to forward chooser draws three cards, each with its number key; This message is ringed and its line says it quotes Ben's message as usual."
+expect  = "The forward opens with the keyboard in the chooser, not in To. Above To, under the title, a What to forward chooser draws three cards, each with its number key; This message is ringed and its line says it quotes the message being read, message 5, as usual: forward acts on the message shown in the window, whichever the thread's latest is."
 
 [[step]]
 id      = "whole"
 key     = "2"
 check   = { composer.open = true, app.focus.compose.chooser.selected = "Whole thread", app.focus.compose.subject = "Fwd: Harbor API draft v3 (6 messages)", app.focus.compose.forwarded.messages = 6, app.focus.compose.forwarded.rows = 6 }
-expect  = "Whole thread is ringed. The subject reads Fwd: Harbor API draft v3 (6 messages) and the body holds the six messages, oldest first, each headed by who wrote it and when, as collapsed rows under the caret; the attachments are listed once."
+expect  = "Whole thread is ringed. The subject reads Fwd: Harbor API draft v3 (6 messages) and the body holds the six messages, oldest first, each headed by who wrote it and when, as collapsed rows under the caret; the attachments are listed once, under the messages."
 
 [[step]]
 id      = "expand"
 key     = "mod+shift+q"
 check   = { composer.open = true, app.focus.compose.quoted_expanded = true, app.focus.compose.forwarded.rows = 0 }
-expect  = "The collapsed rows open into the messages they stand for; nothing above them moved."
+expect  = "The collapsed rows open into the messages they stand for; what is above them does not move, and the attachments stay under the messages."
 
 [[step]]
 id      = "attachments"

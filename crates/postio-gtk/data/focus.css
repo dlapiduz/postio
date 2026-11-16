@@ -1235,6 +1235,16 @@ button.focus-results-filter.focus-results-filter-applied {
   outline-color: var(--postio-hairline-strong);
 }
 
+/* A thread's message under a search result carries the same ring. */
+.focus-results-child.focus-results-cursor {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+.focus-keyboard-away .focus-results-child.focus-results-cursor {
+  outline-color: var(--postio-hairline-strong);
+}
+
 .focus-results-gutter {
   min-width: 28px;
   color: var(--postio-ink-secondary);
@@ -2555,8 +2565,11 @@ button.focus-filtered-tab.focus-filtered-tab-on {
   border-radius: var(--postio-radius-lg);
 }
 
+/* Over the foot of the message, so the soft tint is laid on the surface and
+   never on the text under it. */
 .focus-new-reply-banner {
-  background-color: var(--postio-accent-soft);
+  background-color: var(--postio-surface);
+  background-image: linear-gradient(var(--postio-accent-soft), var(--postio-accent-soft));
   border: 1px solid var(--postio-accent);
 }
 
@@ -2564,6 +2577,14 @@ button.focus-filtered-tab.focus-filtered-tab-on {
 .focus-thread-menu-body,
 .focus-outline-body {
   padding: var(--postio-space-2);
+}
+
+/* A popover is a surface of its own and does not inherit the window's
+   face: names, lines and headings are the interface's, not the mono
+   face the keys and counts keep. */
+.focus-thread-menu > contents,
+.focus-outline > contents {
+  font-family: var(--postio-font-body);
 }
 
 .focus-thread-menu-heading {

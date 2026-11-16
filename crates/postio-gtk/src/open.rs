@@ -404,7 +404,6 @@ impl OpenMessage {
         // last block, not at the foot of a stretched column.
         column.set_valign(gtk::Align::Start);
         column.append(match_banner.widget());
-        column.append(new_reply.widget());
         column.append(banner.widget());
         column.append(&thread_chip);
         column.append(&subject);
@@ -465,7 +464,22 @@ impl OpenMessage {
         // Find sits above the column, not at its top, so opening it keeps
         // the reading position (T203).
         content.append(reader.find_bar().widget());
-        content.append(&scroller);
+        // A reply that arrives while reading is said over the foot of the
+        // message, not above it and not beside it: anything that gives the
+        // text a different place or size would move what is being read
+        // (spec 013 US4, FR-018).
+        let overlay = gtk::Overlay::new();
+        overlay.set_vexpand(true);
+        overlay.set_child(Some(&scroller));
+        let said = new_reply.widget();
+        said.set_valign(gtk::Align::End);
+        said.set_halign(gtk::Align::Fill);
+        said.set_margin_top(0);
+        said.set_margin_bottom(postio_widgets::widgets::space::S4);
+        said.set_margin_start(postio_widgets::widgets::space::S4);
+        said.set_margin_end(postio_widgets::widgets::space::S4);
+        overlay.add_overlay(said);
+        content.append(&overlay);
 
         // Toasts raised under the dialog are drawn in this overlay, above it.
         let toasts = adw::ToastOverlay::new();
@@ -1541,13 +1555,11 @@ impl OpenMessage {
         let latest = latest || thread_len == 0 || self.at.get() + 1 == thread_len;
         let kicker = self.kicker_said.borrow().clone();
         let from_results = self.match_banner.said().is_some();
-        let said = if self.row.get().is_none()
-            && !kicker.is_empty()
-            && (self.hit.get().is_none() || from_results)
-        {
-            // A message of a thread that is no row of the list: the header
-            // says where it is in its thread, in the controller's words.
-            kicker
+        let said = if !kicker.is_empty() && (self.hit.get().is_none() || from_results) {
+            // A message of a thread the window walks: the header says where
+            // it is in the thread, as the kicker does, never where its row
+            // is in the inbox.
+            postio_ui::thread_bar::place(self.at.get(), thread_len)
         } else if let Some(hit) = self.hit.get() {
             focus_dialog::result_line(
                 hit.index as usize,
