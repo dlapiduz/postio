@@ -35,7 +35,8 @@ fn seed_file(name: &str) -> postio_demo::SearchFile {
 
 #[test]
 fn a_test_binary_finds_the_helper_cargo_built_beside_it() {
-    // A test binary runs from `target/<profile>/deps/`; the helper is built
+    // A test binary runs from `target/<profile>/build/<package>/<hash>/out/`
+    // (`deps/` before Cargo 1.100); the helper is built
     // one level up, where the application's executable would be.
     if std::env::var_os(postio_session::HELPER_ENV).is_none() {
         assert_eq!(
