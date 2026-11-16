@@ -138,8 +138,11 @@ struct ThreadBarTests {
         try await window.until("`[` again") { window.ringed == opened - 2 }
 
         window.press("}")
-        try await window.until("`}` rings the latest") { window.ringed == 6 }
-        #expect(window.model.olderBanner == nil, "the latest has no banner")
+        // The ring follows the bar, the banner the message read whole: wait
+        // for both, which land a turn apart.
+        try await window.until("`}` rings the latest and its banner goes") {
+            window.ringed == 6 && window.model.olderBanner == nil
+        }
 
         window.press("{")
         try await window.until("`{` rings the first") { window.ringed == 1 }
