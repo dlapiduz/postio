@@ -65,7 +65,6 @@ pub use dropdown::{
 pub use feed::{Opened, PageAnswer};
 pub use filtered::{
     FilteredBar, FilteredBarAction, FilteredLine, FilteredSplice, FilteredTab, FilteredView,
-    PickChange, RowPicker,
 };
 pub use perform::{perform, perform_now};
 pub use pickers::{

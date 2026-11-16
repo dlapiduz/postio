@@ -819,8 +819,8 @@ fn thread_back(window: &Window) {
 fn step_down(window: &Window) {
     if let Some(digest) = window.digest() {
         digest.step(1);
-    } else if let Some(view) = window.filtered() {
-        view.step(1);
+    } else if window.filtered().is_some() {
+        window.act(CommandId::NextMessage);
     }
     crate::settle();
 }
