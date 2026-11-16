@@ -51,7 +51,7 @@ expect  = "The ring moves from the result to its first child, message 3."
 [[step]]
 id      = "open"
 command = "open_message"
-check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 2, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 3 of 6 · ] newer · [ older", app.focus.reading.matched = "3, 5, 6", app.focus.reading.position = "Message 3 of 6 · ] newer · [ older", app.focus.reading.match_banner = "‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)" }
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 2, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 3 of 6 · ] newer · [ older", app.focus.reading.matched = "3, 5, 6", app.focus.reading.position = "Message 3 of 6", app.focus.reading.match_banner = "‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)" }
 expect  = "The window opens on message 3, not on the thread's latest. The bar marks messages 3, 5 and 6 with a yellow square and rings chip 3; the kicker says \"Message 3 of 6\"; a banner reads \"‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)\" with Next and Back to results, each with its key."
 
 [[step]]
