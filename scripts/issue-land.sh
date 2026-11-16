@@ -16,7 +16,7 @@
 #   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
 #   scripts/issue-land.sh --title "feat(x): y"  # the PR's title, when the last commit's is not it
 #   scripts/issue-land.sh --full-suite          # CI runs the whole nightly on the PR too
-#                                               # (the script names a high-risk diff: scripts/risk-of-diff.sh)
+#                                               # (implied by a toolchain/mise/.cargo/flatpak change: scripts/risk-of-diff.sh)
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
 #   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
@@ -1096,9 +1096,19 @@ echo "$URL"
 # still runs the whole suite every day; the label is for the author's own
 # low confidence in a change, which no path rule can read. The risk is still
 # named, so the choice is made knowing it.
+#
+# The one exception is the build environment (the toolchain pin, mise.toml,
+# .cargo/config.toml, flatpak/*.json): no author can judge that from the
+# diff, and a Rust bump that moved Cargo's test binaries passed the sanity
+# tier and was caught only by a full suite someone happened to ask for.
+# `risk-of-diff.sh` says so on its third line, and it is `--full-suite`.
 if [ "$FULL_SUITE" = 0 ]; then
     RISK=$(git diff --name-only "origin/$BASE...HEAD" | scripts/risk-of-diff.sh || true)
-    if [ "$(printf '%s\n' "$RISK" | sed -n 1p)" = high ]; then
+    if [ "$(printf '%s\n' "$RISK" | sed -n 3p)" = full-suite ]; then
+        FULL_SUITE=1
+        echo "note: this diff changes the build environment ($(printf '%s\n' "$RISK" | sed -n 2p));"
+        echo "      landing it as --full-suite without being asked."
+    elif [ "$(printf '%s\n' "$RISK" | sed -n 1p)" = high ]; then
         echo "note: this diff is high risk ($(printf '%s\n' "$RISK" | sed -n 2p))."
         echo "      \`--full-suite\` runs the nightly on the PR before it merges; ask for it"
         echo "      when the default tier does not give you confidence in this change."
