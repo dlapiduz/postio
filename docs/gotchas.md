@@ -10,7 +10,7 @@ These are the traps in this repository that are still live and that no check, ho
 
 **`unwrap_or_default()` on a test's own observation turns breakage into a false accusation.** If the query breaks, it returns the same default as "not ready yet", and the test times out blaming the code it covers. Unwrap in the observation path. A precondition that something else can satisfy is a race in the same way: `queued > 0` counts what *this call* added, not whether there is work.
 
-**Tests that fail under load have known fixes.** Assert order and causality by recording the sequence in the mock, never wall-clock overlap. Liveness deadlines are minutes and go through `postio_test_support::scaled`/`patience`. A fault meaning "the server refuses X" is persistent, not `inject_after` a call count. `tokio::time::pause` misfires when real I/O is in the loop.
+**Tests that fail under load have known fixes.** Assert order and causality by recording the sequence in the mock, never wall-clock overlap. Liveness deadlines are minutes and go through `postio_test_support::scaled`/`patience`. A fault meaning "the server refuses X" is persistent, not `inject_after` a call count. `tokio::time::pause` misfires when real I/O is in the loop. Before re-running a red check you think is a flake, prove it: `scripts/flake-check.sh -p <crate> --test <suite> <test>` runs it idle and again under CPU load, and says which.
 
 **A negative assertion needs a duration and a positive control.** "Nothing was marked read" is just as true when the mechanism never armed. The control waits on its condition. Without one, the test passes with the feature deleted.
 
