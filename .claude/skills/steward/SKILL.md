@@ -71,6 +71,23 @@ The nightly workflow carries what left the merge path — coverage, the
 rustdoc build, and the whole-workspace suite. It is the second reader, so a
 nightly that has been red for days matters even while every PR is green.
 
+**A red Supply chain audit is yours to patch.** An advisory is published on
+any day, so `main` can carry one while it shows green, and the PR gate does
+not run `advisories` on purpose. When `cargo deny check advisories` is red on
+main, or the nightly's Supply chain job failed, work it from a fresh
+`fix/advisory-<date>` worktree:
+
+```bash
+scripts/advisory-patch.py        # cargo update -p <crate> --precise, then re-audits
+```
+
+It bumps what the lock can reach within semver and never touches a manifest.
+Land the lock change with `scripts/issue-land.sh --detach`, labelled
+`fixes-nightly` (CLAUDE.md's red-main rule: nothing else merges until it
+does). What it reports as needing a manifest bump or having no patched
+version is filed with `scripts/issue-file.sh`, naming the advisory and the
+line.
+
 The tree:
 
 ```bash
