@@ -1383,6 +1383,30 @@ impl FocusWindow {
         if known && let Some(pane) = self.pane() {
             pane.feed().input(postio_focus::Input::SurfaceClosed(kind));
         }
+        // The keyboard was in the popover; the message under it is where it
+        // goes, so the next key reads the message instead of nothing.
+        // GTK hands the focus back to the button the popover hung from as
+        // it closes, and does so after this signal: the message takes it
+        // once the loop is idle, and again a beat later if the toolkit was
+        // slower than that.
+        if known && kind == SurfaceKind::Outline {
+            for delay in [0u64, 60] {
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(delay),
+                    glib::clone!(
+                        #[weak(rename_to = window)]
+                        self,
+                        move || {
+                            if let Some(reading) =
+                                window.reading().filter(|reading| reading.is_open())
+                            {
+                                reading.focus_message();
+                            }
+                        }
+                    ),
+                );
+            }
+        }
     }
 
     /// The open message does what the controller says.

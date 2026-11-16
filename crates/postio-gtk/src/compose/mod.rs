@@ -111,7 +111,7 @@ impl Compose {
             layout.clone().upcast(),
         ));
         composer.mount_on(Rc::clone(&host) as Rc<dyn postio_widgets::composer::ComposerHost>);
-        host.slot.append(&thread.forwarded);
+        composer.below_body().append(&thread.forwarded);
         host.slot.append(&thread.newer);
         // The dialog's own ways out -- Escape reaching it, a click outside
         // -- mean what `Esc` means: close, keeping the draft.

@@ -166,6 +166,7 @@ mod tests {
             || rule.starts_with(".focus-filtered-list > row:selected ")
             || rule.starts_with(".focus-contacts-list > row:selected ")
             || rule.starts_with(".focus-results-row.focus-results-cursor ")
+            || rule.starts_with(".focus-results-child.focus-results-cursor ")
             || rule == ".focus-results-gutter.focus-results-dot { color }"
             || rule.starts_with(".focus-file-card.focus-file-focused ")
             || rule.starts_with(".focus-quicklook-card.focus-quicklook-current ")
@@ -234,6 +235,24 @@ mod tests {
             bar,
             "the folders popover leaves its highlighted row in the accent tint"
         );
+    }
+
+    /// Where the keyboard is in a search's results is a ring, on a result and
+    /// on a thread's message under it alike: the ring moves to the child and
+    /// a child that does not draw it leaves the person nowhere to look.
+    #[test]
+    fn a_result_and_the_thread_message_under_it_draw_the_same_ring() {
+        let sheets = [SHARED, COLOURS, SURFACES];
+        for selector in [
+            ".focus-results-row.focus-results-cursor",
+            ".focus-results-child.focus-results-cursor",
+        ] {
+            assert_eq!(
+                winning(&sheets, selector, "outline").as_deref(),
+                Some("2px solid var(--postio-accent)"),
+                "{selector}"
+            );
+        }
     }
 
     /// A selector's specificity, in this stylesheet's own narrow subset: one

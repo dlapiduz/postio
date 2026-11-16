@@ -656,6 +656,9 @@ mod imp {
         /// nothing to show — a bare "no attachments" line is clutter the Cc
         /// row already taught this composer not to add.
         pub attachments_box: gtk::Box,
+        /// Under the body and above the attachments: what a host has to say
+        /// about the text, as the folded messages of a forwarded thread.
+        pub below_body: gtk::Box,
         pub attachments_list: gtk::ListBox,
         /// Everything about the draft that is not in a field: its id, account,
         /// kind, attachments, and what it is a reply to.
@@ -784,6 +787,7 @@ mod imp {
                 warning: gtk::Label::new(None),
                 tracking_notice: gtk::Label::new(None),
                 attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                below_body: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 attachments_list: gtk::ListBox::new(),
                 draft: RefCell::new(Draft::new(AccountId::UNASSIGNED)),
                 composing_from: Cell::new(AccountId::UNASSIGNED),
@@ -1219,6 +1223,13 @@ impl Composer {
             imp.filling.set(was);
         }
         postio_body::forward::thread_rows(&imp.held.borrow())
+    }
+
+    /// The place under the body, above the attachments, for what a host
+    /// has to say about the text: the forwarded thread's folded rows sit
+    /// here, so they read as the text being forwarded.
+    pub fn below_body(&self) -> gtk::Box {
+        self.imp().below_body.clone()
     }
 
     /// Show the folded forwarded messages in the body again.
@@ -3126,6 +3137,7 @@ impl Composer {
         column.append(&imp.tracking_notice);
         column.append(&self.build_toolbar());
         column.append(imp.body.widget());
+        column.append(&imp.below_body);
         column.append(&imp.warning);
         column.append(&self.build_attachments());
         let actions = self.build_actions();

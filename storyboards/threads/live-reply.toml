@@ -40,8 +40,8 @@ expect  = "Message 4 is shown and ringed."
 id      = "arrives"
 event   = "reply"
 settle  = { until = { app.focus.reading.chips = 7 } }
-check   = { view = "reader", reading.id = { same_as = "older" }, app.focus.reading.chip = 3, app.focus.reading.chips = 7, app.focus.reading.new_reply = true }
-expect  = "Message 4 is still shown and still ringed; nothing scrolled. The bar has a seventh chip with an unread dot, and an accent banner says Ana replied, quotes the first line of it, and ends with Read it }. The kicker now says Message 4 of 7."
+check   = { view = "reader", reading.id = { same_as = "older" }, app.focus.reading.chip = 3, app.focus.reading.chips = 7, app.focus.reading.new_reply = true, app.focus.footer.title = "Message 4 of 7 · Ben Adeyemi" }
+expect  = "Message 4 is still shown and still ringed; nothing scrolled. The bar has a seventh chip with an unread dot, and an accent banner says Ana replied, quotes the first line of it, and ends with Read it }. The kicker now says Message 4 of 7, and so does the title line. The banner sits over the foot of the message: the text being read does not move."
 
 [[step]]
 id      = "read-it"

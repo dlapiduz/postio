@@ -31,6 +31,9 @@ fn popover(parent: &impl IsA<gtk::Widget>, class: &str, width: i32) -> gtk::Popo
     popover.add_css_class(class);
     popover.set_has_arrow(false);
     popover.set_position(gtk::PositionType::Bottom);
+    // Hung from the button's right edge: the button is at the dialog's
+    // right, and a popover centred on it would run past the window.
+    popover.set_halign(gtk::Align::End);
     popover.set_size_request(width, -1);
     popover.set_parent(parent);
     let held = popover.downgrade();

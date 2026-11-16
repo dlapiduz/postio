@@ -5,6 +5,7 @@
 //! observation's account of where the cursor is.
 
 use crate::support::{self, Fixture};
+use adw::prelude::AdwDialogExt as _;
 use gtk::prelude::*;
 use postio_model::MessageId;
 
@@ -352,7 +353,7 @@ pub fn the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it() {
         assert!(
             said(&window, "focus.footer.note")
                 .and_then(|note| note.as_str().map(str::to_owned))
-                .is_some_and(|note| note.starts_with("Reply and forward act on this message")),
+                .is_some_and(|note| note.ends_with(" act on the thread")),
             "and says what acts on what"
         );
         support::keys(&window, &["r"]);
@@ -415,6 +416,21 @@ pub fn the_window_walks_its_thread() {
             reading_said(&window, "banner"),
             Some(serde_json::json!(true))
         );
+        assert_eq!(
+            window.reading().expect("open").subtitle(),
+            "Message 5 of 6",
+            "the header says where the message is in its thread, as the kicker does"
+        );
+        assert!(
+            window
+                .observe()
+                .app
+                .get("focus.footer.title")
+                .and_then(|title| title.as_str())
+                .is_some_and(|title| title.starts_with("Message 5 of 6")),
+            "the footer behind the window names the message r acts on: {:?}",
+            window.observe().app.get("focus.footer.title")
+        );
 
         for _ in 0..2 {
             support::press(&window, "bracketleft", gtk::gdk::ModifierType::empty());
@@ -434,7 +450,7 @@ pub fn the_window_walks_its_thread() {
         assert_eq!(pane.cursor().selected(), 0, "the list's cursor stayed");
         assert_eq!(
             window.reading().expect("open").subtitle(),
-            "Message 3 of 6 \u{b7} ] newer \u{b7} [ older",
+            "Message 3 of 6",
             "the header says where the message is in its thread, not a result"
         );
 
@@ -450,6 +466,11 @@ pub fn the_window_walks_its_thread() {
         assert_eq!(
             reading_said(&window, "banner"),
             Some(serde_json::json!(false))
+        );
+        assert_eq!(
+            window.reading().expect("open").subtitle(),
+            "Message 6 of 6",
+            "the latest is still said by its place in the thread, not the inbox's"
         );
 
         support::keys(&window, &["g", "u"]);
@@ -526,6 +547,29 @@ pub fn a_reply_while_reading_changes_nothing_on_screen_until_read_it() {
             .await
         );
         let shown = window.observe().reading.id;
+        // Where the body is drawn, in the window: a reply must not move it.
+        let body_y = |window: &postio_gtk::window::FocusWindow| {
+            let reading = window.reading().expect("open");
+            let dialog = reading.dialog().child().expect("the dialog's content");
+            reading
+                .reader()
+                .view()
+                .compute_bounds(&dialog)
+                .map(|bounds| bounds.y())
+        };
+        // The message is whole on screen before it is measured: a body
+        // that lands later is its own layout, not the reply's.
+        let reading = window.reading().expect("open");
+        assert!(
+            crate::settle_until(async || reading.reader().view().document().is_some()
+                && !reading.body_text().is_empty()
+                && reading.reader().view().tiles_settled())
+            .await,
+            "the body was never drawn"
+        );
+        crate::settle();
+        let before = body_y(&window);
+        assert!(before.is_some(), "the body is on screen");
 
         let (reply, thread) = fixture.reply_to(*ids.last().unwrap(), "Ana replied").await;
         sink.emit(postio_core::Event::NewMail {
@@ -556,6 +600,12 @@ pub fn a_reply_while_reading_changes_nothing_on_screen_until_read_it() {
             "the shown message is unchanged"
         );
         assert_eq!(reading_said(&window, "chip"), Some(serde_json::json!(1)));
+        crate::settle();
+        assert_eq!(
+            body_y(&window),
+            before,
+            "the banner for the reply must not push the text being read down"
+        );
 
         support::press(&window, "braceright", gtk::gdk::ModifierType::SHIFT_MASK);
         assert!(
@@ -655,6 +705,38 @@ pub fn the_outline_filters_by_name_and_return_shows_that_message() {
             Some(serde_json::json!(2))
         );
         let reading = window.reading().expect("open");
+        // The outline is the width the design gives it, whole inside the
+        // window, and in the interface's face (a popover is its own surface
+        // and does not inherit the window's font).
+        let outline = support::descendants(&thread_button(&reading))
+            .into_iter()
+            .find_map(|widget| {
+                widget
+                    .downcast::<gtk::Popover>()
+                    .ok()
+                    .filter(|popover| popover.has_css_class("focus-outline"))
+            })
+            .expect("the outline popover");
+        let bounds = outline
+            .child()
+            .and_then(|body| body.compute_bounds(&window))
+            .expect("the outline is placed in the window");
+        assert!(
+            bounds.width() <= 450.0 && bounds.x() + bounds.width() <= window.width() as f32,
+            "the outline is 440 wide and inside the window: {bounds:?} in {}",
+            window.width()
+        );
+        let face = outline
+            .child()
+            .and_then(|body| support::descendants(&body).into_iter().next_back())
+            .map(|widget| widget.pango_context().font_description())
+            .and_then(|font| font.and_then(|font| font.family()))
+            .map(|family| family.to_string())
+            .unwrap_or_default();
+        assert!(
+            !face.to_lowercase().contains("mono"),
+            "the outline's names and lines are not in the mono face: {face:?}"
+        );
         let field = support::descendants(&thread_button(&reading))
             .into_iter()
             .find_map(|widget| widget.downcast::<gtk::Entry>().ok())
@@ -679,6 +761,16 @@ pub fn the_outline_filters_by_name_and_return_shows_that_message() {
         assert_eq!(
             said(&window, "focus.outline.open"),
             Some(serde_json::json!(false))
+        );
+        assert!(
+            crate::settle_until(async || window
+                .observe()
+                .keyboard
+                .widget
+                .ends_with("GtkScrolledWindow"))
+            .await,
+            "the keyboard went back to the message, not the dialog's frame: {:?}",
+            window.observe().keyboard
         );
     });
 }
@@ -1260,6 +1352,15 @@ pub fn mod_shift_q_folds_and_unfolds_the_forwarded_messages() {
             .await,
             "six messages fold to six rows: {:?}",
             compose_said(&window, "forwarded.rows")
+        );
+        // The rows are the text being forwarded: they sit in the composer
+        // under what is typed, not below its attachments list like more
+        // attachments.
+        let dialog = window.compose_dialog().expect("the compose dialog");
+        let rows = support::only(&dialog, "focus-forwarded");
+        assert!(
+            rows.is_ancestor(&composer),
+            "the forwarded rows are inside the composer, under its body"
         );
         let seen = || composer.test_body_eval("document.body.innerText");
         assert!(
