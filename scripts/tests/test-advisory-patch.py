@@ -49,7 +49,8 @@ if args[:1] == ["deny"]:
             "code": adv.get("code", "vulnerability"),
             "severity": "error",
             "message": adv["title"],
-            "advisory": {{"id": adv["id"], "package": adv["package"], "title": adv["title"]}},
+            "advisory": {{"id": adv["id"], "package": adv["package"], "title": adv["title"],
+                         **({{"patched_versions": adv["patched_versions"]}} if "patched_versions" in adv else {{}})}},
             "graphs": [{{"Krate": {{"name": adv["package"], "version": adv["version"]}},
                         "parents": [{{"Krate": {{"name": "leaf", "version": "0.1.0"}}}}]}}],
             "notes": ["ID: " + adv["id"], "Solution: " + adv["solution"]],
@@ -231,6 +232,49 @@ def case_mixed_run_patches_what_it_can() -> bool:
     return True
 
 
+def case_unreadable_note_is_its_own_outcome() -> bool:
+    """A note in wording we do not know is not 'no patched version'."""
+    unknown = {
+        "id": "RUSTSEC-2026-9003",
+        "package": "mystery",
+        "version": "2.0.0",
+        "title": "new wording",
+        "solution": "Fixed in 2.0.1 or later",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root, state, env = sandbox(Path(tmp), [unknown], [])
+        result = run(root, env)
+        if result.returncode != 3:
+            return fail(f"expected exit 3, got {result.returncode}", result)
+        if "could not read the patched versions" not in result.stdout:
+            return fail("report should say it could not read the versions", result)
+        if "no patched version" in result.stdout:
+            return fail("must not be folded into 'no patched version'", result)
+        if updates(state):
+            return fail("must not guess an update", result)
+    return True
+
+
+def case_structured_versions_are_preferred() -> bool:
+    """A `patched_versions` field in the advisory beats parsing the note."""
+    adv = {
+        "id": "RUSTSEC-2026-9004",
+        "package": "structured",
+        "version": "1.0.0",
+        "title": "has data",
+        "solution": "gibberish",
+        "patched_versions": [">=1.0.3"],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root, state, env = sandbox(Path(tmp), [adv], [])
+        result = run(root, env)
+        if result.returncode != 0:
+            return fail("structured versions should be used", result)
+        if updates(state) != [["update", "-p", "structured@1.0.0", "--precise", "1.0.3"]]:
+            return fail(f"wrong updates: {updates(state)}", result)
+    return True
+
+
 def case_clean_audit_does_nothing() -> bool:
     with tempfile.TemporaryDirectory() as tmp:
         root, state, env = sandbox(Path(tmp), [], [])
@@ -256,6 +300,8 @@ def main() -> int:
         ("a manifest bump names its line", case_manifest_bump_names_the_line),
         ("no patched version is reported, not attempted", case_no_patched_version),
         ("a mixed run patches what it can", case_mixed_run_patches_what_it_can),
+        ("an unreadable note is its own outcome", case_unreadable_note_is_its_own_outcome),
+        ("structured patched versions are preferred", case_structured_versions_are_preferred),
         ("a clean audit does nothing", case_clean_audit_does_nothing),
         ("it neither pushes nor opens PRs", case_never_pushes_or_edits_the_lock_itself),
     ]
