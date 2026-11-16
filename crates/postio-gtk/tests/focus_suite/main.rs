@@ -1671,6 +1671,10 @@ const CASES: &[(&str, fn())] = &[
         threads::j_walks_the_children_and_on_to_the_next_thread as fn(),
     ),
     (
+        "threads::new_mail_above_an_open_thread_moves_its_children_with_it",
+        threads::new_mail_above_an_open_thread_moves_its_children_with_it as fn(),
+    ),
+    (
         "threads::left_folds_the_thread_from_a_child",
         threads::left_folds_the_thread_from_a_child as fn(),
     ),

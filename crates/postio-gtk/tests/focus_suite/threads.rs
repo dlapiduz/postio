@@ -1567,3 +1567,80 @@ pub fn alt_v_on_a_child_moves_that_message_alone() {
         }
     });
 }
+
+/// How many times each child's line is drawn, in the order the rows are.
+fn children_drawn(pane: &postio_gtk::list::ListPane) -> Vec<String> {
+    drawn(pane)
+        .into_iter()
+        .filter(|text| text.starts_with("Message "))
+        .collect()
+}
+
+/// New mail landing above an open thread moves its row down, and its
+/// children go with it: each is drawn once, under the thread's row, and
+/// `Left` folds all of them away (a sync while a thread was open left two
+/// children behind on screen, 2026-11-16).
+pub fn new_mail_above_an_open_thread_moves_its_children_with_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.thread_of("Harbor plan", 3, 60).await;
+        fixture.file_in(fixture.inbox, "Top", 10).await;
+        let (window, sink) = opened_telling(&fixture).await;
+        let pane = window.pane().expect("the inbox");
+        assert!(
+            crate::settle_until(async || pane.cursor().n_items() == 2).await,
+            "the inbox opens with a message above the thread"
+        );
+        support::keys(&window, &["j", "Right"]);
+        assert!(
+            crate::settle_until(async || pane.cursor().n_items() == 5).await,
+            "Right spliced the three messages in: {} rows",
+            pane.cursor().n_items()
+        );
+
+        let fresh = fixture.file_in(fixture.inbox, "Fresh", 1).await;
+        sink.emit(postio_core::Event::NewMail {
+            account: fixture.account.id,
+            mailbox: fixture.inbox,
+            messages: vec![fresh],
+        });
+        assert!(
+            crate::settle_until(async || pane.cursor().n_items() == 6
+                && support::subjects(&window).first().map(String::as_str) == Some("Fresh"))
+            .await,
+            "the new mail landed at the top: {:?}",
+            support::subjects(&window)
+        );
+        crate::settle();
+        assert_eq!(
+            children_drawn(&pane),
+            ["Message 1", "Message 2", "Message 3"],
+            "each child is drawn once"
+        );
+        let thread_row = pane
+            .cursor()
+            .item(2)
+            .and_downcast::<postio_gtk::list::model::RowObject>()
+            .and_then(|row| row.child_view());
+        assert!(
+            thread_row.is_none(),
+            "the thread's row is third, under the new mail and Top, not a child"
+        );
+
+        support::keys(&window, &["Left"]);
+        assert!(
+            crate::settle_until(async || pane.cursor().n_items() == 3).await,
+            "Left folded the children: {} rows",
+            pane.cursor().n_items()
+        );
+        crate::settle();
+        assert_eq!(
+            children_drawn(&pane),
+            Vec::<String>::new(),
+            "no child is left on screen"
+        );
+    });
+}
