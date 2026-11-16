@@ -44,6 +44,22 @@ message 4, where the design's state needs two.
 | Chips are left-packed with a 4 pt gap; Thread ▾ is 88 wide (76 truncated its label) | Mac | The label's width at the system font |
 | Names and times differ from the design's | both | Invented seed data |
 
+## The bar's `chips` at 500 members
+
+`cargo bench -p postio-bench --bench thread_bar`, release build, 2000 calls
+a case, over a thread of 500 messages with the current one in the middle
+(T086). The budget is 16 ms; plan.md's stop rule is not invoked.
+
+| Case | p50 | p95 |
+|---|---|---|
+| Room for 8 chips, no search | 21.8 us | 37.5 us |
+| Room for 8 chips, 50 matches | 22.6 us | 36.5 us |
+| Room for 500 chips, no search | 222.9 us | 269.5 us |
+| Room for 500 chips, 50 matches | 235.3 us | 280.1 us |
+
+The widest case is under 2% of the budget. A window never has room for
+500 chips; the second pair is the ceiling.
+
 ## A regression found on the way, and not one
 
 `a_hundredth_open_builds_no_second_message_view` hung once each open
