@@ -52,6 +52,14 @@ Rebase the feature branch onto `main` as you go. Children do not close on a
 merge into the feature branch; one PR to `main` naming every child closes
 them.
 
+**A branch that needs an open PR's branch** is stacked the same way: claim it
+with `--base <that-branch>` (or write the name to `postio-base`) and land as
+usual; the PR opens against that branch. Once that PR has squash-merged,
+the next `issue-land.sh` run notices, rebases `--onto origin/main` from the
+base's old tip (a plain rebase would replay commits `main` now has under
+other hashes), records `main`, retargets the PR and carries on. While the base
+is open, it says the PR will retarget when the base merges.
+
 ## 2. Work
 
 Stay in the worktree. Everything is allowed in it — `git add -A`, `cargo fmt
