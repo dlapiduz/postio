@@ -42,7 +42,9 @@ public enum ForwardChooserKeys {
     /// takes nothing from the window.
     public static func contexts(base: UiContext, chooserFocused: Bool, typing: Bool) -> [UiContext] {
         guard base == .composer, chooserFocused, !typing else { return [base] }
-        return [.forwardChooser, base]
+        // The context's own chain ends in the composer's and Global's,
+        // so Escape and Send keep working while it has focus.
+        return [.forwardChooser]
     }
 }
 
