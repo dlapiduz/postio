@@ -6361,7 +6361,10 @@ fn a_form_that_needs_a_message_not_here_is_refused_and_nothing_is_fetched() {
         "the synced message has no body yet"
     );
 
-    let before = (mock.calls(), mock.body_fetches(), mock.header_fetches());
+    // What a forward would fetch: a body or headers. Not every call the
+    // server hears -- the sync loop started above polls on its own, and a
+    // pass landing mid-case counted as the forward's (PR #2124's Tests).
+    let before = (mock.body_fetches(), mock.header_fetches());
     for form in [ForwardForm::Thread, ForwardForm::Attachments] {
         let answer = world
             .rt
@@ -6383,8 +6386,8 @@ fn a_form_that_needs_a_message_not_here_is_refused_and_nothing_is_fetched() {
         .expect("an answer");
     assert_eq!(answer, Forwarded::NotLocal(vec![synced]));
     assert_eq!(
-        (mock.calls(), mock.body_fetches(), mock.header_fetches()),
+        (mock.body_fetches(), mock.header_fetches()),
         before,
-        "the server heard nothing"
+        "nothing was fetched"
     );
 }
