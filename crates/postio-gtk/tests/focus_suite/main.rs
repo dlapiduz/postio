@@ -1724,6 +1724,18 @@ const CASES: &[(&str, fn())] = &[
         threads::a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed as fn(),
     ),
     (
+        "threads::return_on_the_draft_child_opens_the_draft_in_the_composer",
+        threads::return_on_the_draft_child_opens_the_draft_in_the_composer as fn(),
+    ),
+    (
+        "threads::clicking_a_thread_bar_chip_shows_that_message",
+        threads::clicking_a_thread_bar_chip_shows_that_message as fn(),
+    ),
+    (
+        "threads::clicking_the_more_chip_opens_the_outline",
+        threads::clicking_the_more_chip_opens_the_outline as fn(),
+    ),
+    (
         "threads::forwarding_the_whole_thread_says_so_in_the_subject",
         threads::forwarding_the_whole_thread_says_so_in_the_subject as fn(),
     ),

@@ -359,33 +359,79 @@ pub fn install_resume(
                     return;
                 }
             };
-            let (draft, note) = if draft.state == DraftState::Queued {
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                let Ok(Some(reopened)) = client.cancel_send(draft.id).await else {
-                    return;
-                };
-                (reopened, Some(ResumeNote::Cancelled))
-            } else if draft.state == DraftState::Failed {
-                // FR-066's third clause, and #1487: a failed send has to
-                // name what went wrong.
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                let why = client.send_failure(draft.id).await.ok().flatten();
-                (draft, why.map(ResumeNote::Failed))
-            } else {
-                (draft, None)
-            };
-            let Some(composer) = weak.upgrade() else {
-                return;
-            };
-            // So that closing it empty clears the right row: `connect_closed`
-            // carries what became of the draft and not which one it was.
-            last_id.set(Some(draft.id));
-            composer.resume(draft);
-            if let (Some(note), Some(on_note)) = (note, on_note) {
-                on_note(note);
-            }
+            resume_found(draft, weak, client, last_id, on_note).await;
         });
     })
+}
+
+/// What opens a draft by its own id: a thread's unsent reply, which has no
+/// message of its own to name (spec 013, T085 (a)). The same opening as
+/// [`install_resume`]'s.
+pub type ResumeDraft = Rc<dyn Fn(DraftId)>;
+
+/// [`install_resume`] for a draft named by its id.
+pub fn install_resume_draft(
+    composer: &Composer,
+    client: &Client,
+    last_id: Rc<Cell<Option<DraftId>>>,
+    on_note: Option<OnResumeNote>,
+) -> ResumeDraft {
+    let weak = composer.downgrade();
+    let client = client.clone();
+    Rc::new(move |id| {
+        let weak = weak.clone();
+        let client = client.clone();
+        let last_id = Rc::clone(&last_id);
+        let on_note = on_note.clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: client calls are oneshot receives.
+            let draft = match client.draft_by_id(id).await {
+                Ok(Some(draft)) => draft,
+                Ok(None) => return,
+                Err(error) => {
+                    tracing::warn!(%error, "could not read a draft by id");
+                    return;
+                }
+            };
+            resume_found(draft, weak, client, last_id, on_note).await;
+        });
+    })
+}
+
+/// Open `draft` in the composer: a queued send is taken back first, and a
+/// failed one says why.
+async fn resume_found(
+    draft: postio_model::Draft,
+    weak: glib::WeakRef<Composer>,
+    client: Client,
+    last_id: Rc<Cell<Option<DraftId>>>,
+    on_note: Option<OnResumeNote>,
+) {
+    let (draft, note) = if draft.state == DraftState::Queued {
+        // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+        let Ok(Some(reopened)) = client.cancel_send(draft.id).await else {
+            return;
+        };
+        (reopened, Some(ResumeNote::Cancelled))
+    } else if draft.state == DraftState::Failed {
+        // FR-066's third clause, and #1487: a failed send has to
+        // name what went wrong.
+        // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+        let why = client.send_failure(draft.id).await.ok().flatten();
+        (draft, why.map(ResumeNote::Failed))
+    } else {
+        (draft, None)
+    };
+    let Some(composer) = weak.upgrade() else {
+        return;
+    };
+    // So that closing it empty clears the right row: `connect_closed`
+    // carries what became of the draft and not which one it was.
+    last_id.set(Some(draft.id));
+    composer.resume(draft);
+    if let (Some(note), Some(on_note)) = (note, on_note) {
+        on_note(note);
+    }
 }
 
 /// Recipient completion, answered from memory.

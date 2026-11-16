@@ -37,6 +37,7 @@ pub struct Compose {
     frame: Rc<frame::Frame>,
     host: Rc<host::DialogHost>,
     resume: seams::Resume,
+    resume_draft: seams::ResumeDraft,
     /// The account a new message is written from.
     account: AccountId,
     /// "Remind if no reply", opened at the action row by `mod+h` or a click
@@ -146,7 +147,7 @@ impl Compose {
                 window.say(&postio_ui::compose::kept_note(key.as_deref()));
             }
         });
-        let resume = seams::wire(&composer, &frame, client, account, current, say);
+        let (resume, resume_draft) = seams::wire(&composer, &frame, client, account, current, say);
         let remind = WhenPicker::new(&keymap, When::Remind);
         remind.connect_chosen(glib::clone!(
             #[weak]
@@ -158,6 +159,7 @@ impl Compose {
             frame,
             host,
             resume,
+            resume_draft,
             account,
             remind,
             thread,
@@ -228,6 +230,12 @@ impl Compose {
     /// Open the draft behind the Drafts row `message` for editing.
     pub fn open_draft(&self, message: postio_model::MessageId) {
         (self.resume)(message);
+    }
+
+    /// Open the unsent reply `draft`, which a thread shows and which has no
+    /// message of its own, for editing.
+    pub fn open_thread_draft(&self, draft: postio_model::DraftId) {
+        (self.resume_draft)(draft);
     }
 
     /// A new message from a `mailto:` link: its recipients, subject and body

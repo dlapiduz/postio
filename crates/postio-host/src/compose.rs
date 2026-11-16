@@ -425,6 +425,20 @@ pub async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft>
         .ok()?
 }
 
+/// The draft with this id, if it is still there.
+pub async fn draft_by_id(database: &Store, id: DraftId) -> Option<Draft> {
+    let connection = database
+        .read()
+        .await
+        .map_err(|error| tracing::warn!(%error, "could not open the store to resume a draft"))
+        .ok()?;
+    DraftRepository::new(&connection)
+        .get(id)
+        .await
+        .map_err(|error| tracing::warn!(%error, "could not read a draft by id"))
+        .ok()?
+}
+
 /// Every draft `account` has, for crash recovery.
 pub async fn drafts_of(database: &Store, account: AccountId) -> postio_storage::Result<Vec<Draft>> {
     let connection = database.read().await?;

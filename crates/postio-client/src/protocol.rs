@@ -360,6 +360,9 @@ pub enum Req {
     ReplySource(MessageId),
     /// The local draft behind a Drafts row, if there is one.
     DraftBehind(MessageId),
+    /// The local draft with this id, if there is one: a thread's unsent
+    /// reply, which has no message of its own to name.
+    DraftById(DraftId),
     /// Take a queued draft back to edit it, if it has not started sending.
     CancelSend(DraftId),
     /// Why a draft's last send attempt gave up.

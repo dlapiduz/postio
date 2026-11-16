@@ -942,3 +942,162 @@ pub fn forwarding_the_whole_thread_says_so_in_the_subject() {
         );
     });
 }
+
+/// An unsent reply is a child of its thread with no message of its own;
+/// `Return` on it opens that draft in the composer, with its words.
+pub fn return_on_the_draft_child_opens_the_draft_in_the_composer() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 3, 10).await;
+        fixture
+            .thread_draft(ids[2], "Thanks, I will check the exports tomorrow.")
+            .await;
+        let (window, _client) = fixture.open().await;
+        let pane = window.pane().expect("the inbox");
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Right"]);
+        // The row, three messages, and the draft.
+        assert!(crate::settle_until(async || pane.cursor().n_items() == 5).await);
+        support::keys(&window, &["j", "j", "j", "j"]);
+        assert_eq!(pane.cursor().selected(), 4, "on the draft child");
+        support::keys(&window, &["Return"]);
+        let composer = window.composer().expect("the composer");
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "the draft opened in the composer"
+        );
+        assert!(
+            crate::settle_until(async || composer
+                .draft()
+                .body
+                .text
+                .unwrap_or_default()
+                .contains("check the exports tomorrow"))
+            .await,
+            "with its own words: {:?}",
+            composer.draft().body.text
+        );
+        assert!(
+            window.observe().reading.id.is_none(),
+            "a draft is written, not read"
+        );
+    });
+}
+
+/// The chips drawn in the message window's thread bar, left to right.
+fn chips_of(reading: &postio_gtk::open::OpenMessage) -> Vec<gtk::Widget> {
+    support::with_class(&reading.dialog(), "focus-thread-chip")
+        .into_iter()
+        .filter(|chip| chip.root().is_some())
+        .collect()
+}
+
+/// Click the `at`th chip wearing `class` once a click there reaches it:
+/// the dialog is still opening for a moment, and the bar redraws its chips
+/// when it is told how many fit, so the chip is found again on every try.
+async fn click_chip(
+    window: &postio_gtk::window::FocusWindow,
+    reading: &postio_gtk::open::OpenMessage,
+    class: &str,
+    at: usize,
+) {
+    let target = || -> Option<(gtk::Widget, f64, f64)> {
+        let chip = support::with_class(&reading.dialog(), class)
+            .into_iter()
+            .filter(|chip| chip.root().is_some())
+            .nth(at)?;
+        let bounds = chip.compute_bounds(window)?;
+        let x = f64::from(bounds.x() + bounds.width() / 2.0);
+        let y = f64::from(bounds.y() + bounds.height() / 2.0);
+        let picked = window.pick(x, y, gtk::PickFlags::DEFAULT)?;
+        (picked == chip || picked.is_ancestor(&chip)).then_some((chip, x, y))
+    };
+    assert!(
+        crate::settle_until(async || target().is_some()).await,
+        "a click reaches the chip"
+    );
+    let (_, x, y) = target().expect("the chip");
+    support::click_at(window, x, y, 1);
+}
+
+pub fn clicking_a_thread_bar_chip_shows_that_message() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 6, 10).await;
+        fixture.read_first(&ids, 4).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(4))
+            )
+            .await
+        );
+        let reading = window.reading().expect("open");
+        assert!(
+            crate::settle_until(async || chips_of(&reading).len() == 6).await,
+            "every member has a chip"
+        );
+        click_chip(&window, &reading, "focus-thread-chip", 1).await;
+        assert!(
+            crate::settle_until(
+                async || reading_said(&window, "chip") == Some(serde_json::json!(1))
+            )
+            .await,
+            "the click showed message 2: {:?}",
+            reading_said(&window, "chip")
+        );
+        assert_eq!(
+            window.observe().reading.id,
+            Some(ids[1].get().to_string()),
+            "the second message is on screen"
+        );
+    });
+}
+
+pub fn clicking_the_more_chip_opens_the_outline() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 40, 10).await;
+        fixture.read_first(&ids, 39).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(async || reading_said(&window, "chips")
+                .and_then(|chips| chips.as_u64())
+                .is_some_and(|chips| chips > 0))
+            .await
+        );
+        let reading = window.reading().expect("open");
+        let more = || {
+            support::with_class(&reading.dialog(), "focus-thread-chip-more")
+                .into_iter()
+                .filter(|chip| chip.root().is_some())
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            crate::settle_until(async || more().len() == 1).await,
+            "forty messages do not all fit"
+        );
+
+        click_chip(&window, &reading, "focus-thread-chip-more", 0).await;
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.outline.open") == Some(serde_json::json!(true))
+            )
+            .await,
+            "the click opened the outline"
+        );
+    });
+}

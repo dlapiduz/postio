@@ -1486,6 +1486,11 @@ impl OpenMessage {
         self.thread_bar.connect_menu(handler);
     }
 
+    /// Run `handler` when a thread-bar chip is clicked.
+    pub fn connect_thread_chip(&self, handler: impl Fn(crate::thread_bar::ChipClick) + 'static) {
+        self.thread_bar.connect_chip(handler);
+    }
+
     /// The sender block's Reply to row, or none.
     pub fn set_reply_to(&self, reply_to: Option<&str>) {
         self.header_card.set_reply_to(reply_to);

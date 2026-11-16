@@ -28,6 +28,9 @@ pub type Current = Rc<dyn Fn() -> Option<MessageId>>;
 /// Open the draft behind a Drafts row for editing.
 pub type Resume = shared::Resume;
 
+/// Open a thread's unsent reply by its draft's id.
+pub type ResumeDraft = shared::ResumeDraft;
+
 /// What the frame's subtitle says once opening a queued draft has cancelled
 /// its send (#433).
 const SEND_CANCELLED: &str = "Send cancelled \u{2014} you're editing this draft again";
@@ -51,7 +54,7 @@ pub fn wire(
     account: AccountId,
     current: Current,
     say: Say,
-) -> Resume {
+) -> (Resume, ResumeDraft) {
     composer.set_account(account);
     let identities_composer = composer.downgrade();
     let identities_client = client.clone();
@@ -153,7 +156,7 @@ fn resume(
     client: &Client,
     last_id: Rc<std::cell::Cell<Option<postio_model::DraftId>>>,
     frame: &Rc<Frame>,
-) -> Resume {
+) -> (Resume, ResumeDraft) {
     let frame = Rc::downgrade(frame);
     let on_note: shared::OnResumeNote = Rc::new(move |note| {
         let Some(frame) = frame.upgrade() else {
@@ -166,7 +169,15 @@ fn resume(
             }
         }
     });
-    shared::install_resume(composer, client, last_id, Some(on_note))
+    (
+        shared::install_resume(
+            composer,
+            client,
+            Rc::clone(&last_id),
+            Some(Rc::clone(&on_note)),
+        ),
+        shared::install_resume_draft(composer, client, last_id, Some(on_note)),
+    )
 }
 
 /// `r`, `a` and `f` answer the row the cursor is on. A reply starts with its
