@@ -354,6 +354,13 @@ fail-fast = false
 filter = 'test(/^every_command::/)'
 slow-timeout = { period = "120s", terminate-after = 10 }
 
+# The catalogue films every storyboard of Focus: main's last two nightly runs
+# took 620-655 s of the twelve minutes above, and spec 013 adds eleven under
+# storyboards/threads/. Twenty, as the generated pass has.
+[[profile.ci-storyboards.overrides]]
+filter = 'test(/^storyboard_catalogue::/)'
+slow-timeout = { period = "120s", terminate-after = 10 }
+
 # One coverage profile per case, for scripts/test-coverage-sets.py (spec 012,
 # US2). Inherits the default profile, so its default-filter keeps the
 # measurement tier out, as the redundancy report requires. The wrapper sets
