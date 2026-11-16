@@ -25,6 +25,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "advisory-patch.py"
 
@@ -136,7 +140,7 @@ def sandbox(tmp: Path, advisories: list[dict], blocked: list[str]) -> tuple[Path
 
 
 def run(root: Path, env: dict) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return patience.run(
         [sys.executable, str(root / "scripts" / SCRIPT.name)],
         cwd=root,
         env={**os.environ, **env},
