@@ -47,6 +47,10 @@ def run_case(name: str, path: str, text: str, *, labelled: bool, announced: bool
         (root / "scripts" / "risk-of-diff.sh").chmod(0o755)
         git = base_test.git
         git("init", "-q", "-b", "main", cwd=root)
+        # The landing commits under GIT_CONFIG_GLOBAL=/dev/null, so a runner
+        # with no global identity needs one in the repository itself.
+        git("config", "user.email", "test@example.com", cwd=root)
+        git("config", "user.name", "Test", cwd=root)
         git("add", "-A", cwd=root)
         git("commit", "-q", "-m", "init", cwd=root)
         git("remote", "add", "origin", str(origin), cwd=root)
