@@ -1373,6 +1373,44 @@ pub const CONTEXTS: &[(&str, &[&str])] = &[
     ("composer", &["compose"]),
 ];
 
+/// Commands that act on a thread of more than one message, which the small
+/// seed's inbox has none of: each is pressed in its context over the long
+/// thread's seed (one conversation of seven messages, the last two unread),
+/// from the setup given, so that there is something for it to do: the
+/// outline reads a thread opened under the cursor, and the "this message"
+/// verbs refuse a row that stands for a whole thread. A reply
+/// is opened to the thread's first message, so that a newer one is behind it.
+const THREAD_COMMANDS: &[(&str, &str, &[&str])] = &[
+    ("list", "expand_thread", &[]),
+    ("list", "collapse_thread", &["expand_thread"]),
+    ("list", "thread_outline", &["expand_thread"]),
+    (
+        "list",
+        "move_this_message",
+        &["expand_thread", "next_message"],
+    ),
+    (
+        "list",
+        "delete_this_message",
+        &["expand_thread", "next_message"],
+    ),
+    (
+        "composer",
+        "reply_to_latest",
+        &["open_message", "first_in_conversation", "reply"],
+    ),
+    (
+        "composer",
+        "show_newer",
+        &["open_message", "first_in_conversation", "reply"],
+    ),
+    (
+        "composer",
+        "expand_quoted",
+        &["open_message", "first_in_conversation", "reply"],
+    ),
+];
+
 /// One context's coverage, or why it could not be reached.
 #[derive(Debug, Clone)]
 pub struct ContextCoverage {
@@ -1452,7 +1490,14 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
                 coverage.skipped.push((command, (*why).to_owned()));
                 continue;
             }
-            let Some(started) = fresh(setup).await else {
+            let thread = THREAD_COMMANDS
+                .iter()
+                .find(|(here, id, _)| here == context && *id == command);
+            let started = match thread {
+                Some((_, _, setup)) => fresh_over(Seed::LongThread, setup).await,
+                None => fresh(setup).await,
+            };
+            let Some(started) = started else {
                 continue;
             };
             let window = started.window.clone();
@@ -1526,6 +1571,11 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
 
 /// A fresh, seeded, acting window, with `setup` pressed.
 async fn fresh(setup: &[&str]) -> Option<Started> {
+    fresh_over(Seed::Small, setup).await
+}
+
+/// As [`fresh`], over `seed`.
+async fn fresh_over(seed: Seed, setup: &[&str]) -> Option<Started> {
     postio_ui::clock::freeze(
         chrono::DateTime::parse_from_rfc3339(FROZEN_AT)
             .expect("a fixed instant")
@@ -1533,9 +1583,7 @@ async fn fresh(setup: &[&str]) -> Option<Started> {
     );
     hold_still();
     let (size, _) = apply_variant(&BTreeMap::new());
-    let started = acting(Seed::Small, size, "every-command", false)
-        .await
-        .ok()?;
+    let started = acting(seed, size, "every-command", false).await.ok()?;
     deliver::drain();
     for command in setup {
         let _ = deliver_input(

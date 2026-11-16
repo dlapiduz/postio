@@ -99,6 +99,15 @@ command = "zoom_reset"
 context = "list"
 reason  = "bound, and act() has no arm for it; Focus has no zoom"
 
+[[gap]]
+command = "thread_outline"
+context = "list"
+reason  = "CANDIDATE: the controller opens the outline over an expanded thread, but GTK hangs it from the open message's Thread button and has none from the list"
+[[gap]]
+command = "move_this_message"
+context = "list"
+reason  = "CANDIDATE: the controller opens its move picker on the child's message, but GTK's own move picker answers `move` alone and ignores the controller's"
+
 # -- search: `/` pressed: the bar open and empty, the keyboard in its field
 [[gap]]
 command = "show_all_results"
@@ -131,9 +140,13 @@ reason  = "an empty query has nothing to save"
 
 # -- filtered: `g f`: the Filtered view on its first tab
 [[gap]]
-command = "filtered_tab_1"
+command = "expand_thread"
 context = "filtered"
-reason  = "the view is already on its first tab"
+reason  = "the small seed files no conversation of more than one message"
+[[gap]]
+command = "collapse_thread"
+context = "filtered"
+reason  = "the small seed files no conversation of more than one message"
 [[gap]]
 command = "prev_message"
 context = "filtered"
