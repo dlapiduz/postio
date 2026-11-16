@@ -16,27 +16,23 @@ workspace = true
 
 ### BEGIN HAKARI SECTION
 [dependencies]
-aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 arrayvec = { version = "0.7" }
-base64 = { version = "0.23" }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
+bounded-static = { version = "0.8" }
 bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
-cbc = { version = "0.1", features = ["zeroize"] }
 chacha20 = { version = "0.10", default-features = false, features = ["rng", "xchacha"] }
 chrono = { version = "0.4", features = ["serde"] }
-cipher = { version = "0.4", default-features = false, features = ["block-padding", "zeroize"] }
+cipher-9fbad63c4bcf4a8f = { package = "cipher", version = "0.4", default-features = false, features = ["block-padding"] }
+cipher-d8f496e17d97b5cb = { package = "cipher", version = "0.5", default-features = false, features = ["block-padding", "stream-wrapper", "zeroize"] }
 crc32fast = { version = "1" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
-crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom"] }
+crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom", "zeroize"] }
 crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
 cssparser = { version = "0.38", features = ["serde"] }
 derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
-digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", features = ["use_std"] }
-event-listener = { version = "5" }
-event-listener-strategy = { version = "0.5" }
 fastrand = { version = "2" }
 flate2 = { version = "1" }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
@@ -44,13 +40,15 @@ futures-core = { version = "0.3" }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
 hashbrown = { version = "0.17" }
+hybrid-array = { version = "0.4", default-features = false, features = ["zeroize"] }
 icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
 icu_normalizer = { version = "2", default-features = false, features = ["compiled_data", "utf16_iter", "utf8_iter"] }
 icu_properties = { version = "2", default-features = false, features = ["compiled_data"] }
 icu_provider = { version = "2", default-features = false, features = ["alloc", "baked"] }
 idna = { version = "1" }
-inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-io-http = { version = "0.5", default-features = false, features = ["rustls-ring"] }
+inout-6f8ce4dd05d13bba = { package = "inout", version = "0.2", default-features = false, features = ["block-padding"] }
+inout-c65f7effa3be6d31 = { package = "inout", version = "0.1", default-features = false, features = ["block-padding"] }
+io-http = { version = "0.8", default-features = false, features = ["rustls-ring"] }
 itertools = { version = "0.14" }
 libc = { version = "0.2" }
 litemap = { version = "0.8", default-features = false, features = ["alloc"] }
@@ -67,9 +65,12 @@ once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 percent-encoding = { version = "2" }
 phf_shared = { version = "0.14" }
+pimalaya-stream = { version = "0.4" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+psl = { version = "2" }
 pulldown-cmark = { version = "0.13" }
+quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
 rand_core = { version = "0.9", default-features = false, features = ["os_rng", "std"] }
@@ -79,7 +80,7 @@ regex-syntax = { version = "0.8" }
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
-serde_json = { version = "1", features = ["alloc"] }
+serde_json = { version = "1", features = ["alloc", "raw_value"] }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
 stable_deref_trait = { version = "1" }
@@ -91,7 +92,6 @@ thiserror = { version = "2" }
 tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "test-util", "tracing"] }
 toml_datetime = { version = "1", features = ["serde"] }
-toml_edit = { version = "0.25" }
 toml_parser = { version = "1" }
 toml_writer = { version = "1" }
 tracing = { version = "0.1" }
@@ -109,32 +109,27 @@ zerofrom = { version = "0.1", default-features = false, features = ["alloc", "de
 zeroize = { version = "1", features = ["derive"] }
 zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
-zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"] }
 
 [build-dependencies]
-aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 arrayvec = { version = "0.7" }
-base64 = { version = "0.23" }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
+bounded-static = { version = "0.8" }
 bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
-cbc = { version = "0.1", features = ["zeroize"] }
 cc = { version = "1", default-features = false, features = ["parallel"] }
 chacha20 = { version = "0.10", default-features = false, features = ["rng", "xchacha"] }
 chrono = { version = "0.4", features = ["serde"] }
-cipher = { version = "0.4", default-features = false, features = ["block-padding", "zeroize"] }
+cipher-9fbad63c4bcf4a8f = { package = "cipher", version = "0.4", default-features = false, features = ["block-padding"] }
+cipher-d8f496e17d97b5cb = { package = "cipher", version = "0.5", default-features = false, features = ["block-padding", "stream-wrapper", "zeroize"] }
 crc32fast = { version = "1" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
-crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom"] }
+crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom", "zeroize"] }
 crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
 cssparser = { version = "0.38", features = ["serde"] }
 derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
 derive_more-impl = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
-digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", features = ["use_std"] }
-event-listener = { version = "5" }
-event-listener-strategy = { version = "0.5" }
 fastrand = { version = "2" }
 flate2 = { version = "1" }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
@@ -142,13 +137,15 @@ futures-core = { version = "0.3" }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
 hashbrown = { version = "0.17" }
+hybrid-array = { version = "0.4", default-features = false, features = ["zeroize"] }
 icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
 icu_normalizer = { version = "2", default-features = false, features = ["compiled_data", "utf16_iter", "utf8_iter"] }
 icu_properties = { version = "2", default-features = false, features = ["compiled_data"] }
 icu_provider = { version = "2", default-features = false, features = ["alloc", "baked"] }
 idna = { version = "1" }
-inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-io-http = { version = "0.5", default-features = false, features = ["rustls-ring"] }
+inout-6f8ce4dd05d13bba = { package = "inout", version = "0.2", default-features = false, features = ["block-padding"] }
+inout-c65f7effa3be6d31 = { package = "inout", version = "0.1", default-features = false, features = ["block-padding"] }
+io-http = { version = "0.8", default-features = false, features = ["rustls-ring"] }
 itertools = { version = "0.14" }
 libc = { version = "0.2" }
 litemap = { version = "0.8", default-features = false, features = ["alloc"] }
@@ -165,9 +162,12 @@ once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 percent-encoding = { version = "2" }
 phf_shared = { version = "0.14" }
+pimalaya-stream = { version = "0.4" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+psl = { version = "2" }
 pulldown-cmark = { version = "0.13" }
+quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
 rand_core = { version = "0.9", default-features = false, features = ["os_rng", "std"] }
@@ -177,7 +177,7 @@ regex-syntax = { version = "0.8" }
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
-serde_json = { version = "1", features = ["alloc"] }
+serde_json = { version = "1", features = ["alloc", "raw_value"] }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
 stable_deref_trait = { version = "1" }
@@ -190,7 +190,6 @@ thiserror = { version = "2" }
 tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "test-util", "tracing"] }
 toml_datetime = { version = "1", features = ["serde"] }
-toml_edit = { version = "0.25" }
 toml_parser = { version = "1" }
 toml_writer = { version = "1" }
 tracing = { version = "0.1" }
@@ -208,7 +207,6 @@ zerofrom = { version = "0.1", default-features = false, features = ["alloc", "de
 zeroize = { version = "1", features = ["derive"] }
 zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
-zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"] }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 aho-corasick = { version = "1" }

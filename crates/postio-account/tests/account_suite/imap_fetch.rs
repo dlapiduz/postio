@@ -360,6 +360,79 @@ async fn a_line_io_imap_could_not_decode_forces_a_full_resync_not_a_silent_succe
     );
 }
 
+/// A `FETCH` line whose top level scans but one of whose items does not
+/// decode: an `INTERNALDATE` no server should send.
+///
+/// io-imap decodes such a line item by item. What decoded is handed back as
+/// the message's data, and the item that did not is named on the side, with
+/// no log line and no error, so the message arrives looking whole but short.
+fn partly_decodable_fetch_line(seq: u32, uid: u32) -> String {
+    fetch_line(seq, uid).replace("\"07-Feb-1994 21:52:25 -0800\"", "\"not a date\"")
+}
+
+#[tokio::test]
+async fn a_fetch_line_that_decoded_only_in_part_forces_a_full_resync() {
+    // The delta for 102 reached io-imap and lost an item on the way in. A
+    // `CHANGEDSINCE` round trip that hands back 101 alone would be read as
+    // "102 did not change", which is the lie ADR 0001's check exists for.
+    let reply = fetch_reply(&[fetch_line(1, 101), partly_decodable_fetch_line(2, 102)]);
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply().as_str())
+            .on("FETCH", reply.as_str()),
+    );
+    let pool = pool_over(connector).await;
+
+    let error = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::from_iter([Uid::new(101), Uid::new(102)]),
+        Some(ModSeq::new(3000)),
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap_err();
+
+    let postio_account::backend::BackendError::ResyncIntegrityLost { mailbox, skipped } = &error
+    else {
+        panic!("expected ResyncIntegrityLost, got {error:?}");
+    };
+    assert_eq!(mailbox, "INBOX");
+    assert_eq!(*skipped, 1);
+    assert!(error.requires_full_resync());
+}
+
+#[tokio::test]
+async fn a_message_that_decoded_only_in_part_is_left_out_of_a_plain_fetch() {
+    // Outside `CHANGEDSINCE` there is no baseline to miss a delta from, so
+    // the fetch succeeds, with what it can stand behind. A message missing
+    // an item it was asked for is not stored as if it had none.
+    let reply = fetch_reply(&[fetch_line(1, 101), partly_decodable_fetch_line(2, 102)]);
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply().as_str())
+            .on("FETCH", reply.as_str()),
+    );
+    let pool = pool_over(connector).await;
+
+    let messages = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::from_iter([Uid::new(101), Uid::new(102)]),
+        None,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("a message that lost an item does not fail the others");
+
+    assert_eq!(
+        messages.iter().map(|m| m.uid).collect::<Vec<_>>(),
+        vec![Uid::new(101)]
+    );
+}
+
 #[tokio::test]
 async fn the_same_undecodable_line_is_tolerated_outside_a_changedsince_fetch() {
     // The integrity check only brackets an incremental (CHANGEDSINCE)
@@ -373,13 +446,6 @@ async fn the_same_undecodable_line_is_tolerated_outside_a_changedsince_fetch() {
             .on("FETCH", reply.as_str()),
     );
     let pool = pool_over(connector).await;
-
-    // This still makes io-imap skip a real, undecodable line and bump the
-    // real (process-wide) skip counter — production has no reason to care
-    // outside a CHANGEDSINCE fetch, but a sibling test *measuring* a delta
-    // of its own, running concurrently in the same test binary, would
-    // otherwise intermittently see this skip as its own.
-    let _exclusive = postio_account::imap::skip_counter_exclusive_measurement().await;
 
     let messages = fetch_headers(
         &pool,

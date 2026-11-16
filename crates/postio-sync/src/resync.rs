@@ -494,7 +494,7 @@ pub async fn resync_mailbox_with_policy(
                     // The integrity guard firing: io-imap dropped a response
                     // line the incremental pull was counting on, so the answer
                     // cannot be trusted. Loud, because it means a delta was
-                    // silently lost — see postio-account's skip counter.
+                    // silently lost — see `postio_account::imap`'s `undecoded`.
                     tracing::error!(
                         mailbox = mailbox.id.get(),
                         %error,

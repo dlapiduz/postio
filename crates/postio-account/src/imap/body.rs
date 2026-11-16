@@ -33,8 +33,10 @@ use io_imap::client::ImapClientAsync;
 use io_imap::coroutine::{ImapCoroutine, ImapCoroutineState};
 use io_imap::rfc3501::fetch::ImapMessageFetchOptions;
 use io_imap::rfc3501::fetch_stream::{
-    ImapMessageFetchStream, ImapMessageFetchStreamError, ImapMessageFetchStreamYield,
+    ImapMessageFetchStream, ImapMessageFetchStreamError, ImapMessageFetchStreamOptions,
+    ImapMessageFetchStreamYield,
 };
+use io_imap::types::core::Tag;
 use io_imap::types::fetch::{MacroOrMessageDataItemNames, MessageDataItem, MessageDataItemName};
 use io_imap::types::fetch::{Part, Section};
 use io_imap::types::sequence::SequenceSet;
@@ -43,7 +45,7 @@ use postio_model::Uid;
 use crate::backend::{BackendError, BackendResult, BodyPart, BodySink, FetchedBody};
 use crate::cancel::CancelToken;
 
-use super::{ConnectionPool, ImapSession, Priority, READ_BUFFER, TransportError};
+use super::{ConnectionPool, ImapSession, MAX_MESSAGE_SIZE, Priority, READ_BUFFER, TransportError};
 
 /// Octets asked for per round trip. See the [module docs](self) for why this
 /// is a loop of partial fetches rather than one streamed command.
@@ -145,7 +147,17 @@ async fn stream_whole(
         reason: "UID 0 cannot be fetched".to_owned(),
     })?;
 
-    let mut coroutine = ImapMessageFetchStream::new(id, true);
+    let mut coroutine = ImapMessageFetchStream::new(
+        id,
+        ImapMessageFetchStreamOptions {
+            uid: true,
+            // The same ceiling a buffered response gets: a body past it is a
+            // server misbehaving, not a message to write to disk.
+            max_literal_len: MAX_MESSAGE_SIZE,
+            ..ImapMessageFetchStreamOptions::default()
+        },
+    );
+    let mut tag: Tag<'static>;
     let mut buffer = [0u8; READ_BUFFER];
     let mut resume: Option<&[u8]> = None;
     let mut total: u64 = 0;
@@ -165,6 +177,10 @@ async fn stream_whole(
             ImapCoroutineState::Complete(Ok(())) => break,
             ImapCoroutineState::Complete(Err(error)) => {
                 return Err(map_fetch_stream_error(error));
+            }
+            ImapCoroutineState::Yielded(ImapMessageFetchStreamYield::WantsTag) => {
+                tag = session.tags.generate();
+                resume = Some(tag.as_ref().as_bytes());
             }
             ImapCoroutineState::Yielded(ImapMessageFetchStreamYield::WantsWrite(bytes)) => {
                 let timeout = session.command_timeout();
@@ -250,7 +266,7 @@ fn map_fetch_stream_error(error: ImapMessageFetchStreamError) -> BackendError {
         ImapMessageFetchStreamError::No(reason) | ImapMessageFetchStreamError::Bad(reason) => {
             BackendError::Rejected {
                 command: "FETCH".to_owned(),
-                reason,
+                reason: reason.text,
             }
         }
         ImapMessageFetchStreamError::Bye(reason) => BackendError::Disconnected {
@@ -301,7 +317,9 @@ async fn fetch_window(
     };
 
     let raw = session.fetch(sequence_set, items, opts).await;
-    let raw = raw.map_err(|error| session.command_error("FETCH", error))?;
+    let raw = raw
+        .map_err(|error| session.command_error("FETCH", error))?
+        .data;
 
     if raw.is_empty() {
         return Err(BackendError::NoSuchMessage {
@@ -427,7 +445,8 @@ pub async fn fetch_sections(
         let raw = session
             .fetch(sequence_set, items, opts)
             .await
-            .map_err(|error| session.command_error("FETCH", error))?;
+            .map_err(|error| session.command_error("FETCH", error))?
+            .data;
 
         let mut answered = Vec::with_capacity(wanted.len());
         for items in raw.into_values() {

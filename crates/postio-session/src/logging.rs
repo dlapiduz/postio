@@ -23,15 +23,12 @@
 //! `POSTIO_LOG` wins, and keeps winning: an operator who set the environment
 //! for this run meant it, and a config reload must not quietly take it back.
 //!
-//! # The `log` bridge is not optional
+//! # The `log` bridge
 //!
-//! `io-imap` emits through the `log` crate, and one of its records is load
-//! bearing — `postio-account`'s skip counter watches for a dropped untagged
-//! response and turns it into `ResyncIntegrityLost`. `log::set_logger`
-//! succeeds once per process, so the bridge and that counter cannot both
-//! install themselves; [`postio_account::imap::install_skip_counter_forwarding_to`]
-//! composes them. If that composition ever fails, this module says so at
-//! `warn` rather than letting an integrity check go quiet.
+//! `io-imap` emits through the `log` crate, so its records reach the same
+//! filter and sinks as Postio's own only through [`LogTracer`]. None of them
+//! is load bearing: what a response failed to decode comes back in the
+//! command's own output, and `postio-account` reads it there.
 //!
 //! # What must never appear here
 //!
@@ -144,26 +141,15 @@ pub fn init_to(config: &LoggingConfig, destination: Destination) -> Logging {
     // the portal's log.
     let journald = tracing_journald::layer().ok();
 
-    // Before the subscriber, and deliberately not through
-    // `SubscriberInitExt::init`. That helper calls `LogTracer::init` itself,
-    // which is a `log::set_logger` — so it would win the one call the process
-    // gets and leave `io-imap`'s skip counter inert. `set_global_default`
-    // installs the subscriber and nothing else.
-    let bridged = bridge_log_records();
+    // `log::set_logger` succeeds once per process; a second call (a test
+    // binary initialising twice) is not a fault worth reporting.
+    let _ = LogTracer::init();
     let installed = Registry::default().with(filter).with(stderr).with(journald);
     let _ = tracing::subscriber::set_global_default(installed);
 
     // After the subscriber, so a panic between the two is not reported into a
     // void. See [`report_panics`] for what a panic with nowhere to go cost.
     report_panics();
-
-    // Said after the subscriber exists, or nobody would hear it.
-    if !bridged {
-        tracing::warn!(
-            "another logger was installed first: io-imap's skipped-response counter is \
-             inert, so a resync that silently dropped deltas will not be reported"
-        );
-    }
 
     Logging {
         reload,
@@ -316,10 +302,7 @@ const OTHERS: &str = "warn";
 /// it.
 ///
 /// `io_imap` is deliberately **not** here even though it is the noisier
-/// crate. It is in [`OURS`], and `postio-account`'s skip counter reads its
-/// records — see the module docs. Quieting it here would not actually break
-/// the counter (that runs in the `log` layer, before tracing sees anything,
-/// and counts `io_imap` at `debug`), but it would take away the output
+/// crate. It is in [`OURS`]: quieting it would take away the output
 /// somebody debugging a resync needs.
 /// `html5ever` is the second. It logs *"foster parenting not implemented"* at
 /// `warn` every time it repairs a mis-nested table, which is most real HTML
@@ -416,16 +399,6 @@ fn parse(directive: &str, config: &LoggingConfig) -> EnvFilter {
         Ok(filter) => filter,
         Err(_) => EnvFilter::new(scope(config.level.as_str())),
     }
-}
-
-/// Carry `log` records — `io-imap`'s — into `tracing`, without unhooking the
-/// skip counter. See the module docs.
-///
-/// Returns whether both halves are live.
-fn bridge_log_records() -> bool {
-    let installed =
-        postio_account::imap::install_skip_counter_forwarding_to(Some(Box::new(LogTracer::new())));
-    installed && postio_account::imap::skip_counter_is_counting()
 }
 
 #[cfg(test)]

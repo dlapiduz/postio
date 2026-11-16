@@ -574,10 +574,12 @@ fn server_settings(
         Some(DiscoverySecurityType::Tls) => Encryption::Tls,
         Some(DiscoverySecurityType::Starttls) => Encryption::StartTls,
         Some(DiscoverySecurityType::Plain) => Encryption::None,
-        // No `socketType`: infer from the port, and assume implicit TLS when
-        // there is no port either. Guessing TLS can only fail loudly at
-        // connect time; guessing plaintext would fail silently and insecurely.
-        None => match server.port {
+        // No `socketType`, or one this crate cannot read: infer from the
+        // port, and assume implicit TLS when there is no port either.
+        // Guessing TLS can only fail loudly at connect time; guessing
+        // plaintext would fail silently and insecurely, so no inference
+        // lands on it.
+        Some(DiscoverySecurityType::Unknown) | None => match server.port {
             Some(port) if port == tls_port => Encryption::Tls,
             Some(_) => Encryption::StartTls,
             None => Encryption::Tls,

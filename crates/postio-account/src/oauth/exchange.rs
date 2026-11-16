@@ -136,16 +136,16 @@ pub async fn exchange_code(
     params: CodeExchange<'_>,
     cancel: &CancelToken,
 ) -> Result<TokenResponse, OAuthError> {
-    // io-oauth's own RFC 6749 §4.1.3 body. Built to a `String` before the
+    // io-oauth's own RFC 6749 §4.1.3 body. Built to bytes before the
     // `.await` below: the params' serializer is not `Send`, and every
     // `TokenSource` impl is required to be `Send + Sync`.
     let form_body = {
         use std::str::FromStr;
         let verifier =
             io_oauth::rfc7636::pkce::Oauth20PkceCodeVerifier::from_str(params.code_verifier)
-                .map_err(|byte| {
+                .map_err(|error| {
                     OAuthError::Parse(format!(
-                        "the PKCE verifier carries a byte RFC 7636 does not allow: 0x{byte:x}"
+                        "the PKCE verifier is not one RFC 7636 allows: {error}"
                     ))
                 })?;
         Oauth20AccessTokenRequestParams {
@@ -154,8 +154,11 @@ pub async fn exchange_code(
             client_id: params.client_id.into(),
             client_secret: params.client_secret.map(|secret| secret.to_owned().into()),
             pkce_code_verifier: Some(std::borrow::Cow::Owned(verifier)),
+            // RFC 8707 resource indicators: no preset names one, and a
+            // server that wants one says so through its metadata.
+            resource: Vec::new(),
         }
-        .to_string()
+        .to_body()
     };
 
     token_request(token_url, form_body, cancel).await
@@ -180,7 +183,7 @@ pub async fn refresh_token(
         let mut body =
             Oauth20AccessTokenRefreshParams::new(params.client_id, params.refresh_token.to_owned());
         body.client_secret = params.client_secret.map(|secret| secret.to_owned().into());
-        body.to_string()
+        body.to_body()
     };
 
     token_request(token_url, form_body, cancel).await
@@ -188,7 +191,7 @@ pub async fn refresh_token(
 
 async fn token_request(
     token_url: &Url,
-    form_body: String,
+    form_body: Vec<u8>,
     cancel: &CancelToken,
 ) -> Result<TokenResponse, OAuthError> {
     let host = token_url
@@ -206,7 +209,7 @@ async fn token_request(
             ),
             ("Accept".to_string(), "application/json".to_string()),
         ],
-        body: form_body.into_bytes(),
+        body: form_body,
     };
 
     let body = send(token_url.clone(), request, cancel.clone()).await?;
@@ -269,9 +272,7 @@ fn parse_token_response(body: &[u8]) -> Result<TokenResponse, OAuthError> {
         refresh_token: raw
             .refresh_token
             .map(|token| Password::new(token.expose_secret().to_owned())),
-        expires_in: raw
-            .expires_in
-            .map(|seconds| Duration::from_secs(seconds as u64)),
+        expires_in: raw.expires_in.map(Duration::from_secs),
         token_type: raw.token_type,
         scope: raw.scope,
     })
@@ -359,6 +360,9 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
     use std::thread;
+
+    /// A verifier RFC 7636 accepts: 43 to 128 unreserved characters.
+    const TEST_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
     use super::*;
 
@@ -450,7 +454,7 @@ mod tests {
                 client_id: "client-1",
                 client_secret: None,
                 code: "the-code",
-                code_verifier: "the-verifier",
+                code_verifier: TEST_VERIFIER,
                 redirect_uri: "http://127.0.0.1:1/",
             },
             &cancel,
@@ -473,7 +477,7 @@ mod tests {
         );
         assert!(captured.contains("code=the-code"), "{captured}");
         assert!(
-            captured.contains("code_verifier=the-verifier"),
+            captured.contains(&format!("code_verifier={TEST_VERIFIER}")),
             "{captured}"
         );
     }
@@ -525,7 +529,7 @@ mod tests {
                 client_id: "client-1",
                 client_secret: None,
                 code: "stale-code",
-                code_verifier: "v",
+                code_verifier: TEST_VERIFIER,
                 redirect_uri: "http://127.0.0.1:1/",
             },
             &cancel,
@@ -557,7 +561,7 @@ mod tests {
                 client_id: "client-1",
                 client_secret: None,
                 code: "c",
-                code_verifier: "v",
+                code_verifier: TEST_VERIFIER,
                 redirect_uri: "http://127.0.0.1:1/",
             },
             &cancel,
@@ -592,7 +596,7 @@ mod tests {
                 client_id: "client-1",
                 client_secret: None,
                 code: "c",
-                code_verifier: "v",
+                code_verifier: TEST_VERIFIER,
                 redirect_uri: "http://127.0.0.1:1/",
             },
             &cancel,

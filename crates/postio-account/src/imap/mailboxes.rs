@@ -102,7 +102,8 @@ pub async fn create_mailbox(
                 .map_err(|error| BackendError::Rejected {
                     command: "LIST".to_owned(),
                     reason: error.to_string(),
-                })?;
+                })?
+                .data;
             if existing.is_empty() {
                 return Err(BackendError::Rejected {
                     command: "CREATE".to_owned(),
@@ -138,7 +139,8 @@ async fn list_with(
         .map_err(|error| BackendError::Rejected {
             command: "LIST".to_owned(),
             reason: error.to_string(),
-        })?;
+        })?
+        .data;
 
     let subscribed: Option<BTreeSet<String>> = match strategy {
         ListingStrategy::ListOnly => None,
@@ -149,7 +151,12 @@ async fn list_with(
                     reason: error.to_string(),
                 }
             })?;
-            Some(rows.iter().map(|(name, _, _)| mailbox_name(name)).collect())
+            Some(
+                rows.data
+                    .iter()
+                    .map(|(name, _, _)| mailbox_name(name))
+                    .collect(),
+            )
         }
     };
 

@@ -53,7 +53,7 @@ use crate::backend::{
 };
 use crate::cancel::CancelToken;
 
-use super::{ConnectionPool, ImapSession, Priority, skip_counter};
+use super::{ConnectionPool, ImapSession, Priority, undecoded, whole_messages};
 
 /// Fetches metadata for `uids` in `mailbox` — no body bytes.
 ///
@@ -161,11 +161,11 @@ async fn fetch(
 
 /// Issues one `UID FETCH` and maps the response.
 ///
-/// When `changed_since` is set this is an incremental resync's fetch, and
-/// [`skip_counter`] brackets the round trip: `io-imap` completing `Ok` after
-/// silently dropping an untagged line it could not decode is exactly the
-/// case a plain result can't distinguish from a genuinely complete pull. See
-/// the [module docs](self) and [`crate::backend::BackendError::ResyncIntegrityLost`].
+/// When `changed_since` is set this is an incremental resync's fetch, and a
+/// response io-imap could not wholly decode fails it: completing `Ok` with a
+/// line or an item missing is exactly the case a plain result cannot tell
+/// apart from a genuinely complete pull. See the [module docs](self) and
+/// [`crate::backend::BackendError::ResyncIntegrityLost`].
 async fn fetch_batch(
     session: &mut ImapSession,
     mailbox: &str,
@@ -174,22 +174,10 @@ async fn fetch_batch(
     changed_since: Option<ModSeq>,
     promoted: Promoted,
 ) -> BackendResult<Vec<FetchedMessage>> {
-    if changed_since.is_none() {
-        return fetch_batch_inner(session, uid_validity, uids, changed_since, promoted).await;
-    }
+    let (messages, skipped) =
+        fetch_batch_inner(session, uid_validity, uids, changed_since, promoted).await?;
 
-    skip_counter::install();
-    let (messages, skipped) = skip_counter::measuring(fetch_batch_inner(
-        session,
-        uid_validity,
-        uids,
-        changed_since,
-        promoted,
-    ))
-    .await;
-    let messages = messages?;
-
-    if skipped > 0 {
+    if changed_since.is_some() && skipped > 0 {
         return Err(BackendError::ResyncIntegrityLost {
             mailbox: mailbox.to_owned(),
             skipped,
@@ -199,13 +187,15 @@ async fn fetch_batch(
     Ok(messages)
 }
 
+/// The messages one `UID FETCH` decoded whole, and how many of the
+/// response's lines it could not ([`undecoded`]).
 async fn fetch_batch_inner(
     session: &mut ImapSession,
     uid_validity: UidValidity,
     uids: &UidSet,
     changed_since: Option<ModSeq>,
     promoted: Promoted,
-) -> BackendResult<Vec<FetchedMessage>> {
+) -> BackendResult<(Vec<FetchedMessage>, u64)> {
     let sequence_set = sequence_set_for(uids)?;
     let condstore = session.capabilities().contains(Capability::CondStore);
 
@@ -244,6 +234,7 @@ async fn fetch_batch_inner(
         )
         .await;
     let raw = raw.map_err(|error| session.command_error("FETCH", error))?;
+    let (raw, skipped) = whole_messages(raw);
 
     let mut messages = Vec::new();
     for items in raw.into_values() {
@@ -253,16 +244,16 @@ async fn fetch_batch_inner(
             messages.push(message);
         }
     }
-    Ok(messages)
+    Ok((messages, skipped))
 }
 
 /// Every message's flags in `mailbox`: `UID FETCH 1:* (UID FLAGS)`, and
 /// nothing else on the wire. See
 /// [`MailBackend::fetch_flags`](crate::backend::MailBackend::fetch_flags).
 ///
-/// Bracketed by the [`skip_counter`] like the `CHANGEDSINCE` fetch, for the
-/// same reason: `io-imap` completes the command `Ok` after dropping an
-/// untagged line it could not decode, and a sweep whose answer silently lost
+/// Checked for what did not decode ([`undecoded`]) like the `CHANGEDSINCE`
+/// fetch, for the same reason: `io-imap` completes the command `Ok` after
+/// dropping an untagged line it could not decode, and a sweep whose answer silently lost
 /// a message's flags is the very fault the sweep exists to find. The failure
 /// is [`BackendError::ResyncIntegrityLost`], which sends the caller to a full
 /// re-enumeration rather than trusting a short list.
@@ -287,20 +278,21 @@ pub async fn fetch_flags(
         }
 
         let sequence_set = sequence_set_for(&UidSet::all())?;
-        skip_counter::install();
-        let (raw, skipped) = skip_counter::measuring(session.fetch(
-            sequence_set,
-            MacroOrMessageDataItemNames::MessageDataItemNames(vec![
-                MessageDataItemName::Uid,
-                MessageDataItemName::Flags,
-            ]),
-            ImapMessageFetchOptions {
-                uid: true,
-                modifiers: Vec::new(),
-            },
-        ))
-        .await;
-        let raw = raw.map_err(|error| session.command_error("FETCH", error))?;
+        let raw = session
+            .fetch(
+                sequence_set,
+                MacroOrMessageDataItemNames::MessageDataItemNames(vec![
+                    MessageDataItemName::Uid,
+                    MessageDataItemName::Flags,
+                ]),
+                ImapMessageFetchOptions {
+                    uid: true,
+                    modifiers: Vec::new(),
+                },
+            )
+            .await
+            .map_err(|error| session.command_error("FETCH", error))?;
+        let (raw, skipped) = whole_messages(raw);
         if skipped > 0 {
             return Err(BackendError::ResyncIntegrityLost {
                 mailbox: mailbox.clone(),
@@ -817,20 +809,22 @@ pub async fn existing_uids(
         if cancel.is_cancelled() {
             return Err(BackendError::Cancelled);
         }
-        // Bracketed by the skip counter for the same reason `fetch_batch` is,
-        // and it should have been from the start. `io-imap` drops an untagged
-        // response it cannot decode and completes the command `Ok` — so a
-        // `* SEARCH` line it could not parse does not fail the SEARCH, it
-        // silently removes every UID that line carried. An empty result is
-        // indistinguishable from an empty mailbox, which is how a 60,934
-        // message Archive listed nothing at all and was believed.
-        skip_counter::install();
-        let (found, skipped) = skip_counter::measuring(session.search(
-            Vec1::from(SearchKey::All),
-            ImapMessageSearchOptions { uid: true },
-        ))
-        .await;
-        let found = found.map_err(|error| session.command_error("SEARCH", error))?;
+        // Checked for what did not decode for the same reason `fetch_batch`
+        // is. `io-imap` drops an untagged response it cannot decode and
+        // completes the command `Ok` — so a `* SEARCH` line it could not
+        // parse does not fail the SEARCH, it silently removes every UID that
+        // line carried. An empty result is indistinguishable from an empty
+        // mailbox, which is how a 60,934 message Archive listed nothing at
+        // all and was believed.
+        let found = session
+            .search(
+                Vec1::from(SearchKey::All),
+                ImapMessageSearchOptions { uid: true },
+            )
+            .await
+            .map_err(|error| session.command_error("SEARCH", error))?;
+        let skipped = undecoded(&found);
+        let found = found.data;
 
         if skipped > 0 {
             return Err(BackendError::Disconnected {
