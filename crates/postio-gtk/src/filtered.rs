@@ -619,6 +619,7 @@ impl FilteredView {
             button.set_child(Some(&words));
             postio_widgets::widgets::button::style(&button, Kind::Ghost, Size::Regular);
             button.add_css_class("focus-filtered-tab");
+            button.set_valign(gtk::Align::Center);
             if tab.on {
                 button.add_css_class("focus-filtered-tab-on");
             }

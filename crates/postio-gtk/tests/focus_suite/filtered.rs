@@ -74,6 +74,9 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
         }
         let fixture = fixture().await;
         let (window, client) = fixture.open().await;
+        // Measured once it is drawn: Filtered takes its place.
+        crate::settle_until(async || one(window.upcast_ref(), "focus-has-action").width() > 0)
+            .await;
         let strip = strip_type(&window);
         support::keys(&window, &["g", "f"]);
         assert!(
@@ -317,10 +320,13 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
 /// The inbox strip's type, read before leaving it: its place, its counts,
 /// its has-action toggle and that toggle's words.
 struct StripType {
+    height: i32,
     place: (i32, gtk::pango::Weight),
     counts: (i32, gtk::pango::Weight),
     toggle: gtk::Widget,
     toggle_words: (i32, gtk::pango::Weight),
+    toggle_corner: bool,
+    day_heading: i32,
 }
 
 fn one(root: &gtk::Widget, class: &str) -> gtk::Widget {
@@ -333,17 +339,26 @@ fn one(root: &gtk::Widget, class: &str) -> gtk::Widget {
 fn strip_type(window: &postio_gtk::window::FocusWindow) -> StripType {
     let strip = one(window.upcast_ref(), "focus-header-strip");
     StripType {
+        height: strip.height(),
         place: font(&one(&strip, "focus-place-name")),
         counts: font(&label_in(&one(&strip, "focus-counts"))),
         toggle: one(&strip, "focus-has-action"),
         toggle_words: font(&one(&strip, "focus-has-action-label")),
+        toggle_corner: corner_drawn(&one(&strip, "focus-has-action")),
+        day_heading: support::descendants(window.upcast_ref::<gtk::Widget>())
+            .iter()
+            .find(|widget| widget.css_name() == "focusdayheading")
+            .expect("the inbox's day heading")
+            .height(),
     }
 }
 
 /// Filtered's header and tabs are set in the inbox strip's type: its title
 /// as the strip's place, its words as the strip's counts, its sweep as the
 /// has-action toggle, each control the strip's kind of button, and the tab
-/// on screen still bold in its outline.
+/// on screen still bold in its outline. The tabs sit in a row of the strip's
+/// height, each the toggle's size and shape, so the list does not move when
+/// a person goes between the inbox and Filtered.
 fn assert_header_in_strip_type(view: &gtk::Widget, strip: &StripType) {
     assert_eq!(
         font(&one(view, "focus-filtered-title")),
@@ -387,6 +402,34 @@ fn assert_header_in_strip_type(view: &gtk::Widget, strip: &StripType) {
         outline(off.expect("a tab not on screen")),
         "the tab on screen has no outline of its own"
     );
+    assert_eq!(
+        one(view, "focus-filtered-tab-row").height(),
+        strip.height,
+        "the tab row is not the strip's height"
+    );
+    let heading = one(view, "focus-filtered-day")
+        .parent()
+        .expect("the heading's row");
+    assert_eq!(
+        heading.height(),
+        strip.day_heading,
+        "Filtered's day heading is not the inbox's height"
+    );
+    for tab in &tabs {
+        assert_eq!(
+            tab.height(),
+            strip.toggle.height(),
+            "a tab is not the has-action toggle's height"
+        );
+    }
+    assert!(
+        strip.toggle_corner,
+        "the has-action toggle's left edge is not drawn where the probe looks"
+    );
+    assert!(
+        corner_drawn(&on),
+        "the tab on screen is a pill, not the has-action toggle's chip"
+    );
     for control in [&sweep, &back].into_iter().chain(&tabs) {
         assert_eq!(
             kind(control),
@@ -413,6 +456,23 @@ fn font(label: &gtk::Widget) -> (i32, gtk::pango::Weight) {
 
 /// The colour of a widget's top border, as drawn.
 fn outline(widget: &gtk::Widget) -> String {
+    let (pixels, width, _) = pixels_of(widget);
+    // The middle of the top edge.
+    let at = usize::try_from(width / 2 * 4).expect("a column");
+    format!("{:?}", &pixels[at..at + 4])
+}
+
+/// Whether a widget's left edge is drawn a quarter of the way down: true of
+/// a chip with small corners, false of a pill, whose edge curves away.
+fn corner_drawn(widget: &gtk::Widget) -> bool {
+    let (pixels, width, height) = pixels_of(widget);
+    let row = usize::try_from(height / 4).expect("a row");
+    let stride = usize::try_from(width * 4).expect("a width");
+    pixels[row * stride + 3] > 0
+}
+
+/// A widget drawn on its own: its pixels, its width and its height.
+fn pixels_of(widget: &gtk::Widget) -> (Vec<u8>, i32, i32) {
     let paintable = gtk::WidgetPaintable::new(Some(widget));
     let snapshot = gtk::Snapshot::new();
     paintable.snapshot(
@@ -431,9 +491,7 @@ fn outline(widget: &gtk::Widget) -> String {
     let stride = usize::try_from(texture_width * 4).expect("a width");
     let mut pixels = vec![0u8; stride * usize::try_from(texture_height).expect("a height")];
     texture.download(&mut pixels, stride);
-    // The middle of the top edge.
-    let at = usize::try_from(texture_width / 2 * 4).expect("a column");
-    format!("{:?}", &pixels[at..at + 4])
+    (pixels, texture_width, texture_height)
 }
 
 /// The shared button kind and size a button is dressed as.

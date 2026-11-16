@@ -1965,16 +1965,15 @@ button.focus-filtered-tab {
   font-size: var(--postio-text-meta);
 }
 
+/* The tabs' row is the inbox strip's 36 px and its tabs the has-action
+   toggle's chip, so the list does not move between the two views. */
 .focus-filtered-tab-row {
-  min-height: 44px;
+  min-height: 36px;
   padding: 0 var(--postio-space-4);
   border-bottom: 1px solid var(--postio-hairline);
 }
 
 button.focus-filtered-tab {
-  min-height: 0;
-  padding: var(--postio-space-1) var(--postio-space-3);
-  border-radius: 999px;
   font-weight: normal;
 }
 
@@ -2044,8 +2043,11 @@ button.focus-filtered-tab.focus-filtered-tab-on {
   background-color: var(--postio-header);
 }
 
+/* The inbox's day heading (focusdayheading): its height and its inset, so
+   the rows under it sit where the inbox's do. */
 .focus-filtered-day {
-  padding: var(--postio-space-2) var(--postio-space-4);
+  min-height: 32px;
+  padding: 0 var(--postio-space-6);
   background-color: var(--postio-ground);
 }
 
