@@ -20,7 +20,7 @@ apps   = ["focus"]
 [[step]]
 id      = "rules"
 command = "go_to_digest_rules"
-check   = { keyboard.reachable = true, rows.count = 60 }
+check   = { keyboard.reachable = true, rows.count = 61 }
 expect  = "The digest rules page replaces the inbox: one rule, Newsletters, under the Digest rules heading."
 
 [[step]]
@@ -35,5 +35,5 @@ expect  = "Escape cancels the confirmation. The rule is still listed."
 
 [[step]]
 key     = "Escape"
-check   = { keyboard.region = "list", keyboard.reachable = true, rows.count = 60 }
+check   = { keyboard.region = "list", keyboard.reachable = true, rows.count = 61 }
 expect  = "Escape leaves the page: the inbox is back, sixty rows, the keyboard on its list."

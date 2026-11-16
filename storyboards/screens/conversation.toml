@@ -1,4 +1,4 @@
-# A long thread opened: its newest message over the list, with the thread's
+# A long thread opened: its first unread message over the list, with the thread's
 # chip and `p`/`n` to step it (C2).
 #
 # Focus's design references are never committed
@@ -13,4 +13,4 @@ command = "next_message"
 
 [[step]]
 command = "open_message"
-check   = { view = "reader", reading.id = "7" }
+check   = { view = "reader", reading.id = "6" }

@@ -8,15 +8,15 @@
 #
 # Re-expressed for Focus (T265): Focus opens with the cursor on the first row,
 # so the first `x` selects it, and its one inbox across accounts lists both
-# accounts' mail (78 rows).
+# accounts' mail (79 rows).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#468" }
 proof  = "pinned"
 seed   = "two-accounts"
 
 [[step]]
-wait    = { until = { rows.count = 78 } }
-check   = { keyboard.region = "list", cursor.index = 0, rows.count = 78 }
+wait    = { until = { rows.count = 79 } }
+check   = { keyboard.region = "list", cursor.index = 0, rows.count = 79 }
 
 [[step]]
 id      = "first"
@@ -42,10 +42,10 @@ command = "next_message"
 
 [[step]]
 command = "toggle_selection"
-check   = { selection.count = 3, rows.count = 78 }
+check   = { selection.count = 3, rows.count = 79 }
 expect  = "Three rows are selected: the first, the third and the fourth. The bulk bar says three."
 
 [[step]]
 command = "archive"
-check   = { keyboard.region = "list", cursor.index = 1, selection.count = 0, rows.count = 75, notice.undo = true, notice.text = "Archived 3 messages" }
-expect  = "The three selected rows are gone, the cursor is on the first row that followed its old row and survived (second in the list; two of the archived rows were above it), the other 75 are all still there, the bulk bar is gone, and undo is offered. The toast says three: what was chosen, not the messages the three conversations hold."
+check   = { keyboard.region = "list", cursor.index = 1, selection.count = 0, rows.count = 76, notice.undo = true, notice.text = "Archived 3 messages" }
+expect  = "The three selected rows are gone, the cursor is on the first row that followed its old row and survived (second in the list; two of the archived rows were above it), the other 76 are all still there, the bulk bar is gone, and undo is offered. The toast says three: what was chosen, not the messages the three conversations hold."
