@@ -499,17 +499,37 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             .await,
             "the thread's bar never arrived"
         );
-        // The bar's arrival lays the column out again; measure the blocks
-        // where that pass puts them, not where the frame before had them.
-        let below_the_bar = || {
-            let bar = edges(&shown(&dialog, "focus-thread-bar"), &dialog);
-            let thread = edges(&shown(&dialog, "focus-open-thread"), &dialog);
-            thread.1 - bar.3
+        // This asks about the column's rhythm, not where it is scrolled to:
+        // the bar sits above the scroller, so a column opened scrolled down
+        // (as it can under load, #2125) moves
+        // every block under it. Read it from its top.
+        let scroller = shown(&dialog, "focus-open-scroller")
+            .downcast::<gtk::ScrolledWindow>()
+            .expect("the message's scroller");
+        // The bar's arrival lays the column out again, and on a slow machine
+        // over more than one pass: measure once two looks agree.
+        let blocks = || {
+            [
+                "focus-thread-bar",
+                "focus-open-thread",
+                "focus-open-subject",
+                "focus-open-header-card",
+                "postio-attachments",
+            ]
+            .map(|class| edges(&shown(&dialog, class), &dialog))
         };
+        let last = std::cell::RefCell::new(None);
         assert!(
-            crate::settle_until(async || below_the_bar() >= 0.0).await,
-            "the column was never laid out under the bar: the kicker sits {} below it",
-            below_the_bar()
+            crate::settle_until(async || {
+                scroller.vadjustment().set_value(0.0);
+                let now = blocks();
+                let still = last.borrow().as_ref() == Some(&now);
+                last.replace(Some(now));
+                still
+            })
+            .await,
+            "the column never came to rest: {:?}",
+            blocks()
         );
         let at = |class: &str| edges(&shown(&dialog, class), &dialog);
         let toolbar = at("focus-open-toolbar");
