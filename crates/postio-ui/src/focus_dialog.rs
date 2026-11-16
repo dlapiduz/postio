@@ -27,15 +27,11 @@ pub const HEIGHT_INSET: i32 = 80;
 /// Below this width the action row folds Label, Move and Delete into More.
 pub const MORE_BELOW: i32 = 760;
 
-/// The column for a body in the app's colours: 32em at the 15px reading
-/// size, about 70 characters.
-pub const COLUMN_APP_COLOURS: i32 = 480;
-/// What the dialog keeps either side of an app-colours column, at least.
-pub const COLUMN_APP_COLOURS_INSET: i32 = 96;
-/// The column for a body shown on paper, as sent.
-pub const COLUMN_PAPER: i32 = 640;
-/// What the dialog keeps either side of a paper column, at least.
-pub const COLUMN_PAPER_INSET: i32 = 48;
+/// What the dialog keeps either side of the message: where its header's
+/// buttons, its action row's verbs and its thread bar's title start, so the
+/// message shares their left edge (the maintainer, 2026-11-16: the message
+/// reads the dialog's whole width).
+pub const GUTTER: i32 = 20;
 
 /// Between a control's words and its keycap.
 pub const KEYCAP_GAP: i32 = 6;
@@ -74,8 +70,8 @@ pub fn folds_into_more(dialog: i32) -> bool {
 }
 
 /// The content column's width in a dialog `dialog` pixels wide, for a body
-/// shown as `treatment`: `min(480, dialog - 96)` in the app's colours,
-/// `min(640, dialog - 48)` on paper. Everything inside the message --
+/// shown as `treatment`: the dialog less a [`GUTTER`] each side, in the
+/// app's colours and on paper alike. Everything inside the message --
 /// thread marker, subject, labels, sender block, action card, body and
 /// attachments -- shares it.
 pub fn column_width(dialog: i32, treatment: Treatment) -> i32 {
@@ -114,10 +110,10 @@ impl Geometry {
         dialog_min: DIALOG_MIN,
         dialog_max: DIALOG_MAX,
         more_below: MORE_BELOW,
-        app_column: COLUMN_APP_COLOURS,
-        app_inset: COLUMN_APP_COLOURS_INSET,
-        paper_column: COLUMN_PAPER,
-        paper_inset: COLUMN_PAPER_INSET,
+        app_column: DIALOG_MAX,
+        app_inset: 2 * GUTTER,
+        paper_column: DIALOG_MAX,
+        paper_inset: 2 * GUTTER,
         digest: Some(DIGEST_LINUX),
     };
 
@@ -183,9 +179,9 @@ impl Geometry {
 /// The narrowest the list gets beside a reading pane (T232): canvas 1b's
 /// list width.
 pub const LIST_MIN: i32 = 404;
-/// The narrowest reading pane: the app colours column and its inset, so the
-/// column is never squeezed.
-pub const PANE_MIN: i32 = COLUMN_APP_COLOURS + COLUMN_APP_COLOURS_INSET;
+/// The narrowest reading pane: a column of about 70 characters at the
+/// reading size, and its gutters.
+pub const PANE_MIN: i32 = 576;
 /// The widest reading pane: the dialog at its widest, so a message reads at
 /// the same measure beside the list as over it.
 pub const PANE_MAX: i32 = DIALOG_MAX;
@@ -511,11 +507,17 @@ mod tests {
         assert!(folds_into_more(759));
     }
 
+    /// The message reads the dialog's whole width, less the gutter its
+    /// header, action row and thread bar start their words at, so every
+    /// band of the dialog shares one left edge.
     #[test]
-    fn an_app_colours_column_is_480_or_the_dialog_less_96() {
-        assert_eq!(column_width(820, Treatment::AppColours), 480);
-        assert_eq!(column_width(dialog_width(1024), Treatment::AppColours), 480);
-        assert_eq!(column_width(560, Treatment::AppColours), 464);
+    fn a_column_is_the_dialog_less_its_gutters() {
+        for treatment in [Treatment::AppColours, Treatment::Paper] {
+            assert_eq!(column_width(820, treatment), 780);
+            assert_eq!(column_width(dialog_width(1024), treatment), 615);
+            assert_eq!(column_width(640, treatment), 600);
+        }
+        assert_eq!(column_width(30, Treatment::AppColours), 0);
     }
 
     #[test]
@@ -548,13 +550,13 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_holds_the_app_colours_column_whole() {
+    fn a_pane_reads_its_own_width_less_its_gutters() {
         for window in [980, 1024, 1280] {
             let pane = pane_width(window).expect("a pane");
-            assert_eq!(column_width(pane, Treatment::AppColours), 480, "{window}");
+            for treatment in [Treatment::AppColours, Treatment::Paper] {
+                assert_eq!(column_width(pane, treatment), pane - 40, "{window}");
+            }
         }
-        assert_eq!(column_width(620, Treatment::Paper), 572);
-        assert_eq!(column_width(820, Treatment::Paper), 640);
     }
 
     #[test]
@@ -570,13 +572,6 @@ mod tests {
     fn a_pane_under_760_folds_its_action_row_as_the_dialog_does() {
         assert!(folds_into_more(pane_width(1024).expect("a pane")));
         assert!(!folds_into_more(pane_width(1280).expect("a pane")));
-    }
-
-    #[test]
-    fn a_paper_column_is_640_or_the_dialog_less_48() {
-        assert_eq!(column_width(820, Treatment::Paper), 640);
-        assert_eq!(column_width(dialog_width(1024), Treatment::Paper), 607);
-        assert_eq!(column_width(640, Treatment::Paper), 592);
     }
 
     #[test]

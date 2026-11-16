@@ -10,6 +10,7 @@ use gtk::gdk;
 
 use crate::open_reading::{opened, scroller_of};
 use crate::support::{self, Fixture};
+use postio_ui::focus_dialog;
 
 /// Prose that wraps: a paragraph of ordinary words, several hundred
 /// characters long.
@@ -75,12 +76,11 @@ pub fn a_plain_paragraph_break_is_a_short_gap_not_a_blank_line() {
     });
 }
 
-/// The measure is the column's: 480px, 32em of the 15px reading size,
-/// about 70 characters (the message dialog handoff, T207, which replaces
-/// T203's 32em at the left of a full-width column). The text keeps the
-/// column's left edge -- the subject's, the sender block's -- and the
-/// column is centred in the dialog.
-pub fn the_measure_is_near_seventy_characters_in_a_centred_column() {
+/// The measure is the column's, and the column is the dialog's whole width
+/// less its gutters (the maintainer, 2026-11-16, replacing T207's 480px):
+/// the text keeps the column's left edge -- the subject's, the sender
+/// block's -- and its lines run to the column's right edge.
+pub fn the_measure_is_the_dialogs_width_less_its_gutters() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -102,22 +102,26 @@ pub fn the_measure_is_near_seventy_characters_in_a_centred_column() {
             .map(|(_, _, chars)| *chars)
             .max()
             .unwrap_or(0);
-        assert!(
-            (64..=78).contains(&longest),
-            "the longest line holds {longest} characters in a {}px column: \
-             the measure is not near 70",
-            view.width()
-        );
         let content = reading.dialog().child().expect("the dialog's content");
+        let column = focus_dialog::column_width(
+            content.width(),
+            postio_body::treatment::Treatment::AppColours,
+        );
+        assert!(
+            longest > 90,
+            "the longest line holds {longest} characters in a {column}px column: \
+             the text does not run the column's width"
+        );
         let bounds = view.compute_bounds(&content).expect("in the dialog");
         let (left, right) = (
             bounds.x(),
             content.width() as f32 - bounds.x() - bounds.width(),
         );
+        let gutter = focus_dialog::GUTTER as f32;
         assert!(
-            view.width() == 480 && (left - right).abs() <= 1.0,
+            view.width() == column && (left - gutter).abs() <= 1.0 && (right - gutter).abs() <= 1.0,
             "the body is {}px, {left}px from the dialog's left and {right}px from its \
-             right: not the centred 480px column",
+             right: not the {column}px column inside {gutter}px gutters",
             view.width()
         );
         let left = lines

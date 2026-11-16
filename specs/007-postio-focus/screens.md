@@ -113,10 +113,15 @@ Move and Delete fold into More (`.`, the registry's `more_actions`), its menu
 in the row menu's dress. A draft being sent offers its own verbs instead
 ("Sending states").
 
-**One centred column** for everything inside the message, sharing both
-edges: `min(480, dialog − 96)` for a body in app colours, `min(640,
-dialog − 48)` for one on paper, following the treatment the renderer decided
-(and `O`). At 480, a line of prose is about seventy characters.
+**One column** for everything inside the message, sharing both edges: the
+dialog's whole width less a 20 px gutter each side (`dialog − 40`), in app
+colours and on paper alike. The header's buttons, the action row's first
+verb and the thread bar's title start at the same gutter, so every band of
+the dialog shares one left edge. This replaces the handoff's centred
+`min(480, dialog − 96)` and `min(640, dialog − 48)` (the maintainer,
+2026-11-16: the message read narrow inside a wider dialog, with its edges
+matching nothing above it). A line of prose now runs the column's width,
+about 110 characters in the widest dialog, where 480 held about seventy.
 
 Bare recipient addresses wrap within that column. Their domains stay
 visible and the full list remains in the tooltip; the combined widths of
@@ -237,8 +242,8 @@ Reply in the open message puts Send where Reply was.
   a screen reader hears keep the binding's own names.
 - **One column: the reader's.** The field rows, the formatting toolbar, the
   editor, the recipient warning and the attachments share one centred
-  column, `min(480, dialog − 96)`, so a reply is written at the measure it
-  will be read at.
+  column, `dialog − 40`, so a reply is written at the measure it will be
+  read at.
 - **Field rows.** To (with "+ Cc" at its right), Cc and Bcc when shown,
   From, Subject and Labels: 40 px rows, each with a hairline under it, the
   names in one label column as wide as the widest name, muted 13 px, the
@@ -264,7 +269,7 @@ Reply in the open message puts Send where Reply was.
 | Sending | Not a state of the dialog: Send writes the Outbox and closes it at once (local-first); the list's toast says what happened |
 | Offline | The same composer: Send queues in the Outbox (FR-055) and the window's banner says it is offline. Nothing greys out or waits |
 | A send that failed, reopened | The subtitle says "Not sent — {reason}" in place of the saved time |
-| Narrow (1024 × 768) | 655 × 688; the column stays 480; the four verbs fit the action row with their caps, a reminder's day included |
+| Narrow (1024 × 768) | 655 × 688; the column is 615; the four verbs fit the action row with their caps, a reminder's day included |
 
 Compared at 1440 × 900 and 1024 × 768, light and dark (shots 05, 06 and
 32): the dialog does not dim the list in the shots (libadwaita's dimming,
@@ -308,8 +313,8 @@ geometry is `postio_ui::focus_dialog::pane_width`:
   floor.
 - The list takes the rest: 404 at 1024, 460 at 1280, 620 at 1440, 1100 at
   1920.
-- The pane is never narrower than 576, the app colours column and its inset,
-  so a pane needs a window at least 980 px wide (`PANE_WINDOW_MIN`). Below
+- The pane is never narrower than 576, a column of about seventy characters
+  and its gutters, so a pane needs a window at least 980 px wide (`PANE_WINDOW_MIN`). Below
   that a message opens in the dialog and the setting stays as it is.
   Crossing the line with a message open moves it between pane and dialog,
   still open, at its place in the thread.
@@ -361,7 +366,7 @@ no list beside a pane, so a message opened from them opens in the dialog.
 Compared (shots 34, 35 and 36, at 1440x900 and 1024x768, light and dark): at
 1440 the list is 620 and the pane 820, the message exactly as 04's dialog
 draws it; at 1024 the list is 404 and the pane 620, the action row folded
-into More, the column still 480. Nothing behind is dimmed, since nothing is
+into More, the column 580. Nothing behind is dimmed, since nothing is
 behind, and the bulk bar stays at the window's foot.
 
 Pinned by `reading_pane` (F8 and the setting, Return, `j`/`k`, Escape and

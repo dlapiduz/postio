@@ -421,8 +421,14 @@ impl OpenMessage {
         // it rather than in a scroller of its own.
         let clamp = adw::Clamp::builder()
             .child(&column)
-            .maximum_size(focus_dialog::COLUMN_APP_COLOURS)
-            .tightening_threshold(focus_dialog::COLUMN_APP_COLOURS)
+            .maximum_size(focus_dialog::column_width(
+                focus_dialog::DIALOG_MAX,
+                postio_body::treatment::Treatment::AppColours,
+            ))
+            .tightening_threshold(focus_dialog::column_width(
+                focus_dialog::DIALOG_MAX,
+                postio_body::treatment::Treatment::AppColours,
+            ))
             .build();
         let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)

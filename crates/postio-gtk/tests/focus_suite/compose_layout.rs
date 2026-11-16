@@ -554,7 +554,7 @@ pub fn the_dialog_follows_the_message_dialogs_size_rule() {
 }
 
 /// The composer's body and fields are the open message's column at every
-/// window width -- `min(480, dialog - 96)`, the one `focus_dialog` rule the
+/// window width -- `dialog - 40`, the one `focus_dialog` rule the
 /// reader fits too -- and not a width of their own (the Mac composer once
 /// capped its body at 720pt whatever the window, #1896). Measured on the
 /// allocated widgets.

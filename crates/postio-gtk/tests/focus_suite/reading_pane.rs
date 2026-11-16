@@ -321,7 +321,7 @@ pub fn a_window_under_980_opens_the_dialog_instead() {
 }
 
 /// The column inside the pane is `column_width` for the pane's width and
-/// the body's treatment: 480 in the app's colours.
+/// the body's treatment: the pane less its gutters.
 pub fn the_panes_column_follows_column_width_for_its_width() {
     crate::gtk_case(async {
         if !support::display() {
