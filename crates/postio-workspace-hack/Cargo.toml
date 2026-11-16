@@ -67,7 +67,6 @@ once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 percent-encoding = { version = "2" }
 phf_shared = { version = "0.14" }
-pimalaya-stream = { version = "0.3" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 pulldown-cmark = { version = "0.13" }
@@ -166,7 +165,6 @@ once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 percent-encoding = { version = "2" }
 phf_shared = { version = "0.14" }
-pimalaya-stream = { version = "0.3" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 pulldown-cmark = { version = "0.13" }

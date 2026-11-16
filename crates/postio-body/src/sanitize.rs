@@ -961,12 +961,12 @@ fn refused_element(name: &str) -> Option<&'static str> {
 
 fn collect_facts(node: &Handle, facts: &mut DocumentFacts, tally: &Tally) {
     if let NodeData::Element { name, attrs, .. } = &node.data {
-        let element = name.local.as_ref();
+        let element = &*name.local;
         let attrs = attrs.borrow();
         let get = |wanted: &str| {
             attrs
                 .iter()
-                .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case(wanted))
+                .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, wanted))
                 .map(|attr| attr.value.to_string())
         };
         // What ammonia will remove without a filter ever seeing it, noted
@@ -975,7 +975,7 @@ fn collect_facts(node: &Handle, facts: &mut DocumentFacts, tally: &Tally) {
             tally.refuse(Refused::Element(refused));
         }
         for attr in attrs.iter() {
-            let name = attr.name.local.as_ref();
+            let name = &*attr.name.local;
             if name.len() > 2
                 && name
                     .get(..2)
@@ -1402,13 +1402,13 @@ fn likely_tracker_sources(document: &Handle) -> HashSet<String> {
 
 fn collect_beacons(node: &Handle, found: &mut HashSet<String>) {
     if let NodeData::Element { name, attrs, .. } = &node.data
-        && name.local.as_ref().eq_ignore_ascii_case("img")
+        && str::eq_ignore_ascii_case(&name.local, "img")
     {
         let attrs = attrs.borrow();
         let get = |wanted: &str| {
             attrs
                 .iter()
-                .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case(wanted))
+                .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, wanted))
                 .map(|attr| attr.value.to_string())
         };
         if let Some(src) = get("src")

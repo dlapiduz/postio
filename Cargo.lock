@@ -266,7 +266,7 @@ dependencies = [
  "objc2-foundation",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1758,7 +1758,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2276,7 +2276,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps 9.0.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2623,16 +2623,6 @@ checksum = "1054432bae2f14e0061e33d23402fbaa67a921d319d56adc6bcf887ddad1cbc2"
 dependencies = [
  "log",
  "markup5ever 0.38.0",
-]
-
-[[package]]
-name = "html5ever"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46a1761807faccc9a19e86944bbf40610014066306f96edcdedc2fb714bcb7b8"
-dependencies = [
- "log",
- "markup5ever 0.39.0",
 ]
 
 [[package]]
@@ -3087,7 +3077,7 @@ dependencies = [
  "httparse",
  "log",
  "memchr",
- "pimalaya-stream",
+ "pimalaya-stream 0.3.2",
  "secrecy",
  "thiserror",
  "url",
@@ -3102,7 +3092,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "imap-codec",
- "io-sasl",
+ "io-sasl 0.1.0",
  "log",
  "secrecy",
  "thiserror",
@@ -3164,7 +3154,7 @@ dependencies = [
  "io-http",
  "ipconfig",
  "log",
- "pimalaya-stream",
+ "pimalaya-stream 0.3.2",
  "resolv-conf",
  "serde",
  "serde-xml-rs",
@@ -3197,6 +3187,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-sasl"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41b6725f5378a27ba94468ff1663ead20f612fa16b70839af132dca27dabfe3f"
+dependencies = [
+ "log",
+ "secrecy",
+ "thiserror",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "io-smtp"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3206,7 +3208,7 @@ dependencies = [
  "bounded-static",
  "bounded-static-derive",
  "chumsky",
- "io-sasl",
+ "io-sasl 0.1.0",
  "log",
  "secrecy",
  "thiserror",
@@ -3735,17 +3737,6 @@ dependencies = [
 
 [[package]]
 name = "markup5ever"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7122d987ec5f704ee56f6e5b41a7d93722e9aae27ae07cafa4036c4d3f9757de"
-dependencies = [
- "log",
- "tendril",
- "web_atoms 0.2.6",
-]
-
-[[package]]
-name = "markup5ever"
 version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ab3dc68ac4a0f5719e560136778c1ee716e296030d75dbd4484e37e39e3a842"
@@ -3769,14 +3760,14 @@ dependencies = [
 
 [[package]]
 name = "markup5ever_rcdom"
-version = "0.39.0+unofficial"
+version = "0.40.1+unofficial"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ac010f19d6c4af81eeb4018a39d7a115de9d285af45c126a4ac02e6fc5716b7"
+checksum = "64206f12eb431c03d9b6f293846f8b0517578905b6c0cac266aa52f09c11ad7c"
 dependencies = [
- "html5ever 0.39.0",
- "markup5ever 0.39.0",
+ "html5ever 0.40.1",
+ "markup5ever 0.40.0",
  "tendril",
- "xml5ever 0.39.0",
+ "xml5ever 0.40.0",
 ]
 
 [[package]]
@@ -4316,7 +4307,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4707,6 +4698,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pimalaya-stream"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "314599e9b99dbd22c67c45704fafa0010c38ad000bea4c6ce555bd9d7ca05aab"
+dependencies = [
+ "anyhow",
+ "io-proxy",
+ "log",
+ "rustls",
+ "rustls-platform-verifier",
+ "secrecy",
+ "uds_windows",
+ "url",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4845,10 +4852,10 @@ dependencies = [
  "io-maildir",
  "io-oauth",
  "io-pim-discovery",
- "io-sasl",
+ "io-sasl 0.2.0",
  "log",
  "oo7",
- "pimalaya-stream",
+ "pimalaya-stream 0.4.0",
  "postio-account",
  "postio-config",
  "postio-model",
@@ -4922,8 +4929,8 @@ dependencies = [
  "ammonia",
  "cssparser",
  "htmd",
- "html5ever 0.39.0",
- "markup5ever_rcdom 0.39.0+unofficial",
+ "html5ever 0.40.1",
+ "markup5ever_rcdom 0.40.1+unofficial",
  "postio-model",
  "postio-workspace-hack",
  "pulldown-cmark",
@@ -5102,7 +5109,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "io-gmail",
- "pimalaya-stream",
+ "pimalaya-stream 0.4.0",
  "postio-account",
  "postio-model",
  "postio-workspace-hack",
@@ -5217,7 +5224,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "io-jmap",
- "pimalaya-stream",
+ "pimalaya-stream 0.4.0",
  "postio-account",
  "postio-model",
  "postio-workspace-hack",
@@ -5279,10 +5286,10 @@ dependencies = [
  "blitz-paint",
  "blitz-traits",
  "fontdb",
- "html5ever 0.39.0",
+ "html5ever 0.40.1",
  "image",
  "kurbo",
- "markup5ever_rcdom 0.39.0+unofficial",
+ "markup5ever_rcdom 0.40.1+unofficial",
  "parley",
  "postio-body",
  "postio-model",
@@ -5310,7 +5317,7 @@ dependencies = [
  "futures-util",
  "io-http",
  "mimalloc",
- "pimalaya-stream",
+ "pimalaya-stream 0.4.0",
  "postio-account",
  "postio-core",
  "postio-index",
@@ -5381,7 +5388,7 @@ version = "0.5.0"
 dependencies = [
  "async-trait",
  "idna",
- "io-sasl",
+ "io-sasl 0.2.0",
  "io-smtp",
  "postio-model",
  "postio-transport",
@@ -5649,7 +5656,6 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "phf_shared 0.14.0",
- "pimalaya-stream",
  "potential_utf",
  "proc-macro2",
  "pulldown-cmark",
@@ -5793,7 +5799,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad9c5423459fa2f729b8d9235fab810aa29628b171467744fc86d21460ad70d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -6247,7 +6253,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6260,7 +6266,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6317,7 +6323,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7393,7 +7399,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8709,7 +8715,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9023,16 +9029,6 @@ checksum = "d3dc9559429edf0cd3f327cc0afd9d6b36fa8cec6d93107b7fbe64f806b5f2d9"
 dependencies = [
  "log",
  "markup5ever 0.38.0",
-]
-
-[[package]]
-name = "xml5ever"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ab627f34ff61b80d756180d556f9c68801d836d271b3b8c094504ceca69d221"
-dependencies = [
- "log",
- "markup5ever 0.39.0",
 ]
 
 [[package]]

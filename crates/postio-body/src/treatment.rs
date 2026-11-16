@@ -235,7 +235,7 @@ fn find_triggers(
     found: &mut Option<Trigger>,
 ) {
     if let NodeData::Element { name, attrs, .. } = &node.data {
-        let element = name.local.as_ref();
+        let element = &*name.local;
         let attrs = attrs.borrow();
         let get = |wanted: &str| attribute(&attrs, wanted);
         let declared = declarations(&get("style").unwrap_or_default());
@@ -327,7 +327,7 @@ fn text_length(node: &Handle) -> usize {
 fn attribute(attrs: &[Attribute], wanted: &str) -> Option<String> {
     attrs
         .iter()
-        .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case(wanted))
+        .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, wanted))
         .map(|attr| attr.value.trim().to_owned())
 }
 
@@ -766,7 +766,7 @@ fn guard_node(node: &Handle, surfaces: &[Surface], rules: &mut Vec<String>, chan
         let mut attrs = attrs.borrow_mut();
         let colour = attrs
             .iter()
-            .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case("style"))
+            .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "style"))
             .and_then(|style| {
                 declarations(&style.value)
                     .into_iter()
@@ -776,7 +776,7 @@ fn guard_node(node: &Handle, surfaces: &[Surface], rules: &mut Vec<String>, chan
             *changed = true;
             if let Some(style) = attrs
                 .iter_mut()
-                .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case("style"))
+                .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "style"))
             {
                 let rest: Vec<String> = declarations(&style.value)
                     .into_iter()
@@ -786,7 +786,7 @@ fn guard_node(node: &Handle, surfaces: &[Surface], rules: &mut Vec<String>, chan
                 style.value = StrTendril::from(rest.join("; "));
             }
             attrs.retain(|attr| {
-                !(attr.name.local.as_ref().eq_ignore_ascii_case("style")
+                !(str::eq_ignore_ascii_case(&attr.name.local, "style")
                     && attr.value.trim().is_empty())
             });
             let reads: Vec<Scheme> = parse_colour(&value)
@@ -850,7 +850,7 @@ fn reads_on(colour: Colour, surface: &Surface) -> bool {
 
 fn find_body(node: &Handle) -> Option<Handle> {
     if let NodeData::Element { name, .. } = &node.data
-        && name.local.as_ref() == "body"
+        && (&*name.local) == "body"
     {
         return Some(node.clone());
     }
@@ -861,7 +861,7 @@ fn treat(node: &Handle, in_link: bool, in_grid: bool) {
     let mut in_link = in_link;
     let mut in_grid = in_grid;
     if let NodeData::Element { name, attrs, .. } = &node.data {
-        let element = name.local.as_ref().to_owned();
+        let element = name.local.to_string();
         if element == "a" {
             in_link = true;
         }
@@ -872,7 +872,7 @@ fn treat(node: &Handle, in_link: bool, in_grid: bool) {
         attrs.retain(|attr| {
             !STRIPPED_ATTRIBUTES
                 .iter()
-                .any(|stripped| attr.name.local.as_ref().eq_ignore_ascii_case(stripped))
+                .any(|stripped| str::eq_ignore_ascii_case(&attr.name.local, stripped))
         });
         let table_part = matches!(
             element.as_str(),
@@ -882,13 +882,13 @@ fn treat(node: &Handle, in_link: bool, in_grid: bool) {
             attrs.retain(|attr| {
                 !["border", "cellpadding", "cellspacing", "width"]
                     .iter()
-                    .any(|gone| attr.name.local.as_ref().eq_ignore_ascii_case(gone))
+                    .any(|gone| str::eq_ignore_ascii_case(&attr.name.local, gone))
             });
         }
         let keeps_colour = !in_link && PHRASING.contains(&element.as_str());
         if let Some(style) = attrs
             .iter_mut()
-            .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case("style"))
+            .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "style"))
         {
             let kept: Vec<String> = declarations(&style.value)
                 .into_iter()
@@ -915,8 +915,7 @@ fn treat(node: &Handle, in_link: bool, in_grid: bool) {
             style.value = StrTendril::from(kept.join("; "));
         }
         attrs.retain(|attr| {
-            !(attr.name.local.as_ref().eq_ignore_ascii_case("style")
-                && attr.value.trim().is_empty())
+            !(str::eq_ignore_ascii_case(&attr.name.local, "style") && attr.value.trim().is_empty())
         });
         if element == "table" && in_grid {
             add_class(&mut attrs, GRID_CLASS);
@@ -932,7 +931,7 @@ fn treat(node: &Handle, in_link: bool, in_grid: bool) {
 fn add_class(attrs: &mut Vec<Attribute>, class: &str) {
     if let Some(existing) = attrs
         .iter_mut()
-        .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case("class"))
+        .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "class"))
     {
         let joined = format!("{} {class}", existing.value.trim());
         existing.value = StrTendril::from(joined.trim().to_owned());
@@ -964,7 +963,7 @@ fn draws_grid(table: &Handle) -> bool {
     }
     fn walk(node: &Handle, top: bool) -> bool {
         if let NodeData::Element { name, attrs, .. } = &node.data {
-            let element = name.local.as_ref();
+            let element = &*name.local;
             if element == "table" && !top {
                 return false;
             }
@@ -989,7 +988,7 @@ fn is_spacer(node: &Handle) -> bool {
     let NodeData::Element { name, .. } = &node.data else {
         return false;
     };
-    if name.local.as_ref() != "p" {
+    if (&*name.local) != "p" {
         return false;
     }
     fn blank(node: &Handle) -> bool {
@@ -1000,7 +999,7 @@ fn is_spacer(node: &Handle) -> bool {
                 .all(|c| c.is_whitespace() || c == '\u{a0}'),
             NodeData::Element { name, .. } => {
                 matches!(
-                    name.local.as_ref(),
+                    &*name.local,
                     "span" | "font" | "b" | "i" | "o:p" | "br" | "p"
                 ) && node.children.borrow().iter().all(blank)
             }

@@ -218,8 +218,8 @@ blake3 = "1.8.7"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
-io-sasl = { version = "=0.1.0", default-features = false }
-pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
+io-sasl = { version = "=0.2.0", default-features = false }
+pimalaya-stream = { version = "0.4", features = ["rustls-ring"] }
 rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
 secrecy = "0.10.3"
