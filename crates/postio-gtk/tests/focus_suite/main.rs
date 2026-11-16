@@ -1740,6 +1740,11 @@ const CASES: &[(&str, fn())] = &[
         threads::a_search_childs_row_says_who_wrote_it_and_when as fn(),
     ),
     (
+        "threads::the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboard",
+        threads::the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboard
+            as fn(),
+    ),
+    (
         "threads::forwarding_the_whole_thread_says_so_in_the_subject",
         threads::forwarding_the_whole_thread_says_so_in_the_subject as fn(),
     ),

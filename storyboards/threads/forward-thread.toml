@@ -12,7 +12,8 @@
 # forward* chooser of three cards, each with its number key, on "This
 # message". `2` picks "Whole thread": the subject becomes "Fwd: Harbor API
 # draft v3 (6 messages)" and the quoted messages show as collapsed rows;
-# `mod+shift+q` expands them. The design's `shift+f` is `f` then `2` here
+# `mod+shift+q` expands them. The keyboard starts in the chooser (Tab moves
+# to To; the runner cannot press Tab, so a focus_suite case covers it). The design's `shift+f` is `f` then `2` here
 # (T3). On a one-message thread, the third row of the seed, `f` opens no
 # chooser.
 apps   = ["focus"]
@@ -33,8 +34,8 @@ expect  = "Harbor opens on message 5 of 6, the first unread."
 [[step]]
 id      = "forward"
 command = "forward"
-check   = { composer.open = true, keyboard.field = "to", app.focus.compose.chooser.open = true, app.focus.compose.chooser.selected = "This message", app.focus.compose.chooser.cards = "This message 1 | Whole thread 2 | As attachments 3" }
-expect  = "The forward opens with the caret in To. Above To, under the title, a What to forward chooser draws three cards, each with its number key; This message is ringed and its line says it quotes Ben's message as usual."
+check   = { composer.open = true, app.focus.compose.chooser.focused = true, app.focus.compose.chooser.open = true, app.focus.compose.chooser.selected = "This message", app.focus.compose.chooser.cards = "This message 1 | Whole thread 2 | As attachments 3" }
+expect  = "The forward opens with the keyboard in the chooser, not in To. Above To, under the title, a What to forward chooser draws three cards, each with its number key; This message is ringed and its line says it quotes Ben's message as usual."
 
 [[step]]
 id      = "whole"

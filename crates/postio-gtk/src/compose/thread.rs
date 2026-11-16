@@ -70,6 +70,10 @@ impl ThreadParts {
         let chooser = gtk::Box::new(gtk::Orientation::Vertical, 6);
         chooser.add_css_class("focus-forward-chooser");
         chooser.set_visible(false);
+        // One stop in the tab order, above To: `1` `2` `3` are its own while
+        // it holds the keyboard (spec 013 FR-023), and Tab moves on to To.
+        chooser.set_focusable(true);
+        chooser.update_property(&[gtk::accessible::Property::Label("What to forward")]);
         let cards = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         cards.set_homogeneous(true);
         chooser.append(&cards);
@@ -125,6 +129,10 @@ impl ThreadParts {
         for card in &view.cards {
             let button = gtk::Button::new();
             button.add_css_class("focus-forward-card");
+            // The chooser is the one stop; a click chooses and leaves the
+            // keyboard there.
+            button.set_focusable(false);
+            button.set_focus_on_click(false);
             if card.form == view.selected {
                 button.add_css_class("focus-forward-card-selected");
             }
@@ -148,6 +156,7 @@ impl ThreadParts {
             let (weak, form) = (Rc::downgrade(self), card.form);
             button.connect_clicked(move |_| {
                 if let Some(parts) = weak.upgrade() {
+                    parts.chooser.grab_focus();
                     let handler = parts.on_card.borrow().clone();
                     if let Some(handler) = handler {
                         handler(form);
@@ -222,6 +231,26 @@ impl ThreadParts {
         self.chooser.set_visible(false);
         self.chooser_view.replace(None);
         self.quoted_expanded.set(false);
+    }
+
+    /// Whether the keyboard is in the chooser.
+    pub fn chooser_has_focus(&self) -> bool {
+        self.chooser.is_visible()
+            && self
+                .chooser
+                .root()
+                .and_then(|root| root.focus())
+                .is_some_and(|focus| {
+                    focus == *self.chooser.upcast_ref::<gtk::Widget>()
+                        || focus.is_ancestor(&self.chooser)
+                })
+    }
+
+    /// Put the keyboard in the chooser, when it is up.
+    pub fn focus_chooser(&self) {
+        if self.chooser.is_visible() {
+            self.chooser.grab_focus();
+        }
     }
 
     /// Whether the chooser is up.
