@@ -1990,6 +1990,13 @@ impl FocusWindow {
         }
     }
 
+    /// Open the unsent reply a thread shows, by its draft's id.
+    pub fn open_thread_draft(&self, draft: postio_model::DraftId) {
+        if let Some(compose) = self.compose() {
+            compose.open_thread_draft(draft);
+        }
+    }
+
     /// Start the composer's editing surface, while nobody is waiting on it.
     pub fn warm_composer(&self) {
         self.imp().warm.set(true);
@@ -2539,6 +2546,10 @@ impl FocusWindow {
                 kind: postio_focus::ComposerKind::Draft,
                 message: Some(message),
             } => self.open_draft(*message),
+            Intent::Composer {
+                kind: postio_focus::ComposerKind::ThreadDraft { draft },
+                message: None,
+            } => self.open_thread_draft(*draft),
             Intent::Composer {
                 kind:
                     kind @ (postio_focus::ComposerKind::Reply
@@ -5066,6 +5077,23 @@ impl FocusWindow {
                         if let Some(pane) = window.pane() {
                             pane.feed().input(postio_focus::Input::BarRoom(room));
                         }
+                    }
+                ));
+                reading.connect_thread_chip(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |click| {
+                        let Some(pane) = window.pane() else {
+                            return;
+                        };
+                        pane.feed().input(match click {
+                            crate::thread_bar::ChipClick::Message(index) => {
+                                postio_focus::Input::ThreadBarChipClicked(index)
+                            }
+                            crate::thread_bar::ChipClick::More(from) => {
+                                postio_focus::Input::ThreadBarMoreClicked { from }
+                            }
+                        });
                     }
                 ));
                 reading.connect_thread_menu(glib::clone!(

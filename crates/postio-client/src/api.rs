@@ -148,6 +148,7 @@ impl Req {
             Req::UndoTop => "UndoTop",
             Req::ReplySource(_) => "ReplySource",
             Req::DraftBehind(_) => "DraftBehind",
+            Req::DraftById(_) => "DraftById",
             Req::CancelSend(_) => "CancelSend",
             Req::SendFailure(_) => "SendFailure",
             Req::DefaultSignature { .. } => "DefaultSignature",
@@ -1170,6 +1171,15 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// The local draft with this id: a thread's unsent reply.
+    pub async fn draft_by_id(&self, draft: DraftId) -> Result<Option<Draft>, StoreError> {
+        self.read(Req::DraftById(draft), "a draft", |answer| match answer {
+            Resp::Draft(found) => Some(found.map(|found| *found)),
+            _ => None,
+        })
         .await
     }
 

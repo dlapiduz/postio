@@ -1274,6 +1274,11 @@ impl Inner {
                     .await
                     .map(Box::new),
             ),
+            Req::DraftById(draft) => Resp::Draft(
+                compose::draft_by_id(&self.wiring.database, draft)
+                    .await
+                    .map(Box::new),
+            ),
             Req::CancelSend(draft) => Resp::Draft(
                 compose::cancel_queued_send(&self.wiring.database, draft)
                     .await

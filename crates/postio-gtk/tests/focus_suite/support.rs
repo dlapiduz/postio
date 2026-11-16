@@ -861,6 +861,30 @@ impl Fixture {
         (message.id, threaded.thread_id)
     }
 
+    /// An unsent reply in `member`'s thread, saying `words`: what a thread
+    /// shows as its last child. Answers the draft.
+    pub async fn thread_draft(&self, member: MessageId, words: &str) -> postio_model::DraftId {
+        let connection = self.database.connect().await.expect("a connection");
+        let thread = MessageRepository::new(&connection)
+            .get(member)
+            .await
+            .expect("a read")
+            .expect("the member")
+            .thread_id
+            .expect("threaded");
+        let mut draft = postio_model::Draft::new(self.account.id);
+        draft.thread_id = Some(thread);
+        draft.subject = "Re: Harbor plan".to_owned();
+        draft.body = postio_model::MessageBody {
+            text: Some(words.to_owned()),
+            html: None,
+        };
+        postio_storage::repository::DraftRepository::new(&connection)
+            .save(&mut draft)
+            .await
+            .expect("a draft")
+    }
+
     /// Mark the first `count` messages of `thread` read.
     pub async fn read_first(&self, thread: &[MessageId], count: usize) {
         let connection = self.database.connect().await.expect("a connection");

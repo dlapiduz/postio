@@ -30,6 +30,17 @@ const FIXED: i32 = 66 + 100 + 48;
 /// Told how many chips the bar has room for, whenever that changes.
 type RoomHandler = Rc<dyn Fn(u32)>;
 
+/// What a click on a chip asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChipClick {
+    /// The chip for this member, from zero.
+    Message(u32),
+    /// The "... N more" chip, which stands for the members from this one.
+    More(u32),
+}
+
+type ChipHandler = Rc<RefCell<Option<Rc<dyn Fn(ChipClick)>>>>;
+
 /// The bar.
 pub struct ThreadBar {
     root: gtk::Box,
@@ -46,6 +57,7 @@ pub struct ThreadBar {
     room: Cell<u32>,
     on_room: RefCell<Option<RoomHandler>>,
     on_menu: RefCell<Option<Rc<dyn Fn()>>>,
+    on_chip: ChipHandler,
 }
 
 impl ThreadBar {
@@ -88,6 +100,7 @@ impl ThreadBar {
             room: Cell::new(0),
             on_room: RefCell::default(),
             on_menu: RefCell::default(),
+            on_chip: ChipHandler::default(),
         });
         let weak = Rc::downgrade(&bar);
         bar.menu.connect_clicked(move |_| {
@@ -122,6 +135,11 @@ impl ThreadBar {
     /// Run `handler` when the Thread button is pressed.
     pub fn connect_menu(&self, handler: impl Fn() + 'static) {
         self.on_menu.replace(Some(Rc::new(handler)));
+    }
+
+    /// Run `handler` when a chip is clicked.
+    pub fn connect_chip(&self, handler: impl Fn(ChipClick) + 'static) {
+        self.on_chip.replace(Some(Rc::new(handler)));
     }
 
     /// Run `handler` with how many chips fit, once the bar has a width and
@@ -195,6 +213,21 @@ impl ThreadBar {
         tile.add_css_class("focus-thread-chip");
         tile.set_size_request(CHIP_WIDTH, 46);
         tile.set_valign(gtk::Align::Center);
+        let click = match chip {
+            Chip::Message { index, .. } => ChipClick::Message(*index),
+            Chip::More { from, .. } => ChipClick::More(*from),
+        };
+        let handler = Rc::clone(&self.on_chip);
+        let gesture = gtk::GestureClick::new();
+        gesture.connect_released(move |gesture, _, _, _| {
+            let handler = handler.borrow().clone();
+            if let Some(handler) = handler {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                handler(click);
+            }
+        });
+        tile.add_controller(gesture);
+        tile.set_cursor_from_name(Some("pointer"));
         match chip {
             Chip::Message {
                 index,
