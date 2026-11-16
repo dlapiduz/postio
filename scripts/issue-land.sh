@@ -343,6 +343,60 @@ fi
 # command, is a flag somebody eventually forgets, and forgetting this one
 # merges initiative work straight into `main`. #290.
 BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
+
+# A branch stacked on another open PR's branch (`issue-claim.sh --base
+# <branch>`, or `postio-base` written by hand) outlives that PR: PRs merge
+# squashed, so once the base has landed its commits are on `main` under
+# other hashes, and a plain rebase would replay them as conflicts. What
+# is left to replay is only what this branch added on top of the base's
+# tip, so rebase exactly that onto `main`, record `main`, and retarget the
+# PR if there is one. GitHub retargets a PR itself when its base branch is
+# deleted on merge; the commits it cannot move. Nothing here runs for a
+# worktree whose base is `main`.
+STACKED_ON_OPEN=0
+if [ "$BASE" != main ] && [ "$WIP" != 1 ]; then
+    # gh is first needed here for a stacked base, so its version is checked
+    # here too (the later source line serves every other landing; a WIP push
+    # never touches gh and skips this block).
+    . "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
+    BASE_TIP=$(gh pr list --head "$BASE" --state merged \
+        --json headRefOid,baseRefName \
+        -q '[.[] | select(.baseRefName == "main")][0].headRefOid // empty' \
+        2>/dev/null || true)
+    if [ -n "$BASE_TIP" ]; then
+        for attempt in 1 2 3; do
+            git fetch --quiet origin main && break
+            [ "$attempt" -lt 3 ] && sleep 1
+        done
+        OLD_POINT=$(git merge-base HEAD "$BASE_TIP" 2>/dev/null || true)
+        if [ -z "$OLD_POINT" ]; then
+            echo "Base '$BASE' was merged, but this branch shares no history with its" >&2
+            echo "last commit ($BASE_TIP), so there is nothing to rebase --onto." >&2
+            echo "Rebase by hand onto origin/main, then record it:" >&2
+            echo "    printf 'main\\n' > \"\$(git rev-parse --git-dir)/postio-base\"" >&2
+            exit 2
+        fi
+        echo "base '$BASE' was squash-merged into main; moving this branch onto main"
+        if ! git rebase --autostash --onto origin/main "$OLD_POINT"; then
+            git rebase --abort 2>/dev/null || true
+            echo >&2
+            echo "Rebase onto origin/main hit a conflict. Nothing was pushed." >&2
+            echo "Resolve it here, record main as the base, and run this again:" >&2
+            echo "    git rebase --onto origin/main $OLD_POINT" >&2
+            echo "    printf 'main\\n' > \"\$(git rev-parse --git-dir)/postio-base\"" >&2
+            exit 1
+        fi
+        printf 'main\n' > "$(git rev-parse --git-dir)/postio-base"
+        BASE=main
+        if [ "$(gh pr list --head "$BRANCH" --state open --json number -q length 2>/dev/null || echo 0)" = 1 ]; then
+            gh pr edit --base main >/dev/null
+            echo "retargeted the open PR to main."
+        fi
+        echo "base is now main."
+    else
+        STACKED_ON_OPEN=1
+    fi
+fi
 if ! git ls-remote --exit-code --heads origin "$BASE" >/dev/null 2>&1; then
     echo "This worktree records base '$BASE', which is not on origin any more." >&2
     echo "Nothing was pushed. If the initiative branch was merged and deleted," >&2
@@ -389,6 +443,10 @@ else
 fi
 echo "branch: $BRANCH"
 echo "base:   $BASE"
+if [ "$STACKED_ON_OPEN" = 1 ]; then
+    echo "        stacked on an open base: the PR targets $BASE and is retargeted"
+    echo "        to main the first landing after $BASE merges."
+fi
 echo "crates: ${CRATES:-none}"
 # #178 gave every worktree its own target/ because sharing one compiled a
 # worktree's crate against a sibling's. Nothing defaults this any more: these
