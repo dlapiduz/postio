@@ -64,6 +64,17 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.6.2" date="2026-11-16" type="development">
+      <description>
+        <p>Postio 0.6.2 is an alpha. It fixes messages being left behind in an expanded thread, gives the open message the dialog's full width, and shows in About which build you are running.</p>
+        <ul>
+          <li>A thread you expanded and then collapsed no longer leaves its messages behind in the list when new mail arrives while it is open.</li>
+          <li>The open message reads at the dialog's full width, and the thread bar, the actions, the subject and + Label line up on the message's left edge. To and From sit on the same line as their values.</li>
+          <li>Closing the command bar over search results gives the keyboard back to the results more reliably.</li>
+          <li>About shows the commit beside the version.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-11-16" type="development">
       <description>
         <p>Postio 0.6.1 is an alpha. It brings back threads: a conversation's messages can be seen and walked again, on the Mac and on Linux alike, and Filtered's tabs sit where the inbox's strip does.</p>
