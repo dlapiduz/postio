@@ -212,6 +212,18 @@ impl SplicedList {
         } else if is && position > splice.anchor {
             self.items_changed(position + splice.children, removed, added);
         } else {
+            if position + removed <= splice.anchor {
+                // Rows above the thread's (new mail at the top): its row
+                // moves, and its children go with it. Left where it was,
+                // the anchor would hang them from another row, and the
+                // view, told only of the rows above, would keep the old
+                // ones too -- drawn twice, then half left behind on a fold.
+                let anchor = splice.anchor - removed + added;
+                self.imp().splice.set(Some(Splice { anchor, ..splice }));
+                if is && let Some(row) = self.rows().item(anchor).and_downcast::<RowObject>() {
+                    self.mark_anchor(Some(row));
+                }
+            }
             self.items_changed(position, removed, added);
         }
     }
