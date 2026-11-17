@@ -274,6 +274,18 @@ jobs:
           key: ${{ runner.os }}-flatpak-${{ matrix.variant.app_id }}-${{ hashFiles('Cargo.lock', matrix.variant.manifest) }}
           restore-keys: ${{ runner.os }}-flatpak-${{ matrix.variant.app_id }}-
 
+      # About says the commit beside the version (app.rs's COMMIT). The
+      # manifest builds from a copy with no .git, so the commit is handed
+      # in through its environment -- here, after the cache key above was
+      # read from the manifest as committed, so every release still
+      # restores the same cache.
+      - name: Stamp the commit
+        run: |
+          jq --arg commit "$(git rev-parse --short=9 HEAD)" \
+            '."build-options".env.POSTIO_COMMIT = $commit' \
+            "$MANIFEST" > "$RUNNER_TEMP/manifest.json"
+          mv "$RUNNER_TEMP/manifest.json" "$MANIFEST"
+
       - name: Build
         run: |
           flatpak-builder --user --disable-rofiles-fuse --force-clean \

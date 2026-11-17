@@ -747,7 +747,10 @@ impl FocusWindow {
     fn show_about(&self) {
         let about = adw::AboutDialog::builder()
             .application_name(crate::app::NAME)
-            .version(env!("CARGO_PKG_VERSION"))
+            .version(crate::app::version_line(
+                env!("CARGO_PKG_VERSION"),
+                crate::app::COMMIT,
+            ))
             .license_type(gtk::License::MitX11)
             .build();
         about.present(Some(self));
