@@ -187,9 +187,56 @@ jobs:
   # can run beside the suite instead of stopping it for twelve minutes; the
   # nightly's `storyboards` job says why. Same condition as `suite`, because
   # the nightly at this commit runs these too.
+  # The storyboard passes' test binary, built once for the four shards
+  # below, as ci.yml's `frontend-build` builds the frontend suites for its
+  # six: each shard used to compile focus_suite itself, about ten minutes of
+  # every shard before it played a window (2026-11-17). It restores the
+  # `build-app` cache that job keeps warm on `main` -- the same crate's test
+  # build -- and saves none, so the two never race to write one key.
+  storyboards-build:
+    name: Build the storyboard passes
+    needs: [plan, nightly]
+    if: >-
+      !cancelled() && needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
+      && (needs.nightly.result == 'skipped' || needs.nightly.outputs.answer == 'run-here')
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
+      - uses: ./.github/actions/rust-workspace
+        with:
+          cache-name: build-app
+
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
+
+      - name: Cache cargo-nextest
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      - name: cargo nextest archive (focus_suite)
+        run: >-
+          cargo nextest archive -p postio-gtk --test focus_suite
+          --profile ci-storyboards
+          --archive-file "$RUNNER_TEMP/storyboard-tests.tar.zst"
+
+      - name: Ship the archive to the shards
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: storyboard-tests
+          path: ${{ runner.temp }}/storyboard-tests.tar.zst
+          retention-days: 1
+          if-no-files-found: error
+
   storyboards:
     name: Storyboard passes (${{ matrix.shard }}/4)
-    needs: [plan, nightly]
+    needs: [plan, nightly, storyboards-build]
     if: >-
       !cancelled() && needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
       && (needs.nightly.result == 'skipped' || needs.nightly.outputs.answer == 'run-here')
@@ -206,7 +253,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
 
+      # The system libraries and the toolchain, and nothing to build.
       - uses: ./.github/actions/rust-workspace
+        with:
+          build-cache: "false"
 
       - name: Give the GTK suites a runtime directory
         run: |
@@ -223,11 +273,22 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
-      - name: Run the storyboard passes
+      - name: Fetch the archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: storyboard-tests
+          path: ${{ runner.temp }}
+
+      # The archive and the remap pass through to the isolated retry too:
+      # `test-with-flake-retry.sh` hands its further arguments to both runs.
+      - name: cargo nextest run --profile ci-storyboards
         env:
           POSTIO_TEST_PATIENCE: "3"
           POSTIO_STORYBOARD_SHARD: ${{ matrix.shard }}/4
-        run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-storyboards postio-gtk
+        run: >-
+          dbus-run-session -- scripts/test-with-flake-retry.sh ci-storyboards ""
+          --archive-file "$RUNNER_TEMP/storyboard-tests.tar.zst"
+          --workspace-remap "$GITHUB_WORKSPACE"
 
   # One job per Flatpak row of the variants file. A build job reads the tree
   # as it is: the version is already in it, because the release pull request
@@ -572,10 +633,11 @@ jobs:
   # `nightly` did.
   publish:
     name: Publish
-    needs: [plan, nightly, suite, storyboards, flatpak, tarball, macos]
+    needs: [plan, nightly, suite, storyboards-build, storyboards, flatpak, tarball, macos]
     if: >-
       always() && needs.plan.outputs.publish == 'true'
       && contains(fromJSON('["success", "skipped"]'), needs.nightly.result)
+      && contains(fromJSON('["success", "skipped"]'), needs['storyboards-build'].result)
       && contains(fromJSON('["success", "skipped"]'), needs.suite.result)
       && contains(fromJSON('["success", "skipped"]'), needs.storyboards.result)
       && !contains(fromJSON('["failure", "cancelled"]'), needs.flatpak.result)
@@ -600,8 +662,11 @@ jobs:
           path: assets
           merge-multiple: true
 
+      # Every artifact of the run lands here, and the storyboard shards' test
+      # binaries are one when the suite ran in this workflow: not a package.
       - name: Check every package is here
         run: |
+          rm -f assets/storyboard-tests.tar.zst
           missing=0
           for asset in $(python3 scripts/release-variants.py assets --version "$VERSION"); do
             if [ -f "assets/$asset" ]; then
