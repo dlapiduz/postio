@@ -184,13 +184,12 @@ pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
         assert_eq!(reading.title(), "Plain");
         let (left, right) = extent();
         assert!(left < 1.0, "the plain body is inset {left}px: a frame");
-        // T197 then T203: the lines start at the column's edge and run to
-        // the capped measure, 32em of the 15px reading size, not across
-        // the whole column.
-        let measure = 32.0 * 15.0;
+        // T197, then the maintainer's full-width column (2026-11-16): the
+        // lines start at the column's edge and run across it.
+        let measure = f64::from(reading.reader().view().width());
         assert!(
             right > 0.9 * measure && right <= measure + 0.5,
-            "the plain body's lines run to {right}px; the measure is {measure}px"
+            "the plain body's lines run to {right}px; the column is {measure}px"
         );
 
         support::keys(&window, &["j"]);

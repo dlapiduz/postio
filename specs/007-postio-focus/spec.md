@@ -1426,9 +1426,12 @@ screen, not on what a layer was handed, that each surface shows what
 - **FR-039**: The open message's frame MUST follow from the window, never
   from the message: the dialog is `clamp(640, W − 2·max(96, 0.18·W), 820)`
   wide and the window's height less 80, the list behind dimmed. Everything
-  inside the message shares one centred column, `min(480, dialog − 96)` for
-  a body drawn in **app colours** and `min(640, dialog − 48)` for one drawn
-  on **paper**. Every HTML body is sanitised and classified:
+  inside the message shares one column, the dialog's whole width less a
+  20 px gutter each side (`dialog − 40`), for a body drawn in **app
+  colours** and on **paper** alike, and the header, action row and thread
+  bar start their words at the same gutter (the maintainer, 2026-11-16,
+  replacing `min(480, dialog − 96)` and `min(640, dialog − 48)`). Every
+  HTML body is sanitised and classified:
   - **paper** when, after sanitising, it paints a page background, has a
     fixed-width layout table of 480 px or more, or an image wider than
     300 px. It is drawn as sent on a white sheet, never inverted or

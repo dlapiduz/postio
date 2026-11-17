@@ -58,7 +58,8 @@ fn recipient_line() -> adw::WrapBox {
         .child_spacing(S1)
         .line_spacing(S1)
         .hexpand(true)
-        .valign(gtk::Align::Baseline)
+        .valign(gtk::Align::Start)
+        .css_classes(["focus-open-recipient-line"])
         .build()
 }
 
@@ -94,9 +95,13 @@ impl HeaderCard {
         let date = gtk::Label::new(None);
         date.add_css_class("focus-open-date");
         date.set_valign(gtk::Align::Baseline);
+        // A wrapping line gives the grid no baseline to share, so a field
+        // of recipients and its name meet at their tops instead.
         let to_label = field("To");
+        to_label.set_valign(gtk::Align::Start);
         let to = recipient_line();
         let cc_label = field("Cc");
+        cc_label.set_valign(gtk::Align::Start);
         let cc = recipient_line();
         root.attach(&from_label, 0, 0, 1, 1);
         root.attach(&from, 1, 0, 1, 1);

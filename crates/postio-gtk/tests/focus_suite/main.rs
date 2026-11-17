@@ -976,6 +976,10 @@ const CASES: &[(&str, fn())] = &[
         open_layout::the_render_mode_line_sits_24_under_the_card_and_12_over_the_body as fn(),
     ),
     (
+        "open_layout::every_band_starts_at_the_messages_left_edge",
+        open_layout::every_band_starts_at_the_messages_left_edge as fn(),
+    ),
+    (
         "open_layout::the_action_cards_sentence_wraps_and_is_never_cut",
         open_layout::the_action_cards_sentence_wraps_and_is_never_cut as fn(),
     ),
@@ -1356,8 +1360,8 @@ const CASES: &[(&str, fn())] = &[
         open_measure::a_plain_paragraph_break_is_a_short_gap_not_a_blank_line as fn(),
     ),
     (
-        "open_measure::the_measure_is_near_seventy_characters_in_a_centred_column",
-        open_measure::the_measure_is_near_seventy_characters_in_a_centred_column as fn(),
+        "open_measure::the_measure_is_the_dialogs_width_less_its_gutters",
+        open_measure::the_measure_is_the_dialogs_width_less_its_gutters as fn(),
     ),
     (
         "open_measure::opening_find_keeps_the_reading_position",

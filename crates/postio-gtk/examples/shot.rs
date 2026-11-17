@@ -483,6 +483,8 @@ fn stage(
             // above them in the list.
             pane.cursor().set_selected(demo::OPENED as u32 + 1);
             window.act(CommandId::OpenMessage);
+            // A thread's row opens once the thread has been read (spec 013).
+            settle_until(|| window.reading().is_some());
             let Some(reading) = window.reading() else {
                 return Err("Enter opened nothing".into());
             };
@@ -502,6 +504,8 @@ fn stage(
             pick_three();
             pane.cursor().set_selected(demo::OPENED as u32 + 1);
             window.act(CommandId::OpenMessage);
+            // A thread's row opens once the thread has been read (spec 013).
+            settle_until(|| window.reading().is_some());
             let Some(reading) = window.reading() else {
                 return Err("Enter opened nothing".into());
             };

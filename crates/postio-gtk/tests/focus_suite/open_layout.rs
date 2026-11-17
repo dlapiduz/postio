@@ -414,7 +414,7 @@ const BLOCKS: [&str; 6] = [
 
 /// T207: in a wide window and at 1024, the thread marker, subject, labels, sender
 /// block, action card, body and attachments share both edges of one column
-/// `min(480, dialog - 96)` wide, centred in the dialog.
+/// `dialog - 40` wide, inside the dialog's gutters.
 pub fn every_block_shares_both_edges_of_one_centred_column() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1285,4 +1285,79 @@ pub fn the_senders_address_is_never_cut_while_there_is_room() {
             date.text()
         );
     });
+}
+
+/// The maintainer, 2026-11-16: the message reads the dialog's whole width,
+/// and every band of the dialog starts its words at one left edge -- the
+/// thread bar's title, the action row's first verb, the subject, "+ Label"
+/// -- and each field's name sits on its value's line. The message has no
+/// label, so "+ Label" is the first thing on its line.
+pub fn every_band_starts_at_the_messages_left_edge() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor API draft v3", 2, 10).await;
+        fixture.read_all_but_last(&ids).await;
+        let latest = *ids.last().expect("a thread");
+        dress(&fixture, latest, false).await;
+        fixture.write_body(latest, BODY).await;
+        let window = opened_at(&fixture, 1, WIDE).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        let content = dialog.child().expect("content");
+        let left = focus_dialog::GUTTER as f32;
+        let words = |class: &str| -> f32 {
+            let label = first_label(&shown(&dialog, class));
+            edges(&label, &content).0 + label.layout_offsets().0 as f32
+        };
+        for (what, x) in [
+            ("the thread bar's title", words("focus-thread-bar-title")),
+            ("the action row's first verb", words("focus-open-toolbar")),
+            ("the subject", words("focus-open-subject")),
+            ("+ Label", words("focus-open-add-label")),
+        ] {
+            assert!(
+                near(x, left),
+                "{what} starts at {x}; the dialog's bands start at {left}"
+            );
+        }
+        let card = shown(&dialog, "focus-open-header-card")
+            .downcast::<gtk::Grid>()
+            .expect("the sender block is a grid");
+        for (row, field) in [(0, "From"), (1, "To")] {
+            let name = card
+                .child_at(0, row)
+                .and_downcast::<gtk::Label>()
+                .expect("a field's name");
+            assert_eq!(name.text(), field);
+            let value = first_label(&card.child_at(1, row).expect("a field's value"));
+            let (at, should) = (baseline(&name, &content), baseline(&value, &content));
+            // Two sizes centred on one 22px line share a baseline only to
+            // within their fonts' rounding, which differs between machines
+            // (1.2px on CI's fonts): a pixel and a half, not one.
+            assert!(
+                (at - should).abs() <= 1.5,
+                "{field} sits on {at}; its value on {should}"
+            );
+        }
+        window.close();
+        crate::settle();
+    });
+}
+
+/// The first label at or under `root`.
+fn first_label(root: &gtk::Widget) -> gtk::Label {
+    support::descendants(root)
+        .into_iter()
+        .chain(std::iter::once(root.clone()))
+        .find_map(|widget| widget.downcast::<gtk::Label>().ok())
+        .expect("a label")
+}
+
+/// Where `label`'s first line sits, in `root`'s coordinates.
+fn baseline(label: &gtk::Label, root: &impl IsA<gtk::Widget>) -> f32 {
+    let top = edges(label, root).1 + label.layout_offsets().1 as f32;
+    top + label.layout().baseline() as f32 / gtk::pango::SCALE as f32
 }

@@ -80,8 +80,14 @@ impl Compose {
         slot.set_vexpand(true);
         let column = adw::Clamp::builder()
             .child(&slot)
-            .maximum_size(focus_dialog::COLUMN_APP_COLOURS)
-            .tightening_threshold(focus_dialog::COLUMN_APP_COLOURS)
+            .maximum_size(focus_dialog::column_width(
+                focus_dialog::DIALOG_MAX,
+                postio_body::treatment::Treatment::AppColours,
+            ))
+            .tightening_threshold(focus_dialog::column_width(
+                focus_dialog::DIALOG_MAX,
+                postio_body::treatment::Treatment::AppColours,
+            ))
             .vexpand(true)
             .build();
         column.add_css_class("focus-compose-column");

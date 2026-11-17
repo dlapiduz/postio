@@ -119,8 +119,9 @@ message".
   `E`, Forward `f`, Archive `a`, Snooze `s`, Remind `h`, Label `l`, Move `m`,
   Delete `Del`. Below 760 px, Label, Move and Delete fold into More `.`. A
   draft being sent shows its own verbs instead.
-- **Column** (`min(480, dialog − 96)` in app colours, `min(640, dialog −
-  48)` on paper), centred, in order:
+- **Column** (`dialog − 40`, a 20 px gutter each side, in app colours and
+  on paper alike; the action row and thread bar start their words at the
+  same gutter), in order:
   1. a thread marker, "Latest of 6 in this thread · `[` earlier message";
   2. the subject, Adwaita Sans 600 30/34;
   3. its label pills, and "+ Label `l`";
@@ -151,7 +152,7 @@ the composer's verbs (screens.md, "The composer").
 - **Action row (44 px, hairlines above and below).** Send `ctrl+↵`, the one
   primary (raised, bold); Send later `ctrl+⇧+↵` ▾; Attach `ctrl+⇧+a`;
   "Remind · Tue 29 Sep" `ctrl+h` (its tooltip "Remind if no reply").
-- **One column,** `min(480, dialog − 96)`, centred, for everything below.
+- **One column,** `dialog − 40`, the open message's, for everything below.
 - **Fields,** 40 px each, one label column:
   - **To:** recipient chips (name, address in mono, ×). On the right,
     "+ Cc".
