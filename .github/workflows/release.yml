@@ -535,6 +535,16 @@ jobs:
             ${{ env.SBOM }}
           if-no-files-found: error
 
+      # The workspace's own crates rebuild on every release, because the
+      # release moves their version; what is worth keeping is the ~470
+      # dependencies. Saved whole it was 2.5 GB, a quarter of the
+      # repository's cache quota, so it was the first thing evicted and the
+      # next release built cold (0.6.1: an hour). ci.yml's `test` job says
+      # the same of its own cache.
+      - name: Drop workspace artifacts before caching
+        if: ${{ !cancelled() }}
+        run: scripts/ci-drop-workspace-artifacts.sh
+
       - name: Save the build cache
         if: ${{ !cancelled() }}
         uses: ./.github/actions/build-cache-save
