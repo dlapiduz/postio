@@ -1334,8 +1334,11 @@ pub fn every_band_starts_at_the_messages_left_edge() {
             assert_eq!(name.text(), field);
             let value = first_label(&card.child_at(1, row).expect("a field's value"));
             let (at, should) = (baseline(&name, &content), baseline(&value, &content));
+            // Two sizes centred on one 22px line share a baseline only to
+            // within their fonts' rounding, which differs between machines
+            // (1.2px on CI's fonts): a pixel and a half, not one.
             assert!(
-                near(at, should),
+                (at - should).abs() <= 1.5,
                 "{field} sits on {at}; its value on {should}"
             );
         }
