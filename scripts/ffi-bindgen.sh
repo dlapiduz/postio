@@ -9,12 +9,27 @@
 # far away from the change that caused it.
 #
 # Usage:
-#   scripts/ffi-bindgen.sh [out-dir]        # default: target/ffi-bindings
+#   scripts/ffi-bindgen.sh [--release] [out-dir]   # default: target/ffi-bindings
+#
+# `--release` reads the release library, for `macos-build.sh --release`. It
+# used to read a debug one whatever the caller built, so a release build of
+# the Mac app compiled the workspace a second time, in debug, only to read
+# the same metadata: twenty of the macOS release job's sixty minutes
+# (2026-11-16).
 set -euo pipefail
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 cd "$REPO_ROOT"
-OUT="${1:-target/ffi-bindings}"
+PROFILE=debug
+PROFILE_ARGS=()
+OUT=target/ffi-bindings
+for arg in "$@"; do
+    case "$arg" in
+        --release) PROFILE=release; PROFILE_ARGS=(--release) ;;
+        -*) echo "unknown argument: $arg" >&2; exit 2 ;;
+        *) OUT="$arg" ;;
+    esac
+done
 
 # The cdylib carries the metadata `uniffi-bindgen` reads in library mode, so it
 # has to exist before the generator runs. Built with whatever features the
@@ -25,23 +40,23 @@ FEATURE_ARGS=()
 if [ -n "${POSTIO_FFI_FEATURES:-}" ]; then
     FEATURE_ARGS=(--features "$POSTIO_FFI_FEATURES")
 fi
-cargo build -p postio-ffi ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}
+cargo build -p postio-ffi ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}
 
 LIB=""
 for candidate in \
-    "${CARGO_TARGET_DIR:-target}/debug/libpostio_ffi.dylib" \
-    "${CARGO_TARGET_DIR:-target}/debug/libpostio_ffi.so"; do
+    "${CARGO_TARGET_DIR:-target}/${PROFILE}/libpostio_ffi.dylib" \
+    "${CARGO_TARGET_DIR:-target}/${PROFILE}/libpostio_ffi.so"; do
     [ -f "$candidate" ] && LIB="$candidate" && break
 done
 if [ -z "$LIB" ]; then
-    echo "no postio-ffi cdylib under ${CARGO_TARGET_DIR:-target}/debug." >&2
+    echo "no postio-ffi cdylib under ${CARGO_TARGET_DIR:-target}/${PROFILE}." >&2
     echo "The [lib] crate-type in crates/postio-ffi/Cargo.toml must include" >&2
     echo "\`cdylib\` -- library-mode generation reads its metadata." >&2
     exit 1
 fi
 
 mkdir -p "$OUT"
-cargo run -q -p postio-ffi ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} --bin uniffi-bindgen -- \
+cargo run -q -p postio-ffi ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} --bin uniffi-bindgen -- \
     generate --library "$LIB" --language swift --out-dir "$OUT"
 
 echo "swift bindings -> $OUT"
