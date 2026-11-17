@@ -189,12 +189,20 @@ jobs:
   # nightly's `storyboards` job says why. Same condition as `suite`, because
   # the nightly at this commit runs these too.
   storyboards:
-    name: Storyboard passes
+    name: Storyboard passes (${{ matrix.shard }}/4)
     needs: [plan, nightly]
     if: >-
       !cancelled() && needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
       && (needs.nightly.result == 'skipped' || needs.nightly.outputs.answer == 'run-here')
     runs-on: ubuntu-26.04
+    # Each pass is one test that plays hundreds of windows, so nextest
+    # cannot split it; the tests split themselves by
+    # `POSTIO_STORYBOARD_SHARD` (postio-storyboard's `shard`). One job ran
+    # 32-52 minutes and was the release's longest wait (2026-11-16).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
@@ -219,6 +227,7 @@ jobs:
       - name: Run the storyboard passes
         env:
           POSTIO_TEST_PATIENCE: "3"
+          POSTIO_STORYBOARD_SHARD: ${{ matrix.shard }}/4
         run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-storyboards postio-gtk
 
   # One job per Flatpak row of the variants file. A build job reads the tree

@@ -23,6 +23,7 @@ pub mod page;
 pub mod parity;
 pub mod prompt;
 pub mod run;
+pub mod shard;
 pub mod verdicts;
 
 #[cfg(test)]

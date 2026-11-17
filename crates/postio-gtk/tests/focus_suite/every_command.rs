@@ -46,8 +46,14 @@ pub fn every_bound_command_shows_or_is_a_listed_gap() {
             "a context the pass could not reach:\n  {}",
             unreached.join("\n  ")
         );
+        // Per shard when the pass is split across runners
+        // (`POSTIO_STORYBOARD_SHARD`), so the floor is split with it.
+        let shard = postio_storyboard::shard::Shard::from_env();
         let pressed: usize = all.iter().map(|c| c.presses.len()).sum();
-        assert!(pressed > 100, "the pass pressed only {pressed} commands");
+        assert!(
+            pressed > 100 / shard.count(),
+            "the pass pressed only {pressed} commands"
+        );
         let problems: Vec<String> = all
             .iter()
             .flat_map(|c| &c.presses)
