@@ -145,6 +145,9 @@ const IGNORED: &[&str] = &[
     // Failed on CI in two places that do not touch this crate; held out
     // by scripts/quarantine-flakes.py until #1787 finds the race.
     "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
+    // Failed on CI in two places that do not touch this crate; held out
+    // by scripts/quarantine-flakes.py until #2136 finds the race.
+    "results::escape_closes_a_dropdown_over_the_results_then_leaves_them",
 ];
 
 const CASES: &[(&str, fn())] = &[
