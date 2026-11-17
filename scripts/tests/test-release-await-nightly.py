@@ -18,10 +18,15 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
 
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "release-await-nightly.sh"
@@ -88,7 +93,7 @@ def run(runs_replies: list[str], jobs_replies: list[str]) -> tuple[int, str, str
             "RELEASE_AWAIT_GRACE": "1",
             "RELEASE_AWAIT_LIMIT": "5",
         }
-        done = subprocess.run(
+        done = patience.run(
             ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60
         )
         asked = int((stub / "runs.count").read_text()) if (stub / "runs.count").exists() else 0

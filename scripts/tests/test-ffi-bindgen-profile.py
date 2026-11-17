@@ -18,10 +18,15 @@ Exit status: 0 all cases behaved, 1 otherwise.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 BINDGEN = Path(sys.argv[1]) if len(sys.argv) > 1 else SCRIPTS / "ffi-bindgen.sh"
@@ -61,7 +66,7 @@ def generate(*args: str) -> tuple[int, list[str], str]:
             "CARGO_TARGET_DIR": str(stub / "target"),
         }
         env.pop("POSTIO_FFI_FEATURES", None)
-        done = subprocess.run(
+        done = patience.run(
             ["bash", str(BINDGEN), *args, str(stub / "out")],
             env=env, capture_output=True, text=True, timeout=60,
         )

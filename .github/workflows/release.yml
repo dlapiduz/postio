@@ -126,8 +126,7 @@ jobs:
       answer: ${{ steps.wait.outputs.answer }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          sparse-checkout: scripts
+      - uses: ./.github/actions/python
       - name: Wait for the nightly on this commit
         id: wait
         env:
