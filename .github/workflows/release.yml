@@ -18,7 +18,8 @@ name: Release
 # kind, so a second Flatpak or a second tarball is a row, not a job. Every
 # package carries its own SBOM and a provenance attestation.
 #
-# Nothing is published until everything is built: `publish` creates the
+# Nothing is published until everything is built and the full suite has
+# passed on the commit (the packages build beside it): `publish` creates the
 # release as a draft, attaches every asset and `SHA256SUMS`, checks the list
 # against the variants file, and only then publishes -- which is also what
 # creates the tag. A package that fails to build leaves no release and no
@@ -104,11 +105,36 @@ jobs:
   # timer and here. A release is the last point at which finding one is
   # cheaper than shipping it.
   #
-  # Skipped when the nightly already passed this exact commit
-  # (`scripts/release-plan.sh` asks): it runs the identical suite -- the same
-  # `--profile ci-full` through the same flake-retry script, and the doctests
-  # -- so that is this answer already given. Anything short of the exact
-  # commit runs it here.
+  # The push that merged the release started `nightly.yml` on this same
+  # commit, and it runs the identical suite -- the same `--profile ci-full`
+  # through the same flake-retry script, the doctests, the storyboard passes
+  # -- so this job waits for that answer rather than giving it a second time
+  # beside it (2026-11-16; `scripts/release-await-nightly.sh` has the cases).
+  # Red stops the release. Only when there is no answer to wait for -- that
+  # run cancelled by a newer push, or never started -- do `suite` and
+  # `storyboards` below run here. Skipped, with them, when the nightly had
+  # already passed this commit before the release started (`plan` asks).
+  nightly:
+    name: Full suite on main
+    needs: plan
+    if: >-
+      github.event_name == 'push' && needs.plan.outputs.build == 'true'
+      && needs.plan.outputs.suite == 'run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    outputs:
+      answer: ${{ steps.wait.outputs.answer }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+      - name: Wait for the nightly on this commit
+        id: wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-await-nightly.sh >> "$GITHUB_OUTPUT"
+
+  # The suite here, when the nightly gave no answer, or for a dispatch.
   #
   # `--profile ci-full`: the measurement tier runs too, minus the one
   # measurement that asserts on a stopwatch, which a shared runner cannot
@@ -116,8 +142,10 @@ jobs:
   # parallel. `.config/nextest.toml` says which and why.
   suite:
     name: Full suite
-    needs: plan
-    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
+    needs: [plan, nightly]
+    if: >-
+      !cancelled() && needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
+      && (needs.nightly.result == 'skipped' || needs.nightly.outputs.answer == 'run-here')
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,11 +187,13 @@ jobs:
   # Focus's two storyboard passes, which `profile.ci-full` holds out so they
   # can run beside the suite instead of stopping it for twelve minutes; the
   # nightly's `storyboards` job says why. Same condition as `suite`, because
-  # a green nightly at this commit ran these too.
+  # the nightly at this commit runs these too.
   storyboards:
     name: Storyboard passes
-    needs: plan
-    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
+    needs: [plan, nightly]
+    if: >-
+      !cancelled() && needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
+      && (needs.nightly.result == 'skipped' || needs.nightly.outputs.answer == 'run-here')
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -196,14 +226,9 @@ jobs:
   # put it there, and the manifests build from the checkout (`"type": "dir"`).
   flatpak:
     name: Flatpak (${{ matrix.variant.id }})
-    needs: [plan, suite, storyboards]
-    # `always()` because `suite` is skipped whenever the nightly already
-    # answered, and a skipped need otherwise skips this too.
-    if: >-
-      always() && needs.plan.outputs.build == 'true'
-      && needs.plan.outputs.flatpaks != '[]'
-      && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
-      && (needs.storyboards.result == 'success' || needs.storyboards.result == 'skipped')
+    # Beside the gates, not after them: `publish` is what waits for them.
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.flatpaks != '[]'
     runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
@@ -353,12 +378,8 @@ jobs:
   # it.
   tarball:
     name: Tarball (${{ matrix.variant.id }})
-    needs: [plan, suite, storyboards]
-    if: >-
-      always() && needs.plan.outputs.build == 'true'
-      && needs.plan.outputs.tarballs != '[]'
-      && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
-      && (needs.storyboards.result == 'success' || needs.storyboards.result == 'skipped')
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.tarballs != '[]'
     runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
@@ -444,12 +465,8 @@ jobs:
   # macos-latest, so Apple Silicon only.
   macos:
     name: macOS (${{ matrix.variant.id }})
-    needs: [plan, suite, storyboards]
-    if: >-
-      always() && needs.plan.outputs.build == 'true'
-      && needs.plan.outputs.macos != '[]'
-      && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
-      && (needs.storyboards.result == 'success' || needs.storyboards.result == 'skipped')
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.macos != '[]'
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -522,15 +539,27 @@ jobs:
         if: ${{ !cancelled() }}
         uses: ./.github/actions/build-cache-save
 
-  # Everything built, so: one draft, every asset, the checksums, and a check
-  # against the variants file that nothing is missing -- then publish, which
-  # creates the tag at the commit that was built. Anything short of that
-  # leaves a draft and no tag, so re-running the failed jobs finishes it.
+  # Everything built and the suite green, so: one draft, every asset, the
+  # checksums, and a check against the variants file that nothing is missing
+  # -- then publish, which creates the tag at the commit that was built.
+  # Anything short of that leaves a draft and no tag, so re-running the
+  # failed jobs finishes it.
+  #
+  # The gates are needed here and not by the packages (2026-11-16): the
+  # packages used to start only once the storyboards had finished, so a
+  # release took the gates' time plus the slowest build's -- 0.6.1's was
+  # 1h54m, of which the macOS build alone was an hour. Built beside the gates
+  # they cost the longer of the two, and a red gate still ships nothing. A
+  # gate that is skipped passed elsewhere: `plan` found a green nightly, or
+  # `nightly` did.
   publish:
     name: Publish
-    needs: [plan, flatpak, tarball, macos]
+    needs: [plan, nightly, suite, storyboards, flatpak, tarball, macos]
     if: >-
       always() && needs.plan.outputs.publish == 'true'
+      && contains(fromJSON('["success", "skipped"]'), needs.nightly.result)
+      && contains(fromJSON('["success", "skipped"]'), needs.suite.result)
+      && contains(fromJSON('["success", "skipped"]'), needs.storyboards.result)
       && !contains(fromJSON('["failure", "cancelled"]'), needs.flatpak.result)
       && !contains(fromJSON('["failure", "cancelled"]'), needs.tarball.result)
       && !contains(fromJSON('["failure", "cancelled"]'), needs.macos.result)
