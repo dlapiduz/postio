@@ -74,9 +74,16 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
         }
         let fixture = fixture().await;
         let (window, client) = fixture.open().await;
-        // Measured once it is drawn: Filtered takes its place.
-        crate::settle_until(async || one(window.upcast_ref(), "focus-has-action").width() > 0)
-            .await;
+        // Measured once it is drawn -- the toggle painted, the first day
+        // heading laid out -- since Filtered takes its place.
+        assert!(
+            crate::settle_until(async || {
+                pixels_of(&one(window.upcast_ref(), "focus-has-action")).is_some()
+                    && inbox_day_heading(&window).is_some_and(|heading| heading.height() > 0)
+            })
+            .await,
+            "the inbox strip and its first day heading were never drawn"
+        );
         let strip = strip_type(&window);
         support::keys(&window, &["g", "f"]);
         assert!(
@@ -103,12 +110,15 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
         .await;
         // In the type of the strip it was opened from, once the tabs are
         // drawn with their counts.
-        crate::settle_until(async || {
-            support::with_class(view.widget(), "focus-filtered-tab")
-                .iter()
-                .all(|tab| tab.width() > 0)
-        })
-        .await;
+        assert!(
+            crate::settle_until(async || {
+                support::with_class(view.widget(), "focus-filtered-tab")
+                    .iter()
+                    .all(|tab| pixels_of(tab).is_some())
+            })
+            .await,
+            "Filtered's tabs were never drawn"
+        );
         assert_header_in_strip_type(view.widget().upcast_ref::<gtk::Widget>(), &strip);
         let said = view.texts();
         for wanted in [
@@ -345,9 +355,7 @@ fn strip_type(window: &postio_gtk::window::FocusWindow) -> StripType {
         toggle: one(&strip, "focus-has-action"),
         toggle_words: font(&one(&strip, "focus-has-action-label")),
         toggle_corner: corner_drawn(&one(&strip, "focus-has-action")),
-        day_heading: support::descendants(window.upcast_ref::<gtk::Widget>())
-            .iter()
-            .find(|widget| widget.css_name() == "focusdayheading")
+        day_heading: inbox_day_heading(window)
             .expect("the inbox's day heading")
             .height(),
     }
@@ -454,9 +462,16 @@ fn font(label: &gtk::Widget) -> (i32, gtk::pango::Weight) {
     (font.size(), font.weight())
 }
 
+/// The inbox's first day heading, once the list has made one.
+fn inbox_day_heading(window: &postio_gtk::window::FocusWindow) -> Option<gtk::Widget> {
+    support::descendants(window.upcast_ref::<gtk::Widget>())
+        .into_iter()
+        .find(|widget| widget.css_name() == "focusdayheading")
+}
+
 /// The colour of a widget's top border, as drawn.
 fn outline(widget: &gtk::Widget) -> String {
-    let (pixels, width, _) = pixels_of(widget);
+    let (pixels, width, _) = pixels_of(widget).expect("drawn");
     // The middle of the top edge.
     let at = usize::try_from(width / 2 * 4).expect("a column");
     format!("{:?}", &pixels[at..at + 4])
@@ -465,14 +480,15 @@ fn outline(widget: &gtk::Widget) -> String {
 /// Whether a widget's left edge is drawn a quarter of the way down: true of
 /// a chip with small corners, false of a pill, whose edge curves away.
 fn corner_drawn(widget: &gtk::Widget) -> bool {
-    let (pixels, width, height) = pixels_of(widget);
+    let (pixels, width, height) = pixels_of(widget).expect("drawn");
     let row = usize::try_from(height / 4).expect("a row");
     let stride = usize::try_from(width * 4).expect("a width");
     pixels[row * stride + 3] > 0
 }
 
-/// A widget drawn on its own: its pixels, its width and its height.
-fn pixels_of(widget: &gtk::Widget) -> (Vec<u8>, i32, i32) {
+/// A widget drawn on its own: its pixels, its width and its height; none
+/// until it has something to draw (it is mapped and allocated).
+fn pixels_of(widget: &gtk::Widget) -> Option<(Vec<u8>, i32, i32)> {
     let paintable = gtk::WidgetPaintable::new(Some(widget));
     let snapshot = gtk::Snapshot::new();
     paintable.snapshot(
@@ -480,7 +496,7 @@ fn pixels_of(widget: &gtk::Widget) -> (Vec<u8>, i32, i32) {
         f64::from(widget.width()),
         f64::from(widget.height()),
     );
-    let node = snapshot.to_node().expect("something drawn");
+    let node = snapshot.to_node()?;
     let renderer = widget
         .native()
         .expect("a native")
@@ -491,7 +507,7 @@ fn pixels_of(widget: &gtk::Widget) -> (Vec<u8>, i32, i32) {
     let stride = usize::try_from(texture_width * 4).expect("a width");
     let mut pixels = vec![0u8; stride * usize::try_from(texture_height).expect("a height")];
     texture.download(&mut pixels, stride);
-    (pixels, texture_width, texture_height)
+    Some((pixels, texture_width, texture_height))
 }
 
 /// The shared button kind and size a button is dressed as.
