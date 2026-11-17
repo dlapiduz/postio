@@ -417,9 +417,15 @@ jobs:
   # in `.config/nextest.toml` selects exactly what `profile.ci-full` holds
   # out, and `check-measurement-tier.py` keeps the two in step.
   #
-  # `-p postio-gtk`, so this builds the one crate whose suite it runs.
-  storyboards:
-    name: Storyboard passes
+  #
+  # The storyboard passes' test binary, built once for the four shards
+  # below, as ci.yml's `frontend-build` builds the frontend suites for its
+  # six: each shard used to compile focus_suite itself, about ten minutes of
+  # every shard before it played a window (2026-11-17). It restores the
+  # `build-app` cache that job keeps warm on `main` -- the same crate's test
+  # build -- and saves none, so the two never race to write one key.
+  storyboards-build:
+    name: Build the storyboard passes
     needs: changed
     if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
@@ -428,6 +434,56 @@ jobs:
       - uses: ./.github/actions/python
 
       - uses: ./.github/actions/rust-workspace
+        with:
+          cache-name: build-app
+
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
+
+      - name: Cache cargo-nextest
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      - name: cargo nextest archive (focus_suite)
+        run: >-
+          cargo nextest archive -p postio-gtk --test focus_suite
+          --profile ci-storyboards
+          --archive-file "$RUNNER_TEMP/storyboard-tests.tar.zst"
+
+      - name: Ship the archive to the shards
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: storyboard-tests
+          path: ${{ runner.temp }}/storyboard-tests.tar.zst
+          retention-days: 1
+          if-no-files-found: error
+
+  storyboards:
+    name: Storyboard passes (${{ matrix.shard }}/4)
+    needs: [changed, storyboards-build]
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-26.04
+    # Each pass is one test that plays hundreds of windows, so nextest
+    # cannot split it; the tests split themselves by
+    # `POSTIO_STORYBOARD_SHARD` (postio-storyboard's `shard`). One job ran
+    # 32-52 minutes and was the release's longest wait (2026-11-16).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/python
+
+      # The system libraries and the toolchain, and nothing to build.
+      - uses: ./.github/actions/rust-workspace
+        with:
+          build-cache: "false"
 
       - name: Give the GTK suites a runtime directory
         run: |
@@ -444,7 +500,19 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
+      - name: Fetch the archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: storyboard-tests
+          path: ${{ runner.temp }}
+
+      # The archive and the remap pass through to the isolated retry too:
+      # `test-with-flake-retry.sh` hands its further arguments to both runs.
       - name: cargo nextest run --profile ci-storyboards
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-storyboards postio-gtk
+          POSTIO_STORYBOARD_SHARD: ${{ matrix.shard }}/4
+        run: >-
+          dbus-run-session -- scripts/test-with-flake-retry.sh ci-storyboards ""
+          --archive-file "$RUNNER_TEMP/storyboard-tests.tar.zst"
+          --workspace-remap "$GITHUB_WORKSPACE"

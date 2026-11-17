@@ -1446,6 +1446,10 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
     // One context, to run a gap list's entries again without the other
     // five minutes: `POSTIO_STORYBOARD_CONTEXT=composer`.
     let only = std::env::var("POSTIO_STORYBOARD_CONTEXT").ok();
+    // This runner's share of the presses, counted across every context, so
+    // the shards stay even however the commands fall between contexts.
+    let shard = postio_storyboard::shard::Shard::from_env();
+    let mut position = 0;
     let mut all = Vec::new();
     for (context, setup) in CONTEXTS {
         if only.as_deref().is_some_and(|only| only != *context) {
@@ -1483,6 +1487,10 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
         started.finish();
 
         for command in commands {
+            position += 1;
+            if !shard.takes(position - 1) {
+                continue;
+            }
             if let Some((_, why)) = NEVER_PRESSED.iter().find(|(id, _)| *id == command) {
                 coverage.skipped.push((command, (*why).to_owned()));
                 continue;

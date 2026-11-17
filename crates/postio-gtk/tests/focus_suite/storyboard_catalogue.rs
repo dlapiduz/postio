@@ -53,6 +53,15 @@ pub fn the_catalogue_holds_on_focus() {
         }
         files.sort();
         assert!(!files.is_empty(), "the catalogue holds no storyboards");
+        // This runner's share when the nightly splits the catalogue
+        // (`POSTIO_STORYBOARD_SHARD`); the whole of it otherwise.
+        let shard = postio_storyboard::shard::Shard::from_env();
+        let files: Vec<_> = files
+            .into_iter()
+            .enumerate()
+            .filter(|(position, _)| shard.takes(*position))
+            .map(|(_, file)| file)
+            .collect();
 
         let mut problems = Vec::new();
         for file in &files {

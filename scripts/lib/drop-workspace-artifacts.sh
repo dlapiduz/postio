@@ -23,6 +23,11 @@ drop_workspace_artifacts() { # <target-dir>
            "$target"/*/deps/postio_*
     rm -rf "$target"/*/.fingerprint/postio-* \
            "$target"/*/build/postio-*
+    # And the copies cargo lifts out of deps/ to the top of each profile:
+    # the Mac app's static library alone is hundreds of megabytes there, and
+    # the macOS release cache was the one that kept being evicted.
+    find "$target" -mindepth 2 -maxdepth 2 -type f \
+        \( -name 'libpostio_*' -o -name 'postio' -o -name 'postio-*' \) -delete
 }
 
 # Drop SwiftPM's build directory from a worktree that was moved.

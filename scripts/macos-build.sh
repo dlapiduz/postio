@@ -82,7 +82,8 @@ cargo build -p postio-mcp --bin postio-mcp $CARGO_PROFILE_ARGS
 echo "--- bindings ---"
 GENERATED=$(mktemp -d)
 trap 'rm -rf "$GENERATED"' EXIT
-scripts/ffi-bindgen.sh "$GENERATED" >/dev/null
+# shellcheck disable=SC2086  # deliberate: see CARGO_PROFILE_ARGS above
+scripts/ffi-bindgen.sh $CARGO_PROFILE_ARGS "$GENERATED" >/dev/null
 
 C_TARGET=macos/Sources/postio_ffiFFI
 SWIFT_TARGET=macos/Sources/PostioFFI
