@@ -22,7 +22,7 @@
 //! the record that a message was indexed, and "tried, nothing there" spelled
 //! as `NULL` is what #500's infinite loop was made of.
 
-use postio_index::index::{ensure_schema, index_body, messages_missing_body_text};
+use postio_index::index::{ensure_schema, index_bodies, index_body, messages_missing_body_text};
 use postio_model::{BodyState, Message};
 use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
@@ -81,6 +81,50 @@ async fn a_body_is_searchable_in_a_table_of_its_own() {
 
     assert_eq!(body_hits(&connection, "difference").await, vec![id]);
     assert!(body_hits(&connection, "unrelated").await.is_empty());
+}
+
+#[tokio::test]
+async fn many_bodies_indexed_at_once_are_found_as_one_at_a_time_would_be() {
+    // A store filled in one go -- the demo's two years, a rebuild -- paid the
+    // index's merge once per body: 18 of the search seed's 24 seconds
+    // (#2020). Building the index over the rows once is the same index.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let first = a_message(&connection, "Quarterly report").await;
+    let second = a_message(&connection, "Minutes").await;
+    let already = a_message(&connection, "Earlier").await;
+    index_body(&connection, already, Some("the earlier draft"))
+        .await
+        .expect("index");
+
+    index_bodies(
+        &connection,
+        &[
+            (first, "the difference engine is finished"),
+            (second, "the Café's difference"),
+        ],
+    )
+    .await
+    .expect("index");
+
+    assert_eq!(
+        body_hits(&connection, "difference").await,
+        vec![first, second]
+    );
+    assert_eq!(body_hits(&connection, "cafe").await, vec![second], "folded");
+    assert_eq!(
+        body_hits(&connection, "earlier").await,
+        vec![already],
+        "what was indexed before is still found"
+    );
+    assert_eq!(indexed_bodies(&connection).await, 3);
+    // And the index is the index afterwards: one body more, one at a time.
+    index_body(&connection, first, Some("the analytical engine"))
+        .await
+        .expect("re-index");
+    assert_eq!(body_hits(&connection, "analytical").await, vec![first]);
+    assert_eq!(body_hits(&connection, "difference").await, vec![second]);
 }
 
 #[tokio::test]
