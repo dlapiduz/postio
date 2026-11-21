@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use postio_ffi::{ComposerKindFfi, Session, SessionOptions, SurfaceKindFfi, UiEvent};
 
-use crate::focus::{cursor_on_the_first_row, heard, inbox_of};
+use crate::focus::{cursor_on_the_first_row, heard, heard_within, inbox_of};
 
 /// The composer the controller opened, as the Mac hears it.
 async fn composer_opened(session: &Session) -> Option<(ComposerKindFfi, Option<i64>)> {
@@ -97,8 +97,10 @@ async fn esc_saves_at_once_and_the_toast_says_the_draft_was_kept() {
         .await,
         "Esc closes the composer"
     );
+    // Inside a second, unscaled: the autosave's quiet period is a second
+    // and a half, so a longer wait could not tell "now" from "after it".
     assert!(
-        heard(&session, 1, |event| matches!(
+        heard_within(&session, Duration::from_secs(1), |event| matches!(
             event,
             UiEvent::FocusSaveDraft { composition: 1 }
         ))

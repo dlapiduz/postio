@@ -36,18 +36,23 @@ async fn picker(
     mut wanted: impl FnMut(&PickerViewFfi) -> bool,
 ) -> PickerViewFfi {
     let mut seen = None;
+    // What was drawn instead, so a failure says whether the picker never
+    // opened or opened without what was wanted.
+    let mut drawn = Vec::new();
     assert!(
         heard(session, 10, |event| match event {
-            UiEvent::FocusOpenPicker { view } | UiEvent::FocusPickerRows { view }
-                if wanted(view) =>
-            {
-                seen = Some(view.clone());
-                true
+            UiEvent::FocusOpenPicker { view } | UiEvent::FocusPickerRows { view } => {
+                if wanted(view) {
+                    seen = Some(view.clone());
+                    return true;
+                }
+                drawn.push(format!("{:?} with {} rows", view.kind, view.rows.len()));
+                false
             }
             _ => false,
         })
         .await,
-        "the picker wanted was never drawn"
+        "the picker wanted was never drawn; drawn instead: {drawn:?}"
     );
     seen.expect("seen")
 }
