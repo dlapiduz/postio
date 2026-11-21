@@ -142,7 +142,7 @@ pub use focus_list::{
 };
 pub use focus_message::{
     FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusVerbFfi,
-    OpenChoicesFfi,
+    OpenChoicesFfi, OpenLinkFfi,
 };
 pub use focus_pickers::{
     PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,

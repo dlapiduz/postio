@@ -136,9 +136,9 @@ async fn a_part_that_is_not_on_this_machine_and_cannot_be_fetched_says_so() {
 
 // -- opening ------------------------------------------------------------------
 
-/// What `o` offers for `message`, as the Mac asks for it.
+/// What `A` offers for `message` over a document with no links.
 fn offered(session: &Session, message: i64) -> postio_ffi::OpenChoicesFfi {
-    session.open_choices(message)
+    session.open_choices(message, String::new())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -251,6 +251,172 @@ async fn a_part_that_cannot_be_fetched_opens_nothing_and_says_why() {
         .expect_err("no bytes, no file")
         .to_string();
     assert!(refused.contains("syncing"), "got {refused:?}");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_links_on_screen_are_offered_before_the_parts_with_where_they_go() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[Seed::new("2", "application/pdf")
+            .named("report.pdf")
+            .downloaded(b"%PDF-1.4")],
+    )
+    .await;
+    let document = concat!(
+        r#"<p>See <a href="https://example.net/sign-in">https://example.com</a>"#,
+        r#" and <a href="postio-verb:unsubscribe">unsubscribe</a>.</p>"#,
+    );
+
+    let choices = session.open_choices(message, document.to_owned());
+    let links: Vec<(&str, &str)> = choices
+        .links
+        .iter()
+        .map(|link| (link.words.as_str(), link.target.as_str()))
+        .collect();
+    assert_eq!(
+        links,
+        [("https://example.com", "https://example.net/sign-in")],
+        "the words and where they really go; the reader's own verbs are not places"
+    );
+    assert_eq!(choices.parts.len(), 1, "and the parts after them");
+    assert_eq!(choices.save, postio_ui::reader::parts::SAVE);
+    assert_eq!(choices.save_all, postio_ui::reader::parts::SAVE_ALL);
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_with_only_links_has_something_to_open() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[Seed::new("1", "text/plain").downloaded(b"hi")],
+    )
+    .await;
+    let choices = session.open_choices(
+        message,
+        r#"<a href="mailto:ada@example.com">Ada</a>"#.to_owned(),
+    );
+    assert_eq!(choices.nothing, None);
+    assert_eq!(choices.links.len(), 1);
+    session.shutdown();
+}
+
+// -- saving -------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn saving_a_part_writes_it_where_the_person_said_and_says_so() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[Seed::new("2", "application/pdf")
+            .named("report.pdf")
+            .downloaded(b"%PDF-1.4")],
+    )
+    .await;
+    let part = &offered(&session, message).parts[0];
+    assert_eq!(
+        part.save_name, "report.pdf",
+        "the panel offers its own name"
+    );
+    let folder = tempfile::tempdir().expect("a folder");
+    let to = folder.path().join("Quarterly.pdf");
+    std::fs::write(&to, b"what was there").expect("an older file");
+
+    let said = session
+        .save_attachment(message, part.id, to.to_string_lossy().into_owned())
+        .await
+        .expect("a part that is here saves");
+    assert_eq!(
+        std::fs::read(&to).expect("the file"),
+        b"%PDF-1.4",
+        "replaced, not appended"
+    );
+    assert_eq!(said, "Saved Quarterly.pdf");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_part_that_cannot_be_had_saves_nothing_and_says_why() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[Seed::new("1", "application/zip").named("archive.zip")],
+    )
+    .await;
+    let part = offered(&session, message).parts[0].id;
+    let folder = tempfile::tempdir().expect("a folder");
+    let to = folder.path().join("archive.zip");
+    let refused = session
+        .save_attachment(message, part, to.to_string_lossy().into_owned())
+        .await
+        .expect_err("no bytes, no file")
+        .to_string();
+    assert!(refused.contains("syncing"), "got {refused:?}");
+    assert!(!to.exists(), "no empty file that looks saved");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn save_all_writes_every_part_under_names_of_its_own() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[
+            Seed::new("1", "text/plain").downloaded(b"words"),
+            Seed::new("2", "image/png")
+                .named("photo.png")
+                .downloaded(b"one"),
+            Seed::new("3", "image/png")
+                .named("photo.png")
+                .downloaded(b"two"),
+        ],
+    )
+    .await;
+    let folder = tempfile::tempdir().expect("a folder");
+
+    let said = session
+        .save_attachments(message, folder.path().to_string_lossy().into_owned())
+        .await
+        .expect("a folder to save into");
+    assert_eq!(said, "Saved 2 attachments");
+    assert_eq!(
+        std::fs::read(folder.path().join("photo.png")).expect("the first"),
+        b"one"
+    );
+    assert_eq!(
+        std::fs::read(folder.path().join("photo-2.png")).expect("the second"),
+        b"two"
+    );
+    assert_eq!(
+        std::fs::read_dir(folder.path())
+            .expect("the folder")
+            .count(),
+        2,
+        "the body's own text is not an attachment"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn save_all_saves_what_it_can_and_counts_what_it_could_not() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[
+            Seed::new("2", "application/pdf")
+                .named("report.pdf")
+                .downloaded(b"%PDF"),
+            Seed::new("3", "application/zip").named("archive.zip"),
+        ],
+    )
+    .await;
+    let folder = tempfile::tempdir().expect("a folder");
+    let said = session
+        .save_attachments(message, folder.path().to_string_lossy().into_owned())
+        .await
+        .expect("a folder to save into");
+    assert_eq!(said, "1 part could not be saved");
+    assert!(
+        folder.path().join("report.pdf").exists(),
+        "the rest were saved"
+    );
+    assert!(!folder.path().join("archive.zip").exists());
     session.shutdown();
 }
 

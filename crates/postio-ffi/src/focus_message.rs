@@ -58,6 +58,9 @@ pub struct FocusAttachmentFfi {
     pub name: String,
     /// Its size, in the words the reader uses: "48 KB".
     pub size: String,
+    /// The name a save offers it under, made safe to write
+    /// (`postio_ui::reader::parts::save_name`).
+    pub save_name: String,
 }
 
 /// Everything the message window draws around the body.
@@ -273,6 +276,25 @@ pub(crate) fn chips(
     body: &postio_model::MessageBody,
     attachments: &[postio_model::Attachment],
 ) -> Vec<FocusAttachmentFfi> {
+    chip_nodes(content_type, body, attachments)
+        .into_iter()
+        .filter_map(|node| {
+            Some(FocusAttachmentFfi {
+                id: node.attachment?.get(),
+                name: node.label().to_owned(),
+                size: postio_ui::format::human_size(node.size),
+                save_name: postio_ui::reader::parts::save_name(&node),
+            })
+        })
+        .collect()
+}
+
+/// The parts [`chips`] draws, as the tree's nodes: what Save all saves.
+pub(crate) fn chip_nodes(
+    content_type: Option<&str>,
+    body: &postio_model::MessageBody,
+    attachments: &[postio_model::Attachment],
+) -> Vec<postio_ui::reader::parts::Node> {
     let root = postio_ui::reader::parts::root_type(content_type, body, attachments);
     postio_ui::reader::parts::tree(&root, attachments)
         .into_iter()
@@ -280,23 +302,35 @@ pub(crate) fn chips(
         // As the reader's chips (`postio_widgets::reader::chips`):
         // the body's own text parts are already on screen.
         .filter(|node| !(node.mime.starts_with("text/") && node.filename.is_none()))
-        .filter_map(|node| {
-            Some(FocusAttachmentFfi {
-                id: node.attachment?.get(),
-                name: node.label().to_owned(),
-                size: postio_ui::format::human_size(node.size),
-            })
-        })
+        .filter(|node| node.attachment.is_some())
         .collect()
 }
 
-/// What `o` offers for the message on screen.
+/// What `A` offers for the message on screen, as GTK's chooser offers it:
+/// the links in the body, then the parts, each part with its own Save and
+/// all of them with Save all.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenChoicesFfi {
+    /// The links in the document on screen, in reading order.
+    pub links: Vec<OpenLinkFfi>,
     /// The parts to choose from, as the chips list them.
     pub parts: Vec<FocusAttachmentFfi>,
     /// What to say instead when there is nothing to choose from.
     pub nothing: Option<String>,
+    /// A part's Save.
+    pub save: String,
+    /// Save every part to a folder.
+    pub save_all: String,
+}
+
+/// A link `A` offers: the words it was written behind, and where it goes,
+/// both shown before it opens.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OpenLinkFfi {
+    /// What it reads as.
+    pub words: String,
+    /// Where it goes, in full: `http`, `https` or `mailto`.
+    pub target: String,
 }
 
 /// A command and the words on its button.

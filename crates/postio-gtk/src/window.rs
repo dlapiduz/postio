@@ -5614,7 +5614,10 @@ impl FocusWindow {
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_default();
-                        window.imp().toast.show_notice(&format!("Saved {name}"));
+                        window
+                            .imp()
+                            .toast
+                            .show_notice(&postio_ui::reader::parts::saved(&name));
                     }
                     Err(error) => window.imp().toast.show_notice(&error.to_string()),
                 }
@@ -5654,8 +5657,7 @@ impl FocusWindow {
                     return;
                 };
                 let said = match saved {
-                    Ok(failed) => postio_ui::reader::parts::save_all_failure(failed)
-                        .unwrap_or_else(|| format!("Saved {count} attachments")),
+                    Ok(failed) => postio_ui::reader::parts::saved_all(count, failed),
                     Err(error) => error.to_string(),
                 };
                 window.imp().toast.show_notice(&said);

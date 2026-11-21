@@ -131,19 +131,57 @@ struct FocusListPointerTests {
     }
 }
 
-/// The menu `o` shows over the open message.
+/// The menu `A` shows over the open message: GTK's chooser's choices.
 @MainActor
 struct AttachmentMenuTests {
-    @Test func theMenuListsEachPartByNameAndSizeAndChoosingOneSaysWhich() {
-        var chosen: [Int64] = []
+    static let choices = OpenChoicesFfi(
+        links: [OpenLinkFfi(words: "https://example.com", target: "https://example.net/sign-in")],
+        parts: [
+            FocusAttachmentFfi(id: 41, name: "report.pdf", size: "48 KB", saveName: "report.pdf"),
+            FocusAttachmentFfi(id: 42, name: "photo.png", size: "2 MB", saveName: "photo.png"),
+        ],
+        nothing: nil, save: "Save", saveAll: "Save all")
+
+    /// Choose the item titled `title` from `menu`.
+    private func choose(_ title: String, in menu: NSMenu) {
+        guard let item = menu.items.first(where: { $0.title == title }) else {
+            Issue.record("no item \(title)")
+            return
+        }
+        _ = item.target?.perform(item.action, with: item)
+    }
+
+    @Test func theLinksComeFirstThenThePartsThenEachPartAgainUnderSave() {
+        let built = AttachmentMenu { _ in }.menu(for: Self.choices)
+        #expect(
+            built.items.map(\.title) == [
+                "https://example.com", "", "report.pdf  48 KB", "photo.png  2 MB", "", "Save",
+                "report.pdf\u{2026}", "photo.png\u{2026}", "Save all\u{2026}",
+            ])
+        #expect(built.items[0].toolTip == "https://example.net/sign-in", "where the link goes is seen before it opens")
+        if #available(macOS 14.4, *) {
+            #expect(built.items[0].subtitle == "https://example.net/sign-in")
+        }
+    }
+
+    @Test func eachItemSaysWhatWasChosen() {
+        var chosen: [AttachmentMenu.Choice] = []
         let menu = AttachmentMenu { chosen.append($0) }
-        let built = menu.menu(for: [
-            FocusAttachmentFfi(id: 41, name: "report.pdf", size: "48 KB"),
-            FocusAttachmentFfi(id: 42, name: "photo.png", size: "2 MB"),
-        ])
-        #expect(built.items.map(\.title) == ["report.pdf  48 KB", "photo.png  2 MB"])
-        let second = built.items[1]
-        _ = second.target?.perform(second.action, with: second)
-        #expect(chosen == [42])
+        let built = menu.menu(for: Self.choices)
+        choose("https://example.com", in: built)
+        choose("photo.png  2 MB", in: built)
+        choose("report.pdf\u{2026}", in: built)
+        choose("Save all\u{2026}", in: built)
+        #expect(
+            chosen == [
+                .link("https://example.net/sign-in"), .open(42), .save(id: 41, name: "report.pdf"), .saveAll,
+            ])
+    }
+
+    @Test func aMessageWithOnlyLinksOffersNothingToSave() {
+        let built = AttachmentMenu { _ in }.menu(
+            for: OpenChoicesFfi(
+                links: Self.choices.links, parts: [], nothing: nil, save: "Save", saveAll: "Save all"))
+        #expect(built.items.map(\.title) == ["https://example.com"])
     }
 }

@@ -123,9 +123,9 @@ final class Engine {
                 matchEdge: { [weak session] forward in session?.focusMatchEdge(forward: forward) },
                 handOff: { file in
                     // POSTIO-CONSENT: runs only when a person clicked an
-                    // attachment's chip or chose it from the menu `o` offers,
-                    // one at a time; nothing opens on render, on arrival or
-                    // from a setting.
+                    // attachment's chip or chose it or a link from the menu
+                    // `A` offers, one at a time; nothing opens on render, on
+                    // arrival or from a setting.
                     NSWorkspace.shared.open(file)
                 })
             makeBar(session)
@@ -631,14 +631,54 @@ final class Engine {
         }
     }
 
-    /// Hold the attachment menu until it is chosen from, then open the part.
+    /// Hold the attachment menu until it is chosen from, then do what was
+    /// chosen: open a link or a part, or ask where to save.
     private var attachmentMenu: AttachmentMenu?
 
-    private func presentAttachmentMenu(_ parts: [FocusAttachmentFfi]) {
-        guard let view = secondary.window?.contentView else { return }
-        let menu = AttachmentMenu { [weak self] id in self?.messageWindow?.openAttachment(id) }
+    private func presentAttachmentMenu(_ choices: OpenChoicesFfi) {
+        guard let window = secondary.window, let view = window.contentView else { return }
+        let menu = AttachmentMenu { [weak self, weak window] choice in
+            guard let self, let model = self.messageWindow else { return }
+            switch choice {
+            case let .link(target):
+                model.openLink(target)
+            case let .open(id):
+                model.openAttachment(id)
+            case let .save(id, name):
+                // POSTIO-CONSENT: a file is written only to the name and
+                // place somebody chose in this save panel.
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = name
+                self.ask(panel, over: window) { model.saveAttachment(id, to: $0) }
+            case .saveAll:
+                // POSTIO-CONSENT: files are written only into the folder
+                // somebody chose in this panel.
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = false
+                panel.canChooseDirectories = true
+                panel.canCreateDirectories = true
+                panel.allowsMultipleSelection = false
+                panel.prompt = choices.saveAll
+                self.ask(panel, over: window) { model.saveAttachments(to: $0) }
+            }
+        }
         attachmentMenu = menu
-        menu.present(parts, in: view)
+        menu.present(choices, in: view)
+    }
+
+    /// Show `panel` as a sheet over `window` (or on its own without one),
+    /// and hand `then` the place chosen. Dismissed is an answer: nothing is
+    /// written and nothing is said.
+    private func ask(_ panel: NSSavePanel, over window: NSWindow?, then: @escaping (URL) -> Void) {
+        let answered: (NSApplication.ModalResponse) -> Void = { [weak panel] response in
+            guard response == .OK, let url = panel?.url else { return }
+            then(url)
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: answered)
+        } else {
+            answered(panel.runModal())
+        }
     }
 
     private func showMessageWindow(_ model: MessageWindowModel, session: PostioSession, over main: NSWindow) {
@@ -2086,10 +2126,11 @@ final class Engine {
             // controller has no message window of its own to do it in.
             messageWindow?.unsubscribe()
         case Intercepted.openAttachmentOrLink where keyWindow.current == .message && messageWindow?.displayed != nil:
-            // `o`: the open message's attachments, as a menu at the window's
-            // centre. Native menu keys choose; nothing opens until one is.
-            messageWindow?.offerAttachments { [weak self] parts in
-                self?.presentAttachmentMenu(parts)
+            // `A`: the open message's links and attachments, as a menu at
+            // the window's centre. Native menu keys choose; nothing opens
+            // until one is.
+            messageWindow?.offerAttachments { [weak self] choices in
+                self?.presentAttachmentMenu(choices)
             }
         case Intercepted.clearListMail where keyWindow.current == .message && messageWindow?.displayed != nil:
             // The banner's one offer, by key (#1953): the verb the setting

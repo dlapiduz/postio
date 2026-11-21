@@ -1498,11 +1498,14 @@ impl Session {
         blocking(self.part_bytes(message, part_id))
     }
 
-    /// What `o` offers for `message`: its attachments as the chips list
-    /// them, or the shared sentence when there are none. A read of the
-    /// stored message; nothing is fetched.
+    /// What `A` offers for `message`, as GTK's chooser offers it: the links
+    /// in `document` -- the reader document on screen, as
+    /// `focusReaderDocument` made it, so what is offered is what is read --
+    /// then the attachments as the chips list them, with the words for Save
+    /// and Save all; or the shared sentence when there is neither. A read
+    /// of the stored message; nothing is fetched.
     #[uniffi::method(name = "openChoices")]
-    pub fn open_choices(&self, message: i64) -> crate::OpenChoicesFfi {
+    pub fn open_choices(&self, message: i64, document: String) -> crate::OpenChoicesFfi {
         let found = self.store_and_blobs().and_then(|(database, _)| {
             blocking(postio_host::parts::read_message(&database, message.into())).ok()
         });
@@ -1515,11 +1518,20 @@ impl Session {
                 )
             })
             .unwrap_or_default();
+        let links: Vec<crate::OpenLinkFfi> = postio_body::links::links(&document)
+            .into_iter()
+            .map(|link| crate::OpenLinkFfi {
+                words: link.words,
+                target: link.target,
+            })
+            .collect();
         crate::OpenChoicesFfi {
-            nothing: parts
-                .is_empty()
+            nothing: (parts.is_empty() && links.is_empty())
                 .then(|| postio_ui::focus_target::NOTHING_TO_OPEN.to_owned()),
+            links,
             parts,
+            save: postio_ui::reader::parts::SAVE.to_owned(),
+            save_all: postio_ui::reader::parts::SAVE_ALL.to_owned(),
         }
     }
 
@@ -1537,6 +1549,38 @@ impl Session {
     ) -> Result<String, crate::PartsError> {
         blocking(self.open_attachment(message, attachment))
     }
+
+    /// Write one attachment to `to`, the file a person named in a save
+    /// panel, fetching it first if it was never downloaded; answer what to
+    /// say ("Saved report.pdf"). Replaces whatever `to` held: the panel
+    /// asked them about that.
+    ///
+    /// **Never from the main actor**, for the reason `partBytes` gives.
+    #[uniffi::method(name = "saveAttachment")]
+    pub fn save_attachment_ffi(
+        &self,
+        message: i64,
+        attachment: i64,
+        to: String,
+    ) -> Result<String, crate::PartsError> {
+        blocking(self.save_attachment(message, attachment, to))
+    }
+
+    /// Write every part `A` offers into `folder`, the one a person chose,
+    /// each under a name no other of them has
+    /// (`postio_ui::reader::parts::save_names`); answer what to say. A part
+    /// that cannot be had does not stop the rest, and is counted in the
+    /// answer rather than named.
+    ///
+    /// **Never from the main actor**, for the reason `partBytes` gives.
+    #[uniffi::method(name = "saveAttachments")]
+    pub fn save_attachments_ffi(
+        &self,
+        message: i64,
+        folder: String,
+    ) -> Result<String, crate::PartsError> {
+        blocking(self.save_attachments(message, folder))
+    }
 }
 
 impl Session {
@@ -1547,8 +1591,94 @@ impl Session {
         attachment: i64,
     ) -> Result<String, crate::PartsError> {
         use postio_model::ids::AttachmentId;
-        let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
         let (message, attachment) = (message.into(), AttachmentId::new(attachment));
+        let (name, bytes) = self.attachment_bytes(message, attachment).await?;
+        let to = postio_host::parts::private_copy_path(
+            &std::env::temp_dir(),
+            message,
+            attachment,
+            name.as_deref(),
+        )?;
+        std::fs::write(&to, bytes).map_err(|error| error.to_string())?;
+        tracing::debug!(
+            message = message.get(),
+            attachment = attachment.get(),
+            "an attachment was written to open"
+        );
+        Ok(to.to_string_lossy().into_owned())
+    }
+
+    /// [`Self::save_attachment_ffi`]'s body.
+    pub async fn save_attachment(
+        &self,
+        message: i64,
+        attachment: i64,
+        to: String,
+    ) -> Result<String, crate::PartsError> {
+        use postio_model::ids::AttachmentId;
+        let (message, attachment) = (message.into(), AttachmentId::new(attachment));
+        // The bytes first, so a part that cannot be had leaves no empty file.
+        let (_, bytes) = self.attachment_bytes(message, attachment).await?;
+        let to = std::path::PathBuf::from(to);
+        std::fs::write(&to, bytes).map_err(|error| error.to_string())?;
+        tracing::debug!(
+            message = message.get(),
+            attachment = attachment.get(),
+            "an attachment was saved"
+        );
+        let name = to
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Ok(postio_ui::reader::parts::saved(&name))
+    }
+
+    /// [`Self::save_attachments_ffi`]'s body.
+    pub async fn save_attachments(
+        &self,
+        message: i64,
+        folder: String,
+    ) -> Result<String, crate::PartsError> {
+        let (database, _) = self.store_and_blobs().ok_or_else(no_store)?;
+        let message: postio_model::MessageId = message.into();
+        let found = postio_host::parts::read_message(&database, message).await?;
+        let nodes = crate::focus_message::chip_nodes(
+            found.content_type.as_deref(),
+            &found.body,
+            &found.attachments,
+        );
+        let names = postio_ui::reader::parts::save_names(&nodes);
+        let folder = std::path::PathBuf::from(folder);
+        let mut failed = 0;
+        for (node, name) in nodes.iter().zip(names) {
+            let Some(attachment) = node.attachment else {
+                continue;
+            };
+            let saved = match self.attachment_bytes(message, attachment).await {
+                Ok((_, bytes)) => std::fs::write(folder.join(name), bytes).is_ok(),
+                Err(_) => false,
+            };
+            if !saved {
+                failed += 1;
+            }
+        }
+        tracing::debug!(
+            message = message.get(),
+            parts = nodes.len(),
+            failed,
+            "attachments were saved"
+        );
+        Ok(postio_ui::reader::parts::saved_all(nodes.len(), failed))
+    }
+
+    /// One attachment's file name and bytes, fetched first if they were
+    /// never downloaded.
+    async fn attachment_bytes(
+        &self,
+        message: postio_model::MessageId,
+        attachment: postio_model::ids::AttachmentId,
+    ) -> Result<(Option<String>, Vec<u8>), crate::PartsError> {
+        let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
         let engine = self.engine_for_message(message).await;
         let found = postio_host::parts::read_message(&database, message).await?;
         let name = found
@@ -1556,7 +1686,6 @@ impl Session {
             .iter()
             .find(|part| part.id == attachment)
             .and_then(|part| part.filename.clone());
-        // The bytes first, so a part that cannot be had leaves no empty file.
         let events = self
             .wiring
             .lock()
@@ -1572,19 +1701,7 @@ impl Session {
             attachment,
         )
         .await?;
-        let to = postio_host::parts::private_copy_path(
-            &std::env::temp_dir(),
-            message,
-            attachment,
-            name.as_deref(),
-        )?;
-        std::fs::write(&to, bytes).map_err(|error| error.to_string())?;
-        tracing::debug!(
-            message = message.get(),
-            attachment = attachment.get(),
-            "an attachment was written to open"
-        );
-        Ok(to.to_string_lossy().into_owned())
+        Ok((name, bytes))
     }
 }
 
