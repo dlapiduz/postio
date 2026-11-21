@@ -1614,12 +1614,16 @@ pub fn new_mail_above_an_open_thread_moves_its_children_with_it() {
             "the new mail landed at the top: {:?}",
             support::subjects(&window)
         );
-        crate::settle();
-        assert_eq!(
-            children_drawn(&pane),
-            ["Message 1", "Message 2", "Message 3"],
-            "each child is drawn once"
+        // The rows the splice moved are laid out a frame or two after the
+        // count changes: wait for them to be drawn, then hold them to it.
+        let children = ["Message 1", "Message 2", "Message 3"];
+        assert!(
+            crate::settle_until(async || children_drawn(&pane) == children).await,
+            "each child is drawn once: {:?}",
+            children_drawn(&pane)
         );
+        crate::settle();
+        assert_eq!(children_drawn(&pane), children, "and stays drawn once");
         let thread_row = pane
             .cursor()
             .item(2)
