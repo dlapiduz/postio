@@ -135,6 +135,18 @@ impl FocusController {
         if !(first || changed) {
             return steps;
         }
+        // A folder's mark moved: the popover lists it with or without one.
+        // A folder the places have no name for yet is read for, so the
+        // label can name it when they land.
+        if let Event::MailboxSyncChanged {
+            mailbox, failure, ..
+        } = event
+        {
+            steps.push(Step::Show(Intent::PlacesChanged));
+            if failure.is_some() && !self.folder_names().iter().any(|(each, _)| each == mailbox) {
+                steps.extend(self.bar.places_wanted());
+            }
+        }
         if let Event::SyncProgress { done, total, .. } = event
             && done >= total
         {
@@ -142,6 +154,11 @@ impl FocusController {
         }
         steps.extend(self.show_state());
         steps
+    }
+
+    /// Why `mailbox`'s last sync pass failed, while it is failing.
+    pub(crate) fn failure(&self, mailbox: postio_model::MailboxId) -> Option<&str> {
+        self.states.trackers.failure(mailbox)
     }
 
     /// Follow `account`'s sync from here on; whether it is new.
@@ -216,13 +233,33 @@ impl FocusController {
             self.states.banner = Some(banner.clone());
             steps.push(Step::Show(Intent::Banner(banner)));
         }
-        let label = focus_state::sync_label(&statuses, self.states.last_synced, &chrono::Local);
-        if self.states.label.as_ref() != Some(&label) {
-            self.states.label = Some(label.clone());
-            steps.push(Step::Show(Intent::SyncLabel(label)));
-        }
+        steps.extend(self.show_label(&statuses));
         steps.extend(self.show_empty());
         steps
+    }
+
+    /// The sync label again, once one has been drawn, when the folders it
+    /// may name have been read again.
+    pub(crate) fn relabel(&mut self) -> Vec<Step> {
+        if self.states.label.is_none() {
+            return Vec::new();
+        }
+        let statuses = self.states.trackers.statuses(&self.states.tracked);
+        self.show_label(&statuses)
+    }
+
+    fn show_label(&mut self, statuses: &[(AccountId, postio_ui::status::SyncStatus)]) -> Vec<Step> {
+        let label = focus_state::sync_label(
+            statuses,
+            self.states.last_synced,
+            self.folder_names(),
+            &chrono::Local,
+        );
+        if self.states.label.as_ref() == Some(&label) {
+            return Vec::new();
+        }
+        self.states.label = Some(label.clone());
+        vec![Step::Show(Intent::SyncLabel(label))]
     }
 
     /// `banner` in words, its button naming its key under the keymap in

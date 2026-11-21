@@ -679,6 +679,12 @@ impl Bar {
         Step::Ask(Request::Places)
     }
 
+    /// Ask for the places unless a read is already on its way: a folder
+    /// the sync label must name and the places do not know yet (#1731).
+    pub(crate) fn places_wanted(&mut self) -> Option<Step> {
+        (!self.places_asked).then(|| self.ask_places())
+    }
+
     /// The read of the places on its way will not land (the controller
     /// forgot its requests): the next change asks again.
     pub(crate) fn places_forgotten(&mut self) {
@@ -1203,17 +1209,32 @@ impl FocusController {
         self.bar
             .listed(filtered_today, filter)
             .into_iter()
-            .filter_map(|entry| {
+            .filter_map(|mut entry| {
                 let index = all.iter().position(|each| *each == entry)?;
+                // A folder whose last pass failed carries why (#1731).
+                if let Destination::Mailbox(mailbox) = entry.destination {
+                    entry.failure = self.failure(mailbox).map(str::to_owned);
+                }
                 Some(((self.bar.places_read << 32) | index as u64, entry))
             })
             .collect()
     }
 
+    /// Every folder's name as the places list it, for the sync label to
+    /// name a folder that can't sync.
+    pub fn folder_names(&self) -> &[(MailboxId, String)] {
+        &self.bar.places.folders
+    }
+
     /// A reply the bar asked for.
     pub(crate) fn bar_reply(&mut self, reply: Reply, rows: &dyn Rows) -> Vec<Step> {
         match reply {
-            Reply::Places(read) => self.bar.places_landed(read),
+            Reply::Places(read) => {
+                let mut steps = self.bar.places_landed(read);
+                // The sync label names a failed folder by these names.
+                steps.extend(self.relabel());
+                steps
+            }
             Reply::Conversations { stamp, answer } => self.bar.conversations(stamp, answer),
             Reply::Passages { stamp, answer } => self.bar.passages(stamp, answer),
             Reply::Suggest { stamp, answer } => self.bar.suggested(stamp, answer),

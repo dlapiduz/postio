@@ -979,6 +979,7 @@ fn run(
                 to_sync: std::collections::VecDeque::new(),
                 inbox_ids: Vec::new(),
                 inbox_page_pending: false,
+                failing: Default::default(),
                 watcher: None,
                 backfill_covered: false,
                 filing,
@@ -1310,6 +1311,10 @@ struct State {
     /// no other mailbox. Cleared the moment that page is down. See
     /// [`postio_sync::order`].
     inbox_page_pending: bool,
+    /// The mailboxes whose last pass failed while the link stayed up
+    /// (#1731): what lets the pass that completes next clear the folder's
+    /// mark once, and every other completed pass say nothing.
+    failing: std::collections::BTreeSet<MailboxId>,
     /// What is being watched for mail arriving, and how.
     ///
     /// `None` until the first connection tells us what the server can do —
@@ -2071,6 +2076,22 @@ async fn queue_every_mailbox(parts: &EngineParts, store: &Store, state: &mut Sta
             .filter(|mailbox| mailbox.selectable)
             .map(|mailbox| mailbox.id),
     );
+    // A failed folder that is no longer one to sync -- deleted, or made
+    // unselectable -- will never have the pass that clears its mark.
+    let gone: Vec<MailboxId> = state
+        .failing
+        .iter()
+        .filter(|mailbox| !state.to_sync.contains(mailbox))
+        .copied()
+        .collect();
+    for mailbox in gone {
+        state.failing.remove(&mailbox);
+        parts.events.emit(Event::MailboxSyncChanged {
+            account: parts.account,
+            mailbox,
+            failure: None,
+        });
+    }
     // The one line that answers "the account connected and nothing happened".
     // Every folder-enumerating path here reads the *local* table; `discover`
     // is what fills it from the server on link-up, and a count of zero here
@@ -4122,6 +4143,7 @@ async fn settle_pass(
     connection: &Checkout,
     outcome: PassOutcome,
 ) -> Result<SyncSummary, EngineError> {
+    let turned_away = outcome.was_transient();
     let PassOutcome {
         mailbox,
         result,
@@ -4145,6 +4167,13 @@ async fn settle_pass(
                 parts,
                 &state.status.borrow_mut().on_sync_finished(mailbox, now),
             );
+            if state.failing.remove(&mailbox) {
+                parts.events.emit(Event::MailboxSyncChanged {
+                    account: parts.account,
+                    mailbox,
+                    failure: None,
+                });
+            }
             // A pass that finished says so: `done == total` is how the stream
             // says "a sync completed", and a pass over an empty mailbox never
             // counted anything to reach it. Without this a frontend cannot
@@ -4241,6 +4270,19 @@ async fn settle_pass(
                 announce_link(parts, state, moved);
             }
             announce_status(parts, &state.status.borrow_mut().on_sync_abandoned(mailbox));
+            // The folder's own failure, kept on it until a pass of it
+            // completes (#1731) -- unless the link went down with it, which
+            // the link's state already says, or nothing failed the folder: a
+            // store busy with another writer, or a folder gone from the store.
+            let the_folders = !turned_away && !matches!(failure, PassFailure::NoSuchMailbox);
+            if the_folders && state.supervisor.link().is_online() {
+                state.failing.insert(mailbox);
+                parts.events.emit(Event::MailboxSyncChanged {
+                    account: parts.account,
+                    mailbox,
+                    failure: Some(failure.to_string()),
+                });
+            }
             Err(EngineError::new(failure.to_string()))
         }
     }
@@ -4676,6 +4718,7 @@ mod tests {
             to_sync: std::collections::VecDeque::new(),
             inbox_ids: Vec::new(),
             inbox_page_pending: false,
+            failing: Default::default(),
             watcher: None,
             backfill_covered: false,
             filing: FilingSlot::default(),
@@ -4721,6 +4764,42 @@ mod tests {
             clock: Arc::new(SystemClock),
         };
         (parts, events, directory)
+    }
+
+    /// #1731: a failed folder that has left the store never gets the pass
+    /// that would clear its mark, so the next queueing clears it -- and only
+    /// that one.
+    #[tokio::test]
+    async fn queueing_clears_the_mark_of_a_failed_folder_that_is_gone() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, events, _directory) = parts_over(database.clone()).await;
+        let connection = database.connect().await.expect("checkout");
+        let inbox =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "INBOX")
+                .await;
+        drop(connection);
+        let gone = MailboxId::new(inbox.id.get() + 100);
+        let mut state = empty_state();
+        state.failing.extend([inbox.id, gone]);
+
+        queue_every_mailbox(&parts, &database, &mut state).await;
+
+        let mut cleared = Vec::new();
+        while let Some(event) = events.try_next() {
+            if let Event::MailboxSyncChanged {
+                mailbox,
+                failure: None,
+                ..
+            } = event
+            {
+                cleared.push(mailbox);
+            }
+        }
+        assert_eq!(cleared, vec![gone]);
+        assert_eq!(
+            state.failing.into_iter().collect::<Vec<_>>(),
+            vec![inbox.id]
+        );
     }
 
     /// postio-0d9.6: a 37,699-message Archive was queued ahead of an
@@ -5139,5 +5218,118 @@ mod tests {
             "a drained queue must reset the clock, or the next backfill's \
              first report waits out a window that started during this one"
         );
+    }
+
+    /// The folder marks a pass's ending leaves (#1731), by every kind of
+    /// ending `settle_pass` sees, over a link that is up.
+    #[tokio::test]
+    async fn only_a_pass_that_failed_its_folder_marks_it_and_only_a_completed_one_clears_it() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, events, _directory) = parts_over(database.clone()).await;
+        let mut state = empty_state();
+        state
+            .supervisor
+            .poll(parts.backend.as_ref(), Utc::now(), 0)
+            .await;
+        assert!(state.supervisor.link().is_online(), "the mock connects");
+        let connection = database.connect().await.expect("checkout");
+        let mailbox = MailboxId::new(7);
+        let end = |result| PassOutcome {
+            mailbox,
+            result,
+            arrived: Vec::new(),
+        };
+        let marks = |events: &postio_core::bridge::EventStream| {
+            let mut marks = Vec::new();
+            while let Some(event) = events.try_next() {
+                if let Event::MailboxSyncChanged {
+                    mailbox: marked,
+                    failure,
+                    ..
+                } = event
+                {
+                    assert_eq!(marked, mailbox);
+                    marks.push(failure);
+                }
+            }
+            marks
+        };
+        let refused = || {
+            Err(PassFailure::Failed(SyncError::Backend(
+                BackendError::Rejected {
+                    command: "SELECT".to_owned(),
+                    reason: "Mailbox is locked".to_owned(),
+                },
+            )))
+        };
+
+        // Nothing to clear: a completed pass of a folder that never failed
+        // says nothing.
+        let _ = settle_pass(
+            &parts,
+            &mut state,
+            &connection,
+            end(Ok(SyncSummary::default())),
+        )
+        .await;
+        assert_eq!(marks(&events), Vec::<Option<String>>::new());
+
+        // Stopped by the wave, turned away by a busy store, or gone from the
+        // store: none of them failed the folder.
+        for result in [
+            Err(PassFailure::Failed(SyncError::Backend(
+                BackendError::Cancelled,
+            ))),
+            Err(PassFailure::Failed(SyncError::Storage(
+                postio_storage::test_support::busy(),
+            ))),
+            Err(PassFailure::NoSuchMailbox),
+        ] {
+            let _ = settle_pass(&parts, &mut state, &connection, end(result)).await;
+        }
+        assert_eq!(marks(&events), Vec::<Option<String>>::new());
+
+        // The positive control: a refusal with the link up marks it, every
+        // time, and the next completed pass clears it once.
+        let _ = settle_pass(&parts, &mut state, &connection, end(refused())).await;
+        let _ = settle_pass(&parts, &mut state, &connection, end(refused())).await;
+        let marked = marks(&events);
+        assert_eq!(marked.len(), 2, "{marked:?}");
+        assert!(
+            marked.iter().all(|mark| mark
+                .as_deref()
+                .is_some_and(|why| why.contains("Mailbox is locked"))),
+            "{marked:?}"
+        );
+        assert!(
+            state.supervisor.link().is_online(),
+            "a refused SELECT keeps the link"
+        );
+        // A cancelled pass of a marked folder leaves the mark where it is.
+        let _ = settle_pass(
+            &parts,
+            &mut state,
+            &connection,
+            end(Err(PassFailure::Failed(SyncError::Backend(
+                BackendError::Cancelled,
+            )))),
+        )
+        .await;
+        assert_eq!(marks(&events), Vec::<Option<String>>::new());
+        let _ = settle_pass(
+            &parts,
+            &mut state,
+            &connection,
+            end(Ok(SyncSummary::default())),
+        )
+        .await;
+        let _ = settle_pass(
+            &parts,
+            &mut state,
+            &connection,
+            end(Ok(SyncSummary::default())),
+        )
+        .await;
+        assert_eq!(marks(&events), vec![None]);
     }
 }

@@ -601,6 +601,7 @@ says the same thing in a word or two:
 | Offline | "Everything you do is saved here and syncs when you're back.", with Retry now | "Offline" |
 | Sign-in error | "Can't sign in to \<server\>. The server rejected the password for \<address\>. Mail on this computer is still available.". With no password in the keyring: "Postio has no password saved for \<address\>. Mail on this computer is still available.", with Update password… | "Sync failed" |
 | An account failing for another reason | The account, and the reason in the sync's own words when it gave them, with Retry now | "Sync failed" |
+| A folder whose last pass failed while the link stayed up (#1731) | None: every other folder still syncs. The folder's row in the folders popover carries a warning whose tooltip says why | "Sent can't sync", or "3 folders can't sync"; its tooltip names each folder and why. Until that folder's next pass completes |
 
 None of these blocks anything local, and every account that works stays
 listed.

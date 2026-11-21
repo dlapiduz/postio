@@ -2968,3 +2968,104 @@ async fn a_pass_that_failed_is_not_announced_as_a_completed_sync() {
         "a failed pass was announced as a completed sync: {seen:?}"
     );
 }
+
+/// Every event the engine has said so far, waiting until `wanted` is among
+/// them: what this test means by "the engine said so".
+async fn said_until(
+    events: &EventStream,
+    seen: &mut Vec<Event>,
+    wanted: impl Fn(&Event) -> bool,
+) -> bool {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            seen.extend(announced(events));
+            if seen.iter().any(&wanted) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+#[tokio::test]
+async fn a_folder_the_server_will_not_open_is_marked_until_a_pass_of_it_completes() {
+    // #1731: a pass that failed with the link up was visible for a second
+    // and then never again -- the idle status overwrote it. The folder's
+    // failure now outlives the wave, and only its own next pass clears it.
+    let database = test_support::memory().await;
+    let account =
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
+    let connection = database.connect().await.expect("a connection");
+    let inbox = postio_storage::test_support::mailbox(&connection, &account, "INBOX").await;
+    let sent = postio_storage::test_support::mailbox(&connection, &account, "Sent").await;
+    drop(connection);
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(MockMailbox::new("INBOX"))
+            .mailbox(MockMailbox::new("Sent"))
+            .build(),
+    );
+    backend.refuse_select("Sent", "Mailbox is locked");
+    let (engine, events, _directory) = engine_over_arc(&database, account.id, backend.clone());
+    let mark = |mailbox: postio_model::MailboxId, failed: bool| {
+        move |event: &Event| {
+            matches!(
+                event,
+                Event::MailboxSyncChanged { mailbox: marked, failure, .. }
+                    if *marked == mailbox && failure.is_some() == failed
+            )
+        }
+    };
+    let mut seen = Vec::new();
+
+    engine.sync(inbox.id).await.expect("INBOX opens");
+    engine.sync(sent.id).await.expect_err("Sent does not");
+    assert!(
+        said_until(&events, &mut seen, mark(sent.id, true)).await,
+        "the failed folder was never marked: {seen:?}"
+    );
+    let reason = seen.iter().find_map(|event| match event {
+        Event::MailboxSyncChanged {
+            failure: Some(reason),
+            ..
+        } => Some(reason.clone()),
+        _ => None,
+    });
+    assert!(
+        reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("Mailbox is locked")),
+        "the mark says why: {reason:?}"
+    );
+    assert!(
+        !seen.iter().any(mark(inbox.id, true)),
+        "INBOX synced: {seen:?}"
+    );
+    assert!(
+        !seen.iter().any(|event| matches!(
+            event,
+            Event::ConnectionChanged { state, .. }
+                if *state != postio_core::ConnectionState::Online
+                    && *state != postio_core::ConnectionState::Connecting
+        )),
+        "one folder's refusal is not the link's: {seen:?}"
+    );
+
+    backend.allow_select("Sent");
+    engine.sync(sent.id).await.expect("Sent opens now");
+    assert!(
+        said_until(&events, &mut seen, mark(sent.id, false)).await,
+        "the folder's completed pass never cleared it: {seen:?}"
+    );
+    let last = seen
+        .iter()
+        .rev()
+        .find(|event| matches!(event, Event::MailboxSyncChanged { .. }));
+    assert!(
+        last.is_some_and(mark(sent.id, false)),
+        "the last word about Sent is that it synced: {last:?}"
+    );
+}

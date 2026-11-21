@@ -86,6 +86,9 @@ pub struct Entry {
     pub destination: Destination,
     /// How it is marked.
     pub mark: Mark,
+    /// Why its last sync pass failed, while that is the latest word about
+    /// it (#1731): the row carries a warning, and this is its tooltip.
+    pub failure: Option<String>,
 }
 
 /// The entry for a mailbox: a folder of the person's own or one with a role.
@@ -103,6 +106,7 @@ pub fn mailbox_entry(mailbox: &Mailbox) -> Entry {
         go: go_to(mailbox.role),
         destination: Destination::Mailbox(mailbox.id),
         mark: Mark::Role(mailbox.role),
+        failure: None,
     }
 }
 
@@ -119,6 +123,7 @@ pub fn outbox_entry(account: postio_model::AccountId, waiting: u32) -> Entry {
         go: Some(CommandId::GoToOutbox),
         destination: Destination::Outbox(account),
         mark: Mark::Role(MailboxRole::Outbox),
+        failure: None,
     }
 }
 
@@ -135,6 +140,7 @@ pub fn label_entry(label: &Label, count: Option<u32>) -> Entry {
         go: None,
         destination: Destination::Label(label.id),
         mark: Mark::Dot(label.color.clone()),
+        failure: None,
     }
 }
 
@@ -150,6 +156,7 @@ pub fn filtered_entry(today: u32) -> Entry {
         command: Some(CommandId::GoToFiltered),
         destination: Destination::Search(String::new()),
         mark: Mark::Role(MailboxRole::Archive),
+        failure: None,
     }
 }
 
@@ -171,6 +178,7 @@ pub fn view_entry(role: MailboxRole, count: Option<u32>) -> Entry {
         command: Some(command),
         destination: Destination::Search(String::new()),
         mark: Mark::Role(role),
+        failure: None,
     }
 }
 

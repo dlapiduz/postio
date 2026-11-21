@@ -280,6 +280,24 @@ pub enum Event {
         /// Units expected.
         total: u32,
     },
+    /// A mailbox's sync pass failed while the link stayed up, or the first
+    /// pass to complete after such a failure (#1731).
+    ///
+    /// Per mailbox because the failure is: a `SELECT` the server refuses, a
+    /// storage error, a parse failure leave every other folder syncing, so
+    /// the account's [`ConnectionState`] stays `Online` and cannot carry it.
+    /// Sent only on a change -- every failed pass, then the one pass that
+    /// clears it -- never for an ordinary completed pass. A cancelled pass
+    /// sends nothing: it was told to stop, and failed at nothing.
+    MailboxSyncChanged {
+        /// The account the mailbox belongs to.
+        account: AccountId,
+        /// The mailbox whose pass ended.
+        mailbox: MailboxId,
+        /// Why its last pass failed, phrased for the user; `None` once a
+        /// pass has completed again. Never contains a secret or mail.
+        failure: Option<String>,
+    },
     /// Progress filling in message *bodies*, for the status line only.
     ///
     /// Distinct from [`SyncProgress`], which is the message *list*. The two

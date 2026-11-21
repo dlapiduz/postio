@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use postio_core::{ConnectionState, Event};
-use postio_model::AccountId;
 use postio_model::mailbox::Mailbox;
+use postio_model::{AccountId, MailboxId};
 
 /// The protocol the status line names. v1 is IMAP only (CLAUDE.md).
 const PROTOCOL: &str = "imap";
@@ -51,6 +51,13 @@ pub struct SyncStatus {
     ///
     /// [`Event::BackfillProgress`]: postio_core::Event::BackfillProgress
     pub footprint: Option<postio_core::event::MailFootprint>,
+    /// The folders whose last pass failed while the link stayed up, each
+    /// with why, in mailbox order (#1731).
+    ///
+    /// The folder's own fact, not the connection's: no
+    /// [`Event::ConnectionChanged`] clears it, only that folder's next
+    /// completed pass ([`Event::MailboxSyncChanged`] with no failure).
+    pub failing: Vec<(MailboxId, String)>,
 }
 
 impl Default for SyncStatus {
@@ -63,6 +70,7 @@ impl Default for SyncStatus {
             backfill: None,
             detail: None,
             footprint: None,
+            failing: Vec::new(),
         }
     }
 }
@@ -235,6 +243,7 @@ impl Trackers {
             Event::ConnectionChanged { account, .. }
             | Event::SyncProgress { account, .. }
             | Event::BackfillProgress { account, .. }
+            | Event::MailboxSyncChanged { account, .. }
             | Event::Error {
                 account: Some(account),
                 ..
@@ -275,6 +284,19 @@ impl Trackers {
             .entry(account)
             .or_default()
             .note_last_sync(&theirs)
+    }
+
+    /// Why `mailbox`'s last sync pass failed, while that is the latest word
+    /// about it (#1731), whichever account it is.
+    pub fn failure(&self, mailbox: MailboxId) -> Option<&str> {
+        self.per_account.values().find_map(|tracker| {
+            tracker
+                .status
+                .failing
+                .iter()
+                .find(|(each, _)| *each == mailbox)
+                .map(|(_, reason)| reason.as_str())
+        })
     }
 
     /// The statuses of `accounts`, in the order given.
@@ -376,6 +398,20 @@ impl SyncTracker {
                     self.status.progress = None;
                 }
             }
+            Event::MailboxSyncChanged {
+                mailbox, failure, ..
+            } => {
+                let failing = &mut self.status.failing;
+                let at = failing.binary_search_by_key(mailbox, |(each, _)| *each);
+                match (at, failure) {
+                    (Ok(at), Some(reason)) => reason.clone_into(&mut failing[at].1),
+                    (Err(at), Some(reason)) => failing.insert(at, (*mailbox, reason.clone())),
+                    (Ok(at), None) => {
+                        failing.remove(at);
+                    }
+                    (Err(_), None) => {}
+                }
+            }
             Event::Error { message, .. } => {
                 self.reason = Some(message.clone());
                 if matches!(self.status.state, ConnectionState::Failing { .. }) {
@@ -423,7 +459,6 @@ pub fn to_instant(at: DateTime<Utc>, now: DateTime<Utc>, monotonic: Instant) -> 
 #[cfg(test)]
 mod tracker_tests {
     use super::*;
-    use postio_model::MailboxId;
     use postio_model::mailbox::MailboxRole;
 
     fn account() -> AccountId {
@@ -435,6 +470,47 @@ mod tracker_tests {
             account: account(),
             state,
         }
+    }
+
+    fn folder(mailbox: i64, failure: Option<&str>) -> Event {
+        Event::MailboxSyncChanged {
+            account: account(),
+            mailbox: MailboxId::new(mailbox),
+            failure: failure.map(str::to_owned),
+        }
+    }
+
+    /// #1731: a folder whose pass failed with the link up was forgotten the
+    /// moment the wave went idle. Its failure is the folder's, and outlives
+    /// every connection change until that folder's next pass completes.
+    #[test]
+    fn a_failed_folder_stays_failed_until_its_next_pass_completes() {
+        let mut tracker = SyncTracker::new();
+        tracker.apply(&connection(ConnectionState::Online));
+        assert!(tracker.apply(&folder(7, Some("The server refused to open Sent."))));
+        assert!(!tracker.apply(&folder(7, Some("The server refused to open Sent."))));
+        tracker.apply(&connection(ConnectionState::Connecting));
+        tracker.apply(&connection(ConnectionState::Online));
+        assert_eq!(
+            tracker.status().failing,
+            vec![(
+                MailboxId::new(7),
+                "The server refused to open Sent.".to_owned()
+            )],
+            "a connection change is not that folder's pass completing"
+        );
+
+        assert!(tracker.apply(&folder(7, None)));
+        assert!(tracker.status().failing.is_empty());
+    }
+
+    /// The failures go to the account they name, not the one on screen.
+    #[test]
+    fn a_failed_folder_is_its_own_accounts() {
+        let mut trackers = Trackers::default();
+        trackers.apply(&folder(7, Some("No.")), Some(AccountId::new(2)));
+        assert_eq!(trackers.status(account()).failing.len(), 1);
+        assert!(trackers.status(AccountId::new(2)).failing.is_empty());
     }
 
     /// Issue #74: the backfill's progress reached nobody, so the longest

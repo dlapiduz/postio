@@ -52,6 +52,7 @@ mod empty;
 mod every_command;
 mod filtered;
 mod first_run;
+mod folder_sync;
 mod forward_carried;
 mod gmail_keys;
 mod harness;
@@ -206,6 +207,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "e2e::a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list",
         e2e::a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list as fn(),
+    ),
+    (
+        "folder_sync::a_folder_the_server_will_not_open_is_marked_until_it_syncs",
+        folder_sync::a_folder_the_server_will_not_open_is_marked_until_it_syncs as fn(),
     ),
     (
         "idle_passes::the_idle_passes_wait_for_the_first_frame",

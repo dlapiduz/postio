@@ -256,6 +256,7 @@ as the send's window.
 |---|---|---|---|
 | Sign-in error (19) | "Can't sign in to \<server\>", then "The server rejected the password for \<address\>. Mail on this computer is still available." With no password in the keyring: "Postio has no password saved for \<address\>. Mail on this computer is still available." The error colour at low opacity | Update password… | "Sync failed" |
 | An account failing for another reason | The account and the reason, in the sync's own words when it gave them | Retry now | "Sync failed" |
+| A folder whose last pass failed while the link stayed up (#1731) | None. The folder's row in the popover wears a warning, its tooltip the reason | none | "Sent can't sync", or "3 folders can't sync", with each folder and reason in its tooltip, ranked below a running pass and above "Synced", until that folder's next pass completes |
 | Offline (18) | "You're offline", then "Everything you do is saved here and syncs when you're back." | Retry now | "Offline" |
 | First sync (17) | "First sync", then "12,408 of 18,204 messages, newest first. You can read and search what's here." A progress bar | none | "Syncing 12,408 of 18,204" |
 

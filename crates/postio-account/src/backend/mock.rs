@@ -415,6 +415,9 @@ struct State {
     /// The reason `create_mailbox` refuses with, when it is set to refuse.
     /// See [`MockBackend::refuse_creates`].
     refuse_creates: Option<String>,
+    /// The paths `select` refuses, each with its reason. See
+    /// [`MockBackend::refuse_select`].
+    refuse_select: Vec<(String, String)>,
     /// Every path `create_mailbox` was asked for, in order, including ones
     /// that already existed. See [`MockBackend::created`].
     created: Vec<String>,
@@ -768,6 +771,26 @@ impl MockBackend {
     /// to finish that pass, leave the role unmapped, and not ask again.
     pub fn refuse_creates(&self, reason: impl Into<String>) {
         self.state().refuse_creates = Some(reason.into());
+    }
+
+    /// Makes `SELECT` of `path` refuse with `reason`, as a server that lists
+    /// a folder and will not open it does, until [`allow_select`] is called.
+    ///
+    /// Narrower than a [`Fault`] for the same reason as
+    /// [`refuse_creates`](Self::refuse_creates): the case worth testing is
+    /// one folder failing its pass while the link, and every other folder,
+    /// stays healthy (#1731).
+    ///
+    /// [`allow_select`]: Self::allow_select
+    pub fn refuse_select(&self, path: impl Into<String>, reason: impl Into<String>) {
+        self.state()
+            .refuse_select
+            .push((path.into(), reason.into()));
+    }
+
+    /// Lets `SELECT` of `path` through again: the server fixed it.
+    pub fn allow_select(&self, path: &str) {
+        self.state().refuse_select.retain(|(each, _)| each != path);
     }
 
     /// Clears [`fail_all`](Self::fail_all)'s and
@@ -1280,6 +1303,7 @@ impl MockBackendBuilder {
                 latency: Duration::ZERO,
                 calls: 0,
                 refuse_creates: None,
+                refuse_select: Vec::new(),
                 created: Vec::new(),
                 in_flight: 0,
                 peak_in_flight: 0,
@@ -1388,6 +1412,12 @@ impl MailBackend for MockBackend {
         self.enter("SELECT").await?;
         let state = self.state();
         state.require_connected("SELECT")?;
+        if let Some((_, reason)) = state.refuse_select.iter().find(|(each, _)| each == path) {
+            return Err(BackendError::Rejected {
+                command: "SELECT".to_owned(),
+                reason: reason.clone(),
+            });
+        }
         let index = state.index_of(path)?;
         Ok(state.mailboxes[index].status(state.condstore(), mode == SelectMode::ReadOnly))
     }
