@@ -964,6 +964,42 @@ async fn a_fault_can_be_scheduled_so_retry_paths_are_testable() {
 }
 
 #[tokio::test]
+async fn a_body_fault_fails_the_body_and_leaves_the_rest_of_the_server_answering() {
+    // A fault on every call reaches the engine's own calls too -- the wave,
+    // the watch, the liveness check -- so which call takes the link down is
+    // the engine's timing, not the test's (#1943). This one is the body's.
+    let backend = connected().await;
+    let cancel = CancelToken::new();
+    backend.fail_body_fetches(Fault::Timeout);
+
+    assert!(backend.status("INBOX").await.is_ok());
+    assert!(
+        backend
+            .fetch_headers("INBOX", &UidSet::all(), None, &cancel)
+            .await
+            .is_ok()
+    );
+    assert!(matches!(
+        backend
+            .fetch_body("INBOX", &rid(1), &mut VecSink::new(), &cancel)
+            .await,
+        Err(BackendError::TimedOut { .. })
+    ));
+    assert!(
+        backend.body_fetches().is_empty(),
+        "a body that failed was never served"
+    );
+
+    backend.clear_faults();
+    assert!(
+        backend
+            .fetch_body("INBOX", &rid(1), &mut VecSink::new(), &cancel)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
 async fn authentication_failure_is_injectable_at_connect() {
     let backend = server();
     backend.inject(Fault::AuthFailed);

@@ -3010,12 +3010,14 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
             .body
     };
 
-    mock.fail_all(postio_account::backend::Fault::Timeout);
+    // The body is what times out. A fault on every call landed on whichever
+    // call the engine made first -- a pass of its first sync still running
+    // -- and took the link down before the pane read (#1943).
+    mock.fail_body_fetches(postio_account::backend::Fault::Timeout);
     assert_eq!(read(), postio_client::protocol::Body::Partial);
-    // The fault also takes the engine's own link down, and a pane over a
+    // The timeout also takes the engine's own link down, and a pane over a
     // down link reads "offline" and asks for nothing. Either way the fetch
     // could not happen: the failure was announced, or the plate says so.
-    // (Hearing only the failure raced the link report: it never came.)
     eventually(&world, || {
         let failed = std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
             matches!(envelope.event, Event::BodyFailed { message: failed, .. } if failed == message)
@@ -3087,13 +3089,13 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
         }
     });
     assert!(text.contains("The tide gate opens at nine."), "{text}");
-    assert!(
-        heard.iter().any(|event| matches!(
-            event,
-            Event::BodyReachable { message: again, .. } if *again == message
-        )),
-        "the pane that read offline is told to read again: {heard:?}"
-    );
+    // Told, too, whether or not the text came first: a pass of the first
+    // sync still running when the server came back can fetch it beside its
+    // lanes before the link's own retry says it is back (#2016).
+    let told = |event: &Event| matches!(event, Event::BodyReachable { message: again, .. } if *again == message);
+    if !heard.iter().any(told) {
+        world.hear(&events, told);
+    }
 }
 
 #[test]
