@@ -402,18 +402,14 @@ pub async fn threads_demo() -> (Store, AccountId) {
         .await
         .expect("the draft saves");
 
-    // Indexed as the body indexer would have by now, in one transaction.
-    postio_storage::sql::batch(&connection, "BEGIN")
+    // Indexed as the body indexer would have by now, all at once.
+    let bodies: Vec<(i64, &str)> = bodies
+        .iter()
+        .map(|(message, body)| (message.get(), body.as_str()))
+        .collect();
+    postio_index::index::index_bodies(&connection, &bodies)
         .await
-        .expect("begin the bodies");
-    for (message, body) in &bodies {
-        postio_index::index::index_body(&connection, message.get(), Some(body))
-            .await
-            .expect("a body indexed");
-    }
-    postio_storage::sql::batch(&connection, "COMMIT")
-        .await
-        .expect("commit the bodies");
+        .expect("the bodies indexed");
     drop(connection);
     (database, account.id)
 }

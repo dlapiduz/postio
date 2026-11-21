@@ -153,6 +153,7 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     }
 
     postio_storage::sql::batch(connection, SCHEMA).await?;
+    postio_storage::sql::batch(connection, BODY_INDEX).await?;
     postio_storage::sql::batch(connection, ATTACHMENTS_SCHEMA).await?;
 
     set_half_version(connection, "metadata", METADATA_SCHEMA_VERSION).await?;
@@ -574,6 +575,29 @@ pub async fn index_body(
         .await?;
 
     Ok(())
+}
+
+/// [`index_body`] for many messages at once, building the full-text index
+/// over them once rather than merging it once per body.
+///
+/// Each body written into an indexed column pays the index's merge: 18 of
+/// the 24 seconds the search seed's five hundred bodies took (#2020). So
+/// the index is dropped, the rows written as a plain table in one
+/// transaction, and the index built again over every row, the ones that
+/// were there before included. For a store nothing else is searching while
+/// it fills -- a seed, a rebuild -- since its bodies match nothing until
+/// the index is back. The index is rebuilt even when a write fails.
+pub async fn index_bodies(connection: &Connection, bodies: &[(i64, &str)]) -> Result<()> {
+    postio_storage::sql::batch(connection, "DROP INDEX IF EXISTS messages_body_fts").await?;
+    let written = postio_storage::sql::in_scope(connection, |connection| async move {
+        for (message_id, body) in bodies {
+            index_body(&connection, *message_id, Some(body)).await?;
+        }
+        Ok::<_, crate::error::Error>(())
+    })
+    .await;
+    postio_storage::sql::batch(connection, BODY_INDEX).await?;
+    written
 }
 
 /// Indexes a message's body, whichever form it arrived in.
@@ -1117,6 +1141,10 @@ pub async fn rebuild(connection: &Connection) -> Result<()> {
 /// The schema text, for a test that applies it one statement at a time.
 pub const SCHEMA_FOR_TEST: &str = SCHEMA;
 
+/// The full-text index over the bodies: apart from [`SCHEMA`] so that
+/// [`index_bodies`] can build it once over many rows.
+const BODY_INDEX: &str = "CREATE INDEX IF NOT EXISTS messages_body_fts ON message_search_bodies USING fts (body_search);";
+
 const SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS search_documents (
     content_id  INTEGER PRIMARY KEY REFERENCES message_contents(id) ON DELETE CASCADE,
@@ -1156,7 +1184,8 @@ CREATE INDEX IF NOT EXISTS search_documents_fts ON search_documents
 -- both sides went through the same fold. `index_body` is the one writer,
 -- run by `postio_session::spawn_body_indexer` in batches off the sync lane;
 -- a stored body with no row here is what the indexer has yet to reach.
-CREATE INDEX IF NOT EXISTS messages_body_fts ON message_search_bodies USING fts (body_search);
+-- The index itself is `BODY_INDEX`, run after this: `index_bodies` drops
+-- and builds it again on its own.
 
 -- Arbitrary headers: the table `header:` matches against (ADR 0025 Q2).
 --
