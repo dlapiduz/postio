@@ -119,10 +119,15 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
         .expect("the attachment rides the draft");
     assert_eq!(attachment.disposition, Disposition::Inline);
     // …and pixels actually arrive, through the draft-aware cid lookup.
-    settle("the pasted image to render from the store", || {
-        composer.test_body_eval(
-            "String(document.images.length === 1 && document.images[0].naturalWidth > 0)",
-        ) == "true"
+    let what = "the pasted image to render from the store";
+    settle(what, || {
+        composer.test_body_eval("String(document.images.length)") == "1"
+            && crate::support_compose::cid_image_decoded(
+                &composer.test_body_eval(&crate::support_compose::image_state_js(
+                    "document.images[0]",
+                )),
+                what,
+            )
     });
 
     // The wire form of the draft carries the cid reference, which is what
@@ -144,12 +149,22 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
     // drives.
     let pixels = glib::Bytes::from_owned(vec![128u8; 16]);
     let texture = gdk::MemoryTexture::new(2, 2, gdk::MemoryFormat::R8g8b8a8, &pixels, 8);
-    display.clipboard().set_texture(&texture);
+    // The seat's clipboard is not this process's alone: a copy by another
+    // client of the same compositor takes it back, and then it holds what
+    // that client copied for as long as it lives. That is the whole of what
+    // failed here on CI, when every test process shared one compositor:
+    // the texture was set once and waited for for six minutes (#1810). A
+    // person whose copy was overwritten copies again, so this does too.
+    let clipboard = display.clipboard();
+    clipboard.set_texture(&texture);
     settle("the clipboard to hold a texture", || {
-        display
-            .clipboard()
+        let holds = clipboard
             .formats()
-            .contains_type(gdk::Texture::static_type())
+            .contains_type(gdk::Texture::static_type());
+        if !holds {
+            clipboard.set_texture(&texture);
+        }
+        holds
     });
 
     let before = composer.test_attachment_count();
