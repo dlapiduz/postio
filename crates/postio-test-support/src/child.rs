@@ -30,9 +30,75 @@ macro_rules! this_test {
     };
 }
 
+/// Set on a case [`alone`] runs again, to the case's own name.
+const ALONE: &str = "POSTIO_TEST_ALONE";
+
+/// Whether this process runs `case` and nothing else: nextest gives every
+/// case a process, and [`alone`]'s child is one.
+fn own_process(case: &str) -> bool {
+    std::env::var_os("NEXTEST_EXECUTION_MODE").is_some_and(|mode| mode == "process-per-test")
+        || std::env::var_os(ALONE).is_some_and(|name| name == case)
+}
+
+/// Give `case` a process of its own, for a case that reads something the
+/// whole process shares: a counter every thread adds to, a slot the last
+/// session to open filled, the tracing dispatch a callsite cached.
+///
+/// A suite is one binary, and `cargo test` runs its cases as threads of one
+/// process, so such a case reads what its neighbours did too (#1976).
+/// Where the process is already the case's own -- under nextest, or in the
+/// child this starts -- it returns `false` and the case goes on. Anywhere
+/// else it runs this binary again with `case` alone, fails if that did, and
+/// returns `true`: the caller returns at once. Through [`alone!`](crate::alone),
+/// which names the case from where it is written.
+pub fn alone(case: &str) -> bool {
+    if own_process(case) {
+        return false;
+    }
+    let ran = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([case, "--exact", "--nocapture", "--test-threads=1"])
+        .env(ALONE, case)
+        .output()
+        .expect("run this case again");
+    let said = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        ran.status.success(),
+        "{case}, alone, failed:\n{said}\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    // libtest exits 0 having run nothing when no case has the name.
+    assert!(
+        said.contains("1 passed"),
+        "{case} ran nothing alone:\n{said}"
+    );
+    true
+}
+
+/// [`alone`] for the case named `case` in the module this is written in:
+/// `if postio_test_support::alone!("the_case") { return; }`.
+#[macro_export]
+macro_rules! alone {
+    ($case:expr) => {
+        $crate::child::alone(&$crate::this_test!($case))
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::full_name;
+
+    #[test]
+    fn a_case_alone_runs_its_body_in_a_process_of_its_own() {
+        if crate::alone!("a_case_alone_runs_its_body_in_a_process_of_its_own") {
+            return;
+        }
+        // Whoever runs this -- nextest, or `cargo test` with every case on a
+        // thread of one process -- the body runs where nothing else does.
+        assert!(
+            super::own_process("child::tests::a_case_alone_runs_its_body_in_a_process_of_its_own"),
+            "the body ran beside its neighbours"
+        );
+    }
 
     #[test]
     fn a_file_of_its_own_names_the_case_alone() {

@@ -35,6 +35,10 @@ async fn a_background_connection_carries_a_small_cache() {
 
 #[tokio::test]
 async fn reads_take_turns_on_a_few_long_lived_connections() {
+    // The checkouts are the process's: alone, or a neighbour's are counted too.
+    if postio_test_support::alone!("reads_take_turns_on_a_few_long_lived_connections") {
+        return;
+    }
     // A read that opens its own connection pays a new pager, an empty cache
     // and the pragmas every time; a list page paid it twice per page. Reads
     // taken in turn share one warm connection.

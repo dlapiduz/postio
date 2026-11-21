@@ -211,6 +211,10 @@ async fn the_unified_scope_pages_every_account_without_repeating_a_row() {
 
 #[tokio::test]
 async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
+    // The count is the process's: alone, or a neighbour's work is counted too.
+    if postio_test_support::alone!("paging_a_folder_counts_it_once_rather_than_once_per_page") {
+        return;
+    }
     // #1534. `read_thread_page` recomputes `count_of` on every page, and for
     // a threaded folder that is not a column lookup — it is a correlated
     // subquery, one indexed probe per message. Measured on a real account:
@@ -266,6 +270,11 @@ async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
 
 #[tokio::test]
 async fn paging_a_folder_opens_one_connection_rather_than_one_per_page() {
+    // The count is the process's: alone, or a neighbour's work is counted too.
+    if postio_test_support::alone!("paging_a_folder_opens_one_connection_rather_than_one_per_page")
+    {
+        return;
+    }
     // #1602: the engine keeps no pool, so a read that opens its own
     // connection pays a fresh pager, an empty page cache and the pragmas,
     // and a list page opened two. Counted, not timed, like the folder count
@@ -350,6 +359,10 @@ async fn the_rows_for_a_changed_message_are_the_page_row_they_replace() {
 
 #[tokio::test]
 async fn a_folder_told_about_an_archive_is_not_counted_again() {
+    // The count is the process's: alone, or a neighbour's work is counted too.
+    if postio_test_support::alone!("a_folder_told_about_an_archive_is_not_counted_again") {
+        return;
+    }
     // #1607: an archive moved the folder's `total_count`, which is the
     // count's witness, so the next page paid the whole conversation count
     // again -- 786 ms on a real 60k folder, in front of the first row. Told
@@ -408,6 +421,10 @@ async fn a_folder_told_about_an_archive_is_not_counted_again() {
 
 #[tokio::test]
 async fn a_folder_that_gains_a_message_is_counted_again() {
+    // The count is the process's: alone, or a neighbour's work is counted too.
+    if postio_test_support::alone!("a_folder_that_gains_a_message_is_counted_again") {
+        return;
+    }
     // The other half of caching the count: it has to stop being used the
     // moment it is wrong. A cached total that outlived its folder would make
     // the list claim a row count it cannot fill, which is a worse bug than
@@ -527,6 +544,10 @@ async fn a_message_list_s_rows_cost_the_same_however_many() {
 
 #[tokio::test]
 async fn the_unified_list_is_counted_once_while_nothing_moves() {
+    // The count is the process's: alone, or a neighbour's work is counted too.
+    if postio_test_support::alone!("the_unified_list_is_counted_once_while_nothing_moves") {
+        return;
+    }
     // #1610: the unified view counted every conversation of every account on
     // every page -- the folder count's correlated shape, over all of them --
     // where a folder is counted once and kept while its witness holds.
@@ -571,6 +592,10 @@ async fn the_unified_list_is_counted_once_while_nothing_moves() {
 
 #[tokio::test]
 async fn a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips() {
+    // The count is the process's: alone, or a neighbour's work is counted too.
+    if postio_test_support::alone!("a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips") {
+        return;
+    }
     // #1610: a scrollbar drag into a large folder read its page with an
     // OFFSET over the window's correlated predicate, linear in the depth.
     let (store, account, inbox, database) = store(3_000, 3).await;
@@ -769,6 +794,10 @@ async fn focus_s_inbox_pages_every_account_without_repeating_a_row() {
 
 #[tokio::test]
 async fn focus_s_inbox_is_counted_once_while_nothing_moves() {
+    // The count is the process's: alone, or a neighbour's work is counted too.
+    if postio_test_support::alone!("focus_s_inbox_is_counted_once_while_nothing_moves") {
+        return;
+    }
     let (store, account, inbox, database) = store(300, 3).await;
     let before = postio_runtime::store::focus_counted();
     let mut total = 0;

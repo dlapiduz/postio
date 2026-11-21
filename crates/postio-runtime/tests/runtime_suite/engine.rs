@@ -2736,6 +2736,10 @@ async fn a_queued_action_does_not_wait_out_a_sync_wave() {
 /// into the watch and for idleness to show, so it runs on the nightly timer.
 #[tokio::test]
 async fn an_idle_engine_does_not_poll_the_queue() {
+    // The wake-ups are the process's: alone, or a neighbour's engine wakes too.
+    if postio_test_support::alone!("an_idle_engine_does_not_poll_the_queue") {
+        return;
+    }
     // The engine asked the store whether any operation was due every 500 ms
     // and checked its job channel every 50 ms, all day, on an idle app: two
     // store reads and twenty wake-ups a second for nothing. A person's action

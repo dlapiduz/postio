@@ -163,6 +163,11 @@ const FILTERING: &str = "# mine\n[focus]\nfiltering = true\n\n[focus.filter]\n\
 
 #[test]
 fn the_filtering_pane_says_what_gtk_s_says() {
+    // The pane reads the people the last session to open installed: alone, or
+    // a neighbour's session is the one it reads.
+    if postio_test_support::alone!("the_filtering_pane_says_what_gtk_s_says") {
+        return;
+    }
     let page = postio_ffi::settings_filtering(FILTERING.to_owned(), Some(186)).expect("it parses");
     let config = postio_config::Config::from_toml_str(FILTERING).expect("it parses");
     let shared = postio_ui::filtering::page(
@@ -194,6 +199,13 @@ fn the_filtering_pane_says_what_gtk_s_says() {
 
 #[test]
 fn filtering_off_and_an_entry_taken_back_leave_the_rest_of_the_file_alone() {
+    // The pane reads the people the last session to open installed: alone, or
+    // a neighbour's session is the one it reads.
+    if postio_test_support::alone!(
+        "filtering_off_and_an_entry_taken_back_leave_the_rest_of_the_file_alone"
+    ) {
+        return;
+    }
     let off = postio_ffi::settings_patch_filtering(FILTERING.to_owned(), false).expect("written");
     assert!(off.starts_with("# mine\n"), "{off}");
     assert!(off.contains("density = \"compact\""), "{off}");
@@ -758,6 +770,13 @@ fn two_filters_cannot_share_a_key() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_filtering_pane_lists_a_person_s_pin_by_name_and_taking_it_back_clears_the_person() {
+    // The pane reads the people the last session to open installed: alone, or
+    // a neighbour's session is the one it reads.
+    if postio_test_support::alone!(
+        "the_filtering_pane_lists_a_person_s_pin_by_name_and_taking_it_back_clears_the_person"
+    ) {
+        return;
+    }
     use postio_model::{ContactArrival, ContactSettings, EmailAddress, StoppedMarker};
     use postio_storage::repository::{ContactRepository, ContactSettingsRepository};
 

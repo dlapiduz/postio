@@ -220,6 +220,13 @@ async fn stored(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment() {
+    // A callsite caches whether anyone listens, process-wide: alone, or a
+    // neighbour that reached it first with no subscriber decides for this one.
+    if postio_test_support::alone!(
+        "a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment"
+    ) {
+        return;
+    }
     use postio_test_support::logs::Captured;
 
     let database = test_support::temp().await;
