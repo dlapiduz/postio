@@ -39,6 +39,7 @@ fn events_cover_the_repaint_surface() {
         Event::BodyLoaded {
             account: AccountId::new(1),
             message: MessageId::new(3),
+            sections: postio_core::event::Sections::Parts(vec!["2".to_owned()]),
         },
         Event::SelectionChanged {
             selection: postio_core::state::Selection::These(vec![MessageId::new(3)]),

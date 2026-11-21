@@ -2348,6 +2348,22 @@ async fn engine_over_a_real_sync(
     BlobDir,
     test_support::TempStore,
 ) {
+    let (engine, database, account, directory, temp, _events) =
+        telling_engine_over_a_real_sync(backfill).await;
+    (engine, database, account, directory, temp)
+}
+
+/// [`engine_over_a_real_sync`], and what the engine says.
+async fn telling_engine_over_a_real_sync(
+    backfill: postio_sync::BackfillPolicy,
+) -> (
+    Engine,
+    postio_storage::Store,
+    postio_model::AccountId,
+    BlobDir,
+    test_support::TempStore,
+    postio_core::bridge::EventStream,
+) {
     let database = test_support::temp().await;
     let account = {
         let connection = database.connect().await.expect("checkout");
@@ -2359,7 +2375,7 @@ async fn engine_over_a_real_sync(
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let (sink, _events) = event_channel();
+    let (sink, events) = event_channel();
     let engine = Engine::spawn(EngineParts {
         account: account.id,
         database: (*database).clone(),
@@ -2387,7 +2403,7 @@ async fn engine_over_a_real_sync(
     // (#605), instead of the `Box::leak` this used to reach for.
     let cloned = (*database).clone();
     let directory = BlobDir::new(engine.clone(), directory);
-    (engine, cloned, id, directory, database)
+    (engine, cloned, id, directory, database, events)
 }
 
 /// Waits for `look` to answer `Some`, or gives up saying what it was after.
@@ -2496,8 +2512,8 @@ async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
     // The job the reading pane sends when somebody clicks a chip. Nothing
     // else in this test touches the network, so the bytes arriving are the
     // request having gone all the way out and back.
-    let (engine, database, account, _directory, _temp_database) =
-        engine_over_a_real_sync(postio_sync::BackfillPolicy::default()).await;
+    let (engine, database, account, _directory, _temp_database, events) =
+        telling_engine_over_a_real_sync(postio_sync::BackfillPolicy::default()).await;
     let message = the_synced_message(&database, account).await;
 
     // Wait for the text first: `request_payloads` reads the attachment rows,
@@ -2516,7 +2532,11 @@ async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
         .request_payloads(message, vec!["2".to_owned()])
         .await
         .expect("the engine answers");
-    assert!(asked, "there is a payload on the server to ask for");
+    assert_eq!(
+        asked,
+        postio_model::fetch::PayloadAsk::Queued,
+        "there is a payload on the server to ask for"
+    );
 
     // The state, not the blob that precedes it: `fetch_payloads` writes the
     // attachment's blob id and the message's `body_state` separately, so a
@@ -2543,6 +2563,36 @@ async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
     assert!(
         attachment_blob(&database, message).await.is_some(),
         "and the blob it names is in the store"
+    );
+    // The news names the part, so whoever waits on it hears its own
+    // (#1996, #1690), not only the message's words.
+    let mut heard = Vec::new();
+    while let Some(event) = events.try_next() {
+        if let postio_core::Event::BodyLoaded {
+            message: loaded,
+            sections,
+            ..
+        } = event
+            && loaded == message
+        {
+            heard.push(sections);
+        }
+    }
+    assert!(
+        heard.contains(&postio_model::fetch::Sections::Parts(vec!["2".to_owned()])),
+        "the part's landing was never said by section: {heard:?}"
+    );
+    assert!(
+        heard.contains(&postio_model::fetch::Sections::Text),
+        "the words landed first, said as words: {heard:?}"
+    );
+    // Asked again, it is here: no second fetch, and the answer says why.
+    assert_eq!(
+        engine
+            .request_payloads(message, vec!["2".to_owned()])
+            .await
+            .expect("the engine answers"),
+        postio_model::fetch::PayloadAsk::Local
     );
     drop(engine);
 }

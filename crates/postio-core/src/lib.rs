@@ -76,7 +76,7 @@ pub use command::{
 pub use config::{ConfigChange, ConfigService, Keymap, SharedConfig};
 pub use context::{Context, ContextSet, UnknownContext};
 pub use dispatch::{CommandError, Dispatcher, Invocation};
-pub use event::{ConnectionState, Event, FailureReason, MailFootprint};
+pub use event::{ConnectionState, Event, FailureReason, MailFootprint, Sections};
 pub use invocation::{EventEnvelope, InvocationId, InvocationOutcome};
 pub use registry::{Availability, CommandSpec, Frontend, Recovery, Requirement, RequirementSet};
 pub use state::{AppState, Resolved, Scope, Selection, SharedState, StateSnapshot, ViewMode};

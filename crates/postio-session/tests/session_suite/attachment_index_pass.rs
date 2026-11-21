@@ -312,6 +312,7 @@ async fn an_attachment_that_was_never_downloaded_is_never_fetched() {
         sink.emit(postio_core::Event::BodyLoaded {
             account: account.id,
             message,
+            sections: postio_core::event::Sections::Text,
         });
     }
 
@@ -474,6 +475,7 @@ async fn bytes_stored_later_are_indexed_on_the_event_that_says_so() {
     sink.emit(postio_core::Event::BodyLoaded {
         account: account.id,
         message,
+        sections: postio_core::event::Sections::Text,
     });
 
     let check = database.clone();

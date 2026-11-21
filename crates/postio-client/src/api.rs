@@ -270,14 +270,27 @@ impl Client {
     }
 
     /// A forward of `message` was opened: ask for the `parts` it carries now,
-    /// rather than when the send drains (#1690). Posted. Call it for a
-    /// forward only; [`postio_ui::compose::carried_sections`] names the parts.
-    pub fn fetch_carried(&self, message: MessageId, parts: Vec<String>) {
+    /// rather than when the send drains (#1690), and hear whether they are
+    /// coming. Call it for a forward only;
+    /// [`postio_ui::compose::carried_sections`] names the parts. The bytes
+    /// land as an `Event::BodyLoaded` naming them.
+    pub async fn fetch_carried(
+        &self,
+        message: MessageId,
+        parts: Vec<String>,
+    ) -> Result<postio_model::fetch::PayloadAsk, StoreError> {
         if parts.is_empty() {
-            return;
+            return Ok(postio_model::fetch::PayloadAsk::Local);
         }
-        self.counts.record("FetchCarried");
-        self.transport.post(Req::FetchCarried { message, parts });
+        self.read(
+            Req::FetchCarried { message, parts },
+            "a forward's parts",
+            |answer| match answer {
+                Resp::Carried(asked) => Some(asked),
+                _ => None,
+            },
+        )
+        .await
     }
 
     /// `[storage] max_bytes` changed: the host brings the blobs under it.

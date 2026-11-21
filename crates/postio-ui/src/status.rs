@@ -660,6 +660,7 @@ mod tracker_tests {
         assert!(!tracker.apply(&Event::BodyLoaded {
             account: account(),
             message: postio_model::ids::MessageId::new(1),
+            sections: postio_core::event::Sections::Text,
         }));
     }
 

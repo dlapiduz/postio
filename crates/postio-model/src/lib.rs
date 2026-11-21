@@ -52,6 +52,7 @@ pub mod contact_group;
 pub mod contact_settings;
 pub mod draft;
 pub mod egress;
+pub mod fetch;
 pub mod filing;
 pub mod flag;
 pub mod fold;

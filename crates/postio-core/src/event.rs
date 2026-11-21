@@ -11,6 +11,7 @@
 
 use std::time::Duration;
 
+pub use postio_model::fetch::Sections;
 use postio_model::{AccountId, DraftId, MailboxId, MessageId, ThreadId};
 use serde::{Deserialize, Serialize};
 
@@ -144,12 +145,17 @@ pub enum Event {
         /// thread changed some other way.
         members_added: Vec<MessageId>,
     },
-    /// A message body finished loading from the blob store or the server.
+    /// Some of a message's bytes finished loading from the server: its
+    /// words, or the parts `sections` names.
     BodyLoaded {
         /// The account the message belongs to.
         account: AccountId,
-        /// The message whose body is now available.
+        /// The message whose bytes are now available.
         message: MessageId,
+        /// Which of them: a wait for one part listens for its own, and a
+        /// composer forwarding the message stops drawing that part as
+        /// downloading (#1690).
+        sections: Sections,
     },
     /// The server would not give up a message's body (#1918): read the open
     /// message again, so "Downloading" becomes "could not be downloaded"
@@ -157,8 +163,11 @@ pub enum Event {
     BodyFailed {
         /// The account the message belongs to.
         account: AccountId,
-        /// The message whose body will not come.
+        /// The message whose bytes will not come.
         message: MessageId,
+        /// Which of them: a refused text fetch does not end a wait for one
+        /// of its parts (#1996).
+        sections: Sections,
     },
     /// An account's link is back, and a pane drew this message as "not
     /// downloaded, offline" (#1986): read it again, and the read asks for
@@ -481,8 +490,16 @@ mod tests {
                 thread,
                 members_added: vec![message],
             },
-            Event::BodyLoaded { account, message },
-            Event::BodyFailed { account, message },
+            Event::BodyLoaded {
+                account,
+                message,
+                sections: Sections::Text,
+            },
+            Event::BodyFailed {
+                account,
+                message,
+                sections: Sections::Parts(vec!["2".to_owned()]),
+            },
             Event::BodyReachable { account, message },
         ];
         for event in events {

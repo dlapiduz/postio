@@ -1107,7 +1107,7 @@ fn saving_a_new_attachment_fetches_from_its_own_account() {
 }
 
 #[test]
-fn a_posted_fetch_carried_brings_a_forwards_parts_without_a_send() {
+fn fetch_carried_brings_a_forwards_parts_without_a_send_and_says_they_are_coming() {
     // #1690: opening a forward asks for the parts it carries, so they are
     // local before the person presses send. Nothing is sent here.
     use postio_account::backend::{BodyStructure, MockBackend, MockMailbox, MockMessage, PartNode};
@@ -1155,10 +1155,26 @@ fn a_posted_fetch_carried_brings_a_forwards_parts_without_a_send() {
     };
     assert!(blob_of().is_none(), "new mail has no downloaded payload");
 
-    client.fetch_carried(message, vec!["2".to_owned()]);
+    let asked = world
+        .rt
+        .block_on(client.fetch_carried(message, vec!["2".to_owned()]))
+        .expect("the host answers");
+    assert_eq!(
+        asked,
+        postio_model::fetch::PayloadAsk::Queued,
+        "the composer draws the part downloading only on this answer"
+    );
 
     eventually(&world, blob_of);
     assert_eq!(client.counts().of("FetchCarried"), 1);
+    // Asked again once it is here, the answer says so: nothing to draw.
+    assert_eq!(
+        world
+            .rt
+            .block_on(client.fetch_carried(message, vec!["2".to_owned()]))
+            .expect("the host answers"),
+        postio_model::fetch::PayloadAsk::Local
+    );
 }
 
 /// A draft to `account`, saying `words`.
@@ -3820,6 +3836,7 @@ fn a_body_that_lands_while_focus_runs_is_classified() {
     world.host().inner.hub.emit(Event::BodyLoaded {
         account: world.account,
         message: landed,
+        sections: postio_core::event::Sections::Text,
     });
 
     let version = eventually(&world, || body_classified_at(&world, landed));
@@ -4408,6 +4425,7 @@ fn a_later_cancellation_cancels_the_invitation_and_its_answers() {
     world.host().inner.hub.emit(Event::BodyLoaded {
         account: world.account,
         message: cancel,
+        sections: postio_core::event::Sections::Text,
     });
     let _ = focus;
 
