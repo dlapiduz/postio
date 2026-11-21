@@ -1800,6 +1800,14 @@ const CASES: &[(&str, fn())] = &[
         reading_pane::a_filter_landing_under_an_open_pane_shows_the_cursors_row_there as fn(),
     ),
     (
+        "reading_pane::a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes",
+        reading_pane::a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes as fn(),
+    ),
+    (
+        "reading_pane::opening_a_conversation_costs_the_same_however_long_it_is",
+        reading_pane::opening_a_conversation_costs_the_same_however_long_it_is as fn(),
+    ),
+    (
         "colours::the_roles_resolve_and_follow_the_system_into_dark",
         colours::the_roles_resolve_and_follow_the_system_into_dark as fn(),
     ),

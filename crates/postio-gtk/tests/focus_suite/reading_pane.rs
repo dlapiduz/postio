@@ -713,3 +713,134 @@ pub fn a_filter_landing_under_an_open_pane_shows_the_cursors_row_there() {
         );
     });
 }
+
+/// Holding `j` over the open pane reads the row the cursor lands on, not
+/// every row it passes (#1609): eleven steps in one turn of the loop are one
+/// body read, and a `j` that leaves the cursor where it was reads nothing.
+/// Counted at the storage seam, which sees the store owner's thread too.
+pub fn a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        for at in 0..12 {
+            let (message, _) = fixture
+                .file(
+                    ("Ada Moreno", "ada@example.com"),
+                    &format!("Message {at:02}"),
+                    "x",
+                    10 + i64::from(at),
+                )
+                .await;
+            fixture
+                .write_body(message, &format!("Body number {at:02}."))
+                .await;
+        }
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 12).await,
+            "the inbox never listed its mail: {:?}",
+            support::subjects(&window)
+        );
+        read_in_pane(&window);
+        support::deliver(&window, "Return");
+        let reading = window.reading().expect("Return opened the message");
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("Body number 00")).await,
+            "the first body was never drawn: {:?}",
+            reading.body_text()
+        );
+        crate::settle();
+
+        let loads = postio_storage::test_support::counting::body_loads();
+        // Faster than the store answers, as a held key outruns it: the
+        // window's own `j`, eleven times before the loop turns.
+        for _ in 0..11 {
+            window.act(postio_core::CommandId::NextMessage);
+        }
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("Body number 11")).await,
+            "the pane never showed where the cursor landed: {:?} {:?}",
+            pane_title(&window),
+            reading.body_text()
+        );
+        assert_eq!(cursor(&window), 11);
+        assert_eq!(pane_title(&window).as_deref(), Some("Message 11"));
+        let swept = postio_storage::test_support::counting::body_loads() - loads;
+        assert_eq!(
+            swept, 1,
+            "eleven steps read {swept} bodies: every row the cursor passed, \
+             not the one it landed on"
+        );
+
+        // The last row: `j` moves nothing, and nothing is read again.
+        let loads = postio_storage::test_support::counting::body_loads();
+        support::deliver(&window, "j");
+        crate::settle();
+        assert_eq!(cursor(&window), 11);
+        assert_eq!(
+            postio_storage::test_support::counting::body_loads() - loads,
+            0,
+            "a step that moved nothing read the body again"
+        );
+    });
+}
+
+/// Opening a conversation costs what opening one message does, however
+/// many it holds (#1609): its body read once, and its members read on
+/// connections that do not grow with it. A twelve-message conversation and
+/// a two-message one open on the same counts.
+pub fn opening_a_conversation_costs_the_same_however_long_it_is() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let mut costs = Vec::new();
+        for count in [2, 12] {
+            let fixture = Fixture::empty().await;
+            let ids = fixture.thread_of("Harbor draft", count, 20).await;
+            for id in &ids {
+                fixture.write_body(*id, "The harbour schedule.").await;
+            }
+            let (window, _client) = fixture.open().await;
+            assert!(
+                crate::settle_until(async || support::subjects(&window).len() == 1).await,
+                "the conversation was never listed: {:?}",
+                support::subjects(&window)
+            );
+            crate::settle();
+            let connections = postio_storage::test_support::counting::checkouts();
+            let bodies = postio_storage::test_support::counting::body_loads();
+            support::deliver(&window, "Return");
+            assert!(
+                crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+                "Return opened nothing"
+            );
+            let reading = window.reading().expect("open");
+            assert!(
+                crate::settle_until(async || {
+                    reading.thread_known() == count
+                        && reading.body_text().contains("harbour schedule")
+                })
+                .await,
+                "the conversation never opened whole: {} of {count} known, {:?}",
+                reading.thread_known(),
+                reading.body_text()
+            );
+            crate::settle();
+            costs.push((
+                postio_storage::test_support::counting::checkouts() - connections,
+                postio_storage::test_support::counting::body_loads() - bodies,
+            ));
+            window.close();
+            crate::settle();
+        }
+        assert_eq!(
+            costs[0], costs[1],
+            "(connections, bodies) for two messages and for twelve: the open \
+             grew with the conversation"
+        );
+        assert_eq!(costs[1].1, 1, "the open message's body, read once");
+    });
+}
