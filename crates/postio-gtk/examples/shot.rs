@@ -628,7 +628,7 @@ fn stage(
             let (typed, done): (&str, Box<dyn Fn() -> bool>) = match screen {
                 "07" => (
                     "the invoice Marisol sent last month",
-                    Box::new(|| !bar.chips().is_empty()),
+                    Box::new(|| !bar.dropdown().texts().is_empty()),
                 ),
                 "08" => ("in:Rec", Box::new(|| !bar.result_subjects().is_empty())),
                 _ => ("arch", Box::new(|| !bar.texts().is_empty())),

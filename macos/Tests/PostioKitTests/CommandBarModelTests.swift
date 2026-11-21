@@ -47,35 +47,30 @@ struct CommandBarModelTests {
 
     static func line(
         _ kind: BarLineKindFfi, _ token: UInt64, _ title: String, detail: String? = nil,
-        key: String? = nil, command: String? = nil, selectable: Bool = true,
-        sender: String? = nil, wheres: [String] = [], time: String? = nil
+        key: String? = nil, command: String? = nil, selectable: Bool = true
     ) -> BarLineFfi {
         BarLineFfi(
             kind: kind, token: token, title: title, detail: detail, key: key, command: command,
-            selectable: selectable, sender: sender, wheres: wheres, time: time)
+            selectable: selectable)
     }
 
-    /// Screen 09's bar after `arch`, and screen 07's chips.
+    /// `>arch`'s commands, a hint, and `@`'s correspondent: every kind the
+    /// bar draws outside the dropdown.
     static let archLines: [BarLineFfi] = [
         line(.heading, 1, "Commands", selectable: false),
         line(.command, 2, "Archive", detail: "the focused message", key: "a", command: "archive"),
         line(.command, 3, "Archive everything read, older than a week"),
         line(.heading, 4, "Go to", selectable: false),
-        line(.place, 5, "in:Archive", detail: "18,204 threads", key: "g a", command: "go_to_archive"),
+        line(.command, 5, "Go to Archive", key: "g a", command: "go_to_archive"),
         line(.hint, 6, "Commands only", key: ">", selectable: false),
-        line(
-            .message, 7, "Invoice 2026-08", detail: "Attached is the invoice", sender: "Ada",
-            wheres: ["in:Inbox"], time: "14 Aug"),
+        line(.correspondent, 7, "Ada Moreno", detail: "ada@example.com"),
     ]
 
     static func lines(
-        _ lines: [BarLineFfi] = archLines, chips: [String] = [], editing: UInt32? = nil,
-        heading: String? = nil, echo: String? = nil, highlight: UInt64? = nil, saved: [String] = []
+        _ lines: [BarLineFfi] = archLines, echo: String? = nil, highlight: UInt64? = nil,
+        saved: [String] = []
     ) -> UiEvent {
-        .focusBarLines(
-            view: BarViewFfi(
-                heading: heading, echo: echo, chips: chips, editing: editing, lines: lines,
-                highlight: highlight, saved: saved))
+        .focusBarLines(view: BarViewFfi(echo: echo, lines: lines, highlight: highlight, saved: saved))
     }
 
     static func opened(_ text: String = "", mode: BarModeFfi = .search, select: BarSelectFfi? = nil)
@@ -107,9 +102,7 @@ struct CommandBarModelTests {
         #expect(caps[4] == "g a", "a sequence is one cap, its presses spaced")
         #expect(caps[5] == ">", "a hint's prefix is its cap")
         #expect(model.rows[1].detail == "the focused message")
-        #expect(model.rows[6].sender == "Ada")
-        #expect(model.rows[6].wheres == ["in:Inbox"])
-        #expect(model.rows[6].time == "14 Aug")
+        #expect(model.rows[6].detail == "ada@example.com")
     }
 
     @Test func aChordIsSpelledWithTheMacsGlyphs() {
@@ -119,18 +112,11 @@ struct CommandBarModelTests {
         #expect(model.rows.first?.cap == "⌘K")
     }
 
-    @Test func theChipsTheEchoAndTheHeadingAreShown() {
+    @Test func theEchoIsKept() {
         let (model, _) = Self.model()
-        model.apply(Self.opened("from:ada  invoice"))
-        model.apply(
-            Self.lines(
-                chips: ["from:ada", "invoice"], editing: 1,
-                heading: "Receipts · folder · 3 threads · newest first",
-                echo: "You typed “from:ada  invoice”"))
-        #expect(model.chips == ["from:ada", "invoice"])
-        #expect(model.editing == 1)
-        #expect(model.echo == "You typed “from:ada  invoice”")
-        #expect(model.heading == "Receipts · folder · 3 threads · newest first")
+        model.apply(Self.opened(">arch", mode: .commands))
+        model.apply(Self.lines(echo: "You typed “>arch”"))
+        #expect(model.echo == "You typed “>arch”")
     }
 
     @Test func theSavedSearchesCarryTheirKeys() {
@@ -225,7 +211,7 @@ struct CommandBarModelTests {
         // Results landing redraw the same lines: the arrows' place is kept.
         model.apply(Self.lines())
         #expect(model.highlighted == 3)
-        // Return on "Search mail for …" moves it to the first hit.
+        // A run that moves it says where.
         model.apply(Self.lines(highlight: 7))
         #expect(model.highlighted == 7)
         // New words, new tokens: back to the first line that runs.

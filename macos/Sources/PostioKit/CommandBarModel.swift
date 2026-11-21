@@ -75,7 +75,7 @@ public final class CommandBarModel {
         /// `selection` selected: the chip being edited, or the caret at the
         /// end. In UTF-16 units, as the field counts.
         case open(text: String, selection: NSRange)
-        /// The lines, the chips or the saved row changed.
+        /// The lines or the saved row changed.
         case lines
         /// The bar is gone.
         case close
@@ -93,9 +93,6 @@ public final class CommandBarModel {
         public let cap: String?
         /// Whether the arrows may rest on it and Return run it.
         public let selectable: Bool
-        public let sender: String?
-        public let wheres: [String]
-        public let time: String?
     }
 
     /// One pinned saved search, and the key that runs it (`⌥1`-`⌥4`).
@@ -115,14 +112,8 @@ public final class CommandBarModel {
     /// last typed them.
     public private(set) var text = ""
     public private(set) var rows: [Row] = []
-    /// The chips the words were lowered to, drawn before the lines.
-    public private(set) var chips: [String] = []
-    /// The chip being edited after `Tab`.
-    public private(set) var editing: Int?
-    /// The line under the field: what was typed, or which chip is edited.
+    /// The line under the field: what was typed.
     public private(set) var echo: String?
-    /// The heading over a folder's conversations (`in:`).
-    public private(set) var heading: String?
     public private(set) var saved: [Saved] = []
     /// The highlighted line's token.
     public private(set) var highlighted: UInt64?
@@ -254,13 +245,9 @@ public final class CommandBarModel {
         rows = view.lines.map { line in
             Row(
                 id: line.token, kind: line.kind, title: line.title, detail: line.detail,
-                cap: cap(for: line), selectable: line.selectable, sender: line.sender,
-                wheres: line.wheres, time: line.time)
+                cap: cap(for: line), selectable: line.selectable)
         }
-        chips = view.chips
-        editing = view.editing.map(Int.init)
         echo = view.echo
-        heading = view.heading
         saved = view.saved.enumerated().map { index, name in
             let command = index < Self.savedCommands.count ? Self.savedCommands[index] : nil
             return Saved(name: name, cap: command.flatMap { KeyCapSpelling.cap(engine.binding(for: $0)) })
@@ -288,10 +275,7 @@ public final class CommandBarModel {
         isOpen = false
         text = ""
         rows = []
-        chips = []
-        editing = nil
         echo = nil
-        heading = nil
         saved = []
         highlighted = nil
         showsDropdown = false

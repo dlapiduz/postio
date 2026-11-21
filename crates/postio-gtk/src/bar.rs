@@ -3,10 +3,10 @@
 //!
 //! What the bar says is the controller's (`postio_focus`, spec 009 slice
 //! 8): what is typed, the lines it answers with, which of them runs what,
-//! the chips the words were lowered to, and which results are current. This
-//! draws [`BarView`] and hands back what a person does -- the words as they
-//! change, Return or a click on a line, `Tab` into the chips, a saved
-//! search's pill -- through [`Bar::connect_input`]. The arrows' highlight is
+//! and which results are current. This draws [`BarView`] and spec 010's
+//! dropdown, and hands back what a person does -- the words as they change,
+//! Return or a click on a line, `Tab`, a saved search's pill -- through
+//! [`Bar::connect_input`]. The arrows' highlight is
 //! the toolkit's, as on the Mac: the view says only where a run or a
 //! landing moved it.
 //!
@@ -16,11 +16,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::glib;
-use gtk::pango;
 use gtk::prelude::*;
 use postio_core::{ActionId, CommandId, Context, Frontend, Keymap};
 use postio_focus::{BarLine, BarLineKind, BarView};
-use postio_model::{AccountScope, MessageId};
+use postio_model::AccountScope;
 use postio_ui::command_bar::{self as rules, SAVED};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
@@ -63,19 +62,13 @@ pub struct Bar {
     ghost: gtk::Label,
     /// "Tab completes", at the field's end while there is a ghost.
     ghost_hint: gtk::Box,
-    chips: gtk::Box,
     echo: gtk::Label,
-    heading: gtk::Label,
     list: gtk::ListBox,
     keymap: RefCell<Keymap>,
     /// The lines drawn now, one per row of `list`.
     lines: RefCell<Vec<BarLine>>,
     /// The view drawn now.
     view: RefCell<BarView>,
-    /// The messages the last lines with any listed, and their subjects:
-    /// kept when the bar closes, since a hit opens as it does, and `j`/`k`
-    /// step to the others after.
-    found: RefCell<Vec<(MessageId, String)>>,
     open: Cell<bool>,
     /// Set while the bar puts the controller's own words in the field, so
     /// they are not said back as typing.
@@ -93,8 +86,8 @@ pub struct Bar {
     /// Where the keyboard goes when the bar closes: the list, once the
     /// window says which widget that is.
     home: RefCell<Option<Rc<dyn Fn()>>>,
-    /// Spec 009's blend of lines: the saved row, the echo, the heading,
-    /// the lines and their footer.
+    /// Spec 009's blend of lines: the saved row, the echo, the lines and
+    /// their footer.
     blend: gtk::Box,
     /// Spec 010's dropdown, drawn in the blend's place while the
     /// controller sends [`postio_focus::Intent::Dropdown`].
@@ -124,8 +117,6 @@ impl Bar {
     pub fn new(keymap: &Keymap) -> Rc<Self> {
         let icon = gtk::Image::from_icon_name("system-search-symbolic");
         icon.set_accessible_role(gtk::AccessibleRole::Presentation);
-        let chips = gtk::Box::new(gtk::Orientation::Horizontal, S1);
-        chips.add_css_class("focus-bar-chips");
         let entry = gtk::Entry::new();
         entry.set_hexpand(true);
         entry.set_has_frame(false);
@@ -134,7 +125,6 @@ impl Bar {
         let input = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         input.add_css_class("focus-bar-input");
         input.append(&icon);
-        input.append(&chips);
         // The ghost is laid over the entry, after what is typed, and takes
         // no pointer: a click lands on the entry under it.
         let ghost = gtk::Label::new(None);
@@ -166,10 +156,6 @@ impl Bar {
         echo.add_css_class("focus-bar-echo");
         echo.set_xalign(0.0);
         echo.set_visible(false);
-        let heading = gtk::Label::new(None);
-        heading.add_css_class("focus-bar-heading");
-        heading.set_xalign(0.0);
-        heading.set_visible(false);
         let list = gtk::ListBox::new();
         list.add_css_class("focus-bar-results");
         list.set_selection_mode(gtk::SelectionMode::Single);
@@ -197,7 +183,6 @@ impl Bar {
         let blend = gtk::Box::new(gtk::Orientation::Vertical, S2);
         blend.append(&saved_row);
         blend.append(&echo);
-        blend.append(&heading);
         blend.append(&scrolled);
         blend.append(&footer);
         let dropdown = crate::dropdown::Dropdown::new();
@@ -232,14 +217,11 @@ impl Bar {
             entry,
             ghost,
             ghost_hint,
-            chips,
             echo,
-            heading,
             list,
             keymap: RefCell::new(keymap.clone()),
             lines: RefCell::default(),
             view: RefCell::default(),
-            found: RefCell::default(),
             open: Cell::new(false),
             quiet: Cell::new(false),
             places_known: Cell::new(false),
@@ -460,12 +442,8 @@ impl Bar {
         self.drop_down(false);
         self.show_ghost(None, None);
         let kept = self.highlighted_line();
-        self.show_chips(&view.chips, view.editing);
         self.echo.set_visible(view.echo.is_some());
         self.echo.set_text(view.echo.as_deref().unwrap_or_default());
-        self.heading.set_visible(view.heading.is_some());
-        self.heading
-            .set_text(view.heading.as_deref().unwrap_or_default());
         // The same lines under new tokens -- a later answer drawing what is
         // already there -- keep their rows: only what runs them changes.
         let same_words = {
@@ -488,14 +466,6 @@ impl Bar {
                 self.list.append(&self.line_row(line));
             }
             self.lines.replace(view.lines.clone());
-            let found: Vec<(MessageId, String)> = view
-                .lines
-                .iter()
-                .filter_map(|line| Some((line.message?, line.title.clone())))
-                .collect();
-            if !found.is_empty() {
-                self.found.replace(found);
-            }
         }
         let saved_changed = self.view.borrow().saved != view.saved;
         self.view.replace(view.clone());
@@ -692,20 +662,6 @@ impl Bar {
         self.over.is_visible() && !self.scrim.has_css_class("focus-bar-scrim-clear")
     }
 
-    fn show_chips(&self, chips: &[String], editing: Option<u32>) {
-        while let Some(child) = self.chips.first_child() {
-            self.chips.remove(&child);
-        }
-        for (index, chip) in chips.iter().enumerate() {
-            let label = gtk::Label::new(Some(chip));
-            label.add_css_class("focus-bar-chip");
-            if editing == Some(index as u32) {
-                label.add_css_class("focus-bar-chip-editing");
-            }
-            self.chips.append(&label);
-        }
-    }
-
     fn show_saved(&self) {
         while let Some(child) = self.saved_row.first_child() {
             self.saved_row.remove(&child);
@@ -752,11 +708,7 @@ impl Bar {
                 label.set_xalign(0.0);
                 row.set_child(Some(&label));
             }
-            BarLineKind::Message => {
-                row.add_css_class("focus-bar-row");
-                row.set_child(Some(&message_line(line)));
-            }
-            _ => {
+            BarLineKind::Hint | BarLineKind::Command | BarLineKind::Correspondent => {
                 row.add_css_class("focus-bar-row");
                 row.set_child(Some(&plain_line(line)));
             }
@@ -798,19 +750,6 @@ impl Bar {
         true
     }
 
-    /// Run the search row: search for what is typed, as choosing
-    /// "Search mail for …" does.
-    pub fn run_search(&self) {
-        let at = self
-            .lines
-            .borrow()
-            .iter()
-            .position(|line| line.kind == BarLineKind::Search);
-        if let Some(at) = at {
-            self.run(at);
-        }
-    }
-
     /// Run the highlighted row, as Return does.
     pub fn run_search_row(&self) {
         self.run_selected();
@@ -826,42 +765,15 @@ impl Bar {
         self.entry.text().to_string()
     }
 
-    /// The query a search would ask: the chips the words were lowered to,
-    /// or the words themselves when they lower to no chip.
+    /// The query a search would ask: the words typed.
     pub fn query(&self) -> String {
-        let chips = self.chips();
-        if chips.is_empty() {
-            self.entry.text().trim().to_owned()
-        } else {
-            chips.join(" ")
-        }
+        self.entry.text().trim().to_owned()
     }
 
     /// Put `text` in the bar, as typing it would.
     pub fn set_text(&self, text: &str) {
         self.entry.set_text(text);
         self.entry.set_position(-1);
-    }
-
-    /// The heading over a folder's conversations, or over a search's.
-    pub fn heading(&self) -> String {
-        if self.heading.is_visible() {
-            return self.heading.text().to_string();
-        }
-        // A search's: the first heading under the search line, which the
-        // results hang from.
-        let lines = self.lines.borrow();
-        let Some(search) = lines
-            .iter()
-            .position(|line| line.kind == BarLineKind::Search)
-        else {
-            return String::new();
-        };
-        lines[search..]
-            .iter()
-            .find(|line| line.kind == BarLineKind::Heading)
-            .map(|line| line.title.clone())
-            .unwrap_or_default()
     }
 
     /// Every command the bar can list: what typing its name finds.
@@ -884,34 +796,17 @@ impl Bar {
     }
 
     /// The subjects of the messages listed, top to bottom: the dropdown's
-    /// hits while it is the panel.
+    /// hits, which are the only messages the bar lists.
     pub fn result_subjects(&self) -> Vec<String> {
         if self.dropping.get() {
             return self.dropdown.hit_subjects();
         }
-        self.lines
-            .borrow()
-            .iter()
-            .filter(|line| line.kind == BarLineKind::Message)
-            .map(|line| line.title.clone())
-            .collect()
-    }
-
-    /// The subject of `message`, as the bar last listed it.
-    pub fn subject_of(&self, message: MessageId) -> Option<String> {
-        self.found
-            .borrow()
-            .iter()
-            .find(|(id, _)| *id == message)
-            .map(|(_, subject)| subject.clone())
+        Vec::new()
     }
 
     /// The highlighted row, as a storyboard observes it: what kind of row
-    /// it is, and the message it would open when it is one.
-    ///
-    /// The text is the row's own labels, as a person reads it ("Sorted by
-    /// relevance"), and a message's subject.
-    pub fn highlighted(&self) -> Option<(&'static str, Option<MessageId>, String)> {
+    /// it is, and its own labels, as a person reads it.
+    pub fn highlighted(&self) -> Option<(&'static str, String)> {
         if self.dropping.get() {
             use postio_focus::DropdownRowKind as Kind;
             let (kind, text) = self.dropdown.highlighted_row()?;
@@ -928,7 +823,7 @@ impl Bar {
                 Kind::Folder => "folder",
                 _ => "other",
             };
-            return Some((kind, None, text));
+            return Some((kind, text));
         }
         let selected = self.list.selected_row()?;
         let index = usize::try_from(selected.index()).ok()?;
@@ -937,18 +832,9 @@ impl Bar {
             BarLineKind::Heading => "heading",
             BarLineKind::Hint => "hint",
             BarLineKind::Command => "command",
-            BarLineKind::Place => "place",
-            BarLineKind::Search => "search",
-            BarLineKind::Instead => "instead",
-            BarLineKind::Order => "order",
             BarLineKind::Correspondent => "correspondent",
-            BarLineKind::Message => "message",
         };
-        let text = match line.kind {
-            BarLineKind::Message | BarLineKind::Place => line.title.clone(),
-            _ => said(selected.upcast_ref()),
-        };
-        Some((kind, line.message, text))
+        Some((kind, said(selected.upcast_ref())))
     }
 
     /// How many lines of the empty bar's hints are showing.
@@ -958,11 +844,6 @@ impl Bar {
             .iter()
             .filter(|line| line.kind == BarLineKind::Hint)
             .count()
-    }
-
-    /// The chips the words were lowered to.
-    pub fn chips(&self) -> Vec<String> {
-        self.view.borrow().chips.clone()
     }
 
     /// Everything the bar says, as a person reads it.
@@ -1071,14 +952,10 @@ impl Bar {
     }
 }
 
-/// Whether `line` is `was` drawn again: the same token, or the same message,
-/// or the same kind of line saying the same thing.
+/// Whether `line` is `was` drawn again: the same token, or the same kind
+/// of line saying the same thing.
 fn same_line(line: &BarLine, was: &BarLine) -> bool {
-    line.token == was.token
-        || match (line.message, was.message) {
-            (Some(now), Some(then)) => now == then,
-            _ => line.kind == was.kind && line.title == was.title,
-        }
+    line.token == was.token || (line.kind == was.kind && line.title == was.title)
 }
 
 /// Every label under `widget`, as a person reads it, top to bottom.
@@ -1113,59 +990,13 @@ fn plain_line(line: &BarLine) -> gtk::Box {
         detail.add_css_class("dim-label");
         detail.set_xalign(0.0);
         detail.set_hexpand(true);
-        detail.set_ellipsize(pango::EllipsizeMode::End);
+        detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
         row.append(&detail);
     } else {
         name.set_hexpand(true);
     }
     if let Some(key) = &line.key {
         row.append(&keyhint::cap(key));
-    }
-    row
-}
-
-/// A message's line: who, the subject, the first line, where it is, when.
-fn message_line(line: &BarLine) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, S3);
-    let sender = gtk::Label::new(line.sender.as_deref());
-    sender.add_css_class("focus-bar-sender");
-    sender.set_width_chars(18);
-    sender.set_max_width_chars(18);
-    sender.set_ellipsize(pango::EllipsizeMode::End);
-    sender.set_xalign(0.0);
-    let title = gtk::Label::new(Some(&line.title));
-    title.add_css_class("focus-bar-subject");
-    // The first line gives way before the subject (gtk-design): the
-    // subject keeps room for an ordinary one, and only longer ones are
-    // cut; the first line has what is left.
-    title.set_ellipsize(pango::EllipsizeMode::End);
-    title.set_width_chars(36);
-    let first = gtk::Label::new(line.detail.as_deref());
-    first.add_css_class("dim-label");
-    first.set_width_chars(8);
-    first.set_ellipsize(pango::EllipsizeMode::End);
-    first.set_hexpand(true);
-    first.set_xalign(0.0);
-    row.append(&sender);
-    row.append(&title);
-    row.append(&first);
-    // The folder, and under it the account when there are several: one
-    // column two lines tall, not one long line.
-    if !line.wheres.is_empty() {
-        let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        lines.set_valign(gtk::Align::Center);
-        for text in &line.wheres {
-            let label = gtk::Label::new(Some(text));
-            label.add_css_class("focus-bar-place");
-            label.set_xalign(1.0);
-            lines.append(&label);
-        }
-        row.append(&lines);
-    }
-    if let Some(time) = &line.time {
-        let date = gtk::Label::new(Some(time));
-        date.add_css_class("dim-label");
-        row.append(&date);
     }
     row
 }

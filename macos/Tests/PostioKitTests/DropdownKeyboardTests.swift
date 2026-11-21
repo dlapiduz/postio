@@ -233,7 +233,7 @@ struct DropdownKeyboardTests {
         model.apply(
             .focusBarLines(
                 view: BarViewFfi(
-                    heading: nil, echo: nil, chips: [], editing: nil,
+                    echo: nil,
                     lines: [CommandBarModelTests.line(.command, 7, "Archive")], highlight: nil,
                     saved: [])))
         #expect(!model.showsDropdown)
