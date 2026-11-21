@@ -1652,6 +1652,35 @@ fn brackets_move_the_ring_between_the_cards_while_it_is_open() {
 }
 
 #[test]
+fn a_ring_moved_before_the_matches_land_stays_on_its_card() {
+    // #2132. Quick Look draws the row's own matches at once and asks for
+    // its conversation's; a ] pressed before they landed moved the ring,
+    // and the answer put it back on the row's message.
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let opened = run(&mut focus, CommandId::QuickLook, &rows);
+    let places = |view: &postio_focus::QuickLookView| -> Vec<String> {
+        view.cards.iter().map(|card| card.place.clone()).collect()
+    };
+    let view = looked(&opened);
+    assert_eq!(places(&view), ["Body", "Subject"], "the row's own cards");
+    assert_eq!(view.current, Some(0));
+
+    let stepped = looked(&run(&mut focus, CommandId::NextMatch, &rows));
+    assert_eq!(stepped.current, Some(1), "the subject's card");
+
+    let landed = looked(&settle(&mut focus, opened, &rows));
+    assert_eq!(places(&landed), ["Body", "Body", "Subject"]);
+    assert_eq!(
+        landed.current,
+        Some(2),
+        "the conversation's matches took the ring off the subject's card, \
+         where the person had moved it"
+    );
+}
+
+#[test]
 fn return_opens_the_message_and_quick_look_goes() {
     let rows = List::of(3);
     let mut focus = mac();

@@ -572,8 +572,14 @@ async fn quick_look_crosses_with_its_cards_and_closes_with_none() {
     );
 
     session.invoke("next_match");
+    // The step's own view, not one said before it: the panel is drawn from
+    // the row at once and again when its conversation's matches land, and
+    // that second view can still be queued behind the one read above when
+    // the step is taken (#2132). It rings the card it rang before.
     let moved = next(&session, 10, |event| match event {
-        UiEvent::FocusQuickLook { view: Some(view) } => Some(view.current),
+        UiEvent::FocusQuickLook { view: Some(view) } if view.current != Some(current) => {
+            Some(view.current)
+        }
         _ => None,
     })
     .await;

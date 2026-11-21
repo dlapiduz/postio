@@ -84,12 +84,32 @@ async fn a_question_in_the_inbox_is_counted_as_needing_action() {
 }
 
 /// Wait for `wanted` on the session's event stream, up to `secs`.
+///
+/// Scaled by `POSTIO_TEST_PATIENCE`: `secs` is a liveness bound, and a
+/// loaded runner is told to be more patient through the dial rather than by
+/// editing every wait (#2154). A wait whose length is itself the claim uses
+/// [`heard_within`].
 pub(crate) async fn heard(
     session: &Session,
     secs: u64,
+    wanted: impl FnMut(&postio_ffi::UiEvent) -> bool,
+) -> bool {
+    heard_within(
+        session,
+        postio_test_support::scaled(Duration::from_secs(secs)),
+        wanted,
+    )
+    .await
+}
+
+/// [`heard`], within exactly `deadline`, whatever the patience: for a wait
+/// that asserts something happened sooner than something else would.
+pub(crate) async fn heard_within(
+    session: &Session,
+    deadline: Duration,
     mut wanted: impl FnMut(&postio_ffi::UiEvent) -> bool,
 ) -> bool {
-    tokio::time::timeout(Duration::from_secs(secs), async {
+    tokio::time::timeout(deadline, async {
         while let Some(event) = session.next_event().await {
             if wanted(&event) {
                 return true;
