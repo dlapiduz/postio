@@ -28,7 +28,7 @@ fn member(thread: i64, number: i64, who: &EmailAddress) -> ThreadMember {
         from: Some(who.clone()),
         own: false,
         at: chrono::Utc
-            .with_ymd_and_hms(2026, 9, 20 + number as u32, 12, 0, 0)
+            .with_ymd_and_hms(2026, 9, 10 + number as u32, 12, 0, 0)
             .unwrap(),
         seen: true,
         has_attachments: false,
@@ -225,9 +225,9 @@ fn the_top_result_with_several_matches_is_expanded_on_arrival() {
     assert_eq!(
         splice.children.iter().map(said).collect::<Vec<_>>(),
         [
-            "Messages 1\u{2013}2 don't match \u{b7} Tom\u{e1}s, Ben, Mon",
+            "Messages 1\u{2013}2 don't match \u{b7} Tom\u{e1}s, Ben, 11 Sep",
             "message 3",
-            "Message 4 doesn't match \u{b7} Ben, Thu",
+            "Message 4 doesn't match \u{b7} Ben, 14 Sep",
             "message 5",
             "message 6"
         ],
@@ -369,9 +369,9 @@ fn right_and_left_expand_and_collapse_other_results() {
     assert_eq!(
         splice.children.iter().map(said).collect::<Vec<_>>(),
         [
-            "Messages 1\u{2013}4 don't match \u{b7} Tom\u{e1}s, Ben, Mon",
+            "Messages 1\u{2013}4 don't match \u{b7} Tom\u{e1}s, Ben, 11 Sep",
             "message 5",
-            "Messages 6\u{2013}8 don't match \u{b7} Ben, Tom\u{e1}s, Sat"
+            "Messages 6\u{2013}8 don't match \u{b7} Ben, Tom\u{e1}s, 16 Sep"
         ]
     );
     // One at a time: Harbor's folded when the other opened.

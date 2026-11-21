@@ -1997,7 +1997,8 @@ pub enum ResultChild {
         to: u32,
         /// Who wrote them, first names: "Ben".
         senders: String,
-        /// The first one's day: "Thu".
+        /// The first one's time, as every row says it: "Thu" this week,
+        /// "16 Mar" before it.
         day: String,
     },
 }
@@ -2012,7 +2013,6 @@ pub fn children(
     matches: &[postio_search::results::ConversationMatch],
     now: DateTime<chrono::Local>,
 ) -> Vec<ResultChild> {
-    use chrono::Local;
     // The first match of each message names it: a subject match is the
     // thread's, and a message the view does not hold is not shown.
     let mut found: Vec<(usize, &postio_search::results::ConversationMatch)> = Vec::new();
@@ -2049,7 +2049,7 @@ pub fn children(
             from: (start + 1) as u32,
             to: end as u32,
             senders: senders.join(", "),
-            day: run[0].at.with_timezone(&Local).format("%a").to_string(),
+            day: crate::row::timestamp(run[0].at, now),
         }
     };
     let mut out = Vec::new();
@@ -2124,7 +2124,7 @@ fn child_passage(found: &postio_search::results::Match) -> Option<postio_search:
     })
 }
 
-/// What a gap says: "Message 4 doesn't match \u{b7} Ben, Thu".
+/// What a gap says: "Message 4 doesn't match \u{b7} Ben, 16 Sep".
 pub fn gap_line(child: &ResultChild) -> String {
     let ResultChild::Gap {
         from,
@@ -3580,7 +3580,7 @@ mod tests {
                     }),
                     own: false,
                     at: chrono::Utc
-                        .with_ymd_and_hms(2026, 9, 20 + number, 12, 0, 0)
+                        .with_ymd_and_hms(2026, 9, 12 + number, 12, 0, 0)
                         .unwrap(),
                     seen: true,
                     has_attachments: false,
@@ -3681,7 +3681,7 @@ mod tests {
             assert_eq!(numbers, [None, Some(3), None, Some(5), Some(6), None]);
             assert_eq!(
                 gap_line(&kids[2]),
-                "Message 4 doesn't match \u{b7} Ben, Thu"
+                "Message 4 doesn't match \u{b7} Ben, 16 Sep"
             );
             let ResultChild::Match { message, tag, .. } = &kids[1] else {
                 panic!("the second is a match");
@@ -3704,9 +3704,9 @@ mod tests {
             assert_eq!(
                 gaps,
                 [
-                    "Messages 1\u{2013}2 don't match \u{b7} Tom\u{e1}s, Ben, Mon",
-                    "Message 4 doesn't match \u{b7} Ben, Thu",
-                    "Messages 7\u{2013}8 don't match \u{b7} Tom\u{e1}s, Ben, Sun",
+                    "Messages 1\u{2013}2 don't match \u{b7} Tom\u{e1}s, Ben, 13 Sep",
+                    "Message 4 doesn't match \u{b7} Ben, 16 Sep",
+                    "Messages 7\u{2013}8 don't match \u{b7} Tom\u{e1}s, Ben, Sat",
                 ]
             );
             let said: u32 = kids
@@ -3717,6 +3717,32 @@ mod tests {
                 })
                 .sum();
             assert_eq!(said, 8, "every message of the eight, once: {kids:?}");
+        }
+
+        /// #2178: a gap dated "Mon" beside children dated "16 Mar" read as
+        /// yesterday. A gap says its first message's day as every row says
+        /// a time: the weekday only within the week.
+        #[test]
+        fn a_gap_dates_its_first_message_as_the_rows_do() {
+            let mut view = harbor();
+            for (at, member) in view.members.iter_mut().enumerate() {
+                member.at = chrono::Utc
+                    .with_ymd_and_hms(2026, 3, 16 + at as u32, 12, 0, 0)
+                    .unwrap();
+            }
+            let kids = children(&view, &[found(4, Source::Body, "rate limit")], now());
+            let gaps: Vec<String> = kids
+                .iter()
+                .filter(|kid| matches!(kid, ResultChild::Gap { .. }))
+                .map(gap_line)
+                .collect();
+            assert_eq!(
+                gaps,
+                [
+                    "Messages 1\u{2013}3 don't match \u{b7} Tom\u{e1}s, Ben, 16 Mar",
+                    "Messages 5\u{2013}8 don't match \u{b7} Tom\u{e1}s, Ben, 20 Mar",
+                ]
+            );
         }
 
         #[test]
@@ -3740,7 +3766,7 @@ mod tests {
                 lines,
                 [
                     "1",
-                    "Messages 2\u{2013}7 don't match \u{b7} Ben, Tom\u{e1}s, Tue",
+                    "Messages 2\u{2013}7 don't match \u{b7} Ben, Tom\u{e1}s, 14 Sep",
                     "8"
                 ]
             );
@@ -3782,7 +3808,7 @@ mod tests {
             assert_eq!(kids.len(), 5, "{kids:?}");
             assert_eq!(
                 gap_line(&kids[2]),
-                "Messages 3\u{2013}5 don't match \u{b7} Tom\u{e1}s, Ben, Wed"
+                "Messages 3\u{2013}5 don't match \u{b7} Tom\u{e1}s, Ben, 15 Sep"
             );
         }
 
