@@ -204,6 +204,10 @@ impl ListRow for RowObject {
         self.imp().item.borrow().as_ref().and_then(FocusRow::thread)
     }
 
+    fn key(&self) -> Option<postio_ui::list::RowKey> {
+        self.imp().item.borrow().as_ref().map(FocusRow::key)
+    }
+
     fn reconcile(existing: &Self, incoming: Self) -> Self {
         if let Some(item) = incoming.item() {
             existing.set_item(item);
@@ -233,8 +237,8 @@ impl ModelRow for RowObject {
         self.set_item(data);
     }
 
-    fn id_of(data: &FocusRow) -> MessageId {
-        data.id()
+    fn key_of(data: &FocusRow) -> postio_ui::list::RowKey {
+        data.key()
     }
 }
 
@@ -316,6 +320,12 @@ impl postio_focus::Rows for FocusList {
 
     fn position_of(&self, message: MessageId) -> Option<u32> {
         WindowedModel::position_of(self, message)
+    }
+
+    fn position_of_thread(&self, thread: ThreadId) -> Option<u32> {
+        self.windowed()
+            .window()
+            .position_of_key(postio_ui::list::RowKey::Thread(thread))
     }
 
     fn row(&self, position: u32) -> Option<postio_ui::focus_list::FocusRow> {

@@ -2038,6 +2038,7 @@ impl FocusController {
             }
             Input::Reply(_, Reply::Surfaced(surfaced)) => {
                 let steps = self.feed.resurfaced(surfaced);
+                self.rereading(&steps, rows);
                 self.effects(steps)
             }
             // Read by `thread_input` before it gets here.
@@ -2074,6 +2075,7 @@ impl FocusController {
                 steps.extend(self.filtered_event(&event));
                 steps.extend(self.contacts_heard(&event));
                 steps.extend(self.contact_popover_heard(&event));
+                self.rereading(&steps, rows);
                 self.effects(steps)
             }
             Input::Config(config) => {
@@ -2250,6 +2252,7 @@ impl FocusController {
             }
             Input::Timer(token) if token == feed::THREAD_REFRESH_TIMER => {
                 let steps = self.feed.thread_refresh_due();
+                self.rereading(&steps, rows);
                 self.effects(steps)
             }
             Input::Timer(token) if surfaces::is_reader_timer(token) => {
@@ -2917,6 +2920,17 @@ impl FocusController {
     /// and how many messages it holds, digests not counted.
     pub fn message_place(&self, index: u32, total: u32) -> (u32, u32) {
         self.feed.message_place(index, total)
+    }
+
+    /// When `steps` read the list again, the cursor notes the thread its
+    /// row stands for, to follow it wherever the re-read puts it (#2107).
+    fn rereading(&mut self, steps: &[feed::Step], rows: &dyn Rows) {
+        if steps
+            .iter()
+            .any(|step| matches!(step, feed::Step::Show(Intent::RefreshList)))
+        {
+            self.cursor.rereading(rows);
+        }
     }
 
     fn effects(&mut self, steps: Vec<feed::Step>) -> Vec<Effect> {

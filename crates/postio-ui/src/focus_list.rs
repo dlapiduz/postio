@@ -163,6 +163,22 @@ impl FocusRow {
         }
     }
 
+    /// Which row this is across re-reads ([`crate::list::ListRow::key`]):
+    /// a conversation's is its thread, whichever message it is drawn from
+    /// now; a fired reminder's and a digest's are their own, so neither is
+    /// taken for its conversation's row.
+    pub fn key(&self) -> crate::list::RowKey {
+        use crate::list::RowKey;
+        match self {
+            FocusRow::Digest(digest) => RowKey::Other(0, digest.delivery.get()),
+            FocusRow::Reminder { reminder, .. } => RowKey::Other(1, reminder.get()),
+            FocusRow::Conversation(row) => row.summary.id.map_or(
+                RowKey::Message(row.summary.representative.id),
+                RowKey::Thread,
+            ),
+        }
+    }
+
     /// The conversation, when the row stands for one.
     pub fn thread(&self) -> Option<ThreadId> {
         self.as_conversation().and_then(|row| row.summary.id)

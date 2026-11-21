@@ -431,6 +431,11 @@ impl postio_ui::list::ListRow for HeldRow {
     fn thread(&self) -> Option<postio_model::ThreadId> {
         self.ffi.thread()
     }
+
+    /// The row's own: a fired reminder is not its conversation's row.
+    fn key(&self) -> Option<postio_ui::list::RowKey> {
+        Some(self.row.key())
+    }
 }
 
 /// The Mac's rows, as the controller asks about them.
@@ -466,6 +471,10 @@ impl postio_focus::Rows for RowsView<'_> {
     }
     fn position_of(&self, message: postio_model::MessageId) -> Option<u32> {
         self.0.position_of(message)
+    }
+    fn position_of_thread(&self, thread: postio_model::ThreadId) -> Option<u32> {
+        self.0
+            .position_of_key(postio_ui::list::RowKey::Thread(thread))
     }
     /// A picker names the row by its sender column and subject.
     fn said(&self, position: u32) -> Option<(String, String)> {

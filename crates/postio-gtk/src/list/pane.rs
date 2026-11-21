@@ -193,6 +193,11 @@ impl ListPane {
         }
     }
 
+    /// Who "you" is, as [`set_identities`](Self::set_identities) last said.
+    pub fn identities(&self) -> Vec<postio_model::EmailAddress> {
+        self.me.borrow().clone()
+    }
+
     /// Run `handler` when a Ctrl- or Shift-click picks a row (T198).
     pub fn connect_row_pick(&self, handler: impl Fn(&super::FocusRow, Pick) + 'static) {
         self.on_pick.replace(Some(Rc::new(handler)));

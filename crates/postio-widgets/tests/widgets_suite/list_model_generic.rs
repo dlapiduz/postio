@@ -155,8 +155,8 @@ impl ModelRow for NoteRow {
         }
     }
 
-    fn id_of(data: &Note) -> MessageId {
-        data.id
+    fn key_of(data: &Note) -> postio_ui::list::RowKey {
+        postio_ui::list::RowKey::Message(data.id)
     }
 }
 

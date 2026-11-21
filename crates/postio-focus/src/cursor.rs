@@ -59,6 +59,16 @@ pub trait Rows {
     fn facts(&self, position: u32) -> Option<RowFacts>;
     /// Where `message`'s row is, when it is in a landed page.
     fn position_of(&self, message: MessageId) -> Option<u32>;
+    /// Where `thread`'s row is, when it is in a landed page: the row a
+    /// cursor follows across a re-read that changed its message (#2107).
+    /// The default walks every row, which a list of a page or two can
+    /// afford; a windowed list answers from what it holds.
+    fn position_of_thread(&self, thread: ThreadId) -> Option<u32> {
+        (0..self.len()).find(|at| {
+            self.facts(*at)
+                .is_some_and(|row| !row.digest && row.threads.first() == Some(&thread))
+        })
+    }
     /// Whether the row at `position` is a child of an expanded thread, so a
     /// message verb reaches that message and not the thread's latest.
     fn is_child(&self, _position: u32) -> bool {
@@ -112,6 +122,12 @@ pub(crate) struct Cursor {
     /// opened: the rows still showing are the ones it walked, and the first
     /// page landing a beat later must not walk it back to the top.
     moved: bool,
+    /// The thread the cursor's row stood for when the list was asked to
+    /// read itself again: a reply changes the message the row is drawn
+    /// from and may move it to the top, and the cursor goes with it rather
+    /// than staying on a position another row now holds (#2107). Until the
+    /// controller next moves the cursor.
+    follow: Option<ThreadId>,
 }
 
 impl Cursor {
@@ -175,6 +191,27 @@ impl Cursor {
     /// lands, unless a command moves the cursor before then.
     pub(crate) fn opening(&mut self) {
         self.moved = false;
+        self.follow = None;
+    }
+
+    /// The list is about to be read again: the cursor's row is remembered
+    /// by its thread, for [`landed`](Self::landed) to find wherever the
+    /// re-read puts it. A child of an open thread, and a digest, stand for
+    /// no thread of their own here and are left where they are.
+    pub(crate) fn rereading(&mut self, rows: &dyn Rows) {
+        let Some(position) = self.position else {
+            return;
+        };
+        if rows.is_child(position) {
+            return;
+        }
+        if let Some(thread) = self
+            .cursor_row(rows)
+            .filter(|row| !row.digest)
+            .and_then(|row| row.threads.first().copied())
+        {
+            self.follow = Some(thread);
+        }
     }
 
     pub(crate) fn set_accounts(&mut self, accounts: Vec<AccountId>) {
@@ -190,6 +227,21 @@ impl Cursor {
                 None if !rows.is_empty() => self.to(Some(0), rows),
                 None => Vec::new(),
             };
+        }
+        if let Some(thread) = self.follow {
+            let here = self.cursor_row(rows);
+            if here
+                .as_ref()
+                .is_none_or(|row| row.threads.first() != Some(&thread))
+            {
+                match rows.position_of_thread(thread) {
+                    Some(position) => return self.to(Some(position), rows),
+                    // Gone from the rows on screen: the cursor stays where
+                    // the list left it.
+                    None if here.is_some() => self.follow = None,
+                    None => {}
+                }
+            }
         }
         if opened && !rows.is_empty() {
             // A cursor the person moved while the page was on its way is
@@ -402,6 +454,7 @@ impl Cursor {
             Some(position) if position < rows.len() => {
                 self.position = Some(position);
                 self.moved = true;
+                self.follow = None;
                 vec![Step::Show(Intent::Cursor {
                     position,
                     to_top: position == 0,

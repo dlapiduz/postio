@@ -96,8 +96,10 @@ pub trait ModelRow: ListRow + IsA<glib::Object> + Clone + 'static {
     /// bound view to redraw it -- quietly, when nothing changed.
     fn fill(&self, data: Self::Data);
 
-    /// The message a delivered row stands for: what a refresh compares by.
-    fn id_of(data: &Self::Data) -> MessageId;
+    /// Which row a delivered row is ([`ListRow::key`]): what a refresh
+    /// compares by, so a thread's row stays the same row when a reply
+    /// changes the message it is drawn from.
+    fn key_of(data: &Self::Data) -> postio_ui::list::RowKey;
 
     /// Whether the page carrying this position has arrived.
     fn is_loaded(&self) -> bool {
@@ -1147,14 +1149,14 @@ fn apply_refresh<M: WindowedModel>(model: &M) {
         let incoming: Vec<<M::Row as ModelRow>::Data> = (*first..=*last)
             .flat_map(|page| refresh.arrived.remove(&page).unwrap_or_default())
             .collect();
-        let held: Vec<Option<MessageId>> = {
+        let held: Vec<Option<postio_ui::list::RowKey>> = {
             let window = state.window.borrow();
             (start..(last + 1) * PAGE_SIZE)
-                .map_while(|position| window.peek(position).map(Some))
+                .map_while(|position| window.peek_key(position).map(Some))
                 .collect()
         };
-        let ids: Vec<MessageId> = incoming.iter().map(M::Row::id_of).collect();
-        for step in postio_ui::list::splices(&held, &ids) {
+        let keys: Vec<postio_ui::list::RowKey> = incoming.iter().map(M::Row::key_of).collect();
+        for step in postio_ui::list::splices(&held, &keys) {
             let (position, removed, rows) = match step {
                 Splice::Remove { at, count } => (start + at, count, Vec::new()),
                 Splice::Insert { at, count, from } => (
@@ -1178,8 +1180,9 @@ fn apply_refresh<M: WindowedModel>(model: &M) {
         if broken {
             break;
         }
-        // What stayed: the same messages in the same places, told what they
-        // say now. Quiet for a row that says what it said.
+        // What stayed: the same rows in the same places, told what they say
+        // now -- a thread's row a reply came to, its newest message's.
+        // Quiet for a row that says what it said.
         for (offset, row) in incoming.into_iter().enumerate() {
             let position = start + offset as u32;
             state

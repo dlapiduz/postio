@@ -160,15 +160,19 @@ pub fn first_name(who: &EmailAddress) -> &str {
 /// that did not fit ("Lena, Ben, Ana, you +2"). A thread of one message
 /// names its sender in full, as any single message does.
 ///
-/// `participants` is first-seen order, as `ThreadSummary` carries it; "you"
-/// is decided by the account's identities in `me`, never by a name.
+/// `participants` is first-seen order, as `ThreadSummary` carries it, and
+/// `latest` the sender of the newest message, who leads: a reply from
+/// someone who wrote before moves them to the front, as the row's line
+/// does (#2107). "You" is decided by the account's identities in `me`,
+/// never by a name.
 pub fn participants(
     participants: &[EmailAddress],
+    latest: Option<&EmailAddress>,
     message_count: u32,
     me: &[EmailAddress],
 ) -> String {
     if message_count <= 1 {
-        return match participants.first() {
+        return match participants.first().or(latest) {
             Some(only) if is_me(only, me) => "You".to_owned(),
             Some(only) => only.display().to_owned(),
             None => String::new(),
@@ -176,7 +180,13 @@ pub fn participants(
     }
     let mut took_part = false;
     let mut others: Vec<&str> = Vec::new();
-    for who in participants.iter().rev() {
+    let newest_first = latest.into_iter().chain(
+        participants
+            .iter()
+            .rev()
+            .filter(|who| latest.is_none_or(|latest| !latest.same_address(who))),
+    );
+    for who in newest_first {
         if is_me(who, me) {
             took_part = true;
         } else {
@@ -317,7 +327,12 @@ impl ThreadRowView {
         let latest = &thread.representative;
         let words = latest.preview.as_deref().unwrap_or("");
         Self {
-            participants: participants(&thread.participants, thread.message_count, me),
+            participants: participants(
+                &thread.participants,
+                latest.from.as_ref(),
+                thread.message_count,
+                me,
+            ),
             count: count_badge(thread.message_count),
             subject: thread
                 .subject
@@ -1015,7 +1030,30 @@ mod thread_words_tests {
             me()[0].clone(),
             who("Lena Park"),
         ];
-        assert_eq!(participants(&seen, 6, &me()), "Lena, Ben, Ana, you");
+        assert_eq!(participants(&seen, None, 6, &me()), "Lena, Ben, Ana, you");
+    }
+
+    #[test]
+    fn the_newest_messages_sender_leads_though_they_wrote_before() {
+        // Ana opened the thread and has just replied (#2107): she leads,
+        // where first-seen order alone would leave her third.
+        let seen = [
+            me()[0].clone(),
+            who("Ana Ruiz"),
+            who("Lena Park"),
+            who("Ben Ortiz"),
+        ];
+        let ana = EmailAddress::new(Some("Ana Ruiz"), "ANA.RUIZ@example.com");
+        assert_eq!(participants(&seen, None, 7, &me()), "Ben, Lena, Ana, you");
+        assert_eq!(
+            participants(&seen, Some(&ana), 7, &me()),
+            "Ana, Ben, Lena, you"
+        );
+        assert_eq!(
+            participants(&seen, Some(&me()[0]), 7, &me()),
+            "Ben, Lena, Ana, you",
+            "you stay last, though you wrote the newest"
+        );
     }
 
     #[test]
@@ -1028,32 +1066,41 @@ mod thread_words_tests {
             who("Eve Lin"),
             me()[0].clone(),
         ];
-        assert_eq!(participants(&seen, 9, &me()), "Eve, Dan, Cleo, you +2");
+        assert_eq!(
+            participants(&seen, None, 9, &me()),
+            "Eve, Dan, Cleo, you +2"
+        );
     }
 
     #[test]
     fn a_thread_the_account_did_not_join_has_no_you() {
         let seen = [who("Ana Ruiz"), who("Ben Ortiz")];
-        assert_eq!(participants(&seen, 2, &me()), "Ben, Ana");
+        assert_eq!(participants(&seen, None, 2, &me()), "Ben, Ana");
     }
 
     #[test]
     fn a_single_message_names_its_sender_in_full() {
-        assert_eq!(participants(&[who("Ana Ruiz")], 1, &me()), "Ana Ruiz");
-        assert_eq!(participants(&me(), 1, &me()), "You");
+        assert_eq!(participants(&[who("Ana Ruiz")], None, 1, &me()), "Ana Ruiz");
+        assert_eq!(participants(&me(), None, 1, &me()), "You");
     }
 
     #[test]
     fn you_is_decided_by_address_not_by_name() {
         let alias = EmailAddress::new(Some("Somebody Else"), "ME@example.com");
         let impostor = EmailAddress::new(Some("Test User"), "other@example.com");
-        assert_eq!(participants(&[alias, impostor], 2, &me()), "Test, you");
+        assert_eq!(
+            participants(&[alias, impostor], None, 2, &me()),
+            "Test, you"
+        );
     }
 
     #[test]
     fn a_nameless_sender_is_said_by_the_local_part() {
         let bare = EmailAddress::new(None::<String>, "ops@example.com");
-        assert_eq!(participants(&[bare, who("Ana Ruiz")], 2, &me()), "Ana, ops");
+        assert_eq!(
+            participants(&[bare, who("Ana Ruiz")], None, 2, &me()),
+            "Ana, ops"
+        );
     }
 
     #[test]

@@ -474,3 +474,96 @@ fn the_selection_remembers_the_conversations_each_row_stood_for() {
     let _ = focus.clear_selection();
     assert!(focus.selection_reach().is_empty());
 }
+
+/// A reply came to `thread`: the list is read again once the burst it
+/// came in is over.
+fn reply_came(focus: &mut FocusController, thread: i64, rows: &List) {
+    let effects = focus.handle_on(
+        Input::Event(postio_core::Event::ThreadChanged {
+            account: AccountId::new(1),
+            thread: ThreadId::new(thread),
+            members_added: vec![MessageId::new(900)],
+        }),
+        rows,
+    );
+    let token = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Timer { token, .. } => Some(*token),
+            _ => None,
+        })
+        .expect("the re-read waits out the burst");
+    let effects = focus.handle_on(Input::Timer(token), rows);
+    assert!(
+        shown(&effects).contains(&Intent::RefreshList),
+        "the list is read again: {effects:?}"
+    );
+}
+
+/// `rows` re-read with `thread`'s row drawn from its reply, message 900,
+/// and moved to the top, as newest first puts it.
+fn replied_to_top(rows: &List, thread: i64) -> List {
+    let mut moved: Vec<RowFacts> = rows
+        .rows
+        .iter()
+        .filter(|row| row.threads != vec![ThreadId::new(thread)])
+        .cloned()
+        .collect();
+    moved.insert(
+        0,
+        RowFacts {
+            id: MessageId::new(900),
+            digest: false,
+            threads: vec![ThreadId::new(thread)],
+            writes: false,
+        },
+    );
+    List { rows: moved }
+}
+
+fn on_inbox(rows: &List) -> FocusController {
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(rows, true);
+    focus
+}
+
+#[test]
+fn a_reply_that_moves_the_cursors_thread_takes_the_cursor_with_it() {
+    // #2107: the cursor is on the third thread when a reply comes to it.
+    // Its row is now drawn from the reply and sits at the top: the cursor
+    // goes there, whether the frontend's list kept the position (the Mac's)
+    // or slid it with the rows (GTK's).
+    let rows = List::of(4, &[]);
+    let mut focus = on_inbox(&rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    reply_came(&mut focus, 502, &rows);
+    let effects = focus.landed(&replied_to_top(&rows, 502), false);
+    assert_eq!(cursor_of(&effects), Some(0), "{effects:?}");
+    assert_eq!(focus.cursor(), Some(0));
+}
+
+#[test]
+fn a_reply_to_the_cursors_thread_where_it_stands_leaves_the_cursor_there() {
+    let rows = List::of(4, &[]);
+    let mut focus = on_inbox(&rows);
+    reply_came(&mut focus, 500, &rows);
+    let effects = focus.landed(&replied_to_top(&rows, 500), false);
+    assert_eq!(cursor_of(&effects), None, "nothing to move: {effects:?}");
+    assert_eq!(focus.cursor(), Some(0));
+}
+
+#[test]
+fn a_cursor_the_person_moved_after_the_reply_is_not_taken_back() {
+    let rows = List::of(4, &[]);
+    let mut focus = on_inbox(&rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    reply_came(&mut focus, 501, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = focus.landed(&replied_to_top(&rows, 501), false);
+    assert_eq!(cursor_of(&effects), None, "j is the person's: {effects:?}");
+    assert_eq!(focus.cursor(), Some(2));
+}

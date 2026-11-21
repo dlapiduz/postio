@@ -107,6 +107,19 @@ pub trait ListRow {
         None
     }
 
+    /// What makes a re-read row the same row: its thread, when it stands
+    /// for one, else its message.
+    ///
+    /// A thread's row is drawn from its newest message, so a reply changes
+    /// [`id`](Self::id) while the row is still the one the person was on.
+    /// Compared by message, a re-read took the row out and put a new one in
+    /// its place, and a cursor on it slid to the row below (#2107).
+    fn key(&self) -> Option<RowKey> {
+        self.thread()
+            .map(RowKey::Thread)
+            .or_else(|| self.id().map(RowKey::Message))
+    }
+
     /// A redelivered row for the same message.
     ///
     /// The default takes the incoming value, which is right for a plain
@@ -119,6 +132,18 @@ pub trait ListRow {
     {
         incoming
     }
+}
+
+/// Which row a row is, across re-reads: see [`ListRow::key`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RowKey {
+    /// A thread's row, whichever of its messages it is drawn from.
+    Thread(ThreadId),
+    /// A row of one message.
+    Message(MessageId),
+    /// A row that stands for neither, such as a fired reminder: its own
+    /// kind and id, kept apart from its thread's row.
+    Other(u8, i64),
 }
 
 /// The answer to asking [`ListWindow`] for the row at a position.
@@ -188,12 +213,13 @@ pub enum Splice {
     },
 }
 
-/// The fewest positional steps that turn `old` into `new`: removals first,
+/// The fewest positional steps that turn `old` into `new`, compared by
+/// each row's key (a [`RowKey`], or a bare [`MessageId`]): removals first,
 /// bottom up, then insertions, top down, each position counted in the state
 /// the steps before it left.
 ///
 /// This is what lets a list re-read a stretch it is showing and tell its
-/// view only what moved. A row whose message is in both, in the same order
+/// view only what moved. A row whose key is in both, in the same order
 /// relative to the others that stay, stays -- the same object, the same
 /// widget, updated in place by whoever applies this -- and every other row
 /// is an insertion or a removal *at its position*. Announcing the stretch as
@@ -205,8 +231,8 @@ pub enum Splice {
 /// insertion, and mail landing above a page pushes one row off its end
 /// rather than shifting fifty. A position `old` knew nothing about (`None`,
 /// a placeholder) is always replaced.
-pub fn splices(old: &[Option<MessageId>], new: &[MessageId]) -> Vec<Splice> {
-    let mut held: HashMap<MessageId, usize> = HashMap::with_capacity(old.len());
+pub fn splices<K: Copy + Eq + std::hash::Hash>(old: &[Option<K>], new: &[K]) -> Vec<Splice> {
+    let mut held: HashMap<K, usize> = HashMap::with_capacity(old.len());
     for (index, id) in old.iter().enumerate() {
         if let Some(id) = id {
             held.entry(*id).or_insert(index);
@@ -730,7 +756,8 @@ impl<T: ListRow> ListWindow<T> {
 
     /// Accept a page of rows delivered for `generation`.
     ///
-    /// Rows already resident for the same message are reconciled through
+    /// Rows already resident for the same row (the same [`ListRow::key`]:
+    /// a thread's, whichever message it is drawn from) are reconciled through
     /// [`ListRow::reconcile`] rather than replaced outright, so a
     /// redelivered page does not invalidate anything holding onto them.
     pub fn deliver(&mut self, generation: u64, page: u32, rows: Vec<T>) -> Delivered {
@@ -752,18 +779,18 @@ impl<T: ListRow> ListWindow<T> {
         // Taken before `existing` consumes them: whether the page came back
         // as the same messages in the same order is a question about
         // position, which a map keyed by id cannot answer.
-        let previous_ids: Vec<Option<MessageId>> =
-            previous.iter().flatten().map(|row: &T| row.id()).collect();
-        let existing: HashMap<MessageId, T> = previous
+        let previous_keys: Vec<Option<RowKey>> =
+            previous.iter().flatten().map(|row: &T| row.key()).collect();
+        let existing: HashMap<RowKey, T> = previous
             .into_iter()
             .flatten()
-            .filter_map(|row| Some((row.id()?, row)))
+            .filter_map(|row| Some((row.key()?, row)))
             .collect();
 
         let count = rows.len() as u32;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
-            let reconciled = match row.id().and_then(|id| existing.get(&id)) {
+            let reconciled = match row.key().and_then(|key| existing.get(&key)) {
                 Some(old) => T::reconcile(old, row),
                 None => row,
             };
@@ -779,11 +806,11 @@ impl<T: ListRow> ListWindow<T> {
         let span = count.min(self.total.saturating_sub(start));
         let changed = (span > 0).then_some(start..start + span);
 
-        let reconciled = previous_ids.len() == self.pages[&page].len()
-            && previous_ids
+        let reconciled = previous_keys.len() == self.pages[&page].len()
+            && previous_keys
                 .iter()
                 .zip(&self.pages[&page])
-                .all(|(before, now)| before.is_some() && *before == now.id());
+                .all(|(before, now)| before.is_some() && *before == now.key());
 
         Delivered {
             stale: false,
@@ -801,9 +828,11 @@ impl<T: ListRow> ListWindow<T> {
     /// was resident; a row that is not on screen needs no update, because
     /// its page is read fresh when it next is.
     pub fn update(&mut self, incoming: T) -> Option<u32> {
-        let id = incoming.id()?;
+        // By key: a thread's row is found by its thread, whichever message
+        // it was last drawn from.
+        let key = incoming.key()?;
         let found = self.pages.iter().find_map(|(page, rows)| {
-            let index = rows.iter().position(|row| row.id() == Some(id))?;
+            let index = rows.iter().position(|row| row.key() == Some(key))?;
             Some((*page, index))
         })?;
         let (page, index) = found;
@@ -829,6 +858,12 @@ impl<T: ListRow> ListWindow<T> {
             .get(&(position / PAGE_SIZE))
             .and_then(|rows| rows.get((position % PAGE_SIZE) as usize))
             .and_then(T::id)
+    }
+
+    /// The key of the row at `position`, if its page is resident: what a
+    /// re-read compares the rows it holds by ([`splices`]).
+    pub fn peek_key(&self, position: u32) -> Option<RowKey> {
+        self.resident_at(position).and_then(T::key)
     }
 
     /// The row at `position`, if its page is here -- asking for nothing.
@@ -857,6 +892,17 @@ impl<T: ListRow> ListWindow<T> {
         self.pages.iter().find_map(|(page, rows)| {
             rows.iter()
                 .position(|row| row.id() == Some(message))
+                .map(|index| page * PAGE_SIZE + index as u32)
+        })
+    }
+
+    /// Where the row whose [`ListRow::key`] is `key` sits, among the rows
+    /// resident: a thread's row found by its thread, whichever message it
+    /// is drawn from now. `None` as [`position_of`](Self::position_of) is.
+    pub fn position_of_key(&self, key: RowKey) -> Option<u32> {
+        self.pages.iter().find_map(|(page, rows)| {
+            rows.iter()
+                .position(|row| row.key() == Some(key))
                 .map(|index| page * PAGE_SIZE + index as u32)
         })
     }
@@ -1899,6 +1945,30 @@ mod row_facts_tests {
         }]);
 
         assert_eq!(window.row_kind(MessageId::new(99)), RowKind::Missing);
+    }
+
+    /// A reply changes the message a thread's row is drawn from, not which
+    /// row it is (#2107): a re-read keeps it where it was, with nothing to
+    /// splice, and its update lands on it.
+    #[test]
+    fn a_threads_row_stays_the_same_row_when_a_reply_changes_its_message() {
+        let thread = |id: i64, thread: i64| Row {
+            id: MessageId::new(id),
+            thread: Some(ThreadId::new(thread)),
+        };
+        let mut window = window_holding(vec![thread(7, 3), thread(8, 4)]);
+        let held: Vec<Option<RowKey>> = (0..2).map(|at| window.peek_key(at)).collect();
+        let reread: Vec<RowKey> = [thread(9, 3), thread(8, 4)]
+            .iter()
+            .filter_map(ListRow::key)
+            .collect();
+        assert_eq!(
+            splices(&held, &reread),
+            Vec::new(),
+            "the thread's row is still the first row"
+        );
+        assert_eq!(window.update(thread(9, 3)), Some(0), "and is told so");
+        assert_eq!(window.peek(0), Some(MessageId::new(9)));
     }
 
     /// `row_of` must not reach past what is resident: answering from the
