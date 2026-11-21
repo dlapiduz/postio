@@ -346,6 +346,43 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
     });
 }
 
+/// A prefix's view can land before the bar has ever been laid out -- on a
+/// busy machine the controller answers inside the frame `/` opened it in.
+/// The ghost is drawn once the field has its width, not lost to a field
+/// that had none yet (#2151).
+pub fn a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let bar = postio_gtk::bar::Bar::new(postio_core::Keymap::defaults());
+        let window = gtk::Window::new();
+        window.set_default_size(1000, 600);
+        window.set_child(Some(bar.widget()));
+        bar.open_on("at", None);
+        bar.show_dropdown(&DropdownView {
+            state: DropdownState::Prefix,
+            ghost: Some("las".to_owned()),
+            ghost_hint: Some(Hint {
+                key: "Tab".to_owned(),
+                label: "completes".to_owned(),
+            }),
+            sections: vec![],
+            highlight: None,
+            ..words_view()
+        });
+        // What the view asked for runs before anything is allocated.
+        crate::settle();
+        window.present();
+        assert!(
+            crate::settle_until(async || bar.ghost().as_deref() == Some("las")).await,
+            "the ghost was lost to a field with no width yet: {:?}",
+            bar.ghost_at()
+        );
+        window.destroy();
+    });
+}
+
 /// Screen 02 (spec 010 US7): a short prefix draws the rest of its best word
 /// after the caret in the field's lighter ink, "Tab completes" at the
 /// field's end; Tab takes it, and the ghost goes.
