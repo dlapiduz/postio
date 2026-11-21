@@ -303,6 +303,19 @@ fn capture_from_reader(key: &str, heading: &str) {
         let sheet = window.capture().expect("the visible capture sheet");
         assert!(sheet.texts().iter().any(|text| text == heading));
         assert_eq!(sheet.text(), "Please leave comments by Wednesday");
+        // The keyboard is in the sheet's field, so the sheet's own keys are
+        // its, and what is typed edits the sentence (#2080).
+        assert!(
+            crate::settle_until(async || {
+                window.observe().keyboard.typing
+                    && gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| {
+                        gtk::prelude::WidgetExt::is_ancestor(&focus, sheet.dialog())
+                    })
+            })
+            .await,
+            "{key} left the keyboard outside capture's field: {:?}",
+            window.observe().keyboard
+        );
 
         support::keys(&window, &["Escape"]);
         assert!(crate::settle_until(async || !sheet.is_open()).await);

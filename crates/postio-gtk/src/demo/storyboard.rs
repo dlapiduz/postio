@@ -214,11 +214,15 @@ pub enum Preset {
     /// Agents with two accounts shared, where to point an agent, and what
     /// agents did lately, one call of them refused.
     AgentsShared,
+    /// A vault named under `[focus.vault]`: the demo's three projects, in
+    /// a throwaway folder, so `T` and `N` open capture rather than say how
+    /// to name one. Part of the config the window starts with.
+    Vault,
 }
 
 impl Preset {
     /// Every preset Focus can apply.
-    pub const ALL: [Preset; 20] = [
+    pub const ALL: [Preset; 21] = [
         Preset::Settings(Section::Accounts),
         Preset::Settings(Section::Filtering),
         Preset::Settings(Section::Filters),
@@ -239,6 +243,7 @@ impl Preset {
         Preset::FilteringLists,
         Preset::Locked,
         Preset::AgentsShared,
+        Preset::Vault,
     ];
 
     /// The name a storyboard uses. Settings' Appearance section is not one:
@@ -265,6 +270,7 @@ impl Preset {
             Preset::FilteringLists => "settings/filtering-lists",
             Preset::Locked => "locked",
             Preset::AgentsShared => "settings/agents-shared",
+            Preset::Vault => "vault",
         }
     }
 
@@ -277,6 +283,8 @@ impl Preset {
     fn apply(self, started: &Started) -> Result<(), String> {
         let window = &started.window;
         match self {
+            // Applied before the window opened, in its config (`acting`).
+            Preset::Vault => Ok(()),
             Preset::Settings(Section::Sync) | Preset::SyncBackfill => {
                 let panel = open_settings(window, Section::Sync)?;
                 // The mail's weight, as a backfill measures it, and the
@@ -590,24 +598,35 @@ fn config_path(name: &str) -> PathBuf {
 /// until its first rows are drawn.
 ///
 /// `hold_body` takes one seeded body away before the window opens, for a
-/// storyboard whose `body_arrived` step brings it back.
+/// storyboard whose `body_arrived` step brings it back. `vault` names the
+/// demo's vault in the config the window starts with ([`Preset::Vault`]).
 async fn acting(
     seed: Seed,
     size: (i32, i32),
     name: &str,
     hold_body: bool,
+    vault: bool,
 ) -> Result<Started, String> {
     let (database, account) = super::seeded(seed).await;
     if hold_body {
         super::hold_back_body(&database, account).await?;
     }
-    let started = super::start(
-        database,
-        account,
-        &super::config(),
-        &config_path(name),
-        size,
-    )?;
+    let vault = vault
+        .then(super::demo_vault)
+        .transpose()
+        .map_err(|error| format!("no vault: {error}"))?;
+    let config = match &vault {
+        Some(vault) => format!(
+            "{}\n[focus.vault]\npath = \"{}\"\nprojects = \"Projects\"\n",
+            super::config(),
+            vault.path().display()
+        ),
+        None => super::config(),
+    };
+    let mut started = super::start(database, account, &config, &config_path(name), size)?;
+    if let Some(vault) = vault {
+        started.keep(vault);
+    }
     started.sink.emit(Event::ConnectionChanged {
         account,
         state: ConnectionState::Online,
@@ -1196,7 +1215,8 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
         .steps
         .iter()
         .any(|step| step.input == Input::Event(EnvEvent::BodyArrived));
-    let started = match acting(base, size, &board.name, hold_body).await {
+    let vault = board.preset.as_deref() == Some(Preset::Vault.id());
+    let started = match acting(base, size, &board.name, hold_body, vault).await {
         Ok(started) => started,
         Err(message) => {
             played.status = Status::Error { message };
@@ -1595,7 +1615,9 @@ async fn fresh_over(seed: Seed, setup: &[&str]) -> Option<Started> {
     );
     hold_still();
     let (size, _) = apply_variant(&BTreeMap::new());
-    let started = acting(seed, size, "every-command", false).await.ok()?;
+    let started = acting(seed, size, "every-command", false, false)
+        .await
+        .ok()?;
     deliver::drain();
     for command in setup {
         let _ = deliver_input(

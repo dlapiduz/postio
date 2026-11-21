@@ -62,7 +62,9 @@ if ! running; then
     }
     # setsid so the compositor is not in this shell's process group and
     # survives the Ctrl-C that interrupts a test run.
-    setsid mutter --headless --wayland-display="$DISPLAY_NAME" \
+    # --no-x11: as headless-runner.sh, no Xwayland to run out of X
+    # display lock files for.
+    setsid mutter --headless --no-x11 --wayland-display="$DISPLAY_NAME" \
         --virtual-monitor "$GEOMETRY" >"$LOG" 2>&1 < /dev/null &
     for _ in $(seq 1 40); do running && break; sleep 0.25; done
     running || { echo "the headless compositor did not come up; see $LOG" >&2; exit 1; }

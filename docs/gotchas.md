@@ -4,7 +4,7 @@ These are the traps in this repository that are still live and that no check, ho
 
 ## Tests and the headless compositor
 
-**The small demo's second inbox row is a digest, not a message.** `x` deliberately leaves it out of bulk selection, and Return opens the digest rather than the reader. Storyboards for message actions must pass it and assert the row they mean; the first Has action row is an invite, not a to-do. A capture storyboard also needs a configured vault to expect a capture sheet (#1807).
+**The small demo's second inbox row is a digest, not a message.** `x` deliberately leaves it out of bulk selection, and Return opens the digest rather than the reader. Storyboards for message actions must pass it and assert the row they mean; the first Has action row is an invite, not a to-do. A capture storyboard also needs a configured vault to expect a capture sheet: `preset = "vault"` gives the window the demo's (#1807, #2080).
 
 **Waiting for a total in an integration test measures every other row too.** If any other row moves, the total is wrong while the software is right. Wait for the specific message, row or widget by its identity. Use a count only when the count is the property, and settle it against the store.
 

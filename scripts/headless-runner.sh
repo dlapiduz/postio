@@ -167,8 +167,12 @@ if [ ! -S "$SOCKET" ]; then
         # the suite. There is no accessibility bus on a headless runner and
         # nothing here wants one: the accessibility sweep asserts through
         # GTK's own `gtk_test_accessible_*` API, which needs no bridge.
+        # --no-x11: nothing here speaks X (GDK_BACKEND is pinned to Wayland
+        # below), and mutter will not start at all once it has tried 50 X
+        # display lock files in use -- as 25 suites' compositors running at
+        # once had them on 2026-11-20.
         GTK_A11Y=none NO_AT_BRIDGE=1 \
-        setsid mutter --headless --wayland-display="$DISPLAY_NAME" \
+        setsid mutter --headless --no-x11 --wayland-display="$DISPLAY_NAME" \
             --virtual-monitor "${POSTIO_TEST_GEOMETRY:-1280x800}" \
             >"$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" 2>&1 </dev/null &
         # Ten seconds on an idle machine, scaled by POSTIO_TEST_PATIENCE like
