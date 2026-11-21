@@ -349,6 +349,33 @@ pub fn new_mail_arrives_as_an_insertion_at_the_top() {
     );
 }
 
+/// A list with nothing held is refreshed by reading its top, and a second
+/// refresh asked for while that read is out is for a change the read may
+/// predate: the top is read again once it lands, or the list keeps what was
+/// there before the change (#2152: a first sync's mail never listed).
+pub fn a_refresh_asked_while_the_top_is_on_its_way_reads_it_again() {
+    let source = Fake::new(0);
+    let model = new_list();
+    model.set_source(source.clone());
+    assert!(source.drain().is_empty(), "an empty list reads nothing");
+
+    // Something changed: nothing is held, so the top is read. Focus's
+    // source says the page is on its way, as its controller does
+    // (`Intent::PagePending`).
+    model.refresh();
+    assert_eq!(source.drain(), [0]);
+    model.note_pending(0);
+    // Something else changed while that read was out.
+    model.refresh();
+    // The read lands with what was there before the second change.
+    model.deliver(0, Vec::new());
+    assert_eq!(
+        source.drain(),
+        [0],
+        "the second change was folded into a read that may not have seen it"
+    );
+}
+
 pub fn nothing_happens_when_no_mail_arrives() {
     let source = Fake::new(HUGE);
     let model = new_list();
