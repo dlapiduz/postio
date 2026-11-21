@@ -828,16 +828,17 @@ pub fn a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the
         assert!(crate::settle_until(async || window.results().is_some()).await);
         assert!(
             crate::settle_until(
-                async || said(&window, "focus.results.children") == Some(serde_json::json!(4))
+                async || said(&window, "focus.results.children") == Some(serde_json::json!(5))
             )
             .await,
-            "the top result opened in place: three matches and the gap between them: {:?}",
+            "the top result opened in place: three matches, the line for messages 1-2 and the one for 4: {:?}",
             said(&window, "focus.results.children")
         );
         support::keys(&window, &["j"]);
         assert_eq!(
             said(&window, "focus.results.child"),
-            Some(serde_json::json!(0))
+            Some(serde_json::json!(1)),
+            "j passes the line for messages 1-2 to message 3"
         );
         support::keys(&window, &["Return"]);
         assert!(
@@ -872,7 +873,7 @@ pub fn a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         assert!(
             crate::settle_until(
-                async || said(&window, "focus.results.child") == Some(serde_json::json!(0))
+                async || said(&window, "focus.results.child") == Some(serde_json::json!(1))
             )
             .await,
             "Escape put the ring back on the child the window was opened from: {:?}",
@@ -1252,7 +1253,7 @@ pub fn a_search_childs_row_says_who_wrote_it_and_when() {
         bar.run_search_row();
         assert!(
             crate::settle_until(
-                async || said(&window, "focus.results.children") == Some(serde_json::json!(4))
+                async || said(&window, "focus.results.children") == Some(serde_json::json!(5))
             )
             .await
         );

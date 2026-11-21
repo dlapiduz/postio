@@ -225,6 +225,7 @@ fn the_top_result_with_several_matches_is_expanded_on_arrival() {
     assert_eq!(
         splice.children.iter().map(said).collect::<Vec<_>>(),
         [
+            "Messages 1\u{2013}2 don't match \u{b7} Tom\u{e1}s, Ben, Mon",
             "message 3",
             "Message 4 doesn't match \u{b7} Ben, Thu",
             "message 5",
@@ -338,12 +339,12 @@ fn j_walks_into_the_children_and_skips_the_gap() {
     assert_eq!(
         at,
         [
-            (Some(Some(0)), None),
-            (Some(Some(2)), None),
+            (Some(Some(1)), None),
             (Some(Some(3)), None),
+            (Some(Some(4)), None),
             (Some(None), Some(1)),
         ],
-        "message 3, 5, 6, then the next result"
+        "message 3, 5, 6, past the gaps, then the next result"
     );
 }
 
@@ -367,7 +368,11 @@ fn right_and_left_expand_and_collapse_other_results() {
     assert_eq!(splice.anchor, 2);
     assert_eq!(
         splice.children.iter().map(said).collect::<Vec<_>>(),
-        ["message 5"]
+        [
+            "Messages 1\u{2013}4 don't match \u{b7} Tom\u{e1}s, Ben, Mon",
+            "message 5",
+            "Messages 6\u{2013}8 don't match \u{b7} Ben, Tom\u{e1}s, Sat"
+        ]
     );
     // One at a time: Harbor's folded when the other opened.
     let effects = run(&mut focus, CommandId::CollapseThread, &rows);
@@ -523,7 +528,7 @@ fn escape_returns_to_the_results_with_the_ring_on_the_child_it_opened_from() {
         "{shown:?}"
     );
     assert!(
-        shown.contains(&Intent::ResultChildFocus(Some(0))),
+        shown.contains(&Intent::ResultChildFocus(Some(1))),
         "{shown:?}"
     );
     assert!(focus.in_results(), "the results are still up");
