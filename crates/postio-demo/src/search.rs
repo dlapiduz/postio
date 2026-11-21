@@ -722,6 +722,11 @@ pub async fn search_demo() -> (Store, AccountId) {
     threads.extend(generated());
     // After the rest, so every other thread keeps its place and its ids.
     threads.extend(invoices());
+    // One transaction for the five hundred messages, rather than one per
+    // write: every repository's own scope nests inside it as a savepoint.
+    postio_storage::sql::batch(&connection, "BEGIN IMMEDIATE")
+        .await
+        .expect("begin the mail");
     for (index, thread) in threads.iter().enumerate() {
         let mailbox = folders
             .iter()
@@ -757,24 +762,24 @@ pub async fn search_demo() -> (Store, AccountId) {
         )
         .await;
     }
+    postio_storage::sql::batch(&connection, "COMMIT")
+        .await
+        .expect("commit the mail");
     postio_index::index::ensure_schema(&connection)
         .await
         .expect("the search index");
     // Indexed as the body indexer would have by now: a seed whose bodies
     // only the subject search can see shows no body passage and no quoted
     // text until a background pass runs. After `ensure_schema`, whose first
-    // run empties the body index it creates, and in one transaction.
-    postio_storage::sql::batch(&connection, "BEGIN")
+    // run empties the body index it creates; all at once, which builds the
+    // index over them once rather than once per body (#2020).
+    let bodies: Vec<(i64, &str)> = bodies
+        .iter()
+        .map(|(message, body)| (message.get(), body.as_str()))
+        .collect();
+    postio_index::index::index_bodies(&connection, &bodies)
         .await
-        .expect("begin the bodies");
-    for (message, body) in &bodies {
-        postio_index::index::index_body(&connection, message.get(), Some(body))
-            .await
-            .expect("a body indexed");
-    }
-    postio_storage::sql::batch(&connection, "COMMIT")
-        .await
-        .expect("commit the bodies");
+        .expect("the bodies indexed");
     // Screen 01's recent searches: run yesterday, on the weekday before,
     // and the week before that, each with what it finds here -- a recent
     // search says the count it runs to.
