@@ -448,6 +448,10 @@ const CASES: &[(&str, fn())] = &[
         dropdown::escape_gives_the_keyboard_back_to_the_cursor_row as fn(),
     ),
     (
+        "dropdown::a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is",
+        dropdown::a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is as fn(),
+    ),
+    (
         "dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it",
         dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it as fn(),
     ),

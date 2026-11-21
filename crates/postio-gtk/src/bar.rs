@@ -296,6 +296,8 @@ impl Bar {
                 // A ghost belongs to the words it was drawn for: the next
                 // view draws the one for these.
                 if let Some(bar) = weak.upgrade() {
+                    // Its words too, so a placing still to come draws none.
+                    bar.ghost.set_text("");
                     bar.ghost.set_visible(false);
                     bar.dress_terms();
                 }
@@ -623,6 +625,27 @@ impl Bar {
     /// Put the ghost at the end of what is typed, when it fits beside it.
     fn place_ghost(&self) {
         if self.ghost.text().is_empty() {
+            return;
+        }
+        // A view can land before the bar's first frame -- on a busy machine
+        // the controller answers inside the turn `/` opened it in -- and a
+        // field with no width yet has no room: placed now, the ghost would
+        // stay hidden. It is placed on the first frame that has laid the
+        // field out (#2151).
+        let Some(field) = self.ghost.parent() else {
+            return;
+        };
+        if field.width() == 0 {
+            let me = self.me.borrow().clone();
+            field.add_tick_callback(move |field, _| {
+                if field.width() == 0 {
+                    return glib::ControlFlow::Continue;
+                }
+                if let Some(bar) = me.upgrade() {
+                    bar.place_ghost();
+                }
+                glib::ControlFlow::Break
+            });
             return;
         }
         let Some(end) = self.typed_end() else {
