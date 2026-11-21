@@ -3,20 +3,20 @@ import PostioFFI
 import SwiftUI
 
 /// The command bar's content (specs/009-focus-macos T085; screens 07 to
-/// 09): the saved searches, the chips and what was typed, the lines with
-/// their keycaps, and a footer naming the keys.
+/// 09): the saved searches, the lines with their keycaps, and a footer
+/// naming the keys; spec 010's dropdown in their place while the words are
+/// a search.
 ///
 /// It draws `CommandBarModel` and decides nothing. The words are the
 /// controller's; the field the person types in is the toolbar's, which
-/// keeps the keyboard, so this draws the chips the words were lowered to
-/// rather than a second field.
+/// keeps the keyboard.
 ///
 /// Every row has a fixed height by its kind, so the panel's height is
 /// arithmetic (`CommandBarView.height`) rather than a measurement: the
 /// same rule as the list's rows.
 ///
-/// Semantic colours only. The accent is the highlight's ring and the chip
-/// being edited, which are both focus.
+/// Semantic colours only. The accent is the highlight's ring, which is
+/// focus.
 public struct CommandBarView: View {
     let model: CommandBarModel
     let saveCap: String?
@@ -30,15 +30,10 @@ public struct CommandBarView: View {
     /// Fixed heights, by what is drawn.
     public enum Metrics {
         public static let saved: CGFloat = 44
-        public static let query: CGFloat = 44
-        public static let echo: CGFloat = 24
         public static let heading: CGFloat = 30
         public static let line: CGFloat = 36
         public static let footer: CGFloat = 32
         public static let radius: CGFloat = 10
-        /// Where the sender and the time columns of a message line end.
-        public static let sender: CGFloat = 160
-        public static let time: CGFloat = 56
     }
 
     /// How tall the bar is for what `model` holds, before the window caps
@@ -47,12 +42,6 @@ public struct CommandBarView: View {
         if model.showsDropdown { return DropdownView.height(for: model.dropdown) }
         var height = Metrics.footer
         if !model.saved.isEmpty { height += Metrics.saved + 1 }
-        if !model.chips.isEmpty {
-            height += Metrics.query
-            if model.echo != nil { height += Metrics.echo }
-            height += 1
-        }
-        if model.heading != nil { height += Metrics.heading }
         for row in model.rows {
             height += row.kind == .heading ? Metrics.heading : Metrics.line
         }
@@ -85,16 +74,9 @@ public struct CommandBarView: View {
                 savedRow
                 Divider()
             }
-            if !model.chips.isEmpty {
-                queryRow
-                Divider()
-            }
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        if let heading = model.heading {
-                            HeadingRow(text: heading, emphasised: true)
-                        }
                         ForEach(model.rows) { row in
                             line(row).id(row.id)
                         }
@@ -152,45 +134,14 @@ public struct CommandBarView: View {
         .frame(height: Metrics.saved)
     }
 
-    // MARK: the chips
-
-    private var queryRow: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                ForEach(Array(model.chips.enumerated()), id: \.offset) { index, chip in
-                    ChipView(text: chip, editing: model.editing == index)
-                }
-                Spacer(minLength: 8)
-                KeyCap("Esc")
-            }
-            .padding(.horizontal, 14)
-            .frame(height: Metrics.query)
-            if let echo = model.echo {
-                Text(echo)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, 14)
-                    .frame(height: Metrics.echo, alignment: .top)
-            }
-        }
-    }
-
     // MARK: the lines
 
     @ViewBuilder
     private func line(_ row: CommandBarModel.Row) -> some View {
         switch row.kind {
         case .heading:
-            HeadingRow(text: row.title, emphasised: false)
-        case .message:
-            LineButton(row: row, highlighted: model.highlighted == row.id, run: model.run) {
-                MessageLine(row: row)
-            }
-        default:
+            HeadingRow(text: row.title)
+        case .hint, .command, .correspondent:
             LineButton(row: row, highlighted: model.highlighted == row.id, run: model.run) {
                 PlainLine(row: row)
             }
@@ -219,19 +170,17 @@ public struct CommandBarView: View {
     }
 }
 
-/// A section heading, or the folder's heading over its conversations:
-/// the name on the left, the rest of it (after the first " · ") on the
-/// right, dimmer.
+/// A section heading: the name on the left, the rest of it (after the
+/// first " · ") on the right, dimmer.
 private struct HeadingRow: View {
     let text: String
-    let emphasised: Bool
 
     var body: some View {
         let parts = text.components(separatedBy: " \u{b7} ")
         HStack {
             Text(parts.first ?? text)
-                .font(.system(size: emphasised ? 13 : 12, weight: .semibold))
-                .foregroundStyle(emphasised ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             if parts.count > 1 {
                 Text(parts.dropFirst().joined(separator: " \u{b7} "))
@@ -271,7 +220,7 @@ private struct LineButton<Content: View>: View {
     }
 }
 
-/// A command, a place, a search, a hint: the title, its detail, the key.
+/// A command, a correspondent, a hint: the title, its detail, the key.
 private struct PlainLine: View {
     let row: CommandBarModel.Row
 
@@ -288,63 +237,6 @@ private struct PlainLine: View {
             if let cap = row.cap { KeyCap(cap) }
         }
         .lineLimit(1)
-    }
-}
-
-/// A message: who from, the subject and its first line, where it is, when.
-private struct MessageLine: View {
-    let row: CommandBarModel.Row
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Text(row.sender ?? "")
-                .font(.system(size: 13))
-                .frame(width: CommandBarView.Metrics.sender, alignment: .leading)
-            Text(row.title).font(.system(size: 13, weight: .medium)).layoutPriority(1)
-            if let detail = row.detail {
-                // At least a few words of it, or a lone letter is left
-                // standing after a long subject.
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
-                    .frame(minWidth: 56, alignment: .leading)
-                    .layoutPriority(-1)
-            }
-            Spacer(minLength: 8)
-            // Where it is, whole: the subject's first line gives way first.
-            VStack(alignment: .trailing, spacing: 0) {
-                ForEach(row.wheres, id: \.self) { place in
-                    Text(place).font(.system(size: row.wheres.count > 1 ? 10 : 11, design: .monospaced))
-                }
-            }
-            .foregroundStyle(.secondary)
-            .fixedSize()
-            Text(row.time ?? "")
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: CommandBarView.Metrics.time, alignment: .trailing)
-                .fixedSize()
-        }
-        .lineLimit(1)
-    }
-}
-
-/// One chip: an operator and its value, in mono; the one being edited is
-/// ringed in the accent.
-private struct ChipView: View {
-    let text: String
-    let editing: Bool
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 13, design: .monospaced))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 5).fill(.quaternary))
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(editing ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator),
-                                  lineWidth: editing ? 1.5 : 1)
-            )
     }
 }
 

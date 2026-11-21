@@ -49,18 +49,8 @@ pub enum BarLineKind {
     Hint,
     /// A command, with its key.
     Command,
-    /// A place to go: a mailbox, a folder or a label.
-    Place,
-    /// "Search mail for …".
-    Search,
-    /// "Search instead for “word”".
-    Instead,
-    /// The order the results are in.
-    Order,
     /// A correspondent `@` offered.
     Correspondent,
-    /// A message: a search hit, or a folder's conversation.
-    Message,
 }
 
 /// One line of the bar, with everything it draws.
@@ -71,9 +61,9 @@ pub struct BarLine {
     /// What [`Input::BarRun`](crate::Input::BarRun) hands back to run it:
     /// never reused, so a line since redrawn runs nothing.
     pub token: u64,
-    /// Its title: a command's name, a place's `in:`, a hit's subject.
+    /// Its title: a command's name, a correspondent's.
     pub title: String,
-    /// Its dimmer detail, or a hit's first line.
+    /// Its dimmer detail.
     pub detail: Option<String>,
     /// The key that does the same, as the keymap spells it.
     pub key: Option<String>,
@@ -81,28 +71,13 @@ pub struct BarLine {
     pub command: Option<CommandId>,
     /// Whether the arrows may rest on it.
     pub selectable: bool,
-    /// A message's sender.
-    pub sender: Option<String>,
-    /// Where a message is: its folder, and its account when there are
-    /// several, each a line.
-    pub wheres: Vec<String>,
-    /// A message's time column.
-    pub time: Option<String>,
-    /// The message a hit's or a folder's line opens.
-    pub message: Option<MessageId>,
 }
 
 /// The bar, whole: what [`Intent::BarLines`] draws.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BarView {
-    /// The heading over a folder's conversations (`in:`).
-    pub heading: Option<String>,
-    /// The words echoed under the field, and while a chip is edited, which.
+    /// The words echoed under the field.
     pub echo: Option<String>,
-    /// The chips the words were lowered to.
-    pub chips: Vec<String>,
-    /// The chip being edited, after `Tab`.
-    pub editing: Option<u32>,
     /// The lines, top to bottom.
     pub lines: Vec<BarLine>,
     /// Where the highlight goes, by token; `None` leaves it where it is, or
@@ -570,17 +545,40 @@ impl Bar {
         self.next_token
     }
 
-    /// `lines` as items, each with a token of its own.
+    /// `lines` as items, each with a token of its own. Only `>`'s commands,
+    /// `@`'s correspondents and the empty bar's hints are drawn here (see
+    /// [`Bar::base_lines`]); spec 009's places, search and hit rows are the
+    /// dropdown's now (#2079), so a rule that offered one draws nothing.
     fn items(&mut self, lines: Vec<Line>) -> Vec<Item> {
-        lines.into_iter().map(|line| self.item(line)).collect()
+        lines
+            .into_iter()
+            .filter_map(|line| self.item(line))
+            .collect()
     }
 
-    fn item(&mut self, line: Line) -> Item {
+    fn item(&mut self, line: Line) -> Option<Item> {
+        let (kind, command) = match &line {
+            Line::Heading(_) => (BarLineKind::Heading, None),
+            Line::Row { row, .. } => match row {
+                Row::Heading => (BarLineKind::Heading, None),
+                Row::Hint => (BarLineKind::Hint, None),
+                Row::Command(ActionId::Builtin(command)) => (BarLineKind::Command, Some(*command)),
+                Row::Command(ActionId::Ext(_)) => (BarLineKind::Command, None),
+                Row::Correspondent(_) => (BarLineKind::Correspondent, None),
+                Row::Place(..)
+                | Row::Search
+                | Row::Instead(_)
+                | Row::Order
+                | Row::Message { .. } => {
+                    return None;
+                }
+            },
+        };
         let token = self.token();
-        match line {
+        Some(match line {
             Line::Heading(title) => Item {
                 row: Row::Heading,
-                line: plain(BarLineKind::Heading, token, title),
+                line: plain(kind, token, title),
             },
             Line::Row {
                 row,
@@ -588,30 +586,6 @@ impl Bar {
                 detail,
                 key,
             } => {
-                let (kind, command) = match &row {
-                    Row::Heading => (BarLineKind::Heading, None),
-                    Row::Hint => (BarLineKind::Hint, None),
-                    Row::Command(ActionId::Builtin(command)) => {
-                        (BarLineKind::Command, Some(*command))
-                    }
-                    Row::Command(ActionId::Ext(_)) => (BarLineKind::Command, None),
-                    Row::Place(destination, _) => (
-                        BarLineKind::Place,
-                        self.places
-                            .places
-                            .iter()
-                            .find(|place| place.destination == *destination)
-                            .and_then(|place| match place.go {
-                                Some(ActionId::Builtin(command)) => Some(command),
-                                _ => None,
-                            }),
-                    ),
-                    Row::Search => (BarLineKind::Search, None),
-                    Row::Instead(_) => (BarLineKind::Instead, None),
-                    Row::Order => (BarLineKind::Order, Some(CommandId::ToggleResultOrder)),
-                    Row::Correspondent(_) => (BarLineKind::Correspondent, None),
-                    Row::Message { .. } => (BarLineKind::Message, None),
-                };
                 let selectable = row.is_selectable();
                 Item {
                     row,
@@ -624,7 +598,7 @@ impl Bar {
                     },
                 }
             }
-        }
+        })
     }
 
     /// The bar, as it is now, with the highlight on `highlight`.
@@ -633,10 +607,7 @@ impl Bar {
             return self.draw_dropdown(highlight);
         }
         Step::Show(Intent::BarLines(BarView {
-            heading: None,
             echo: self.echo(),
-            chips: Vec::new(),
-            editing: None,
             lines: self.base.iter().map(|item| item.line.clone()).collect(),
             highlight,
             saved: self
@@ -823,10 +794,6 @@ fn plain(kind: BarLineKind, token: u64, title: String) -> BarLine {
         key: None,
         command: None,
         selectable: false,
-        sender: None,
-        wheres: Vec::new(),
-        time: None,
-        message: None,
     }
 }
 

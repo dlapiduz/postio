@@ -1018,7 +1018,7 @@ pub async fn open_hit(
     );
     let on_it = || {
         bar.highlighted()
-            .is_some_and(|(kind, _, text)| kind == "message" && text.contains(subject))
+            .is_some_and(|(kind, text)| kind == "message" && text.contains(subject))
     };
     for _ in 0..8 {
         if on_it() {

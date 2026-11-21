@@ -47,24 +47,14 @@ pub struct BarSelectFfi {
 /// What kind of line the bar draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum BarLineKindFfi {
-    /// A section heading ("Commands", "Go to", "Threads · 3 matches").
+    /// A section heading ("Commands").
     Heading,
     /// A line of the empty bar saying what typing does.
     Hint,
     /// A command, with its key.
     Command,
-    /// A place to go: `in:Receipts`.
-    Place,
-    /// "Search mail for …".
-    Search,
-    /// "Search instead for “word”".
-    Instead,
-    /// "Sorted by relevance", which switches the order.
-    Order,
     /// A correspondent `@` offered.
     Correspondent,
-    /// A message: a search hit, or a folder's conversation.
-    Message,
 }
 
 impl From<postio_focus::BarLineKind> for BarLineKindFfi {
@@ -74,12 +64,7 @@ impl From<postio_focus::BarLineKind> for BarLineKindFfi {
             Kind::Heading => BarLineKindFfi::Heading,
             Kind::Hint => BarLineKindFfi::Hint,
             Kind::Command => BarLineKindFfi::Command,
-            Kind::Place => BarLineKindFfi::Place,
-            Kind::Search => BarLineKindFfi::Search,
-            Kind::Instead => BarLineKindFfi::Instead,
-            Kind::Order => BarLineKindFfi::Order,
             Kind::Correspondent => BarLineKindFfi::Correspondent,
-            Kind::Message => BarLineKindFfi::Message,
         }
     }
 }
@@ -92,9 +77,9 @@ pub struct BarLineFfi {
     /// What [`Session::focus_bar_run`] takes to run it. Never reused: a
     /// token from lines since redrawn runs nothing.
     pub token: u64,
-    /// The title: a command's name, `in:Receipts`, a hit's subject.
+    /// The title: a command's name, a correspondent's.
     pub title: String,
-    /// The dimmer detail beside it, or a hit's first line.
+    /// The dimmer detail beside it.
     pub detail: Option<String>,
     /// The key that does the same, as the keymap spells it (`g i`,
     /// `cmd+k`), or a hint's prefix (`>`, `@`).
@@ -104,13 +89,6 @@ pub struct BarLineFfi {
     pub command: Option<String>,
     /// Whether the arrows may rest on it and Return run it.
     pub selectable: bool,
-    /// A message's sender.
-    pub sender: Option<String>,
-    /// Where a message is: `in:Archive`, or where a digest holds it, and
-    /// under it the account when there are several. One line each.
-    pub wheres: Vec<String>,
-    /// A message's time column: "16:02", "Tue", "12 Sep".
-    pub time: Option<String>,
 }
 
 impl From<postio_focus::BarLine> for BarLineFfi {
@@ -123,9 +101,6 @@ impl From<postio_focus::BarLine> for BarLineFfi {
             key: line.key,
             command: line.command.map(|command| command.to_string()),
             selectable: line.selectable,
-            sender: line.sender,
-            wheres: line.wheres,
-            time: line.time,
         }
     }
 }
@@ -133,16 +108,8 @@ impl From<postio_focus::BarLine> for BarLineFfi {
 /// The bar, whole: everything `FocusBarLines` redraws.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BarViewFfi {
-    /// The heading over a folder's conversations (`in:`): "Receipts ·
-    /// folder · 3 threads · newest first".
-    pub heading: Option<String>,
-    /// The line under the field: "You typed “…”", and while a chip is
-    /// edited, which one and the keys that move on and go back.
+    /// The line under the field: "You typed “…”".
     pub echo: Option<String>,
-    /// The chips the words were lowered to, drawn before the field.
-    pub chips: Vec<String>,
-    /// The chip being edited after `Tab`, drawn as such.
-    pub editing: Option<u32>,
     /// The lines, top to bottom.
     pub lines: Vec<BarLineFfi>,
     /// The line the highlight goes to, by token. `None` keeps it where it
@@ -156,10 +123,7 @@ pub struct BarViewFfi {
 impl From<postio_focus::BarView> for BarViewFfi {
     fn from(view: postio_focus::BarView) -> Self {
         BarViewFfi {
-            heading: view.heading,
             echo: view.echo,
-            chips: view.chips,
-            editing: view.editing,
             lines: view.lines.into_iter().map(BarLineFfi::from).collect(),
             highlight: view.highlight,
             saved: view.saved,

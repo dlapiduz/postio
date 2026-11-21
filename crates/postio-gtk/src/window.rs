@@ -5329,14 +5329,10 @@ impl FocusWindow {
             .is_some_and(|pane| pane.feed().among_hits(message))
             && let Some(reading) = self.reading_dialog()
         {
-            let subject = self
-                .bar()
-                .and_then(|bar| bar.subject_of(message))
-                .or_else(|| {
-                    row.as_ref()
-                        .and_then(|row| row.as_conversation())
-                        .and_then(|conversation| conversation.summary.subject.clone())
-                })
+            let subject = row
+                .as_ref()
+                .and_then(|row| row.as_conversation())
+                .and_then(|conversation| conversation.summary.subject.clone())
                 .unwrap_or_default();
             let hit = crate::open::Position { index, total };
             reading.show_found(self, message, &subject, Some(hit));
@@ -7095,14 +7091,13 @@ impl FocusWindow {
             );
         }
         if let Some(bar) = &bar {
-            // What the bar lists, which the list behind it never shows: its
-            // heading, how many messages it found and the row Return runs.
+            // What the bar lists, which the list behind it never shows: how
+            // many messages it found and the row Return runs.
             // One key each, because a check names an app field by its whole
             // key (`app.focus.bar.messages`).
             let highlighted = bar.highlighted();
             let fields = [
                 ("focus.bar.typed", serde_json::json!(bar.typed())),
-                ("focus.bar.heading", serde_json::json!(bar.heading())),
                 ("focus.bar.hints", serde_json::json!(bar.hints())),
                 (
                     "focus.bar.messages",
@@ -7110,19 +7105,11 @@ impl FocusWindow {
                 ),
                 (
                     "focus.bar.highlighted",
-                    serde_json::json!(highlighted.as_ref().map(|(kind, _, _)| *kind)),
-                ),
-                (
-                    "focus.bar.highlighted_id",
-                    serde_json::json!(
-                        highlighted
-                            .as_ref()
-                            .and_then(|(_, id, _)| id.map(|id| id.get().to_string()))
-                    ),
+                    serde_json::json!(highlighted.as_ref().map(|(kind, _)| *kind)),
                 ),
                 (
                     "focus.bar.highlighted_text",
-                    serde_json::json!(highlighted.map(|(_, _, text)| text)),
+                    serde_json::json!(highlighted.map(|(_, text)| text)),
                 ),
             ];
             for (key, value) in fields {

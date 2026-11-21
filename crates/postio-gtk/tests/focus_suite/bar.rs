@@ -49,7 +49,7 @@ pub fn in_rec_offers_receipts_and_return_searches_it() {
         assert!(
             crate::settle_until(async || {
                 bar.highlighted()
-                    .is_some_and(|(kind, _, text)| kind == "folder" && text.starts_with("Receipts"))
+                    .is_some_and(|(kind, text)| kind == "folder" && text.starts_with("Receipts"))
             })
             .await,
             "Receipts is not offered: {:?} of {:?}",
@@ -276,7 +276,7 @@ pub fn a_word_lists_top_hits_and_return_shows_all() {
             "a word listed a command: {said:?}"
         );
         assert_eq!(
-            bar.highlighted().map(|(kind, _, _)| kind),
+            bar.highlighted().map(|(kind, _)| kind),
             Some("show_all"),
             "{:?}",
             bar.highlighted()
@@ -338,7 +338,7 @@ pub fn the_dropdown_opens_on_the_newest_recent_search() {
         }
         let newest = |bar: &postio_gtk::bar::Bar| {
             bar.highlighted()
-                .is_some_and(|(_, _, text)| text.starts_with("plan"))
+                .is_some_and(|(_, text)| text.starts_with("plan"))
         };
         let bar = open_bar(&window);
         assert!(
@@ -350,7 +350,7 @@ pub fn the_dropdown_opens_on_the_newest_recent_search() {
         support::press(&window, "Down", gtk::gdk::ModifierType::empty());
         assert!(
             bar.highlighted()
-                .is_some_and(|(_, _, text)| text.starts_with("archive")),
+                .is_some_and(|(_, text)| text.starts_with("archive")),
             "Down did not move: {:?}",
             bar.highlighted()
         );
