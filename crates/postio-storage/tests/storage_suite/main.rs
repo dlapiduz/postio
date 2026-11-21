@@ -15,6 +15,12 @@
 //! set a process-global -- no `set_var`, no `#![...]` crate attributes -- and
 //! that was checked before they were merged rather than assumed. A test that
 //! grows one has to move back out, or it will change what its neighbours see.
+//!
+//! A case that only *reads* something the process shares -- a count every
+//! thread adds to, a slot the last session to open filled, a log callsite --
+//! is no setter, and still sees its neighbours under `cargo test`. It starts
+//! with `postio_test_support::alone!`, which gives it a process of its own
+//! wherever it does not already have one (#1976).
 
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 

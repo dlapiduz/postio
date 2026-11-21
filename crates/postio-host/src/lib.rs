@@ -709,21 +709,27 @@ impl Host {
         self.inner.runtime().clone()
     }
 
-    /// Stop the engines and mark a clean end, before the host is dropped.
+    /// Stop this host's engines and mark a clean end, before the host is
+    /// dropped.
     ///
     /// Engines first: they are the one thing still writing on threads of
     /// their own, and a write torn by the process exit is left for a pre-1.0
     /// engine to recover (the classic app's startup said the same, and did this).
+    /// Only this host's: a process with several -- a test suite -- stopped
+    /// every one of them whenever one host ended (#1976).
     pub fn stop(&self) {
-        postio_runtime::stop_retained();
+        let engines: Vec<_> =
+            std::mem::take(&mut *self.inner.engines.running.lock().expect("never poisoned"))
+                .into_values()
+                .collect();
+        postio_runtime::stop(engines);
         self.close();
     }
 
     /// What [`Host::stop`] does once nothing is syncing: Focus's mark kept
     /// current, so nothing that landed since its last tick is sorted again
     /// at the next open, and the store's clean end. Apart so a test can
-    /// close one host of several in a process -- the engines
-    /// [`postio_runtime::stop_retained`] stops are the whole process's.
+    /// close a host and launch the next session over the same store.
     pub(crate) fn close(&self) {
         self.keep_focus_mark();
         postio_session::blocking::now(postio_session::end_session(&self.inner.wiring.database));

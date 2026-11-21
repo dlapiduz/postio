@@ -178,6 +178,12 @@ use postio_test_support::logs::Captured;
 
 #[tokio::test]
 async fn no_key_material_reaches_the_log_at_any_level() {
+    // A callsite caches whether anyone listens, process-wide: alone, or a
+    // neighbour that reached it first with no subscriber silences it here,
+    // and a log nothing reached passes for one that kept the key out.
+    if postio_test_support::alone!("no_key_material_reaches_the_log_at_any_level") {
+        return;
+    }
     let captured = Captured::default();
     let subscriber = tracing_subscriber::fmt()
         .with_writer(captured.clone())

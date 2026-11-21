@@ -3166,6 +3166,43 @@ fn a_body_asked_of_an_engine_that_is_replaced_is_asked_of_the_new_one_at_once() 
 }
 
 #[test]
+fn stopping_one_host_leaves_another_hosts_engines_running() {
+    // #1976: `Host::stop` stopped every engine the process had retained, so
+    // a test whose host stopped took its neighbour's sync down with it --
+    // the end-to-end case that waited out its 120 s deadline when its suite
+    // ran in one process. A host stops what it started.
+    let first = syncing_world(server_with_one_message());
+    let second = syncing_world(server_with_one_message());
+    for world in [&first, &second] {
+        let (client, _events) = world.frontend(ClientKind::Tui);
+        world.host().start_syncing();
+        eventually(world, || row_titled(world, &client, "Tide gate"));
+    }
+    let engine_of = |world: &World| {
+        world
+            .host()
+            .inner
+            .engines
+            .running
+            .lock()
+            .expect("never poisoned")
+            .values()
+            .next()
+            .cloned()
+            .expect("the account's engine")
+    };
+    let (mine, theirs) = (engine_of(&first), engine_of(&second));
+
+    first.host().stop();
+
+    assert!(mine.is_stopped(), "the host stopped its own engine");
+    assert!(
+        !theirs.is_stopped(),
+        "stopping one host stopped another host's engine"
+    );
+}
+
+#[test]
 fn an_engine_that_is_replaced_stops_so_an_account_never_syncs_twice() {
     // #1986: a re-authorisation started a second engine and left the first
     // running, retained for the session.

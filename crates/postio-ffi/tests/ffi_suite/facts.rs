@@ -275,6 +275,10 @@ async fn one_open_is_one_body_read_counted_at_the_sql_seam() {
 /// store owner's thread as well as this one.
 #[tokio::test(flavor = "multi_thread")]
 async fn opening_a_message_in_focus_reads_and_sanitises_its_body_once() {
+    // The loads are the process's: alone, or a neighbour's are counted too.
+    if postio_test_support::alone!("opening_a_message_in_focus_reads_and_sanitises_its_body_once") {
+        return;
+    }
     let (session, message) = a_message_with_everything().await;
 
     let loads = test_support::counting::body_loads();
