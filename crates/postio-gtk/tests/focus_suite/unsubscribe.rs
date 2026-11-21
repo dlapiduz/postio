@@ -284,7 +284,27 @@ async fn the_offer_is_up(window: &postio_gtk::window::FocusWindow, button: &str)
             window
                 .toast_host()
                 .is_some_and(|host| host.is_ancestor(&reading.dialog())),
-            "the offer is drawn under the open message, out of reach"
+            "the offer is drawn under the open message, out of reach: in {}; \
+             the dialog is {}mapped, its toast overlay {}mapped, the message {}in the pane",
+            // What there was, so the next failure says which half (#2158):
+            // a toast raised while the dialog's overlay was not mapped, or
+            // one carried back to the window's overlay after it was raised.
+            match window.toast_host() {
+                None => "no overlay".to_owned(),
+                Some(host) if host == reading.toast_overlay() => "the dialog's overlay".to_owned(),
+                Some(host) => format!("{} {:?}", host.type_(), host.css_classes()),
+            },
+            if reading.dialog().is_mapped() {
+                ""
+            } else {
+                "not "
+            },
+            if reading.toast_overlay().is_mapped() {
+                ""
+            } else {
+                "not "
+            },
+            if reading.in_pane() { "" } else { "not " },
         );
     }
     let said = window.toast_showing().expect("the toast's words");
