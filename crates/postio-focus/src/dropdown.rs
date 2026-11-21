@@ -1,5 +1,4 @@
-//! The search dropdown: the bar's search half on a frontend that has a
-//! results view (`Policy.caps.results_view`; spec 010 step 2, screens 01
+//! The search dropdown: the bar's search half (spec 010 step 2, screens 01
 //! and 03).
 //!
 //! Empty, it lists the searches run lately, the pinned saved searches with

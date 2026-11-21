@@ -3164,9 +3164,6 @@ impl FocusController {
     /// ⌘[ and ⌘]: from the inbox or the results, nothing closed on the way
     /// (D18). `None` when `id` is neither.
     pub(crate) fn history_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
-        if !self.policy.caps.results_view {
-            return None;
-        }
         let here = self.here();
         let to = match id {
             CommandId::HistoryBack => self.history.back(here),

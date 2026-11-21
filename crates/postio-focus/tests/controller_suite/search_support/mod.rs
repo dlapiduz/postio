@@ -65,7 +65,6 @@ pub fn today() -> DateTime<Local> {
 /// The Mac's controller, its clock stopped on the screens' day.
 pub fn mac() -> FocusController {
     let mut focus = FocusController::new(Policy::for_platform(Platform::Apple));
-    assert!(focus.policy().caps.results_view);
     let _ = focus.handle(Input::Clock(Some(today())));
     focus
 }

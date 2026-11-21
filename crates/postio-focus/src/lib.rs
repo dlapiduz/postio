@@ -47,7 +47,7 @@ mod thread_menu;
 mod verbs;
 mod walk;
 
-pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRead};
+pub use bar::{BarLine, BarLineKind, BarMode, BarView, PlacesRead};
 pub use capture::{CaptureProject, CaptureView};
 pub use compose::{AUTOSAVE, ComposerKind};
 pub use confirm::Confirm;
@@ -103,15 +103,6 @@ pub struct Capabilities {
     /// Secondary surfaces stack over each other: Linux's dialogs do, the
     /// Mac's windows replace each other (spec 009 M4).
     pub stacking: bool,
-    /// Search has its two layers: the dropdown, and the results view it
-    /// opens (spec 010 D17). Both platforms have them since Linux adopted
-    /// them (#1825); spec 009's blend it switched off goes with #2079.
-    pub results_view: bool,
-    /// `from:` and `to:` know people: a word that names a contact finds
-    /// mail from every address they own, `from:@Group` every member
-    /// (specs/011-focus-contacts S4). Both platforms have it since Linux's
-    /// search adopted spec 010's (#1825).
-    pub people_search: bool,
     /// The Contacts view, a mode of the main window (specs/011-focus-contacts
     /// S7). Both platforms have it (Linux's came at S13).
     pub contacts_view: bool,
@@ -126,8 +117,6 @@ impl Policy {
             caps: Capabilities {
                 reading_pane: linux,
                 stacking: linux,
-                results_view: true,
-                people_search: true,
                 contacts_view: true,
             },
         }
@@ -927,18 +916,6 @@ pub enum Request {
     },
     /// Every place there is to go: one read, however many accounts.
     Places,
-    /// Search this machine's index, for the bar.
-    Search {
-        /// The words, lowered.
-        query: postio_search::ParsedQuery,
-        /// Which order the hits come in.
-        order: postio_search::ResultOrder,
-        /// The bar's words' stamp, echoed in the answer.
-        stamp: u64,
-        /// Whether to read which hits a digest holds: only while a digest
-        /// rule can hold mail, since a hit then says where it waits.
-        held: bool,
-    },
     /// Search this machine's index for conversations: the dropdown's top
     /// hits and the facets it narrows by (spec 010).
     Conversations {
@@ -1109,13 +1086,6 @@ pub enum Request {
         searches: Vec<(String, String)>,
         /// The day relative dates are read against.
         today: chrono::NaiveDate,
-    },
-    /// A folder's newest conversations, for `in:`.
-    Folder {
-        /// The folder.
-        mailbox: MailboxId,
-        /// The bar's words' stamp, echoed in the answer.
-        stamp: u64,
     },
     /// The folder of `role` in the account Focus writes from: the first
     /// enabled account with one.
@@ -1375,13 +1345,6 @@ pub enum Reply {
     Sent(Result<(), String>),
     /// The answer to [`Request::Places`].
     Places(Result<PlacesRead, String>),
-    /// The answer to [`Request::Search`].
-    Search {
-        /// The stamp it was asked under.
-        stamp: u64,
-        /// What it found.
-        answer: Result<Found, String>,
-    },
     /// The answer to [`Request::Conversations`].
     Conversations {
         /// The stamp it was asked under.
@@ -1502,15 +1465,6 @@ pub enum Reply {
     RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
     /// The answer to [`Request::SavedCounts`].
     SavedCounts(Result<Vec<postio_client::protocol::SavedCount>, String>),
-    /// The answer to [`Request::Folder`].
-    Folder {
-        /// The stamp it was asked under.
-        stamp: u64,
-        /// How many conversations the folder holds.
-        count: Result<u32, String>,
-        /// Its newest conversations.
-        rows: Result<Vec<FoundRow>, String>,
-    },
     /// The answer to [`Request::RoleFolder`]: the folder and its name.
     RoleFolder(Option<(MailboxId, String)>),
     /// The answer to [`Request::Labels`].
@@ -1752,11 +1706,7 @@ impl FocusController {
             cursor: cursor::Cursor::default(),
             verbs: verbs::Verbs::default(),
             surfaces: surfaces::Surfaces::default(),
-            bar: bar::Bar::new(
-                policy.platform,
-                policy.caps.results_view,
-                policy.caps.people_search,
-            ),
+            bar: bar::Bar::new(policy.platform),
             pickers: pickers::Pickers::default(),
             toast_undo: None,
             shown: None,
@@ -2099,14 +2049,12 @@ impl FocusController {
             Input::Reply(
                 _,
                 reply @ (Reply::Places(_)
-                | Reply::Search { .. }
                 | Reply::Conversations { .. }
                 | Reply::Passages { .. }
                 | Reply::Suggest { .. }
                 | Reply::LatestFrom { .. }
                 | Reply::RecentSearches(_)
                 | Reply::SavedCounts(_)
-                | Reply::Folder { .. }
                 | Reply::RoleFolder(_)),
             ) => {
                 let steps = self.bar_reply(reply, rows);
@@ -2125,7 +2073,6 @@ impl FocusController {
                 self.effects(steps)
             }
             Input::Config(config) => {
-                self.bar.digesting = !config.digests.is_empty();
                 let mut steps = self.bar_input(Input::Filtering(config.filtering), rows);
                 steps.extend(self.set_config(config));
                 self.effects(steps)
@@ -2773,9 +2720,7 @@ impl FocusController {
     /// the selection's, `!`, and the verbs on the list. A frontend sends the
     /// rest -- a surface's commands, the composer's -- where it always did.
     pub fn answers(&self, id: CommandId) -> bool {
-        if self.surfaces.top() == Some(SurfaceKind::Bar)
-            && bar::bar_key(id, self.policy.caps.results_view)
-        {
+        if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
             return true;
         }
         if pickers::picker_key(id) {
@@ -2795,9 +2740,7 @@ impl FocusController {
             {
                 return true;
             }
-            if self.policy.caps.results_view
-                && matches!(id, CommandId::HistoryBack | CommandId::HistoryForward)
-            {
+            if matches!(id, CommandId::HistoryBack | CommandId::HistoryForward) {
                 return true;
             }
         }
@@ -3199,12 +3142,6 @@ mod tests {
                 key: "atlas".to_owned(),
             },
             Request::Places,
-            Request::Search {
-                query,
-                order: postio_search::ResultOrder::default(),
-                stamp: 1,
-                held: false,
-            },
         ] {
             assert_eq!(request.lane(), None, "{request:?}");
         }
