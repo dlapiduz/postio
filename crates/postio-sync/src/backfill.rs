@@ -47,6 +47,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use chrono::{DateTime, Utc};
 use postio_account::backend::{BackendError, BodyPart, MailBackend, VecSink};
 use postio_account::cancel::CancelToken;
+use postio_model::fetch::{PayloadAsk, Sections};
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
 use postio_storage::repository::{
@@ -519,6 +520,17 @@ impl BodyRequest {
 }
 
 impl Want {
+    /// What a fetch for this want brings, as the news of it names it: the
+    /// part a waiter listens for (#1996).
+    pub fn sections(&self) -> Sections {
+        match self {
+            Want::Text => Sections::Text,
+            Want::Payloads(parts) => Sections::Parts(parts.clone()),
+            Want::Whole => Sections::Whole,
+            Want::HeaderBlock => Sections::Headers,
+        }
+    }
+
     /// Folds another request for the same message into this one.
     ///
     /// Two payload requests union their parts: one round trip, both parts.
@@ -1385,12 +1397,12 @@ pub async fn request_whole(
 /// message: `BODY.PEEK[2]` for the part somebody clicked, not `BODY.PEEK[]`
 /// for the forty megabytes it happens to sit beside.
 ///
-/// Returns `false` when there is nothing to fetch, and each way of meaning
-/// that is a different sentence the reading pane can say:
-///
-/// * [`AttachmentPolicy::Never`] — the bytes were never going to be fetched.
-/// * every named part already has its bytes — read the blob instead.
-/// * the message has no local row, or no `UID`, or is already `full`.
+/// Answers [`PayloadAsk::Queued`] when something joined the queue, and
+/// otherwise why nothing did, because each is a different sentence the
+/// person who asked is told (#1996): attachments are never downloaded, the
+/// bytes are already here, the message or part is gone, or the message has
+/// no `UID` to fetch by yet. Whether the account can reach its server is the
+/// engine's to add; this knows only the store.
 ///
 /// A part whose [`Attachment::part_headers`](postio_model::Attachment) were
 /// never recorded escalates the request to [`Want::Whole`]: `BODY[2]` comes
@@ -1401,20 +1413,21 @@ pub async fn request_payloads(
     backfill: &mut Backfill,
     message_id: MessageId,
     parts: &[String],
-) -> Result<bool> {
+) -> Result<PayloadAsk> {
     if backfill.policy().attachments == AttachmentPolicy::Never {
-        return Ok(false);
+        return Ok(PayloadAsk::Never);
     }
     let messages = MessageRepository::new(connection);
-    let Some(candidate) = messages.backfill_candidate(message_id).await? else {
-        return Ok(false);
-    };
     let Some(message) = messages.get(message_id).await? else {
-        return Ok(false);
+        return Ok(PayloadAsk::Gone);
     };
+    if message.sync.deleted_locally {
+        return Ok(PayloadAsk::Gone);
+    }
 
     let mut wanted = Vec::new();
     let mut needs_every_byte = false;
+    let mut found = false;
     for part_id in parts {
         let Some(attachment) = message
             .attachments
@@ -1423,6 +1436,7 @@ pub async fn request_payloads(
         else {
             continue;
         };
+        found = true;
         if attachment.blob_id.is_some() {
             continue;
         }
@@ -1431,9 +1445,24 @@ pub async fn request_payloads(
         }
         wanted.push(part_id.clone());
     }
-    if wanted.is_empty() {
-        return Ok(false);
+    if !found {
+        return Ok(PayloadAsk::Gone);
     }
+    if wanted.is_empty() {
+        return Ok(PayloadAsk::Local);
+    }
+    let Some(candidate) = messages.backfill_candidate(message_id).await? else {
+        // Here, with a part whose bytes are not: either the server has not
+        // given the message an address yet, or its body is `full`, and the
+        // raw source holds the part.
+        return Ok(
+            if message.server.uid.is_none() || message.server.remote_id.is_none() {
+                PayloadAsk::NotOnServer
+            } else {
+                PayloadAsk::Local
+            },
+        );
+    };
 
     let mut request = BodyRequest::from(candidate);
     request.want = if needs_every_byte {
@@ -1442,7 +1471,7 @@ pub async fn request_payloads(
         Want::Payloads(wanted)
     };
     backfill.request_now(request);
-    Ok(true)
+    Ok(PayloadAsk::Queued)
 }
 
 /// Queues what a message that has just arrived needs, on the fresh lane:

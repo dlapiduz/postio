@@ -7,6 +7,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
+use postio_model::fetch::PayloadAsk;
 use postio_model::{BodyState, Mailbox, MessageId, Uid, UidValidity};
 use postio_storage::BlobStore;
 use postio_storage::repository::{MailboxRepository, MessageRepository};
@@ -1761,10 +1762,11 @@ async fn opening_an_attachment_fetches_the_part_and_records_where_it_landed() {
     let (id, _uid) = a_partial_message(&local, &backend).await;
 
     let mut backfill = Backfill::new(policy());
-    assert!(
+    assert_eq!(
         request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
             .await
             .expect("ask"),
+        PayloadAsk::Queued,
         "there is a payload on the server to ask for"
     );
     let claim = backfill.next_body().expect("a claim");
@@ -1836,10 +1838,11 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
     .expect("fetch");
     let after_first = backend.calls();
 
-    assert!(
-        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+    assert_eq!(
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
             .await
             .expect("ask"),
+        PayloadAsk::Local,
         "the bytes are here; opening it again must not reach the network"
     );
     assert!(backfill.next_body().is_none());
@@ -1923,10 +1926,11 @@ async fn an_evicted_payload_can_be_fetched_again() {
 
     // And the part is askable again, from the same call the attachment chip
     // makes when somebody presses download.
-    assert!(
+    assert_eq!(
         request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
             .await
             .expect("ask"),
+        PayloadAsk::Queued,
         "an evicted payload is a payload the server still has: eviction is \
          not a delete from the user's point of view"
     );
@@ -2031,11 +2035,71 @@ async fn never_leaves_a_payload_on_the_server_even_when_it_is_opened() {
         ..policy()
     });
 
-    assert!(
-        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+    assert_eq!(
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
             .await
             .expect("ask"),
+        PayloadAsk::Never,
         "filename search and nothing more -- that is what `never` promises"
+    );
+    assert!(backfill.next_body().is_none());
+}
+
+#[tokio::test]
+async fn a_part_the_message_does_not_have_is_gone_and_asks_nothing() {
+    // #1996: each "nothing to fetch" is its own sentence for the person.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+    let mut backfill = Backfill::new(policy());
+
+    assert_eq!(
+        request_payloads(&local.connection, &mut backfill, id, &["9".to_owned()])
+            .await
+            .expect("ask"),
+        PayloadAsk::Gone
+    );
+    assert_eq!(
+        request_payloads(
+            &local.connection,
+            &mut backfill,
+            MessageId::new(id.get() + 1000),
+            &["2".to_owned()]
+        )
+        .await
+        .expect("ask"),
+        PayloadAsk::Gone,
+        "a message that is not here"
+    );
+    assert!(backfill.next_body().is_none());
+}
+
+#[tokio::test]
+async fn a_part_of_a_message_with_no_server_address_says_so_and_asks_nothing() {
+    // A message moved a moment ago has no UID until the next sync, so there
+    // is nowhere to fetch its part from yet (#1996).
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+    let messages = MessageRepository::new(&local.connection);
+    let mut row = messages.get(id).await.expect("get").expect("row");
+    row.server.uid = None;
+    messages.update(&mut row).await.expect("updated");
+    let mut backfill = Backfill::new(policy());
+
+    assert_eq!(
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
+        PayloadAsk::NotOnServer
     );
     assert!(backfill.next_body().is_none());
 }

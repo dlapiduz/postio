@@ -1036,6 +1036,7 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
     world.host().inner.hub.emit(Event::BodyLoaded {
         account: world.account,
         message: questions[0],
+        sections: postio_core::event::Sections::Text,
     });
     crate::tests::eventually(&world, || {
         crate::tests::body_classified_at(&world, questions[0])
@@ -1056,6 +1057,7 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
     world.host().inner.hub.emit(Event::BodyLoaded {
         account: world.account,
         message: next,
+        sections: postio_core::event::Sections::Text,
     });
     crate::tests::eventually(&world, || crate::tests::body_classified_at(&world, next));
     assert_eq!(

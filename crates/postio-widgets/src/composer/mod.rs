@@ -660,6 +660,11 @@ mod imp {
         /// about the text, as the folded messages of a forwarded thread.
         pub below_body: gtk::Box,
         pub attachments_list: gtk::ListBox,
+        /// The carried parts, by MIME path, being fetched from the message
+        /// this draft forwards: drawn downloading until their bytes land
+        /// (#1690). Not part of the draft -- it is what the fetch is doing,
+        /// and a new composition starts with none.
+        pub downloading: RefCell<std::collections::BTreeSet<String>>,
         /// Everything about the draft that is not in a field: its id, account,
         /// kind, attachments, and what it is a reply to.
         pub draft: RefCell<Draft>,
@@ -789,6 +794,7 @@ mod imp {
                 attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
                 below_body: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 attachments_list: gtk::ListBox::new(),
+                downloading: RefCell::new(std::collections::BTreeSet::new()),
                 draft: RefCell::new(Draft::new(AccountId::UNASSIGNED)),
                 composing_from: Cell::new(AccountId::UNASSIGNED),
                 identities: RefCell::new(Vec::new()),
@@ -2615,6 +2621,41 @@ impl Composer {
         self.refresh();
     }
 
+    /// Draws the carried parts named by `parts` as downloading from the
+    /// message this draft forwards, and every other part as not: what a
+    /// host says once it has asked for them (#1690). Empty says nothing is
+    /// on its way.
+    pub fn set_downloading(&self, parts: impl IntoIterator<Item = String>) {
+        let parts: std::collections::BTreeSet<String> = parts.into_iter().collect();
+        if *self.imp().downloading.borrow() == parts {
+            return;
+        }
+        self.imp().downloading.replace(parts);
+        self.render_attachments();
+    }
+
+    /// A fetch of `message`'s `sections` ended, landed or refused: if this
+    /// draft forwards that message, the parts it held stop being drawn
+    /// downloading. A refused part is fetched again when the forward is sent
+    /// (the drain's carry stage), so it reads as an ordinary attachment.
+    pub fn fetch_settled(
+        &self,
+        message: postio_model::MessageId,
+        sections: &postio_core::event::Sections,
+    ) {
+        let imp = self.imp();
+        if imp.draft.borrow().forwarded_from != Some(message) {
+            return;
+        }
+        let before = imp.downloading.borrow().len();
+        imp.downloading
+            .borrow_mut()
+            .retain(|part| !sections.holds_part(part));
+        if imp.downloading.borrow().len() != before {
+            self.render_attachments();
+        }
+    }
+
     /// Rebuilds the attachment rows from the draft's own list, which stays
     /// the single source of truth — never the widgets, matching how `to`,
     /// `cc` and `bcc` work the other way around.
@@ -2631,26 +2672,33 @@ impl Composer {
         imp.attachments_box.set_visible(!attachments.is_empty());
     }
 
-    /// One row: name, size (flagging one past [`LARGE_ATTACHMENT_BYTES`]),
-    /// and a button to remove it before send.
+    /// One row: name, size (flagging one past [`LARGE_ATTACHMENT_BYTES`],
+    /// and a carried part still downloading), and a button to remove it
+    /// before send.
     fn build_attachment_row(&self, index: usize, attachment: &Attachment) -> gtk::Widget {
+        let downloading = attachment
+            .part_id
+            .as_ref()
+            .is_some_and(|part| self.imp().downloading.borrow().contains(part));
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_margin_top(4);
         row.set_margin_bottom(4);
-        row.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Attachment: {}",
-            attachment.display_name()
-        ))]);
+        row.update_property(&[gtk::accessible::Property::Label(&if downloading {
+            format!("Attachment: {}, downloading", attachment.display_name())
+        } else {
+            format!("Attachment: {}", attachment.display_name())
+        })]);
 
         let name = gtk::Label::new(Some(attachment.display_name()));
         name.set_xalign(0.0);
         name.set_hexpand(true);
         name.set_ellipsize(pango::EllipsizeMode::Middle);
 
-        let mut meta_text = postio_ui::format::human_size(attachment.size);
-        if attachment.size >= LARGE_ATTACHMENT_BYTES {
-            meta_text.push_str(" — large");
-        }
+        let meta_text = postio_ui::compose::attachment_note(
+            &postio_ui::format::human_size(attachment.size),
+            attachment.size >= LARGE_ATTACHMENT_BYTES,
+            downloading,
+        );
         let meta = gtk::Label::new(Some(&meta_text));
         meta.add_css_class("postio-compose-label");
         meta.add_css_class("dim-label");
@@ -2762,6 +2810,7 @@ impl Composer {
 
         let identity = draft.identity_id;
         *imp.draft.borrow_mut() = draft;
+        imp.downloading.borrow_mut().clear();
         imp.filling.set(false);
         self.render_attachments();
 

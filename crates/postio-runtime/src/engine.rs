@@ -46,6 +46,7 @@ use postio_account::auth::TokenSource;
 use postio_account::backend::{BackendError, MailBackend};
 use postio_core::event::MailFootprint;
 use postio_model::RoleOverrides;
+use postio_model::fetch::{PayloadAsk, Sections};
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
 use postio_storage::repository::{
@@ -281,7 +282,7 @@ enum Job {
     RequestPayloads {
         message: MessageId,
         parts: Vec<String>,
-        reply: tokio::sync::oneshot::Sender<Result<bool, EngineError>>,
+        reply: tokio::sync::oneshot::Sender<Result<PayloadAsk, EngineError>>,
     },
     RequestWholeMessage {
         message: MessageId,
@@ -790,14 +791,16 @@ impl Engine {
     /// pane sends when somebody opens one. By section — `BODY.PEEK[2]` — not
     /// the message around it, and the bytes land in `attachments.blob_id`.
     ///
-    /// `false` means nothing was fetched, and there are three ways to mean it:
-    /// the bytes are already here, the message has no such part any more, or
-    /// [`AttachmentPolicy::Never`] is in force.
+    /// The answer says whether the fetch was queued and, when it was not,
+    /// why: each is a different sentence for the person who asked (#1996).
+    /// [`PayloadAsk::Unreachable`] is queued all the same, for when the link
+    /// is back. The bytes land as a `BodyLoaded` naming the parts, or a
+    /// `BodyFailed` does.
     pub async fn request_payloads(
         &self,
         message: MessageId,
         parts: Vec<String>,
-    ) -> Result<bool, EngineError> {
+    ) -> Result<PayloadAsk, EngineError> {
         self.ask(|reply| Job::RequestPayloads {
             message,
             parts,
@@ -2371,7 +2374,13 @@ async fn pump_body(
                     continue;
                 }
             };
-            let Some((message, mailbox, result)) = settled else {
+            let Some(Settled {
+                message,
+                mailbox,
+                sections,
+                result,
+            }) = settled
+            else {
                 break;
             };
             // A slot just freed. If the user has opened something since this call
@@ -2385,7 +2394,7 @@ async fn pump_body(
                 // message, which is not a batch.
                 running.push(fetch_one_body(parts, store, inline_cap, None, next));
             }
-            settle_body(parts, state, message, mailbox, result).await;
+            settle_body(parts, state, message, mailbox, sections, result).await;
         }
 
         // The next batch: already here, still on the wire, or never claimed.
@@ -2498,31 +2507,27 @@ async fn fetch_one_body(
     inline_cap: Option<u64>,
     prefetched: Option<Rc<RefCell<postio_sync::backfill::Prefetched>>>,
     claim: postio_sync::backfill::Claim,
-) -> (MessageId, MailboxId, Result<Outcome, SyncError>) {
-    let message = claim.request.message;
-    let mailbox = claim.request.mailbox;
+) -> Settled {
+    let settled = |result| Settled {
+        message: claim.request.message,
+        mailbox: claim.request.mailbox,
+        sections: claim.request.want.sections(),
+        result,
+    };
     // A body queued behind the write gate when the shutdown fired has not
     // started, and its text may already be in the prefetch, so nothing below
     // would hear the token. Writes already begun finish; this one has not.
     if claim.cancel.is_cancelled() {
-        return (
-            message,
-            mailbox,
-            Err(SyncError::Backend(BackendError::Cancelled)),
-        );
+        return settled(Err(SyncError::Backend(BackendError::Cancelled)));
     }
     let connection = match store.connect_background().await {
         Ok(connection) => connection,
         // Reported settled rather than left in flight for ever: a claim
         // nobody finishes is a queue that never drains.
         Err(error) => {
-            return (
-                message,
-                mailbox,
-                Ok(Outcome::Failed {
-                    reason: error.to_string(),
-                }),
-            );
+            return settled(Ok(Outcome::Failed {
+                reason: error.to_string(),
+            }));
         }
     };
     // Lifted out **before** the fetch, and the borrow dropped with the
@@ -2542,7 +2547,16 @@ async fn fetch_one_body(
         &claim.cancel,
     )
     .await;
-    (message, mailbox, result)
+    settled(result)
+}
+
+/// One fetched body, as [`fetch_one_body`] hands it to [`settle_body`]:
+/// which message, and which of its sections the fetch was for.
+struct Settled {
+    message: MessageId,
+    mailbox: MailboxId,
+    sections: Sections,
+    result: Result<Outcome, SyncError>,
 }
 
 /// Say how far the body queue has got.
@@ -2722,7 +2736,8 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
                         .map_err(|error| EngineError::new(error.to_string()))
                 }
                 Err(error) => Err(EngineError::new(error.to_string())),
-            };
+            }
+            .map(|asked| unreachable_unless_up(asked, state.supervisor.link()));
             // Interactive, like `RequestBody`: the user opened that chip and
             // is watching a spinner for exactly these bytes (#316).
             announce_backfill_now(parts, state, std::time::Instant::now()).await;
@@ -2764,6 +2779,24 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             let outcome = sync(parts, store, state, mailbox).await;
             let _ = reply.send(outcome);
         }
+    }
+}
+
+/// A queued payload ask on a link that cannot carry it now, said so: the
+/// person waiting on a save hears "offline" now rather than "still
+/// downloading" in thirty seconds. A link about to make its first attempt
+/// is not down; one waiting out a failure, with no network, or stopped for
+/// the person is.
+fn unreachable_unless_up(asked: PayloadAsk, link: &Link) -> PayloadAsk {
+    let down = match link {
+        Link::Online { .. } => false,
+        Link::Waiting { attempts, .. } => *attempts > 0,
+        Link::Offline | Link::Blocked(_) => true,
+    };
+    if asked == PayloadAsk::Queued && down {
+        PayloadAsk::Unreachable
+    } else {
+        asked
     }
 }
 
@@ -3703,7 +3736,7 @@ async fn fetch_bodies(
 /// stopped short of because a job was waiting.
 #[derive(Default)]
 struct Fetched {
-    results: Vec<(MessageId, MailboxId, Result<Outcome, SyncError>)>,
+    results: Vec<Settled>,
     unstarted: Vec<postio_sync::backfill::Claim>,
 }
 
@@ -3713,8 +3746,16 @@ async fn settle_bodies(parts: &EngineParts, state: &mut State, fetched: Fetched)
     for claim in fetched.unstarted {
         state.backfill.release(claim);
     }
-    for (message, mailbox, result) in fetched.results {
-        settle_body(parts, state, message, mailbox, result).await;
+    for settled in fetched.results {
+        settle_body(
+            parts,
+            state,
+            settled.message,
+            settled.mailbox,
+            settled.sections,
+            settled.result,
+        )
+        .await;
     }
 }
 
@@ -3730,6 +3771,7 @@ async fn settle_body(
     state: &mut State,
     message: MessageId,
     mailbox: MailboxId,
+    sections: Sections,
     result: Result<Outcome, SyncError>,
 ) {
     let outcome = result.unwrap_or_else(|error| {
@@ -3750,10 +3792,12 @@ async fn settle_body(
     });
     // The reading pane is waiting on exactly this for whatever the user just
     // opened, so it is worth saying the moment the bytes are local.
+    // Named by section, so a wait for one part hears its own (#1996, #1690).
     if matches!(outcome, Outcome::Stored { .. }) {
         parts.events.emit(Event::BodyLoaded {
             account: parts.account,
             message,
+            sections: sections.clone(),
         });
     }
     // The open message reads again: a refusal changes its plate (#1918), and
@@ -3766,6 +3810,7 @@ async fn settle_body(
         parts.events.emit(Event::BodyFailed {
             account: parts.account,
             message,
+            sections,
         });
     }
     state.backfill.finished(message, outcome);
@@ -4828,6 +4873,7 @@ mod tests {
             state,
             claim.request.message,
             claim.request.mailbox,
+            claim.request.want.sections(),
             result,
         )
         .await;
@@ -4880,6 +4926,72 @@ mod tests {
                 .backfill
                 .enqueue_at(body_request(1), Instant::now() + Duration::from_secs(3600)),
             "a dropped link is not the message's fault"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_part_is_said_by_its_section_so_a_text_wait_does_not_hear_it() {
+        // #1996: the news names what the fetch was for.
+        let database = postio_storage::test_support::memory().await;
+        let (parts, events, _directory) = parts_over(database).await;
+        let mut state = empty_state();
+        let mut request = body_request(1);
+        request.want = postio_sync::Want::Payloads(vec!["2".to_owned()]);
+        state.backfill.request_now(request);
+        let claim = state.backfill.next_interactive_body().expect("the claim");
+        settle_body(
+            &parts,
+            &mut state,
+            claim.request.message,
+            claim.request.mailbox,
+            claim.request.want.sections(),
+            Ok(Outcome::Failed {
+                reason: "NO [UNAVAILABLE]".to_owned(),
+            }),
+        )
+        .await;
+
+        let mut failed = Vec::new();
+        while let Some(event) = events.try_next() {
+            if let Event::BodyFailed { sections, .. } = event {
+                failed.push(sections);
+            }
+        }
+        assert_eq!(failed, [Sections::Parts(vec!["2".to_owned()])]);
+    }
+
+    #[test]
+    fn a_queued_ask_on_a_link_that_is_down_says_it_cannot_be_reached() {
+        let now = Utc::now();
+        let up = Link::Online { since: now };
+        let starting = Link::Waiting {
+            attempts: 0,
+            retry_at: now,
+        };
+        let failing = Link::Waiting {
+            attempts: 2,
+            retry_at: now,
+        };
+        assert_eq!(
+            unreachable_unless_up(PayloadAsk::Queued, &up),
+            PayloadAsk::Queued
+        );
+        assert_eq!(
+            unreachable_unless_up(PayloadAsk::Queued, &starting),
+            PayloadAsk::Queued,
+            "a link about to make its first attempt is not down"
+        );
+        for down in [failing, Link::Offline] {
+            assert_eq!(
+                unreachable_unless_up(PayloadAsk::Queued, &down),
+                PayloadAsk::Unreachable,
+                "{down:?}"
+            );
+        }
+        assert_eq!(
+            unreachable_unless_up(PayloadAsk::Local, &Link::Offline),
+            PayloadAsk::Local,
+            "bytes already here are here, offline or not"
         );
     }
 

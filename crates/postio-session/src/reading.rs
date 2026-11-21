@@ -20,6 +20,7 @@
 use postio_core::Event;
 use postio_core::bridge::{EventSink, EventStream};
 use postio_model::MessageBody;
+use postio_model::fetch::PayloadAsk;
 use postio_model::ids::MessageId;
 use postio_runtime::Engine;
 use postio_storage::repository::{DraftRepository, MessageRepository};
@@ -409,28 +410,31 @@ pub async fn part_bytes_at(
             // and returns as soon as it is queued -- `true` means "there was
             // something to fetch", not "here it is". The bytes land when the
             // engine's own loop claims the job, so the wait is ours.
-            if engine
+            let asked = engine
                 .request_payloads(message, vec![part_id.to_owned()])
                 .await
-                .map_err(|error| error.message().to_string())?
-            {
-                wait_for_part(database, message, part_id, failures.as_ref(), BODY_WAIT).await?
-            } else {
-                // "Nothing to fetch" has two readings, and the queue cannot
-                // tell them apart: there is truly nothing (the message is
-                // gone, or AttachmentPolicy::Never), or the background lane
-                // fetched this very message between the look above and the
-                // queue's answer -- ADR 0016 backfills every mailbox, so
-                // both lanes chase the same messages, and the open that
-                // races the backfill is an ordinary open, not a corner
-                // (#109, four observed failures; a5735a3 is the same race
-                // in the runtime's own test). One re-read settles it: a
-                // committed write that made the answer `false` is visible
-                // to this read, so no wait is needed -- absent here means
-                // absent, and the sentence below is then the truth.
-                locate_part(database, message, part_id)
+                .map_err(|error| error.message().to_string())?;
+            tracing::debug!(
+                message = message.get(),
+                ?asked,
+                "asked the engine for a part"
+            );
+            match asked {
+                PayloadAsk::Queued => {
+                    wait_for_part(database, message, part_id, failures.as_ref(), BODY_WAIT).await?
+                }
+                // "Here already" may be the background lane having fetched
+                // this very message between the look above and the queue's
+                // answer -- ADR 0016 backfills every mailbox, so both lanes
+                // chase the same messages, and the open that races the
+                // backfill is an ordinary open, not a corner (#109; a5735a3
+                // is the same race in the runtime's own test). One re-read
+                // settles it: the committed write that made the answer is
+                // visible to this read, so no wait is needed.
+                PayloadAsk::Local => locate_part(database, message, part_id)
                     .await?
-                    .ok_or("There is nothing to fetch for that part")?
+                    .ok_or("There is nothing to fetch for that part")?,
+                refused => return Err(not_fetched(refused).into()),
             }
         }
     };
@@ -568,6 +572,30 @@ pub async fn save_all_parts(
     Ok(outcome)
 }
 
+/// What a person is told when the engine would not queue a part's fetch, by
+/// its reason (#1987, #1996). [`PayloadAsk::Queued`] and
+/// [`PayloadAsk::Local`] are answered by bytes, not by a sentence.
+pub fn not_fetched(asked: PayloadAsk) -> &'static str {
+    match asked {
+        PayloadAsk::Unreachable => {
+            "That attachment cannot be downloaded right now \u{2014} this \
+             account is not connected. It will download once the \
+             connection is back, so try again then"
+        }
+        PayloadAsk::NotOnServer => {
+            "That attachment cannot be downloaded yet \u{2014} its message \
+             has only just moved and the server has not placed it. Try \
+             again after the next sync"
+        }
+        PayloadAsk::Never => {
+            "Attachments are set never to download, so that one stays on \
+             the server. Change it in Settings, under Sync & storage"
+        }
+        PayloadAsk::Gone => "That attachment is no longer in this message",
+        PayloadAsk::Queued | PayloadAsk::Local => "There is nothing to fetch for that part",
+    }
+}
+
 /// Wait for a queued part to land, or give up saying so.
 ///
 /// Polling, with an ear out for refusals. It
@@ -582,9 +610,8 @@ pub async fn save_all_parts(
 /// tell "slow" from "refused" and said "still downloading" for the whole of
 /// `wait` either way. The part is looked for first, so bytes that landed
 /// win over a failure heard in the same breath. The failure is matched on the
-/// message, not the part: the event carries no section, so a refused text
-/// fetch of the same message also ends the wait, and the sentence it ends
-/// with ("try again") is true of both.
+/// part: a refused fetch of the same message's text says nothing about this
+/// part, and does not end the wait (#1996).
 ///
 /// `wait` is [`BODY_WAIT`] outside tests.
 pub async fn wait_for_part(
@@ -613,7 +640,7 @@ pub async fn wait_for_part(
             Err(error) if std::time::Instant::now() >= deadline => return Err(error),
             Err(_) => {}
         }
-        if failures.is_some_and(|events| fetch_failed(events, message)) {
+        if failures.is_some_and(|events| fetch_failed(events, message, part_id)) {
             tracing::debug!(
                 message = message.get(),
                 after_ms = started.elapsed().as_millis() as u64,
@@ -634,12 +661,16 @@ pub async fn wait_for_part(
     }
 }
 
-/// Whether `events` holds a `BodyFailed` for `message`, taking everything
-/// queued so far.
-fn fetch_failed(events: &EventStream, message: MessageId) -> bool {
+/// Whether `events` holds a `BodyFailed` for `part_id` of `message`, taking
+/// everything queued so far.
+fn fetch_failed(events: &EventStream, message: MessageId, part_id: &str) -> bool {
     let mut failed = false;
     while let Some(event) = events.try_next() {
-        failed |= matches!(event, Event::BodyFailed { message: m, .. } if m == message);
+        failed |= matches!(
+            &event,
+            Event::BodyFailed { message: m, sections, .. }
+                if *m == message && sections.holds_part(part_id)
+        );
     }
     failed
 }
@@ -701,6 +732,7 @@ mod wait_tests {
     use super::*;
     use postio_core::Event;
     use postio_core::bridge::EventHub;
+    use postio_core::event::Sections;
     use postio_model::{Attachment, Message};
     use postio_storage::test_support;
     use std::time::{Duration, Instant};
@@ -727,7 +759,11 @@ mod wait_tests {
         let (store, message, account) = message_with_an_unfetched_part().await;
         let hub = EventHub::new();
         let failures = hub.subscribe("test");
-        hub.sink().emit(Event::BodyFailed { account, message });
+        hub.sink().emit(Event::BodyFailed {
+            account,
+            message,
+            sections: Sections::Parts(vec!["2".to_owned()]),
+        });
 
         let started = Instant::now();
         let said = wait_for_part(
@@ -758,6 +794,7 @@ mod wait_tests {
         hub.sink().emit(Event::BodyFailed {
             account,
             message: MessageId::new(message.get() + 1000),
+            sections: Sections::Parts(vec!["2".to_owned()]),
         });
 
         let said = wait_for_part(
@@ -771,6 +808,75 @@ mod wait_tests {
         .err()
         .expect("nothing arrived");
         assert!(said.contains("still downloading"), "{said}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_text_fetch_of_the_same_message_does_not_end_a_part_wait() {
+        // #1996: the news names its section, so a part wait hears only its
+        // own part's refusal, or a whole-message one, which holds the part.
+        let (store, message, account) = message_with_an_unfetched_part().await;
+        let hub = EventHub::new();
+        let failures = hub.subscribe("test");
+        for sections in [Sections::Text, Sections::Parts(vec!["3".to_owned()])] {
+            hub.sink().emit(Event::BodyFailed {
+                account,
+                message,
+                sections,
+            });
+        }
+        let said = wait_for_part(
+            &store,
+            message,
+            "2",
+            Some(&failures),
+            Duration::from_millis(150),
+        )
+        .await
+        .err()
+        .expect("nothing arrived");
+        assert!(said.contains("still downloading"), "{said}");
+
+        // The positive control: a whole-message refusal holds part 2.
+        hub.sink().emit(Event::BodyFailed {
+            account,
+            message,
+            sections: Sections::Whole,
+        });
+        let said = wait_for_part(
+            &store,
+            message,
+            "2",
+            Some(&failures),
+            Duration::from_secs(30),
+        )
+        .await
+        .err()
+        .expect("a refusal is not a part");
+        assert!(said.contains("could not be downloaded"), "{said}");
+    }
+
+    #[test]
+    fn each_reason_a_part_was_not_queued_is_its_own_sentence() {
+        // #1987's second point: the person is told why.
+        let reasons = [
+            PayloadAsk::Unreachable,
+            PayloadAsk::NotOnServer,
+            PayloadAsk::Never,
+            PayloadAsk::Gone,
+        ];
+        let said: Vec<&str> = reasons.iter().map(|asked| not_fetched(*asked)).collect();
+        for (asked, sentence) in reasons.iter().zip(&said) {
+            assert!(
+                !sentence.contains("still downloading"),
+                "{asked:?}: {sentence}"
+            );
+        }
+        assert!(said[0].contains("not connected"), "{}", said[0]);
+        assert!(said[2].contains("never to download"), "{}", said[2]);
+        let mut distinct = said.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), said.len(), "{said:?}");
     }
 
     #[tokio::test]
@@ -800,7 +906,11 @@ mod wait_tests {
         let (store, message, account) = message_with_an_unfetched_part().await;
         let hub = EventHub::new();
         let failures = hub.subscribe("test");
-        hub.sink().emit(Event::BodyFailed { account, message });
+        hub.sink().emit(Event::BodyFailed {
+            account,
+            message,
+            sections: Sections::Parts(vec!["2".to_owned()]),
+        });
         {
             let connection = store.connect().await.expect("a connection");
             let repository = MessageRepository::new(&connection);

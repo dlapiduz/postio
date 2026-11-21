@@ -652,7 +652,7 @@ pub enum Req {
     FetchBody(MessageId),
     /// A forward of `message` was opened: fetch these sections of it ahead
     /// of the send, so the attachments it carries are local by then (#1690).
-    /// Posted. Sent only for a forward -- a reply carries nothing, and
+    /// Answered with whether they are coming. Sent only for a forward -- a reply carries nothing, and
     /// nothing leaves the machine that the person did not ask for.
     FetchCarried {
         /// The message being forwarded.
@@ -896,6 +896,8 @@ pub enum Resp {
     InlinePart(Option<(Vec<u8>, String)>),
     /// How many parts of a batch could not be saved.
     SavedParts(u32),
+    /// Whether a forward's carried parts are coming, and why not.
+    Carried(postio_model::fetch::PayloadAsk),
     /// The id a saved draft has.
     DraftSaved(DraftId),
     /// A draft was queued.

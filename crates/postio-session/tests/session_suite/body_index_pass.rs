@@ -130,7 +130,11 @@ async fn a_body_that_lands_is_indexed_a_moment_later_by_the_indexer() {
             .await
             .expect("store the body");
     }
-    sink.emit(postio_core::Event::BodyLoaded { account, message });
+    sink.emit(postio_core::Event::BodyLoaded {
+        account,
+        message,
+        sections: postio_core::event::Sections::Text,
+    });
 
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
@@ -245,6 +249,7 @@ async fn a_burst_indexes_the_bodies_it_names_and_leaves_the_rest_alone() {
     sink.emit(postio_core::Event::BodyLoaded {
         account,
         message: named,
+        sections: postio_core::event::Sections::Text,
     });
 
     let deadline =

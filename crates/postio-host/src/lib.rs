@@ -866,7 +866,12 @@ impl Inner {
             };
             while let Some(envelope) = everybody.next_tracked().await {
                 // A fetch that ended without the body: the ask is over (#1985).
-                if let Event::BodyFailed { message, .. } = &envelope.event {
+                // Only one for the words: a part refused says nothing of them.
+                if let Event::BodyFailed {
+                    message, sections, ..
+                } = &envelope.event
+                    && sections.holds_text()
+                {
                     asked_bodies.failed(*message, std::time::Instant::now());
                 }
                 if to_client.send(envelope).await.is_err() {
@@ -1683,8 +1688,10 @@ impl Inner {
                 Resp::Done
             }
             Req::FetchCarried { message, parts } => {
-                self.fetch_carried(message, parts).await;
-                Resp::Done
+                match self.fetch_carried(message, parts).await {
+                    Ok(asked) => Resp::Carried(asked),
+                    Err(why) => Resp::Failed(postio_model::listing::StoreError::new(why)),
+                }
             }
             Req::StorageCeiling(max_bytes) => {
                 maintenance::enforce_ceiling(&self.wiring, max_bytes);
@@ -1900,23 +1907,29 @@ impl Inner {
     }
 
     /// Queues the sections a freshly opened forward carries, through the
-    /// interactive lane, as the reader's chip does (#1690).
-    async fn fetch_carried(&self, message: postio_model::MessageId, parts: Vec<String>) {
+    /// interactive lane, as the reader's chip does (#1690), and says whether
+    /// they are coming: the composer draws them downloading only then.
+    async fn fetch_carried(
+        &self,
+        message: postio_model::MessageId,
+        parts: Vec<String>,
+    ) -> Result<postio_model::fetch::PayloadAsk, String> {
         let Some(engine) = self.engine_for_message(message).await else {
-            return;
+            return Err("This account is not syncing, so its parts cannot be fetched".to_owned());
         };
-        self.runtime().spawn(async move {
-            match engine.request_payloads(message, parts).await {
-                Ok(queued) => tracing::debug!(
-                    message = message.get(),
-                    queued,
-                    "asked the engine for a forward's parts"
-                ),
-                Err(error) => {
-                    tracing::warn!(message = message.get(), %error, "cannot fetch a forward's parts");
-                }
-            }
-        });
+        let asked = engine
+            .request_payloads(message, parts)
+            .await
+            .map_err(|error| {
+                tracing::warn!(message = message.get(), %error, "cannot fetch a forward's parts");
+                error.message().to_owned()
+            })?;
+        tracing::debug!(
+            message = message.get(),
+            ?asked,
+            "asked the engine for a forward's parts"
+        );
+        Ok(asked)
     }
 
     async fn export_messages(

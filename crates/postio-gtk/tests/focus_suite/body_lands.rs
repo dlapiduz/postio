@@ -58,6 +58,7 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
         sink.emit(Event::BodyLoaded {
             account: fixture.account.id,
             message: postio_model::MessageId::new(message.get() + 1),
+            sections: postio_core::event::Sections::Text,
         });
         // This one's lands, as the engine says it.
         fixture
@@ -67,6 +68,7 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
             sink.emit(Event::BodyLoaded {
                 account: fixture.account.id,
                 message,
+                sections: postio_core::event::Sections::Text,
             }),
             "the hub took the event"
         );
@@ -126,6 +128,7 @@ pub fn a_body_the_server_refuses_stops_saying_it_is_downloading() {
         assert!(sink.emit(Event::BodyFailed {
             account: fixture.account.id,
             message,
+            sections: postio_core::event::Sections::Text,
         }));
         assert!(
             crate::settle_until(async || reading.body_text().contains("could not be downloaded"))

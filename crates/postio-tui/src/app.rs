@@ -7241,6 +7241,7 @@ pub(crate) mod tests {
             Input::Host(postio_core::Event::BodyLoaded {
                 account,
                 message: row(3).id,
+                sections: postio_core::event::Sections::Text,
             }),
         );
         assert_eq!(
@@ -7250,7 +7251,11 @@ pub(crate) mod tests {
         );
         let landed = update(
             &mut app,
-            Input::Host(postio_core::Event::BodyLoaded { account, message }),
+            Input::Host(postio_core::Event::BodyLoaded {
+                account,
+                message,
+                sections: postio_core::event::Sections::Text,
+            }),
         );
         assert!(
             landed.contains(&Effect::ReadBody(message)) && reads(&landed) == 1,

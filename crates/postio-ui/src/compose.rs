@@ -652,6 +652,19 @@ pub fn carried_sections(attachments: &[postio_model::Attachment]) -> Vec<String>
         .collect()
 }
 
+/// What an attachment row in the composer says beside the name: its size,
+/// and whether it is large or still downloading from the message it was
+/// forwarded from (#1690). "Downloading" is the reader's word for bytes on
+/// their way.
+pub fn attachment_note(size: &str, large: bool, downloading: bool) -> String {
+    match (large, downloading) {
+        (false, false) => size.to_owned(),
+        (true, false) => format!("{size} \u{2014} large"),
+        (false, true) => format!("{size} \u{2014} downloading"),
+        (true, true) => format!("{size} \u{2014} large, downloading"),
+    }
+}
+
 /// What the reminder verb says: "Remind", as the message dialog's action
 /// row names the same command, and the day once one is chosen ("Remind ·
 /// Tue 29 Sep"), in the person's own time zone. The whole of it -- "if no
@@ -1232,6 +1245,23 @@ mod frame_tests {
         ];
         assert_eq!(carried_sections(&attachments), vec!["2", "4"]);
         assert!(carried_sections(&[]).is_empty());
+    }
+
+    #[test]
+    fn an_attachment_note_says_large_and_downloading_after_the_size() {
+        assert_eq!(attachment_note("12 KB", false, false), "12 KB");
+        assert_eq!(
+            attachment_note("30 MB", true, false),
+            "30 MB \u{2014} large"
+        );
+        assert_eq!(
+            attachment_note("12 KB", false, true),
+            "12 KB \u{2014} downloading"
+        );
+        assert_eq!(
+            attachment_note("30 MB", true, true),
+            "30 MB \u{2014} large, downloading"
+        );
     }
 
     #[test]

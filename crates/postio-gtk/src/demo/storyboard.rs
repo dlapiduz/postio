@@ -985,7 +985,11 @@ fn deliver_input(
                     let message =
                         off_thread(async move { super::deliver_held_body(&store, account).await })
                             .map_err(|error| format!("the body could not be stored: {error}"))?;
-                    acting.sink.emit(Event::BodyLoaded { account, message })
+                    acting.sink.emit(Event::BodyLoaded {
+                        account,
+                        message,
+                        sections: postio_core::event::Sections::Text,
+                    })
                 }
             };
             if !emitted {

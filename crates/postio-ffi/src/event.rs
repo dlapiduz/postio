@@ -926,11 +926,15 @@ impl From<postio_core::Event> for UiEvent {
                 done,
                 total,
             },
-            Event::BodyLoaded { account, message } => UiEvent::BodyLoaded {
+            Event::BodyLoaded {
+                account, message, ..
+            } => UiEvent::BodyLoaded {
                 account: account.into(),
                 message: message.into(),
             },
-            Event::BodyFailed { account, message } => UiEvent::BodyFailed {
+            Event::BodyFailed {
+                account, message, ..
+            } => UiEvent::BodyFailed {
                 account: account.into(),
                 message: message.into(),
             },
@@ -1064,6 +1068,7 @@ mod tests {
             UiEvent::from(postio_core::Event::BodyLoaded {
                 account: 3.into(),
                 message: 42.into(),
+                sections: postio_core::event::Sections::Parts(vec!["2".to_owned()]),
             }),
             UiEvent::BodyLoaded {
                 account: 3,
