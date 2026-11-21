@@ -271,6 +271,32 @@ impl Places {
         self.footer.set_text(&rules::footer(entry));
     }
 
+    /// Each place drawn with a warning, top to bottom: its name, and what
+    /// the warning's tooltip says.
+    pub fn warnings(&self) -> Vec<(String, String)> {
+        let mut warnings = Vec::new();
+        let mut at = 0;
+        while let Some(item) = self.list.row_at_index(at) {
+            at += 1;
+            let Some(row) = item.child() else { continue };
+            let mut children =
+                std::iter::successors(row.first_child(), |child| child.next_sibling());
+            let name = children
+                .clone()
+                .find_map(|child| child.downcast::<gtk::Label>().ok())
+                .map(|label| label.text().to_string());
+            let warning = children.find(|child| {
+                child
+                    .downcast_ref::<gtk::Image>()
+                    .is_some_and(|image| image.icon_name().as_deref() == Some(FAILED_ICON))
+            });
+            if let (Some(name), Some(warning)) = (name, warning) {
+                warnings.push((name, warning.tooltip_text().unwrap_or_default().to_string()));
+            }
+        }
+        warnings
+    }
+
     /// The names listed now, top to bottom.
     pub fn names(&self) -> Vec<String> {
         self.shown
@@ -382,6 +408,19 @@ impl Places {
             name.set_xalign(0.0);
             name.set_hexpand(true);
             row.append(&name);
+            // A folder whose last pass failed (#1731): the warning says why
+            // to the pointer and to a screen reader. The row still opens
+            // the folder; its stored mail is still here.
+            if let Some(failure) = &entry.failure {
+                let warning = gtk::Image::from_icon_name(FAILED_ICON);
+                warning.add_css_class("warning");
+                warning.set_tooltip_text(Some(failure));
+                warning.update_property(&[
+                    gtk::accessible::Property::Label(&format!("{} can't sync", entry.name)),
+                    gtk::accessible::Property::Description(failure),
+                ]);
+                row.append(&warning);
+            }
             let count = gtk::Label::new(entry.count.as_deref());
             count.add_css_class("dim-label");
             count.add_css_class("focus-places-count");
@@ -408,6 +447,9 @@ impl Places {
         }
     }
 }
+
+/// The mark of a folder that can't sync, as the sync label wears it.
+const FAILED_ICON: &str = "dialog-warning-symbolic";
 
 /// The flag: the mark of flagged mail, wherever it is named.
 pub const FLAG_ICON: &str = "emoji-flags-symbolic";

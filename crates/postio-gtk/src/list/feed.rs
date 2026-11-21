@@ -207,6 +207,12 @@ impl Feed {
         self.inner.focus.borrow().places(filter)
     }
 
+    /// Every folder's name as the places list it, from the places the
+    /// controller last read.
+    pub fn folder_names(&self) -> Vec<(postio_model::MailboxId, String)> {
+        self.inner.focus.borrow().folder_names().to_vec()
+    }
+
     /// The Contacts list's row at `index`, or `None` while its page is on its
     /// way: a miss asks the store for it, and `ContactsRows` says when to
     /// draw again.

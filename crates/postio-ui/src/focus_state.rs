@@ -11,7 +11,7 @@
 use chrono::{DateTime, Local, TimeZone};
 use postio_config::FocusConfig;
 use postio_core::{CommandId, ConnectionState, FailureReason, Keymap};
-use postio_model::AccountId;
+use postio_model::{AccountId, MailboxId};
 
 use crate::status::SyncStatus;
 
@@ -238,6 +238,19 @@ pub struct SyncLabel {
     pub text: String,
     /// The symbolic icon's name.
     pub icon: &'static str,
+    /// What its tooltip and accessible description say beyond the words:
+    /// each folder that can't sync and why, one per line (#1731).
+    pub detail: Option<String>,
+}
+
+impl SyncLabel {
+    fn plain(text: impl Into<String>, icon: &'static str) -> Self {
+        SyncLabel {
+            text: text.into(),
+            icon,
+            detail: None,
+        }
+    }
 }
 
 /// "Syncing 1,200 of 8,400": how far a pass has come, as the sync label and
@@ -248,10 +261,17 @@ pub fn syncing(done: u32, total: u32) -> String {
 
 /// The sync label for `statuses`, as of `now`: when mail last arrived is
 /// said as a clock time in `zone`, `last_synced` being the newest of the
-/// accounts' last completed syncs.
+/// accounts' last completed syncs. `folders` names each folder as the
+/// folders popover lists it, for a folder that can't sync.
+///
+/// The link speaks first -- failing, then offline -- then a pass that is
+/// running, then a folder whose last pass failed (#1731), and only then when
+/// mail last synced: "Synced 16:09" claims a comparison a failed folder
+/// never had.
 pub fn sync_label<Tz: TimeZone>(
     statuses: &[(AccountId, SyncStatus)],
     last_synced: Option<DateTime<chrono::Utc>>,
+    folders: &[(MailboxId, String)],
     zone: &Tz,
 ) -> SyncLabel
 where
@@ -259,16 +279,10 @@ where
 {
     let states = || statuses.iter().map(|(_, status)| status.state);
     if states().any(|state| matches!(state, ConnectionState::Failing { .. })) {
-        return SyncLabel {
-            text: "Sync failed".to_owned(),
-            icon: "dialog-warning-symbolic",
-        };
+        return SyncLabel::plain("Sync failed", "dialog-warning-symbolic");
     }
     if states().any(|state| state == ConnectionState::Offline) {
-        return SyncLabel {
-            text: "Offline".to_owned(),
-            icon: "network-offline-symbolic",
-        };
+        return SyncLabel::plain("Offline", "network-offline-symbolic");
     }
     // A list pass, or the backfill that follows it: either is mail still
     // arriving, and the label says how much.
@@ -279,34 +293,70 @@ where
     if !passes.is_empty() {
         let done = passes.iter().map(|(done, _)| done).sum();
         let total = passes.iter().map(|(_, total)| total).sum();
-        return SyncLabel {
-            text: syncing(done, total),
-            icon: "emblem-synchronizing-symbolic",
-        };
+        return SyncLabel::plain(syncing(done, total), "emblem-synchronizing-symbolic");
+    }
+    if let Some(label) = cannot_sync(statuses, folders) {
+        return label;
     }
     if let Some(at) = last_synced {
-        return SyncLabel {
-            text: format!("Synced {}", at.with_timezone(zone).format("%H:%M")),
-            icon: "emblem-ok-symbolic",
-        };
+        return SyncLabel::plain(
+            format!("Synced {}", at.with_timezone(zone).format("%H:%M")),
+            "emblem-ok-symbolic",
+        );
     }
     let text = if states().any(|state| state == ConnectionState::Connecting) {
         "Connecting"
     } else {
         "Not synced yet"
     };
-    SyncLabel {
-        text: text.to_owned(),
-        icon: "emblem-synchronizing-symbolic",
-    }
+    SyncLabel::plain(text, "emblem-synchronizing-symbolic")
+}
+
+/// "Sent can't sync", or "3 folders can't sync", with each folder's reason
+/// for the tooltip: `None` while every folder's last pass completed.
+fn cannot_sync(
+    statuses: &[(AccountId, SyncStatus)],
+    folders: &[(MailboxId, String)],
+) -> Option<SyncLabel> {
+    let failing: Vec<(Option<&str>, &str)> = statuses
+        .iter()
+        .flat_map(|(_, status)| &status.failing)
+        .map(|(mailbox, reason)| {
+            let name = folders
+                .iter()
+                .find(|(each, _)| each == mailbox)
+                .map(|(_, name)| name.as_str());
+            (name, reason.as_str())
+        })
+        .collect();
+    let text = match failing.as_slice() {
+        [] => return None,
+        [(Some(name), _)] => format!("{name} can't sync"),
+        [(None, _)] => "A folder can't sync".to_owned(),
+        many => format!("{} folders can't sync", many.len()),
+    };
+    let detail = failing
+        .iter()
+        .map(|(name, reason)| match name {
+            Some(name) => format!("{name}: {reason}"),
+            None => (*reason).to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(SyncLabel {
+        text,
+        icon: "dialog-warning-symbolic",
+        detail: Some(detail),
+    })
 }
 
 /// [`sync_label`] in the machine's own time zone.
 pub fn sync_label_here(
     statuses: &[(AccountId, SyncStatus)],
     last_synced: Option<DateTime<chrono::Utc>>,
+    folders: &[(MailboxId, String)],
 ) -> SyncLabel {
-    sync_label(statuses, last_synced, &Local)
+    sync_label(statuses, last_synced, folders, &Local)
 }
 
 /// What the empty inbox says under "Inbox is empty" (screen 16): when the
@@ -953,7 +1003,7 @@ mod tests {
         let zone = FixedOffset::east_opt(0).expect("UTC");
         let synced = Utc.with_ymd_and_hms(2026, 9, 26, 16, 9, 0).single();
         let label = |state, progress| {
-            sync_label(&[(account(1), status(state, progress))], synced, &zone).text
+            sync_label(&[(account(1), status(state, progress))], synced, &[], &zone).text
         };
         assert_eq!(label(AUTH, None), "Sync failed");
         assert_eq!(label(ConnectionState::Offline, None), "Offline");
@@ -969,7 +1019,7 @@ mod tests {
                 backfill: Some((done, total)),
                 ..SyncStatus::default()
             };
-            sync_label(&[(account(1), status)], synced, &zone).text
+            sync_label(&[(account(1), status)], synced, &[], &zone).text
         };
         assert_eq!(backfill(12_400, 81_744), "Syncing 12,400 of 81,744");
         assert_eq!(backfill(81_744, 81_744), "Synced 16:09");
@@ -978,12 +1028,14 @@ mod tests {
         let never = sync_label(
             &[(account(1), status(ConnectionState::Connecting, None))],
             None,
+            &[],
             &zone,
         );
         assert_eq!(never.text, "Connecting");
         let idle = sync_label(
             &[(account(1), status(ConnectionState::Online, None))],
             None,
+            &[],
             &zone,
         );
         assert_eq!(idle.text, "Not synced yet");
@@ -1143,6 +1195,62 @@ mod tests {
         assert!(failed.detail.expect("a detail").starts_with("Sync failed."));
     }
 
+    /// #1731: "Synced 16:09" is a claim that every folder was compared. A
+    /// folder whose last pass failed says so, by the name the folders
+    /// popover lists it under, until its next pass completes.
+    #[test]
+    fn the_label_names_a_folder_that_cannot_sync() {
+        let zone = FixedOffset::east_opt(0).expect("UTC");
+        let synced = Utc.with_ymd_and_hms(2026, 9, 26, 16, 9, 0).single();
+        let folders = [
+            (MailboxId::new(3), "Inbox".to_owned()),
+            (MailboxId::new(7), "Sent Messages".to_owned()),
+        ];
+        let failing = |mailboxes: &[i64], progress| SyncStatus {
+            failing: mailboxes
+                .iter()
+                .map(|mailbox| (MailboxId::new(*mailbox), format!("Refused {mailbox}.")))
+                .collect(),
+            ..status(ConnectionState::Online, progress)
+        };
+        let label = |status| sync_label(&[(account(1), status)], synced, &folders, &zone);
+
+        let one = label(failing(&[7], None));
+        assert_eq!(one.text, "Sent Messages can't sync");
+        assert_eq!(one.icon, "dialog-warning-symbolic");
+        assert_eq!(one.detail.as_deref(), Some("Sent Messages: Refused 7."));
+
+        let two = label(failing(&[3, 7], None));
+        assert_eq!(two.text, "2 folders can't sync");
+        assert_eq!(
+            two.detail.as_deref(),
+            Some("Inbox: Refused 3.\nSent Messages: Refused 7.")
+        );
+
+        // A folder the places have not named yet is still a folder.
+        let unnamed = label(failing(&[9], None));
+        assert_eq!(unnamed.text, "A folder can't sync");
+        assert_eq!(unnamed.detail.as_deref(), Some("Refused 9."));
+
+        // A pass running says how far it has come; the mark is back when
+        // the wave settles.
+        assert_eq!(
+            label(failing(&[7], Some((4, 9)))).text,
+            "Syncing 4 of 9",
+            "progress outranks a folder's mark"
+        );
+        // The link outranks every folder.
+        let offline = SyncStatus {
+            state: ConnectionState::Offline,
+            ..failing(&[7], None)
+        };
+        assert_eq!(label(offline).text, "Offline");
+        // Nothing failing: the label is the ordinary one, with no detail.
+        let fine = label(status(ConnectionState::Online, None));
+        assert_eq!(fine.text, "Synced 16:09");
+        assert_eq!(fine.detail, None);
+    }
+
     #[test]
     fn the_label_puts_the_worst_account_first() {
         let zone = FixedOffset::east_opt(0).expect("UTC");
@@ -1152,6 +1260,7 @@ mod tests {
                 (account(2), status(AUTH, None)),
             ],
             None,
+            &[],
             &zone,
         );
         assert_eq!(label.text, "Sync failed");

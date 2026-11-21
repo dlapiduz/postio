@@ -2747,6 +2747,9 @@ impl FocusWindow {
                 if let Some(places) = self.places() {
                     places.redraw();
                 }
+                // The sync label names a folder that can't sync by the name
+                // the places list it under, which may only now be known.
+                self.show_state();
             }
             Intent::ShowFiltered => self.show_filtered(),
             Intent::Filtered(frame) => {
@@ -4829,9 +4832,14 @@ impl FocusWindow {
                 });
             slot.show(banner.as_ref(), key);
         }
-        let label = postio_ui::focus_state::sync_label_here(&statuses, imp.last_synced.get());
+        let folders = self
+            .pane()
+            .map(|pane| pane.feed().folder_names())
+            .unwrap_or_default();
+        let label =
+            postio_ui::focus_state::sync_label_here(&statuses, imp.last_synced.get(), &folders);
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
-            chrome.set_sync(&label.text, label.icon);
+            chrome.set_sync(&label.text, label.icon, label.detail.as_deref());
         }
     }
 
@@ -4850,6 +4858,11 @@ impl FocusWindow {
         self.chrome()
             .map(|chrome| chrome.sync_said())
             .unwrap_or_default()
+    }
+
+    /// What the top bar's sync label's tooltip says, when it says anything.
+    pub fn sync_detail(&self) -> Option<String> {
+        self.chrome().and_then(|chrome| chrome.sync_detail())
     }
 
     /// "Update password…": the credential dialog both desktop apps share,

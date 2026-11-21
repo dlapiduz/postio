@@ -499,14 +499,27 @@ impl Chrome {
     }
 
     /// What the sync label says, and its icon.
-    pub fn set_sync(&self, said: &str, icon: &str) {
+    pub fn set_sync(&self, said: &str, icon: &str, detail: Option<&str>) {
         self.sync.set_text(said);
         self.sync_icon.set_icon_name(Some(icon));
+        // Each folder that can't sync and why (#1731): to the pointer as a
+        // tooltip, to a screen reader as the label's description.
+        self.sync.set_tooltip_text(detail);
+        self.sync
+            .update_property(&[gtk::accessible::Property::Description(
+                detail.unwrap_or_default(),
+            )]);
     }
 
     /// What the sync label says.
     pub fn sync_said(&self) -> String {
         self.sync.text().to_string()
+    }
+
+    /// What the sync label's tooltip says beyond its words, when it says
+    /// anything.
+    pub fn sync_detail(&self) -> Option<String> {
+        self.sync.tooltip_text().map(|text| text.to_string())
     }
 
     /// Whether the has-action filter is on, and what the toggle and the

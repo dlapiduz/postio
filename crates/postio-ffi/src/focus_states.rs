@@ -154,7 +154,7 @@ mod tests {
             progress,
             ..SyncStatus::default()
         };
-        SyncMarkFfi::of(&sync_label_here(&[(AccountId::new(1), status)], None))
+        SyncMarkFfi::of(&sync_label_here(&[(AccountId::new(1), status)], None, &[]))
     }
 
     #[test]
@@ -189,7 +189,23 @@ mod tests {
                 },
             )],
             Some(chrono::Utc::now()),
+            &[],
         );
         assert_eq!(SyncMarkFfi::of(&synced), SyncMarkFfi::Synced);
+        // A folder that can't sync wears the failed mark on the Mac too
+        // (#1731).
+        let folder = sync_label_here(
+            &[(
+                AccountId::new(1),
+                SyncStatus {
+                    state: ConnectionState::Online,
+                    failing: vec![(postio_model::MailboxId::new(2), "No.".to_owned())],
+                    ..SyncStatus::default()
+                },
+            )],
+            Some(chrono::Utc::now()),
+            &[],
+        );
+        assert_eq!(SyncMarkFfi::of(&folder), SyncMarkFfi::Failed);
     }
 }

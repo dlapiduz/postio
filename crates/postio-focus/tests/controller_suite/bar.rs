@@ -599,6 +599,112 @@ fn mail_changing_reads_no_places_while_no_popover_is_up() {
     assert!(asked(&focus.handle(flagged_elsewhere())).is_empty());
 }
 
+/// #1731: a folder whose last pass failed is marked where a person goes to
+/// open it, with why, and the sync label names it -- until a pass of it
+/// completes. Each change to the mark redraws the popover.
+#[test]
+fn a_folder_that_cannot_sync_is_marked_in_the_places_and_named_by_the_label() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    let effects = run(&mut focus, CommandId::GoToFolders, &rows);
+    let (ticket, _) = ask(&effects);
+    let _ = focus.handle(Input::Reply(ticket, Reply::Places(Ok(places()))));
+    let account = postio_model::AccountId::new(1);
+    let said = |focus: &mut FocusController, failure: Option<&str>| {
+        focus.handle(Input::Event(postio_core::Event::MailboxSyncChanged {
+            account,
+            mailbox: MailboxId::new(2),
+            failure: failure.map(str::to_owned),
+        }))
+    };
+    let failures = |focus: &FocusController| -> Vec<(String, String)> {
+        focus
+            .places("")
+            .into_iter()
+            .filter_map(|(_, entry)| Some((entry.name, entry.failure?)))
+            .collect()
+    };
+    let label = |effects: &[Effect]| {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Show(Intent::SyncLabel(label)) => Some(label.clone()),
+            _ => None,
+        })
+    };
+    let _ = focus.handle(Input::Event(postio_core::Event::ConnectionChanged {
+        account,
+        state: postio_core::ConnectionState::Online,
+    }));
+
+    let effects = said(&mut focus, Some("SELECT refused: Mailbox is locked"));
+    assert!(
+        shown(&effects).contains(&Intent::PlacesChanged),
+        "{effects:?}"
+    );
+    assert_eq!(
+        failures(&focus),
+        vec![(
+            "Sent".to_owned(),
+            "SELECT refused: Mailbox is locked".to_owned()
+        )]
+    );
+    let drawn = label(&effects).expect("the label is drawn again");
+    assert_eq!(drawn.text, "Sent can't sync");
+    assert_eq!(
+        drawn.detail.as_deref(),
+        Some("Sent: SELECT refused: Mailbox is locked")
+    );
+    // The token still opens the folder: its stored mail is still here.
+    let sent = focus
+        .places("sent")
+        .into_iter()
+        .next()
+        .expect("Sent is listed");
+    let opened = focus.handle_on(Input::OpenPlace(sent.0), &rows);
+    assert!(!opened.is_empty(), "the marked row still opens");
+
+    let effects = said(&mut focus, None);
+    assert!(
+        shown(&effects).contains(&Intent::PlacesChanged),
+        "{effects:?}"
+    );
+    assert_eq!(failures(&focus), Vec::<(String, String)>::new());
+    assert_ne!(
+        label(&effects).map(|label| label.text),
+        Some("Sent can't sync".to_owned())
+    );
+}
+
+/// A folder fails before anything has read the places: the controller
+/// reads them, and the label names the folder once they land.
+#[test]
+fn a_folder_that_fails_before_the_places_are_read_is_named_once_they_are() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    let account = postio_model::AccountId::new(1);
+    let _ = focus.handle(Input::Event(postio_core::Event::ConnectionChanged {
+        account,
+        state: postio_core::ConnectionState::Online,
+    }));
+    let effects = focus.handle(Input::Event(postio_core::Event::MailboxSyncChanged {
+        account,
+        mailbox: MailboxId::new(2),
+        failure: Some("Mailbox is locked".to_owned()),
+    }));
+    let label = |effects: &[Effect]| {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Show(Intent::SyncLabel(label)) => Some(label.text.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(label(&effects).as_deref(), Some("A folder can't sync"));
+    let (ticket, _) = asks(&effects)
+        .into_iter()
+        .find(|(_, request)| *request == Request::Places)
+        .expect("a folder with no name yet reads the places");
+    let effects = focus.handle_on(Input::Reply(ticket, Reply::Places(Ok(places()))), &rows);
+    assert_eq!(label(&effects).as_deref(), Some("Sent can't sync"));
+}
+
 #[test]
 fn the_places_are_one_request_and_a_place_opens_from_the_popover() {
     let rows = List::of(1);

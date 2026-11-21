@@ -3016,9 +3016,15 @@ impl App {
     /// What the top bar's sync label says: where every account whose
     /// connection has been heard of stands, and when mail last arrived.
     pub fn sync_label(&self) -> postio_ui::focus_state::SyncLabel {
+        let folders: Vec<(postio_model::MailboxId, String)> = self
+            .folders
+            .iter()
+            .map(|folder| (folder.id, postio_ui::places::place_name(folder)))
+            .collect();
         postio_ui::focus_state::sync_label_here(
             &self.trackers.statuses(&self.tracked),
             self.last_synced,
+            &folders,
         )
     }
 
