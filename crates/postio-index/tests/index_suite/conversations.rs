@@ -1049,6 +1049,54 @@ async fn with_no_words_every_attachment_of_the_matched_mail_is_a_card() {
     assert_eq!(found[0].matched, None, "no word to have matched");
 }
 
+/// #2178: the Files tab read "Files 7" over the results and "Files 6" once
+/// it opened on six cards. The search's count is the cards the tab lists:
+/// a file in matching mail that matched neither by its name nor by its
+/// contents is no card, and is not counted.
+#[tokio::test]
+async fn the_files_count_is_the_cards_the_tab_lists() {
+    let (_database, connection, account, inbox) = store().await;
+    let (_, sheet) = mail_with_budget_sheet(&connection, &account, inbox).await;
+    postio_index::index::index_attachment_text(&connection, sheet, &budget_sheet())
+        .await
+        .expect("index its text");
+    file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            from: "grace",
+            subject: "The plan",
+            body: "Attached.",
+            file: Some("kestrel-plan.pdf"),
+            ago: Duration::days(1),
+            ..Mail::default()
+        },
+    )
+    .await;
+    file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            subject: "Field notes",
+            body: "A kestrel over the car park again.",
+            file: Some("notes.pdf"),
+            ago: Duration::days(3),
+            ..Mail::default()
+        },
+    )
+    .await;
+
+    for query in ["kestrel", "from:ada"] {
+        let cards = files(&connection, query).await.len() as u64;
+        let counted = conversations(&connection, query, ConversationOrder::BestMatch, 0, 10)
+            .await
+            .files;
+        assert_eq!(counted, cards, "{query:?}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The People tab (spec 010 step 10, US9, T132)
 // ---------------------------------------------------------------------------

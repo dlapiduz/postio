@@ -248,10 +248,8 @@ pub async fn search_conversations(
         corpus_complete: searched.bodies,
         contents_complete: searched.contents,
         facets: facets(&conversations, request.today, fold.capped()),
-        files: conversations
-            .iter()
-            .map(|conversation| conversation.files)
-            .sum(),
+        // The cards the Files tab lists, counted as it lists them (#2178).
+        files: super::files::cards(connection, request.query, &carried(&fold)).await?,
         people: people_in(&conversations, &searched.own),
         // Names are the session's to read, for the counts it keeps.
         names: FacetNames::default(),
@@ -275,15 +273,19 @@ pub(super) async fn carriers(
     request: &ConversationRequest<'_>,
 ) -> Result<Vec<Carrier>> {
     let (fold, _) = walked(connection, request).await?;
-    Ok(fold
-        .found
+    Ok(carried(&fold))
+}
+
+/// The messages of `fold` that carry attachments.
+fn carried(fold: &Fold) -> Vec<Carrier> {
+    fold.found
         .iter()
         .filter(|found| found.files > 0)
         .map(|found| Carrier {
             id: MessageId::new(found.id),
             in_file: found.in_file,
         })
-        .collect())
+        .collect()
 }
 
 /// One person the match reaches, as the People tab counts them.
@@ -810,7 +812,6 @@ struct Conversation {
     answered: bool,
     attachment: bool,
     action: bool,
-    files: u64,
     senders: Vec<i64>,
     recipients: Vec<i64>,
     labels: Vec<i64>,
@@ -831,7 +832,6 @@ impl Conversation {
             answered: false,
             attachment: false,
             action: false,
-            files: 0,
             senders: Vec::new(),
             recipients: Vec::new(),
             labels: Vec::new(),
@@ -865,7 +865,6 @@ impl Conversation {
         self.answered |= message.answered;
         self.attachment |= message.attachment;
         self.action |= message.action;
-        self.files += message.files;
         self.senders.extend(&message.senders);
         self.recipients.extend(&message.recipients);
         self.labels.extend(&message.labels);
