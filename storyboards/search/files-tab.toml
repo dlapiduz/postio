@@ -9,17 +9,22 @@
 # Files tab is a grid of cards, four across: a preview with the matching
 # line marked, the type tile, the name, "sender · date · size", the
 # matching line from the contents, and "in ‘<subject>’". The arrows move
-# between cards, Space hands the file itself to the system's Quick Look,
-# Return opens its message, ⌘↓ saves it.
+# between cards, Space hands a copy of the file to the system (Quick Look
+# on the Mac, the desktop's app for its type on Linux), Return opens its
+# message, mod+Down saves it.
 #
 # The seed's two PDFs whose bytes were never downloaded are never fetched
 # to be indexed (FR-050): searching their contents finds nothing, and the
-# footer says contents are searched only for files on this Mac.
+# header says contents are searched only for files on this machine.
+#
+# A top hit is also listed under its month: every thread is in its month,
+# a top hit too (D4 in postio-focus's results.rs).
 #
 # The Files tab's count is its cards, the same on the Threads tab as once
-# it opens (#2178). On GTK, Space and ⌘↓ hand the file to the desktop's
-# previewer and save dialog, which are outside the window the runner
-# films, so those steps are filmed by hand there as on the Mac.
+# it opens (#2178), and its heading and footer count the files (#2183).
+# Space and mod+Down hand the file to the system's previewer and save
+# dialog, which are outside the window the runner films, so those steps
+# are filmed by hand on both apps.
 #
 # The engine's half is postio-index's attachment_text and conversations
 # suites and postio-session's attachment_index_pass; the controller's is
@@ -42,13 +47,13 @@ type    = "fy26"
 id      = "found-inside"
 command = "show_all_results"
 check   = { keyboard.region = "results" }
-expect  = "The results open on Threads with one row: “Atlas budget template v2”. Its source tag is the file's name, “Atlas-budget-template.xlsx”, and its passage reads “Sheet ‘Summary’, row 14: Total Atlas budget FY26 …” with “FY26” marked. The tabs read Threads 1 · Files 1 · People 1."
+expect  = "The results open on Threads with one thread, “Atlas budget template v2”, listed twice: as the one top hit, and again under its month, “April 2026 · 1”, because every thread is in its month, a top hit too. Its source tag is the file's name, “Atlas-budget-template.xlsx”, and its passage reads “Sheet ‘Summary’, row 14: Total Atlas budget FY26 …” with “FY26” marked. The tabs read Threads 1 · Files 1 · People 1."
 
 [[step]]
 id      = "files"
 command = "results_files"
 check   = { keyboard.region = "results" }
-expect  = "⌘2 shows the Files tab: one card, ringed. Its preview is a sheet with the matching row marked in highlight yellow; the XLSX tile, “Atlas-budget-template.xlsx”, “Ada Moreno · <date> · <size>”; “Sheet ‘Summary’, row 14: Total Atlas budget FY26” with “FY26” marked; and “in ‘Atlas budget template v2’”. The header line says contents are indexed on this Mac."
+expect  = "The Files tab's key (⌘2, ctrl+2 off the Mac) shows the Files tab: one card, ringed, under the heading “1 file”. Its preview is a sheet with the matching row marked in highlight yellow; the XLSX tile, “Atlas-budget-template.xlsx”, “Ada Moreno · <date> · <size>”; “Sheet ‘Summary’, row 14: Total Atlas budget FY26” with “FY26” marked; and “in ‘Atlas budget template v2’”. The header line says contents are indexed on this Mac, or “on this computer” off the Mac."
 
 [[step]]
 command = "history_back"
@@ -68,7 +73,7 @@ check   = { keyboard.region = "results" }
 id      = "grid"
 command = "results_files"
 check   = { keyboard.region = "results" }
-expect  = "The Files tab for “atlas budget”: a grid of cards four across with 12 between them, the first ringed. Every file whose bytes are on this Mac and whose name or contents match has a card: the two workbooks (“Sheet ‘Q3’, row …”, “Sheet ‘Summary’, row …”), the September actuals (“Page 2: Spend to date against Atlas budget: 71%”), the memo (“Paragraph …”), the review deck (“Slide …”) and the notes (“Line …”). A file never downloaded shows by name only, with no contents line. The Files tab's count is the number of cards, the count it had on the Threads tab."
+expect  = "The Files tab for “atlas budget”: a grid of cards four across with 12 between them, the first ringed. Every file whose bytes are on this machine and whose name or contents match has a card: the two workbooks (“Sheet ‘Q3’, row …”, “Sheet ‘Summary’, row …”), the September actuals (“Page 1: Atlas budget actuals, September”), the memo (“Paragraph …”), the review deck (“Slide …”) and the notes (“Line …”). The Files tab's count is the number of cards, the count it had on the Threads tab, and the heading and the footer say it too: “6 files”, “6 files · local index · … ms”."
 
 [[step]]
 key     = "Right"
@@ -89,18 +94,18 @@ expect  = "↑ moves it back to the second card of the first row."
 id      = "look"
 command = "quick_look"
 check   = { keyboard.region = "results" }
-expect  = "Space opens the system's Quick Look on the file itself, a copy in the app's own temporary folder: the workbook's sheet or the PDF's page, as Finder would preview it. The grid stays where it was behind it, with its ring."
+expect  = "Space hands the system a copy of the file from the app's own temporary folder: on the Mac, Quick Look opens on it; on Linux, the desktop opens it in its app for the type, and the footer's Space says “open the file”. The grid stays where it was, with its ring."
 
 [[step]]
 id      = "unlook"
 command = "quick_look"
 check   = { keyboard.region = "results", overlay.kind = "none" }
-expect  = "Space again closes Quick Look: the grid, with the ring on the same card."
+expect  = "Space again lets the copy go: on the Mac it closes Quick Look; on Linux the desktop's app is a window of its own, closed there. The grid is as it was, the ring on the same card."
 
 [[step]]
 id      = "save"
 key     = "mod+Down"
-expect  = "⌘↓ offers to save the file: a save panel named after it, in Downloads."
+expect  = "The save key (⌘↓, ctrl+Down off the Mac) offers to save the file: the system's save dialog, with the file's name filled in."
 
 [[step]]
 command = "open_message"
@@ -128,4 +133,7 @@ skip = { reason = "The save dialog is the portal's own window, outside the windo
 check = { keyboard.region = "results", app.focus.results.tab = "Threads", app.focus.results.count_line = "1 thread" }
 
 [app.focus.step.files]
-check = { keyboard.region = "results", app.focus.results.tab = "Files" }
+check = { keyboard.region = "results", app.focus.results.tab = "Files", app.focus.results.count_line = "1 file" }
+
+[app.focus.step.grid]
+check = { keyboard.region = "results", app.focus.results.tab = "Files", app.focus.results.count_line = "6 files" }
