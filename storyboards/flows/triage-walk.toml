@@ -8,6 +8,14 @@
 # Re-expressed for Focus (T265): the cursor opens on index 0, so `j` moves it
 # to index 1. It was red on #1746, where the archived row's cursor was not
 # handed to the row below.
+#
+# The pause is the walk's "new thought". Archives of one kind that land
+# within the undo stack's coalescing window (`UndoStack::COALESCE_WINDOW`,
+# one second) are one burst, and one undo takes the whole burst back
+# (postio-core's `undo` module). Without it the two archives were a second
+# apart, give or take a frame: on a quick runner they were one unit, the
+# toast said "Archived 2 messages", and the undo brought both back with
+# the cursor on the first (#2159).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
 proof  = "pinned"
@@ -25,6 +33,12 @@ check   = { cursor.index = { same_as = "j1" }, notice.undo = true, rows.count = 
 expect  = "The row goes, the next one is under the cursor ring, and a toast offers Undo."
 
 [[step]]
+id      = "pause"
+wait    = { ms = 1200 }
+check   = { cursor.index = { same_as = "j1" }, rows.count = { same_as = "a1" } }
+expect  = "Nothing moves while the person reads the next row."
+
+[[step]]
 id      = "j2"
 command = "next_message"
 check   = { cursor.index = 2 }
@@ -32,11 +46,11 @@ check   = { cursor.index = 2 }
 [[step]]
 id      = "a2"
 command = "archive"
-check   = { cursor.index = { same_as = "j2" }, notice.undo = true }
-expect  = "The same again: one row gone, the cursor on its replacement, the toast refreshed."
+check   = { cursor.index = { same_as = "j2" }, notice.undo = true, notice.text = "Archived 1 message" }
+expect  = "The same again: one row gone, the cursor on its replacement, the toast refreshed for this one archive."
 
 [[step]]
 id      = "undo"
 command = "undo"
-check   = { keyboard.region = "list", rows.count = { changed = true }, cursor.index = { same_as = "j2" }, notice.undo = false }
+check   = { keyboard.region = "list", rows.count = { same_as = "a1" }, cursor.index = { same_as = "j2" }, notice.undo = false, notice.text = "Archived 1 message, undone" }
 expect  = "The last archived row comes back in its place under the cursor, whole and under its day heading, and the keyboard is still on the list. The toast says it was undone."
