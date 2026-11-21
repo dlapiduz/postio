@@ -37,8 +37,12 @@ async fn picker(
 ) -> PickerViewFfi {
     let mut seen = None;
     // What was drawn instead, so a failure says whether the picker never
-    // opened or opened without what was wanted.
+    // opened or opened without what was wanted; and what else was said,
+    // with whether the first row was held, for a picker that never
+    // opened at all (#2154).
     let mut drawn = Vec::new();
+    let mut said = Vec::new();
+    let held = session.focus_resident_row_at(0).is_some();
     assert!(
         heard(session, 10, |event| match event {
             UiEvent::FocusOpenPicker { view } | UiEvent::FocusPickerRows { view } => {
@@ -49,10 +53,15 @@ async fn picker(
                 drawn.push(format!("{:?} with {} rows", view.kind, view.rows.len()));
                 false
             }
-            _ => false,
+            other => {
+                let words = format!("{other:?}");
+                said.push(words.chars().take(80).collect::<String>());
+                false
+            }
         })
         .await,
-        "the picker wanted was never drawn; drawn instead: {drawn:?}"
+        "the picker wanted was never drawn; drawn instead: {drawn:?}; the first row \
+         held as the wait began: {held}; said meanwhile: {said:?}"
     );
     seen.expect("seen")
 }
