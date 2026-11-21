@@ -2169,7 +2169,7 @@ impl App {
     /// or how many are selected.
     fn picker_target(&self) -> Option<String> {
         if let postio_core::Selection::Everything { .. } = self.selection.selection() {
-            return Some("Every conversation".to_owned());
+            return Some(postio_ui::pickers::EVERY_THREAD.to_owned());
         }
         let rows = self.aimed_rows();
         let first = rows.first()?;
@@ -3505,8 +3505,8 @@ impl App {
                     .map(|member| vec![Effect::Unsubscribe(member.id)])
                     .unwrap_or_default();
             }
-            "next_in_conversation" => return self.walk_conversation(1),
-            "prev_in_conversation" => return self.walk_conversation(-1),
+            "next_in_thread" => return self.walk_conversation(1),
+            "prev_in_thread" => return self.walk_conversation(-1),
             "toggle_reading_pane" => return self.toggle_reading_pane(),
             "view_source" => return self.view_source(),
             "open_attachment_or_link" => return self.offer_choices(),
@@ -3538,8 +3538,8 @@ impl App {
                 };
                 let sentence = format!(
                     "The open message shows one message; {} and {} step through the thread",
-                    key("next_in_conversation"),
-                    key("prev_in_conversation")
+                    key("next_in_thread"),
+                    key("prev_in_thread")
                 );
                 return self.say(&sentence);
             }

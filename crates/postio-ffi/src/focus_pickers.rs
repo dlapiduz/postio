@@ -145,7 +145,7 @@ pub struct PickerViewFfi {
     pub anchor: PickerAnchorFfi,
     /// Its title: "Snooze until".
     pub title: String,
-    /// What it acts on: "Ada Moreno · Atlas Q3 budget", "3 conversations".
+    /// What it acts on: "Ada Moreno · Atlas Q3 budget", "3 threads".
     pub target: String,
     /// The field it holds.
     pub field: PickerFieldFfi,

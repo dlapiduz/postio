@@ -47,7 +47,7 @@ fn where_available(contexts: ContextSet) -> String {
         .filter(|context| !matches!(context, Context::Contacts | Context::ContactPopover))
         .map(|context| match context {
             Context::List => "list",
-            Context::Conversation => "conversation",
+            Context::Conversation => "thread",
             Context::Reader => "reader",
             Context::Composer => "composer",
             Context::Search => "search",

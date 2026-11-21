@@ -293,7 +293,7 @@ fn a_reminder_is_set_on_the_conversation_and_undo_takes_it_back() {
     assert_eq!(
         said,
         Event::ActionCompleted {
-            description: "Reminder set on 1 conversation".to_owned(),
+            description: "Reminder set on 1 thread".to_owned(),
             undoable: true,
         }
     );
@@ -304,7 +304,7 @@ fn a_reminder_is_set_on_the_conversation_and_undo_takes_it_back() {
 
     world.send(&client, remind(budget, None));
     world.hear(&events, |event| {
-        matches!(event, Event::ActionCompleted { description, .. } if description == "Reminder cleared on 1 conversation")
+        matches!(event, Event::ActionCompleted { description, .. } if description == "Reminder cleared on 1 thread")
     });
     assert_eq!(reminder_on(&world, thread), None, "cleared");
 

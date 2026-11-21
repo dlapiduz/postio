@@ -224,9 +224,9 @@ clash in its contexts:
 | Command | Keys | Contexts |
 |---|---|---|
 | `expand_thread` / `collapse_thread` | `Right` / `Left` | List, Results, Filtered view |
-| `prev_in_conversation` / `next_in_conversation` (existing) | gain `[` / `]` as default | Reader |
-| `first_in_conversation` / `latest_in_conversation` | `{` / `}` | Reader |
-| `first_unread_in_conversation` | `g u` (Reader); `u` (Outline) | Reader, Outline |
+| `prev_in_thread` / `next_in_thread` (existing) | gain `[` / `]` as default | Reader |
+| `first_in_thread` / `latest_in_thread` | `{` / `}` | Reader |
+| `first_unread_in_thread` | `g u` (Reader); `u` (Outline) | Reader, Outline |
 | `thread_outline` | `alt+t` | Reader, List |
 | `thread_menu` | `alt+period` (clarified 2026-11-11) | Reader |
 | `reply_to_latest` | `alt+e` | List, Reader, Results, Composer (not the terminal) |

@@ -27,16 +27,16 @@ check   = { view = "reader", keyboard.region = "reader", reading.id = "6" }
 expect  = "The thread opens on its first unread message."
 
 [[step]]
-command = "prev_in_conversation"
+command = "prev_in_thread"
 check   = { reading.id = "5" }
 expect  = "The open message steps back one, to the one before it in the thread."
 
 [[step]]
-command = "prev_in_conversation"
+command = "prev_in_thread"
 check   = { reading.id = "4" }
 
 [[step]]
-command = "next_in_conversation"
+command = "next_in_thread"
 check   = { reading.id = "5" }
 expect  = "`n` steps forward again."
 

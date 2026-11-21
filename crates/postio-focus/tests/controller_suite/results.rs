@@ -1978,7 +1978,7 @@ fn a_picker_in_the_results_opens_over_what_is_checked() {
         })
         .expect("m opens the move picker");
     assert_eq!(opened.anchor, postio_focus::Anchor::Result(1));
-    assert_eq!(opened.target, "2 conversations");
+    assert_eq!(opened.target, "2 threads");
     assert!(
         asked(&effects)
             .iter()

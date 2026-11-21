@@ -223,7 +223,7 @@ The picker cannot be reused: it already gives `1`-`4` to `picker_choose_n`, so
 `prev_view` in the reader beneath the outline. Each is its own `KeyContext`
 and falls through to `Global` only, as the picker does. One command is added
 to R10's table, `outline_first_unread` (`u`, Outline only): a command has one
-set of bindings for all its contexts, so `first_unread_in_conversation` cannot
+set of bindings for all its contexts, so `first_unread_in_thread` cannot
 carry `u` without taking it from `prev_view` in the reader.
 
 `edit_externally`'s `alt+e` alternate is replaced by `alt+shift+e`: `alt+e` is

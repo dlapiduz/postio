@@ -293,7 +293,7 @@ pub fn senders(rows: &[FocusRow]) -> Vec<EmailAddress> {
 pub fn picker_target(selection: &Selection, cursor: Option<&FocusRow>) -> String {
     let selected = match selection {
         Selection::These(picked) => picked.len(),
-        Selection::Everything { .. } => return "Every conversation".to_owned(),
+        Selection::Everything { .. } => return crate::pickers::EVERY_THREAD.to_owned(),
     };
     let Some(row) = cursor.and_then(FocusRow::as_conversation) else {
         return String::new();
@@ -553,11 +553,11 @@ mod tests {
                 &Selection::These(vec![MessageId::new(1), MessageId::new(2)]),
                 Some(&cursor)
             ),
-            "2 conversations"
+            "2 threads"
         );
         assert_eq!(
             picker_target(&Selection::Everything { except: Vec::new() }, None),
-            "Every conversation"
+            "Every thread"
         );
         assert_eq!(picker_target(&Selection::default(), None), "");
     }

@@ -343,7 +343,7 @@ impl Client {
     ) -> Result<Vec<MessageSummary>, StoreError> {
         self.read(
             Req::Conversation(thread),
-            "a conversation",
+            "a thread",
             |answer| match answer {
                 Resp::Rows(rows) => Some(rows),
                 _ => None,
@@ -573,7 +573,7 @@ impl Client {
             limit,
             offline,
         };
-        self.read(request, "a conversation's reading", |answer| match answer {
+        self.read(request, "a thread's reading", |answer| match answer {
             Resp::Readings(readings) => Some(readings),
             _ => None,
         })
@@ -1539,7 +1539,7 @@ impl Client {
     ) -> Result<Vec<postio_search::results::ConversationMatch>, StoreError> {
         self.read(
             Req::ConversationMatches { query, key },
-            "a conversation's matches",
+            "a thread's matches",
             |answer| match answer {
                 Resp::Matches(found) => Some(found),
                 _ => None,

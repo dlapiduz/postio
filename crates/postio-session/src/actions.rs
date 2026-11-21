@@ -553,8 +553,7 @@ impl Actions {
                 vec![self.group_members(group, people, false).await?]
             }
             Command::MuteThread { thread, muted } => {
-                let thread =
-                    thread.ok_or_else(|| CommandError::rejected("Choose a conversation"))?;
+                let thread = thread.ok_or_else(|| CommandError::rejected("Choose a thread"))?;
                 vec![self.mute(thread, *muted, events).await?]
             }
             Command::SplitThread {

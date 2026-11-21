@@ -56,11 +56,14 @@ pub fn date_hint(text: &str, now: DateTime<Local>) -> String {
     }
 }
 
+/// What a picker acts on when the whole list is selected.
+pub const EVERY_THREAD: &str = "Every thread";
+
 /// What a picker acts on, as its title row names it: the sender and the
-/// subject for one conversation, and how many for a selection.
-pub fn target(conversations: usize, sender: &str, subject: &str) -> String {
-    if conversations > 1 {
-        format!("{conversations} conversations")
+/// subject for one thread, and how many for a selection.
+pub fn target(threads: usize, sender: &str, subject: &str) -> String {
+    if threads > 1 {
+        format!("{threads} threads")
     } else {
         format!("{sender} \u{b7} {subject}")
     }
@@ -352,10 +355,7 @@ mod tests {
             target(1, "Ada Moreno", "Atlas Q3 budget"),
             "Ada Moreno \u{b7} Atlas Q3 budget"
         );
-        assert_eq!(
-            target(3, "Ada Moreno", "Atlas Q3 budget"),
-            "3 conversations"
-        );
+        assert_eq!(target(3, "Ada Moreno", "Atlas Q3 budget"), "3 threads");
     }
 
     #[test]

@@ -112,7 +112,7 @@ public final class PickerModel {
     public private(set) var anchor: PickerAnchorFfi = .openMessage
     /// "Snooze until".
     public private(set) var title = ""
-    /// What it acts on: "Ada Moreno · Atlas Q3 budget", "2 conversations".
+    /// What it acts on: "Ada Moreno · Atlas Q3 budget", "2 threads".
     public private(set) var target = ""
     /// The date field under the rows, or the filter above them.
     public private(set) var field: PickerFieldFfi = .date

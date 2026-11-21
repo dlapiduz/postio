@@ -125,7 +125,7 @@ pub struct PickerView {
     pub anchor: Anchor,
     /// Its title: "Snooze until".
     pub title: String,
-    /// What it acts on: "Ada Moreno · Atlas Q3 budget", "3 conversations".
+    /// What it acts on: "Ada Moreno · Atlas Q3 budget", "3 threads".
     pub target: String,
     /// The field it holds.
     pub field: PickerField,
@@ -292,7 +292,7 @@ pub(crate) fn opens_picker(id: CommandId) -> bool {
 fn target(selection: &Selection, said: Option<(String, String)>) -> String {
     let selected = match selection {
         Selection::These(picked) => picked.len(),
-        Selection::Everything { .. } => return "Every conversation".to_owned(),
+        Selection::Everything { .. } => return words::EVERY_THREAD.to_owned(),
     };
     if selected > 1 {
         return words::target(selected, "", "");

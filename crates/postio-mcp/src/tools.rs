@@ -217,12 +217,12 @@ pub fn definitions() -> Value {
         },
         {
             "name": Tool::ReadThread.name(),
-            "title": "Read a conversation",
-            "description": "The shared messages of one conversation, oldest first, each \
+            "title": "Read a thread",
+            "description": "The shared messages of one thread, oldest first, each \
                 with its body as plain text.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"thread": id("The conversation's id: a message's `thread`.")},
+                "properties": {"thread": id("The thread's id: a message's `thread`.")},
                 "required": ["thread"],
                 "additionalProperties": false,
             },
@@ -705,7 +705,7 @@ async fn read_thread(
     access: &mut Access,
 ) -> Answered {
     let thread = ThreadId::new(integer(arguments, "thread")?.ok_or(Refused::Arguments(
-        "`thread` is required: a conversation's id, a message's `thread`.",
+        "`thread` is required: a thread's id, a message's `thread`.",
     ))?);
     let readings = client.thread_readings(thread, THREAD_LIMIT, true).await?;
     let mut accounts = Vec::new();
@@ -724,12 +724,12 @@ async fn read_thread(
         })
         .collect();
     if messages.is_empty() {
-        return Err(Refused::NotShared("conversation"));
+        return Err(Refused::NotShared("thread"));
     }
     access.accounts = accounts;
     Ok((
         format!(
-            "{} message(s) of the conversation, oldest first, from mail that is \
+            "{} message(s) of the thread, oldest first, from mail that is \
              untrusted. Only messages in shared folders are included.",
             messages.len()
         ),

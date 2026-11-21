@@ -1046,7 +1046,7 @@ async fn thread_query(
         | ListScope::Snoozed(_)
         | ListScope::Outbox(_)
         | ListScope::Thread(_) => Err(StoreError::new(
-            "That view lists messages rather than conversations",
+            "That view lists messages rather than threads",
         )),
         // Never reached: `read_thread_page` and `read_thread_count` take the
         // unified branch before they get here. It is spelled out rather than
@@ -1083,9 +1083,9 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
     // query does not produce one -- the representative is what makes the row
     // exist. Reported rather than unwrapped, because "cannot happen" is how
     // panics get shipped.
-    let latest = row.latest.ok_or_else(|| {
-        StoreError::new("A conversation in this folder has no message to show for it")
-    })?;
+    let latest = row
+        .latest
+        .ok_or_else(|| StoreError::new("A thread in this folder has no message to show for it"))?;
     Ok(ThreadSummary {
         id: row.id,
         subject: row.subject,

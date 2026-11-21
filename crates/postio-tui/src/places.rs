@@ -123,7 +123,7 @@ pub fn name_of(places: &Places, scope: ListScope) -> SafeText {
             .map(|account| account.address.address.clone())
             .unwrap_or_default(),
         ListScope::Unified | ListScope::Focus(_) => "Inbox".to_owned(),
-        ListScope::Thread(_) => "Conversation".to_owned(),
+        ListScope::Thread(_) => "Thread".to_owned(),
     };
     SafeText::new(&name)
 }

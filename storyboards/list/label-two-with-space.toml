@@ -36,7 +36,7 @@ expect  = "Two rows are selected, and the bulk bar says two."
 [[step]]
 command = "add_label"
 check   = { overlay.kind = "picker", keyboard.region = "picker", selection.count = 2 }
-expect  = "\"Labels\" hangs from the cursor's row and says it acts on 2 conversations. Its filter says \"Filter, or type a new label\" and holds the keyboard; the labels are listed with their colour dots and counts, the first highlighted, and the footnote names Space and Return."
+expect  = "\"Labels\" hangs from the cursor's row and says it acts on 2 threads. Its filter says \"Filter, or type a new label\" and holds the keyboard; the labels are listed with their colour dots and counts, the first highlighted, and the footnote names Space and Return."
 
 [[step]]
 key     = "space"

@@ -1422,12 +1422,12 @@ const THREAD_COMMANDS: &[(&str, &str, &[&str])] = &[
     (
         "composer",
         "reply_to_latest",
-        &["open_message", "first_in_conversation", "reply"],
+        &["open_message", "first_in_thread", "reply"],
     ),
     (
         "composer",
         "show_newer",
-        &["open_message", "first_in_conversation", "reply"],
+        &["open_message", "first_in_thread", "reply"],
     ),
     ("composer", "expand_quoted", &["forward", "forward_what_2"]),
 ];
