@@ -27,7 +27,7 @@ use postio_search::query::{Clause, Filter, TokenKind};
 use postio_search::relax::{Loosen, Relaxation};
 use postio_search::results::{
     ConversationHit, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
-    Counted, FacetNames, FileHit, Location, Match, ResultsTab, Source,
+    Counted, FacetNames, FileHit, Location, Match, RankReason, ResultsTab, Source,
 };
 use postio_ui::hints::Hint;
 use postio_ui::search_view::{self as words, FilterKind, ResultChild};
@@ -2493,8 +2493,20 @@ impl Results {
         .join(", ");
         let date = words::hit_date(hit.newest_match.with_timezone(&Local), with.now);
         let passage_text: String = passage.iter().map(|run| run.text.as_str()).collect();
+        // A row that says "K of M messages match" has said its count: the
+        // reason line's matches, which count the subject once too, would
+        // be a second number beside it.
+        let reasons: Vec<RankReason> = if matched_messages(hit).is_some() {
+            hit.reasons
+                .iter()
+                .filter(|reason| !matches!(reason, RankReason::Matches(_)))
+                .cloned()
+                .collect()
+        } else {
+            hit.reasons.clone()
+        };
         let reason = top_hit
-            .then(|| words::reason_beside(&hit.reasons, &sources))
+            .then(|| words::reason_beside(&reasons, &sources))
             .filter(|line| !line.is_empty());
         Some(ResultRow {
             message: hit.best,

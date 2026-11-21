@@ -148,7 +148,11 @@ fn engine(request: &Request) -> Option<Reply> {
                         // matches count it once, and it is no message
                         // (#2184).
                         let mut harbor = hit(HARBOR, 106, 6, 3, "Harbor API draft v3");
-                        harbor.reasons = vec![RankReason::Matches(4)];
+                        harbor.reasons = vec![
+                            RankReason::Replied,
+                            RankReason::InSubject,
+                            RankReason::Matches(4),
+                        ];
                         harbor
                     },
                     hit(GATEWAY, 201, 1, 1, "Gateway defaults"),
@@ -562,6 +566,13 @@ fn a_multi_match_thread_says_how_many_of_its_messages_match_and_a_single_match_s
     assert_eq!(
         focus.result_row(0).expect("harbor").summary.as_deref(),
         Some("3 of 6 messages match")
+    );
+    // The row says its count in messages; the reason line does not say
+    // another one beside it ("7 matches" over "6 of 12", #2178's review),
+    // and names the subject that makes Quick Look's extra card instead.
+    assert_eq!(
+        focus.result_row(0).expect("harbor").reason.as_deref(),
+        Some("you replied \u{b7} subject")
     );
     assert_eq!(
         focus.result_row(1).expect("gateway").summary,
