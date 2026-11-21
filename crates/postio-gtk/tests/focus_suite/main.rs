@@ -2257,6 +2257,18 @@ fn hermetic(arguments: &[String]) {
         .status()
         .expect("the suite runs again in its own configuration");
     drop(config);
+    // A case that dies by a signal prints nothing of its own: say which,
+    // or the run shows a FAIL with no reason at all (#2155).
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        eprintln!(
+            "the suite's run died by signal {signal}{}",
+            if std::os::unix::process::ExitStatusExt::core_dumped(&status) {
+                " (core dumped)"
+            } else {
+                ""
+            }
+        );
+    }
     std::process::exit(status.code().unwrap_or(101));
 }
 
