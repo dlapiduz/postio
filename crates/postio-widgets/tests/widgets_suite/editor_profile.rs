@@ -87,17 +87,15 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
 
     let mut blobs = HashMap::new();
     // A real 1x1 PNG, so a resolved cid image has dimensions to assert on.
-    let png: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
-        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
-        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
-        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-    ];
-    blobs.insert(
-        "inline-one".to_owned(),
-        (png.to_vec(), "image/png".to_owned()),
-    );
+    // Encoded here rather than written out as bytes: a hand-copied constant
+    // had a bad IDAT, which WebKit gave a size from its header and failed
+    // only when it painted, so the case failed whenever a paint came first
+    // (#2157).
+    let pixels = glib::Bytes::from_owned(vec![255u8; 4]);
+    let png = gdk::MemoryTexture::new(1, 1, gdk::MemoryFormat::R8g8b8a8, &pixels, 4)
+        .save_to_png_bytes()
+        .to_vec();
+    blobs.insert("inline-one".to_owned(), (png, "image/png".to_owned()));
 
     let window = gtk::Window::new();
     window.set_default_size(600, 400);

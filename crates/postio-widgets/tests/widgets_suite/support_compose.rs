@@ -57,11 +57,24 @@ pub fn settle_until(what: &str, done: impl Fn() -> bool) {
 
 /// JavaScript for an `<img>`'s state, given an expression that finds it:
 /// `absent`, `loading`, `decoded`, or `broken` -- finished, with no pixels.
+///
+/// `decoded` means the pixels decoded, which is what a person sees, not that
+/// the header gave a size (#2157). WebKit takes `naturalWidth` from the
+/// header and decodes the rest when the image is first painted, so a
+/// corrupt image reads as `1` until a paint fails it, and a check made before
+/// the paint passed by luck. `decode()` asks for that decode now; its outcome
+/// is kept on the element, so asking again polls the same one.
 pub(crate) fn image_state_js(find: &str) -> String {
     format!(
         "(() => {{ const i = {find}; if (!i) return 'absent'; \
            if (!i.complete) return 'loading'; \
-           return i.naturalWidth > 0 ? 'decoded' : 'broken'; }})()"
+           if (i.naturalWidth === 0) return 'broken'; \
+           if (i.postioDecoded === undefined) {{ \
+             i.postioDecoded = 'loading'; \
+             i.decode().then(() => {{ i.postioDecoded = 'decoded'; }}, \
+                             () => {{ i.postioDecoded = 'broken'; }}); \
+           }} \
+           return i.postioDecoded; }})()"
     )
 }
 
@@ -72,7 +85,8 @@ pub(crate) fn cid_image_decoded(state: &str, what: &str) -> bool {
         "decoded" => true,
         "broken" => panic!(
             "{what}: the image finished loading with no pixels -- the postio-cid: \
-             request failed or was refused, so waiting longer cannot help"
+             request failed or was refused, or the bytes it served do not decode, \
+             so waiting longer cannot help"
         ),
         _ => false,
     }

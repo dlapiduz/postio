@@ -822,16 +822,21 @@ impl Editor {
         }
     }
 
-    /// Pump until the editing shell is loaded and editable.
+    /// Pump until the editing shell is loaded and its script is listening.
     ///
     /// `load` is asynchronous where the old `GtkTextBuffer` was not; the
     /// blocking test helpers gate on this so a test that loads-then-types
-    /// keeps meaning what it meant.
+    /// keeps meaning what it meant. The body is editable as soon as it is
+    /// parsed, before `editor.js` runs at document end, so an editable body
+    /// says nothing about whether a gesture will be reported: wait for the
+    /// marker the script sets last, as the suites' own waits do (#1716).
     fn wait_ready(&self) {
         let deadline = Instant::now() + Duration::from_secs(120);
         while Instant::now() < deadline {
-            let ready =
-                self.run_blocking("document.body && document.body.isContentEditable ? '1' : '0'");
+            let ready = self.run_blocking(
+                "document.body && document.body.isContentEditable \
+                 && window.postioEditorReady === true ? '1' : '0'",
+            );
             if ready == "1" {
                 return;
             }
