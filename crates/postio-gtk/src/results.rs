@@ -636,12 +636,19 @@ impl ResultsPane {
         self.cursor.set(view.cursor);
         if groups_changed {
             self.asked.borrow_mut().clear();
-            self.items.set_groups(&view.groups);
+            self.redraw(|items| items.set_groups(&view.groups));
         } else {
             let total = self.items.n_items();
-            self.items.items_changed(0, total, total);
+            self.redraw(|items| items.items_changed(0, total, total));
         }
         self.reveal_cursor();
+    }
+
+    /// Tell the list some of its rows changed, keeping the keyboard on it:
+    /// a row drawn again is a new widget, and the keyboard on the old one
+    /// would go with it (#2136).
+    fn redraw(&self, change: impl FnOnce(&ResultsItems)) {
+        crate::rebuild::keeping_focus_in_view(&self.list, || change(&self.items));
     }
 
     /// The results `first..first + count` landed or changed.
@@ -660,7 +667,7 @@ impl ResultsPane {
                 asked.remove(&position);
             }
         }
-        self.items.rows_changed(first, count);
+        self.redraw(|items| items.rows_changed(first, count));
         // A row still being read is drawn empty; the rows landing now grow
         // into their height and push the ring down, out of view.
         if self
@@ -679,26 +686,31 @@ impl ResultsPane {
         self.splice.replace(splice.cloned());
         self.child_focus
             .set(splice.and_then(|splice| splice.focused));
-        self.items.set_splice(anchor);
-        // The result wears its chevron's turn and loses a ring a child has.
-        if let Some((anchor, _)) = anchor {
-            self.items.rows_changed(anchor, 1);
-        }
+        self.redraw(|items| {
+            items.set_splice(anchor);
+            // The result wears its chevron's turn and loses a ring a child
+            // has.
+            if let Some((anchor, _)) = anchor {
+                items.rows_changed(anchor, 1);
+            }
+        });
     }
 
     /// The ring is on child `child` of the expanded result, or back on the
     /// result's own row (`Intent::ResultChildFocus`).
     pub fn show_child_focus(&self, child: Option<u32>) {
         let was = self.child_focus.replace(child);
-        if let Some(was) = was {
-            self.items.child_changed(was);
-        }
-        if let Some(child) = child {
-            self.items.child_changed(child);
-        }
-        if let Some((anchor, _)) = self.items.imp().splice.get() {
-            self.items.rows_changed(anchor, 1);
-        }
+        self.redraw(|items| {
+            if let Some(was) = was {
+                items.child_changed(was);
+            }
+            if let Some(child) = child {
+                items.child_changed(child);
+            }
+            if let Some((anchor, _)) = items.imp().splice.get() {
+                items.rows_changed(anchor, 1);
+            }
+        });
         if let Some(at) = child.and_then(|child| self.items.child_position(child)) {
             let weak = self.me.borrow().clone();
             glib::idle_add_local_once(move || {
@@ -738,10 +750,12 @@ impl ResultsPane {
             return;
         }
         let was = self.cursor.replace(Some(position));
-        if let Some(was) = was {
-            self.items.rows_changed(was, 1);
-        }
-        self.items.rows_changed(position, 1);
+        self.redraw(|items| {
+            if let Some(was) = was {
+                items.rows_changed(was, 1);
+            }
+            items.rows_changed(position, 1);
+        });
         self.reveal_cursor();
     }
 

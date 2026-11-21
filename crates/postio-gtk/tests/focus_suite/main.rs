@@ -145,9 +145,6 @@ const IGNORED: &[&str] = &[
     // Failed on CI in two places that do not touch this crate; held out
     // by scripts/quarantine-flakes.py until #1787 finds the race.
     "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
-    // Failed on CI in two places that do not touch this crate; held out
-    // by scripts/quarantine-flakes.py until #2136 finds the race.
-    "results::escape_closes_a_dropdown_over_the_results_then_leaves_them",
 ];
 
 const CASES: &[(&str, fn())] = &[
@@ -540,6 +537,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "results::escape_closes_a_dropdown_over_the_results_then_leaves_them",
         results::escape_closes_a_dropdown_over_the_results_then_leaves_them as fn(),
+    ),
+    (
+        "results::checking_and_walking_the_results_keeps_the_keyboard_in_their_list",
+        results::checking_and_walking_the_results_keeps_the_keyboard_in_their_list as fn(),
     ),
     (
         "results::escape_gives_a_keyboard_on_nothing_to_the_results",

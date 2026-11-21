@@ -732,6 +732,62 @@ pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
     });
 }
 
+/// #2136: the results draw a row again whenever it changes -- checked by
+/// `x`, the ring moving onto it or off it, its page landing -- and a row
+/// drawn again is a new widget. A keyboard on the old one went with it:
+/// to nothing, or on to the next control GTK found (the results' Back
+/// button, where Space presses it). On a loaded machine a page landing
+/// just after Escape did that to the case above. The keyboard stays in
+/// the list.
+pub fn checking_and_walking_the_results_keeps_the_keyboard_in_their_list() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _fixture) = budgets().await;
+        let results = show_all(&window).await;
+        let in_the_list = || {
+            let seen = window.observe().keyboard;
+            seen.reachable && seen.widget.contains("GtkListView")
+        };
+        assert!(
+            crate::settle_until(async || results.cursor().is_some()).await,
+            "the results never drew"
+        );
+        // `/` and Escape: the keyboard comes back onto the ringed row.
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        assert!(support::deliver(&window, "Escape"), "Escape was dropped");
+        assert!(
+            crate::settle_until(async || in_the_list()).await,
+            "the results never had the keyboard back: {}",
+            window.observe().keyboard.widget
+        );
+        let said = || support::texts(results.widget());
+        assert!(support::deliver(&window, "x"), "x was dropped");
+        assert!(
+            crate::settle_until(async || said().iter().any(|text| text == "1 selected")).await,
+            "x did not check the ringed result: {:?}",
+            said()
+        );
+        assert!(
+            crate::settle_while(async || in_the_list()).await,
+            "x took the keyboard out of the results' list: {}",
+            window.observe().keyboard.widget
+        );
+        let first = results.cursor();
+        assert!(support::deliver(&window, "j"), "j was dropped");
+        assert!(
+            crate::settle_until(async || results.cursor() != first).await,
+            "j did not move the ring off {first:?}"
+        );
+        assert!(
+            crate::settle_while(async || in_the_list()).await,
+            "j took the keyboard out of the results' list: {}",
+            window.observe().keyboard.widget
+        );
+    });
+}
+
 /// The keyboard was on nothing when `/`'s dropdown over the results closed
 /// -- the bar's field could not take it while the window was busy, or a
 /// popover let it go: Escape still hands it to the results' list, not to

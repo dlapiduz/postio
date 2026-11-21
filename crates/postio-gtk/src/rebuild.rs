@@ -53,3 +53,26 @@ pub(crate) fn keeping_focus(list: &gtk::ListBox, rebuild: impl FnOnce()) {
         }
     }
 }
+
+/// Run `change`, which tells `view`'s model that rows changed, and keep the
+/// keyboard in the view when it was there. A list view draws a changed row
+/// as a new widget and destroys the old one; the keyboard on it would be
+/// left on nothing, or handed on by GTK to whatever control comes next. It
+/// goes back to the row now at the place of the one that had it -- the
+/// view's own idea of where its keyboard is, which it keeps across the
+/// change. Does nothing about the keyboard when it was not in the view, or
+/// is still there.
+pub(crate) fn keeping_focus_in_view(view: &gtk::ListView, change: impl FnOnce()) {
+    let within = || {
+        view.root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| {
+                focus == *view.upcast_ref::<gtk::Widget>() || focus.is_ancestor(view)
+            })
+    };
+    let had = within();
+    change();
+    if had && !within() {
+        view.grab_focus();
+    }
+}
