@@ -5787,16 +5787,23 @@ impl FocusWindow {
                     move |token| feed.input(postio_focus::Input::OpenPlace(token))
                 });
                 // Chosen from or dismissed, the keyboard goes back to the
-                // list, not to the button the popover hangs from.
+                // list, not to the button the popover hangs from, and its
+                // counts need no more reading.
                 places.connect_closed(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
-                    move || window.focus_list_soon()
+                    #[strong(rename_to = feed)]
+                    pane.feed(),
+                    move || {
+                        feed.input(postio_focus::Input::PlacesShown(false));
+                        window.focus_list_soon();
+                    }
                 ));
                 places
             })
             .clone();
         places.open();
+        pane.feed().input(postio_focus::Input::PlacesShown(true));
         crate::motion::keep_to_budget(self);
     }
 

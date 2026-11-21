@@ -309,6 +309,49 @@ pub fn every_place_shows_its_count() {
     });
 }
 
+/// A flag written while the folders popover is up is counted in it: the
+/// popover reads the places again when mail changes, rather than showing
+/// the read it opened with until it is opened again (#2153). The same
+/// read is what a flag written just after `g l` asked for its places
+/// would otherwise miss.
+pub fn a_flag_while_the_folders_are_up_is_counted() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (atlas, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
+            .await;
+        let (harbor, _) = fixture
+            .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
+            .await;
+        let (window, client) = fixture.open().await;
+        crate::commands::flag(&client, atlas).await;
+        support::keys(&window, &["g", "l"]);
+        assert!(
+            crate::settle_until(async || row_saying(&window, "Flagged")
+                .await
+                .iter()
+                .any(|text| text == "1"))
+            .await,
+            "Flagged never counted one: {:?}",
+            row_saying(&window, "Flagged").await
+        );
+
+        crate::commands::flag(&client, harbor).await;
+        assert!(
+            crate::settle_until(async || row_saying(&window, "Flagged")
+                .await
+                .iter()
+                .any(|text| text == "2"))
+            .await,
+            "the open popover's Flagged row never said 2: {:?}",
+            row_saying(&window, "Flagged").await
+        );
+    });
+}
+
 /// What the popover's row for `name` says, key included.
 /// A count that moves while the popover is up is written into the row it
 /// is on, not drawn with a new list: a click across a redraw lands on a row
