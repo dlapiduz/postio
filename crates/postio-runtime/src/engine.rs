@@ -332,10 +332,10 @@ impl Job {
 /// to undo a write torn by `exit()` is a bet worth not making. See
 /// [`EngineThread`].
 ///
-/// So they are retained here instead, where [`stop_retained`] can reach them.
+/// So they are retained here instead, where [`stop`] can reach them.
 static RETAINED: Mutex<Vec<Engine>> = Mutex::new(Vec::new());
 
-/// Keep `engine` alive for the session, and reachable by [`stop_retained`].
+/// Keep `engine` alive for the session, and reachable by [`stop`].
 pub fn retain(engine: Engine) {
     RETAINED
         .lock()
@@ -346,7 +346,7 @@ pub fn retain(engine: Engine) {
 /// Wind down an engine that something else has replaced, without waiting.
 ///
 /// Closes its job channel at once, so nothing more is queued on it, takes
-/// it out of the retained list so [`stop_retained`] does not hold or join
+/// it out of the retained list so [`stop`] does not hold or join
 /// it a second time, and joins its thread off the caller's thread: the
 /// caller may be the async executor or a UI loop (#1986).
 pub fn retire(engine: Engine) {
@@ -359,16 +359,27 @@ pub fn retire(engine: Engine) {
     std::thread::spawn(move || engine.thread.join_bounded());
 }
 
-/// Stop every retained engine and wait for its thread. Call before exiting.
+/// Stop `engines` and wait for their threads, before exiting. Every other
+/// retained engine goes on running.
 ///
-/// Idempotent, and a no-op in a process that retained none — which is every
-/// test that builds its own engine and drops it.
-pub fn stop_retained() {
-    let engines = std::mem::take(
-        &mut *RETAINED
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    );
+/// What a host stopping is: the engines it started, and nobody else's. It
+/// stopped every retained engine once, which in the application is the same
+/// thing and in a test suite is not: several hosts share a process there,
+/// and each one that ended took its neighbours' syncs down mid-case (#1976).
+/// A no-op given none.
+pub fn stop(engines: Vec<Engine>) {
+    RETAINED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|kept| {
+            !engines
+                .iter()
+                .any(|engine| Arc::ptr_eq(&kept.thread, &engine.thread))
+        });
+    stop_and_wait(engines);
+}
+
+fn stop_and_wait(engines: Vec<Engine>) {
     if engines.is_empty() {
         return;
     }
@@ -533,7 +544,7 @@ impl EngineThread {
     }
 
     /// As [`join_bounded`](Self::join_bounded), against a deadline the caller
-    /// chose — which is what lets [`stop_retained`] give N engines one shared
+    /// chose — which is what lets [`stop`] give N engines one shared
     /// grace on the way out instead of N graces in a row (#759).
     fn join_until(&self, deadline: Instant) {
         let Some(handle) = self

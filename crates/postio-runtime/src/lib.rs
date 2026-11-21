@@ -42,7 +42,7 @@ pub mod store;
 
 pub use engine::{
     Clock, DrainSummary, Engine, EngineError, EngineParts, FilingSlot, Link, NetworkSource,
-    NetworkState, POLL_INTERVAL, SyncSummary, SystemClock, retain, retire, stop_retained,
+    NetworkState, POLL_INTERVAL, SyncSummary, SystemClock, retain, retire, stop,
 };
 // The two policies `EngineParts` is built with. Re-exported rather than left
 // to be reached for through `postio-sync`, because the composition root that
