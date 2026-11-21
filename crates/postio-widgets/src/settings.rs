@@ -1817,9 +1817,23 @@ impl SettingsPanel {
         // changed: the same account is still the open one.
         imp.redrawing.set(true);
         let open_on = *imp.account_detail_id.borrow();
+        // The keyboard on a row goes with the row, and GTK hands it to
+        // whichever row is left: the next `Return` or `Delete` would act on
+        // another account (#1787). It goes back to the same account's row.
+        let keyboard_on = self.focused_account();
         clear_rows(&imp.accounts_list);
         for account in imp.accounts.borrow().iter() {
             imp.accounts_list.append(&self.account_row(account));
+        }
+        if let Some(keyboard_on) = keyboard_on {
+            let mut index = 0;
+            while let Some(row) = imp.accounts_list.row_at_index(index) {
+                if row_account_id(&row) == keyboard_on {
+                    row.grab_focus();
+                    break;
+                }
+                index += 1;
+            }
         }
         // Selecting a row is what opens the form under the list (#1179), so
         // a redraw that dropped the selection would close a form somebody is

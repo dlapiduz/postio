@@ -5,34 +5,17 @@
 //! selection is only let go when a verb runs, so dismissing the menu loses
 //! nothing. Escape closes it.
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::state::Selection;
 
 use crate::support::{self, Fixture};
 
-/// Right-click the `index`th row on screen as GTK would run it: the list's
-/// secondary-button gesture, pressed at the row's middle.
+/// Right-click the `index`th row on screen as a person does: at its middle,
+/// once it is still and a press there reaches it, along GTK's path.
 pub(crate) fn right_click(window: &postio_gtk::window::FocusWindow, index: usize) {
-    let pane = window.pane().expect("the inbox");
-    let view = pane.view().clone();
-    let rows = pane.rows_on_screen();
+    let rows = window.pane().expect("the inbox").rows_on_screen();
     let row = rows.get(index).expect("a row on screen");
-    let middle = row
-        .compute_point(
-            &view,
-            &gtk::graphene::Point::new(row.width() as f32 / 2.0, row.height() as f32 / 2.0),
-        )
-        .expect("the row is in the list");
-    let controllers = view.observe_controllers();
-    let gesture = (0..controllers.n_items())
-        .filter_map(|at| controllers.item(at).and_downcast::<gtk::GestureClick>())
-        .find(|gesture| gesture.button() == gdk::BUTTON_SECONDARY)
-        .expect("the list answers the secondary button");
-    gesture.emit_by_name::<()>(
-        "pressed",
-        &[&1i32, &f64::from(middle.x()), &f64::from(middle.y())],
-    );
+    support::secondary_click(window, row);
     crate::settle();
 }
 
@@ -43,7 +26,21 @@ pub(crate) async fn menu_shown(window: &postio_gtk::window::FocusWindow) -> gtk:
             .row_menu()
             .is_some_and(|menu| menu.is_open() && menu.widget().width() > 0))
         .await,
-        "no menu opened on the row"
+        "no menu opened on the row: {}",
+        // What there was, so a failure says which part never came (#1793).
+        match window.row_menu() {
+            None => format!(
+                "the right-click built none (cursor on {:?})",
+                window.pane().map(|pane| pane.cursor().selected())
+            ),
+            Some(menu) => format!(
+                "open {}, mapped {}, {}x{}",
+                menu.is_open(),
+                menu.widget().is_mapped(),
+                menu.widget().width(),
+                menu.widget().height()
+            ),
+        }
     );
     window.row_menu().expect("the menu").widget().clone()
 }

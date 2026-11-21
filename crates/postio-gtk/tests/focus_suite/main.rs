@@ -142,12 +142,6 @@ const IGNORED: &[&str] = &[
     // GTK code, once on the retry too). Back in `CASES`' default run when
     // #1793 finds what the popover waits on; run by name until then.
     "row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection",
-    // Failed on CI in two places that do not touch this crate; held out
-    // by scripts/quarantine-flakes.py until #1787 finds the race.
-    "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
-    // Failed on CI in two places that do not touch this crate; held out
-    // by scripts/quarantine-flakes.py until #2136 finds the race.
-    "results::escape_closes_a_dropdown_over_the_results_then_leaves_them",
 ];
 
 const CASES: &[(&str, fn())] = &[
@@ -540,6 +534,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "results::escape_closes_a_dropdown_over_the_results_then_leaves_them",
         results::escape_closes_a_dropdown_over_the_results_then_leaves_them as fn(),
+    ),
+    (
+        "results::checking_and_walking_the_results_keeps_the_keyboard_in_their_list",
+        results::checking_and_walking_the_results_keeps_the_keyboard_in_their_list as fn(),
     ),
     (
         "results::escape_gives_a_keyboard_on_nothing_to_the_results",
@@ -1919,6 +1917,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "drag_out::a_dragged_message_survives_the_portal",
         drag_out::a_dragged_message_survives_the_portal as fn(),
+    ),
+    (
+        "settings_wiring::an_account_verb_leaves_the_keyboard_on_its_row",
+        settings_wiring::an_account_verb_leaves_the_keyboard_on_its_row as fn(),
     ),
     (
         "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",

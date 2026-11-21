@@ -1404,6 +1404,29 @@ pub fn click(
     click_on(&native, x, y, n_press);
 }
 
+/// Right-click the middle of `widget` as a person would: once it is laid
+/// out, still, and the place a press there reaches, the secondary button
+/// pressed and released along GTK's path, as [`click`] does the primary.
+pub fn secondary_click(
+    window: &postio_gtk::window::FocusWindow,
+    widget: &impl gtk::prelude::IsA<gtk::Widget>,
+) {
+    use gtk::prelude::*;
+    let widget = widget.as_ref();
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while !(widget.is_mapped() && widget.width() > 0 && widget.height() > 0)
+        && std::time::Instant::now() < deadline
+    {
+        crate::settle();
+    }
+    let native = native_of(widget, window);
+    wait_to_be_still(&native, widget);
+    let (width, height) = (widget.width() as f32, widget.height() as f32);
+    let (x, y) = wait_to_be_pickable(&native, widget, width / 2.0, height / 2.0);
+    press_on(&native, x, y, 1, gtk::gdk::BUTTON_SECONDARY);
+}
+
 /// The surface `widget` is drawn on: the window, or a popover's own.
 fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> gtk::Widget {
     use gtk::prelude::*;
@@ -1574,6 +1597,12 @@ pub fn click_at(window: &postio_gtk::window::FocusWindow, x: f64, y: f64, n_pres
 /// [`click_at`] on a surface `native` (a window, or a popover's own), in its
 /// coordinates.
 fn click_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32) {
+    press_on(window, x, y, n_press, gtk::gdk::BUTTON_PRIMARY);
+}
+
+/// [`click_on`] with `button`: the gestures for it, or for every button,
+/// see the press.
+fn press_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32, button: u32) {
     use gtk::prelude::*;
     let picked = window
         .pick(x, y, gtk::PickFlags::DEFAULT)
@@ -1596,9 +1625,9 @@ fn click_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32) {
         (0..controllers.n_items())
             .filter_map(|at| controllers.item(at).and_downcast::<gtk::GestureClick>())
             .filter(|gesture| gesture.propagation_phase() == phase)
-            // A primary click: a gesture for another button (a row's
-            // context menu on the secondary) never sees it.
-            .filter(|gesture| matches!(gesture.button(), 0 | gtk::gdk::BUTTON_PRIMARY))
+            // A gesture for another button (a row's context menu on the
+            // secondary, for a primary click) never sees it.
+            .filter(|gesture| gesture.button() == 0 || gesture.button() == button)
             .collect()
     };
     // The path, in the order GTK runs it: widget and gesture.

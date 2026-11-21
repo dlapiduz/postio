@@ -53,3 +53,50 @@ pub(crate) fn keeping_focus(list: &gtk::ListBox, rebuild: impl FnOnce()) {
         }
     }
 }
+
+/// Build a list view over `model` with `build`, and keep the keyboard in it
+/// whenever `model`'s rows change. A list view draws a changed row as a new
+/// widget and destroys the old one, and the keyboard on it would be left on
+/// nothing -- or handed by GTK to whatever control came next -- until
+/// something put it back (#2136, #2150). It goes back to the row now at the
+/// place of the one that had it: the view's own idea of where its keyboard
+/// is, which it keeps across the change.
+///
+/// Hooked on the model itself, before and after the view's own handler, so
+/// it holds for every change, whoever makes it and however many turns of
+/// the loop the rows take to land.
+pub(crate) fn keeping_keyboard(
+    model: &impl IsA<gtk::gio::ListModel>,
+    build: impl FnOnce() -> gtk::ListView,
+) -> gtk::ListView {
+    fn within(view: &gtk::ListView) -> bool {
+        view.root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| {
+                focus == *view.upcast_ref::<gtk::Widget>() || focus.is_ancestor(view)
+            })
+    }
+    let watched: std::rc::Rc<gtk::glib::WeakRef<gtk::ListView>> = std::rc::Rc::default();
+    let had = std::rc::Rc::new(std::cell::Cell::new(false));
+    // Connected before the view connects its own: this runs first, while
+    // the row with the keyboard is still there.
+    model.connect_items_changed({
+        let watched = std::rc::Rc::clone(&watched);
+        let had = std::rc::Rc::clone(&had);
+        move |_, _, _, _| had.set(watched.upgrade().is_some_and(|view| within(&view)))
+    });
+    let view = build();
+    watched.set(Some(&view));
+    model.connect_items_changed({
+        let watched = std::rc::Rc::clone(&watched);
+        move |_, _, _, _| {
+            if had.take()
+                && let Some(view) = watched.upgrade()
+                && !within(&view)
+            {
+                view.grab_focus();
+            }
+        }
+    });
+    view
+}

@@ -361,7 +361,12 @@ impl ResultsPane {
         let items = ResultsItems::default();
         let selection = gtk::NoSelection::new(Some(items.clone()));
         let factory = gtk::SignalListItemFactory::new();
-        let list = gtk::ListView::new(Some(selection), Some(factory.clone()));
+        // A row is drawn again as a new widget whenever it changes -- `x`,
+        // the ring moving, its page landing -- and the keyboard stays in
+        // the list across it (#2136).
+        let list = crate::rebuild::keeping_keyboard(&selection, || {
+            gtk::ListView::new(Some(selection.clone()), Some(factory.clone()))
+        });
         list.add_css_class("focus-results-list");
         list.set_single_click_activate(false);
         list.set_accessible_role(gtk::AccessibleRole::List);
