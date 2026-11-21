@@ -121,7 +121,13 @@ impl ListPane {
         // The cursor, not the selection: GTK's name, Postio's meaning
         // (`postio_ui::selection`). What `e` would archive is kept apart.
         let cursor = keep_the_cursor(feed.shown());
-        let view = gtk::ListView::new(Some(cursor.clone()), Some(factory));
+        // A place opening builds the rows anew, and the row with the
+        // keyboard goes with the old ones: the keyboard stays in the list
+        // until the cursor's row takes it, however many turns the rows
+        // take to land (#2150).
+        let view = crate::rebuild::keeping_keyboard(&cursor, || {
+            gtk::ListView::new(Some(cursor.clone()), Some(factory))
+        });
         view.set_header_factory(Some(&day_headings(feed.list())));
         // A page landing may move where a day starts.
         feed.list().connect_local("filled", false, {
