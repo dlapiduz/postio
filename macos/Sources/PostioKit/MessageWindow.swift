@@ -17,10 +17,16 @@ public protocol MessageWindowSource: AnyObject, Sendable {
     ) -> FocusReaderDocumentFfi
     /// The message as it came off the wire, for `v`.
     func rawSource(_ message: Int64) throws -> Data
-    /// What `o` offers for `message`.
-    func openChoices(_ message: Int64) -> OpenChoicesFfi
+    /// What `A` offers for `message`: the links in `document`, the reader
+    /// document on screen, and the attachments.
+    func openChoices(_ message: Int64, _ document: String) -> OpenChoicesFfi
     /// A private copy of one attachment, fetched first if need be: its path.
     func openAttachment(_ message: Int64, _ attachment: Int64) throws -> String
+    /// One attachment written to the file at `to`, fetched first if need
+    /// be: what to say.
+    func saveAttachment(_ message: Int64, _ attachment: Int64, to: String) throws -> String
+    /// Every attachment written into the folder at `folder`: what to say.
+    func saveAttachments(_ message: Int64, folder: String) throws -> String
     /// Leave the list `message` came from: `nil` when the activation was
     /// recorded, else why not. Writes, so never on the main actor.
     func activateUnsubscribe(_ message: Int64) -> String?
@@ -366,20 +372,68 @@ public final class MessageWindowModel {
             })
     }
 
-    /// `o`: what the open message offers. Nothing to choose from is said in
-    /// the shared words; otherwise `present` gets the parts, to be shown as
-    /// a menu. Nothing opens until one is chosen.
-    public func offerAttachments(present: @escaping ([FocusAttachmentFfi]) -> Void) {
+    /// `A`: what the open message offers, as GTK's chooser offers it -- the
+    /// links in the document on screen, then the parts. Nothing to choose
+    /// from is said in the shared words; otherwise `present` gets the
+    /// choices, to be shown as a menu. Nothing opens until one is chosen.
+    public func offerAttachments(present: @escaping (OpenChoicesFfi) -> Void) {
         guard let message = displayed else { return }
         let source = engine
+        let shown = document?.html ?? ""
         pending.append(
             Task { [weak self] in
-                let choices = await Task.detached { source.openChoices(message) }.value
+                let choices = await Task.detached { source.openChoices(message, shown) }.value
                 guard let self, self.displayed == message else { return }
                 if let nothing = choices.nothing {
                     self.say(nothing)
                 } else {
-                    present(choices.parts)
+                    present(choices)
+                }
+            })
+    }
+
+    /// A link chosen from `A`'s menu: handed to the system as it is, the
+    /// target the menu showed beside its words.
+    public func openLink(_ target: String) {
+        guard place != nil, let url = URL(string: target) else { return }
+        handOff(url)
+    }
+
+    /// Save attachment `attachment` of the message on screen to the file a
+    /// person named, and say how it went.
+    public func saveAttachment(_ attachment: Int64, to file: URL) {
+        guard let message = displayed else { return }
+        let source = engine
+        let path = file.path
+        saving { try source.saveAttachment(message, attachment, to: path) }
+    }
+
+    /// Save every attachment of the message on screen into the folder a
+    /// person chose, and say how it went.
+    public func saveAttachments(to folder: URL) {
+        guard let message = displayed else { return }
+        let source = engine
+        let path = folder.path
+        saving { try source.saveAttachments(message, folder: path) }
+    }
+
+    /// Run a save off the main actor and say its answer, or why it failed.
+    private func saving(_ save: @escaping @Sendable () throws -> String) {
+        pending.append(
+            Task { [weak self] in
+                let saved = await Task.detached { () -> Result<String, Error> in
+                    Result { try save() }
+                }.value
+                guard let self, self.place != nil else { return }
+                switch saved {
+                case let .success(words):
+                    self.say(words)
+                case let .failure(error):
+                    if case let PartsError.Refused(message) = error {
+                        self.say(message)
+                    } else {
+                        self.say(String(describing: error))
+                    }
                 }
             })
     }

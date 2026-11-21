@@ -648,10 +648,23 @@ public final class PostioSession {
         inner.clearListMail(message: message, delete: delete)
     }
 
-    /// What `o` offers for `message`: its attachments, or the shared words
-    /// for there being none. A local read.
-    public nonisolated func openChoices(_ message: Int64) -> OpenChoicesFfi {
-        inner.openChoices(message: message)
+    /// What `A` offers for `message`: the links in `document` (the reader
+    /// document on screen) and its attachments, or the shared words for
+    /// there being neither. A local read.
+    public nonisolated func openChoices(_ message: Int64, _ document: String) -> OpenChoicesFfi {
+        inner.openChoices(message: message, document: document)
+    }
+
+    /// One attachment written to the file at `to`, the one a person named:
+    /// what to say. **Never on the main actor**, as `openAttachment`.
+    public nonisolated func saveAttachment(_ message: Int64, _ attachment: Int64, to: String) throws -> String {
+        try inner.saveAttachment(message: message, attachment: attachment, to: to)
+    }
+
+    /// Every attachment written into `folder`, the one a person chose: what
+    /// to say. **Never on the main actor**, as `openAttachment`.
+    public nonisolated func saveAttachments(_ message: Int64, folder: String) throws -> String {
+        try inner.saveAttachments(message: message, folder: folder)
     }
 
     /// A private copy of one attachment, fetched first if it was never

@@ -56,10 +56,33 @@ struct MessageWindowModelTests {
         var opened: [(Int64, Int64)] { lock.withLock { _opened } }
         /// What opening answers: the file's path, or why not.
         var written: Result<String, Error> = .success("/tmp/postio-test/report.pdf")
-        /// What `o` finds.
-        var choices = OpenChoicesFfi(parts: [], nothing: "Nothing to open")
+        /// What `A` finds.
+        var choices = OpenChoicesFfi(links: [], parts: [], nothing: "Nothing to open", save: "Save", saveAll: "Save all")
+        private var _asked: [(Int64, String)] = []
+        /// Every `A` asked: the message and the document it was asked over.
+        var asked: [(Int64, String)] { lock.withLock { _asked } }
 
-        func openChoices(_ message: Int64) -> OpenChoicesFfi { choices }
+        func openChoices(_ message: Int64, _ document: String) -> OpenChoicesFfi {
+            lock.withLock { _asked.append((message, document)) }
+            return choices
+        }
+
+        private var _saved: [(Int64, Int64?, String)] = []
+        /// Every save asked: the message, the part (`nil` for all of them),
+        /// and where.
+        var saved: [(Int64, Int64?, String)] { lock.withLock { _saved } }
+        /// What a save answers: what to say, or why not.
+        var saving: Result<String, Error> = .success("Saved report.pdf")
+
+        func saveAttachment(_ message: Int64, _ attachment: Int64, to: String) throws -> String {
+            lock.withLock { _saved.append((message, attachment, to)) }
+            return try saving.get()
+        }
+
+        func saveAttachments(_ message: Int64, folder: String) throws -> String {
+            lock.withLock { _saved.append((message, nil, folder)) }
+            return try saving.get()
+        }
 
         func openAttachment(_ message: Int64, _ attachment: Int64) throws -> String {
             lock.withLock { _opened.append((message, attachment)) }
@@ -602,24 +625,65 @@ struct MessageWindowModelTests {
         let (model, _) = Self.model(source)
         _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
         await model.settled()
-        var offered: [[FocusAttachmentFfi]] = []
+        var offered: [OpenChoicesFfi] = []
         model.offerAttachments { offered.append($0) }
         await settle(model) { model.notice != nil }
         #expect(model.notice == "Nothing to open")
         #expect(offered.isEmpty)
     }
 
-    @Test func oOffersTheParts() async {
+    @Test func aOffersTheLinksOnScreenAndTheParts() async {
         let source = Source()
         source.choices = OpenChoicesFfi(
-            parts: [FocusAttachmentFfi(id: 41, name: "report.pdf", size: "48 KB")], nothing: nil)
+            links: [OpenLinkFfi(words: "the report", target: "https://example.com/report")],
+            parts: [FocusAttachmentFfi(id: 41, name: "report.pdf", size: "48 KB", saveName: "report.pdf")],
+            nothing: nil, save: "Save", saveAll: "Save all")
         let (model, _) = Self.model(source)
         _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
         await model.settled()
-        var offered: [[FocusAttachmentFfi]] = []
+        var offered: [OpenChoicesFfi] = []
         model.offerAttachments { offered.append($0) }
         await settle(model) { !offered.isEmpty }
-        #expect(offered.first?.map(\.id) == [41])
+        #expect(offered.first?.parts.map(\.id) == [41])
+        #expect(offered.first?.links.map(\.target) == ["https://example.com/report"])
+        #expect(source.asked.map(\.0) == [7])
+        #expect(source.asked.map(\.1) == ["<p>7</p>"], "the links are the document's on screen")
         #expect(model.notice == nil)
+    }
+
+    @Test func aLinkChosenIsHandedToTheSystemAsItIs() async {
+        let source = Source()
+        var handed: [URL] = []
+        let model = MessageWindowModel(source: source, report: { _, _ in }, handOff: { handed.append($0) })
+        _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
+        await model.settled()
+        model.openLink("https://example.com/report?q=1")
+        #expect(handed == [URL(string: "https://example.com/report?q=1")!])
+    }
+
+    @Test func savingAPartWritesItWhereThePersonSaidAndSaysSo() async {
+        let source = Source()
+        let (model, _) = Self.model(source)
+        _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
+        await model.settled()
+        model.saveAttachment(41, to: URL(fileURLWithPath: "/tmp/postio-test/Quarterly.pdf"))
+        await settle(model) { model.notice != nil }
+        #expect(source.saved.map(\.0) == [7])
+        #expect(source.saved.map(\.1) == [41])
+        #expect(source.saved.map(\.2) == ["/tmp/postio-test/Quarterly.pdf"])
+        #expect(model.notice == "Saved report.pdf", "the engine's words")
+    }
+
+    @Test func saveAllWritesIntoTheFolderChosenAndAFailureIsASentence() async {
+        let source = Source()
+        source.saving = .failure(PartsError.Refused(message: "There is no open store to read that message from"))
+        let (model, _) = Self.model(source)
+        _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
+        await model.settled()
+        model.saveAttachments(to: URL(fileURLWithPath: "/tmp/postio-test", isDirectory: true))
+        await settle(model) { model.notice != nil }
+        #expect(source.saved.map(\.1) == [nil], "every part, not one")
+        #expect(source.saved.map(\.2) == ["/tmp/postio-test"])
+        #expect(model.notice == "There is no open store to read that message from")
     }
 }

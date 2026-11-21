@@ -48,7 +48,7 @@ struct MessageWindowWordsTests {
             date: "Today, 15:22", marker: marker,
             dismiss: FocusRowActionFfi(command: "dismiss_marker", label: "Dismiss"),
             actions: actions, more: more,
-            attachments: [FocusAttachmentFfi(id: 3, name: "draft-v3.pdf", size: "47 KB")])
+            attachments: [FocusAttachmentFfi(id: 3, name: "draft-v3.pdf", size: "47 KB", saveName: "draft-v3.pdf")])
     }
 
     @Test func theTitleAreaIsTheSubjectThePositionAndOneKJCap() {
