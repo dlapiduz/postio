@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use postio_account::backend::{
-    AppendMessage, FetchEvent, MailBackend, MockBackend, MockMailbox, MockMessage,
+    AppendMessage, FetchEvent, Held, MailBackend, MockBackend, MockMailbox, MockMessage,
 };
 use postio_core::bridge::event_channel;
 use postio_model::operation::{Operation, OperationTarget};
@@ -301,15 +301,26 @@ async fn the_inbox_finishes_while_a_large_archive_is_still_going() {
     // an archive is a lane INBOX is *not* queued behind, so this should hold
     // more comfortably than it did sequentially — but only if the wave keeps
     // taking mailboxes off the front of a priority-ordered queue.
+    //
+    // Two batches of archive are enough for the order to say it, and no
+    // background lane: the archive's bodies beside its headers were most of
+    // the case's time and none of its question.
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
-            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .mailbox(folder("Archive", &["\\Archive"], 400))
             .build(),
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine, _directory) = engine_over(backend.clone()).await;
+    let (database, engine, _directory) = engine_over_with(
+        backend.clone(),
+        postio_runtime::BackfillPolicy {
+            background: false,
+            ..Default::default()
+        },
+    )
+    .await;
 
     // Liveness only: wait for the whole wave, then judge the order the
     // server actually saw. Waiting for both is what makes the assertion
@@ -317,7 +328,7 @@ async fn the_inbox_finishes_while_a_large_archive_is_still_going() {
     // already been written.
     until("both folders to finish their first sync", async || {
         stored(&database, "INBOX").await == Some(10)
-            && stored(&database, "Archive").await == Some(2_000)
+            && stored(&database, "Archive").await == Some(400)
     })
     .await;
 
@@ -344,36 +355,43 @@ async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
     // scheduler, at any load. (The earlier form asserted the archive's row
     // count was below its total at the moment the answer returned, which a
     // machine slow enough to finish the archive inside that window turned
-    // vacuous — the CI flake this test was known for, #122.)
+    // vacuous — the CI flake this test was known for, #122.) The archive's
+    // pass is parked inside its second header fetch while the question is
+    // asked, so the wave is under way for as long as the answer takes.
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
-            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .mailbox(folder("Archive", &["\\Archive"], 400))
             .build(),
     );
     backend.set_latency(LATENCY);
+    backend.hold(Held::Headers, "Archive", 1);
 
-    let (database, engine, _directory) = engine_over(backend.clone()).await;
+    let (database, engine, _directory) = engine_over_with(
+        backend.clone(),
+        postio_runtime::BackfillPolicy {
+            background: false,
+            ..Default::default()
+        },
+    )
+    .await;
 
-    // Wait until the wave is demonstrably under way rather than guessing at a
-    // sleep: one committed batch means a pass is running.
-    until("the archive to start arriving", async || {
-        stored(&database, "Archive")
-            .await
-            .is_some_and(|count| count > 0)
+    until("the archive's pass to be parked mid-flight", async || {
+        backend.parked() == 1
     })
     .await;
 
-    engine
-        .backfill_progress()
+    tokio::time::timeout(Duration::from_secs(180), engine.backfill_progress())
         .await
+        .expect("the engine answers while the archive's pass is parked")
         .expect("the engine answers while it is syncing");
     let fetches_at_answer = archive_fetches(&backend);
 
     // And nothing was dropped on the way: an interrupted pass is requeued and
     // resumes, so the archive still finishes.
+    backend.release();
     until("the archive to finish anyway", async || {
-        stored(&database, "Archive").await == Some(2_000)
+        stored(&database, "Archive").await == Some(400)
     })
     .await;
 
@@ -398,50 +416,39 @@ async fn inbox_bodies_start_before_the_archive_s_headers_finish() {
     // settle every lane's outcome only once every lane in it had completed,
     // and the outer loop did not fetch a single body until the whole
     // account's header queue was empty.
+    //
+    // The archive's pass is parked inside its second header fetch, so its
+    // headers cannot finish before INBOX's first body whatever the machine's
+    // load; an engine that holds INBOX's bodies until they do never fetches
+    // one, and the wait below names it.
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
-            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .mailbox(folder("Archive", &["\\Archive"], 400))
             .build(),
     );
     backend.set_latency(LATENCY);
+    backend.hold(Held::Headers, "Archive", 1);
 
-    let (database, engine, _directory) = engine_over(backend.clone()).await;
+    let (_database, engine, _directory) = engine_over(backend.clone()).await;
 
-    until("both folders to finish their first sync", async || {
-        stored(&database, "INBOX").await == Some(10)
-            && stored(&database, "Archive").await == Some(2_000)
-    })
+    until(
+        "INBOX's first body while the archive's headers are parked",
+        async || {
+            backend.parked() == 1
+                && backend
+                    .body_fetches()
+                    .iter()
+                    .any(|mailbox| mailbox == "INBOX")
+        },
+    )
     .await;
-
-    // Give the backfill lane a moment to fetch what it seeded -- the wave
-    // above only guarantees headers are in; bodies are a separate queue this
-    // waits for the same way `until` waits for anything else.
-    until("INBOX to have at least one body fetched", async || {
-        backend
-            .body_fetches()
-            .iter()
-            .any(|mailbox| mailbox == "INBOX")
-    })
-    .await;
-
-    let order = backend.fetch_order();
-    let last_archive_header = order
-        .iter()
-        .rposition(|event| matches!(event, FetchEvent::Header(mailbox) if mailbox == "Archive"));
-    let first_inbox_body = order
-        .iter()
-        .position(|event| matches!(event, FetchEvent::Body(mailbox) if mailbox == "INBOX"));
-
-    match (first_inbox_body, last_archive_header) {
-        (Some(body), Some(header)) => assert!(
-            body < header,
-            "INBOX's first body fetch came after the archive's last header \
-             fetch, so INBOX's own bodies waited out the archive's headers: \
-             {order:?}"
-        ),
-        _ => panic!("the log never saw one of the two calls it needs: {order:?}"),
-    }
+    assert_eq!(
+        archive_fetches(&backend),
+        1,
+        "the archive's headers were let go before INBOX's first body"
+    );
+    backend.release();
     drop(engine);
 }
 
@@ -463,14 +470,19 @@ async fn inbox_bodies_keep_arriving_while_the_archive_s_headers_run() {
     // shrunk from 200 so the property is about *when* the top-up happens,
     // not about how fast two hundred bodies can be written next to an
     // archive's headers on the machine running the test.
+    //
+    // The archive's pass is parked inside its second header fetch, so its
+    // headers are still running for as long as the case needs them to be,
+    // where a 2,000-message archive only probably was (#2166).
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 28))
-            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .mailbox(folder("Archive", &["\\Archive"], 400))
             .build(),
     );
     backend.refuse_creates("no new folders here");
     backend.set_latency(LATENCY);
+    backend.hold(Held::Headers, "Archive", 1);
 
     let policy = postio_runtime::BackfillPolicy {
         seed_batch: 20,
@@ -480,12 +492,7 @@ async fn inbox_bodies_keep_arriving_while_the_archive_s_headers_run() {
 
     until(
         "INBOX's headers to land while the archive is under way",
-        async || {
-            stored(&database, "INBOX").await == Some(28)
-                && stored(&database, "Archive")
-                    .await
-                    .is_some_and(|count| count > 0)
-        },
+        async || stored(&database, "INBOX").await == Some(28) && backend.parked() == 1,
     )
     .await;
 
@@ -493,20 +500,12 @@ async fn inbox_bodies_keep_arriving_while_the_archive_s_headers_run() {
         bodies_missing(&database, "INBOX").await == Some(0)
     })
     .await;
-    let fetches_when_bodies_were_complete = archive_fetches(&backend);
-
-    until("the archive to finish anyway", async || {
-        stored(&database, "Archive").await == Some(2_000)
-    })
-    .await;
-    let fetches_in_the_end = archive_fetches(&backend);
-    assert!(
-        fetches_when_bodies_were_complete < fetches_in_the_end,
-        "INBOX's last body arrived only after the archive's last header fetch \
-         ({fetches_when_bodies_were_complete} of {fetches_in_the_end} archive \
-         fetches had already happened), so bodies beyond the first seeded \
-         batch waited out the whole wave"
+    assert_eq!(
+        archive_fetches(&backend),
+        1,
+        "the archive's headers were let go before INBOX's last body arrived"
     );
+    backend.release();
     drop(engine);
 }
 
@@ -521,26 +520,24 @@ async fn new_inbox_mail_is_synced_while_the_archive_s_headers_run() {
     // A message is appended to INBOX once the archive is demonstrably under
     // way, and it has to be in the store while the archive is still fetching
     // headers. Causal: the archive's fetch count when the message lands must
-    // be below its final count.
+    // be below its final count. The archive's pass is parked inside its
+    // second header fetch until the message is in, rather than sized to
+    // probably outlast it (#2166).
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
-            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .mailbox(folder("Archive", &["\\Archive"], 400))
             .build(),
     );
     backend.refuse_creates("no new folders here");
     backend.set_latency(LATENCY);
+    backend.hold(Held::Headers, "Archive", 1);
 
     let (database, engine, _directory) = engine_over(backend.clone()).await;
 
     until(
         "INBOX's headers to land while the archive is under way",
-        async || {
-            stored(&database, "INBOX").await == Some(10)
-                && stored(&database, "Archive")
-                    .await
-                    .is_some_and(|count| count > 0)
-        },
+        async || stored(&database, "INBOX").await == Some(10) && backend.parked() == 1,
     )
     .await;
 
@@ -553,19 +550,12 @@ async fn new_inbox_mail_is_synced_while_the_archive_s_headers_run() {
         stored(&database, "INBOX").await == Some(11)
     })
     .await;
-    let fetches_when_it_landed = archive_fetches(&backend);
-
-    until("the archive to finish anyway", async || {
-        stored(&database, "Archive").await == Some(2_000)
-    })
-    .await;
-    let fetches_in_the_end = archive_fetches(&backend);
-    assert!(
-        fetches_when_it_landed < fetches_in_the_end,
-        "the new INBOX message was synced only after the archive's last header \
-         fetch ({fetches_when_it_landed} of {fetches_in_the_end} archive fetches \
-         had already happened), so new mail waited out the whole wave"
+    assert_eq!(
+        archive_fetches(&backend),
+        1,
+        "the archive's headers were let go before the new message was synced"
     );
+    backend.release();
     drop(engine);
 }
 
@@ -587,22 +577,24 @@ async fn new_inbox_mail_is_synced_while_the_wave_only_fetches_bodies() {
     );
     backend.refuse_creates("no new folders here");
     backend.set_latency(LATENCY);
+    // The archive's bodies are parked until the case is over, so the
+    // body-only stretch outlasts the question whatever the machine's load.
+    // Slowing them down once the headers were in was not enough: on a busy
+    // machine the headers took long enough for the bodies to finish beside
+    // them (#2166).
+    backend.hold(Held::Bodies, "Archive", 0);
 
     let (database, engine, _directory) = engine_over(backend.clone()).await;
 
-    until("every header to land", async || {
-        stored(&database, "INBOX").await == Some(10)
-            && stored(&database, "Archive").await == Some(600)
-    })
+    until(
+        "every header to land, with the archive's bodies on the wire",
+        async || {
+            stored(&database, "INBOX").await == Some(10)
+                && stored(&database, "Archive").await == Some(600)
+                && backend.parked() > 0
+        },
+    )
     .await;
-    // Slow the bodies down so the body-only stretch is unmistakable.
-    backend.set_latency(Duration::from_millis(150));
-    assert!(
-        bodies_missing(&database, "Archive")
-            .await
-            .is_some_and(|missing| missing > 100),
-        "the archive's bodies were done before the question could be asked"
-    );
 
     backend
         .append("INBOX", &AppendMessage::new(message(11)))
@@ -613,12 +605,16 @@ async fn new_inbox_mail_is_synced_while_the_wave_only_fetches_bodies() {
         stored(&database, "INBOX").await == Some(11)
     })
     .await;
-    let missing = bodies_missing(&database, "Archive").await.unwrap_or(0);
-    assert!(
-        missing > 0,
-        "the new INBOX message was synced only once the archive's bodies were \
-         all down, so new mail waited out the whole backfill"
+    // Causal: the archive's backfill cannot have finished, since none of its
+    // bodies has been served, so the message came in during it. An engine
+    // that looked at INBOX only once the backfill was over never syncs it,
+    // and the wait above names the step.
+    assert_eq!(
+        bodies_missing(&database, "Archive").await,
+        Some(600),
+        "an archive body came down while every one was held"
     );
+    backend.release();
     drop(engine);
 }
 
@@ -706,6 +702,9 @@ async fn new_mail_and_its_attachments_come_down_ahead_of_the_backlog() {
     );
     backend.refuse_creates("no new folders here");
     backend.set_latency(LATENCY);
+    // Held until every header is in, so the whole backlog is still to come
+    // when the note arrives, however long the headers took (#2166).
+    backend.hold(Held::Bodies, "Archive", 0);
 
     let (database, engine, _directory) = engine_over(backend.clone()).await;
 
@@ -714,13 +713,15 @@ async fn new_mail_and_its_attachments_come_down_ahead_of_the_backlog() {
             && stored(&database, "Archive").await == Some(600)
     })
     .await;
-    backend.set_latency(Duration::from_millis(150));
-    assert!(
-        bodies_missing(&database, "Archive")
-            .await
-            .is_some_and(|missing| missing > 100),
-        "the archive's bodies were done before the question could be asked"
+    assert_eq!(
+        bodies_missing(&database, "Archive").await,
+        Some(600),
+        "an archive body came down while every one was held"
     );
+    // Let go, but slowly: the note has to overtake a backlog that is moving,
+    // and a parked one would hold the wave's two batches against it.
+    backend.set_latency(Duration::from_millis(150));
+    backend.release();
 
     backend.deliver("INBOX", a_note_with_a_large_attachment());
     until("the new message to be synced", async || {
@@ -767,7 +768,7 @@ async fn a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave() {
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
-            .mailbox(folder("Drafts", &["\\Drafts"], 2_000))
+            .mailbox(folder("Drafts", &["\\Drafts"], 400))
             .mailbox(folder("Lists/alpha", &[], 5))
             .mailbox(folder("Lists/bravo", &[], 5))
             .mailbox(folder("Lists/carol", &[], 5))
@@ -776,18 +777,43 @@ async fn a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave() {
     );
     backend.refuse_creates("no new folders here");
     backend.set_latency(LATENCY);
+    // The slow pass is parked inside its second header fetch until every
+    // regular folder is in: slow on any machine at any load, where 2,000
+    // messages behind the latency was only slow on a fast one (#2166).
+    backend.hold(Held::Headers, "Drafts", 1);
+    // No background lane: the incident is about header lanes, and the
+    // bodies beside them were most of the case's time.
+    let (database, engine, _directory) = engine_over_with(
+        backend.clone(),
+        postio_runtime::BackfillPolicy {
+            background: false,
+            ..Default::default()
+        },
+    )
+    .await;
 
-    let (database, engine, _directory) = engine_over(backend.clone()).await;
+    until(
+        "the regular folders to finish while the slow pass is parked",
+        async || {
+            for path in ["Lists/alpha", "Lists/bravo", "Lists/carol", "Lists/dana"] {
+                if stored(&database, path).await != Some(5) {
+                    return false;
+                }
+            }
+            backend.parked() == 1
+        },
+    )
+    .await;
+    backend.release();
 
     // Everything finishes either way — the question is in what order the
     // server saw the requests, which no machine speed can forge: without a
     // refill, a regular folder's first header fetch can only happen after
     // the wave holding the slow pass returns, i.e. after the slow pass's
-    // *last* header fetch. Ten 200-message batches, each behind the injected
-    // latency, is the window a refilled lane's fetch must land inside.
+    // *last* header fetch, which the hold keeps back until they are done.
     until("every folder to finish its first sync", async || {
         for (path, count) in [
-            ("Drafts", 2_000),
+            ("Drafts", 400),
             ("Lists/alpha", 5),
             ("Lists/bravo", 5),
             ("Lists/carol", 5),
@@ -890,15 +916,18 @@ async fn a_body_requested_during_the_wave_does_not_restart_its_lanes() {
     // when it starts, so the archive being listed a second time *is* the
     // restart, whatever the scheduler did with the clock. And the body has
     // to land while the archive is still fetching, or the request merely
-    // waited the wave out (#944).
+    // waited the wave out (#944). The archive's pass is parked inside its
+    // second header fetch for as long as the request takes, so "still
+    // fetching" is a fact rather than a matter of the archive's size.
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
-            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .mailbox(folder("Archive", &["\\Archive"], 400))
             .build(),
     );
     backend.refuse_creates("no new folders here");
     backend.set_latency(LATENCY);
+    backend.hold(Held::Headers, "Archive", 1);
     // No background lane: the request below has to be the only reason a
     // body is fetched, or the backfill could have fetched it first and the
     // request would have had nothing to ask for.
@@ -911,15 +940,9 @@ async fn a_body_requested_during_the_wave_does_not_restart_its_lanes() {
     )
     .await;
 
-    until(
-        "INBOX's headers to land while the archive is under way",
-        async || {
-            stored(&database, "INBOX").await == Some(10)
-                && stored(&database, "Archive")
-                    .await
-                    .is_some_and(|count| count > 0)
-        },
-    )
+    until("the archive's pass to be parked mid-flight", async || {
+        stored(&database, "INBOX").await == Some(10) && backend.parked() == 1
+    })
     .await;
     let (_, message) = newest_message(&database, "INBOX").await;
     assert!(
@@ -937,18 +960,19 @@ async fn a_body_requested_during_the_wave_does_not_restart_its_lanes() {
         body_is_local(&database, message).await
     })
     .await;
-    let fetches_when_it_landed = archive_fetches(&backend);
+    assert_eq!(
+        backend.parked(),
+        1,
+        "the archive's parked fetch ended while the body was fetched: the \
+         wave cancelled its lanes to serve a body request"
+    );
     let listings_when_it_landed = archive_listings(&backend);
 
+    backend.release();
     until("the archive to finish anyway", async || {
-        stored(&database, "Archive").await == Some(2_000)
+        stored(&database, "Archive").await == Some(400)
     })
     .await;
-    assert!(
-        fetches_when_it_landed < archive_fetches(&backend),
-        "the body landed only after the archive's last header fetch, so the \
-         request waited out the wave"
-    );
     assert_eq!(
         listings_when_it_landed, 1,
         "the archive had been listed {listings_when_it_landed} times when the \
@@ -972,29 +996,38 @@ async fn a_queued_write_during_the_wave_is_drained_without_restarting_its_lanes(
     // connection of its own, so it can run beside the lanes and the person's
     // write still reaches the server without waiting out the archive.
     //
-    // Larger archive than the body test's: the queue is polled twice a
-    // second, where the job inbox is polled twenty times, and the wave has
-    // to still be running when the poll notices.
+    // The archive's pass is let through one batch of headers and then parked
+    // inside its next fetch, so the wave is still running whenever the
+    // twice-a-second queue poll notices the write. This used to be bought
+    // with a 4,000-message archive and its bodies behind the latency
+    // instead: 75 to 95 s of CPU on an idle machine, and past the liveness
+    // bound under load (#2105).
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
-            .mailbox(folder("Archive", &["\\Archive"], 4_000))
+            .mailbox(folder("Archive", &["\\Archive"], 400))
             .build(),
     );
     backend.refuse_creates("no new folders here");
     backend.set_latency(LATENCY);
+    backend.hold(Held::Headers, "Archive", 1);
 
-    let (database, engine, _directory) = engine_over(backend.clone()).await;
-
-    until(
-        "INBOX's headers to land while the archive is under way",
-        async || {
-            stored(&database, "INBOX").await == Some(10)
-                && stored(&database, "Archive")
-                    .await
-                    .is_some_and(|count| count > 0)
+    // No background lane: its bodies are not what this asks about, and beside
+    // the wave they were most of the case's cost -- an archive's worth of
+    // bodies written on the engine's one thread, between the header batches
+    // the case waits for.
+    let (database, engine, _directory) = engine_over_with(
+        backend.clone(),
+        postio_runtime::BackfillPolicy {
+            background: false,
+            ..Default::default()
         },
     )
+    .await;
+
+    until("the archive's pass to be parked mid-flight", async || {
+        stored(&database, "INBOX").await == Some(10) && backend.parked() == 1
+    })
     .await;
     let (account, message) = newest_message(&database, "INBOX").await;
     {
@@ -1022,24 +1055,28 @@ async fn a_queued_write_during_the_wave_is_drained_without_restarting_its_lanes(
             .is_ok_and(|due| due.is_empty())
     })
     .await;
-    let fetches_when_drained = archive_fetches(&backend);
-    let listings_when_drained = archive_listings(&backend);
-
-    until("the archive to finish anyway", async || {
-        stored(&database, "Archive").await == Some(4_000)
-    })
-    .await;
-    assert!(
-        fetches_when_drained < archive_fetches(&backend),
-        "the write was drained only after the archive's last header fetch, \
-         so it waited out the wave"
+    // Causal: the pass that was parked when the write was queued is the one
+    // still parked now. A wave that cancelled its lanes to drain would have
+    // ended that fetch, and its restarted pass listed the archive again.
+    assert_eq!(
+        backend.parked(),
+        1,
+        "the archive's parked fetch ended while the write was drained: the \
+         wave cancelled its lanes to drain one queued operation"
     );
+    let listings_when_drained = archive_listings(&backend);
     assert_eq!(
         listings_when_drained, 1,
         "the archive had been listed {listings_when_drained} times when the \
          write was drained: its pass was cancelled and started again to \
          drain one queued operation"
     );
+
+    backend.release();
+    until("the archive to finish anyway", async || {
+        stored(&database, "Archive").await == Some(400)
+    })
+    .await;
     assert_eq!(
         archive_listings(&backend),
         1,

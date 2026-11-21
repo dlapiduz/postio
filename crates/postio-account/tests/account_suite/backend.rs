@@ -10,7 +10,7 @@ use std::time::Duration;
 use chrono::{TimeZone, Utc};
 use postio_account::backend::{
     AppendMessage, BackendError, BodyPart, Capabilities, Capability, Disposition, Envelope, Fault,
-    FetchedMessage, FlagChange, MailBackend, MailboxFilter, MailboxStatus, MailboxSummary,
+    FetchedMessage, FlagChange, Held, MailBackend, MailboxFilter, MailboxStatus, MailboxSummary,
     MockBackend, MockMailbox, MockMessage, PartNode, SelectMode, UidSet, VecSink,
 };
 use postio_account::cancel::CancelToken;
@@ -961,6 +961,89 @@ async fn a_fault_can_be_scheduled_so_retry_paths_are_testable() {
         Err(BackendError::TimedOut { .. })
     ));
     assert!(backend.status("INBOX").await.is_ok());
+}
+
+/// Turns the scheduler until `backend` has `count` fetches parked.
+async fn parked(backend: &MockBackend, count: usize) {
+    while backend.parked() != count {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test]
+async fn a_held_mailbox_admits_its_quota_then_parks_its_fetches_until_released() {
+    // A test that needs a pass to be mid-flight holds it there, rather than
+    // sizing a mailbox and a latency so it probably still is (#2105).
+    let backend = Arc::new(connected().await);
+    let cancel = CancelToken::new();
+    backend.hold(Held::Headers, "INBOX", 1);
+
+    let admitted = backend
+        .fetch_headers("INBOX", &UidSet::all(), None, &cancel)
+        .await
+        .expect("the first is let through");
+    assert_eq!(admitted.len(), 3);
+
+    let parked_fetch = tokio::spawn({
+        let backend = Arc::clone(&backend);
+        async move {
+            backend
+                .fetch_headers("INBOX", &UidSet::all(), None, &CancelToken::new())
+                .await
+        }
+    });
+    parked(&backend, 1).await;
+    assert_eq!(
+        backend.header_fetches(),
+        ["INBOX"],
+        "a parked fetch has not been served"
+    );
+    // Only what was held waits: another mailbox, and INBOX's bodies.
+    backend
+        .fetch_headers("Archive", &UidSet::all(), None, &cancel)
+        .await
+        .expect("another mailbox is answered");
+    let mut sink = VecSink::new();
+    backend
+        .fetch_part("INBOX", &rid(1), &BodyPart::Whole, &mut sink, &cancel)
+        .await
+        .expect("INBOX's bodies are not held");
+    assert!(!parked_fetch.is_finished());
+
+    backend.release();
+    let served = parked_fetch.await.expect("joined").expect("served");
+    assert_eq!(served.len(), 3);
+    assert_eq!(backend.parked(), 0);
+    assert_eq!(backend.header_fetches(), ["INBOX", "Archive", "INBOX"]);
+}
+
+#[tokio::test]
+async fn a_parked_fetch_hears_its_cancel() {
+    // An engine that cancels a lane waits for its fetch to come back, so a
+    // hold that ignored the token would turn the cancel into a hang.
+    let backend = Arc::new(connected().await);
+    backend.hold(Held::Bodies, "INBOX", 0);
+    let cancel = CancelToken::new();
+    let parked_fetch = tokio::spawn({
+        let backend = Arc::clone(&backend);
+        let cancel = cancel.clone();
+        async move {
+            let mut sink = VecSink::new();
+            backend
+                .fetch_part("INBOX", &rid(1), &BodyPart::Whole, &mut sink, &cancel)
+                .await
+                .map(|_| ())
+        }
+    });
+    parked(&backend, 1).await;
+
+    cancel.cancel();
+    assert!(matches!(
+        parked_fetch.await.expect("joined"),
+        Err(BackendError::Cancelled)
+    ));
+    assert_eq!(backend.parked(), 0);
+    assert!(backend.body_fetches().is_empty());
 }
 
 #[tokio::test]

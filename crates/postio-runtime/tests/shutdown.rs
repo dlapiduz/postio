@@ -11,9 +11,9 @@
 //! SQLCipher pages while `exit()` tore libcrypto down underneath it — the
 //! coredump `docs/archive/engineering-notes.md` documents under #610/#300.
 //!
-//! One test, in a binary of its own: it asserts over everything the engine
-//! logs, and a global subscriber cannot be shared with tests that log for
-//! other reasons.
+//! One test, in a binary of its own: it asserts over every warning the
+//! engine logs, and a global subscriber cannot be shared with tests that log
+//! for other reasons.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -61,9 +61,15 @@ async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     // Globally, not per-thread: the engine works on a thread of its own, and
     // `set_default` would leave that thread — the one whose warning this
     // test exists to catch — with no subscriber at all.
+    //
+    // Warnings only. At `DEBUG` this captured every crate's debug lines,
+    // the store's among them: Turso traces each statement it prepares,
+    // trigger by trigger, in hundreds of lines. On a loaded runner the
+    // engine then spent the grace writing those lines into this buffer
+    // while it wound down, and the stop it was measuring ran out (#2167).
     let subscriber = tracing_subscriber::fmt()
         .with_writer(captured.clone())
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::WARN)
         .with_ansi(false)
         .finish();
     tracing::subscriber::set_global_default(subscriber)
@@ -131,11 +137,12 @@ async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
         "the backfill fetched {fetched_after} bodies after Engine::stop(), more than the \
          {on_the_wire} that can be on the wire at once; it did not hear the shutdown"
     );
+    let log = captured.text();
     assert!(
         took < Duration::from_secs(5),
-        "Engine::stop() took {took:?}, the whole grace; the backfill did not hear the shutdown"
+        "Engine::stop() took {took:?}, the whole grace; the backfill did not hear the \
+         shutdown. The engine warned:\n{log}"
     );
-    let log = captured.text();
     assert!(
         !log.contains("did not stop within"),
         "the engine warned about its own shutdown:\n{log}"

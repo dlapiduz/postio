@@ -12,6 +12,10 @@ These are the traps in this repository that are still live and that no check, ho
 
 **Tests that fail under load have known fixes.** Assert order and causality by recording the sequence in the mock, never wall-clock overlap. Liveness deadlines are minutes and go through `postio_test_support::scaled`/`patience`. A fault meaning "the server refuses X" is persistent, not `inject_after` a call count. `tokio::time::pause` misfires when real I/O is in the loop. Before re-running a red check you think is a flake, prove it: `scripts/flake-check.sh -p <crate> --test <suite> <test>` runs it idle and again under CPU load, and says which.
 
+**A case that needs a sync pass still running parks it; it does not size a mailbox for it.** `MockBackend::hold(Held::Headers | Held::Bodies, mailbox, admit)` lets `admit` fetches through and parks the rest until `release()`; wait for `parked()` before acting, and assert the same fetch is still parked afterwards. A large mailbox behind a latency is CPU, not time: its headers and above all its backfilled bodies are written on the engine's one thread, which cost 75 to 95 s idle and finished early under load (#2105, #2166). Turn the background lane off (`BackfillPolicy { background: false, .. }`) when the case is not about bodies.
+
+**A global `tracing` subscriber at `DEBUG` captures Turso's traces.** Turso logs each statement it prepares, trigger by trigger, in hundreds of lines, and an engine writing them into a capture buffer on a loaded runner is slow enough to fail a timing claim (#2167). Capture at the level the case reads.
+
 **A negative assertion needs a duration and a positive control.** "Nothing was marked read" is just as true when the mechanism never armed. The control waits on its condition. Without one, the test passes with the feature deleted.
 
 **Locals drop in reverse order, so a `TempDir` bound last goes first.** A running engine then recreates the directory, and nothing owns it. Stop the engine in a `Drop` before the directory goes, as `BlobDir` does in `crates/postio-runtime/tests/runtime_suite/harness/mod.rs`.

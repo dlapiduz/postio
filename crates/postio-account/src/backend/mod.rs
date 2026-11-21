@@ -69,7 +69,7 @@ pub use self::message::{
     UidMapping, resolve_roles, resolve_roles_with_known_names,
 };
 pub use self::mock::{
-    Fault, FetchEvent, MockBackend, MockBackendBuilder, MockMailbox, MockMessage,
+    Fault, FetchEvent, Held, MockBackend, MockBackendBuilder, MockMailbox, MockMessage,
 };
 pub use self::sink::{BodySink, CountingSink, VecSink};
 pub use self::uid_set::UidSet;
