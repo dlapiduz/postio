@@ -214,6 +214,30 @@ def main() -> int:
             f"no flake confirmation in output:\n{out}",
         )
 
+    # ── the retry builds what the first run built ────────────────────
+    # A bare `cargo nextest run` builds the workspace's default members, and
+    # postio-ffi is not one: on PR #2182 a full suite's one ffi failure was
+    # "retried" over 87 binaries without it, ran nothing, and was called a
+    # failure twice (#2154).
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory))
+        run(stub_dir, "ci-full")
+        retries = (stub_dir / "calls").read_text(encoding="utf-8").splitlines()[1:]
+        case(
+            "a workspace run's retry asks for the whole workspace too",
+            len(retries) == 2 and all("--workspace" in call for call in retries),
+            f"retries were:\n{retries}",
+        )
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory))
+        run(stub_dir, "ci", "postio-widgets")
+        retries = (stub_dir / "calls").read_text(encoding="utf-8").splitlines()[1:]
+        case(
+            "a package run's retry keeps the package",
+            len(retries) == 2 and all("-p postio-widgets" in call for call in retries),
+            f"retries were:\n{retries}",
+        )
+
     # ── under Actions, a forgiven flake is still said out loud ───────
     # The nightly runs through this script too (#1710), and the nightly is
     # where flakes get noticed. A retry that turns one green must not make
