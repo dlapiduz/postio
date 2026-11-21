@@ -159,7 +159,7 @@ pub const SHOW_ALL_DETAIL: &str = "in the main window, with filters, a timeline 
 /// words find nothing (US6): Return opens the no-results page.
 pub const NOTHING_DETAIL: &str = "Return offers looser searches";
 
-/// How many conversations a recent search found: "48 results", or
+/// How many threads a recent search found: "48 results", or
 /// "5,000+ results" when that search stopped at its walk's cap (D30).
 pub fn results_count(n: u64, capped: bool) -> String {
     match (n, capped) {
@@ -445,20 +445,20 @@ pub fn group_line(title: &str, n: u64) -> String {
     format!("{title} \u{b7} {}", grouped(n))
 }
 
-/// A count of conversations: "48 conversations", "1 conversation",
-/// "10,000+ conversations".
-fn conversations(total: u64, capped: bool) -> String {
+/// A count of threads: "48 threads", "1 thread", "10,000+ threads".
+/// Postio says thread, never conversation (#2118).
+fn threads(total: u64, capped: bool) -> String {
     let noun = if total == 1 && !capped {
-        "conversation"
+        "thread"
     } else {
-        "conversations"
+        "threads"
     };
     format!("{} {noun}", count(total, capped))
 }
 
-/// The timeline's count line (§3.3): "48 conversations".
+/// The timeline's count line (§3.3): "48 threads".
 pub fn count_line(total: u64, capped: bool) -> String {
-    conversations(total, capped)
+    threads(total, capped)
 }
 
 /// The timeline's sub-line (§3.3): "12 files · 6 people · last 12 months".
@@ -554,7 +554,7 @@ fn plural(n: u64, capped: bool, one: &str, many: &str) -> String {
     }
 }
 
-/// The results footer's right-hand side (§3.5): "48 conversations · local
+/// The results footer's right-hand side (§3.5): "48 threads · local
 /// index · 41 ms".
 pub fn results_footer(total: u64, capped: bool, elapsed: Duration) -> String {
     let took = match elapsed.as_millis() {
@@ -563,7 +563,7 @@ pub fn results_footer(total: u64, capped: bool, elapsed: Duration) -> String {
     };
     format!(
         "{} \u{b7} local index \u{b7} {took}",
-        conversations(total, capped)
+        threads(total, capped)
     )
 }
 
@@ -926,7 +926,7 @@ pub fn new_badge(n: u64, capped: bool) -> String {
 }
 
 /// The results tabs' words, in their order (§3.2).
-pub const TABS: [&str; 3] = ["Conversations", "Files", "People"];
+pub const TABS: [&str; 3] = ["Threads", "Files", "People"];
 
 /// A count as a tab says it: "48", "10,000+".
 pub fn tab_count(total: u64, capped: bool) -> String {
@@ -1183,12 +1183,11 @@ pub fn field_chips(typed: &str, today: chrono::NaiveDate) -> Vec<FieldChip> {
         .collect()
 }
 
-/// How many matches the conversation holds: "4 matches in this
-/// conversation".
+/// How many matches the thread holds: "4 matches in this thread".
 pub fn matches_line(n: usize) -> String {
     match n {
-        1 => "1 match in this conversation".to_owned(),
-        n => format!("{} matches in this conversation", grouped(n as u64)),
+        1 => "1 match in this thread".to_owned(),
+        n => format!("{} matches in this thread", grouped(n as u64)),
     }
 }
 
@@ -1290,7 +1289,7 @@ pub fn thread_size(messages: u32) -> Option<String> {
 
 /// The sentence under the no-results title.
 pub const NO_RESULTS_BODY: &str = "Each line below loosens one filter and shows how many \
-                                   conversations you would get. Pick one, or press its number.";
+                                   threads you would get. Pick one, or press its number.";
 
 /// The sentence under the title when no single change finds anything.
 pub const NO_RELAXATIONS_BODY: &str =
@@ -1449,10 +1448,10 @@ pub fn no_results_hints(keymap: &Keymap, offered: usize) -> Vec<Hint> {
     out
 }
 
-/// A looser search's count, on its row's right: "4 conversations", or
-/// "10,000+ conversations" when its count stopped at its cap (D30).
+/// A looser search's count, on its row's right: "4 threads", or
+/// "10,000+ threads" when its count stopped at its cap (D30).
 pub fn relaxation_count(n: u64, capped: bool) -> String {
-    conversations(n, capped)
+    threads(n, capped)
 }
 
 /// The line under the looser searches (§3.10): how much was searched.
@@ -1817,7 +1816,7 @@ pub fn latest_from(name: &str) -> String {
 /// The operator state's footer, right: what the list is drawn from.
 pub fn operator_source(keyword: &str) -> &'static str {
     match keyword {
-        "label" => "Labels, by how many conversations carry them",
+        "label" => "Labels, by how many threads carry them",
         "in" => "Folders mail is filed in",
         _ => "Contacts and everyone you have mail with",
     }
@@ -2665,10 +2664,21 @@ mod tests {
     }
 
     #[test]
-    fn the_timeline_counts_conversations_and_says_what_else_matched() {
-        assert_eq!(count_line(48, false), "48 conversations");
-        assert_eq!(count_line(1, false), "1 conversation");
-        assert_eq!(count_line(10_000, true), "10,000+ conversations");
+    fn search_says_thread_never_conversation() {
+        // Postio's word is Thread (#2118): the first tab, and what the
+        // label operator's list is counted in.
+        assert_eq!(TABS, ["Threads", "Files", "People"]);
+        assert_eq!(
+            operator_source("label"),
+            "Labels, by how many threads carry them"
+        );
+    }
+
+    #[test]
+    fn the_timeline_counts_threads_and_says_what_else_matched() {
+        assert_eq!(count_line(48, false), "48 threads");
+        assert_eq!(count_line(1, false), "1 thread");
+        assert_eq!(count_line(10_000, true), "10,000+ threads");
         assert_eq!(
             sub_line(12, 6, false),
             "12 files · 6 people · last 12 months"
@@ -2682,7 +2692,7 @@ mod tests {
     // -- grouped as every count is.
     #[test]
     fn a_capped_answer_draws_every_count_as_a_floor() {
-        assert_eq!(count_line(5_000, true), "5,000+ conversations");
+        assert_eq!(count_line(5_000, true), "5,000+ threads");
         assert_eq!(tab_count(5_000, true), "5,000+");
         assert_eq!(facet_count(1_204, true), "1,204+");
         assert_eq!(facet_count(24, false), "24");
@@ -2701,15 +2711,15 @@ mod tests {
         let took = |ms| Duration::from_millis(ms);
         assert_eq!(
             results_footer(48, false, took(41)),
-            "48 conversations · local index · 41 ms"
+            "48 threads · local index · 41 ms"
         );
         assert_eq!(
             results_footer(10_000, true, took(41)),
-            "10,000+ conversations · local index · 41 ms"
+            "10,000+ threads · local index · 41 ms"
         );
         assert_eq!(
             results_footer(1, false, Duration::from_micros(300)),
-            "1 conversation · local index · <1 ms"
+            "1 thread · local index · <1 ms"
         );
     }
 
@@ -3083,8 +3093,8 @@ mod tests {
                 ("Close".to_owned(), "space".to_owned()),
             ]
         );
-        assert_eq!(matches_line(4), "4 matches in this conversation");
-        assert_eq!(matches_line(1), "1 match in this conversation");
+        assert_eq!(matches_line(4), "4 matches in this thread");
+        assert_eq!(matches_line(1), "1 match in this thread");
         assert_eq!(
             matches_hint(&keymap).map(|hint| (hint.key, hint.label)),
             Some(("]/[".to_owned(), "jump between them".to_owned()))
@@ -3317,11 +3327,11 @@ mod tests {
                 "Remove \u{201c}budget\u{201d}",
             ]
         );
-        assert_eq!(relaxation_count(4, false), "4 conversations");
-        assert_eq!(relaxation_count(1, false), "1 conversation");
-        assert_eq!(relaxation_count(18_204, false), "18,204 conversations");
+        assert_eq!(relaxation_count(4, false), "4 threads");
+        assert_eq!(relaxation_count(1, false), "1 thread");
+        assert_eq!(relaxation_count(18_204, false), "18,204 threads");
         // Counted to TOTAL_HITS_CAP, and a floor past it (D30).
-        assert_eq!(relaxation_count(10_000, true), "10,000+ conversations");
+        assert_eq!(relaxation_count(10_000, true), "10,000+ threads");
     }
 
     #[test]
@@ -3441,7 +3451,7 @@ mod tests {
         );
         assert_eq!(
             NO_RESULTS_BODY,
-            "Each line below loosens one filter and shows how many conversations you would \
+            "Each line below loosens one filter and shows how many threads you would \
              get. Pick one, or press its number."
         );
     }

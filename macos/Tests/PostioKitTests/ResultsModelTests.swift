@@ -60,15 +60,15 @@ struct ResultsModelTests {
     static func results(cursor: UInt64? = 0) -> UiEvent {
         .focusResults(
             view: ResultsViewFfi(
-                tabs: [TabFfi(tab: .conversations, label: "Conversations", count: "26", selected: true, key: "cmd+1")],
-                order: .bestMatch, sortable: true, countLine: "26 conversations", subLine: "12 files · 6 people · last 12 months",
+                tabs: [TabFfi(tab: .conversations, label: "Threads", count: "26", selected: true, key: "cmd+1")],
+                order: .bestMatch, sortable: true, countLine: "26 threads", subLine: "12 files · 6 people · last 12 months",
                 months: [], timelineHint: "Matches by month · drag across months to narrow", timelineStep: nil,
                 groups: [
                     group("Top hits", first: 0, rows: 3, topHits: true),
                     group("September 2026", first: 3, rows: 9),
                     group("August 2026", first: 12, rows: 14),
                 ],
-                rows: 26, cursor: cursor, footerHints: [], footerRight: "26 conversations · local index · 41 ms",
+                rows: 26, cursor: cursor, footerHints: [], footerRight: "26 threads · local index · 41 ms",
                 selected: 0, bulk: [], selectAll: nil, files: nil))
     }
 
@@ -84,7 +84,7 @@ struct ResultsModelTests {
         .focusResults(
             view: ResultsViewFfi(
                 tabs: [TabFfi(tab: .files, label: "Files", count: "3", selected: true, key: "cmd+2")],
-                order: .newest, sortable: false, countLine: "26 conversations", subLine: "3 files", months: [], timelineHint: "",
+                order: .newest, sortable: false, countLine: "26 threads", subLine: "3 files", months: [], timelineHint: "",
                 timelineStep: nil, groups: [], rows: 3, cursor: cursor, footerHints: [], footerRight: "",
                 selected: 0, bulk: [], selectAll: nil,
                 files: FilesHeaderFfi(title: "Files whose name or contents match", note: "contents are indexed")))
@@ -103,10 +103,10 @@ struct ResultsModelTests {
         .focusResults(
             view: ResultsViewFfi(
                 tabs: [
-                    TabFfi(tab: .conversations, label: "Conversations", count: "26", selected: false, key: "cmd+1"),
+                    TabFfi(tab: .conversations, label: "Threads", count: "26", selected: false, key: "cmd+1"),
                     TabFfi(tab: .people, label: "People", count: "2", selected: true, key: "cmd+3"),
                 ],
-                order: .bestMatch, sortable: true, countLine: "26 conversations", subLine: "2 people", months: [],
+                order: .bestMatch, sortable: true, countLine: "26 threads", subLine: "2 people", months: [],
                 timelineHint: "", timelineStep: nil, groups: [], rows: 2, cursor: cursor, footerHints: [],
                 footerRight: "", selected: 0, bulk: [], selectAll: nil, files: nil))
     }
@@ -130,7 +130,7 @@ struct ResultsModelTests {
         model.open(person: 0)
         #expect(engine.pointed == [1, 0])
         #expect(engine.invoked == [ResultsCommand.open], "↩ runs from: them")
-        // Back on Conversations, the table draws again.
+        // Back on Threads, the table draws again.
         model.apply(Self.results())
         #expect(!model.isPeople)
         #expect(model.personCount == 0)

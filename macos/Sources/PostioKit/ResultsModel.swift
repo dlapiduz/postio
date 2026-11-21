@@ -97,7 +97,7 @@ public final class ResultsModel {
     public private(set) var order: ConversationOrderFfi = .bestMatch
     /// Whether Sort offers a choice: not on the Files tab.
     public private(set) var sortable = true
-    /// "48 conversations".
+    /// "48 threads".
     public private(set) var countLine = ""
     /// "12 files · 6 people · last 12 months".
     public private(set) var subLine = ""
@@ -117,7 +117,7 @@ public final class ResultsModel {
     /// (spec 013 US6), and the child with the ring, an index into them.
     public private(set) var splice: ResultSpliceFfi?
     public private(set) var footerHints: [Hint] = []
-    /// "48 conversations · local index · 41 ms".
+    /// "48 threads · local index · 41 ms".
     public private(set) var footerRight = ""
     /// Results checked: the footer is the bulk bar while above zero.
     public private(set) var selected: UInt64 = 0

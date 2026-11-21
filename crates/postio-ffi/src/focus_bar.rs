@@ -47,7 +47,7 @@ pub struct BarSelectFfi {
 /// What kind of line the bar draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum BarLineKindFfi {
-    /// A section heading ("Commands", "Go to", "Conversations · 3 matches").
+    /// A section heading ("Commands", "Go to", "Threads · 3 matches").
     Heading,
     /// A line of the empty bar saying what typing does.
     Hint,
@@ -134,7 +134,7 @@ impl From<postio_focus::BarLine> for BarLineFfi {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BarViewFfi {
     /// The heading over a folder's conversations (`in:`): "Receipts ·
-    /// folder · 3 conversations · newest first".
+    /// folder · 3 threads · newest first".
     pub heading: Option<String>,
     /// The line under the field: "You typed “…”", and while a chip is
     /// edited, which one and the keys that move on and go back.

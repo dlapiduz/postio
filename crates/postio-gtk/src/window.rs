@@ -6884,6 +6884,15 @@ impl FocusWindow {
                 "focus.results.child".to_owned(),
                 serde_json::json!(results.child_focus()),
             );
+            // The words a check holds the results to (#2118: "Threads").
+            app.insert(
+                "focus.results.tab".to_owned(),
+                serde_json::json!(results.tab_said()),
+            );
+            app.insert(
+                "focus.results.count_line".to_owned(),
+                serde_json::json!(results.count_line()),
+            );
         }
         // What the composer holds of a thread (spec 013 US7).
         if let Some(compose) = self.compose()

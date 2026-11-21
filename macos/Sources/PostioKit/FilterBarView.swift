@@ -51,7 +51,7 @@ public struct FilterBarView: View {
         HStack(spacing: 6) {
             // The tabs and Sort keep their size: at 1024 wide the bar is
             // too narrow for everything, and squeezing the tabs made
-            // "Conversations" "Conv…". The filters give way instead,
+            // "Threads" "Thre…". The filters give way instead,
             // scrolling sideways under a fade at their trailing edge.
             tabStrip.fixedSize()
             Rectangle().fill(.separator).frame(width: 1, height: 18).padding(.horizontal, 6)

@@ -551,7 +551,7 @@ async fn quick_look_crosses_with_its_cards_and_closes_with_none() {
     assert!(runs(&view.subject).to_lowercase().contains("atlas"));
     assert!(view.subject.iter().any(|run| run.highlighted));
     assert!(
-        view.matches_line.ends_with("matches in this conversation"),
+        view.matches_line.ends_with("matches in this thread"),
         "{}",
         view.matches_line
     );

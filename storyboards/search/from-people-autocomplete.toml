@@ -68,7 +68,7 @@ expect  = "Backspace on an empty value goes back to words: the operator is gone,
 [[step]]
 type    = "label:At"
 check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
-expect  = "`label:` lists labels the same way: “Atlas” with how many conversations carry it, ringed."
+expect  = "`label:` lists labels the same way: “Atlas” with how many threads carry it, ringed."
 
 [[step]]
 key     = "Return"

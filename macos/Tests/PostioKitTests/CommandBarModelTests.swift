@@ -61,7 +61,7 @@ struct CommandBarModelTests {
         line(.command, 2, "Archive", detail: "the focused message", key: "a", command: "archive"),
         line(.command, 3, "Archive everything read, older than a week"),
         line(.heading, 4, "Go to", selectable: false),
-        line(.place, 5, "in:Archive", detail: "18,204 conversations", key: "g a", command: "go_to_archive"),
+        line(.place, 5, "in:Archive", detail: "18,204 threads", key: "g a", command: "go_to_archive"),
         line(.hint, 6, "Commands only", key: ">", selectable: false),
         line(
             .message, 7, "Invoice 2026-08", detail: "Attached is the invoice", sender: "Ada",
@@ -125,12 +125,12 @@ struct CommandBarModelTests {
         model.apply(
             Self.lines(
                 chips: ["from:ada", "invoice"], editing: 1,
-                heading: "Receipts · folder · 3 conversations · newest first",
+                heading: "Receipts · folder · 3 threads · newest first",
                 echo: "You typed “from:ada  invoice”"))
         #expect(model.chips == ["from:ada", "invoice"])
         #expect(model.editing == 1)
         #expect(model.echo == "You typed “from:ada  invoice”")
-        #expect(model.heading == "Receipts · folder · 3 conversations · newest first")
+        #expect(model.heading == "Receipts · folder · 3 threads · newest first")
     }
 
     @Test func theSavedSearchesCarryTheirKeys() {

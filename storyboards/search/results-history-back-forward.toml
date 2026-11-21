@@ -43,7 +43,7 @@ expect  = "⌘[ goes back to the inbox, on the row it had. Nothing was closed on
 [[step]]
 command = "history_forward"
 check   = { keyboard.region = "results" }
-expect  = "⌘] brings the results back as they were left: “atlas budget”, Conversations, Sort “Newest”, the ring on the row it was on (the first) and the checked conversation still checked, “1 selected”."
+expect  = "⌘] brings the results back as they were left: “atlas budget”, Threads, Sort “Newest”, the ring on the row it was on (the first) and the checked conversation still checked, “1 selected”."
 
 [[step]]
 command = "history_back"

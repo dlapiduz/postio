@@ -1203,7 +1203,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::ResultsConversations,
-        title: "Show conversations",
+        title: "Show threads",
         default_binding: "mod+1",
         alternate_bindings: &[],
         contexts: Context::Results.as_set(),

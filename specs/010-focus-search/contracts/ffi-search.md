@@ -108,10 +108,10 @@ record FilterButtonFfi { kind: FilterKindFfi, label: String, applied: bool, open
 record ResultsViewFfi {
   tabs: Vec<TabFfi>,                  // label, count, selected, keycap
   order: ConversationOrderFfi,
-  count_line: String, sub_line: String,              // "48 conversations", "12 files · 6 people · last 12 months"
+  count_line: String, sub_line: String,              // "48 threads", "12 files · 6 people · last 12 months"
   months: Vec<MonthBarFfi>,                          // 12
   groups: Vec<GroupFfi>,                             // title, count, first row position
-  footer_hints: Vec<KeyHintFfi>, footer_right: String,   // "48 conversations · local index · 41 ms"
+  footer_hints: Vec<KeyHintFfi>, footer_right: String,   // "48 threads · local index · 41 ms"
   selected: u64, bulk: Vec<KeyHintFfi>,              // the bulk bar when selected > 0
 }
 record MonthBarFfi { label: String, conversations: u64, height: f64 /* 0..1 */, selected: bool }

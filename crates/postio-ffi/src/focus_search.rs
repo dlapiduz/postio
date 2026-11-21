@@ -573,7 +573,7 @@ impl From<postio_focus::QueryView> for QueryViewFfi {
 pub struct TabFfi {
     /// Which.
     pub tab: ResultsTabFfi,
-    /// "Conversations".
+    /// "Threads".
     pub label: String,
     /// "48".
     pub count: String,
@@ -634,7 +634,7 @@ pub struct ResultsViewFfi {
     /// Whether Sort offers a choice: not on the Files tab, whose cards are
     /// newest first.
     pub sortable: bool,
-    /// "48 conversations".
+    /// "48 threads".
     pub count_line: String,
     /// "12 files · 6 people · last 12 months".
     pub sub_line: String,
@@ -653,7 +653,7 @@ pub struct ResultsViewFfi {
     pub cursor: Option<u64>,
     /// The footer's keys.
     pub footer_hints: Vec<KeyHintFfi>,
-    /// "48 conversations · local index · 41 ms".
+    /// "48 threads · local index · 41 ms".
     pub footer_right: String,
     /// Conversations checked: the footer is the bulk bar while this is
     /// above zero.
@@ -1096,7 +1096,7 @@ pub struct QuickLookViewFfi {
     /// The sender line: the name strong, the address mono, then when and
     /// the thread's size.
     pub sender: Vec<RunFfi>,
-    /// "4 matches in this conversation".
+    /// "4 matches in this thread".
     pub matches_line: String,
     /// "]/[" "jump between them".
     pub matches_hint: Option<KeyHintFfi>,
@@ -1147,7 +1147,7 @@ pub struct RelaxationFfi {
     pub label: String,
     /// The query it runs, drawn monospaced.
     pub query: String,
-    /// "4 conversations".
+    /// "4 threads".
     pub count: String,
     /// Ringed: Return runs it.
     pub focused: bool,

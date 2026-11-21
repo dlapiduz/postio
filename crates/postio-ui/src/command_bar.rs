@@ -247,10 +247,7 @@ pub fn blend_lines(blend: &Blend<'_>) -> Vec<Line> {
             lines.push(Line::Row {
                 row: Row::Place(hit.place.destination.clone(), hit.place.name.clone()),
                 title: format!("in:{}", hit.place.name),
-                detail: hit
-                    .place
-                    .count
-                    .map(|count| format!("{count} conversations")),
+                detail: hit.place.count.map(|count| format!("{count} threads")),
                 key: hit.binding.clone(),
             });
         }
@@ -334,9 +331,9 @@ pub fn folder_for(places: &[Place], name: &str) -> Option<(String, MailboxId)> {
         })
 }
 
-/// A folder's heading over its conversations.
+/// A folder's heading over its threads.
 pub fn folder_heading(name: &str, count: u32) -> String {
-    format!("{name} \u{b7} folder \u{b7} {count} conversations \u{b7} newest first")
+    format!("{name} \u{b7} folder \u{b7} {count} threads \u{b7} newest first")
 }
 
 /// The hits to list: one per conversation, the best first, at most [`HITS`].
@@ -376,10 +373,10 @@ pub fn search_title(query: &str, instead: Option<&str>) -> String {
     }
 }
 
-/// The results' heading: "Conversations · 3 matches".
+/// The results' heading: "Threads · 3 matches".
 pub fn results_heading(count: usize) -> String {
     format!(
-        "Conversations \u{b7} {count} match{}",
+        "Threads \u{b7} {count} match{}",
         if count == 1 { "" } else { "es" }
     )
 }
@@ -628,8 +625,8 @@ mod tests {
 
     #[test]
     fn the_words_the_bar_says() {
-        assert_eq!(results_heading(1), "Conversations \u{b7} 1 match");
-        assert_eq!(results_heading(3), "Conversations \u{b7} 3 matches");
+        assert_eq!(results_heading(1), "Threads \u{b7} 1 match");
+        assert_eq!(results_heading(3), "Threads \u{b7} 3 matches");
         assert_eq!(
             order_words(ResultOrder::Newest),
             (
@@ -639,7 +636,7 @@ mod tests {
         );
         assert_eq!(
             folder_heading("Receipts", 4),
-            "Receipts \u{b7} folder \u{b7} 4 conversations \u{b7} newest first"
+            "Receipts \u{b7} folder \u{b7} 4 threads \u{b7} newest first"
         );
     }
 
