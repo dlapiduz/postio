@@ -465,6 +465,29 @@ struct State {
     /// Whether `EXPUNGE` leaves `HIGHESTMODSEQ` alone. See
     /// [`MockBackend::expunge_keeps_mod_seq`].
     expunge_keeps_mod_seq: bool,
+    /// The fetches [`MockBackend::hold`] parks, by kind and mailbox.
+    holds: Vec<Hold>,
+    /// How many fetches are parked behind a hold right now. See
+    /// [`MockBackend::parked`].
+    parked: usize,
+}
+
+/// Which fetches a [`MockBackend::hold`] parks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Held {
+    /// Header `FETCH`es: the calls a sync pass makes batch by batch.
+    Headers,
+    /// Body and part `FETCH`es, batched or single.
+    Bodies,
+}
+
+/// One [`MockBackend::hold`]: `admit` more of these fetches are let
+/// through, and every one after them waits for [`MockBackend::release`].
+#[derive(Debug)]
+struct Hold {
+    kind: Held,
+    mailbox: String,
+    admit: usize,
 }
 
 /// One served fetch, in [`MockBackend::fetch_order`].
@@ -525,6 +548,8 @@ impl State {
 pub struct MockBackend {
     state: Arc<Mutex<State>>,
     notify: Arc<Notify>,
+    /// Wakes the fetches parked behind a [`hold`](MockBackend::hold).
+    released: Arc<Notify>,
 }
 
 impl fmt::Debug for MockBackend {
@@ -565,6 +590,18 @@ impl Drop for InFlight {
     fn drop(&mut self) {
         if let Ok(mut state) = self.0.lock() {
             state.in_flight = state.in_flight.saturating_sub(1);
+        }
+    }
+}
+
+/// A fetch parked behind a hold, counted in [`State::parked`] for as long as
+/// it waits -- a cancelled or dropped wait included.
+struct Parked(Arc<Mutex<State>>);
+
+impl Drop for Parked {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.parked = state.parked.saturating_sub(1);
         }
     }
 }
@@ -747,6 +784,79 @@ impl MockBackend {
     /// Delays every call by `latency`.
     pub fn set_latency(&self, latency: Duration) {
         self.state().latency = latency;
+    }
+
+    /// Lets the next `admit` of `mailbox`'s `kind` of fetch through, and
+    /// parks every one after them until [`release`](Self::release).
+    ///
+    /// For a test whose question needs a pass to be *still running* when
+    /// something happens: a parked fetch is a pass that is demonstrably
+    /// mid-flight, on any machine at any load, where a large mailbox behind
+    /// a latency is only probably one -- and costs the machine a mailbox's
+    /// worth of work to be so (#2105, #2166). A parked fetch is not served
+    /// and not logged until it is let go; its cancel token still ends it, as
+    /// a cancelled command on the wire ends, so an engine cancelling a lane
+    /// is not made to hang by the hold.
+    ///
+    /// A second hold on the same kind and mailbox replaces the first.
+    pub fn hold(&self, kind: Held, mailbox: &str, admit: usize) {
+        let mut state = self.state();
+        state
+            .holds
+            .retain(|hold| !(hold.kind == kind && hold.mailbox == mailbox));
+        state.holds.push(Hold {
+            kind,
+            mailbox: mailbox.to_owned(),
+            admit,
+        });
+    }
+
+    /// Lifts every [`hold`](Self::hold), and lets the parked fetches go.
+    pub fn release(&self) {
+        self.state().holds.clear();
+        self.released.notify_waiters();
+    }
+
+    /// How many fetches are parked behind a [`hold`](Self::hold) right now.
+    ///
+    /// What a test waits for before it acts: the pass it means to interrupt
+    /// is then inside a call that cannot finish on its own.
+    pub fn parked(&self) -> usize {
+        self.state().parked
+    }
+
+    /// Waits while `mailbox`'s `kind` of fetch is held, or until `cancel`.
+    async fn gate(&self, kind: Held, mailbox: &str, cancel: &CancelToken) -> BackendResult<()> {
+        loop {
+            // Enabled before the check, so a release between the check and
+            // the wait still wakes it.
+            let released = self.released.notified();
+            tokio::pin!(released);
+            released.as_mut().enable();
+            {
+                let mut state = self.state();
+                match state
+                    .holds
+                    .iter_mut()
+                    .find(|hold| hold.kind == kind && hold.mailbox == mailbox)
+                {
+                    None => return Ok(()),
+                    Some(hold) if hold.admit > 0 => {
+                        hold.admit -= 1;
+                        return Ok(());
+                    }
+                    Some(_) => state.parked += 1,
+                }
+            }
+            let parked = Parked(Arc::clone(&self.state));
+            tokio::select! {
+                () = released => {}
+                () = cancel.cancelled() => return Err(BackendError::Cancelled),
+            }
+            // Released: counted out, and looked at again -- a new hold may
+            // have been set since.
+            drop(parked);
+        }
     }
 
     /// How many calls the backend has served.
@@ -1182,8 +1292,11 @@ impl MockBackendBuilder {
                 change_feed: self.change_feed,
                 section_batches: Vec::new(),
                 chunk_size: self.chunk_size,
+                holds: Vec::new(),
+                parked: 0,
             })),
             notify: Arc::new(Notify::new()),
+            released: Arc::new(Notify::new()),
         }
     }
 }
@@ -1358,6 +1471,7 @@ impl MailBackend for MockBackend {
         // charged latency per message would make a batch look no cheaper than
         // a walk. Faults and latency are paid once, up front.
         self.enter("FETCH BODY").await?;
+        self.gate(Held::Bodies, mailbox, cancel).await?;
         let mut answered = Vec::with_capacity(ids.len());
         for id in ids {
             let mut sink = crate::backend::sink::VecSink::new();
@@ -1380,6 +1494,7 @@ impl MailBackend for MockBackend {
         cancel: &CancelToken,
     ) -> BackendResult<FetchedBody> {
         self.enter("FETCH BODY").await?;
+        self.gate(Held::Bodies, mailbox, cancel).await?;
         self.serve_part(mailbox, id, part, sink, cancel).await
     }
 
@@ -1764,6 +1879,7 @@ impl MockBackend {
         cancel: &CancelToken,
     ) -> BackendResult<Vec<FetchedMessage>> {
         self.enter("FETCH").await?;
+        self.gate(Held::Headers, mailbox, cancel).await?;
 
         if cancel.is_cancelled() {
             return Err(BackendError::Cancelled);
