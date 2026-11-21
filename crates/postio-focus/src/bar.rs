@@ -186,6 +186,13 @@ pub(crate) struct Bar {
     names: postio_ui::names::Names,
     /// Moves with every read of the places: a popover token names its read.
     places_read: u64,
+    /// Whether the folders popover is up (the frontend says).
+    places_shown: bool,
+    /// Whether a read of the places is on its way.
+    places_asked: bool,
+    /// Whether mail changed after the read on its way was asked for: it
+    /// may not count the change, so another read follows it.
+    places_stale: bool,
     /// Whether Focus files mail away: the popover lists Filtered then.
     filtering: bool,
     /// The clock, when stopped: what the dropdown's dates count from.
@@ -294,6 +301,9 @@ impl Bar {
             places: PlacesRead::default(),
             names: postio_ui::names::Names::default(),
             places_read: 0,
+            places_shown: false,
+            places_asked: false,
+            places_stale: false,
             filtering: false,
             clock: None,
             drop: None,
@@ -443,7 +453,7 @@ impl Bar {
                 text: text.to_owned(),
                 select: None,
             }),
-            Step::Ask(Request::Places),
+            self.ask_places(),
         ];
         if mode == BarMode::Search {
             self.sheet = (0..=postio_ui::search_view::cheat_sheet().len())
@@ -654,6 +664,60 @@ impl Bar {
     /// The places, read again: what the bar completes and blends with, and
     /// what the popover lists.
     fn places_landed(&mut self, read: Result<PlacesRead, String>) -> Vec<Step> {
+        self.places_asked = false;
+        let again = std::mem::take(&mut self.places_stale) && self.places_shown;
+        let mut steps = self.places_read_landed(read);
+        if again {
+            steps.push(self.ask_places());
+        }
+        steps
+    }
+
+    /// Ask for the places, noting that a read is on its way.
+    fn ask_places(&mut self) -> Step {
+        self.places_asked = true;
+        Step::Ask(Request::Places)
+    }
+
+    /// The read of the places on its way will not land (the controller
+    /// forgot its requests): the next change asks again.
+    pub(crate) fn places_forgotten(&mut self) {
+        self.places_asked = false;
+    }
+
+    /// The folders popover went up or came down (the frontend's word).
+    pub(crate) fn places_shown(&mut self, shown: bool) {
+        self.places_shown = shown;
+        if !shown {
+            self.places_stale = false;
+        }
+    }
+
+    /// Mail changed: while the folders popover is up its counts are read
+    /// again, one read at a time -- a change during a read is followed by
+    /// one more, not by a read per change.
+    pub(crate) fn places_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
+        use postio_core::Event;
+        let counts = matches!(
+            event,
+            Event::MessagesChanged { .. }
+                | Event::MessagesRemoved { .. }
+                | Event::NewMail { .. }
+                | Event::MessageListChanged { .. }
+                | Event::MailboxesChanged { .. }
+        );
+        if !counts || !self.places_shown {
+            return Vec::new();
+        }
+        if self.places_asked {
+            self.places_stale = true;
+            return Vec::new();
+        }
+        vec![self.ask_places()]
+    }
+
+    /// [`Self::places_landed`]'s read, taken in.
+    fn places_read_landed(&mut self, read: Result<PlacesRead, String>) -> Vec<Step> {
         match read {
             Ok(read) => {
                 self.names = postio_ui::names::Names::new(&read.contacts);
@@ -894,7 +958,7 @@ impl FocusController {
             },
             CommandId::GoToFiltered => self.show_filtered(),
             CommandId::GoToFolders => {
-                vec![Step::Show(Intent::OpenPlaces), Step::Ask(Request::Places)]
+                vec![Step::Show(Intent::OpenPlaces), self.bar.ask_places()]
             }
             _ => return None,
         };
@@ -1178,6 +1242,10 @@ impl FocusController {
             Input::SearchForget(token) => self.bar.forget(token),
             Input::SearchExclude(token) => self.bar.exclude(token),
             Input::OpenPlace(token) => self.open_place(token, rows),
+            Input::PlacesShown(shown) => {
+                self.bar.places_shown(shown);
+                Vec::new()
+            }
             Input::SavedSearches(saved) => {
                 self.bar.set_saved(saved);
                 self.redraw_bar()

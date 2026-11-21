@@ -540,6 +540,65 @@ fn going_somewhere_lets_the_selection_and_has_action_go() {
     assert_eq!(focus.selection(), Default::default());
 }
 
+/// Mail that changed in place, as a flag written elsewhere says it.
+fn flagged_elsewhere() -> Input {
+    Input::Event(postio_core::Event::MessagesChanged {
+        account: postio_model::AccountId::new(1),
+        messages: vec![MessageId::new(100)],
+    })
+}
+
+/// While the folders popover is up, mail that changes has its places read
+/// again, so the counts follow a flag written after the popover's own read
+/// was answered (#2153). Changes while a read is on its way are one more
+/// read once it lands, not a read each; once the popover has gone,
+/// changes read nothing.
+#[test]
+fn the_folders_popover_reads_its_counts_again_as_mail_changes() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    let (opening, _) = ask(&run(&mut focus, CommandId::GoToFolders, &rows));
+    let _ = focus.handle(Input::PlacesShown(true));
+
+    // Its first read is still on its way: a change waits for it.
+    assert!(asked(&focus.handle(flagged_elsewhere())).is_empty());
+    assert!(asked(&focus.handle(flagged_elsewhere())).is_empty());
+    let landed = focus.handle(Input::Reply(opening, Reply::Places(Ok(places()))));
+    let (again, request) = ask(&landed);
+    assert_eq!(request, Request::Places, "one more read for both changes");
+    let landed = focus.handle(Input::Reply(again, Reply::Places(Ok(places()))));
+    assert!(
+        asked(&landed).is_empty(),
+        "nothing changed since: {landed:?}"
+    );
+
+    // Nothing on its way: a change is read at once.
+    let (_, request) = ask(&focus.handle(flagged_elsewhere()));
+    assert_eq!(request, Request::Places);
+
+    // A read the controller forgot never lands; the next change asks anew.
+    focus.invalidate();
+    let (later, _) = ask(&focus.handle(flagged_elsewhere()));
+    let _ = focus.handle(Input::Reply(later, Reply::Places(Ok(places()))));
+
+    let _ = focus.handle(Input::PlacesShown(false));
+    assert!(
+        asked(&focus.handle(flagged_elsewhere())).is_empty(),
+        "a popover that has gone reads nothing"
+    );
+}
+
+/// The popover's word is what arms the re-reading: a frontend that never
+/// says it is up (the Mac's, for now) reads its places as before.
+#[test]
+fn mail_changing_reads_no_places_while_no_popover_is_up() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    let (opening, _) = ask(&run(&mut focus, CommandId::GoToFolders, &rows));
+    let _ = focus.handle(Input::Reply(opening, Reply::Places(Ok(places()))));
+    assert!(asked(&focus.handle(flagged_elsewhere())).is_empty());
+}
+
 #[test]
 fn the_places_are_one_request_and_a_place_opens_from_the_popover() {
     let rows = List::of(1);

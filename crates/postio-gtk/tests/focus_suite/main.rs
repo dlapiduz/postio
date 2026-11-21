@@ -874,6 +874,10 @@ const CASES: &[(&str, fn())] = &[
         places::a_count_landing_keeps_the_rows_a_click_is_on as fn(),
     ),
     (
+        "places::a_flag_while_the_folders_are_up_is_counted",
+        places::a_flag_while_the_folders_are_up_is_counted as fn(),
+    ),
+    (
         "places::flagged_and_snoozed_are_listed_and_open_their_views",
         places::flagged_and_snoozed_are_listed_and_open_their_views as fn(),
     ),

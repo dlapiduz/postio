@@ -266,6 +266,9 @@ pub enum Input {
     /// Go to the folders popover's place with this token
     /// ([`FocusController::places`]).
     OpenPlace(u64),
+    /// The folders popover is up, or has gone: while it is up, mail that
+    /// changes has its places read again, so its counts follow (#2153).
+    PlacesShown(bool),
     /// The pinned saved searches, in order.
     SavedSearches(Vec<postio_ui::saved_search::SavedSearch>),
     /// What became of an [`Intent::SaveSearch`]: the saved searches now and
@@ -2064,6 +2067,7 @@ impl FocusController {
                 let mut steps = self.verbs.event(&event);
                 steps.extend(self.results_heard(&event));
                 steps.extend(self.bar.heard(&event));
+                steps.extend(self.bar.places_heard(&event));
                 steps.extend(self.feed.event(&event));
                 steps.extend(self.walk_heard(&event));
                 steps.extend(self.hear_sync(&event));
@@ -2278,6 +2282,7 @@ impl FocusController {
             | Input::SearchForget(_)
             | Input::SearchExclude(_)
             | Input::OpenPlace(_)
+            | Input::PlacesShown(_)
             | Input::SavedSearches(_)
             | Input::SearchSaved(_)
             | Input::Filtering(_)) => {
@@ -2971,6 +2976,7 @@ impl FocusController {
     pub fn invalidate(&mut self) {
         self.generation += 1;
         self.pending = None;
+        self.bar.places_forgotten();
     }
 
     /// What a surface no longer on the stack held is forgotten: the Mac's
