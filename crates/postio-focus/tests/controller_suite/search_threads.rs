@@ -84,6 +84,7 @@ fn hit(
     hit.has_attachments = false;
     hit.labels = Vec::new();
     hit.reasons = vec![RankReason::Matches(matched)];
+    hit.matched_messages = matched;
     hit
 }
 
@@ -142,7 +143,14 @@ fn engine(request: &Request) -> Option<Reply> {
             let mut answer = page(query, *order, *offset, *limit);
             if *order == ConversationOrder::BestMatch {
                 answer.hits = vec![
-                    hit(HARBOR, 106, 6, 3, "Harbor API draft v3"),
+                    {
+                        // Its subject matches too: the reason line's
+                        // matches count it once, and it is no message
+                        // (#2184).
+                        let mut harbor = hit(HARBOR, 106, 6, 3, "Harbor API draft v3");
+                        harbor.reasons = vec![RankReason::Matches(4)];
+                        harbor
+                    },
                     hit(GATEWAY, 201, 1, 1, "Gateway defaults"),
                     hit(SLOS, 305, 8, 1, "Re: Platform SLOs"),
                 ];

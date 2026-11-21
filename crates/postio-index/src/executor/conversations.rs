@@ -1404,6 +1404,7 @@ fn hit(
             .collect(),
         score: pool_key(best, now),
         reasons,
+        matched_messages: conversation.shown,
         matches,
     }
 }

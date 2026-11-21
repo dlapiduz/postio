@@ -348,6 +348,10 @@ pub struct ConversationHit {
     pub score: f64,
     /// Why it ranks here; `Matches` always last.
     pub reasons: Vec<RankReason>,
+    /// How many of its messages matched by their own words, a quote or a
+    /// file: "K of M messages match", the children its expansion shows
+    /// (#2184). `Matches` also counts the subject or sender once.
+    pub matched_messages: u32,
     /// Where it matched; passages filled by a read of their own.
     pub matches: Vec<Match>,
 }

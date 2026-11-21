@@ -27,7 +27,7 @@ use postio_search::query::{Clause, Filter, TokenKind};
 use postio_search::relax::{Loosen, Relaxation};
 use postio_search::results::{
     ConversationHit, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
-    Counted, FacetNames, FileHit, Location, Match, RankReason, ResultsTab, Source,
+    Counted, FacetNames, FileHit, Location, Match, ResultsTab, Source,
 };
 use postio_ui::hints::Hint;
 use postio_ui::search_view::{self as words, FilterKind, ResultChild};
@@ -2790,10 +2790,9 @@ pub(crate) struct Landed {
 /// How many of a thread's messages matched, when several of its several
 /// did.
 fn matched_messages(hit: &ConversationHit) -> Option<usize> {
-    let matched = hit.reasons.iter().find_map(|reason| match reason {
-        RankReason::Matches(n) => Some(*n as usize),
-        _ => None,
-    })?;
+    // The messages, not the reason line's matches, which count the subject
+    // once too: the row's K is its expansion's children (#2184).
+    let matched = hit.matched_messages as usize;
     (hit.messages > 1 && matched > 1).then_some(matched)
 }
 

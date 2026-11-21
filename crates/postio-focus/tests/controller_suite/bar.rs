@@ -1218,6 +1218,7 @@ mod dropdown {
             labels: Vec::new(),
             score: 1.0,
             reasons: Vec::new(),
+            matched_messages: 1,
             matches: vec![Match {
                 source: Source::Body,
                 passage: None,

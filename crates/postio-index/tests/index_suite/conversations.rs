@@ -1185,6 +1185,9 @@ async fn a_subject_every_reply_repeats_is_one_match() {
         "the subject once, and the one reply that says it: {:?}",
         found.reasons
     );
+    // #2184: but of its messages one matched, and "K of M messages match"
+    // says that one, the child its expansion shows.
+    assert_eq!(found.matched_messages, 1);
 }
 
 #[tokio::test]
