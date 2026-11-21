@@ -235,8 +235,7 @@ fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current
                 // The person asked to forward, so the parts it carries are
                 // theirs to fetch now: local by the time they press send
                 // (#1690). A reply carries nothing and never gets here.
-                let carried = postio_ui::compose::carried_sections(&composer.draft().attachments);
-                client.fetch_carried(message, carried);
+                fetch_carried(&composer, &client, message);
             } else {
                 let ids = labels.iter().map(|label| label.id).collect();
                 frame.know(labels);
@@ -248,6 +247,40 @@ fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current
                 frame.note(note);
             }
         });
+    });
+}
+
+/// Asks for the parts a forward of `message` carries that are not on this
+/// machine, and draws them downloading while they come (#1690).
+///
+/// Drawn before the ask, so a part that lands faster than the answer
+/// returns is not drawn downloading again after it landed: the landing is an
+/// event the window hands the composer ([`Composer::fetch_settled`]). An
+/// answer that says nothing is on its way -- already here, never downloaded,
+/// no link -- takes the drawing back; the send's carry stage fetches what is
+/// still missing.
+fn fetch_carried(composer: &Composer, client: &Client, message: MessageId) {
+    let carried = postio_ui::compose::carried_sections(&composer.draft().attachments);
+    if carried.is_empty() {
+        return;
+    }
+    composer.set_downloading(carried.clone());
+    let generation = composer.generation();
+    let weak = composer.downgrade();
+    let client = client.clone();
+    glib::spawn_future_local(async move {
+        // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+        // asks the engine to queue the parts and answers at once.
+        let asked = client.fetch_carried(message, carried).await;
+        let Some(composer) = weak.upgrade() else {
+            return;
+        };
+        if composer.generation() != generation {
+            return;
+        }
+        if !matches!(asked, Ok(postio_model::fetch::PayloadAsk::Queued)) {
+            composer.set_downloading(Vec::new());
+        }
     });
 }
 

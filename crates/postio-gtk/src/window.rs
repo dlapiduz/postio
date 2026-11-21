@@ -3641,10 +3641,23 @@ impl FocusWindow {
             Event::NewMail {
                 mailbox, messages, ..
             } => self.announce(*mailbox, messages.clone()),
-            // The open message's words landed: drawn in place (#1788).
-            Event::BodyLoaded { message, .. }
-            | Event::BodyFailed { message, .. }
-            | Event::BodyReachable { message, .. } => {
+            // The open message's words landed: drawn in place (#1788). A
+            // forward of it stops drawing the parts that landed as
+            // downloading (#1690).
+            Event::BodyLoaded {
+                message, sections, ..
+            }
+            | Event::BodyFailed {
+                message, sections, ..
+            } => {
+                if let Some(reading) = self.reading() {
+                    reading.body_landed(*message);
+                }
+                if let Some(compose) = self.compose() {
+                    compose.composer().fetch_settled(*message, sections);
+                }
+            }
+            Event::BodyReachable { message, .. } => {
                 if let Some(reading) = self.reading() {
                     reading.body_landed(*message);
                 }

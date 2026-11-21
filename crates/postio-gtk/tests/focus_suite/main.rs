@@ -52,6 +52,7 @@ mod empty;
 mod every_command;
 mod filtered;
 mod first_run;
+mod forward_carried;
 mod gmail_keys;
 mod harness;
 mod has_action;
@@ -2073,6 +2074,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gmail_keys::z_takes_back_a_removed_account_in_settings",
         gmail_keys::z_takes_back_a_removed_account_in_settings as fn(),
+    ),
+    (
+        "forward_carried::a_forwarded_part_reads_downloading_until_its_bytes_land",
+        forward_carried::a_forwarded_part_reads_downloading_until_its_bytes_land as fn(),
     ),
 ];
 
