@@ -141,6 +141,9 @@ pub struct StatusTracker {
     /// mailboxes by sync priority. It holds at most as many entries as the
     /// engine has sync lanes, so a linear scan is the cheap answer.
     in_flight: Vec<MailboxId>,
+    /// What the link last said, while it says the account cannot reach its
+    /// server: a pass that ends after that is not the account going idle.
+    link_down: Option<SyncStatus>,
 }
 
 /// How often [`StatusTracker::on_progress`] is allowed to report, at most.
@@ -171,6 +174,7 @@ impl StatusTracker {
             last_progress_at: None,
             min_progress_interval: TimeDelta::from_std(interval).unwrap_or(TimeDelta::zero()),
             in_flight: Vec::new(),
+            link_down: None,
         }
     }
 
@@ -200,6 +204,10 @@ impl StatusTracker {
                 no_password: matches!(blocker, Blocker::NoPassword(_)),
             },
         };
+        self.link_down = match link {
+            Link::Online { .. } => None,
+            _ => Some(self.status.clone()),
+        };
         self.status.clone()
     }
 
@@ -223,6 +231,7 @@ impl StatusTracker {
             progress: None,
             last_sync: self.last_sync,
         };
+        self.keep_the_link_down();
         self.status.clone()
     }
 
@@ -240,6 +249,11 @@ impl StatusTracker {
     /// the UI. The batch that finishes the pass is never dropped.
     pub fn on_progress(&mut self, progress: Progress, now: DateTime<Utc>) -> Option<SyncStatus> {
         let progress = SyncProgress::from(progress);
+        // A pass still committing after the link dropped is not the account
+        // syncing again; the status line goes on saying what the link says.
+        if self.link_down.is_some() {
+            return None;
+        }
         // A batch from a pass that is not the one on the status line changes
         // nothing the user can see, and reporting it would make the line
         // flicker between folders for the whole of a first sync.
@@ -301,6 +315,7 @@ impl StatusTracker {
                 };
             }
         }
+        self.keep_the_link_down();
         self.status.clone()
     }
 
@@ -329,7 +344,22 @@ impl StatusTracker {
                 };
             }
         }
+        self.keep_the_link_down();
         self.status.clone()
+    }
+
+    /// A pass that starts or ends while the link is down says what the link
+    /// says.
+    ///
+    /// A wave's lanes outlive the link: the first to fail takes it down and
+    /// the rest end one by one after it. Each used to hand the status line
+    /// to the next pass, or to Idle, and either reads as Online -- so a
+    /// frontend following the account's link was told it was back while
+    /// the link waited out its backoff (#2016).
+    fn keep_the_link_down(&mut self) {
+        if let Some(down) = &self.link_down {
+            self.status = down.clone();
+        }
     }
 }
 
@@ -364,6 +394,51 @@ mod tests {
             status,
             SyncStatus::Idle {
                 last_sync: Some(at(5))
+            }
+        );
+    }
+
+    #[test]
+    fn a_pass_that_ends_after_the_link_dropped_leaves_the_link_down() {
+        // #2016: a wave's lanes outlive the link. The first to fail takes it
+        // down; the others then end one by one, and each used to say Idle --
+        // read as Online -- while the link waited out its backoff. A host
+        // following the account's link then asked for bodies the engine
+        // could not fetch, and remembered having asked.
+        let mut tracker = StatusTracker::new();
+        tracker.on_link(&Link::Online { since: at(0) });
+        let (inbox, archive) = (MailboxId::new(1), MailboxId::new(2));
+        tracker.on_sync_started(inbox);
+        tracker.on_sync_started(archive);
+        let waiting = Link::Waiting {
+            attempts: 1,
+            retry_at: at(2),
+        };
+        assert_eq!(tracker.on_link(&waiting), SyncStatus::Connecting);
+
+        // A lane admitted after the drop, and a batch one of them commits,
+        // say nothing new about the link either.
+        let junk = MailboxId::new(3);
+        assert_eq!(tracker.on_sync_started(junk), SyncStatus::Connecting);
+        assert_eq!(tracker.on_progress(progress(inbox, 5, 10), at(1)), None);
+        assert_eq!(tracker.on_sync_abandoned(junk), SyncStatus::Connecting);
+        assert_eq!(tracker.on_sync_abandoned(inbox), SyncStatus::Connecting);
+        assert_eq!(
+            tracker.on_sync_finished(archive, at(1)),
+            SyncStatus::Connecting
+        );
+        assert_eq!(tracker.status(), &SyncStatus::Connecting);
+        assert_eq!(
+            tracker.last_sync(),
+            Some(at(1)),
+            "a pass that finished still finished"
+        );
+
+        // And once the link is back, the account is idle again.
+        assert_eq!(
+            tracker.on_link(&Link::Online { since: at(3) }),
+            SyncStatus::Idle {
+                last_sync: Some(at(1))
             }
         );
     }

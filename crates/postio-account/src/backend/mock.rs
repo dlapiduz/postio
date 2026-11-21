@@ -407,6 +407,9 @@ struct State {
     /// A fault every call fails with until cleared. See
     /// [`MockBackend::fail_all`].
     persistent_fault: Option<Fault>,
+    /// A fault every body fetch fails with until cleared. See
+    /// [`MockBackend::fail_body_fetches`].
+    body_fault: Option<Fault>,
     latency: Duration,
     calls: u64,
     /// The reason `create_mailbox` refuses with, when it is set to refuse.
@@ -633,6 +636,23 @@ impl MockBackend {
         self.state().persistent_fault = Some(fault);
     }
 
+    /// Makes every **body** fetch fail with `fault` until [`clear_faults`]
+    /// is called, while every other call is answered.
+    ///
+    /// Narrower than [`fail_all`] for the reason [`fail_all`] is narrower
+    /// than [`inject_after`]: a spawned engine calls this backend on its own
+    /// schedule -- a wave's passes, the watch, the liveness check -- and a
+    /// fault on every call lands on whichever of them comes first. A test
+    /// asking what a failed body does wants the body to be what failed
+    /// (#1943).
+    ///
+    /// [`clear_faults`]: Self::clear_faults
+    /// [`fail_all`]: Self::fail_all
+    /// [`inject_after`]: Self::inject_after
+    pub fn fail_body_fetches(&self, fault: Fault) {
+        self.state().body_fault = Some(fault);
+    }
+
     /// Makes [`MailBackend::existing_uids`] refuse, as a server without a
     /// usable `SEARCH` would.
     ///
@@ -713,11 +733,14 @@ impl MockBackend {
         self.state().refuse_creates = Some(reason.into());
     }
 
-    /// Clears [`fail_all`](Self::fail_all)'s fault and any scheduled ones —
+    /// Clears [`fail_all`](Self::fail_all)'s and
+    /// [`fail_body_fetches`](Self::fail_body_fetches)' faults and any
+    /// scheduled ones —
     /// "the user fixed it", whatever it was.
     pub fn clear_faults(&self) {
         let mut state = self.state();
         state.persistent_fault = None;
+        state.body_fault = None;
         state.faults.clear();
     }
 
@@ -978,7 +1001,12 @@ impl MockBackend {
             let mut state = self.state();
             state.calls += 1;
             let call = state.calls;
-            (state.latency, state.take_fault(call))
+            let fault = state.take_fault(call).or_else(|| {
+                (context == "FETCH BODY")
+                    .then(|| state.body_fault.clone())
+                    .flatten()
+            });
+            (state.latency, fault)
         };
 
         // Dropped at the end of this scope *or* when the caller's future is
@@ -1134,6 +1162,7 @@ impl MockBackendBuilder {
                 mailboxes: self.mailboxes.into_iter().map(MailboxState::seed).collect(),
                 faults: Vec::new(),
                 persistent_fault: None,
+                body_fault: None,
                 refuse_uid_listing: false,
                 truncate_uid_listing: None,
                 omit_uid_mappings: false,
