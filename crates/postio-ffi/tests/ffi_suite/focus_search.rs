@@ -270,11 +270,7 @@ async fn show_all_emits_the_results_and_their_rows_read_back_marked() {
     assert!(view.groups[0].rows <= 3);
     assert!(view.groups.len() > 1, "then the months");
     assert_eq!(session.focus_search_row_count(), view.rows);
-    assert!(
-        view.count_line.ends_with("conversations"),
-        "{}",
-        view.count_line
-    );
+    assert!(view.count_line.ends_with("threads"), "{}", view.count_line);
     assert!(view.footer_right.contains("local index"));
     assert_eq!(view.months.len(), 12);
     assert!(
