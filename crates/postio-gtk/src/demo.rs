@@ -62,9 +62,16 @@ pub struct Started {
     pub store: Store,
     /// The blob directory the host reads, kept until the demo ends.
     _blobs: tempfile::TempDir,
+    /// Folders the window's config names, such as a vault, kept as long.
+    kept: Vec<tempfile::TempDir>,
 }
 
 impl Started {
+    /// Keep `dir` until the demo ends: a folder the window's config names.
+    pub fn keep(&mut self, dir: tempfile::TempDir) {
+        self.kept.push(dir);
+    }
+
     /// Take the window down, stopping its session first.
     pub fn finish(self) {
         self.window.destroy();
@@ -152,5 +159,6 @@ pub fn start(
         account,
         store,
         _blobs: blobs_dir,
+        kept: Vec::new(),
     })
 }
