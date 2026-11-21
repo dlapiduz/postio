@@ -557,14 +557,26 @@ fn plural(n: u64, capped: bool, one: &str, many: &str) -> String {
 /// The results footer's right-hand side (§3.5): "48 threads · local
 /// index · 41 ms".
 pub fn results_footer(total: u64, capped: bool, elapsed: Duration) -> String {
+    footer_of(&threads(total, capped), elapsed)
+}
+
+/// The Files tab's count line (#2183): the cards under it, "6 files", not
+/// the search's threads.
+pub fn files_count_line(files: u64, capped: bool) -> String {
+    plural(files, capped, "file", "files")
+}
+
+/// The Files tab's footer: "6 files · local index · 41 ms".
+pub fn files_footer(files: u64, capped: bool, elapsed: Duration) -> String {
+    footer_of(&files_count_line(files, capped), elapsed)
+}
+
+fn footer_of(counted: &str, elapsed: Duration) -> String {
     let took = match elapsed.as_millis() {
         0 => "<1 ms".to_owned(),
         ms => format!("{ms} ms"),
     };
-    format!(
-        "{} \u{b7} local index \u{b7} {took}",
-        threads(total, capped)
-    )
+    format!("{counted} \u{b7} local index \u{b7} {took}")
 }
 
 /// One of the filter bar's buttons (§3.2), in its order.
@@ -1702,8 +1714,10 @@ const RESULTS_TABS: [CommandId; 3] = [
     CommandId::ResultsPeople,
 ];
 
-/// The Files tab's footer (design §3.8): the grid's arrows, Quick Look,
-/// open the message, save, and the tabs.
+/// The Files tab's footer (design §3.8): the grid's arrows, Space, open
+/// the message, save, and the tabs. Space hands a copy of the file to the
+/// system: the Mac's Quick Look, or elsewhere the desktop's app for its
+/// type, which is what the key says there (#2183).
 pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut out = vec![hints::fixed(
         "Up/Down/Left/Right",
@@ -1711,7 +1725,12 @@ pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
         "the arrows move the ring across the grid's columns and rows, which \
          the collection view lays out; j and k step it as the list's do",
     )];
-    out.extend(hints::hint(keymap, CommandId::QuickLook, "Quick Look"));
+    let look = if keymap.platform() == Some(postio_config::paths::Platform::Apple) {
+        QUICK_LOOK
+    } else {
+        "open the file"
+    };
+    out.extend(hints::hint(keymap, CommandId::QuickLook, look));
     out.extend(hints::hint(
         keymap,
         CommandId::OpenMessage,

@@ -1917,6 +1917,13 @@ impl Results {
             selected: self.tab == tab,
             key: postio_ui::hints::key(with.keymap, id),
         };
+        // The cards once read are the Files tab's count; until then the
+        // search's own.
+        let files = self.files.as_ref().map_or_else(
+            || frame.map_or(0, |frame| frame.files),
+            |files| files.len() as u64,
+        );
+        let on_files = self.tab == ResultsTab::Files;
         let tabs = vec![
             tab(
                 ResultsTab::Conversations,
@@ -1928,12 +1935,7 @@ impl Results {
             tab(
                 ResultsTab::Files,
                 words::TABS[1],
-                // The cards once read are the count; until then the
-                // search's own.
-                self.files.as_ref().map_or_else(
-                    || frame.map_or(0, |frame| frame.files),
-                    |files| files.len() as u64,
-                ),
+                files,
                 // Read over the same capped walk: a floor with it.
                 capped,
                 CommandId::ResultsFiles,
@@ -1982,13 +1984,16 @@ impl Results {
                 self.order
             },
             sortable: self.tab != ResultsTab::Files,
-            count_line: frame.map_or_else(String::new, |_| words::count_line(total, capped)),
+            // The heading counts what the tab shows (#2183).
+            count_line: frame.map_or_else(String::new, |_| {
+                if on_files {
+                    words::files_count_line(files, capped)
+                } else {
+                    words::count_line(total, capped)
+                }
+            }),
             sub_line: frame.map_or_else(String::new, |frame| {
                 // The tabs' own counts, once their rows are read.
-                let files = self
-                    .files
-                    .as_ref()
-                    .map_or(frame.files, |files| files.len() as u64);
                 let people = self
                     .listed
                     .as_ref()
@@ -2031,6 +2036,8 @@ impl Results {
             footer: frame.map_or_else(String::new, |frame| {
                 if self.found_nothing() {
                     words::searched_footer(frame.messages_searched, frame.elapsed)
+                } else if on_files {
+                    words::files_footer(files, capped, frame.elapsed)
                 } else {
                     words::results_footer(total, capped, frame.elapsed)
                 }
