@@ -26,7 +26,7 @@ struct QuickLookModelTests {
             ],
             subject: [RunFfi(text: "Atlas", highlighted: true, style: .plain)],
             sender: [RunFfi(text: "Ada Moreno", highlighted: false, style: .strong)],
-            matchesLine: "2 matches in this conversation",
+            matchesLine: "2 matches in this thread",
             matchesHint: KeyHintFfi(key: "]/[", label: "jump between them"),
             cards: [
                 MatchCardFfi(place: "Body", when: "Ada · 26 Sep", passage: [], file: false),

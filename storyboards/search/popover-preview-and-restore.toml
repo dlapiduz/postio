@@ -42,7 +42,7 @@ expect  = "From's key, shown on its button, opens its popover, 360 wide with an 
 [[step]]
 id      = "check-ada"
 key     = "space"
-expect  = "Space checks Ada Moreno. With the popover still open the list narrows to her conversations, the Conversations count and the timeline's bars drop, and the count line's second line reads “previewing Ada Moreno · ↩ applies”. The popover's rows and their counts stay as they opened."
+expect  = "Space checks Ada Moreno. With the popover still open the list narrows to her conversations, the Threads count and the timeline's bars drop, and the count line's second line reads “previewing Ada Moreno · ↩ applies”. The popover's rows and their counts stay as they opened."
 
 [[step]]
 key     = "Escape"

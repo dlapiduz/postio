@@ -1399,7 +1399,7 @@ impl ResultsPane {
         &self.list
     }
 
-    /// The count line: "48 conversations".
+    /// The count line: "48 threads".
     pub fn count_line(&self) -> String {
         self.count_line.text().to_string()
     }
@@ -1452,6 +1452,23 @@ impl ResultsPane {
             child = widget.next_sibling();
         }
         false
+    }
+
+    /// The words the selected tab draws, its count left out: "Threads".
+    pub fn tab_said(&self) -> Option<String> {
+        let mut child = self.tabs.first_child();
+        while let Some(widget) = child {
+            if widget.has_css_class("focus-results-tab-selected") {
+                return widget
+                    .downcast_ref::<gtk::Button>()
+                    .and_then(|button| button.child())
+                    .and_then(|said| said.first_child())
+                    .and_downcast::<gtk::Label>()
+                    .map(|label| label.text().to_string());
+            }
+            child = widget.next_sibling();
+        }
+        None
     }
 
     /// Click the tab whose label starts with `text`, as a person does.

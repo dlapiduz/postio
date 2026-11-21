@@ -323,9 +323,9 @@ it understood.
 
 **Independent test**: US9's.
 
-- [x] T132 [P] [US9] Write failing tests for `executor::people` (`index_suite/conversations.rs`: the distinct correspondents of the matched messages, the user's own addresses excluded, with counts and last dates) and, in `crates/postio-focus/tests/results.rs`, ↩ on a person replaces the query with `from:<address>` and selects the Conversations tab. Red: missing
+- [x] T132 [P] [US9] Write failing tests for `executor::people` (`index_suite/conversations.rs`: the distinct correspondents of the matched messages, the user's own addresses excluded, with counts and last dates) and, in `crates/postio-focus/tests/results.rs`, ↩ on a person replaces the query with `from:<address>` and selects the Threads tab. Red: missing
 - [x] T133 [US9] Implement `executor::people`, `Req::People`, the tab in `results.rs`, `PersonRowFfi`/`focus_search_person`, and `macos/Sources/PostioKit/PeopleListView.swift` (avatar, name, address, count, last date). Make T132 green
-- [x] T134 [US9] Capture the People tab at 1440×900 light; there is no PNG, so compare with design §3.11's text and the Files and Conversations rows' rhythm; note it; commit the phase
+- [x] T134 [US9] Capture the People tab at 1440×900 light; there is no PNG, so compare with design §3.11's text and the Files and Threads rows' rhythm; note it; commit the phase
 
 ---
 
@@ -468,7 +468,7 @@ turns on (T176).
     glyphs are the read and unread marks. The ghost after the caret (screen
     02) is not drawn yet; it goes with T175's typing states or T176.
 - [x] T171 The results view (`ShowResults`, `ResultsPage`, `ResultsCursor`,
-  `Query`, `LeaveResults`, History back and forward): the Conversations tab.
+  `Query`, `LeaveResults`, History back and forward): the Threads tab.
   - *As built:* `crates/postio-gtk/src/results.rs` is a page of the
     window's body beside the mail, as Contacts is: the head (count, tabs,
     Sort), the query's chips with their ✕ and the filter buttons, a

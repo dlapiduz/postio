@@ -17,17 +17,17 @@ struct NoResultsModelTests {
     nonisolated static func view(counting: Bool = false) -> NoResultsViewFfi {
         NoResultsViewFfi(
             title: "Nothing matches all four filters",
-            body: "Each line below loosens one filter and shows how many conversations you would get.",
+            body: "Each line below loosens one filter and shows how many threads you would get.",
             relaxations: counting
                 ? []
                 : [
                     RelaxationFfi(
                         number: 1, key: "1", label: "Remove “before March”",
-                        query: "from:ada has:attachment subject:\"budget v4\"", count: "4 conversations",
+                        query: "from:ada has:attachment subject:\"budget v4\"", count: "4 threads",
                         focused: true),
                     RelaxationFfi(
                         number: 2, key: "2", label: "Anyone, not just Ada Moreno",
-                        query: "has:attachment before:2026-03-01 subject:\"budget v4\"", count: "3 conversations",
+                        query: "has:attachment before:2026-03-01 subject:\"budget v4\"", count: "3 threads",
                         focused: false),
                 ],
             counting: counting ? "Counting looser searches…" : nil,

@@ -157,7 +157,7 @@ async fn each_relaxation_counts_what_its_search_would_find() {
 
 /// A way out counts to `TOTAL_HITS_CAP`, and past it says its count is a
 /// floor (D30), as every count drawn past a cap is: screen 13 then reads
-/// "10,000+ conversations", never a bare 10,000 that is not the total.
+/// "10,000+ threads", never a bare 10,000 that is not the total.
 #[tokio::test]
 async fn a_way_out_past_the_cap_says_its_count_is_a_floor() {
     let (_database, connection, account, inbox) = store().await;

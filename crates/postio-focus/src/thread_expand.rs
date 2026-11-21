@@ -256,6 +256,12 @@ impl Rows for Through<'_> {
             })
     }
 
+    fn position_of_thread(&self, thread: ThreadId) -> Option<u32> {
+        self.inner
+            .position_of_thread(thread)
+            .map(|row| self.splice.display(Slot::Row(row)))
+    }
+
     fn is_child(&self, position: u32) -> bool {
         matches!(self.splice.slot(position), Slot::Child { .. })
     }

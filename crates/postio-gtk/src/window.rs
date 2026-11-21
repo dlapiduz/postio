@@ -6897,6 +6897,15 @@ impl FocusWindow {
                 "focus.results.child".to_owned(),
                 serde_json::json!(results.child_focus()),
             );
+            // The words a check holds the results to (#2118: "Threads").
+            app.insert(
+                "focus.results.tab".to_owned(),
+                serde_json::json!(results.tab_said()),
+            );
+            app.insert(
+                "focus.results.count_line".to_owned(),
+                serde_json::json!(results.count_line()),
+            );
         }
         // What the composer holds of a thread (spec 013 US7).
         if let Some(compose) = self.compose()
@@ -7054,6 +7063,29 @@ impl FocusWindow {
                 .muted
                 .map(postio_ui::thread_outline::muted_badge);
             app.insert("focus.row.muted".to_owned(), serde_json::json!(badge));
+            // What the cursor's thread row says of who wrote and what the
+            // newest said: a reply moves both (#2107).
+            if conversation.summary.message_count > 1 {
+                let me = pane
+                    .as_ref()
+                    .map(|pane| pane.identities())
+                    .unwrap_or_default();
+                let said = postio_ui::focus_row::ThreadRowView::new(
+                    &conversation.summary,
+                    &conversation.labels,
+                    &me,
+                    false,
+                    postio_ui::clock::now(),
+                );
+                app.insert(
+                    "focus.row.participants".to_owned(),
+                    serde_json::json!(said.participants),
+                );
+                app.insert(
+                    "focus.row.line".to_owned(),
+                    serde_json::json!(said.latest_line),
+                );
+            }
         }
         if let Some(child) = &child {
             app.insert("focus.cursor.tag".to_owned(), serde_json::json!(child.tag));

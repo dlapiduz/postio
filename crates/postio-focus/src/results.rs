@@ -49,7 +49,7 @@ const RESIDENT: usize = 8;
 pub struct ResultsTabView {
     /// Which tab.
     pub tab: ResultsTab,
-    /// "Conversations".
+    /// "Threads".
     pub label: String,
     /// "48".
     pub count: String,
@@ -107,7 +107,7 @@ pub struct ResultsView {
     /// Whether Sort offers a choice: the conversations can be ranked or
     /// dated; a file has no rank (screen 11 reads "Newest").
     pub sortable: bool,
-    /// "48 conversations".
+    /// "48 threads".
     pub count_line: String,
     /// "12 files · 6 people · last 12 months".
     pub sub_line: String,
@@ -126,7 +126,7 @@ pub struct ResultsView {
     pub cursor: Option<u64>,
     /// The footer's keys.
     pub hints: Vec<Hint>,
-    /// "48 conversations · local index · 41 ms".
+    /// "48 threads · local index · 41 ms".
     pub footer: String,
     /// How many conversations are checked.
     pub selected: u64,
@@ -392,7 +392,7 @@ pub struct RelaxationView {
     pub label: String,
     /// The query it runs, in the query language: drawn monospaced.
     pub query: String,
-    /// "4 conversations".
+    /// "4 threads".
     pub count: String,
     /// Ringed: Return runs it, and its chip is ringed in the field.
     pub focused: bool,
@@ -516,7 +516,7 @@ pub struct QuickLookView {
     /// Its sender line: the name (strong), the address (mono), when, and
     /// the thread's size.
     pub sender: Vec<Run>,
-    /// "4 matches in this conversation".
+    /// "4 matches in this thread".
     pub matches_line: String,
     /// "]/[ jump between them".
     pub matches_hint: Option<Hint>,

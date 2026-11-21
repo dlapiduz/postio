@@ -18,7 +18,7 @@ struct QuickLookPanelTests {
     static func view(_ position: String) -> QuickLookViewFfi {
         QuickLookViewFfi(
             title: "Quick Look", position: position, walk: nil, actions: [], subject: [], sender: [],
-            matchesLine: "1 match in this conversation", matchesHint: nil,
+            matchesLine: "1 match in this thread", matchesHint: nil,
             cards: [MatchCardFfi(place: "Body", when: "Ada · 26 Sep", passage: [], file: false)], current: 0)
     }
 

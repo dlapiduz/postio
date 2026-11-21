@@ -114,12 +114,12 @@ fn best_match_gives_top_hits_then_month_groups() {
 
     assert_eq!(view.order, ConversationOrder::BestMatch);
     assert!(view.sortable, "the conversations can be ranked or dated");
-    assert_eq!(view.count_line, "120 conversations");
+    assert_eq!(view.count_line, "120 threads");
     assert_eq!(view.sub_line, "12 files · 6 people · last 12 months");
-    assert_eq!(view.footer, "120 conversations · local index · 41 ms");
+    assert_eq!(view.footer, "120 threads · local index · 41 ms");
     assert_eq!(view.months.len(), 12);
     assert_eq!(view.months[11].label, "Sep");
-    assert_eq!(view.tabs[0].label, "Conversations");
+    assert_eq!(view.tabs[0].label, "Threads");
     assert_eq!(view.tabs[0].count, "120");
     assert!(view.tabs[0].selected);
     assert_eq!(view.tabs[1].count, "12");
@@ -426,7 +426,7 @@ fn a_filter_button_edits_the_query_and_asks_again() {
     assert!(button(&query, FilterKind::From).applied);
     assert_eq!(
         results_view(&effects).expect("again").count_line,
-        "60 conversations"
+        "60 threads"
     );
 
     // ✕ on a chip takes it out.
@@ -705,7 +705,7 @@ fn checking_a_person_previews_live_and_esc_restores_the_query_exactly() {
     let effects = settle(&mut focus, effects, &rows);
     // The list, the counts and the timeline follow while it is open.
     let view = results_view(&effects).expect("the preview");
-    assert_eq!(view.count_line, "60 conversations");
+    assert_eq!(view.count_line, "60 threads");
     assert_eq!(
         view.sub_line,
         "previewing Ada Moreno \u{b7} \u{21a9} applies"
@@ -735,7 +735,7 @@ fn checking_a_person_previews_live_and_esc_restores_the_query_exactly() {
     );
     let effects = settle(&mut focus, effects, &rows);
     let view = results_view(&effects).expect("as before");
-    assert_eq!(view.count_line, "120 conversations");
+    assert_eq!(view.count_line, "120 threads");
     assert_eq!(
         view.sub_line,
         "12 files \u{b7} 6 people \u{b7} last 12 months"
@@ -766,7 +766,7 @@ fn return_keeps_the_previewed_query() {
     // Screen 11's "from Ada since July · 9 files": the filter in words,
     // then the files; a person is the filter, so no people.
     assert_eq!(view.sub_line, "from Ada \u{b7} 12 files");
-    assert_eq!(view.count_line, "60 conversations");
+    assert_eq!(view.count_line, "60 threads");
 }
 
 #[test]
@@ -796,7 +796,7 @@ fn alt_click_excludes_and_again_takes_it_out() {
     let effects = settle(&mut focus, effects, &rows);
     assert_eq!(
         results_view(&effects).expect("the preview").count_line,
-        "60 conversations"
+        "60 threads"
     );
     let row = &popover_view(&effects).flatten().expect("redrawn").rows[0];
     assert!(row.excluded && !row.checked);
@@ -1359,7 +1359,7 @@ fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
     assert_eq!(selected, [9, 10, 11]);
     assert!(popover.months[0..9].iter().any(|bar| bar.conversations > 0));
     let view = results_view(&effects).expect("the preview");
-    assert_eq!(view.count_line, "44 conversations");
+    assert_eq!(view.count_line, "44 threads");
     assert_eq!(
         view.sub_line,
         "previewing Jul \u{2013} Sep \u{b7} \u{21a9} applies"
@@ -1541,7 +1541,7 @@ fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
     // ringed.
     let effects = settle(&mut focus, effects, &rows);
     let view = looked(&effects);
-    assert_eq!(view.matches_line, "3 matches in this conversation");
+    assert_eq!(view.matches_line, "3 matches in this thread");
     assert_eq!(
         view.matches_hint
             .as_ref()
@@ -2297,7 +2297,7 @@ fn nothing_found_counted(
     )
 }
 
-/// A way out counted past its cap says so (D30): "10,000+ conversations",
+/// A way out counted past its cap says so (D30): "10,000+ threads",
 /// never a bare number that is not the total.
 #[test]
 fn a_way_out_counted_past_its_cap_is_drawn_as_a_floor() {
@@ -2323,10 +2323,7 @@ fn a_way_out_counted_past_its_cap_is_drawn_as_a_floor() {
         .iter()
         .map(|way| way.count.as_str())
         .collect();
-    assert_eq!(
-        counts,
-        ["10,000+ conversations", "4 conversations", "1 conversation"]
-    );
+    assert_eq!(counts, ["10,000+ threads", "4 threads", "1 thread"]);
 }
 
 #[test]
@@ -2397,28 +2394,28 @@ fn the_ways_out_are_most_first_none_empty_and_at_most_four() {
                 1,
                 "Remove “before March”",
                 "from:ada@example.com has:attachment subject:\"budget v4\" atlas plan",
-                "6 conversations",
+                "6 threads",
                 true
             ),
             (
                 2,
                 "Remove “plan”",
                 "from:ada@example.com has:attachment before:2026-03-01 subject:\"budget v4\" atlas",
-                "5 conversations",
+                "5 threads",
                 false
             ),
             (
                 3,
                 "Anyone, not just Ada Moreno",
                 "has:attachment before:2026-03-01 subject:\"budget v4\" atlas plan",
-                "4 conversations",
+                "4 threads",
                 false
             ),
             (
                 4,
                 "Remove “atlas”",
                 "from:ada@example.com has:attachment before:2026-03-01 subject:\"budget v4\" plan",
-                "3 conversations",
+                "3 threads",
                 false
             ),
         ],
@@ -2984,7 +2981,7 @@ fn a_new_query_reads_the_people_again() {
 }
 
 /// Every results read among `effects` answered as `settle` answers it, but
-/// past the walk's cap (D30): 5,000 conversations and more, every count a
+/// past the walk's cap (D30): 5,000 threads and more, every count a
 /// floor.
 fn settle_capped(focus: &mut FocusController, effects: Vec<Effect>, rows: &List) -> Vec<Effect> {
     use postio_focus::Reply;
@@ -3031,8 +3028,8 @@ fn a_capped_answer_says_every_count_is_a_floor() {
     let effects = settle_capped(&mut focus, effects, &rows);
     let view = results_view(&effects).expect("the results");
 
-    assert_eq!(view.count_line, "5,000+ conversations");
-    assert_eq!(view.footer, "5,000+ conversations · local index · 41 ms");
+    assert_eq!(view.count_line, "5,000+ threads");
+    assert_eq!(view.footer, "5,000+ threads · local index · 41 ms");
     assert_eq!(
         view.tabs
             .iter()

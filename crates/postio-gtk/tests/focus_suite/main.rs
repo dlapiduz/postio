@@ -1680,6 +1680,14 @@ const CASES: &[(&str, fn())] = &[
         threads::new_mail_above_an_open_thread_moves_its_children_with_it as fn(),
     ),
     (
+        "threads::a_reply_keeps_the_cursor_on_its_thread_and_the_row_says_the_reply",
+        threads::a_reply_keeps_the_cursor_on_its_thread_and_the_row_says_the_reply as fn(),
+    ),
+    (
+        "threads::a_reply_moves_its_thread_to_the_top_and_the_cursor_with_it",
+        threads::a_reply_moves_its_thread_to_the_top_and_the_cursor_with_it as fn(),
+    ),
+    (
         "threads::left_folds_the_thread_from_a_child",
         threads::left_folds_the_thread_from_a_child as fn(),
     ),

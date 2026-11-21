@@ -1614,12 +1614,16 @@ pub fn new_mail_above_an_open_thread_moves_its_children_with_it() {
             "the new mail landed at the top: {:?}",
             support::subjects(&window)
         );
-        crate::settle();
-        assert_eq!(
-            children_drawn(&pane),
-            ["Message 1", "Message 2", "Message 3"],
-            "each child is drawn once"
+        // The rows the splice moved are laid out a frame or two after the
+        // count changes: wait for them to be drawn, then hold them to it.
+        let children = ["Message 1", "Message 2", "Message 3"];
+        assert!(
+            crate::settle_until(async || children_drawn(&pane) == children).await,
+            "each child is drawn once: {:?}",
+            children_drawn(&pane)
         );
+        crate::settle();
+        assert_eq!(children_drawn(&pane), children, "and stays drawn once");
         let thread_row = pane
             .cursor()
             .item(2)
@@ -1641,6 +1645,152 @@ pub fn new_mail_above_an_open_thread_moves_its_children_with_it() {
             children_drawn(&pane),
             Vec::<String>::new(),
             "no child is left on screen"
+        );
+    });
+}
+
+/// The cursor's row's thread and what its row draws, once drawn.
+fn cursor_thread(window: &postio_gtk::window::FocusWindow) -> Option<postio_model::ThreadId> {
+    window.cursor_row().and_then(|row| row.thread())
+}
+
+/// A reply to the thread under the cursor, while its message is open in a
+/// window: the cursor behind the window stays on the thread's row, which
+/// now names who replied first and says their line, and Escape comes back
+/// to it (#2107; the cursor slid to the row below, and the row kept the
+/// sender and line it had).
+pub fn a_reply_keeps_the_cursor_on_its_thread_and_the_row_says_the_reply() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor plan", 3, 10).await;
+        fixture.file_in(fixture.inbox, "Solo", 300).await;
+        let (window, sink) = opened_telling(&fixture).await;
+        let pane = window.pane().expect("the inbox");
+        assert!(
+            crate::settle_until(
+                async || pane.cursor().selected() == 0 && pane.cursor().n_items() == 2
+            )
+            .await,
+            "the inbox opens on the thread, above the single message"
+        );
+        let harbor = cursor_thread(&window).expect("the cursor is on the thread");
+        let before = first_row(&pane).await;
+        assert!(
+            before.iter().any(|text| text.contains("Message 3")),
+            "the row says the thread's newest line before the reply: {before:?}"
+        );
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(async || window.observe().reading.id.is_some()).await,
+            "Return opened the thread's message in a window"
+        );
+
+        let (reply, thread) = fixture.reply_to(*ids.last().unwrap(), "Exports too").await;
+        assert_eq!(thread, harbor, "the reply joined the thread");
+        sink.emit(postio_core::Event::NewMail {
+            account: fixture.account.id,
+            mailbox: fixture.inbox,
+            messages: vec![reply],
+        });
+        sink.emit(postio_core::Event::ThreadChanged {
+            account: fixture.account.id,
+            thread,
+            members_added: vec![reply],
+        });
+        assert!(
+            crate::settle_until(async || first_row(&pane)
+                .await
+                .iter()
+                .any(|text| text.contains("Exports too")))
+            .await,
+            "the row never said the reply's line: {:?}",
+            first_row(&pane).await
+        );
+        crate::settle();
+        let after = first_row(&pane).await;
+        assert_eq!(
+            after.first().map(String::as_str),
+            Some("Ana, Ada"),
+            "the row names who replied first: {after:?}"
+        );
+        assert_eq!(
+            (pane.cursor().selected(), cursor_thread(&window)),
+            (0, Some(harbor)),
+            "the cursor stays on the thread's row behind the window: {:?}",
+            support::subjects(&window)
+        );
+
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || window.observe().reading.id.is_none()).await,
+            "Escape closed the window"
+        );
+        assert_eq!(
+            cursor_thread(&window),
+            Some(harbor),
+            "Escape came back to the thread's row: {:?}",
+            support::subjects(&window)
+        );
+    });
+}
+
+/// A reply to the thread under the cursor further down the list moves its
+/// row to the top, newest first, and the cursor goes with it (#2107): it
+/// does not stay on the row that slid into the thread's old place.
+pub fn a_reply_moves_its_thread_to_the_top_and_the_cursor_with_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.file_in(fixture.inbox, "Top", 5).await;
+        let ids = fixture.thread_of("Harbor plan", 3, 60).await;
+        fixture.file_in(fixture.inbox, "Solo", 300).await;
+        let (window, sink) = opened_telling(&fixture).await;
+        let pane = window.pane().expect("the inbox");
+        assert!(
+            crate::settle_until(
+                async || pane.cursor().selected() == 0 && pane.cursor().n_items() == 3
+            )
+            .await,
+            "the inbox opens on Top, above the thread and Solo"
+        );
+        support::keys(&window, &["j"]);
+        let harbor = cursor_thread(&window).expect("the cursor is on the thread");
+
+        let (reply, thread) = fixture.reply_to(*ids.last().unwrap(), "Exports too").await;
+        sink.emit(postio_core::Event::NewMail {
+            account: fixture.account.id,
+            mailbox: fixture.inbox,
+            messages: vec![reply],
+        });
+        sink.emit(postio_core::Event::ThreadChanged {
+            account: fixture.account.id,
+            thread,
+            members_added: vec![reply],
+        });
+        assert!(
+            crate::settle_until(async || pane
+                .feed()
+                .shown()
+                .item(0)
+                .and_downcast::<postio_gtk::list::model::RowObject>()
+                .and_then(|row| row.item())
+                .and_then(|row| row.thread())
+                == Some(harbor))
+            .await,
+            "the thread's row never reached the top: {:?}",
+            support::subjects(&window)
+        );
+        crate::settle();
+        assert_eq!(
+            (pane.cursor().selected(), cursor_thread(&window)),
+            (0, Some(harbor)),
+            "the cursor went with the thread: {:?}",
+            support::subjects(&window)
         );
     });
 }

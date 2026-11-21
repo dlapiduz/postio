@@ -270,11 +270,7 @@ async fn show_all_emits_the_results_and_their_rows_read_back_marked() {
     assert!(view.groups[0].rows <= 3);
     assert!(view.groups.len() > 1, "then the months");
     assert_eq!(session.focus_search_row_count(), view.rows);
-    assert!(
-        view.count_line.ends_with("conversations"),
-        "{}",
-        view.count_line
-    );
+    assert!(view.count_line.ends_with("threads"), "{}", view.count_line);
     assert!(view.footer_right.contains("local index"));
     assert_eq!(view.months.len(), 12);
     assert!(
@@ -551,7 +547,7 @@ async fn quick_look_crosses_with_its_cards_and_closes_with_none() {
     assert!(runs(&view.subject).to_lowercase().contains("atlas"));
     assert!(view.subject.iter().any(|run| run.highlighted));
     assert!(
-        view.matches_line.ends_with("matches in this conversation"),
+        view.matches_line.ends_with("matches in this thread"),
         "{}",
         view.matches_line
     );

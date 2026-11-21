@@ -197,7 +197,7 @@ keyboard. Screens 01 and 03 compared, differences listed.
 
 ⌘↩ (or "Show all") turns the main window into the results view: ‹ Inbox
 with an Esc keycap, the query as chips and words, Save search ⌘S; a filter
-bar with tabs (Conversations, Files, People) and filter buttons; a timeline
+bar with tabs (Threads, Files, People) and filter buttons; a timeline
 of matches per month; then results grouped as Top hits (Best match only)
 and month groups. Each row says who, the subject with highlights, label
 pills, a source tag (body, quoted text, subject, file name) and the matching
@@ -264,7 +264,7 @@ compared, differences listed.
 ### User Story 4 - Look inside a result without opening it (Priority: P2)
 
 Space on a result opens Quick Look over the list: the subject, the sender
-line, "4 matches in this conversation", and one card per match with where
+line, "4 matches in this thread", and one card per match with where
 (Body, an attachment, Earlier reply, Subject) and when. j/k move to the next
 result with the panel open; ]/[ move between matches; ↩ opens the message;
 `a` archives; Space or Esc closes.
@@ -379,7 +379,7 @@ search does not depend on it.
 
 **Independent Test**: Over the demo store with a PDF, an XLSX, a DOCX and a
 PPTX attachment already on disk, search a word only inside the XLSX: the
-Conversations tab shows the row with the file-name tag and "Sheet
+Threads tab shows the row with the file-name tag and "Sheet
 ‘Summary’, row 14: …"; the Files tab shows its card. Screen 11 compared.
 
 **Acceptance Scenarios**:
@@ -400,7 +400,7 @@ address, message count, last date. ↩ runs `from:<person>`.
 **Why this priority**: Not drawn yet (design §3.11); a simple list.
 
 **Independent Test**: Run `atlas`, ⌘3, ↩ on a person: the query is
-`from:<address>` and the Conversations tab shows.
+`from:<address>` and the Threads tab shows.
 
 ### Edge Cases
 

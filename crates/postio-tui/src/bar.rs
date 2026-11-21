@@ -882,7 +882,7 @@ mod tests {
             ],
         );
         let drawn = screen(120, 36, &app);
-        assert!(drawn.contains("Conversations · 2 matches"), "{drawn}");
+        assert!(drawn.contains("Threads · 2 matches"), "{drawn}");
         assert!(drawn.contains("Sorted by relevance"), "{drawn}");
         assert!(drawn.contains("switch to date"), "{drawn}");
         assert!(drawn.contains("Tide gate"), "{drawn}");
@@ -992,7 +992,7 @@ mod tests {
         );
         let drawn = screen(120, 36, &app);
         assert!(
-            drawn.contains("Archive · folder · 4 conversations · newest first"),
+            drawn.contains("Archive · folder · 4 threads · newest first"),
             "{drawn}"
         );
         assert!(drawn.contains("Receipt"), "{drawn}");
