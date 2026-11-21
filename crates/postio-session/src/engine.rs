@@ -18,7 +18,9 @@
 //! to inside the engine, because a listener that opened a system-bus
 //! connection on its own would make every test behave differently on a
 //! desktop and on a CI runner. A machine without NetworkManager loses nothing
-//! but the promptness of a reconnect.
+//! but the promptness of a reconnect. An engine over a substitute server
+//! (`Wiring::with_mail`) does not ask: that server is not on the desktop's
+//! network.
 
 use std::sync::Arc;
 
@@ -102,7 +104,7 @@ pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
             backfill: wiring.backfill,
             reconnect: Default::default(),
             watch: wiring.watch,
-            network: NetworkSource::NetworkManager,
+            network: network_for(wiring.mail.as_ref()),
             mailbox_roles: wiring.mailbox_roles.clone(),
             clock: Arc::new(SystemClock),
         },
@@ -113,6 +115,22 @@ pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
             tracing::error!(%error, "the sync engine did not start: {error}");
             None
         }
+    }
+}
+
+/// Who tells an engine about the network: NetworkManager, unless the mail
+/// goes somewhere else.
+///
+/// A [`MailOverride`](crate::MailOverride) is a server that is not on the
+/// machine's network -- a test's mock -- so what the desktop says about that
+/// network says nothing about whether it answers. Following it anyway made
+/// every host test over a mock depend on the machine's own NetworkManager,
+/// and behave differently on a laptop whose Wi-Fi blinked than on a runner
+/// with no NetworkManager at all ([`NetworkSource`]'s own warning).
+fn network_for(mail: Option<&crate::MailOverride>) -> NetworkSource {
+    match mail {
+        Some(_) => NetworkSource::Ignored,
+        None => NetworkSource::NetworkManager,
     }
 }
 
@@ -351,6 +369,18 @@ pub async fn start_joining(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_engine_over_a_substitute_server_does_not_follow_the_desktops_network() {
+        let mail = crate::MailOverride {
+            backend: Arc::new(postio_account::backend::MockBackend::new()),
+            smtp: Arc::new(postio_smtp::transport::ScriptedConnector::new(
+                postio_smtp::transport::SmtpScript::new("220 ready"),
+            )),
+        };
+        assert_eq!(network_for(Some(&mail)), NetworkSource::Ignored);
+        assert_eq!(network_for(None), NetworkSource::NetworkManager);
+    }
 
     #[test]
     fn the_backend_follows_the_accounts_stored_choice() {
