@@ -34,6 +34,11 @@ ignore = [
     # postio-account), whose newest release is a beta that still pins it.
     # No fix to take; revisit when oo7 0.7 is stable.
     { id = "RUSTSEC-2026-0370", reason = "unmaintained notice for zvariant via oo7; no patched release, no vulnerability" },
+    # chrono is unmaintained (chronotope/chrono#1768), not vulnerable, with
+    # no release that fixes it. 29 of the workspace's crates use it
+    # directly and more arrive through dependencies, so leaving it is a
+    # migration (to jiff or time), not a version bump.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained notice for chrono; no patched release, no vulnerability; leaving it is a migration" },
 ]
 
 [licenses]
