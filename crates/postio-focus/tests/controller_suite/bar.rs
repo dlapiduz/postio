@@ -10,16 +10,13 @@
 //! the places are read in one request however many accounts there are.
 
 use crate::search_support::{asks, shown};
-use chrono::Utc;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
-    BarLine, BarLineKind, BarMode, BarView, Effect, FocusController, Found, FoundRow, Host, Input,
-    Intent, Opened, PageAnswer, PlacesRead, Policy, Reply, Request, RowFacts, Rows, SurfaceKind,
-    Ticket, ToastKind,
+    BarLine, BarLineKind, BarMode, BarView, Effect, FocusController, Host, Input, Intent, Opened,
+    PageAnswer, PlacesRead, Policy, Reply, Request, RowFacts, Rows, SurfaceKind, Ticket, ToastKind,
 };
 use postio_model::{FocusScope, ListScope, MailboxId, MailboxRole, MessageId, ThreadId};
-use postio_search::SearchHit;
 use postio_ui::keymap::KeyContext;
 use postio_ui::places::Entry;
 
@@ -60,14 +57,9 @@ impl Rows for List {
 
 const RECEIPTS: MailboxId = MailboxId::new(7);
 
-/// The controller as spec 009 built it: the bar's search half is the blend
-/// `results_view` off draws, which every test above the dropdown's section
-/// pins. Neither app runs it since Linux adopted spec 010 (#1825); it goes
-/// with #2079.
+/// The Mac's controller.
 fn mac() -> FocusController {
-    let mut policy = Policy::for_platform(Platform::Apple);
-    policy.caps.results_view = false;
-    FocusController::new(policy)
+    FocusController::new(Policy::for_platform(Platform::Apple))
 }
 
 fn asked(effects: &[Effect]) -> Vec<Request> {
@@ -164,46 +156,6 @@ fn bar_open(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec
     effects
 }
 
-fn hit(message: i64, subject: &str) -> SearchHit {
-    SearchHit {
-        message_id: MessageId::new(message),
-        thread_id: Some(ThreadId::new(message + 400)),
-        mailbox_id: MailboxId::new(1),
-        subject: Some(subject.to_owned()),
-        from: Some(postio_model::EmailAddress::new(
-            Some("Ada Moreno"),
-            "ada@example.com",
-        )),
-        received_at: Utc::now(),
-        preview: None,
-        snippet: String::new(),
-        score: 0.0,
-    }
-}
-
-/// Answer the one search among `effects` with `hits`.
-fn found(focus: &mut FocusController, effects: &[Effect], hits: Vec<SearchHit>) -> Vec<Effect> {
-    let (ticket, request) = asks(effects)
-        .into_iter()
-        .rev()
-        .find(|(_, request)| matches!(request, Request::Search { .. }))
-        .unwrap_or_else(|| panic!("a search in {effects:?}"));
-    let Request::Search { stamp, .. } = request else {
-        unreachable!()
-    };
-    focus.handle(Input::Reply(
-        ticket,
-        Reply::Search {
-            stamp,
-            answer: Ok(Found {
-                hits,
-                instead: None,
-                held: Vec::new(),
-            }),
-        },
-    ))
-}
-
 // -- Opening the bar (C24) ------------------------------------------------
 
 #[test]
@@ -220,23 +172,20 @@ fn slash_opens_the_bar_for_search_and_reads_the_places_once() {
         }
     );
     assert_eq!(
-        asked(&effects),
-        vec![Request::Places],
-        "one read, not one per account"
-    );
-    let lines = view(&effects);
-    assert!(
-        lines
-            .lines
+        asked(&effects)
             .iter()
-            .any(|line| line.kind == BarLineKind::Hint),
-        "the empty bar says what typing does: {lines:?}"
+            .filter(|request| **request == Request::Places)
+            .count(),
+        1,
+        "one read, not one per account: {:?}",
+        asked(&effects)
     );
     assert!(
-        lines
-            .lines
+        shown(&effects)
             .iter()
-            .all(|line| !line.selectable || line.kind != BarLineKind::Hint)
+            .any(|intent| matches!(intent, Intent::Dropdown(view)
+                if view.state == postio_focus::DropdownState::Empty)),
+        "the empty dropdown: {effects:?}"
     );
     assert_eq!(
         focus.key_context(),
@@ -275,72 +224,6 @@ fn mod_k_opens_the_bar_on_commands_with_the_prefix_typed() {
 }
 
 #[test]
-fn typing_offers_the_one_search_row_and_asks_the_index() {
-    let rows = List::of(3);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "tide", &rows);
-    let lines = view(&effects);
-    let first = lines
-        .lines
-        .iter()
-        .find(|line| line.selectable)
-        .expect("a row to run");
-    assert_eq!(first.kind, BarLineKind::Search);
-    assert_eq!(first.title, "Search mail for \u{201c}tide\u{201d}");
-    assert_eq!(
-        lines.echo.as_deref(),
-        Some("You typed \u{201c}tide\u{201d}")
-    );
-    assert!(matches!(
-        asked(&effects).as_slice(),
-        [Request::Search { .. }]
-    ));
-    // The same words again, as a frontend echoes its own field: nothing.
-    assert!(typed(&mut focus, "tide", &rows).is_empty());
-}
-
-#[test]
-fn a_single_letter_asks_the_index_nothing_yet() {
-    // The first keystroke of "southwest" is "s": in most of a mailbox, and
-    // over a large store a search for it ran for minutes and held every
-    // later keystroke's search behind it.
-    let rows = List::of(3);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "s", &rows);
-    assert!(
-        !asked(&effects)
-            .iter()
-            .any(|request| matches!(request, Request::Search { .. })),
-        "{:?}",
-        asked(&effects)
-    );
-    let effects = typed(&mut focus, "so", &rows);
-    assert!(
-        asked(&effects)
-            .iter()
-            .any(|request| matches!(request, Request::Search { .. })),
-        "two letters are a word"
-    );
-}
-
-#[test]
-fn what_the_bar_searches_for_forgives_a_near_word() {
-    // A person searching: "tickt" should still find the ticket. A rule's
-    // query is never forgiving (ADR 0037, as amended), so it is the bar
-    // that asks for it.
-    let rows = List::of(3);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "tickt", &rows);
-    let forgiving = asked(&effects)
-        .iter()
-        .any(|request| matches!(request, Request::Search { query, .. } if query.is_forgiving()));
-    assert!(forgiving, "{:?}", asked(&effects));
-}
-
-#[test]
 fn the_bar_searches_people_on_both_platforms() {
     // from: and to: that know people (specs/011-focus-contacts S4), on the
     // Mac and, since its search adopted the dropdown, on Linux (#1825).
@@ -352,9 +235,7 @@ fn the_bar_searches_people_on_both_platforms() {
         let aware: Vec<bool> = asked(&effects)
             .iter()
             .filter_map(|request| match request {
-                Request::Search { query, .. } | Request::Conversations { query, .. } => {
-                    Some(query.is_contact_aware())
-                }
+                Request::Conversations { query, .. } => Some(query.is_contact_aware()),
                 _ => None,
             })
             .collect();
@@ -482,18 +363,16 @@ fn a_token_from_lines_since_redrawn_runs_nothing() {
 // -- Places --------------------------------------------------------------
 
 #[test]
-fn in_receipts_opens_that_folder_as_the_list_with_the_cursor_on_its_first_row() {
+fn receipts_from_the_places_opens_as_the_list_with_the_cursor_on_its_first_row() {
     let rows = List::of(3);
     let mut focus = mac();
     let _ = focus.landed(&rows, true);
     let _ = run(&mut focus, CommandId::LastMessage, &rows);
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let lines = view(&typed(&mut focus, "Receipts", &rows));
-    let receipts = line(&lines, "in:Receipts").clone();
-    assert_eq!(receipts.kind, BarLineKind::Place);
-    let effects = focus.handle_on(Input::BarRun(receipts.token), &rows);
+    let (ticket, _) = ask(&run(&mut focus, CommandId::GoToFolders, &rows));
+    let _ = focus.handle(Input::Reply(ticket, Reply::Places(Ok(places()))));
+    let receipts = focus.places("receipts");
+    let effects = focus.handle_on(Input::OpenPlace(receipts[0].0), &rows);
     let intents = shown(&effects);
-    assert_eq!(intents[0], Intent::CloseSurface(SurfaceKind::Bar));
     assert!(
         intents.contains(&Intent::Place {
             name: "Receipts".to_owned()
@@ -556,50 +435,6 @@ fn in_receipts_opens_that_folder_as_the_list_with_the_cursor_on_its_first_row() 
         "Receipts opened with the cursor on its first row"
     );
     assert_eq!(focus.cursor(), Some(0));
-}
-
-#[test]
-fn in_rec_lists_the_folders_conversations_under_its_heading() {
-    let rows = List::of(1);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "in:Rec", &rows);
-    let (ticket, request) = ask(&effects);
-    let Request::Folder { mailbox, stamp } = request else {
-        panic!("the folder's rows, not {request:?}");
-    };
-    assert_eq!(mailbox, RECEIPTS);
-    let row = |id: i64, subject: &str| FoundRow {
-        message: MessageId::new(id),
-        from: Some("Ada Moreno".to_owned()),
-        subject: subject.to_owned(),
-        preview: None,
-        at: Utc::now(),
-    };
-    let effects = focus.handle(Input::Reply(
-        ticket,
-        Reply::Folder {
-            stamp,
-            count: Ok(3),
-            rows: Ok(vec![
-                row(1, "Coffee beans"),
-                row(2, "Bookshop order"),
-                row(3, "Train ticket"),
-            ]),
-        },
-    ));
-    let lines = view(&effects);
-    assert_eq!(
-        lines.heading.as_deref(),
-        Some("Receipts \u{b7} folder \u{b7} 3 conversations \u{b7} newest first")
-    );
-    let subjects: Vec<&str> = lines
-        .lines
-        .iter()
-        .filter(|line| line.kind == BarLineKind::Message)
-        .map(|line| line.title.as_str())
-        .collect();
-    assert_eq!(subjects, ["Coffee beans", "Bookshop order", "Train ticket"]);
 }
 
 #[test]
@@ -897,10 +732,9 @@ fn alt_numbers_open_the_saved_searches() {
     assert!(
         asked(&effects)
             .iter()
-            .any(|request| matches!(request, Request::Search { .. })),
+            .any(|request| matches!(request, Request::Conversations { .. })),
         "and it runs: {effects:?}"
     );
-    assert_eq!(view(&effects).saved, ["Budget", "Ada"], "the saved row");
 
     let mut focus = mac();
     let effects = run(&mut focus, CommandId::SavedSearch3, &rows);
@@ -948,7 +782,12 @@ fn mod_s_saves_the_bars_query() {
         text: postio_ui::focus_target::search_saved("from:ada invoice"),
         kind: ToastKind::Notice,
     }));
-    assert_eq!(view(&effects).saved, ["from-ada-invoice"]);
+    assert!(
+        shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::Dropdown(_))),
+        "the dropdown drawn again: {intents:?}"
+    );
     let effects = focus.handle(Input::SearchSaved(Err("no file".to_owned())));
     assert_eq!(
         shown(&effects),
@@ -961,258 +800,20 @@ fn mod_s_saves_the_bars_query() {
 
 // -- The chips -------------------------------------------------------------
 
-#[test]
-fn tab_steps_into_the_chips_and_back_to_words_returns_to_what_was_typed() {
-    let rows = List::of(1);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let lines = view(&typed(&mut focus, "from:ada  invoice", &rows));
-    assert_eq!(lines.chips, ["from:ada", "invoice"]);
-    assert_eq!(lines.editing, None);
-
-    let effects = focus.handle(Input::BarTab);
-    assert_eq!(
-        shown(&effects)[0],
-        Intent::OpenBar {
-            mode: BarMode::Search,
-            text: "from:ada invoice".to_owned(),
-            select: Some((0, 8)),
-        },
-        "the field holds the chips, the first selected"
-    );
-    let editing = view(&effects);
-    assert_eq!(editing.editing, Some(0));
-    assert!(
-        editing
-            .echo
-            .as_deref()
-            .is_some_and(|echo| echo.contains("editing from:")),
-        "{editing:?}"
-    );
-    let effects = focus.handle(Input::BarTab);
-    assert_eq!(
-        shown(&effects)[0],
-        Intent::OpenBar {
-            mode: BarMode::Search,
-            text: "from:ada invoice".to_owned(),
-            select: Some((9, 16)),
-        }
-    );
-    let effects = run(&mut focus, CommandId::BackToWords, &rows);
-    assert_eq!(
-        shown(&effects)[0],
-        Intent::OpenBar {
-            mode: BarMode::Search,
-            text: "from:ada  invoice".to_owned(),
-            select: None,
-        },
-        "the words as typed"
-    );
-    assert_eq!(view(&effects).editing, None);
-    assert!(
-        run(&mut focus, CommandId::BackToWords, &rows).is_empty(),
-        "nothing to go back to now"
-    );
-    // Words that make no chip have none to step into.
-    let _ = typed(&mut focus, "tide", &rows);
-    assert!(focus.handle(Input::BarTab).is_empty());
-}
-
 // -- A hit, and back to the results ----------------------------------------
-
-#[test]
-fn a_hits_line_names_the_message_it_opens() {
-    // What a frontend observes and a storyboard checks: which message the
-    // highlighted line would open, without asking the controller again.
-    let rows = List::of(3);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "tide", &rows);
-    let effects = found(
-        &mut focus,
-        &effects,
-        vec![hit(1, "Tide tables"), hit(2, "Tide again")],
-    );
-    let lines = view(&effects);
-    assert_eq!(line(&lines, "Tide again").message, Some(MessageId::new(2)));
-    assert!(
-        lines
-            .lines
-            .iter()
-            .filter(|line| line.kind != BarLineKind::Message)
-            .all(|line| line.message.is_none()),
-        "only a message's line names one"
-    );
-}
-
-#[test]
-fn a_message_a_hit_opened_is_among_the_hits_until_it_closes() {
-    // How a frontend tells a hit from the same message as a list row: its
-    // position line is the hits', not the list's.
-    let rows = List::of(3);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "tide", &rows);
-    let effects = found(
-        &mut focus,
-        &effects,
-        vec![hit(1, "Tide tables"), hit(2, "Tide again")],
-    );
-    let second = line(&view(&effects), "Tide again").clone();
-    assert!(!focus.among_hits(MessageId::new(2)), "nothing is open yet");
-    let _ = focus.handle_on(Input::BarRun(second.token), &rows);
-    assert!(focus.among_hits(MessageId::new(2)));
-    assert!(
-        focus.among_hits(MessageId::new(1)),
-        "and so is the hit k walks to"
-    );
-    let _ = run(&mut focus, CommandId::Back, &rows);
-    assert!(
-        !focus.among_hits(MessageId::new(2)),
-        "closed, it is a row again"
-    );
-}
-
-#[test]
-fn a_hit_opens_walks_the_results_and_closing_it_reopens_the_bar_on_it() {
-    let rows = List::of(3);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "tide", &rows);
-    let effects = found(
-        &mut focus,
-        &effects,
-        vec![hit(1, "Tide tables"), hit(2, "Tide again")],
-    );
-    let lines = view(&effects);
-    assert!(
-        lines
-            .lines
-            .iter()
-            .any(|line| line.title == "Conversations \u{b7} 2 matches")
-    );
-    let second = line(&lines, "Tide again").clone();
-    assert_eq!(second.kind, BarLineKind::Message);
-    assert_eq!(second.sender.as_deref(), Some("Ada Moreno"));
-
-    let effects = focus.handle_on(Input::BarRun(second.token), &rows);
-    assert_eq!(
-        shown(&effects),
-        vec![
-            Intent::CloseSurface(SurfaceKind::Bar),
-            Intent::OpenMessage {
-                message: MessageId::new(2),
-                index: 1,
-                total: 2,
-                host: Host::Own,
-            }
-        ]
-    );
-    assert_eq!(focus.key_context(), KeyContext::Reader);
-    // `k` walks the results, not the list behind them.
-    let effects = run(&mut focus, CommandId::PrevMessage, &rows);
-    assert_eq!(
-        shown(&effects),
-        vec![Intent::OpenMessage {
-            message: MessageId::new(1),
-            index: 0,
-            total: 2,
-            host: Host::Own,
-        }]
-    );
-    // Back closes it, and the bar comes back on the words, the highlight
-    // on the hit last read.
-    let effects = run(&mut focus, CommandId::Back, &rows);
-    let intents = shown(&effects);
-    assert!(intents.contains(&Intent::CloseSurface(SurfaceKind::Message)));
-    assert!(
-        intents.contains(&Intent::OpenBar {
-            mode: BarMode::Search,
-            text: "tide".to_owned(),
-            select: None,
-        }),
-        "{intents:?}"
-    );
-    let effects = found(
-        &mut focus,
-        &effects,
-        vec![hit(1, "Tide tables"), hit(2, "Tide again")],
-    );
-    let lines = view(&effects);
-    assert_eq!(
-        lines.highlight,
-        Some(line(&lines, "Tide tables").token),
-        "back where they left the results"
-    );
-}
-
-#[test]
-fn replying_from_a_hit_does_not_bring_the_bar_back_over_the_composer() {
-    let rows = List::of(3);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "tide", &rows);
-    let effects = found(
-        &mut focus,
-        &effects,
-        vec![hit(1, "Tide tables"), hit(2, "Tide again")],
-    );
-    let second = line(&view(&effects), "Tide again").clone();
-    let _ = focus.handle_on(Input::BarRun(second.token), &rows);
-    // On the Mac the composer replaces the message's window (M4): the
-    // message "closes", but the words are not coming back under a composer.
-    let effects = run(&mut focus, CommandId::ReplyAll, &rows);
-    let intents = shown(&effects);
-    assert!(
-        intents
-            .iter()
-            .any(|intent| matches!(intent, Intent::Composer { .. })),
-        "{intents:?}"
-    );
-    assert!(
-        !intents
-            .iter()
-            .any(|intent| matches!(intent, Intent::OpenBar { .. })),
-        "the dropdown must not open over the composer: {intents:?}"
-    );
-    assert_eq!(focus.key_context(), KeyContext::Composer);
-}
-
-#[test]
-fn return_on_the_search_row_goes_to_the_first_hit() {
-    let rows = List::of(1);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "tide", &rows);
-    let lines = view(&found(&mut focus, &effects, vec![hit(5, "Tide tables")]));
-    let search = lines
-        .lines
-        .iter()
-        .find(|line| line.kind == BarLineKind::Search)
-        .expect("the search row")
-        .token;
-    let effects = focus.handle_on(Input::BarRun(search), &rows);
-    let lines = view(&effects);
-    assert_eq!(lines.highlight, Some(line(&lines, "Tide tables").token));
-}
-
-#[test]
-fn an_answer_for_words_since_changed_is_not_drawn() {
-    let rows = List::of(1);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let first = typed(&mut focus, "tid", &rows);
-    let _ = typed(&mut focus, "tide", &rows);
-    assert!(found(&mut focus, &first, vec![hit(5, "Tide tables")]).is_empty());
-}
 
 #[test]
 fn closing_the_bar_forgets_it() {
     let rows = List::of(1);
     let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let lines = view(&typed(&mut focus, "Receipts", &rows));
-    let token = line(&lines, "in:Receipts").token;
+    let _ = bar_open(&mut focus, CommandId::CommandPalette, &rows);
+    let lines = view(&typed(&mut focus, ">archive", &rows));
+    let token = lines
+        .lines
+        .iter()
+        .find(|line| line.command == Some(CommandId::Archive))
+        .expect("an Archive row")
+        .token;
     let effects = focus.handle_on(Input::SurfaceClosed(SurfaceKind::Bar), &rows);
     assert_eq!(shown(&effects), vec![Intent::KeyboardHome]);
     assert!(focus.handle_on(Input::BarRun(token), &rows).is_empty());
@@ -1252,58 +853,26 @@ fn the_bar_answers_its_own_keys_while_open() {
     let rows = List::of(1);
     let mut focus = mac();
     assert!(!focus.answers(CommandId::BackToWords), "no bar, no chips");
-    assert!(!focus.answers(CommandId::ToggleResultOrder));
+    assert!(!focus.answers(CommandId::ShowAllResults));
     let _ = bar_open(&mut focus, CommandId::Search, &rows);
     for command in [
         CommandId::BackToWords,
-        CommandId::ToggleResultOrder,
         CommandId::SaveSearch,
         CommandId::SavedSearch1,
+        CommandId::ShowAllResults,
+        CommandId::ForgetRecent,
+        CommandId::ExcludeSuggestion,
     ] {
         assert!(focus.answers(command), "{command:?}");
     }
     assert!(!focus.answers(CommandId::Archive), "a letter is typing");
 }
 
-#[test]
-fn the_order_row_switches_the_order_and_asks_again() {
-    let rows = List::of(1);
-    let mut focus = mac();
-    let _ = bar_open(&mut focus, CommandId::Search, &rows);
-    let effects = typed(&mut focus, "tide", &rows);
-    let lines = view(&found(&mut focus, &effects, vec![hit(5, "Tide tables")]));
-    let order = lines
-        .lines
-        .iter()
-        .find(|line| line.kind == BarLineKind::Order)
-        .expect("the order row")
-        .clone();
-    assert_eq!(order.title, "Sorted by relevance");
-    let effects = focus.handle_on(Input::BarRun(order.token), &rows);
-    let Some(Request::Search { order, .. }) = asked(&effects).into_iter().next() else {
-        panic!("asked again: {effects:?}");
-    };
-    assert_eq!(order, postio_search::ResultOrder::Newest);
-    let lines = view(&found(&mut focus, &effects, vec![hit(5, "Tide tables")]));
-    let row = lines
-        .lines
-        .iter()
-        .find(|line| line.kind == BarLineKind::Order)
-        .expect("the order row");
-    assert_eq!(row.title, "Sorted by date");
-    assert_eq!(
-        lines.highlight,
-        Some(row.token),
-        "the highlight stays on it"
-    );
-}
-
 // -- The search dropdown (spec 010 step 2, screens 01 and 03) ---------------
 //
-// With `results_view` on -- the Mac's policy -- the bar's search half is the
-// dropdown: empty, it lists the recent and saved searches and the cheat
-// sheet; with words, the top hits, Narrow to and Show all. Everything above
-// this section runs with it off, which is GTK's bar, unchanged.
+// The bar's search half, on both platforms: empty, it lists the recent and
+// saved searches and the cheat sheet; with words, the top hits, Narrow to
+// and Show all. `>` and `@` keep spec 009's lines, above.
 
 mod dropdown {
     use super::*;
@@ -1326,10 +895,6 @@ mod dropdown {
 
     fn mac_search() -> FocusController {
         let mut focus = FocusController::new(Policy::for_platform(Platform::Apple));
-        assert!(
-            focus.policy().caps.results_view,
-            "the Mac draws the dropdown"
-        );
         let _ = focus.handle(Input::Clock(Some(today())));
         focus
     }
@@ -2302,6 +1867,183 @@ mod dropdown {
         );
     }
 
+    #[test]
+    fn a_single_letter_asks_the_index_nothing_yet() {
+        // The first keystroke of "southwest" is "s": in most of a mailbox,
+        // and over a large store a search for it ran for minutes and held
+        // every later keystroke's search behind it.
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = typed(&mut focus, "s", &rows);
+        assert!(
+            !asked(&effects).iter().any(is_conversations),
+            "{:?}",
+            asked(&effects)
+        );
+        let effects = typed(&mut focus, "so", &rows);
+        assert!(
+            asked(&effects).iter().any(is_conversations),
+            "two letters are a word"
+        );
+    }
+
+    #[test]
+    fn what_the_bar_searches_for_forgives_a_near_word() {
+        // A person searching: "tickt" should still find the ticket. A
+        // rule's query is never forgiving (ADR 0037, as amended), so it is
+        // the bar that asks for it.
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = typed(&mut focus, "tickt", &rows);
+        let forgiving = asked(&effects).iter().any(|request| {
+            matches!(request, Request::Conversations { query, .. } if query.is_forgiving())
+        });
+        assert!(forgiving, "{:?}", asked(&effects));
+    }
+
+    #[test]
+    fn a_hit_opened_walks_the_hits_and_closing_it_reopens_the_bar_on_it() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
+        let second = dropdown(&effects).sections[0].rows[1].token;
+        assert!(!focus.among_hits(MessageId::new(2)), "nothing is open yet");
+        let _ = focus.handle_on(Input::BarRun(second), &rows);
+        assert_eq!(focus.key_context(), KeyContext::Reader);
+        assert!(focus.among_hits(MessageId::new(2)));
+        assert!(
+            focus.among_hits(MessageId::new(1)),
+            "and so is the hit k walks to"
+        );
+        // `k` walks the hits, not the list behind them.
+        let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+        assert_eq!(
+            shown(&effects),
+            vec![Intent::OpenMessage {
+                message: MessageId::new(1),
+                index: 0,
+                total: 4,
+                host: Host::Own,
+            }]
+        );
+        // Back closes it, and the bar comes back on the words, the arrows
+        // on the hit last read once its hits land again.
+        let effects = run(&mut focus, CommandId::Back, &rows);
+        let intents = shown(&effects);
+        assert!(intents.contains(&Intent::CloseSurface(SurfaceKind::Message)));
+        assert!(
+            intents.contains(&Intent::OpenBar {
+                mode: BarMode::Search,
+                text: "atlas budget".to_owned(),
+                select: None,
+            }),
+            "{intents:?}"
+        );
+        assert!(
+            !focus.among_hits(MessageId::new(1)),
+            "closed, it is a row again"
+        );
+        let effects = answer(
+            &mut focus,
+            &effects,
+            is_conversations,
+            |request| {
+                let Request::Conversations { stamp, .. } = request else {
+                    unreachable!()
+                };
+                Reply::Conversations {
+                    stamp: *stamp,
+                    answer: Ok(Box::new(atlas_budget())),
+                }
+            },
+            &rows,
+        );
+        let view = dropdown(&effects);
+        assert_eq!(
+            view.select,
+            Some(view.sections[0].rows[0].token),
+            "back where they left the hits"
+        );
+    }
+
+    #[test]
+    fn replying_from_a_hit_does_not_bring_the_bar_back_over_the_composer() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
+        let second = dropdown(&effects).sections[0].rows[1].token;
+        let _ = focus.handle_on(Input::BarRun(second), &rows);
+        // On the Mac the composer replaces the message's window (M4): the
+        // message "closes", but the words are not coming back under a
+        // composer.
+        let effects = run(&mut focus, CommandId::ReplyAll, &rows);
+        let intents = shown(&effects);
+        assert!(
+            intents
+                .iter()
+                .any(|intent| matches!(intent, Intent::Composer { .. })),
+            "{intents:?}"
+        );
+        assert!(
+            !intents
+                .iter()
+                .any(|intent| matches!(intent, Intent::OpenBar { .. })),
+            "the dropdown must not open over the composer: {intents:?}"
+        );
+        assert_eq!(focus.key_context(), KeyContext::Composer);
+    }
+
+    #[test]
+    fn at_lists_correspondents_and_one_run_searches_their_mail() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let mut effects = run(&mut focus, CommandId::Search, &rows);
+        let (ticket, _) = asks(&effects)
+            .into_iter()
+            .find(|(_, request)| *request == Request::Places)
+            .expect("the places");
+        let mut read = places();
+        read.contacts = vec![postio_model::Contact::new(
+            postio_model::ContactAddress::new(AddressId::new(1), ada()),
+        )];
+        effects.extend(focus.handle_on(Input::Reply(ticket, Reply::Places(Ok(read))), &rows));
+        let effects = typed(&mut focus, "@ada", &rows);
+        assert!(try_dropdown(&effects).is_none(), "spec 009's lines");
+        let lines = view(&effects);
+        let ada = line(&lines, "Ada Moreno").clone();
+        assert_eq!(ada.kind, BarLineKind::Correspondent);
+        let effects = focus.handle_on(Input::BarRun(ada.token), &rows);
+        assert_eq!(
+            shown(&effects)[0],
+            Intent::OpenBar {
+                mode: BarMode::Search,
+                text: "with:ada@example.com".to_owned(),
+                select: None,
+            }
+        );
+        assert!(try_dropdown(&effects).is_some(), "the words' dropdown");
+        assert!(asked(&effects).iter().any(is_conversations));
+    }
+
+    #[test]
+    fn words_typed_over_the_palette_are_the_dropdowns() {
+        // ⌘K, `>` taken away: the words are a search, as `/`'s are.
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = bar_open(&mut focus, CommandId::CommandPalette, &rows);
+        let effects = typed(&mut focus, "atlas budget", &rows);
+        assert_eq!(dropdown(&effects).state, DropdownState::Words);
+        assert!(asked(&effects).iter().any(is_conversations));
+        assert!(
+            !run(&mut focus, CommandId::ShowAllResults, &rows).is_empty(),
+            "and ⌘↩ shows their results"
+        );
+    }
+
     /// A search whose count stopped at the walk's cap is remembered as a
     /// floor, and its Recent row says so (D30).
     #[test]
@@ -3209,32 +2951,3 @@ fn a_save_writes_the_search_pinned_and_answers_with_every_pinned_one() {
 }
 
 // -- What a search asks ------------------------------------------------------
-
-#[test]
-fn a_search_asks_what_a_digest_holds_only_while_a_digest_rule_can_hold_mail() {
-    // GTK's bar asked only then (US10 scenario 7): with no rule nothing is
-    // held, and asking again on every keystroke is a round trip for nothing.
-    let rows = List::of(3);
-    let held_asked = |focus: &mut FocusController| {
-        let _ = bar_open(focus, CommandId::Search, &rows);
-        let effects = typed(focus, "tide", &rows);
-        asked(&effects)
-            .into_iter()
-            .find_map(|request| match request {
-                Request::Search { held, .. } => Some(held),
-                _ => None,
-            })
-    };
-    let mut plain = mac();
-    assert_eq!(held_asked(&mut plain), Some(false), "no rule, nothing held");
-
-    let mut digesting = mac();
-    let config = postio_config::Config::from_toml_str(
-        "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.example\"]\n\
-         cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
-    )
-    .expect("a config")
-    .focus;
-    let _ = digesting.handle_on(Input::Config(config), &rows);
-    assert_eq!(held_asked(&mut digesting), Some(true));
-}

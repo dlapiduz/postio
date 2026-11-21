@@ -426,18 +426,6 @@ pub fn result_place(
     }
 }
 
-/// The account a result belongs to, when there is more than one account to
-/// tell apart (`owners` is empty with one): the same message filed in two
-/// accounts is two rows, and the row says which it is. It is drawn under the
-/// place, on its own line: beside it, one long line squeezed the message's
-/// first line out of the row.
-pub fn result_account(hit: &SearchHit, owners: &[(MailboxId, String)]) -> Option<String> {
-    owners
-        .iter()
-        .find(|(id, _)| *id == hit.mailbox_id)
-        .map(|(_, account)| account.clone())
-}
-
 /// A sender as a result row names them: their name, or their address.
 pub fn said_of(from: &postio_model::EmailAddress) -> String {
     from.name.clone().unwrap_or_else(|| from.address.clone())
@@ -522,17 +510,6 @@ mod tests {
             Run::SearchFor("with:ada@example.com".to_owned())
         );
         assert!(correspondent_lines(&[]).is_empty());
-    }
-
-    #[test]
-    fn a_result_names_its_account_only_where_accounts_are_to_be_told_apart() {
-        let one = hit(1, None);
-        let owners = vec![(MailboxId::new(1), "ada@example.com".to_owned())];
-        assert_eq!(
-            result_account(&one, &owners).as_deref(),
-            Some("ada@example.com")
-        );
-        assert_eq!(result_account(&one, &[]), None);
     }
 
     #[test]

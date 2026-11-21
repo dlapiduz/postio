@@ -6,14 +6,14 @@
 //! reply are decided here once (research R1).
 
 use postio_client::Client;
-use postio_model::listing::{ListPage, MailStore, PageRequest};
+use postio_model::listing::{ListPage, MailStore};
 use postio_model::mailbox::MailboxRole;
 use postio_model::{FocusScope, ListScope, MailboxId};
 
 use postio_core::state::{SharedState, ViewScope};
 use postio_core::{Command, MessageTarget};
 
-use crate::{Found, FoundRow, Opened, PageAnswer, PlacesRead, Reply, Request};
+use crate::{Opened, PageAnswer, PlacesRead, Reply, Request};
 
 /// Answer `request` now, when it needs no await: a post, said before
 /// anything that follows it is asked. `Err` hands the request back for
@@ -143,15 +143,6 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
         ),
         Request::Refresh { viewing } => Reply::Sent(refresh(client, viewing).await),
         Request::Places => Reply::Places(places(client).await),
-        Request::Search {
-            query,
-            order,
-            stamp,
-            held,
-        } => Reply::Search {
-            stamp,
-            answer: search(client, query, order, held).await,
-        },
         Request::Conversations {
             query,
             order,
@@ -383,23 +374,6 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         ),
-        Request::Folder { mailbox, stamp } => {
-            let scope = ListScope::Mailbox(mailbox);
-            let count = client
-                .list_count(scope)
-                .await
-                .map_err(|error| error.to_string());
-            let rows = client
-                .list_page(PageRequest {
-                    scope,
-                    offset: 0,
-                    limit: postio_ui::command_bar::FOLDER_ROWS,
-                })
-                .await
-                .map(folder_rows)
-                .map_err(|error| error.to_string());
-            Reply::Folder { stamp, count, rows }
-        }
         Request::RoleFolder(role) => Reply::RoleFolder(role_folder(client, role).await),
         Request::Labels {
             message,
@@ -766,39 +740,6 @@ fn searched(mailbox: &postio_model::Mailbox) -> u64 {
     }
 }
 
-/// Search this machine's index for the bar: one row per conversation, and
-/// where a digest holds any of them.
-async fn search(
-    client: &Client,
-    query: postio_search::ParsedQuery,
-    order: postio_search::ResultOrder,
-    held: bool,
-) -> Result<Found, String> {
-    let results = client
-        .search_hits(
-            postio_model::AccountScope::Unified,
-            query,
-            postio_search::facets::Scope::AllMail,
-            order,
-            0,
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "nothing to search for".to_owned())?;
-    let hits = postio_ui::command_bar::conversations(results.hits);
-    let held = if hits.is_empty() || !held {
-        Vec::new()
-    } else {
-        let ids = hits.iter().map(|hit| hit.message_id).collect();
-        client.held(ids).await.unwrap_or_default()
-    };
-    Ok(Found {
-        hits,
-        instead: results.instead,
-        held,
-    })
-}
-
 /// What the label picker lists, in one round: the labels of `message`'s
 /// account -- a message can carry only its own account's (T170) -- or of
 /// `account`, or of the first enabled one; how many conversations carry
@@ -852,35 +793,6 @@ async fn folders(client: &Client) -> Result<crate::FoldersRead, String> {
     }
     let recent = client.move_recent().await.unwrap_or_default();
     Ok(crate::FoldersRead { folders, recent })
-}
-
-/// A folder's first page, as the bar lists it.
-fn folder_rows(page: ListPage) -> Vec<FoundRow> {
-    use postio_ui::command_bar::said_of;
-    match page {
-        ListPage::Threads(page) => page
-            .rows
-            .into_iter()
-            .map(|thread| FoundRow {
-                message: thread.representative.id,
-                from: thread.representative.from.as_ref().map(said_of),
-                subject: thread.subject.clone().unwrap_or_default(),
-                preview: thread.representative.preview.clone(),
-                at: thread.last_at,
-            })
-            .collect(),
-        ListPage::Messages(page) => page
-            .rows
-            .into_iter()
-            .map(|message| FoundRow {
-                message: message.id,
-                from: message.from.as_ref().map(said_of),
-                subject: message.subject.clone().unwrap_or_default(),
-                preview: message.preview.clone(),
-                at: message.received_at,
-            })
-            .collect(),
-    }
 }
 
 /// The folder of `role` in the account Focus writes from: the first enabled
