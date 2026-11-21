@@ -111,7 +111,7 @@ pub fn dialog(
         row.set_title_lines(1);
         row.set_subtitle_selectable(true);
         if matches!(choice, Choice::Part { .. }) {
-            let save = gtk::Button::with_label("Save");
+            let save = gtk::Button::with_label(postio_ui::reader::parts::SAVE);
             save.add_css_class("flat");
             save.set_valign(gtk::Align::Center);
             save.set_tooltip_text(Some("Save this attachment"));
@@ -134,7 +134,7 @@ pub fn dialog(
         .iter()
         .any(|choice| matches!(choice, Choice::Part { .. }))
     {
-        let save_all = gtk::Button::with_label("Save all");
+        let save_all = gtk::Button::with_label(postio_ui::reader::parts::SAVE_ALL);
         save_all.set_tooltip_text(Some("Save every attachment to a folder"));
         let (chosen, close) = (Rc::clone(&chosen), Rc::clone(&close));
         save_all.connect_clicked(move |_| {

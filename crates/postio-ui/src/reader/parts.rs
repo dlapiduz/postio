@@ -524,6 +524,29 @@ pub fn save_all_failure(failed: usize) -> Option<String> {
     ))
 }
 
+/// A part's own Save, where `A` offers the parts.
+pub const SAVE: &str = "Save";
+
+/// Save every part to a folder, where `A` offers the parts.
+pub const SAVE_ALL: &str = "Save all";
+
+/// What is said once one part is saved as `name`.
+pub fn saved(name: &str) -> String {
+    format!("Saved {name}")
+}
+
+/// What is said once "save all" of `count` parts is done, `failed` of them
+/// not saved: the failure when there is one ([`save_all_failure`]), else
+/// how many were saved.
+pub fn saved_all(count: usize, failed: usize) -> String {
+    save_all_failure(failed).unwrap_or_else(|| {
+        format!(
+            "Saved {count} attachment{}",
+            if count == 1 { "" } else { "s" }
+        )
+    })
+}
+
 /// Where the cursor goes when the walk keys are pressed.
 ///
 /// **Clamps rather than wraps.** A tree is a thing you read down, and a `j`
@@ -993,6 +1016,18 @@ mod tests {
         assert_eq!(
             save_all_failure(3).as_deref(),
             Some("3 parts could not be saved")
+        );
+    }
+
+    #[test]
+    fn a_save_says_what_it_saved_and_one_part_is_one_attachment() {
+        assert_eq!(saved("report.pdf"), "Saved report.pdf");
+        assert_eq!(saved_all(1, 0), "Saved 1 attachment");
+        assert_eq!(saved_all(3, 0), "Saved 3 attachments");
+        assert_eq!(
+            saved_all(3, 1),
+            "1 part could not be saved",
+            "a partial save says what went wrong, not what went right"
         );
     }
 
