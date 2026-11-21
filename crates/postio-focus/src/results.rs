@@ -537,6 +537,9 @@ pub(crate) struct QuickLook {
     matches: Option<Vec<ConversationMatch>>,
     /// The ringed card.
     current: usize,
+    /// Whether the person has moved the ring with ] or [ since Quick Look
+    /// came to this row.
+    stepped: bool,
     /// What its read was asked under.
     stamp: u64,
 }
@@ -2566,6 +2569,7 @@ impl Results {
             hit,
             matches: None,
             current: 0,
+            stepped: false,
             stamp,
         });
         Some(Request::QuickLookMatches {
@@ -2576,8 +2580,9 @@ impl Results {
     }
 
     /// The conversation's matches landed: the cards are theirs, and the
-    /// ring on the first that is the row's own message. Whether Quick Look
-    /// changed.
+    /// ring on the first that is the row's own message -- or, once the
+    /// person has moved it, on the same card among them. Whether Quick
+    /// Look changed.
     fn matches_landed(
         &mut self,
         stamp: u64,
@@ -2595,9 +2600,24 @@ impl Results {
                 return false;
             }
         };
-        look.current = found
-            .iter()
-            .position(|each| each.message == Some(look.hit.best))
+        // The ring stays on the card the person moved it to, when the
+        // conversation has it too: an answer landing after a ] must not
+        // take the step back (#2132). Otherwise, the row's own message.
+        let ringed = look
+            .stepped
+            .then(|| look.matches().get(look.current).cloned())
+            .flatten();
+        look.current = ringed
+            .and_then(|ringed| {
+                found.iter().position(|each| {
+                    each.message == ringed.message && each.found.source == ringed.found.source
+                })
+            })
+            .or_else(|| {
+                found
+                    .iter()
+                    .position(|each| each.message == Some(look.hit.best))
+            })
             .unwrap_or(0);
         look.matches = Some(found);
         true
@@ -2617,6 +2637,7 @@ impl Results {
             return false;
         }
         look.current = next;
+        look.stepped = true;
         true
     }
 

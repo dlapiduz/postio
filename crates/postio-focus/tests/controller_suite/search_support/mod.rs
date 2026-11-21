@@ -279,11 +279,19 @@ pub fn conversation(n: i64) -> ConversationHit {
             30 => vec![RankReason::FrequentSender, RankReason::InFileName],
             _ => vec![RankReason::Matches(1)],
         },
-        matches: vec![Match {
+        matches: std::iter::once(Match {
             source: if n == 4 { Source::Quoted } else { Source::Body },
             passage: None,
             when: None,
-        }],
+        })
+        // The top hit's subject matches too, as the engine reports it, so
+        // Quick Look over it draws two cards before its conversation is read.
+        .chain((n == 7).then_some(Match {
+            source: Source::Subject,
+            passage: None,
+            when: None,
+        }))
+        .collect(),
     }
 }
 
