@@ -195,10 +195,19 @@ public final class FocusListTable: NSObject {
     /// rows long. Inserted, not reloaded: nothing else on screen moves but
     /// what is below. Under Reduce Motion they appear at once; otherwise
     /// they fade in within the 100 ms budget (`Motion`).
+    ///
+    /// After a re-read with a thread open (`rereadWhileOpen`), the rows on
+    /// screen were drawn by the session's splice, not this one: the list is
+    /// drawn again whole, as the re-read was, rather than slid.
     public func splice(anchor: Int, children: Int) {
         let folded = model.open
+        let reread = model.rereadWhileOpen
         let inserted = model.spliced(anchor: anchor, children: children)
         heightsOwed = []
+        if reread {
+            tableView.reloadData()
+            return
+        }
         changing { [tableView] in
             if let folded {
                 tableView.removeRows(at: IndexSet(folded.range), withAnimation: [])
@@ -210,9 +219,15 @@ public final class FocusListTable: NSObject {
     }
 
     /// `FocusUnsplice`: the open thread folded; its rows go.
+    /// After a re-read with a thread open, drawn again whole (see `splice`).
     public func unsplice() {
+        let reread = model.rereadWhileOpen
         guard let anchor = model.open?.anchor, let gone = model.unspliced() else { return }
         heightsOwed = []
+        if reread {
+            tableView.reloadData()
+            return
+        }
         changing { [tableView] in
             tableView.removeRows(at: IndexSet(integersIn: gone), withAnimation: Self.exit)
         }

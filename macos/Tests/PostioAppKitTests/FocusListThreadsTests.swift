@@ -91,11 +91,44 @@ struct FocusListThreadsTests {
         table.tableView.layoutSubtreeIfNeeded()
     }
 
+    /// What the session says when its list moved under the open thread,
+    /// in its order: the list re-read and its page, then the thread folded
+    /// where its row was and opened where it went, then the cursor. All of
+    /// it is said from one landing, so by the time the first is read the
+    /// session's rows are already the new ones: `now`, children and all.
+    static func landed(
+        _ table: FocusListTable, _ rows: Rows, now: [FocusRowFfi], from: Int, to: Int, children: Int
+    ) {
+        rows.rows = now
+        table.listChanged(total: UInt32(now.count))
+        table.pageArrived(0)
+        table.unsplice()
+        table.splice(anchor: to, children: children)
+        table.model.focus.apply(.focusCursor(position: UInt32(to), toTop: false))
+        table.apply(.cursor(previous: from, toTop: false))
+        table.tableView.layoutSubtreeIfNeeded()
+    }
+
     static let kids = [Self.child("Kicking off v3."), Self.child("Cursor it is.", unread: true),
                        Self.child("Thanks both.", draft: true)]
 
     private func isCursor(_ table: FocusListTable, _ row: Int) -> Bool? {
         (table.tableView.rowView(atRow: row, makeIfNecessary: true) as? FocusRowView)?.isCursor
+    }
+
+    /// What each row of the table draws, top to bottom: its message's id,
+    /// or "child" for a message of the open thread.
+    private func drawn(_ table: FocusListTable) -> [String] {
+        table.tableView.layoutSubtreeIfNeeded()
+        return (0..<table.tableView.numberOfRows).map { row in
+            let view = table.tableView.rowView(atRow: row, makeIfNecessary: true)
+            guard let shown = (view?.view(atColumn: 0) as? FocusRowCell)?.shown else { return "nothing" }
+            return shown.layout == .child ? "child" : "\(shown.id)"
+        }
+    }
+
+    private func heights(_ table: FocusListTable) -> [CGFloat] {
+        (0..<table.tableView.numberOfRows).map { table.tableView(table.tableView, heightOfRow: $0) }
     }
 
     @Test func focusStaysOnTheRowAfterRightAndReturnsToItAfterLeft() {
@@ -152,5 +185,40 @@ struct FocusListThreadsTests {
         #expect(table.model.row(at: 1)?.child?.hintKeys == ["r", "f"], "every message child carries them; the cursor decides who draws")
         #expect(table.model.row(at: 3)?.child?.hintKeys == [], "the unsent reply acts on nothing")
         #expect(table.model.row(at: 1)?.accessibilityLabel.contains("Ana Ruiz") == true)
+    }
+
+    /// Mail landing above the open thread moves its row down, and its
+    /// children go with it: each is drawn once, under the thread's row, and
+    /// `Left` folds every one of them (#2134; GTK's was #2135). Two messages,
+    /// so a row the fold and the splice both slid past is between them.
+    @Test func mailLandingAboveAnOpenThreadMovesItsChildrenWithIt() {
+        let rows = Rows([Self.row(1), Self.row(2, thread: true), Self.row(3)])
+        let table = Self.table(rows)
+        Self.right(table, rows, anchor: 1, children: Self.kids)
+        #expect(drawn(table) == ["1", "2", "child", "child", "child", "3"])
+
+        Self.landed(table, rows, now: [Self.row(10), Self.row(11)] + rows.rows, from: 1, to: 3, children: 3)
+        #expect(
+            drawn(table) == ["10", "11", "1", "2", "child", "child", "child", "3"],
+            "each child once, under the thread's row")
+        #expect(heights(table) == [72, 40, 40, 46, 38, 38, 38, 40], "and each row as tall as what it draws")
+
+        Self.left(table, rows, anchor: 3, children: 3)
+        #expect(drawn(table) == ["10", "11", "1", "2", "3"], "Left folds every child away")
+    }
+
+    /// And mail leaving above it moves the row up, the children with it.
+    @Test func mailLeavingAboveAnOpenThreadMovesItsChildrenWithIt() {
+        let rows = Rows([Self.row(10), Self.row(11), Self.row(1), Self.row(2, thread: true), Self.row(3)])
+        let table = Self.table(rows)
+        Self.right(table, rows, anchor: 3, children: Self.kids)
+        #expect(drawn(table) == ["10", "11", "1", "2", "child", "child", "child", "3"])
+
+        Self.landed(table, rows, now: Array(rows.rows.dropFirst(2)), from: 3, to: 1, children: 3)
+        #expect(drawn(table) == ["1", "2", "child", "child", "child", "3"], "each child once, under the thread's row")
+        #expect(heights(table) == [72, 46, 38, 38, 38, 40], "and each row as tall as what it draws")
+
+        Self.left(table, rows, anchor: 1, children: 3)
+        #expect(drawn(table) == ["1", "2", "3"], "Left folds every child away")
     }
 }

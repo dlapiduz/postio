@@ -446,6 +446,18 @@ public final class FocusListModel {
     }
     public private(set) var open: Splice?
 
+    /// Whether the list was re-read while a thread was open, and no thread
+    /// has been opened since. The session draws its rows by its own splice,
+    /// and it says a re-read, the fold where the thread's row was and the
+    /// splice where the row went from one landing: by the time the re-read
+    /// is drawn here, the session's rows are already the new ones while
+    /// `open` still names the old. Until a splice brings the two together
+    /// again, the rows on screen are not where `open` says, so the fold and
+    /// the splice redraw the list rather than slide rows drawn under the
+    /// other splice -- which left a row between the two anchors drawing a
+    /// child, and asked the table to remove rows it no longer had (#2134).
+    public private(set) var rereadWhileOpen = false
+
     /// Keycaps by command, until the keymap changes. A binding lookup
     /// clones the whole keymap on the other side, and the table draws a
     /// row's actions on every redraw.
@@ -475,6 +487,7 @@ public final class FocusListModel {
     /// re-reads and replaces it); none is asked for, so nothing is paged.
     public func reset(total: UInt32) {
         count = Int(total)
+        if open != nil { rereadWhileOpen = true }
         let known = shapes.keys.sorted()
         var kept: [Int: Shape] = [:]
         for index in known where index < count {
@@ -501,6 +514,7 @@ public final class FocusListModel {
             uniqueKeysWithValues: shapes.map { $0.key > anchor ? ($0.key + children, $0.value) : ($0.key, $0.value) })
         count += children
         open = splice
+        rereadWhileOpen = false
         return splice.range
     }
 

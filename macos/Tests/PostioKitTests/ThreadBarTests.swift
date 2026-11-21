@@ -129,7 +129,12 @@ struct ThreadBarTests {
         #expect(window.model.bar?.chips.count == 6)
 
         window.press("[")
-        try await window.until("`[` rings the message before") { window.ringed == opened - 1 }
+        // The ring follows the bar, the kicker and the reply line the
+        // message read whole: wait for both, which land a turn apart.
+        try await window.until("`[` rings the message before and shows it") {
+            window.ringed == opened - 1 && window.model.kicker.hasPrefix("Message \(opened - 1) of 6")
+                && window.model.replyTo != nil
+        }
         #expect(window.model.kicker.hasPrefix("Message \(opened - 1) of 6"))
         #expect(window.model.olderBanner != nil, "an older message says so")
         #expect(window.model.replyTo?.hasSuffix("(message 1)") == true)
