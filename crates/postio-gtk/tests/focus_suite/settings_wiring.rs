@@ -187,6 +187,59 @@ pub fn account_rows_persist_enable_default_and_removal() {
     });
 }
 
+/// #1787: a verb on an account row changes the account, and Settings draws
+/// its rows again -- new widgets. The keyboard on the old row went with
+/// it, so the next key reached no account: `m` then `Return` disabled
+/// nothing. It stays on the account's row.
+pub fn an_account_verb_leaves_the_keyboard_on_its_row() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
+            .await;
+        let (second, _) = fixture.second_account().await;
+        let (window, _directory, _path) = open_under(&fixture, "").await;
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        assert!(crate::settle_until(async || rows(&dialog).len() == 2).await);
+        let database = fixture.database.clone();
+        focus_row(&window, &dialog, second.id);
+        let name = format!("postio-account-{}", second.id.get());
+        let row_now = || {
+            rows(&dialog)
+                .into_iter()
+                .find(|row| row.widget_name() == name.as_str())
+        };
+        let before = row_now().expect("the account's row");
+        support::deliver(&window, "m");
+        assert!(
+            crate::settle_until(async || account(&database, second.id).await.is_default).await,
+            "`m` on the second account's row made it the default"
+        );
+        // The rows are drawn again once the change is heard back.
+        assert!(
+            crate::settle_until(async || row_now().is_some_and(|row| row != before)).await,
+            "the rows were never drawn again, so this proves nothing"
+        );
+        assert!(
+            crate::settle_while(async || {
+                window
+                    .settings()
+                    .expect("Settings")
+                    .panel()
+                    .focused_account()
+                    == Some(second.id)
+            })
+            .await,
+            "the keyboard left the account's row when it was drawn again: {}",
+            support::focus_path(&window)
+        );
+    });
+}
+
 /// Put the keyboard on the account row named `account`, as Tab would.
 fn focus_row(
     window: &postio_gtk::window::FocusWindow,
@@ -199,13 +252,21 @@ fn focus_row(
         .find(|row| row.widget_name() == name.as_str())
         .expect("the account's row is on screen");
     row.grab_focus();
-    crate::settle();
-    assert_eq!(
+    let focused = || {
         window
             .settings()
             .expect("Settings")
             .panel()
-            .focused_account(),
+            .focused_account()
+    };
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while focused() != Some(account) && std::time::Instant::now() < deadline {
+        crate::settle();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        focused(),
         Some(account),
         "the keyboard is on the account's row"
     );
