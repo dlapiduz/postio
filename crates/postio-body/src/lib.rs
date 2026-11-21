@@ -40,6 +40,7 @@ pub mod edit;
 pub mod flowed;
 pub mod forward;
 mod hints;
+pub mod links;
 pub mod markdown;
 pub mod narrow;
 pub mod outgoing;
