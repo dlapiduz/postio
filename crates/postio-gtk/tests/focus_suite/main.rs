@@ -448,6 +448,10 @@ const CASES: &[(&str, fn())] = &[
         dropdown::escape_gives_the_keyboard_back_to_the_cursor_row as fn(),
     ),
     (
+        "dropdown::a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is",
+        dropdown::a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is as fn(),
+    ),
+    (
         "dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it",
         dropdown::a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it as fn(),
     ),
@@ -2248,6 +2252,18 @@ fn hermetic(arguments: &[String]) {
         .status()
         .expect("the suite runs again in its own configuration");
     drop(config);
+    // A case that dies by a signal prints nothing of its own: say which,
+    // or the run shows a FAIL with no reason at all (#2155).
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        eprintln!(
+            "the suite's run died by signal {signal}{}",
+            if std::os::unix::process::ExitStatusExt::core_dumped(&status) {
+                " (core dumped)"
+            } else {
+                ""
+            }
+        );
+    }
     std::process::exit(status.code().unwrap_or(101));
 }
 
