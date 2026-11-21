@@ -66,13 +66,6 @@ pub enum PayloadAsk {
     Never,
 }
 
-impl PayloadAsk {
-    /// Whether the fetch was put in the queue, whenever it can run.
-    pub fn is_queued(self) -> bool {
-        matches!(self, PayloadAsk::Queued | PayloadAsk::Unreachable)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,19 +87,5 @@ mod tests {
         assert!(Sections::Whole.holds_text());
         assert!(!Sections::Parts(vec!["2".to_owned()]).holds_text());
         assert!(!Sections::Headers.holds_text());
-    }
-
-    #[test]
-    fn only_a_queued_ask_is_coming() {
-        assert!(PayloadAsk::Queued.is_queued());
-        assert!(PayloadAsk::Unreachable.is_queued());
-        for nothing in [
-            PayloadAsk::Local,
-            PayloadAsk::Gone,
-            PayloadAsk::NotOnServer,
-            PayloadAsk::Never,
-        ] {
-            assert!(!nothing.is_queued(), "{nothing:?}");
-        }
     }
 }
