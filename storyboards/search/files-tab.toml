@@ -16,6 +16,11 @@
 # to be indexed (FR-050): searching their contents finds nothing, and the
 # footer says contents are searched only for files on this Mac.
 #
+# The Files tab's count is its cards, the same on the Threads tab as once
+# it opens (#2178). On GTK, Space and ⌘↓ hand the file to the desktop's
+# previewer and save dialog, which are outside the window the runner
+# films, so those steps are filmed by hand there as on the Mac.
+#
 # The engine's half is postio-index's attachment_text and conversations
 # suites and postio-session's attachment_index_pass; the controller's is
 # postio-focus tests/controller_suite/results.rs (files_*).
@@ -63,7 +68,7 @@ check   = { keyboard.region = "results" }
 id      = "grid"
 command = "results_files"
 check   = { keyboard.region = "results" }
-expect  = "The Files tab for “atlas budget”: a grid of cards four across with 12 between them, the first ringed. Every file whose bytes are on this Mac and whose name or contents match has a card: the two workbooks (“Sheet ‘Q3’, row …”, “Sheet ‘Summary’, row …”), the September actuals (“Page 2: Spend to date against Atlas budget: 71%”), the memo (“Paragraph …”), the review deck (“Slide …”) and the notes (“Line …”). A file never downloaded shows by name only, with no contents line."
+expect  = "The Files tab for “atlas budget”: a grid of cards four across with 12 between them, the first ringed. Every file whose bytes are on this Mac and whose name or contents match has a card: the two workbooks (“Sheet ‘Q3’, row …”, “Sheet ‘Summary’, row …”), the September actuals (“Page 2: Spend to date against Atlas budget: 71%”), the memo (“Paragraph …”), the review deck (“Slide …”) and the notes (“Line …”). A file never downloaded shows by name only, with no contents line. The Files tab's count is the number of cards, the count it had on the Threads tab."
 
 [[step]]
 key     = "Right"
@@ -87,6 +92,7 @@ check   = { keyboard.region = "results" }
 expect  = "Space opens the system's Quick Look on the file itself, a copy in the app's own temporary folder: the workbook's sheet or the PDF's page, as Finder would preview it. The grid stays where it was behind it, with its ring."
 
 [[step]]
+id      = "unlook"
 command = "quick_look"
 check   = { keyboard.region = "results", overlay.kind = "none" }
 expect  = "Space again closes Quick Look: the grid, with the ring on the same card."
@@ -106,6 +112,15 @@ skip = { reason = "QLPreviewPanel is the system's own window, outside the app's 
 
 [app.macos.step.save]
 skip = { reason = "The save panel is the system's own window, outside the app's observation; filmed by hand until the runner can see it" }
+
+[app.focus.step.look]
+skip = { reason = "The desktop's previewer opens the copy outside the window the runner films; filmed by hand until the runner can see it" }
+
+[app.focus.step.unlook]
+skip = { reason = "Closes the previewer the look step opened, which the runner cannot see" }
+
+[app.focus.step.save]
+skip = { reason = "The save dialog is the portal's own window, outside the window the runner films; filmed by hand until the runner can see it" }
 
 # The tabs' words and the count, which only Postio publishes (#2118:
 # Threads, never Conversations).

@@ -145,11 +145,10 @@ pub async fn files(
             .collect::<Vec<_>>()
             .join(",")
     );
-    // Parts that are shown in the body (a logo by its `cid:`) are not
-    // files anyone sent.
     let rows: Vec<Row> = sql::all_unbounded(
         connection,
-        "SELECT f.id, f.message_id, coalesce(f.filename, ''), f.mime_type, f.size,
+        &format!(
+            "SELECT f.id, f.message_id, coalesce(f.filename, ''), f.mime_type, f.size,
                 sub.subject, sub.received_at, sender.name, a.address
            FROM json_each(?1) j
            JOIN attachments f ON f.message_id = j.value
@@ -161,7 +160,8 @@ pub async fn files(
                   WHERE m.id IN (SELECT value FROM json_each(?1))) sub ON sub.id = f.message_id
            LEFT JOIN recipients sender ON sender.id = sub.from_recipient
            LEFT JOIN addresses a ON a.id = sender.address_id
-          WHERE NOT (f.disposition = 'inline' AND f.content_id IS NOT NULL)",
+          WHERE {SENT}"
+        ),
         [ids.as_str()],
         |row| {
             Ok(Row {
@@ -260,6 +260,68 @@ pub async fn files(
         .min(cards.len());
     Ok(cards.drain(offset..end).collect())
 }
+
+/// How many cards [`files`] lists for the mail that `carriers` are: the
+/// search's own count, so the Files tab says the same number before it
+/// opens and after (#2178). Two statements at most, whatever the match
+/// holds -- the attachments' names, and where their text matched when an
+/// attachment's text matched at all -- and none when nothing carries a
+/// file.
+pub(super) async fn cards(
+    connection: &Connection,
+    query: &ParsedQuery,
+    carriers: &[super::conversations::Carrier],
+) -> Result<u64> {
+    if carriers.is_empty() {
+        return Ok(0);
+    }
+    let ids = format!(
+        "[{}]",
+        carriers
+            .iter()
+            .map(|carrier| carrier.id.get().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let rows: Vec<(i64, String)> = sql::all_unbounded(
+        connection,
+        &format!(
+            "SELECT f.id, coalesce(f.filename, '')
+               FROM json_each(?1) j
+               JOIN attachments f ON f.message_id = j.value
+              WHERE {SENT}"
+        ),
+        [ids.as_str()],
+        |row| Ok((row.col(0)?, row.col(1)?)),
+    )
+    .await?;
+    let name_terms = super::conversations::file_terms(query);
+    if name_terms.is_empty() {
+        return Ok(rows.len() as u64);
+    }
+    let in_files: Vec<MessageId> = carriers
+        .iter()
+        .filter(|carrier| carrier.in_file)
+        .map(|carrier| carrier.id)
+        .collect();
+    let read = if in_files.is_empty() {
+        Vec::new()
+    } else {
+        file_matches(connection, query, &in_files).await?
+    };
+    Ok(rows
+        .iter()
+        .filter(|(attachment, name)| {
+            let attachment = AttachmentId::new(*attachment);
+            read.iter().any(|file| file.attachment == attachment)
+                || !postio_search::highlight::find(name, &name_terms).is_empty()
+        })
+        .count() as u64)
+}
+
+/// The attachments that are files someone sent: a part shown in the body
+/// (a logo by its `cid:`) is not one.
+const SENT: &str = "NOT (f.disposition = 'inline' AND f.content_id IS NOT NULL)";
 
 /// One attachment row, as [`files`] reads it.
 struct Row {

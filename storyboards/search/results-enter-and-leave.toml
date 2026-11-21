@@ -6,10 +6,11 @@
 # Esc with nothing open and nothing selected leaves it, and the inbox is
 # back on the row and the selection it had (US2 scenario 4).
 #
-# The Mac's own: `apps = ["macos"]`, because GTK keeps spec 009's bar
-# until Linux adopts the results view (S2, D17), and the Mac runner is out
-# of scope (009 FR-063). Written before the results view was built, so it
-# is the acceptance its review is held to.
+# The rows are threads (specs/013-focus-threads US6): a thread with several
+# matches says "N of M messages match" in place of its passage, and the top
+# one opens expanded on arrival, its matching messages as child rows and
+# every run of the others as one line, so `j` walks into its messages
+# before it reaches the second result.
 apps   = ["macos", "focus"]
 source = { kind = "spec", ref = "specs/010-focus-search US2" }
 seed   = "search"
@@ -37,12 +38,12 @@ check   = { overlay.kind = "finder", keyboard.region = "search" }
 [[step]]
 command = "show_all_results"
 check   = { overlay.kind = "none", keyboard.region = "results" }
-expect  = "The dropdown is gone and the main window is the results view: ‹ Inbox with an Esc keycap, the field holding “atlas budget” with “/ to edit” on its right, and Save search ⌘S. The filter bar has Threads, Files and People with their counts, Threads selected, the filter buttons in outline, and Sort “Best match”. The timeline says “N threads”, N the dropdown's Show all count, over “F files · P people · last 12 months” with the tabs' counts, beside twelve bars. Top hits come first, each with its reason under the sender (such as “you replied · 3 matches” or “you flagged”), then “June 2026” with its count and the other months, newest first. Every row has a source tag and a passage with “atlas” and “budget” in the find yellow. The footer reads “N threads · local index · … ms”, the same N. The first row has the focus ring."
+expect  = "The dropdown is gone and the main window is the results view: ‹ Inbox with an Esc keycap, the field holding “atlas budget” with “/ to edit” on its right, and Save search ⌘S. The filter bar has Threads, Files and People with their counts, Threads selected, the filter buttons in outline, and Sort “Best match”. The timeline says “N threads”, N the dropdown's Show all count, over “F files · P people · last 12 months” with the tabs' counts, beside twelve bars. Top hits come first, each with its reason under the sender (such as “you replied · 3 matches” or “you flagged”), then “June 2026” with its count and the other months, newest first. A row with one match has a source tag and a passage with “atlas” and “budget” in the find yellow; a thread with several says “K of M messages match” instead. The first top hit is expanded under its row: each matching message a child row tagged “message n” with its passage, and every message it does not show in a line such as “Messages 2–4 don't match · Ben, Thu”, before the first match, between two and after the last, so the children and the lines together count all M. The footer reads “N threads · local index · … ms”, the same N. The first row has the focus ring."
 
 [[step]]
 command = "next_message"
 check   = { keyboard.region = "results" }
-expect  = "j moves the focus ring to the second result; the inbox behind is not touched."
+expect  = "j moves the focus ring into the expanded top hit, onto its first matching message, past any line before it; the inbox behind is not touched."
 
 [[step]]
 command = "back"

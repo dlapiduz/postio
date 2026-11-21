@@ -2004,8 +2004,9 @@ pub enum ResultChild {
 
 /// The children of an expanded result: the messages of `view` that
 /// `matches` name, oldest first, with one [`ResultChild::Gap`] for each run
-/// of messages between two of them that did not match. `now` is what the
-/// times are said against.
+/// of messages that did not match -- before the first, between two and
+/// after the last, so every message of the thread is said once (#2178).
+/// `now` is what the times are said against.
 pub fn children(
     view: &postio_model::ThreadView,
     matches: &[postio_search::results::ConversationMatch],
@@ -2027,32 +2028,37 @@ pub fn children(
         }
     }
     found.sort_by_key(|(at, _)| *at);
-    let mut out = Vec::new();
-    let mut previous: Option<usize> = None;
-    for (at, each) in found {
-        if let Some(before) = previous
-            && at > before + 1
-        {
-            let run = &view.members[before + 1..at];
-            let mut senders: Vec<String> = Vec::new();
-            for member in run {
-                let who = match (&member.from, member.own) {
-                    (_, true) => "You".to_owned(),
-                    (Some(from), false) => crate::focus_row::first_name(from).to_owned(),
-                    (None, false) => "?".to_owned(),
-                };
-                if !senders.contains(&who) {
-                    senders.push(who);
-                }
+    if found.is_empty() {
+        return Vec::new();
+    }
+    // Members `start..end` (from 0), which did not match, as one line.
+    let gap = |start: usize, end: usize| {
+        let run = &view.members[start..end];
+        let mut senders: Vec<String> = Vec::new();
+        for member in run {
+            let who = match (&member.from, member.own) {
+                (_, true) => "You".to_owned(),
+                (Some(from), false) => crate::focus_row::first_name(from).to_owned(),
+                (None, false) => "?".to_owned(),
+            };
+            if !senders.contains(&who) {
+                senders.push(who);
             }
-            out.push(ResultChild::Gap {
-                from: (before + 2) as u32,
-                to: at as u32,
-                senders: senders.join(", "),
-                day: run[0].at.with_timezone(&Local).format("%a").to_string(),
-            });
         }
-        previous = Some(at);
+        ResultChild::Gap {
+            from: (start + 1) as u32,
+            to: end as u32,
+            senders: senders.join(", "),
+            day: run[0].at.with_timezone(&Local).format("%a").to_string(),
+        }
+    };
+    let mut out = Vec::new();
+    let mut next = 0;
+    for (at, each) in found {
+        if at > next {
+            out.push(gap(next, at));
+        }
+        next = at + 1;
         let member = &view.members[at];
         out.push(ResultChild::Match {
             message: member.id,
@@ -2067,6 +2073,9 @@ pub fn children(
             initials: crate::row::initials(member.from.as_ref()),
             time: crate::row::timestamp(member.at, now),
         });
+    }
+    if view.members.len() > next {
+        out.push(gap(next, view.members.len()));
     }
     out
 }
@@ -3661,7 +3670,7 @@ mod tests {
         #[test]
         fn matches_one_child_each_and_a_gap_where_a_message_did_not() {
             let kids = children(&harbor(), &matches_3_5_6(), now());
-            assert_eq!(kids.len(), 4, "{kids:?}");
+            assert_eq!(kids.len(), 6, "{kids:?}");
             let numbers: Vec<_> = kids
                 .iter()
                 .map(|kid| match kid {
@@ -3669,15 +3678,72 @@ mod tests {
                     ResultChild::Gap { .. } => None,
                 })
                 .collect();
-            assert_eq!(numbers, [Some(3), None, Some(5), Some(6)]);
+            assert_eq!(numbers, [None, Some(3), None, Some(5), Some(6), None]);
             assert_eq!(
-                gap_line(&kids[1]),
+                gap_line(&kids[2]),
                 "Message 4 doesn't match \u{b7} Ben, Thu"
             );
-            let ResultChild::Match { message, tag, .. } = &kids[0] else {
-                panic!("first is a match");
+            let ResultChild::Match { message, tag, .. } = &kids[1] else {
+                panic!("the second is a match");
             };
             assert_eq!((*message, tag.as_str()), (MessageId::new(3), "message 3"));
+        }
+
+        /// #2178: "7 of 12 messages match" over messages 1, 5 and 9 left
+        /// 10-12 unsaid. Every message the expansion does not show is in a
+        /// gap line, before the first match and after the last as well as
+        /// between two.
+        #[test]
+        fn the_gaps_account_for_every_message_not_shown() {
+            let kids = children(&harbor(), &matches_3_5_6(), now());
+            let gaps: Vec<String> = kids
+                .iter()
+                .filter(|kid| matches!(kid, ResultChild::Gap { .. }))
+                .map(gap_line)
+                .collect();
+            assert_eq!(
+                gaps,
+                [
+                    "Messages 1\u{2013}2 don't match \u{b7} Tom\u{e1}s, Ben, Mon",
+                    "Message 4 doesn't match \u{b7} Ben, Thu",
+                    "Messages 7\u{2013}8 don't match \u{b7} Tom\u{e1}s, Ben, Sun",
+                ]
+            );
+            let said: u32 = kids
+                .iter()
+                .map(|kid| match kid {
+                    ResultChild::Match { .. } => 1,
+                    ResultChild::Gap { from, to, .. } => to - from + 1,
+                })
+                .sum();
+            assert_eq!(said, 8, "every message of the eight, once: {kids:?}");
+        }
+
+        #[test]
+        fn a_match_on_the_first_and_the_last_message_needs_no_gap_at_either_end() {
+            let kids = children(
+                &harbor(),
+                &[
+                    found(1, Source::Body, "rate limit"),
+                    found(8, Source::Body, "rate limit"),
+                ],
+                now(),
+            );
+            let lines: Vec<String> = kids
+                .iter()
+                .map(|kid| match kid {
+                    ResultChild::Match { number, .. } => format!("{number}"),
+                    gap @ ResultChild::Gap { .. } => gap_line(gap),
+                })
+                .collect();
+            assert_eq!(
+                lines,
+                [
+                    "1",
+                    "Messages 2\u{2013}7 don't match \u{b7} Ben, Tom\u{e1}s, Tue",
+                    "8"
+                ]
+            );
         }
 
         #[test]
@@ -3692,8 +3758,8 @@ mod tests {
                 "rate limit headers table",
             );
             let kids = children(&harbor(), &[file], now());
-            let [ResultChild::Match { tag, passage, .. }] = kids.as_slice() else {
-                panic!("one match: {kids:?}");
+            let [_, ResultChild::Match { tag, passage, .. }, _] = kids.as_slice() else {
+                panic!("one match between two gaps: {kids:?}");
             };
             assert_eq!(tag, "message 5 \u{b7} file");
             let passage = passage.as_ref().expect("a passage");
@@ -3713,9 +3779,9 @@ mod tests {
                 ],
                 now(),
             );
-            assert_eq!(kids.len(), 3);
+            assert_eq!(kids.len(), 5, "{kids:?}");
             assert_eq!(
-                gap_line(&kids[1]),
+                gap_line(&kids[2]),
                 "Messages 3\u{2013}5 don't match \u{b7} Tom\u{e1}s, Ben, Wed"
             );
         }
@@ -3741,7 +3807,14 @@ mod tests {
                 ],
                 now(),
             );
-            assert_eq!(kids.len(), 1, "{kids:?}");
+            let shown: Vec<u32> = kids
+                .iter()
+                .filter_map(|kid| match kid {
+                    ResultChild::Match { number, .. } => Some(*number),
+                    ResultChild::Gap { .. } => None,
+                })
+                .collect();
+            assert_eq!(shown, [4], "{kids:?}");
         }
 
         #[test]
