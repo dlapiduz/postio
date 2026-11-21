@@ -159,6 +159,11 @@ pub struct OpenMessage {
     /// still queued for it then does nothing, so `j` held down prepares the
     /// message it lands on and not every one it passed.
     preparing: RefCell<Arc<AtomicBool>>,
+    /// A reading of the store is on its way (#1609): one at a time, so `j`
+    /// held over the pane reads the message it lands on, not every one it
+    /// passed. What was asked for meanwhile, the latest only, waits here.
+    reading: Cell<bool>,
+    waiting: Cell<Option<(MessageId, u64)>>,
     open: Rc<Cell<bool>>,
     handler: RefCell<Option<Handler>>,
     /// The conversation's messages, oldest first, once read, and which of
@@ -547,6 +552,8 @@ impl OpenMessage {
             inline,
             generation: Rc::default(),
             preparing: RefCell::default(),
+            reading: Cell::new(false),
+            waiting: Cell::new(None),
             open,
             handler: RefCell::default(),
             chip: RefCell::default(),
@@ -1286,6 +1293,17 @@ impl OpenMessage {
         self.load(message, self.generation.get());
     }
 
+    /// A reading came back, or was not needed: the latest ask that waited
+    /// for it, if it is still for what is on screen, is read now.
+    fn read_landed(&self) {
+        self.reading.set(false);
+        if let Some((message, generation)) = self.waiting.take()
+            && generation == self.generation.get()
+        {
+            self.load(message, generation);
+        }
+    }
+
     /// Draw the action row for a message whose draft is in `state`: the
     /// received verbs for mail on its way nowhere, and otherwise the verbs
     /// that settle that state (T239; `focus_dialog::send_verbs`).
@@ -1611,8 +1629,13 @@ impl OpenMessage {
     }
 
     /// Read `message` from the store, and draw it if it is still the one on
-    /// screen when it lands.
+    /// screen when it lands. While a reading is on its way, the ask waits,
+    /// and only the latest: the store is read for where the cursor landed.
     fn load(&self, message: MessageId, generation: u64) {
+        if self.reading.replace(true) {
+            self.waiting.set(Some((message, generation)));
+            return;
+        }
         let client = self.client.clone();
         let reader = self.reader.clone();
         let current = Rc::clone(&self.generation);
@@ -1629,9 +1652,19 @@ impl OpenMessage {
         shown_parts.borrow_mut().clear();
         inline.borrow_mut().clear();
         glib::spawn_future_local(async move {
+            // Moved on before this turn came round: nothing to read for.
+            if current.get() != generation {
+                if let Some(page) = page.upgrade() {
+                    page.read_landed();
+                }
+                return;
+            }
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
             let read = client.readings(vec![message], false).await;
+            if let Some(page) = page.upgrade() {
+                page.read_landed();
+            }
             if current.get() != generation {
                 return;
             }
