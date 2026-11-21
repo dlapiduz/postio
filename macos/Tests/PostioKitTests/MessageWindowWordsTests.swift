@@ -13,7 +13,7 @@ struct MessageWindowWordsTests {
         "reply": "e", "reply_all": "E", "forward": "f", "archive": "a", "snooze": "s",
         "remind_if_no_reply": "h", "add_label": "l", "move": "m", "delete": "BackSpace",
         "more_actions": ".", "prev_message": "k", "next_message": "j",
-        "prev_in_conversation": "[", "next_in_conversation": "]", "dismiss_marker": "-",
+        "prev_in_thread": "[", "next_in_thread": "]", "dismiss_marker": "-",
         "switch_treatment": "O",
     ]
 

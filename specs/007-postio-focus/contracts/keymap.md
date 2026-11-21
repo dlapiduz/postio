@@ -50,7 +50,7 @@ it.
 | `J` / `K` | `extend_selection_down` / `_up` | All | List, reader and search; alternates `shift+Down` / `shift+Up` |
 | `* a` (alt `mod+a`, `X`) | `select_all` | All | Gmail's. A predicate over the view (C19) |
 | `Escape` | `back` | All | Clears the selection in the list, closes a dialog |
-| `n` / `p` | `next_in_conversation` / `prev_in_conversation` | All | Gmail's. Steps the open message through its thread. Alternates `alt+Down` / `alt+Up` |
+| `n` / `p` | `next_in_thread` / `prev_in_thread` | All | Gmail's. Steps the open message through its thread. Alternates `alt+Down` / `alt+Up` |
 | `r` / `a` / `f` | `reply` / `reply_all` / `forward` | All | Gmail's. Alternates `mod+r` / `mod+shift+r` / `mod+shift+f` |
 | `e` | `archive` | All | Gmail's. Alternate `mod+shift+a` |
 | `E` | `archive_thread` | All | *Invented*: shifted archive. In `Context::Digest` it archives the whole digest |

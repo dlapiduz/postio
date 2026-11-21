@@ -612,7 +612,7 @@ static SPECS: &[CommandSpec] = &[
     // -- Message actions -------------------------------------------------
     CommandSpec {
         id: CommandId::NextInConversation,
-        title: "Next message in conversation",
+        title: "Next message in thread",
         // Gmail's `n` and `p` (docs/PRODUCT.md §8): `j` walks the list of
         // conversations, and these walk the messages of the one that is
         // open -- in the macOS pane, and in Focus's reading dialog, which
@@ -629,7 +629,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::PrevInConversation,
-        title: "Previous message in conversation",
+        title: "Previous message in thread",
         default_binding: "[",
         alternate_bindings: &["p", "alt+Up"],
         contexts: ctx(&[Context::Conversation, Context::Reader]),
@@ -2973,7 +2973,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::FirstInConversation,
-        title: "First message in conversation",
+        title: "First message in thread",
         default_binding: "{",
         alternate_bindings: &[],
         contexts: Context::Reader.as_set(),
@@ -2983,7 +2983,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::LatestInConversation,
-        title: "Latest message in conversation",
+        title: "Latest message in thread",
         default_binding: "}",
         alternate_bindings: &[],
         contexts: Context::Reader.as_set(),
@@ -2993,7 +2993,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::FirstUnreadInConversation,
-        title: "First unread message in conversation",
+        title: "First unread message in thread",
         default_binding: "g u",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Reader, Context::Outline]),
@@ -3884,21 +3884,21 @@ mod tests {
             &[Context::List, Context::Results, Context::Filtered],
         ),
         (
-            "next_in_conversation",
+            "next_in_thread",
             "]",
             &["n", "alt+Down"],
             &[Context::Conversation, Context::Reader],
         ),
         (
-            "prev_in_conversation",
+            "prev_in_thread",
             "[",
             &["p", "alt+Up"],
             &[Context::Conversation, Context::Reader],
         ),
-        ("first_in_conversation", "{", &[], &[Context::Reader]),
-        ("latest_in_conversation", "}", &[], &[Context::Reader]),
+        ("first_in_thread", "{", &[], &[Context::Reader]),
+        ("latest_in_thread", "}", &[], &[Context::Reader]),
         (
-            "first_unread_in_conversation",
+            "first_unread_in_thread",
             "g u",
             &[],
             &[Context::Reader, Context::Outline],
@@ -4126,6 +4126,21 @@ mod tests {
                 "`{}` ends in a period",
                 spec.title
             );
+        }
+    }
+
+    /// The vocabulary table (`ux-architect`) says Thread, never
+    /// Conversation, and both the title and the id are words people read:
+    /// the palette shows one, `config.toml` is keyed by the other (#2171).
+    #[test]
+    fn no_command_says_conversation() {
+        for spec in all() {
+            for word in [spec.title, spec.id.as_str()] {
+                assert!(
+                    !word.to_lowercase().contains("conversation"),
+                    "`{word}` says conversation; Postio says thread"
+                );
+            }
         }
     }
 }

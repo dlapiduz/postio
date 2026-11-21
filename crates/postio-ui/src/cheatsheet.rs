@@ -75,7 +75,7 @@ const IN_THE_BOX: &str = "In the search box";
 fn heading(context: Context) -> &'static str {
     match context {
         Context::List => "Message list",
-        Context::Conversation => "Conversation",
+        Context::Conversation => "Thread",
         Context::Reader => "Reading",
         Context::Composer => "Composing",
         Context::Search => "Search",
@@ -235,6 +235,19 @@ mod tests {
 
     fn defaults() -> Keymap {
         Keymap::resolve(&postio_config::KeyBindings::default())
+    }
+
+    /// The vocabulary table (`ux-architect`) says Thread, never
+    /// Conversation (#2171).
+    #[test]
+    fn no_heading_says_conversation() {
+        for context in Context::ALL {
+            assert!(
+                !heading(*context).to_lowercase().contains("conversation"),
+                "{context:?} is headed {:?}",
+                heading(*context)
+            );
+        }
     }
 
     #[test]

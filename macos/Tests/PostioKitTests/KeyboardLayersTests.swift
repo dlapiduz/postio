@@ -37,8 +37,8 @@ import Testing
         ("search", "⌥⌘F", "/"),
         // `]` and `[` (spec 013), `n` and `p` beside them; `J`/`K` extend the
         // list's selection.
-        ("next_in_conversation", "⌥↓", "]"),
-        ("prev_in_conversation", "⌥↑", "["),
+        ("next_in_thread", "⌥↓", "]"),
+        ("prev_in_thread", "⌥↑", "["),
         ("next_message", "↓", "j"),
         ("prev_message", "↑", "k"),
         ("expand_all", "⇧⌘E", ";"),

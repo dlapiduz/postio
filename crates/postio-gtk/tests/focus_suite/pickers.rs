@@ -303,7 +303,7 @@ pub fn m_moves_three_to_receipts_and_ctrl_z_returns_them() {
         let said = picker.texts();
         for wanted in [
             "Move to folder",
-            "3 conversations",
+            "3 threads",
             "Recent",
             "Receipts",
             "All folders",

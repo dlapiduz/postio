@@ -270,7 +270,7 @@ public struct MessageContentView<BodyView: View>: View {
     }
 
     /// The command `Latest }` runs: the controller's walk, as the key does.
-    private static var latest: String { "latest_in_conversation" }
+    private static var latest: String { "latest_in_thread" }
 
     @ViewBuilder
     private func draw(_ block: MessageBlock) -> some View {

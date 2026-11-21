@@ -35,7 +35,7 @@ pub const KEPT: &str =
 
 /// FR-111's guards, which win over every rule, as one sentence.
 pub const GUARDS: &str = "Whatever its headers say, mail is never filtered from anyone you have \
-written to, from your own domain, in a conversation you took part in, or from a sender listed \
+written to, from your own domain, in a thread you took part in, or from a sender listed \
 here.";
 
 /// What the stopped markers list says with nothing in it (FR-108).
@@ -462,7 +462,7 @@ mod tests {
         );
         assert!(GUARDS.contains("anyone you have written to"));
         assert!(GUARDS.contains("your own domain"));
-        assert!(GUARDS.contains("a conversation you took part in"));
+        assert!(GUARDS.contains("a thread you took part in"));
     }
 
     #[test]

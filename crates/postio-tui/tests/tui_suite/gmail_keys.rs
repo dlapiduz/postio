@@ -284,8 +284,8 @@ const GMAIL: &[&str] = &[
     "prev_view",
     "next_message",
     "prev_message",
-    "next_in_conversation",
-    "prev_in_conversation",
+    "next_in_thread",
+    "prev_in_thread",
     "expand_all",
     "toggle_fold",
     "toggle_selection",
@@ -339,7 +339,7 @@ fn no_effect_here(state: &str, id: &str) -> bool {
         ("open" | "digest-email", "open_message") => true,
         // A single message has no thread to walk; `n_and_p_walk_the_open_
         // conversation_as_delivered` opens a conversation.
-        ("open", "next_in_conversation" | "prev_in_conversation") => true,
+        ("open", "next_in_thread" | "prev_in_thread") => true,
         _ => false,
     }
 }
@@ -434,10 +434,7 @@ fn shown(app: &App) -> usize {
 #[test]
 fn n_and_p_walk_the_open_conversation_as_delivered() {
     let mut failures = Vec::new();
-    for (id, step) in [
-        ("prev_in_conversation", -1_isize),
-        ("next_in_conversation", 1),
-    ] {
+    for (id, step) in [("prev_in_thread", -1_isize), ("next_in_thread", 1)] {
         for binding in bindings_of(id) {
             for delivery in 0..how_many_deliveries(binding) {
                 let mut app = in_thread();

@@ -10,8 +10,8 @@ select_all	* a | ctrl+a | X
 prev_view	u
 back	Escape
 toggle_result_order	alt+o
-next_in_conversation	] | n | alt+Down
-prev_in_conversation	[ | p | alt+Up
+next_in_thread	] | n | alt+Down
+prev_in_thread	[ | p | alt+Up
 toggle_fold	Z
 view_original	ctrl+o
 toggle_reader_view	ctrl+shift+o | alt+o
@@ -53,7 +53,7 @@ forget_recent	alt+Delete
 exclude_suggestion	alt+Return
 history_back	ctrl+bracketleft
 history_forward	ctrl+bracketright
-results_conversations	ctrl+1
+results_threads	ctrl+1
 results_files	ctrl+2
 results_people	ctrl+3
 filter_from	alt+f
@@ -189,9 +189,9 @@ contacts_export	v x
 contacts_sync	
 expand_thread	Right
 collapse_thread	Left
-first_in_conversation	{
-latest_in_conversation	}
-first_unread_in_conversation	g u
+first_in_thread	{
+latest_in_thread	}
+first_unread_in_thread	g u
 outline_first_unread	u
 thread_outline	alt+t
 thread_menu	alt+period

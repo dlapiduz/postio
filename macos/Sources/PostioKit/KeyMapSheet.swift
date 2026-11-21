@@ -293,7 +293,7 @@ private struct KeyMapGroupView: View {
                 HStack(alignment: .center, spacing: 8) {
                     // One line, so every row is 30 and the columns' rows
                     // line up across the panel: a long title ("Previous
-                    // message in conversation" beside `p ⌥↑`) tightens to
+                    // message in thread" beside `p ⌥↑`) tightens to
                     // fit rather than wrap, and the cap keeps its size.
                     Text(row.title)
                         .font(.system(size: 13))

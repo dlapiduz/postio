@@ -50,7 +50,7 @@ impl Actions {
             Aim::Rows(rows) => rows,
             Aim::Bulk(_) => {
                 return Err(CommandError::rejected(
-                    "Select the conversations to be reminded about",
+                    "Select the threads to be reminded about",
                 ));
             }
         };
@@ -67,7 +67,7 @@ impl Actions {
         }
         let Some(account) = account else {
             return Err(CommandError::rejected(
-                "That message is not in a conversation yet, so there is nothing to wait on",
+                "That message is not in a thread yet, so there is nothing to wait on",
             ));
         };
 
@@ -1122,7 +1122,7 @@ impl Actions {
             .account_of(thread)
             .await
             .map_err(store_failure)?
-            .ok_or_else(|| CommandError::rejected("That conversation is gone"))?;
+            .ok_or_else(|| CommandError::rejected("That thread is gone"))?;
         let done = if muted {
             threads.mute(thread).await
         } else {
@@ -1130,7 +1130,7 @@ impl Actions {
         };
         done.map_err(|error| match error {
             postio_storage::Error::ForbiddenTransition { .. } => {
-                CommandError::rejected("That conversation has no message id to remember a mute by")
+                CommandError::rejected("That thread has no message id to remember a mute by")
             }
             other => store_failure(other),
         })?;
@@ -1167,12 +1167,12 @@ impl Actions {
             .thread_id_of(message)
             .await
             .map_err(store_failure)?
-            .ok_or_else(|| CommandError::rejected("That message is not in a conversation yet"))?;
+            .ok_or_else(|| CommandError::rejected("That message is not in a thread yet"))?;
         let account = threads
             .account_of(original)
             .await
             .map_err(store_failure)?
-            .ok_or_else(|| CommandError::rejected("That conversation is gone"))?;
+            .ok_or_else(|| CommandError::rejected("That thread is gone"))?;
         let split = threads.split(message).await.map_err(|error| match error {
             postio_storage::Error::ForbiddenTransition { reason, .. } => {
                 CommandError::rejected(format!("That message cannot be split off: {reason}"))
@@ -1219,7 +1219,7 @@ impl Actions {
             .account_of(original)
             .await
             .map_err(store_failure)?
-            .ok_or_else(|| CommandError::rejected("That conversation is gone"))?;
+            .ok_or_else(|| CommandError::rejected("That thread is gone"))?;
         // The messages the split thread holds now, replies that arrived
         // since included: they are what rejoins, and what is asked of again
         // if the undo is itself undone.

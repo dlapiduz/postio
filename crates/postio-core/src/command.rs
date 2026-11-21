@@ -168,9 +168,9 @@ commands! {
     /// move between messages inside the one that is open. Two axes, two
     /// pairs of keys, and which one you are on is a fact about where the
     /// keyboard is rather than about what you pressed.
-    NextInConversation => "next_in_conversation",
+    NextInConversation => "next_in_thread",
     /// Walk up the open conversation's stack (#1007).
-    PrevInConversation => "prev_in_conversation",
+    PrevInConversation => "prev_in_thread",
     /// Fold or unfold the conversation's focused message (#1007).
     ///
     /// The only way to *collapse* the focused message: landing on one
@@ -395,7 +395,7 @@ commands! {
     /// Forward through the search history.
     HistoryForward => "history_forward",
     /// The results' Conversations tab.
-    ResultsConversations => "results_conversations",
+    ResultsConversations => "results_threads",
     /// The results' Files tab.
     ResultsFiles => "results_files",
     /// The results' People tab.
@@ -904,11 +904,11 @@ commands! {
     /// Fold an expanded thread back to its row (`Left`).
     CollapseThread => "collapse_thread",
     /// Jump to the conversation's first message (`{`).
-    FirstInConversation => "first_in_conversation",
+    FirstInConversation => "first_in_thread",
     /// Jump to the conversation's latest message (`}`).
-    LatestInConversation => "latest_in_conversation",
+    LatestInConversation => "latest_in_thread",
     /// Jump to the conversation's first unread message (`g u`).
-    FirstUnreadInConversation => "first_unread_in_conversation",
+    FirstUnreadInConversation => "first_unread_in_thread",
     /// The outline's own `u`: the same jump, from inside the outline, where
     /// `g u` would read as two keys of a list's type-ahead.
     OutlineFirstUnread => "outline_first_unread",

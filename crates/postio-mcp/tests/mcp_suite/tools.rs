@@ -65,6 +65,20 @@ fn no_tool_sends_deletes_or_marks_mail() {
 }
 
 #[test]
+fn no_tool_says_conversation() {
+    // An agent's client shows these words to its person, and Postio's word
+    // is thread (the `ux-architect` vocabulary table, #2171).
+    let mut world = World::new(INBOX_ONLY);
+    let answer = world.request("tools/list", json!({}));
+    for tool in answer["result"]["tools"].as_array().expect("tools") {
+        assert!(
+            !tool.to_string().to_lowercase().contains("conversation"),
+            "{tool}"
+        );
+    }
+}
+
+#[test]
 fn every_tool_says_what_it_takes() {
     let mut world = World::new(INBOX_ONLY);
     let answer = world.request("tools/list", json!({}));

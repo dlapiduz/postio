@@ -43,7 +43,7 @@ The macOS app's appearance. The desktop app and the terminal read none of these:
 | `initial_sync_messages` | integer or string | `5000` | How many messages the first sync reaches back for, newest first, or `"all"` for everything the server has. |
 | `notify` | boolean | `true` | Master switch for desktop notifications on new mail. |
 | `notify_roles` | array of strings | `["inbox"]` | Which mailbox roles produce a notification when mail arrives in them. |
-| `badge` | boolean | `true` | Show how many inbox conversations are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero. |
+| `badge` | boolean | `true` | Show how many inbox threads are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero. |
 | `empty_junk_after_days` | integer | `0 (never)` | Permanently delete Junk older than this many days, here and on the server. Flagged mail is kept. 0 leaves Junk alone. |
 | `empty_trash_after_days` | integer | `0 (never)` | Permanently delete Trash older than this many days, here and on the server. Flagged mail is kept. 0 leaves Trash alone. |
 
@@ -139,7 +139,7 @@ Validation reports an entry that is not an address or a whole domain, or a stopp
 | `day` | string or integer | `unset` | A weekday for a weekly rule (`saturday`), a day from 1 to 28 for a monthly one, and absent for a daily one. |
 | `at` | string | `none (required)` | The local time it comes due, as `HH:MM`. |
 
-One table per rule. The file's order is the order the rules are matched in, and the first rule that matches holds the message. Mail with an invitation, a question or a to-do in it is never held, and neither is a conversation you have written in.
+One table per rule. The file's order is the order the rules are matched in, and the first rule that matches holds the message. Mail with an invitation, a question or a to-do in it is never held, and neither is a thread you have written in.
 
 **When a rule comes due.** The next delivery is the first time the cadence, day and `at` name after the previous delivery, or after the rule was made, in the local time zone. Days are counted on the calendar, not as 24-hour spans, so a weekly digest keeps its time across a change of the clocks. A time the clocks skip is pushed forward by the gap, and a time they repeat comes due once, at its first occurrence. Monthly days stop at 28, so every month has one. A delivery that came due while Focus was closed is made once when it next opens, and a delivery with nothing held is not made at all.
 

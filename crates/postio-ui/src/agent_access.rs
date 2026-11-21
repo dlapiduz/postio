@@ -233,7 +233,7 @@ fn verb(tool: &str, call: &AgentCall) -> String {
         "list_mailboxes" => "Listed folders".to_owned(),
         "search_mail" => format!("Searched mail, {} found", messages(n)),
         "read_message" => format!("Read {}", messages(n)),
-        "read_thread" => format!("Read a conversation of {}", messages(n)),
+        "read_thread" => format!("Read a thread of {}", messages(n)),
         "create_draft" => "Wrote a draft".to_owned(),
         "archive_messages" => format!("Archived {}", messages(n)),
         "move_messages" => format!("Moved {}", messages(n)),
@@ -250,7 +250,7 @@ fn attempt(tool: &str) -> String {
         "list_mailboxes" => "list folders".to_owned(),
         "search_mail" => "search mail".to_owned(),
         "read_message" => "read a message".to_owned(),
-        "read_thread" => "read a conversation".to_owned(),
+        "read_thread" => "read a thread".to_owned(),
         "create_draft" => "write a draft".to_owned(),
         "archive_messages" => "archive messages".to_owned(),
         "move_messages" => "move messages".to_owned(),
@@ -454,6 +454,28 @@ mod tests {
         assert_eq!(
             shown.calls[0].line,
             "Tried to archive messages \u{b7} refused"
+        );
+    }
+
+    #[test]
+    fn reading_a_thread_says_thread() {
+        // The vocabulary table says Thread, never Conversation (#2171).
+        let log = concat!(
+            r#"{"at":"2026-10-16T10:00:00+00:00","tool":"read_thread","accounts":[],"mailboxes":[],"messages":[11,12],"drafts":[],"labels":[],"outcome":"answered"}"#,
+            "\n",
+            r#"{"at":"2026-10-16T11:00:00+00:00","tool":"read_thread","accounts":[],"mailboxes":[],"messages":[],"drafts":[],"labels":[],"outcome":"refused"}"#,
+            "\n",
+        );
+        let lines: Vec<String> = parse_log(log, 10)
+            .iter()
+            .map(|call| call_line(call, &Names::default()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Tried to read a thread \u{b7} refused",
+                "Read a thread of 2 messages"
+            ]
         );
     }
 

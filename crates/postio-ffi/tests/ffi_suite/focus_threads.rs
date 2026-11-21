@@ -593,7 +593,7 @@ async fn the_window_walks_a_thread_and_the_controller_says_what_to_draw() {
     session.focus_surface_opened(postio_ffi::SurfaceKindFfi::Message);
     session.focus_bar_room(8);
 
-    session.invoke("prev_in_conversation");
+    session.invoke("prev_in_thread");
     assert!(
         walked_to(&session, &mut walked, 4).await,
         "`[` rings message 4: {walked:?}"
@@ -624,7 +624,7 @@ async fn the_window_walks_a_thread_and_the_controller_says_what_to_draw() {
         walked.opened
     );
 
-    session.invoke("latest_in_conversation");
+    session.invoke("latest_in_thread");
     assert!(
         walked_to(&session, &mut walked, 6).await,
         "`}}` goes to the latest"
@@ -703,7 +703,7 @@ async fn window_on_harbor() -> (Arc<Session>, Walked) {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reply_arriving_while_reading_offers_itself_and_leaves_the_shown_message_alone() {
     let (session, mut walked) = window_on_harbor().await;
-    session.invoke("prev_in_conversation");
+    session.invoke("prev_in_thread");
     assert!(walked_to(&session, &mut walked, 4).await, "{walked:?}");
     let opened = walked.opened.len();
 
@@ -728,7 +728,7 @@ async fn a_reply_arriving_while_reading_offers_itself_and_leaves_the_shown_messa
     assert!(!reopened, "the message on screen is not replaced");
     assert_eq!(walked.opened.len(), opened);
 
-    session.invoke("latest_in_conversation");
+    session.invoke("latest_in_thread");
     assert!(
         heard(&session, 10, |event| matches!(
             event,

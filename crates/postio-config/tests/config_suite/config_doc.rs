@@ -134,7 +134,7 @@ const ENTRIES: &[Entry] = &[
         path: "sync.badge",
         kind: "boolean",
         default: "true",
-        description: "Show how many inbox conversations are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero.",
+        description: "Show how many inbox threads are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero.",
     },
     Entry {
         path: "sync.empty_junk_after_days",
@@ -456,7 +456,7 @@ const PROSE: &[(&str, &str)] = &[
         "One table per rule. The file's order is the order the rules are \
          matched in, and the first rule that matches holds the message. Mail \
          with an invitation, a question or a to-do in it is never held, and \
-         neither is a conversation you have written in.\n\
+         neither is a thread you have written in.\n\
          \n\
          **When a rule comes due.** The next delivery is the first time the \
          cadence, day and `at` name after the previous delivery, or after the \

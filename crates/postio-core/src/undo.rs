@@ -183,8 +183,8 @@ impl UndoKind {
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
             // Counted in conversations: a reminder waits on a reply to the
             // conversation, whichever of its messages it was set from.
-            UndoKind::Remind => format!("Reminder set on {count} {}", conversations(count)),
-            UndoKind::Unremind => format!("Reminder cleared on {count} {}", conversations(count)),
+            UndoKind::Remind => format!("Reminder set on {count} {}", threads(count)),
+            UndoKind::Unremind => format!("Reminder cleared on {count} {}", threads(count)),
             // One answer to one invitation: screen 15's "Accepted · Undo".
             UndoKind::Accept => "Accepted".to_owned(),
             UndoKind::Decline => "Declined".to_owned(),
@@ -200,13 +200,9 @@ impl UndoKind {
     }
 }
 
-/// "conversation", or its plural, for `count` of them.
-fn conversations(count: usize) -> &'static str {
-    if count == 1 {
-        "conversation"
-    } else {
-        "conversations"
-    }
+/// "thread", or its plural, for `count` of them.
+fn threads(count: usize) -> &'static str {
+    if count == 1 { "thread" } else { "threads" }
 }
 
 /// "sender", or its plural, for `count` of them.

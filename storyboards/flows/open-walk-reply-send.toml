@@ -23,12 +23,12 @@ check   = { view = "reader", reading.id = "6", composer.open = false }
 expect  = "The thread is open over the list on its first unread message."
 
 [[step]]
-command = "prev_in_conversation"
+command = "prev_in_thread"
 check   = { reading.id = "5" }
 expect  = "`p` shows the message before it."
 
 [[step]]
-command = "next_in_conversation"
+command = "next_in_thread"
 check   = { reading.id = "6" }
 expect  = "`n` moves back."
 

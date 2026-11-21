@@ -99,8 +99,8 @@ public enum Intercepted {
     public static let setDefaultAccount = "set_default_account"
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
-    public static let nextInConversation = "next_in_conversation"
-    public static let prevInConversation = "prev_in_conversation"
+    public static let nextInConversation = "next_in_thread"
+    public static let prevInConversation = "prev_in_thread"
 
     /// Every id above, for the test that checks they still exist.
     public static let all = [

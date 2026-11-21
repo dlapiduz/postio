@@ -424,7 +424,7 @@ fn space_toggles_a_label_on_the_aim_and_return_closes() {
     assert_eq!(focus.cursor(), Some(1));
 
     let effects = run(&mut focus, CommandId::AddLabel, &rows);
-    assert_eq!(opened(&effects).target, "2 conversations");
+    assert_eq!(opened(&effects).target, "2 threads");
     assert!(
         asked(&effects).iter().any(|request| matches!(
             request,
