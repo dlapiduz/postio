@@ -19,6 +19,16 @@ use postio_model::{Draft, DraftId};
 use crate::counting::Counts;
 use crate::protocol::{ListMailFound, Queued, Req, Resp};
 
+/// The answer when it is the one variant asked for; any other is an unexpected answer.
+macro_rules! only {
+    ($variant:path) => {
+        |answer| match answer {
+            $variant(value) => Some(value),
+            _ => None,
+        }
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("Postio's store is not answering.")]
 pub struct Disconnected;
@@ -256,10 +266,7 @@ impl Client {
         self.read(
             Req::FetchCarried { message, parts },
             "a forward's parts",
-            |answer| match answer {
-                Resp::Carried(asked) => Some(asked),
-                _ => None,
-            },
+            only!(Resp::Carried),
         )
         .await
     }
@@ -288,34 +295,21 @@ impl Client {
     }
 
     pub async fn accounts(&self) -> Result<Vec<postio_model::Account>, StoreError> {
-        self.read(Req::Accounts, "the accounts", |answer| match answer {
-            Resp::Accounts(accounts) => Some(accounts),
-            _ => None,
-        })
-        .await
+        self.read(Req::Accounts, "the accounts", only!(Resp::Accounts))
+            .await
     }
 
     pub async fn body(&self, message: MessageId) -> Result<crate::protocol::Body, StoreError> {
-        self.read(Req::Body(message), "a body", |answer| match answer {
-            Resp::Body(body) => Some(body),
-            _ => None,
-        })
-        .await
+        self.read(Req::Body(message), "a body", only!(Resp::Body))
+            .await
     }
 
     pub async fn conversation(
         &self,
         thread: postio_model::ThreadId,
     ) -> Result<Vec<MessageSummary>, StoreError> {
-        self.read(
-            Req::Conversation(thread),
-            "a thread",
-            |answer| match answer {
-                Resp::Rows(rows) => Some(rows),
-                _ => None,
-            },
-        )
-        .await
+        self.read(Req::Conversation(thread), "a thread", only!(Resp::Rows))
+            .await
     }
 
     pub async fn thread(
@@ -348,11 +342,8 @@ impl Client {
     }
 
     pub async fn split(&self, message: MessageId) -> Result<postio_model::ThreadId, StoreError> {
-        self.read(Req::Split(message), "a split", |answer| match answer {
-            Resp::Split(thread) => Some(thread),
-            _ => None,
-        })
-        .await
+        self.read(Req::Split(message), "a split", only!(Resp::Split))
+            .await
     }
 
     pub async fn muted_of(
@@ -362,10 +353,7 @@ impl Client {
         self.read(
             Req::MutedOf(threads),
             "the muted threads",
-            |answer| match answer {
-                Resp::Muted(muted) => Some(muted),
-                _ => None,
-            },
+            only!(Resp::Muted),
         )
         .await
     }
@@ -379,10 +367,7 @@ impl Client {
         self.read(
             Req::ForwardThread { thread, form },
             "a thread forward",
-            |answer| match answer {
-                Resp::Forwarded(forwarded) => Some(forwarded),
-                _ => None,
-            },
+            only!(Resp::Forwarded),
         )
         .await
     }
@@ -398,10 +383,7 @@ impl Client {
                 form,
             },
             "a forward form",
-            |answer| match answer {
-                Resp::Forwarded(forwarded) => Some(forwarded),
-                _ => None,
-            },
+            only!(Resp::Forwarded),
         )
         .await
     }
@@ -426,10 +408,7 @@ impl Client {
         self.read(
             Req::Unsubscribe(message),
             "an unsubscribe",
-            |answer| match answer {
-                Resp::Unsubscribed(list) => Some(list),
-                _ => None,
-            },
+            only!(Resp::Unsubscribed),
         )
         .await
     }
@@ -440,10 +419,7 @@ impl Client {
         self.read(
             Req::ListMail(message),
             "a list's mail",
-            |answer| match answer {
-                Resp::ListMail(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::ListMail),
         )
         .await
     }
@@ -452,11 +428,8 @@ impl Client {
         &self,
         message: MessageId,
     ) -> Result<Vec<postio_model::Attachment>, StoreError> {
-        self.read(Req::Parts(message), "the parts", |answer| match answer {
-            Resp::Parts(parts) => Some(parts),
-            _ => None,
-        })
-        .await
+        self.read(Req::Parts(message), "the parts", only!(Resp::Parts))
+            .await
     }
 
     pub async fn save_part(
@@ -470,11 +443,7 @@ impl Client {
             attachment,
             to,
         };
-        self.read(request, "a saved part", |answer| match answer {
-            Resp::Saved(path) => Some(path),
-            _ => None,
-        })
-        .await
+        self.read(request, "a saved part", only!(Resp::Saved)).await
     }
 
     pub async fn open_part(
@@ -486,11 +455,8 @@ impl Client {
             message,
             attachment,
         };
-        self.read(request, "a part to open", |answer| match answer {
-            Resp::Saved(path) => Some(path),
-            _ => None,
-        })
-        .await
+        self.read(request, "a part to open", only!(Resp::Saved))
+            .await
     }
 
     pub async fn readings(
@@ -499,11 +465,7 @@ impl Client {
         offline: bool,
     ) -> Result<Vec<crate::protocol::Reading>, StoreError> {
         let request = Req::Readings { messages, offline };
-        self.read(request, "a reading", |answer| match answer {
-            Resp::Readings(readings) => Some(readings),
-            _ => None,
-        })
-        .await
+        self.read(request, "a reading", only!(Resp::Readings)).await
     }
 
     pub async fn thread_readings(
@@ -517,11 +479,8 @@ impl Client {
             limit,
             offline,
         };
-        self.read(request, "a thread's reading", |answer| match answer {
-            Resp::Readings(readings) => Some(readings),
-            _ => None,
-        })
-        .await
+        self.read(request, "a thread's reading", only!(Resp::Readings))
+            .await
     }
 
     pub async fn inline_part(
@@ -533,11 +492,8 @@ impl Client {
             message,
             content_id,
         };
-        self.read(request, "an inline part", |answer| match answer {
-            Resp::InlinePart(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "an inline part", only!(Resp::InlinePart))
+            .await
     }
 
     /// The answer is how many could not be written.
@@ -582,10 +538,7 @@ impl Client {
             generation,
             draft: Box::new(draft),
         };
-        self.hand_over(request, "a saved draft", |answer| match answer {
-            Resp::DraftSaved(id) => Some(id),
-            _ => None,
-        })
+        self.hand_over(request, "a saved draft", only!(Resp::DraftSaved))
     }
 
     pub fn queue_send(
@@ -599,10 +552,7 @@ impl Client {
             draft: Box::new(draft),
             at,
         };
-        self.hand_over(request, "a queued send", |answer| match answer {
-            Resp::Queued(moved) => Some(moved),
-            _ => None,
-        })
+        self.hand_over(request, "a queued send", only!(Resp::Queued))
     }
 
     pub fn discard_draft(
@@ -623,11 +573,8 @@ impl Client {
         prefix: String,
     ) -> Result<Vec<RecipientCandidate>, StoreError> {
         let request = Req::Recipients { account, prefix };
-        self.read(request, "recipients", |answer| match answer {
-            Resp::Recipients(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "recipients", only!(Resp::Recipients))
+            .await
     }
 
     pub async fn take_back_filter(
@@ -654,10 +601,7 @@ impl Client {
         self.read(
             Req::Treatments,
             "the senders' treatments",
-            |answer| match answer {
-                Resp::Treatments(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Treatments),
         )
         .await
     }
@@ -729,10 +673,7 @@ impl Client {
                 limit,
             },
             "a page of contacts",
-            |answer| match answer {
-                Resp::ContactsPage(page) => Some(page),
-                _ => None,
-            },
+            only!(Resp::ContactsPage),
         )
         .await
     }
@@ -750,10 +691,7 @@ impl Client {
                 cap,
             },
             "the contacts matching a filter",
-            |answer| match answer {
-                Resp::ContactsFiltered(rows) => Some(rows),
-                _ => None,
-            },
+            only!(Resp::ContactsFiltered),
         )
         .await
     }
@@ -762,10 +700,7 @@ impl Client {
         self.read(
             Req::ContactsOverview,
             "the contacts overview",
-            |answer| match answer {
-                Resp::ContactsOverview(overview) => Some(overview),
-                _ => None,
-            },
+            only!(Resp::ContactsOverview),
         )
         .await
     }
@@ -863,10 +798,7 @@ impl Client {
         self.read(
             Req::ContactReview(first),
             "the review",
-            |answer| match answer {
-                Resp::ContactReview(groups) => Some(groups),
-                _ => None,
-            },
+            only!(Resp::ContactReview),
         )
         .await
     }
@@ -880,10 +812,7 @@ impl Client {
         self.read(
             Req::ContactPosition(person, tab),
             "a person's place in the list",
-            |answer| match answer {
-                Resp::ContactPosition(at) => Some(at),
-                _ => None,
-            },
+            only!(Resp::ContactPosition),
         )
         .await
     }
@@ -909,10 +838,7 @@ impl Client {
         self.read(
             Req::ContactSuggestions,
             "the Suggestions switches",
-            |answer| match answer {
-                Resp::ContactSuggestions(switches) => Some(switches),
-                _ => None,
-            },
+            only!(Resp::ContactSuggestions),
         )
         .await
     }
@@ -925,10 +851,7 @@ impl Client {
         self.read(
             Req::ContactSuggestionSet(which, on),
             "a Suggestions switch",
-            |answer| match answer {
-                Resp::ContactSuggestions(switches) => Some(switches),
-                _ => None,
-            },
+            only!(Resp::ContactSuggestions),
         )
         .await
     }
@@ -940,10 +863,7 @@ impl Client {
         self.read(
             Req::ContactSeen(person),
             "what the mail says",
-            |answer| match answer {
-                Resp::ContactSeen(items) => Some(items),
-                _ => None,
-            },
+            only!(Resp::ContactSeen),
         )
         .await
     }
@@ -952,10 +872,7 @@ impl Client {
         self.read(
             Req::ContactGroups,
             "the contact groups",
-            |answer| match answer {
-                Resp::ContactGroups(names) => Some(names),
-                _ => None,
-            },
+            only!(Resp::ContactGroups),
         )
         .await
     }
@@ -967,10 +884,7 @@ impl Client {
         self.read(
             Req::RecipientDirectory(account),
             "the recipient directory",
-            |answer| match answer {
-                Resp::RecipientDirectory(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::RecipientDirectory),
         )
         .await
     }
@@ -982,20 +896,14 @@ impl Client {
         self.read(
             Req::Correspondents(account),
             "correspondents",
-            |answer| match answer {
-                Resp::Correspondents(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Correspondents),
         )
         .await
     }
 
     pub async fn labels(&self, account: AccountId) -> Result<Vec<postio_model::Label>, StoreError> {
-        self.read(Req::Labels(account), "labels", |answer| match answer {
-            Resp::Labels(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(Req::Labels(account), "labels", only!(Resp::Labels))
+            .await
     }
 
     /// A label nothing carries is left out.
@@ -1006,10 +914,7 @@ impl Client {
         self.read(
             Req::LabelCounts(account),
             "label counts",
-            |answer| match answer {
-                Resp::LabelCounts(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::LabelCounts),
         )
         .await
     }
@@ -1023,10 +928,7 @@ impl Client {
         self.read(
             Req::CreateLabel { account, name },
             "a new label",
-            |answer| match answer {
-                Resp::Label(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Label),
         )
         .await
     }
@@ -1038,29 +940,20 @@ impl Client {
         self.read(
             Req::ThreadLabels(threads),
             "labels",
-            |answer| match answer {
-                Resp::ThreadLabels(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::ThreadLabels),
         )
         .await
     }
 
     pub async fn focus_counts(&self) -> Result<crate::protocol::FocusCounts, StoreError> {
-        self.read(Req::FocusCounts, "Focus's counts", |answer| match answer {
-            Resp::FocusCounts(counts) => Some(counts),
-            _ => None,
-        })
-        .await
+        self.read(Req::FocusCounts, "Focus's counts", only!(Resp::FocusCounts))
+            .await
     }
 
     /// In the toast's words, or `None` when nothing can be undone. Read, not taken.
     pub async fn undo_top(&self) -> Result<Option<String>, StoreError> {
-        self.read(Req::UndoTop, "the undo top", |answer| match answer {
-            Resp::UndoTop(top) => Some(top),
-            _ => None,
-        })
-        .await
+        self.read(Req::UndoTop, "the undo top", only!(Resp::UndoTop))
+            .await
     }
 
     pub async fn reply_source(
@@ -1114,10 +1007,7 @@ impl Client {
         self.read(
             Req::SendFailure(draft),
             "a send failure",
-            |answer| match answer {
-                Resp::SendFailure(why) => Some(why),
-                _ => None,
-            },
+            only!(Resp::SendFailure),
         )
         .await
     }
@@ -1128,11 +1018,8 @@ impl Client {
         selected: Option<MailboxId>,
     ) -> Result<Option<postio_model::SignatureId>, StoreError> {
         let request = Req::DefaultSignature { account, selected };
-        self.read(request, "a signature", |answer| match answer {
-            Resp::Signature(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "a signature", only!(Resp::Signature))
+            .await
     }
 
     pub async fn attach(
@@ -1148,11 +1035,8 @@ impl Client {
         mime_type: Option<String>,
     ) -> Result<Option<postio_model::Attachment>, StoreError> {
         let request = Req::Attach { path, mime_type };
-        self.read(request, "an attachment", |answer| match answer {
-            Resp::Attached(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "an attachment", only!(Resp::Attached))
+            .await
     }
 
     pub async fn attachment_bytes(
@@ -1162,10 +1046,7 @@ impl Client {
         self.read(
             Req::AttachmentBytes(blob),
             "an attachment's bytes",
-            |answer| match answer {
-                Resp::Bytes(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Bytes),
         )
         .await
     }
@@ -1189,11 +1070,8 @@ impl Client {
         mime_type: String,
     ) -> Result<Option<postio_model::Attachment>, StoreError> {
         let request = Req::InlineImage { bytes, mime_type };
-        self.read(request, "an inline image", |answer| match answer {
-            Resp::Attached(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "an inline image", only!(Resp::Attached))
+            .await
     }
 
     pub async fn account(&self, op: crate::protocol::AccountOp) -> Result<(), StoreError> {
@@ -1314,11 +1192,8 @@ impl Client {
         &self,
         search: crate::protocol::Search,
     ) -> Result<Option<crate::protocol::Found>, StoreError> {
-        self.read(Req::Search(search), "a search", |answer| match answer {
-            Resp::Found(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(Req::Search(search), "a search", only!(Resp::Found))
+            .await
     }
 
     pub async fn search_hits(
@@ -1354,11 +1229,8 @@ impl Client {
             query,
             scope,
         };
-        self.read(request, "the facet counts", |answer| match answer {
-            Resp::Facets(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "the facet counts", only!(Resp::Facets))
+            .await
     }
 
     pub async fn conversations(
@@ -1396,10 +1268,7 @@ impl Client {
                 first_line,
             },
             "the passages",
-            |answer| match answer {
-                Resp::Passages(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Passages),
         )
         .await
     }
@@ -1412,10 +1281,7 @@ impl Client {
         self.read(
             Req::ConversationMatches { query, key },
             "a thread's matches",
-            |answer| match answer {
-                Resp::Matches(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Matches),
         )
         .await
     }
@@ -1433,11 +1299,7 @@ impl Client {
             offset,
             limit,
         };
-        self.read(request, "the files", |answer| match answer {
-            Resp::Files(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "the files", only!(Resp::Files)).await
     }
 
     /// The person's own addresses are left out.
@@ -1454,11 +1316,7 @@ impl Client {
             offset,
             limit,
         };
-        self.read(request, "the people", |answer| match answer {
-            Resp::People(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "the people", only!(Resp::People)).await
     }
 
     /// Where the copy is, or nothing when the bytes are not on this machine.
@@ -1468,11 +1326,8 @@ impl Client {
         dir: std::path::PathBuf,
     ) -> Result<Option<std::path::PathBuf>, StoreError> {
         let request = Req::AttachmentCopy { attachment, dir };
-        self.read(request, "a copy of a file", |answer| match answer {
-            Resp::Path(path) => Some(path),
-            _ => None,
-        })
-        .await
+        self.read(request, "a copy of a file", only!(Resp::Path))
+            .await
     }
 
     pub async fn relaxations(
@@ -1492,11 +1347,8 @@ impl Client {
             query,
             today,
         };
-        self.read(request, "the ways out", |answer| match answer {
-            Resp::Relaxed(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(request, "the ways out", only!(Resp::Relaxed))
+            .await
     }
 
     pub async fn suggest(
@@ -1521,10 +1373,7 @@ impl Client {
         self.read(
             Req::RecentSearches,
             "the recent searches",
-            |answer| match answer {
-                Resp::Recent(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Recent),
         )
         .await
     }
@@ -1581,10 +1430,7 @@ impl Client {
         self.read(
             request,
             "the saved searches' counts",
-            |answer| match answer {
-                Resp::SavedCounts(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::SavedCounts),
         )
         .await
     }
@@ -1593,11 +1439,8 @@ impl Client {
         &self,
         message: MessageId,
     ) -> Result<postio_model::MessageBody, StoreError> {
-        self.read(Req::StoredBody(message), "a body", |answer| match answer {
-            Resp::StoredBody(body) => Some(body),
-            _ => None,
-        })
-        .await
+        self.read(Req::StoredBody(message), "a body", only!(Resp::StoredBody))
+            .await
     }
 
     pub async fn export_messages(
@@ -1607,10 +1450,7 @@ impl Client {
         self.read(
             Req::ExportMessages(messages),
             "an export",
-            |answer| match answer {
-                Resp::Exported(paths) => Some(paths),
-                _ => None,
-            },
+            only!(Resp::Exported),
         )
         .await
     }
@@ -1620,10 +1460,11 @@ impl Client {
         weights: bool,
     ) -> Result<Vec<crate::protocol::AccountSettings>, StoreError> {
         let request = Req::AccountSettings { weights };
-        self.read(request, "the account settings", |answer| match answer {
-            Resp::AccountSettings(accounts) => Some(accounts),
-            _ => None,
-        })
+        self.read(
+            request,
+            "the account settings",
+            only!(Resp::AccountSettings),
+        )
         .await
     }
 
@@ -1670,23 +1511,13 @@ impl Client {
         &self,
         limit: u32,
     ) -> Result<Vec<postio_model::egress::EgressEvent>, StoreError> {
-        self.read(
-            Req::EgressLog(limit),
-            "the egress log",
-            |answer| match answer {
-                Resp::Egress(entries) => Some(entries),
-                _ => None,
-            },
-        )
-        .await
+        self.read(Req::EgressLog(limit), "the egress log", only!(Resp::Egress))
+            .await
     }
 
     pub async fn privacy_log(&self) -> Result<crate::protocol::PrivacyLog, StoreError> {
-        self.read(Req::PrivacyLog, "the privacy log", |answer| match answer {
-            Resp::Privacy(log) => Some(log),
-            _ => None,
-        })
-        .await
+        self.read(Req::PrivacyLog, "the privacy log", only!(Resp::Privacy))
+            .await
     }
 
     pub async fn set_backfill_excluded(
@@ -1695,23 +1526,13 @@ impl Client {
         excluded: bool,
     ) -> Result<Vec<Mailbox>, StoreError> {
         let request = Req::SetBackfillExcluded { mailbox, excluded };
-        self.read(request, "a folder's backfill", |answer| match answer {
-            Resp::Mailboxes(mailboxes) => Some(mailboxes),
-            _ => None,
-        })
-        .await
+        self.read(request, "a folder's backfill", only!(Resp::Mailboxes))
+            .await
     }
 
     pub async fn orientation_seen(&self) -> Result<bool, StoreError> {
-        self.read(
-            Req::OrientationSeen,
-            "the orientation",
-            |answer| match answer {
-                Resp::Seen(seen) => Some(seen),
-                _ => None,
-            },
-        )
-        .await
+        self.read(Req::OrientationSeen, "the orientation", only!(Resp::Seen))
+            .await
     }
 
     pub async fn retire_orientation(&self) -> Result<(), StoreError> {
@@ -1719,21 +1540,15 @@ impl Client {
     }
 
     pub async fn move_recent(&self) -> Result<Vec<MailboxId>, StoreError> {
-        self.read(Req::MoveRecent, "recent moves", |answer| match answer {
-            Resp::MoveRecent(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(Req::MoveRecent, "recent moves", only!(Resp::MoveRecent))
+            .await
     }
 
     pub async fn account_of(&self, message: MessageId) -> Result<Option<AccountId>, StoreError> {
         self.read(
             Req::AccountOf(message),
             "a message's account",
-            |answer| match answer {
-                Resp::AccountOf(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::AccountOf),
         )
         .await
     }
@@ -1742,21 +1557,15 @@ impl Client {
         &self,
         messages: Vec<MessageId>,
     ) -> Result<Vec<(MessageId, String, bool)>, StoreError> {
-        self.read(Req::Held(messages), "held mail", |answer| match answer {
-            Resp::Held(found) => Some(found),
-            _ => None,
-        })
-        .await
+        self.read(Req::Held(messages), "held mail", only!(Resp::Held))
+            .await
     }
 
     pub async fn digest_waiting(&self, rules: Vec<String>) -> Result<Vec<u32>, StoreError> {
         self.read(
             Req::DigestWaiting(rules),
             "what the rules hold",
-            |answer| match answer {
-                Resp::Counts(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Counts),
         )
         .await
     }
@@ -1768,10 +1577,7 @@ impl Client {
         self.read(
             Req::DeliveryMessages(delivery),
             "a digest's messages",
-            |answer| match answer {
-                Resp::Rows(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Rows),
         )
         .await
     }
@@ -1780,10 +1586,7 @@ impl Client {
         self.read(
             Req::FilteredTabs,
             "the filtered tabs",
-            |answer| match answer {
-                Resp::FilteredTabs(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::FilteredTabs),
         )
         .await
     }
@@ -1801,10 +1604,7 @@ impl Client {
                 limit,
             },
             "filtered mail",
-            |answer| match answer {
-                Resp::Filtered(found) => Some(found),
-                _ => None,
-            },
+            only!(Resp::Filtered),
         )
         .await
     }
@@ -1829,15 +1629,8 @@ impl Client {
 
     /// Asked first so the person sees the count before anything moves.
     pub async fn sweep_preview(&self) -> Result<u32, StoreError> {
-        self.read(
-            Req::SweepPreview,
-            "a sweep's count",
-            |answer| match answer {
-                Resp::Count(count) => Some(count),
-                _ => None,
-            },
-        )
-        .await
+        self.read(Req::SweepPreview, "a sweep's count", only!(Resp::Count))
+            .await
     }
 
     /// Read from this machine when it is here; otherwise fetched on this call and no other: the
@@ -1847,21 +1640,15 @@ impl Client {
         self.read(
             Req::RawSource(message),
             "the message's source",
-            |answer| match answer {
-                Resp::RawSource(bytes) => Some(bytes),
-                _ => None,
-            },
+            only!(Resp::RawSource),
         )
         .await
     }
 
     /// Read again on `Event::SurfacedChanged`.
     pub async fn surfaced(&self) -> Result<Vec<postio_model::listing::Surfaced>, StoreError> {
-        self.read(Req::Surfaced, "the surfaced rows", |answer| match answer {
-            Resp::Surfaced(rows) => Some(rows),
-            _ => None,
-        })
-        .await
+        self.read(Req::Surfaced, "the surfaced rows", only!(Resp::Surfaced))
+            .await
     }
 
     /// Fails with a sentence when no `[focus.vault]` is configured.
@@ -1871,10 +1658,7 @@ impl Client {
                 subject: subject.to_owned(),
             },
             "the vault",
-            |answer| match answer {
-                Resp::Vault(picture) => Some(picture),
-                _ => None,
-            },
+            only!(Resp::Vault),
         )
         .await
     }
@@ -1888,10 +1672,7 @@ impl Client {
         self.read(
             Req::CaptureTask { project, task },
             "the task written to the vault",
-            |answer| match answer {
-                Resp::Captured(captured) => Some(captured),
-                _ => None,
-            },
+            only!(Resp::Captured),
         )
         .await
     }
@@ -1904,10 +1685,7 @@ impl Client {
         self.read(
             Req::CaptureNote { note, entry },
             "the note written to the vault",
-            |answer| match answer {
-                Resp::Captured(captured) => Some(captured),
-                _ => None,
-            },
+            only!(Resp::Captured),
         )
         .await
     }
@@ -1920,10 +1698,7 @@ impl Client {
         self.read(
             Req::DigestLikeThis(message),
             "a rule for mail like this",
-            |answer| match answer {
-                Resp::DigestLikeThis(rule) => Some(rule),
-                _ => None,
-            },
+            only!(Resp::DigestLikeThis),
         )
         .await
     }
@@ -1937,10 +1712,7 @@ impl Client {
         self.read(
             Req::DigestSummary(delivery),
             "a digest's summary",
-            |answer| match answer {
-                Resp::DigestSummary(summary) => Some(summary),
-                _ => None,
-            },
+            only!(Resp::DigestSummary),
         )
         .await
     }
@@ -1952,11 +1724,8 @@ impl Client {
         since: DateTime<Utc>,
     ) -> Result<crate::protocol::DigestPreview, StoreError> {
         let request = Req::DigestPreview { queries, since };
-        self.read(request, "a digest's preview", |answer| match answer {
-            Resp::DigestPreview(preview) => Some(preview),
-            _ => None,
-        })
-        .await
+        self.read(request, "a digest's preview", only!(Resp::DigestPreview))
+            .await
     }
 
     /// The error is a sentence for the dialog.
@@ -1977,10 +1746,7 @@ impl Client {
         self.read(
             Req::DeleteDigestRule(name),
             "a removed digest rule",
-            |answer| match answer {
-                Resp::Count(released) => Some(released),
-                _ => None,
-            },
+            only!(Resp::Count),
         )
         .await
     }
@@ -2040,37 +1806,19 @@ fn unexpected(asked: &str) -> StoreError {
 
 impl MailStore for Client {
     fn list_page(&self, request: PageRequest) -> Read<'_, ListPage> {
-        Box::pin(
-            self.read(Req::Page(request), "a page", |answer| match answer {
-                Resp::Page(page) => Some(page),
-                _ => None,
-            }),
-        )
+        Box::pin(self.read(Req::Page(request), "a page", only!(Resp::Page)))
     }
 
     fn list_count(&self, scope: ListScope) -> Read<'_, u32> {
-        Box::pin(
-            self.read(Req::Count(scope), "a count", |answer| match answer {
-                Resp::Count(count) => Some(count),
-                _ => None,
-            }),
-        )
+        Box::pin(self.read(Req::Count(scope), "a count", only!(Resp::Count)))
     }
 
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
-        Box::pin(self.read(Req::Rows(ids), "rows", |answer| match answer {
-            Resp::Rows(rows) => Some(rows),
-            _ => None,
-        }))
+        Box::pin(self.read(Req::Rows(ids), "rows", only!(Resp::Rows)))
     }
 
     fn rows_in(&self, scope: ListScope, ids: Vec<MessageId>) -> Read<'_, ListRows> {
-        Box::pin(
-            self.read(Req::RowsIn(scope, ids), "rows", |answer| match answer {
-                Resp::ListRows(rows) => Some(rows),
-                _ => None,
-            }),
-        )
+        Box::pin(self.read(Req::RowsIn(scope, ids), "rows", only!(Resp::ListRows)))
     }
 
     fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
@@ -2080,22 +1828,14 @@ impl MailStore for Client {
     }
 
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>> {
-        Box::pin(
-            self.read(Req::Mailboxes(account), "folders", |answer| match answer {
-                Resp::Mailboxes(mailboxes) => Some(mailboxes),
-                _ => None,
-            }),
-        )
+        Box::pin(self.read(Req::Mailboxes(account), "folders", only!(Resp::Mailboxes)))
     }
 
     fn draft_counts(&self, account: AccountId) -> Read<'_, DraftCounts> {
         Box::pin(self.read(
             Req::DraftCounts(account),
             "draft counts",
-            |answer| match answer {
-                Resp::DraftCounts(counts) => Some(counts),
-                _ => None,
-            },
+            only!(Resp::DraftCounts),
         ))
     }
 }
