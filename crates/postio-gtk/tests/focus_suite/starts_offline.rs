@@ -6,17 +6,9 @@ use crate::support::{self, Fixture};
 
 pub fn the_inbox_is_listed_from_the_store_with_no_network() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "The numbers are attached.",
-                30,
-            )
+            .file_from_ada("Atlas budget", "The numbers are attached.", 30)
             .await;
         fixture
             .file(

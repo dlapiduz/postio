@@ -27,9 +27,6 @@ fn moved(sink: &postio_core::bridge::EventSink, fixture: &Fixture) {
 
 pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         folder(&fixture, 120).await;
         let (host, sink) = fixture.host_telling();
@@ -99,9 +96,6 @@ pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
 
 pub fn a_reordering_sync_leaves_the_cursor_on_the_same_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         folder(&fixture, 120).await;
         let (host, sink) = fixture.host_telling();

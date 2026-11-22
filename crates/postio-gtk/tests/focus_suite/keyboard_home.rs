@@ -17,9 +17,6 @@ fn said(window: &postio_gtk::window::FocusWindow) -> String {
 
 pub fn the_window_opens_with_the_keyboard_in_the_list() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         crate::settle();
         assert!(in_the_list(&window), "{}", said(&window));
@@ -28,9 +25,6 @@ pub fn the_window_opens_with_the_keyboard_in_the_list() {
 
 pub fn escape_from_the_bar_returns_the_keyboard_to_the_list() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         let bar = window.bar().expect("/ opened the bar");
@@ -44,13 +38,8 @@ pub fn escape_from_the_bar_returns_the_keyboard_to_the_list() {
 
 pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = support::Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
-            .await;
+        fixture.file_from_ada("Inbox mail", "Hello.", 5).await;
         let travel = fixture.folder("Travel").await;
         fixture.file_in(travel, "Train to the coast", 60).await;
         fixture.file_in(travel, "Hotel booking", 20).await;
@@ -112,9 +101,6 @@ fn on_a_control(window: &postio_gtk::window::FocusWindow) -> bool {
 
 pub fn going_to_an_empty_place_rests_the_keyboard_on_its_page() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         assert!(
             crate::settle_until(async || in_the_list(&window)).await,
@@ -165,9 +151,6 @@ pub fn going_to_an_empty_place_rests_the_keyboard_on_its_page() {
 
 pub fn an_empty_inbox_at_launch_rests_the_keyboard_on_its_page() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = support::Fixture::empty().await;
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
@@ -192,9 +175,6 @@ pub fn an_empty_inbox_at_launch_rests_the_keyboard_on_its_page() {
 
 pub fn the_keyboard_follows_the_cursor_row() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         support::keys(&window, &["j"]);
         crate::settle();
@@ -206,9 +186,6 @@ pub fn the_keyboard_follows_the_cursor_row() {
 
 pub fn a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let pane = window.pane().expect("the inbox");
         support::keys(&window, &["j", "j"]);

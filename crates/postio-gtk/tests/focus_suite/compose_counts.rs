@@ -35,9 +35,7 @@ async fn composing(
     postio_gtk::window::FocusWindow,
     postio_widgets::composer::Composer,
 ) {
-    fixture
-        .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-        .await;
+    fixture.file_from_ada("Budget", "Numbers.", 5).await;
     let (window, _client) = fixture.open().await;
     assert!(
         crate::settle_until(async || window.composer().is_some()).await,
@@ -54,9 +52,6 @@ async fn composing(
 
 pub fn autosave_writes_off_the_main_thread_and_keeps_one_row() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = writable().await;
         let before = drafts(&fixture.database).await;
         let (_window, composer) = composing(&fixture).await;
@@ -96,13 +91,8 @@ pub fn opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread() {
     // The composer asks through seams that once answered with store reads on the GTK thread: two
     // cold connections, five statements and a body decode in front of a reply.
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = writable().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let (window, _client) = fixture.open().await;
         assert!(
             crate::settle_until(async || window.composer().is_some()).await,
@@ -138,9 +128,6 @@ pub fn opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread() {
 
 pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = writable().await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
@@ -209,9 +196,6 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
 /// frame in flight, and the compositor dropped the client ("Error 71").
 pub fn typing_back_and_forth_across_the_threshold_stays_connected() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = writable().await;
         {
             let connection = fixture.database.connect().await.expect("a connection");

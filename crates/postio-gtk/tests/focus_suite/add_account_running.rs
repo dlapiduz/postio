@@ -19,9 +19,6 @@ fn form_in(widget: &gtk::Widget) -> Option<Onboarding> {
 
 pub fn the_add_account_key_opens_a_blank_form_over_the_running_window() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let mail_before = support::subjects(&window);
         assert_eq!(mail_before.len(), 3, "the inbox has its mail on screen");
@@ -69,9 +66,6 @@ pub fn the_add_account_key_opens_a_blank_form_over_the_running_window() {
 
 pub fn the_add_account_dialog_is_as_tall_as_its_form() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         window.act(postio_core::CommandId::AddAccount);
         assert!(

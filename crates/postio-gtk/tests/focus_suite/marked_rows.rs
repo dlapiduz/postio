@@ -5,21 +5,12 @@ use crate::support::{self, Fixture};
 
 pub fn a_marked_row_is_two_lines_whatever_its_state() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas staffing",
-                "Sharing the draft.",
-                30,
-            )
+            .file_from_ada("Atlas staffing", "Sharing the draft.", 30)
             .await;
         let (asked, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
+            .file_from_ada(
                 "Re: Atlas Q3 budget",
                 "Can you approve these by Friday so finance can close the quarter?",
                 10,
@@ -93,13 +84,9 @@ pub fn a_marked_row_is_two_lines_whatever_its_state() {
 /// check over the dot; the box takes the dot's place.
 pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (asked, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
+            .file_from_ada(
                 "Re: Atlas Q3 budget",
                 "Can you approve these by Friday?",
                 10,
@@ -164,21 +151,12 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
 
 pub fn the_dot_is_unread_mail_not_a_marker() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas staffing",
-                "Sharing the draft.",
-                30,
-            )
+            .file_from_ada("Atlas staffing", "Sharing the draft.", 30)
             .await;
         let (asked, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
+            .file_from_ada(
                 "Re: Atlas Q3 budget",
                 "Can you approve these by Friday?",
                 10,

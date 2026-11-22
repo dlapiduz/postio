@@ -82,10 +82,6 @@ fn until(within: Duration, done: impl Fn() -> bool) -> bool {
 }
 
 pub fn a_composer_on_a_test_host_autosaves_and_sends() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     let _ = fonts::install();
     style::install(&display);

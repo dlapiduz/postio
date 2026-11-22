@@ -59,9 +59,6 @@ async fn in_the_outbox(client: &Client, fixture: &Fixture) -> u32 {
 
 pub fn offline_a_send_is_in_the_outbox_at_once_and_leaves_once() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
@@ -76,9 +73,7 @@ pub fn offline_a_send_is_in_the_outbox_at_once_and_leaves_once() {
                 .await
                 .expect("an identity");
         }
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let window = postio_gtk::window::FocusWindow::new(None);
         gtk::prelude::GtkWindowExt::present(&window);
         let session =

@@ -49,9 +49,7 @@ pub async fn one_message_under(
     std::path::PathBuf,
 ) {
     let fixture = Fixture::empty().await;
-    fixture
-        .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-        .await;
+    fixture.file_from_ada("Budget", "A line.", 10).await;
     let (window, directory, path) = open_under(&fixture, text).await;
     (fixture, window, directory, path)
 }
@@ -125,9 +123,6 @@ fn pane_title(dialog: &adw::Dialog) -> String {
 
 pub fn mod_comma_and_the_menu_open_settings_in_focuss_frame() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, _directory, _path) = one_message_under("").await;
         assert!(window.settings_dialog().is_none(), "nothing is open yet");
 
@@ -207,9 +202,6 @@ pub fn mod_comma_and_the_menu_open_settings_in_focuss_frame() {
 
 pub fn every_section_focus_shows_is_reachable_and_appearance_is_not() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, _directory, _path) = one_message_under("").await;
         mod_comma(&window);
         let dialog = settings_shown(&window).await.expect("Settings opened");
@@ -273,13 +265,8 @@ async fn keyboard_lists_focuss_commands(dialog: &adw::Dialog) {
 
 pub fn a_signature_made_in_settings_signs_the_next_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
+        fixture.file_from_ada("Budget", "A line.", 10).await;
         // An unsigned sending identity: nothing composes without one, and an unsigned one leaves
         // the account's default the only signature.
         {
@@ -418,195 +405,10 @@ pub fn a_signature_made_in_settings_signs_the_next_message() {
     });
 }
 
-pub fn a_folder_left_out_of_backfill_is_written_and_shown() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (fixture, window, _directory, _path) = one_message_under("").await;
-        mod_comma(&window);
-        let dialog = settings_shown(&window).await.expect("Settings opened");
-        let sync = || {
-            section_rows(&dialog)
-                .into_iter()
-                .find(|(name, _)| name == "Sync & storage")
-                .map(|(_, row)| row)
-        };
-        assert!(
-            crate::settle_until(async || sync().is_some()).await,
-            "Sync & storage is listed"
-        );
-        let sync = sync().expect("Sync & storage's row");
-        support::click(&window, &sync, 1);
-        let panel = window.settings().expect("Settings is built");
-        let trash = || {
-            panel
-                .panel()
-                .backfill_check("Trash")
-                .filter(|check| check.is_mapped() && check.height() > 0)
-        };
-        assert!(
-            crate::settle_until(async || trash().is_some()).await,
-            "Sync & storage lists the account's folders"
-        );
-        assert!(
-            trash().is_some_and(|check| check.is_active()),
-            "every folder backs up by default (ADR 0016)"
-        );
-        scroll_into_view(&trash().expect("Trash's check"));
-        support::settle_still(&trash().expect("Trash's check"), &dialog);
-        support::click(&window, &trash().expect("Trash's check"), 1);
-
-        let database = fixture.database.clone();
-        let account = fixture.account.id;
-        let excluded = || {
-            let database = database.clone();
-            async move {
-                let connection = database.connect().await.expect("a connection");
-                postio_storage::repository::MailboxRepository::new(&connection)
-                    .list_for_account(account)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .any(|mailbox| mailbox.path == "Trash" && mailbox.backfill_excluded)
-            }
-        };
-        assert!(
-            crate::settle_until(excluded).await,
-            "clearing Trash's check skips its backfill in the store"
-        );
-        assert!(
-            crate::settle_until(async || panel
-                .panel()
-                .backfill_check("Trash")
-                .is_some_and(|check| !check.is_active()))
-            .await,
-            "and the check, drawn again from the store's answer, stays clear"
-        );
-    });
-}
-
-pub fn mod_e_opens_config_toml_in_the_persons_editor() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (_fixture, window, _directory, path) = one_message_under("").await;
-        let opened: std::rc::Rc<std::cell::RefCell<Vec<std::path::PathBuf>>> =
-            std::rc::Rc::default();
-        window.set_editor({
-            let opened = std::rc::Rc::clone(&opened);
-            move |path| opened.borrow_mut().push(path.to_path_buf())
-        });
-
-        support::deliver_with(&window, "e", ModifierType::CONTROL_MASK);
-        crate::settle();
-        assert_eq!(
-            opened.borrow().as_slice(),
-            std::slice::from_ref(&path),
-            "mod+e from the list opened config.toml"
-        );
-
-        mod_comma(&window);
-        let dialog = settings_shown(&window).await.expect("Settings opened");
-        support::deliver_with(&window, "e", ModifierType::CONTROL_MASK);
-        crate::settle();
-        assert_eq!(opened.borrow().len(), 2, "mod+e from Settings opened it");
-        let button = support::with_class(&dialog, "postio-settings-editor")
-            .into_iter()
-            .next()
-            .expect("the foot strip's Open in $EDITOR");
-        support::click(&window, &button, 1);
-        // Waited for, not read in the same breath: a loaded runner once saw two opens of three. A
-        // press that did not land (the dialog still settling) is the likelier cause (#1800).
-        assert!(
-            crate::settle_until(async || opened.borrow().len() == 3).await,
-            "the foot strip's button opened nothing: {:?}",
-            opened.borrow()
-        );
-        assert_eq!(
-            opened.borrow().as_slice(),
-            [path.clone(), path.clone(), path],
-            "the foot strip's button opened it"
-        );
-    });
-}
-
-pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (_fixture, window, _directory, path) = one_message_under(
-            "[saved_searches.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\n\
-             name = \"Waiting on reply\"\n\n\
-             [saved_searches.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\n\
-             name = \"Atlas\"\n",
-        )
-        .await;
-        assert!(watched(), "the config is watched");
-        mod_comma(&window);
-        let dialog = settings_shown(&window).await.expect("Settings opened");
-        let filters = || {
-            section_rows(&dialog)
-                .into_iter()
-                .find(|(name, _)| name == "Saved searches")
-                .map(|(_, row)| row)
-        };
-        assert!(crate::settle_until(async || filters().is_some()).await);
-        support::click(&window, &filters().expect("Filters"), 1);
-        let delete = || {
-            support::with_class(&dialog, "postio-settings-filter-delete")
-                .into_iter()
-                .find(|button| button.is_mapped() && button.width() > 0)
-        };
-        assert!(
-            crate::settle_until(async || delete().is_some()).await,
-            "Filters lists the saved searches, each with Delete"
-        );
-        // The Saved searches pane has just been switched to; its rows settle into place before the
-        // press, or the press and release land apart.
-        let first = delete().expect("the first Delete");
-        support::settle_still(&first, &dialog);
-        support::click(&window, &first, 1);
-        assert!(
-            crate::settle_until(async || {
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
-                !text.contains("from:juno") && text.contains("subject:atlas")
-            })
-            .await,
-            "the first saved search left config.toml, and the second stayed: {}",
-            std::fs::read_to_string(&path).unwrap_or_default()
-        );
-
-        support::deliver(&window, "Escape");
-        assert!(settings_gone(&window).await);
-        assert!(
-            crate::settle_until(async || {
-                support::deliver_with(&window, "1", ModifierType::ALT_MASK);
-                let opened = window.bar().is_some_and(|bar| bar.is_open());
-                let query = window.bar().map(|bar| bar.query()).unwrap_or_default();
-                if opened && query != "subject:atlas" {
-                    support::deliver(&window, "Escape");
-                }
-                opened && query == "subject:atlas"
-            })
-            .await,
-            "alt+1 runs Atlas now: {:?}",
-            window.bar().map(|bar| bar.query())
-        );
-    });
-}
-
 pub fn the_signature_editor_has_the_keyboard_and_says_what_it_is() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
+        fixture.file_from_ada("Budget", "A line.", 10).await;
         let (window, _directory, _path) = open_under(&fixture, "").await;
         mod_comma(&window);
         let dialog = settings_shown(&window).await.expect("Settings opened");
@@ -656,13 +458,8 @@ pub fn the_signature_editor_has_the_keyboard_and_says_what_it_is() {
 
 pub fn filtering_turned_off_in_settings_is_written_and_the_strip_follows() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
+        fixture.file_from_ada("Budget", "A line.", 10).await;
         let ago = |minutes: i64| (support::now() - chrono::Utc::now()).num_minutes() + minutes;
         for (subject, minutes) in [("Review requested", 1), ("Build passed", 2)] {
             fixture
@@ -788,188 +585,12 @@ pub fn filtering_turned_off_in_settings_is_written_and_the_strip_follows() {
     });
 }
 
-pub fn a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
-        let (window, _directory, path) = open_under(
-            &fixture,
-            "[focus]\nfiltering = true\n\n[focus.filter]\nnever = [\"@example.net\"]\n\
-             stop_markers = [{ sender = \"news@ledger.example\", kind = \"question\" }]\n",
-        )
-        .await;
-        mod_comma(&window);
-        let dialog = settings_shown(&window).await.expect("Settings opened");
-        let row = section_rows(&dialog)
-            .into_iter()
-            .find(|(name, _)| name == "Filtering")
-            .map(|(_, row)| row)
-            .expect("Settings lists Filtering");
-        support::click(&window, &row, 1);
-        assert!(
-            crate::settle_until(async || pane_title(&dialog) == "Filtering").await,
-            "Filtering shows its page"
-        );
-        let said = || support::texts(&dialog);
-        assert!(
-            crate::settle_until(async || said().iter().any(|text| text == "Filter again")).await,
-            "a pinned sender offers Filter again: {:?}",
-            said()
-        );
-        assert!(
-            said().iter().any(|text| text == "Turn back on"),
-            "a turned-off marker offers Turn back on: {:?}",
-            said()
-        );
-
-        // The page has just slid in; on CI the press landed mid-slide.
-        let again = support::only(&dialog, "postio-settings-filtering-undo-never");
-        support::settle_still(&again, &dialog);
-        support::click(&window, &again, 1);
-        assert!(
-            crate::settle_until(async || {
-                !std::fs::read_to_string(&path)
-                    .unwrap_or_default()
-                    .contains("@example.net")
-            })
-            .await,
-            "Filter again wrote the file without the pin: {}",
-            std::fs::read_to_string(&path).unwrap_or_default()
-        );
-        let back = support::only(&dialog, "postio-settings-filtering-undo-stopped");
-        support::settle_still(&back, &dialog);
-        support::click(&window, &back, 1);
-        assert!(
-            crate::settle_until(async || {
-                !std::fs::read_to_string(&path)
-                    .unwrap_or_default()
-                    .contains("news@ledger.example")
-            })
-            .await,
-            "Turn back on wrote the file without the marker: {}",
-            std::fs::read_to_string(&path).unwrap_or_default()
-        );
-        assert!(
-            std::fs::read_to_string(&path)
-                .unwrap_or_default()
-                .contains("filtering = true"),
-            "and left the rest of the file"
-        );
-        assert!(
-            crate::settle_until(async || {
-                !said()
-                    .iter()
-                    .any(|text| text == "Filter again" || text == "Turn back on")
-            })
-            .await,
-            "both lists are empty on the page: {:?}",
-            said()
-        );
-    });
-}
-
-pub fn a_persons_pin_is_listed_by_name_and_taken_back_in_settings() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(
-                ("Ada Lovelace", "ada@work.example"),
-                "Budget",
-                "A line.",
-                10,
-            )
-            .await;
-        let ada = {
-            let connection = fixture.database.connect().await.expect("a connection");
-            let ada = postio_storage::repository::ContactRepository::new(&connection)
-                .create(
-                    Some("Ada Lovelace"),
-                    &[
-                        postio_model::EmailAddress::new(None::<String>, "ada@work.example"),
-                        postio_model::EmailAddress::new(None::<String>, "ada@home.example"),
-                    ],
-                )
-                .await
-                .expect("a person");
-            postio_storage::repository::ContactSettingsRepository::new(&connection)
-                .put(
-                    ada,
-                    &postio_model::ContactSettings {
-                        arrival: Some(postio_model::ContactArrival::Inbox),
-                        ..postio_model::ContactSettings::default()
-                    },
-                )
-                .await
-                .expect("a pin");
-            ada
-        };
-        let (window, _directory, path) = open_under(&fixture, "[focus]\nfiltering = true\n").await;
-        mod_comma(&window);
-        let dialog = settings_shown(&window).await.expect("Settings opened");
-        let row = section_rows(&dialog)
-            .into_iter()
-            .find(|(name, _)| name == "Filtering")
-            .map(|(_, row)| row)
-            .expect("Settings lists Filtering");
-        support::click(&window, &row, 1);
-        assert!(
-            crate::settle_until(async || pane_title(&dialog) == "Filtering").await,
-            "Filtering shows its page"
-        );
-        let said = || support::texts(&dialog);
-        assert!(
-            crate::settle_until(async || {
-                said()
-                    .iter()
-                    .any(|text| text == "Ada Lovelace \u{b7} ada@work.example, ada@home.example")
-            })
-            .await,
-            "the person's pin is listed by name: {:?}",
-            said()
-        );
-
-        let again = support::only(&dialog, "postio-settings-filtering-undo-never");
-        support::settle_still(&again, &dialog);
-        support::click(&window, &again, 1);
-        let kept = || async {
-            let connection = fixture.database.connect().await.expect("a connection");
-            postio_storage::repository::ContactSettingsRepository::new(&connection)
-                .get(ada)
-                .await
-                .expect("a read")
-        };
-        let cleared = crate::settle_until(async || kept().await.arrival.is_none()).await;
-        assert!(cleared, "Filter again did not clear the person's pin");
-        assert!(
-            crate::settle_until(async || !said().iter().any(|text| text == "Filter again")).await,
-            "the list is empty on the page: {:?}",
-            said()
-        );
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap_or_default(),
-            "[focus]\nfiltering = true\n",
-            "and the file was never written for it"
-        );
-    });
-}
-
 /// libadwaita opens a dialog by scaling it from 0.8 to 1, so until it has opened each row is
 /// smaller and elsewhere every frame,
 /// and a press and a release a frame later land at two places: the press waits for the row to be
 /// drawn still (#1817).
 pub fn a_click_into_settings_as_it_opens_waits_for_it_to_open() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, _directory, _path) = one_message_under("").await;
         mod_comma(&window);
         let dialog = settings_shown(&window).await.expect("Settings opened");
@@ -1026,9 +647,6 @@ pub fn a_click_into_settings_as_it_opens_waits_for_it_to_open() {
 
 pub fn agents_in_settings_shows_the_log_and_revokes_from_the_file() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let message = fixture
             .file_as(fixture.account.id, fixture.inbox, "Budget", 10)

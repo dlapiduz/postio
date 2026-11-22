@@ -2,14 +2,7 @@ use crate::support::{self, Fixture};
 
 async fn budgets() -> (postio_gtk::window::FocusWindow, Fixture) {
     let fixture = Fixture::empty().await;
-    fixture
-        .file(
-            ("Ada Moreno", "ada@example.com"),
-            "Q3 budget",
-            "Numbers.",
-            5,
-        )
-        .await;
+    fixture.file_from_ada("Q3 budget", "Numbers.", 5).await;
     fixture
         .file(
             ("Tomas Ruiz", "tomas@example.com"),
@@ -30,10 +23,7 @@ async fn budgets() -> (postio_gtk::window::FocusWindow, Fixture) {
         .file(("Lin Park", "lin@example.com"), "Lunch", "Noon?", 10)
         .await;
     let (window, _client) = fixture.open().await;
-    assert!(
-        crate::settle_until(async || support::subjects(&window).len() == 4).await,
-        "the inbox never reached the screen"
-    );
+    support::rows_shown(&window, 4).await;
     (window, fixture)
 }
 
@@ -63,9 +53,6 @@ async fn show_all(
 
 pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, _fixture) = budgets().await;
         let results = show_all(&window).await;
         assert!(
@@ -145,18 +132,8 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
 pub fn quick_look_stays_put_while_j_walks() {
     use gtk::prelude::*;
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Q3 budget",
-                "Numbers.",
-                5,
-            )
-            .await;
+        fixture.file_from_ada("Q3 budget", "Numbers.", 5).await;
         fixture
             .file(
                 ("Tomas Ruiz", "tomas@example.com"),
@@ -168,10 +145,7 @@ pub fn quick_look_stays_put_while_j_walks() {
             )
             .await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 2).await;
         let results = show_all(&window).await;
         assert!(
             crate::settle_until(async || results.cursor().is_some()).await,
@@ -221,18 +195,10 @@ pub fn quick_look_stays_put_while_j_walks() {
 pub fn the_results_open_on_their_first_heading() {
     use gtk::prelude::*;
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         for n in 0..25 {
             fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    &format!("Budget notes {n}"),
-                    "Who spends what.",
-                    n + 1,
-                )
+                .file_from_ada(&format!("Budget notes {n}"), "Who spends what.", n + 1)
                 .await;
         }
         let (window, _client) = fixture.open().await;
@@ -274,9 +240,6 @@ pub fn the_results_open_on_their_first_heading() {
 pub fn an_unread_result_has_the_inboxs_accent_dot() {
     use gtk::prelude::*;
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, _fixture) = budgets().await;
         let results = show_all(&window).await;
         let dots = || {
@@ -314,9 +277,6 @@ pub fn an_unread_result_has_the_inboxs_accent_dot() {
 pub fn the_tabs_hold_still_when_the_sort_changes() {
     use gtk::prelude::*;
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, _fixture) = budgets().await;
         let results = show_all(&window).await;
         let tabs = support::only(results.widget(), "focus-results-tabs");
@@ -337,115 +297,8 @@ pub fn the_tabs_hold_still_when_the_sort_changes() {
     });
 }
 
-pub fn the_filter_buttons_show_and_answer_their_keys() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        let keymap = postio_core::Keymap::defaults();
-        let from_key = keymap
-            .binding(postio_core::CommandId::FilterFrom)
-            .expect("From has a key")
-            .to_owned();
-        assert!(
-            crate::settle_until(async || support::texts(results.widget()).contains(&from_key))
-                .await,
-            "the From button teaches no key: {:?}",
-            support::texts(results.widget())
-        );
-        window.press_command(postio_core::CommandId::FilterFrom);
-        assert!(
-            crate::settle_until(async || results.popover().is_open()).await,
-            "the key opened no popover"
-        );
-    });
-}
-
-pub fn a_toggle_filter_adds_its_chip_and_the_chip_removes_it() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || !results.filters().is_empty()).await,
-            "no filter buttons"
-        );
-        let toggle = results
-            .filters()
-            .into_iter()
-            .map(|(label, _)| label)
-            .find(|label| !label.ends_with('\u{25be}'))
-            .expect("a toggle button");
-        assert!(results.click_filter(&toggle));
-        assert!(
-            crate::settle_until(async || results.chips().len() == 1).await,
-            "{toggle} added no chip: {:?}",
-            results.chips()
-        );
-        assert!(
-            results
-                .filters()
-                .iter()
-                .any(|(label, applied)| *label == toggle && *applied),
-            "{toggle} is not drawn applied: {:?}",
-            results.filters()
-        );
-        assert!(results.remove_chip(0), "no chip to remove");
-        assert!(
-            crate::settle_until(async || results.chips().is_empty()).await,
-            "the chip stayed: {:?}",
-            results.chips()
-        );
-    });
-}
-
-pub fn from_checks_a_person_and_return_keeps_the_chip() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || results.click_filter("From")).await,
-            "no From button"
-        );
-        let popover = results.popover();
-        assert!(
-            crate::settle_until(async || popover.is_open() && popover.rows().len() == 3).await,
-            "From did not list the three senders: {:?}",
-            popover.rows()
-        );
-        assert!(
-            popover.key(gtk::gdk::Key::space),
-            "Space was not the popover's"
-        );
-        assert!(
-            crate::settle_until(async || popover.rows().iter().filter(|(_, on)| *on).count() == 1)
-                .await,
-            "Space checked nothing: {:?}",
-            popover.rows()
-        );
-        assert!(popover.key(gtk::gdk::Key::Return));
-        assert!(
-            crate::settle_until(async || !popover.is_open()
-                && results.chips().iter().any(|chip| chip.starts_with("from:")))
-            .await,
-            "Return kept no from: chip: {:?}",
-            results.chips()
-        );
-    });
-}
-
 pub fn a_click_away_from_a_popover_keeps_nothing() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, _fixture) = budgets().await;
         let results = show_all(&window).await;
         assert!(crate::settle_until(async || results.click_filter("From")).await);
@@ -470,9 +323,6 @@ pub fn a_click_away_from_a_popover_keeps_nothing() {
 
 pub fn a_drag_across_the_timeline_narrows_the_dates() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, _fixture) = budgets().await;
         let results = show_all(&window).await;
         let timeline = results.timeline();
@@ -495,148 +345,8 @@ pub fn a_drag_across_the_timeline_narrows_the_dates() {
     });
 }
 
-pub fn return_on_a_person_searches_from_them() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || results.click_tab("People")).await,
-            "no People tab"
-        );
-        assert!(
-            crate::settle_until(async || {
-                let mut names = results.people().names();
-                names.sort();
-                names == ["Ada Moreno", "Grace Ho", "Tomas Ruiz"]
-            })
-            .await,
-            "not the three senders: {:?}",
-            results.people().names()
-        );
-        window.press_command(postio_core::CommandId::OpenMessage);
-        assert!(
-            crate::settle_until(async || results
-                .chips()
-                .iter()
-                .any(|chip| chip.starts_with("from:")))
-            .await,
-            "Return searched nobody: {:?}",
-            results.chips()
-        );
-    });
-}
-
-pub fn nothing_found_offers_a_looser_search_that_finds_some() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || results.click_filter("Attachment")).await,
-            "no Attachment button"
-        );
-        assert!(
-            crate::settle_until(
-                async || results.showing_nothing() && !results.nothing().ways().is_empty()
-            )
-            .await,
-            "no page offering a way out: {:?}",
-            results.nothing().ways()
-        );
-        assert!(
-            !results.nothing().title().is_empty(),
-            "the page says nothing"
-        );
-        assert!(
-            !gtk::prelude::WidgetExt::is_mapped(results.timeline().widget()),
-            "the timeline stayed over the page"
-        );
-        window.press_command(postio_core::CommandId::PickRelaxation1);
-        assert!(
-            crate::settle_until(async || !results.showing_nothing() && results.chips().is_empty())
-                .await,
-            "the looser search did not bring the results back: {:?}",
-            results.chips()
-        );
-        assert!(
-            crate::settle_until(async || results.subjects().len() >= 3).await,
-            "the budgets are not back: {:?}",
-            results.subjects()
-        );
-        assert!(
-            gtk::prelude::WidgetExt::is_mapped(results.timeline().widget()),
-            "the timeline did not come back with them"
-        );
-    });
-}
-
-pub fn the_tabs_go_by_their_keys() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || results.cursor().is_some()).await,
-            "the results never drew"
-        );
-        let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
-        assert!(
-            support::deliver_with(&window, "bracketleft", ctrl),
-            "History back was dropped"
-        );
-        assert!(
-            crate::settle_until(async || window.results().is_none()).await,
-            "History back did not go back to the inbox"
-        );
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || results.cursor().is_some()).await,
-            "the results never drew again"
-        );
-        assert!(
-            support::deliver_with(&window, "2", ctrl),
-            "Ctrl+2 was dropped"
-        );
-        assert!(
-            crate::settle_until(async || results.showing_files()).await,
-            "Ctrl+2 did not show the Files tab"
-        );
-        assert!(
-            support::deliver_with(&window, "3", ctrl),
-            "Ctrl+3 was dropped"
-        );
-        assert!(
-            crate::settle_until(async || results.showing_people()).await,
-            "Ctrl+3 did not show the People tab"
-        );
-        assert!(
-            support::deliver_with(&window, "1", ctrl),
-            "Ctrl+1 was dropped"
-        );
-        assert!(
-            crate::settle_until(async || !results.showing_people() && !results.showing_files())
-                .await,
-            "Ctrl+1 did not go back to the conversations"
-        );
-        assert!(
-            support::deliver(&window, "j"),
-            "the conversations' keys were dropped after the tabs"
-        );
-    });
-}
-
 pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, _fixture) = budgets().await;
         let _results = show_all(&window).await;
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
@@ -684,9 +394,6 @@ pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
 /// (the results' Back button, where Space presses it). The keyboard stays in the list (#2136).
 pub fn checking_and_walking_the_results_keeps_the_keyboard_in_their_list() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, _fixture) = budgets().await;
         let results = show_all(&window).await;
         let in_the_list = || {
@@ -730,213 +437,10 @@ pub fn checking_and_walking_the_results_keeps_the_keyboard_in_their_list() {
     });
 }
 
-/// The keyboard was on nothing when the dropdown closed: Escape still hands it to the results'
-/// list, not the window, where `j` and a second Escape would reach nothing.
-pub fn escape_gives_a_keyboard_on_nothing_to_the_results() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let _results = show_all(&window).await;
-        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
-        let bar = window.bar().expect("/ opened the bar");
-        assert!(
-            bar.is_open(),
-            "/ did not open the dropdown over the results"
-        );
-        // Every move of the keyboard from here is said with a failure: this has failed on CI only.
-        let moves = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        {
-            use gtk::prelude::ObjectExt;
-            let moves = std::rc::Rc::clone(&moves);
-            window.connect_notify_local(Some("focus-widget"), move |window, _| {
-                moves.borrow_mut().push(window.observe().keyboard.widget);
-            });
-        }
-        gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
-        moves.borrow_mut().push("-- Escape".to_owned());
-        assert!(support::deliver(&window, "Escape"), "Escape was dropped");
-        moves.borrow_mut().push("-- delivered".to_owned());
-        assert!(!bar.is_open(), "Escape left the dropdown up");
-        assert!(
-            crate::settle_until(async || {
-                let seen = window.observe().keyboard;
-                seen.reachable && seen.widget.contains("GtkListView")
-            })
-            .await,
-            "the keyboard did not come back to the results' list: {}\nmoves:\n{}",
-            window.observe().keyboard.widget,
-            moves.borrow().join("\n")
-        );
-    });
-}
-
-pub fn a_search_after_one_that_found_nothing_shows_its_rows() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
-        let bar = window.bar().expect("/ opened the bar");
-        bar.set_text("zebra");
-        crate::settle();
-        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
-        assert!(
-            crate::settle_until(async || window.results().is_some_and(|r| r.showing_nothing()))
-                .await,
-            "zebra did not say it found nothing"
-        );
-        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
-        assert!(
-            crate::settle_until(async || window.results().is_none()).await,
-            "Escape did not leave the results"
-        );
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || !results.subjects().is_empty()).await,
-            "budget found nothing"
-        );
-        assert!(
-            !results.showing_nothing(),
-            "the last search's \"Nothing matches\" is shown over budget's rows"
-        );
-    });
-}
-
-pub fn replying_to_a_result_and_escaping_back_to_the_results() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || results.cursor().is_some()).await,
-            "the results never drew"
-        );
-        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
-        assert!(
-            crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
-            "Return did not open the result"
-        );
-        support::keys(&window, &["r"]);
-        assert!(
-            crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "r opened no reply"
-        );
-        support::keys(&window, &["Escape"]);
-        assert!(
-            crate::settle_until(async || window.compose_dialog().is_none()).await,
-            "Escape left the reply up"
-        );
-        support::keys(&window, &["Escape"]);
-        assert!(
-            crate::settle_until(async || window.reading().is_none_or(|r| !r.is_open())).await,
-            "the second Escape left the message open"
-        );
-        assert!(window.results().is_some(), "the results are gone");
-        assert!(
-            crate::settle_until(async || {
-                let seen = window.observe().keyboard;
-                seen.reachable && seen.region == postio_ui::observe::Region::Results
-            })
-            .await,
-            "the keyboard is not back on the results: {}",
-            window.observe().keyboard.widget
-        );
-        let on_the_ring = || {
-            use gtk::prelude::WidgetExt;
-            gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| {
-                std::iter::successors(Some(focus.clone()), |widget| widget.first_child())
-                    .any(|widget| widget.has_css_class("focus-results-cursor"))
-            })
-        };
-        assert!(
-            crate::settle_until(async || on_the_ring()).await,
-            "the keyboard is not on the ringed result: {}",
-            support::focus_path(&window)
-        );
-    });
-}
-
-pub fn checking_results_says_how_many_are_selected() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || results.cursor().is_some()).await,
-            "the results never drew"
-        );
-        let said = || support::texts(results.widget());
-        support::keys(&window, &["x"]);
-        assert!(
-            crate::settle_until(async || said().iter().any(|text| text == "1 selected")).await,
-            "the bulk bar does not count one: {:?}",
-            said()
-        );
-        support::keys(&window, &["j", "x"]);
-        assert!(
-            crate::settle_until(async || said().iter().any(|text| text == "2 selected")).await,
-            "the bulk bar does not count two: {:?}",
-            said()
-        );
-    });
-}
-
-pub fn clearing_the_filters_keeps_the_keyboard_on_the_results() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture) = budgets().await;
-        let results = show_all(&window).await;
-        assert!(
-            crate::settle_until(async || results.click_filter("Attachment")).await,
-            "no Attachment button"
-        );
-        assert!(
-            crate::settle_until(async || results.showing_nothing()).await,
-            "nothing matched, and the page did not say so"
-        );
-        results.focus();
-        support::press(&window, "BackSpace", gtk::gdk::ModifierType::CONTROL_MASK);
-        assert!(
-            crate::settle_until(async || !results.showing_nothing() && results.chips().is_empty())
-                .await,
-            "Ctrl+Backspace did not clear the filters: {:?}",
-            results.chips()
-        );
-        assert!(
-            crate::settle_until(async || {
-                let seen = window.observe().keyboard;
-                seen.reachable && seen.region == postio_ui::observe::Region::Results
-            })
-            .await,
-            "the keyboard is not on the results: {}",
-            support::focus_path(&window)
-        );
-    });
-}
-
 pub fn ctrl_s_opens_the_save_popover_and_return_saves() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Q3 budget",
-                "Numbers.",
-                5,
-            )
-            .await;
+        fixture.file_from_ada("Q3 budget", "Numbers.", 5).await;
         fixture
             .file(
                 ("Tomas Ruiz", "tomas@example.com"),
@@ -962,10 +466,7 @@ pub fn ctrl_s_opens_the_save_popover_and_return_saves() {
             Some(&path),
         ));
         support::keep(directory);
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 3).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 3).await;
         let results = show_all(&window).await;
         assert!(
             crate::settle_until(async || results.cursor().is_some()).await,

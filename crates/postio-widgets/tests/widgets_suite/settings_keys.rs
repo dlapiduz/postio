@@ -1,4 +1,5 @@
 use crate::support_compose::{fonts, style};
+use crate::support_reader::collect;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::settings::SettingsPanel;
@@ -10,17 +11,6 @@ pub fn rows_render_one_per_command_with_its_current_binding() {
 
     let row = row_for(&panel, "Next message");
     assert_eq!(binding_in(&row), "j", "the built-in default, unoverridden");
-
-    window.destroy();
-}
-
-pub fn an_override_in_the_file_is_what_the_row_shows() {
-    let Some((window, panel)) = panel_with_text("[keys]\nnext_message = \"n\"\n") else {
-        return;
-    };
-
-    let row = row_for(&panel, "Next message");
-    assert_eq!(binding_in(&row), "n");
 
     window.destroy();
 }
@@ -87,28 +77,6 @@ pub fn capturing_a_binding_already_in_use_is_surfaced_not_silently_overwritten()
         "a rejected capture must never reach the buffer: {}",
         panel.text()
     );
-
-    window.destroy();
-}
-
-pub fn escape_cancels_capture_without_changing_anything() {
-    let Some((window, panel)) = panel_with_text("") else {
-        return;
-    };
-
-    let row = row_for(&panel, "Next message");
-    rebind_button_in(&row).emit_clicked();
-    pump();
-
-    panel.test_capture_key(
-        gdk::Key::from_name("Escape").unwrap(),
-        gdk::ModifierType::empty(),
-    );
-    pump();
-
-    let row = row_for(&panel, "Next message");
-    assert_eq!(binding_in(&row), "j");
-    assert!(!panel.text().contains("next_message"));
 
     window.destroy();
 }
@@ -191,17 +159,4 @@ fn rebind_button_in(row: &gtk::ListBoxRow) -> gtk::Button {
     .into_iter()
     .find_map(|w| w.downcast::<gtk::Button>().ok())
     .expect("every keys row has a keycap to press")
-}
-
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }

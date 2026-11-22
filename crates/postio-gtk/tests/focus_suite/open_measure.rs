@@ -36,13 +36,8 @@ fn lines(document: &postio_render::RenderedDocument) -> Vec<(f64, f64, usize)> {
 
 pub fn a_plain_paragraph_break_is_a_short_gap_not_a_blank_line() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Paragraphs", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Paragraphs", "x", 10).await;
         fixture
             .write_body(
                 message,
@@ -66,13 +61,8 @@ pub fn a_plain_paragraph_break_is_a_short_gap_not_a_blank_line() {
 
 pub fn the_measure_is_the_dialogs_width_less_its_gutters() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Measure", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Measure", "x", 10).await;
         fixture.write_body(message, PROSE).await;
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
@@ -120,13 +110,8 @@ pub fn the_measure_is_the_dialogs_width_less_its_gutters() {
 
 pub fn opening_find_keeps_the_reading_position() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Long", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Long", "x", 10).await;
         let body = (1..=300)
             .map(|n| format!("Line {n} of a long message about the harbour."))
             .collect::<Vec<_>>()
@@ -201,15 +186,10 @@ fn pixel(texture: &gdk::Texture, x: i32, y: i32) -> [u8; 3] {
 
 pub fn the_columns_ground_is_the_dialogs_own_in_light_and_dark() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         manager.set_color_scheme(adw::ColorScheme::ForceLight);
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Ground", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Ground", "x", 10).await;
         fixture.write_body(message, "A short line.").await;
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
@@ -263,13 +243,8 @@ fn line_box(glyphs: postio_render::Rect, line_height: f64) -> (f64, f64) {
 
 pub fn a_plain_list_draws_as_a_list_with_the_handoffs_rhythm() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "List", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("List", "x", 10).await;
         fixture
             .write_body(
                 message,
@@ -305,9 +280,6 @@ pub fn a_plain_list_draws_as_a_list_with_the_handoffs_rhythm() {
 
 pub fn the_attribution_sits_between_the_sign_off_and_the_toggle() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(("Lena Park", "lena@example.com"), "Reply", "x", 10)
@@ -382,13 +354,8 @@ pub fn the_attribution_sits_between_the_sign_off_and_the_toggle() {
 
 pub fn the_body_ends_at_its_last_line() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Ends", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Ends", "x", 10).await;
         fixture
             .write_body(message, "First paragraph.\n\nThe last line.")
             .await;

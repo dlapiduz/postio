@@ -9,8 +9,6 @@ use postio_gtk::window::FocusWindow;
 use postio_storage::key::{Purpose, StoreKey};
 use postio_widgets::startup::{Phase, Timeline};
 
-use crate::support;
-
 fn keyring(key: &StoreKey) -> Arc<dyn SecretStore> {
     let secrets = MemorySecretStore::default();
     postio_session::blocking::now(secrets.store(
@@ -23,9 +21,6 @@ fn keyring(key: &StoreKey) -> Arc<dyn SecretStore> {
 
 pub fn the_timeline_reaches_the_frame_with_mail_in_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a scratch directory");
         let store = directory.path().join("postio.db");
         let key = StoreKey::generate();

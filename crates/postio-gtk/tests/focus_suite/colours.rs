@@ -8,9 +8,6 @@ fn luminance(colour: &gtk::gdk::RGBA) -> f32 {
 
 pub fn the_roles_resolve_and_follow_the_system_into_dark() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         manager.set_color_scheme(adw::ColorScheme::ForceLight);
         let (_fixture, window) = support::three_in_the_inbox().await;
@@ -52,19 +49,11 @@ pub fn the_roles_resolve_and_follow_the_system_into_dark() {
 
 pub fn the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         manager.set_color_scheme(adw::ColorScheme::ForceLight);
         let fixture = support::Fixture::empty().await;
         let (message, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Budget",
-                "Can you approve it?",
-                5,
-            )
+            .file_from_ada("Budget", "Can you approve it?", 5)
             .await;
         fixture.ask(message, "Can you approve it?").await;
         let (window, _client) = fixture.open().await;

@@ -5,16 +5,9 @@ use crate::support::{self, Fixture};
 
 pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Tide gate", "", 5)
-            .await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Older", "", 50)
-            .await;
+        let (message, _) = fixture.file_from_ada("Tide gate", "", 5).await;
+        fixture.file_from_ada("Older", "", 50).await;
         let (host, sink) = fixture.host_telling();
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
@@ -23,10 +16,7 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
             host,
             &postio_config::Config::default(),
         ));
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 2).await;
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Return opened the message");
         assert_eq!(reading.shown(), Some(message));
@@ -83,16 +73,9 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
 
 pub fn a_body_the_server_refuses_stops_saying_it_is_downloading() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Tide gate", "", 5)
-            .await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Older", "", 50)
-            .await;
+        let (message, _) = fixture.file_from_ada("Tide gate", "", 5).await;
+        fixture.file_from_ada("Older", "", 50).await;
         let (host, sink) = fixture.host_telling();
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
@@ -101,10 +84,7 @@ pub fn a_body_the_server_refuses_stops_saying_it_is_downloading() {
             host,
             &postio_config::Config::default(),
         ));
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 2).await;
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Return opened the message");
         assert!(

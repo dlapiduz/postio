@@ -100,17 +100,12 @@ fn leaving(draft: &Draft, identity: &Identity) -> String {
 
 pub fn the_same_content_from_either_composer_leaves_as_the_same_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
             postio_storage::test_support::mailbox(&connection, &fixture.account, "Drafts").await;
         }
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
         let session =

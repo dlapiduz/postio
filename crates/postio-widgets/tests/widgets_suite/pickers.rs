@@ -29,10 +29,6 @@ fn anchored() -> (gtk::Window, gtk::Button) {
 }
 
 pub fn two_picks_the_second_preset_and_tab_focuses_the_date_entry() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, anchor) = anchored();
     let now = local_at(2026, 9, 26, 16, 9);
     let picker = WhenPicker::new(Keymap::defaults(), When::Snooze);

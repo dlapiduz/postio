@@ -6,11 +6,6 @@ use postio_widgets::reader::Reader;
 use crate::support_reader::settle;
 
 pub fn a_dropped_reader_releases_its_view() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
     let weak = {
         let reader = Reader::new(Rc::new(|_content_id: &str| None));
         let weak = reader.view().downgrade();
@@ -32,11 +27,6 @@ pub fn a_dropped_reader_releases_its_view() {
 }
 
 pub fn readers_do_not_accumulate_views() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
     let mut weaks = Vec::new();
     for _ in 0..5 {
         let reader = Reader::new(Rc::new(|_content_id: &str| None));

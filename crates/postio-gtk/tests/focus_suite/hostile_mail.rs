@@ -15,9 +15,6 @@ fn cursor_subject(window: &postio_gtk::window::FocusWindow) -> Option<String> {
 
 pub fn each_hostile_message_opens_and_the_app_keeps_answering() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let fixtures = test_corpus::by_category(Category::Hostile);
         assert!(fixtures.len() >= 5, "the corpus has its hostile fixtures");

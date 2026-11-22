@@ -36,9 +36,6 @@ impl SecretStore for Counting {
 
 pub fn the_store_opens_behind_a_window_that_is_already_up() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a store directory");
         let store = directory.path().join("postio.db");
 
@@ -102,9 +99,6 @@ pub fn the_store_opens_behind_a_window_that_is_already_up() {
 /// over, since a second open would read the keyring and open the file again.
 pub fn the_store_starts_opening_before_there_is_a_window() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a store directory");
         let secrets = Arc::new(Counting::default());
         let opener = Opener::at(

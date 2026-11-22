@@ -1,16 +1,12 @@
 use std::time::{Duration, Instant};
 
+use gtk::glib;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_widgets::jank;
 
 use postio_test_support::logs::Captured;
 
 pub fn a_blocked_main_loop_is_reported_with_the_action_before_it() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let captured = Captured::default();
     let subscriber = tracing_subscriber::fmt()
         .with_writer(captured.clone())

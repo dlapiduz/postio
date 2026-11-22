@@ -12,7 +12,6 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
-use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use postio_model::address::EmailAddress;
@@ -27,11 +26,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         Some("main"),
         "this case must run on the main thread -- see `main` below"
     );
-
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
 
     let window = gtk::Window::new();
     window.set_default_size(600, 500);
@@ -584,11 +578,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
 /// `postio_ui::test_support` is only worth having if its numbers move when the reader moves;
 /// `postio-ui` cannot build a `Reader`.
 pub fn the_counters_see_what_the_reader_actually_does() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
     let surfaces_before = postio_ui::test_support::surfaces_created();
     let held_before = postio_ui::test_support::surfaces_held();
     let renders_before = postio_ui::test_support::renders_issued();
@@ -652,10 +641,6 @@ pub fn the_counters_see_what_the_reader_actually_does() {
 /// The constructor used to end in `clear()`, whose empty load starts the web process inside the
 /// startup burst for a pane nobody had opened (#1603).
 pub fn a_new_reader_loads_nothing_until_it_is_asked_to() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let before = postio_ui::test_support::renders_issued();
     let reader = Reader::with_allowlist(
         Rc::new(NoBlobs),

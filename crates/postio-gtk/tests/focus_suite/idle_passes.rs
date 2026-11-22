@@ -38,13 +38,8 @@ async fn hits(fixture: &Fixture, account: AccountId, query: &str) -> Vec<Message
 
 pub fn the_idle_passes_wait_for_the_first_frame() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (target, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 5)
-            .await;
+        let (target, _) = fixture.file_from_ada("Atlas budget", "x", 5).await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
             MessageRepository::new(&connection)

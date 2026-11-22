@@ -4,9 +4,6 @@ use crate::support;
 
 pub fn a_registered_command_reaches_the_key_map_with_its_key() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let ext = registry::register(registry::ExtCommand {
             id: "test:sort-by-sender".to_owned(),
             title: "Sort by sender".to_owned(),

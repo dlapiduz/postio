@@ -3,7 +3,7 @@ use std::time::Duration;
 use gtk::prelude::*;
 use postio_widgets::storyboard::settle::{Settings, Verdict, settle};
 
-use super::storyboard_support::{display, show};
+use super::storyboard_support::show;
 
 fn window_with(label: &gtk::Label) -> gtk::Window {
     let window = gtk::Window::new();
@@ -21,9 +21,6 @@ fn quick() -> Settings {
 }
 
 pub fn a_static_window_settles() {
-    if !display() {
-        return;
-    }
     let label = gtk::Label::new(Some("nothing moves here"));
     let window = window_with(&label);
 
@@ -40,9 +37,6 @@ pub fn a_static_window_settles() {
 }
 
 pub fn a_change_after_settling_is_a_jump_with_both_frames() {
-    if !display() {
-        return;
-    }
     let label = gtk::Label::new(Some("before"));
     let window = window_with(&label);
     // Counted on the frame clock, not timed: a wall-clock 250 ms landed before the settle on a
@@ -79,9 +73,6 @@ pub fn a_change_after_settling_is_a_jump_with_both_frames() {
 }
 
 pub fn an_empty_window_is_blank() {
-    if !display() {
-        return;
-    }
     let label = gtk::Label::new(Some("never realised"));
     label.set_visible(false);
     let window = gtk::Window::new();
@@ -101,9 +92,6 @@ pub fn an_empty_window_is_blank() {
 }
 
 pub fn a_window_that_never_stops_changing_is_unsettled() {
-    if !display() {
-        return;
-    }
     let label = gtk::Label::new(Some("0"));
     let window = window_with(&label);
     let mut count = 0u32;

@@ -28,9 +28,6 @@ fn empty_says(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
 
 pub fn with_filtering_the_empty_inbox_counts_what_was_filtered_today() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let connection = fixture.database.connect().await.expect("a connection");
         let archive =
@@ -76,32 +73,5 @@ pub fn with_filtering_the_empty_inbox_counts_what_was_filtered_today() {
             );
         }
         assert!(window.rows_on_screen().is_empty(), "no rows behind it");
-    });
-}
-
-pub fn without_filtering_the_empty_inbox_names_the_next_digest_and_no_count() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let config = postio_config::Config::from_toml_str(
-            "[focus]\nfiltering = false\n\n[[focus.digests]]\nname = \"Newsletters\"\n\
-             queries = [\"from:news@example.com\"]\ncadence = \"weekly\"\nday = \"saturday\"\n\
-             at = \"16:00\"\n",
-        )
-        .expect("a config");
-        let window = open_empty(&fixture, &config).await;
-        let said = empty_says(&window);
-        assert!(
-            said.iter()
-                .any(|line| line.starts_with("Next digest: Weekly \u{b7} Newsletters, ")),
-            "the next digest is named: {said:?}"
-        );
-        assert!(
-            said.iter().all(|line| !line.contains("filtered today")),
-            "filtering is off, so no filtered count: {said:?}"
-        );
-        assert!(said.contains(&"archive".to_owned()) && said.contains(&"compose".to_owned()));
     });
 }

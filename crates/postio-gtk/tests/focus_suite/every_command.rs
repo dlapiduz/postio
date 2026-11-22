@@ -7,13 +7,8 @@ use std::path::Path;
 
 use postio_storyboard::coverage::Effect;
 
-use crate::support;
-
 pub fn every_bound_command_shows_or_is_a_listed_gap() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let all = postio_gtk::demo::storyboard::every_command(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../storyboards/gaps/focus.toml"),
         )

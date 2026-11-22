@@ -82,13 +82,8 @@ async fn laid_out(surface: &impl IsA<gtk::Widget>) {
 
 pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         fixture.label_in(message, "Harbor", "#3a7d44").await;
         let (window, _client) = fixture.open().await;
@@ -131,9 +126,6 @@ pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
 
 pub fn the_digests_icon_buttons_keep_their_own_shape() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (fixture, _, _) = crate::digest::delivered_holding().await;
         let (window, _client) = fixture.open().await;
         let digest = crate::digest::open_digest(&window).await;
@@ -145,9 +137,6 @@ pub fn the_digests_icon_buttons_keep_their_own_shape() {
 
 pub fn the_settings_icon_buttons_keep_their_own_shape() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, _directory, _path) = crate::settings::one_message_under(
             "[saved_searches.receipts]\nquery = \"in:Receipts\"\npinned = true\n",
         )

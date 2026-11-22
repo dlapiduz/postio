@@ -79,9 +79,6 @@ fn durations(css: &str) -> Vec<(String, f64)> {
 
 pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         for (name, css) in [
             ("focus.css", postio_gtk::style::SURFACES),
             ("focus-colours.css", postio_gtk::style::COLOURS),
@@ -97,14 +94,7 @@ pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
 
         let fixture = Fixture::empty().await;
         for (subject, minutes) in [("Budget", 5), ("Harbor draft", 9)] {
-            let (message, _) = fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    subject,
-                    "Hello.",
-                    minutes,
-                )
-                .await;
+            let (message, _) = fixture.file_from_ada(subject, "Hello.", minutes).await;
             fixture.write_body(message, "Hello.").await;
         }
         let (host, sink) = fixture.host_telling();
@@ -115,10 +105,7 @@ pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
             host,
             &postio_config::Config::default(),
         ));
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 2).await;
         assert!(sink.emit(Event::ConnectionChanged {
             account: fixture.account.id,
             state: ConnectionState::Offline,

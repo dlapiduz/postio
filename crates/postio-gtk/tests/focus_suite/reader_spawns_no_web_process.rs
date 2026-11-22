@@ -58,9 +58,6 @@ async fn spend(duration: Duration) {
 
 pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         for index in 0..11_i64 {
             let body = format!(
@@ -68,8 +65,7 @@ pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
                  few sentences so the body has lines to lay out and draw."
             );
             let (message, _) = fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
+                .file_from_ada(
                     &format!("Conversation {index}"),
                     "A line of text.",
                     10 + index,

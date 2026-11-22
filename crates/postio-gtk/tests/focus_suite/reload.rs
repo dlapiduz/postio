@@ -43,28 +43,15 @@ fn archive_cap(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
 
 pub fn a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a config directory");
         let path = directory.path().join("config.toml");
         std::fs::write(&path, "").expect("an empty config");
         let fixture = Fixture::empty().await;
         for (subject, minutes) in [("First", 10), ("Second", 20), ("Third", 30)] {
-            fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    subject,
-                    "A line.",
-                    minutes,
-                )
-                .await;
+            fixture.file_from_ada(subject, "A line.", minutes).await;
         }
         let window = open_following(&fixture, &path).await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 3).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 3).await;
         support::keys(&window, &["j", "x"]);
         assert!(
             crate::settle_until(async || archive_cap(&window) == ["e"]).await,
@@ -112,9 +99,6 @@ pub fn a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map() {
 
 pub fn a_saved_focus_section_reaches_the_empty_inbox() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a config directory");
         let path = directory.path().join("config.toml");
         std::fs::write(&path, "[focus]\nfiltering = true\n").expect("a config");
@@ -167,9 +151,6 @@ fn composed(window: &postio_gtk::window::FocusWindow) -> String {
 
 pub fn a_saved_compose_section_reaches_the_next_reply() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(("Lena Park", "lena@example.org"), "Harbor", "x", 10)
@@ -214,9 +195,6 @@ pub fn a_saved_compose_section_reaches_the_next_reply() {
 
 pub fn a_saved_reader_zoom_reaches_the_open_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(("Lena Park", "lena@example.org"), "Harbor", "x", 10)
@@ -249,13 +227,8 @@ pub fn a_saved_reader_zoom_reaches_the_open_message() {
 
 pub fn editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        fixture.file_from_ada("Budget", "x", 10).await;
         let blobs = fixture.blob_store();
         let mut written = Vec::new();
         {

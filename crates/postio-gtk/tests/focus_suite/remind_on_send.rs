@@ -8,9 +8,6 @@ use crate::support::{self, Fixture};
 
 pub fn mod_h_in_the_composer_sets_a_reminder_that_sending_keeps() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
@@ -25,9 +22,7 @@ pub fn mod_h_in_the_composer_sets_a_reminder_that_sending_keeps() {
                 .await
                 .expect("an identity");
         }
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let window = postio_gtk::window::FocusWindow::new(None);
         gtk::prelude::GtkWindowExt::present(&window);
         let session =

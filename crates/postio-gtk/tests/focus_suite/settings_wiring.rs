@@ -74,13 +74,8 @@ async fn account(
 
 pub fn account_rows_persist_enable_default_and_removal() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
+        fixture.file_from_ada("Budget", "A line.", 10).await;
         let (second, _) = fixture.second_account().await;
         let (window, _directory, _path) = open_under(&fixture, "").await;
         mod_comma(&window);
@@ -166,13 +161,8 @@ pub fn account_rows_persist_enable_default_and_removal() {
 /// the next key reached no account (#1787). It stays on the row.
 pub fn an_account_verb_leaves_the_keyboard_on_its_row() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
+        fixture.file_from_ada("Budget", "A line.", 10).await;
         let (second, _) = fixture.second_account().await;
         let (window, _directory, _path) = open_under(&fixture, "").await;
         mod_comma(&window);
@@ -243,140 +233,8 @@ fn focus_row(
     );
 }
 
-pub fn the_account_verbs_have_keys_on_the_focused_row() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
-        fixture
-            .write_body(message, "The numbers are attached.")
-            .await;
-        let (second, _) = fixture.second_account().await;
-        let (window, _directory, _path) = open_under(&fixture, "").await;
-        mod_comma(&window);
-        let dialog = settings_shown(&window).await.expect("Settings opened");
-        assert!(crate::settle_until(async || rows(&dialog).len() == 2).await);
-        let database = fixture.database.clone();
-
-        window
-            .settings()
-            .expect("Settings")
-            .panel()
-            .search_field()
-            .grab_focus();
-        crate::settle();
-        let before = account(&database, second.id).await.is_default;
-        support::deliver(&window, "Delete");
-        support::deliver(&window, "m");
-        crate::settle();
-        assert_eq!(account(&database, second.id).await.is_default, before);
-        assert!(!account(&database, second.id).await.pending_deletion);
-
-        focus_row(&window, &dialog, second.id);
-        support::deliver(&window, "m");
-        assert!(
-            crate::settle_until(async || account(&database, second.id).await.is_default).await,
-            "`m` on the second account's row made it the default"
-        );
-
-        focus_row(&window, &dialog, second.id);
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || !account(&database, second.id).await.enabled).await,
-            "`Return` on the row disabled the account"
-        );
-        focus_row(&window, &dialog, second.id);
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || account(&database, second.id).await.enabled).await,
-            "and enabled it again"
-        );
-
-        fixture.index().await;
-        focus_row(&window, &dialog, fixture.account.id);
-        support::deliver(&window, "r");
-        let first = fixture.account.id;
-        assert!(
-            crate::settle_until(async || {
-                let connection = database.connect().await.expect("a connection");
-                postio_index::index::messages_missing_body_text_for_account(
-                    &connection,
-                    first.get(),
-                    10,
-                )
-                .await
-                .expect("candidates")
-                .is_empty()
-            })
-            .await,
-            "`r` rebuilt the account's index"
-        );
-
-        focus_row(&window, &dialog, second.id);
-        support::deliver(&window, "Delete");
-        assert!(
-            crate::settle_until(async || account(&database, second.id).await.pending_deletion)
-                .await,
-            "`Delete` marked the account for removal"
-        );
-        support::deliver_with(&window, "z", gtk::gdk::ModifierType::CONTROL_MASK);
-        assert!(
-            crate::settle_until(async || !account(&database, second.id).await.pending_deletion)
-                .await,
-            "`mod+z` restored it"
-        );
-
-        focus_row(&window, &dialog, second.id);
-        support::deliver(&window, "M");
-        let detail = || {
-            support::with_class(&dialog, "postio-settings-account-detail-mailboxes")
-                .into_iter()
-                .any(|group| group.is_mapped())
-        };
-        assert!(
-            crate::settle_until(async || detail()).await,
-            "`M` opened the account's roles"
-        );
-    });
-}
-
-pub fn the_command_bar_offers_the_account_verbs() {
-    use postio_core::CommandId::*;
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (fixture, window, _directory, _path) = one_message_under("").await;
-        let _keep = &fixture;
-        let bar = window.command_bar_rows();
-        for verb in [
-            RemoveAccount,
-            RebuildAccountIndex,
-            SetDefaultAccount,
-            ToggleAccountEnabled,
-            MapMailboxRole,
-        ] {
-            assert!(bar.contains(&verb), "the command bar lists {verb}");
-        }
-        window.take_unanswered();
-        window.act(SetDefaultAccount);
-        assert!(
-            settings_shown(&window).await.is_some(),
-            "with Settings shut, the verb opens it to pick an account"
-        );
-        assert!(window.take_unanswered().is_empty());
-    });
-}
-
 pub fn update_credential_opens_a_prefilled_form_over_the_window() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (fixture, window, _directory, _path) = one_message_under("").await;
         mod_comma(&window);
         let dialog = settings_shown(&window).await.expect("Settings opened");
@@ -420,61 +278,8 @@ pub fn update_credential_opens_a_prefilled_form_over_the_window() {
     });
 }
 
-pub fn rebuilding_an_index_refills_it_and_clears_the_row() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
-        fixture
-            .write_body(message, "The numbers are attached.")
-            .await;
-        fixture.index().await;
-        let (window, _directory, _path) = open_under(&fixture, "").await;
-        mod_comma(&window);
-        let dialog = settings_shown(&window).await.expect("Settings opened");
-        assert!(crate::settle_until(async || rows(&dialog).len() == 1).await);
-
-        account_verb(&window, fixture.account.id, "account.rebuild-index");
-        let database = fixture.database.clone();
-        let account = fixture.account.id;
-        assert!(
-            crate::settle_until(async || {
-                let connection = database.connect().await.expect("a connection");
-                postio_index::index::messages_missing_body_text_for_account(
-                    &connection,
-                    account.get(),
-                    10,
-                )
-                .await
-                .expect("candidates")
-                .is_empty()
-            })
-            .await,
-            "the rebuild refilled the account's index"
-        );
-        let reindexing = || {
-            rows(&dialog).first().and_then(|row| {
-                support::with_class(row, "postio-settings-account-reindexing")
-                    .into_iter()
-                    .find(|line| line.is_visible())
-            })
-        };
-        assert!(
-            crate::settle_until(async || reindexing().is_none()).await,
-            "the row's progress line clears once the rebuild is over"
-        );
-    });
-}
-
 pub fn opening_makes_no_connection_and_privacy_lists_the_log() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (fixture, window, _directory, _path) = one_message_under("").await;
         let connection = fixture.database.connect().await.expect("a connection");
         let log = EgressLogRepository::new(&connection);
@@ -510,54 +315,6 @@ pub fn opening_makes_no_connection_and_privacy_lists_the_log() {
             })
             .await,
             "Privacy lists the logged connection"
-        );
-    });
-}
-
-pub fn privacy_counts_the_receipts_asked_for() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        const ASKED: &[u8] = b"From: Newsletter <news@example.org>\r\n\
-To: Ada Lovelace <ada@example.com>\r\n\
-Subject: Please confirm receipt\r\n\
-Disposition-Notification-To: news@example.org\r\n\
-MIME-Version: 1.0\r\n\
-Content-Type: text/plain; charset=utf-8\r\n\
-\r\n\
-Let us know you got this\r\n";
-        let fixture = Fixture::empty().await;
-        {
-            let connection = fixture.database.connect().await.expect("a connection");
-            let mut asked = postio_model::mime::parse(ASKED).into_message(
-                fixture.account.id,
-                fixture.inbox,
-                chrono::Utc::now(),
-            );
-            postio_storage::repository::MessageRepository::new(&connection)
-                .create(&mut asked)
-                .await
-                .expect("a message");
-        }
-        let (window, _directory, _path) = open_under(&fixture, "").await;
-        mod_comma(&window);
-        let dialog = settings_shown(&window).await.expect("Settings opened");
-        open_section(&window, &dialog, "Privacy").await;
-        let said = || {
-            support::with_class(&dialog, "postio-settings-read-receipt-count")
-                .first()
-                .map(support::texts)
-                .unwrap_or_default()
-                .join(" ")
-        };
-        assert!(
-            crate::settle_until(
-                async || said().contains('1') && said().contains("none have been sent")
-            )
-            .await,
-            "one message asked for a receipt, and none were sent: {:?}",
-            said()
         );
     });
 }

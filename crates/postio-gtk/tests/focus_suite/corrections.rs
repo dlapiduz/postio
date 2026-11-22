@@ -4,23 +4,13 @@ use crate::support::{self, Fixture};
 
 pub fn three_dismissals_write_a_stop_marker_to_focus_s_config() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a config directory");
         let path = directory.path().join("config.toml");
         std::fs::write(&path, "").expect("an empty config");
         let fixture = Fixture::empty().await;
         let mut asked = Vec::new();
         for (subject, minutes) in [("One", 10), ("Two", 20), ("Three", 30)] {
-            let (message, _) = fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    subject,
-                    "A question.",
-                    minutes,
-                )
-                .await;
+            let (message, _) = fixture.file_from_ada(subject, "A question.", minutes).await;
             fixture.ask(message, "Can you approve it?").await;
             asked.push(message);
         }

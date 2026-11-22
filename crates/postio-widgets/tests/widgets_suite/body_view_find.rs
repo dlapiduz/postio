@@ -1,14 +1,9 @@
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::{BodyView, find::FindBar};
 
 use crate::body_view::{content, until};
 
 pub fn find_highlights_steps_and_survives_a_re_render() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     let view = BodyView::new(crate::support_reader::reader_deadline());
     let bar = FindBar::new(&view);

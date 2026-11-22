@@ -1,14 +1,9 @@
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::BodyView;
 
 use crate::body_view::{content, until};
 
 pub fn the_accessible_text_is_the_text_index() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(crate::support_reader::reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()

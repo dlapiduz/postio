@@ -22,9 +22,6 @@ fn keyring(key: &StoreKey) -> Arc<dyn SecretStore> {
 
 pub fn an_account_with_no_credential_offers_the_repair() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a scratch directory");
         let store = directory.path().join("postio.db");
         let key = StoreKey::generate();

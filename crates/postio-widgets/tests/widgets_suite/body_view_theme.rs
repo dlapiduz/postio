@@ -1,15 +1,11 @@
+use gtk::glib;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_render::Presentation;
 use postio_widgets::body_view::BodyView;
 
 use crate::body_view::{content, until};
 
 pub fn a_theme_change_re_renders_once_and_keeps_the_place() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let style = adw::StyleManager::default();
     style.set_color_scheme(adw::ColorScheme::ForceLight);
     let view = BodyView::new(crate::support_reader::reader_deadline());

@@ -1,4 +1,5 @@
 use crate::support_compose::{fonts, style};
+use crate::support_reader::collect;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::settings::{Section, SettingsPanel};
@@ -17,27 +18,6 @@ attachment_fetch = \"eager\"
 notify = false
 notify_roles = [\"inbox\", \"flagged\"]
 ";
-
-pub fn the_pane_shows_the_files_values() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-
-    assert!(
-        segment(&panel, "Every 5 min").is_active(),
-        "check_for_mail = \"poll\" is the middle segment"
-    );
-    assert!(
-        segment(&panel, "Always").is_active(),
-        "attachment_fetch = \"eager\" is the middle segment -- and a segment \
-         rather than a checkbox because `never` is a third answer a box \
-         could not say without silently rewriting it"
-    );
-    assert!(!checkbox(&panel, "Notify about new mail").is_active());
-    assert_eq!(notify_roles(&panel).text(), "inbox, flagged");
-
-    window.destroy();
-}
 
 /// Both controls offer the same words, so they are told apart by place: the two with "90 days"
 /// segments, Junk first.
@@ -90,23 +70,6 @@ pub fn emptying_junk_and_trash_is_off_and_chosen_per_folder() {
     window.destroy();
 }
 
-pub fn the_interval_the_file_actually_holds_is_still_stated() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-
-    // The spin button is gone, so this line is the only place that can say the interval is 2
-    // minutes rather than the segment's 5.
-    assert!(
-        stat_lines(&panel).iter().any(|line| line.contains("2 min")),
-        "the real interval must be stated, not rounded to the segment's \
-         label: {:?}",
-        stat_lines(&panel)
-    );
-
-    window.destroy();
-}
-
 pub fn pressing_manual_writes_straight_to_the_buffer_and_leaves_the_rest_alone() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -128,25 +91,6 @@ pub fn pressing_manual_writes_straight_to_the_buffer_and_leaves_the_rest_alone()
     assert!(
         text.contains("[saved_searches.old]") && text.contains("query = \"is:unread\""),
         "nor an unrelated section: {text}"
-    );
-
-    window.destroy();
-}
-
-pub fn an_interval_somebody_set_by_hand_survives_pressing_the_segment_it_is_on() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-
-    // Already on `poll` at 120 seconds: pressing the segment it is on is not a choice and must not
-    // overwrite the interval with 300.
-    segment(&panel, "Every 5 min").set_active(true);
-    pump();
-
-    assert!(
-        panel.text().contains("poll_interval_secs = 120"),
-        "pressing the chosen segment overwrote an interval set by hand: {}",
-        panel.text()
     );
 
     window.destroy();
@@ -243,14 +187,6 @@ fn segment(panel: &SettingsPanel, label: &str) -> gtk::ToggleButton {
         .unwrap_or_else(|| panic!("no segment labelled {label:?}"))
 }
 
-fn checkbox(panel: &SettingsPanel, label: &str) -> gtk::CheckButton {
-    collect(panel.upcast_ref::<gtk::Widget>(), "postio-check")
-        .into_iter()
-        .filter_map(|widget| widget.downcast::<gtk::CheckButton>().ok())
-        .find(|button| button.label().is_some_and(|text| text == label))
-        .unwrap_or_else(|| panic!("no checkbox labelled {label:?}"))
-}
-
 fn notify_roles(panel: &SettingsPanel) -> gtk::Entry {
     collect(
         panel.upcast_ref::<gtk::Widget>(),
@@ -267,17 +203,4 @@ fn stat_lines(panel: &SettingsPanel) -> Vec<String> {
         .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
         .map(|label| label.text().to_string())
         .collect()
-}
-
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }

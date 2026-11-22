@@ -70,10 +70,6 @@ fn notice(composer: &postio_widgets::composer::Composer) -> gtk::Label {
 }
 
 pub fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_not() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

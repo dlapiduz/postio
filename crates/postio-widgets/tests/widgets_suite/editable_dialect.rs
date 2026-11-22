@@ -2,7 +2,6 @@ use crate::support_compose::settle_until as settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_body::{Block, Document, Inline, parse};
 use webkit6::prelude::*;
@@ -59,11 +58,6 @@ fn round_trips(dialect: &str) -> Document {
 }
 
 pub fn webkit_editing_gestures_stay_inside_the_canonical_subset() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
-
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
 

@@ -11,9 +11,6 @@ fn key(command: CommandId) -> String {
 
 pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
 
         assert_eq!(key(CommandId::Search), "/");

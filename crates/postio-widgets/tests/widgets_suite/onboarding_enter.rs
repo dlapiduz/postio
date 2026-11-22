@@ -4,10 +4,6 @@ use adw::prelude::*;
 use postio_widgets::onboarding::{Onboarding, Server, Settings, Status};
 
 pub fn return_does_the_right_thing_in_every_field() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
     let display = gtk::gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

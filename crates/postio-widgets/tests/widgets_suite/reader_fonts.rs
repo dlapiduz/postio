@@ -2,16 +2,11 @@ use crate::support_reader::pump;
 use std::rc::Rc;
 use std::time::Instant;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_model::message::MessageBody;
 use postio_widgets::reader::{BlobSource, Reader, RemoteImageAllowList};
 
 pub fn the_faces_are_the_readers_own_and_not_carried_by_the_document() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, reader) = reader("allowlist");
     reader.render(&body("<p>The tide gate interlock is fixed.</p>"), None);
     wait_for_text(&reader, "tide gate");
@@ -46,10 +41,6 @@ pub fn the_faces_are_the_readers_own_and_not_carried_by_the_document() {
 /// Font discovery is the one slow thing a first render could wait on; warming starts it on the
 /// first idle turn.
 pub fn a_warmed_reader_draws_its_first_message_in_full() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, reader) = reader("warm-allowlist");
     reader.warm();
     reader.render(

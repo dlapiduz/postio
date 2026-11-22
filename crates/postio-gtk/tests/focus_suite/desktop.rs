@@ -20,9 +20,6 @@ pub fn focus_says_which_application_it_is() {
 pub fn the_window_is_titled_postio() {
     use gtk::prelude::GtkWindowExt;
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let window = postio_gtk::window::FocusWindow::new(None);
         assert_eq!(window.title().as_deref(), Some("Postio"));
     });
@@ -30,9 +27,6 @@ pub fn the_window_is_titled_postio() {
 
 pub fn focus_shows_the_postio_icon() {
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let (_fixture, window) = crate::support::three_in_the_inbox().await;
         let name = postio_gtk::app::ICON_NAME;
         assert_eq!(name, "dev.postio.Postio", "the package's one icon");
@@ -61,9 +55,6 @@ pub fn focus_shows_the_postio_icon() {
 
 pub fn a_postio_link_opens_its_message_and_an_unknown_one_is_refused() {
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let (fixture, window) = crate::support::three_in_the_inbox().await;
         let row = window
             .pane()
@@ -163,13 +154,8 @@ async fn shows_the_mailto(window: &postio_gtk::window::FocusWindow) {
 
 pub fn a_mailto_link_opens_a_composer_with_its_fields_filled() {
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let fixture = crate::support::Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let (window, _client) = fixture.open().await;
         window.open_link(
             "mailto:ada@example.com?subject=Lunch%20on%20Friday&body=Noon%20at%20the%20usual%20place%3F",
@@ -180,9 +166,6 @@ pub fn a_mailto_link_opens_a_composer_with_its_fields_filled() {
 
 pub fn a_mailto_link_that_arrives_before_the_store_waits_for_it() {
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let fixture = crate::support::Fixture::empty().await;
         let window = postio_gtk::window::FocusWindow::new(None);
         gtk::prelude::GtkWindowExt::present(&window);
@@ -203,9 +186,6 @@ pub fn a_mailto_link_that_arrives_before_the_store_waits_for_it() {
 pub fn a_second_activate_has_one_window_and_starts_sync_once() {
     use adw::prelude::*;
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let application = postio_gtk::app::application();
         let _ = application.register(gtk::gio::Cancellable::NONE);
         let none = crate::support::NoAccount::new().await;

@@ -25,10 +25,6 @@ pub fn typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending() 
         std::env::temp_dir().join(format!("postio-composer-autosave-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
@@ -92,10 +88,6 @@ pub fn saving_twice_carries_the_assigned_id_forward_into_the_second_save() {
     ));
     std::fs::create_dir_all(&state_dir).unwrap();
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

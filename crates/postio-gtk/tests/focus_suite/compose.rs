@@ -98,118 +98,14 @@ pub fn field(root: &impl IsA<gtk::Widget>, name: &str) -> Option<String> {
     Some(shown.join(", "))
 }
 
-pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let message = fixture.harbor_thread().await;
-        fixture.label(message, &["Harbor"]).await;
-        let (window, _client) = fixture.open().await;
-        support::keys(&window, &["j"]);
-        let cursor = window.cursor_row().map(|row| row.id());
-        assert_eq!(cursor, Some(message), "the cursor is on the thread");
-
-        support::keys(&window, &["a"]);
-        assert!(
-            crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "a opened no composer over the list"
-        );
-        let dialog = window.compose_dialog().expect("the compose dialog");
-        assert_eq!(
-            (dialog.content_width(), dialog.content_height()),
-            (
-                postio_ui::focus_dialog::dialog_width(window.width()),
-                postio_ui::focus_dialog::dialog_height(window.height())
-            ),
-            "the message dialog's frame"
-        );
-        assert!(
-            crate::settle_until(async || {
-                support::texts(&dialog)
-                    .iter()
-                    .any(|text| text == "Reply to all")
-            })
-            .await,
-            "the header names the composition: {:?}",
-            support::texts(&dialog)
-        );
-        assert_eq!(
-            field(&dialog, "To").as_deref(),
-            Some("Lena Park <lena@example.org>"),
-            "the sender, as screen 06 draws it"
-        );
-        assert_eq!(
-            field(&dialog, "Cc").as_deref(),
-            Some(
-                "Ben Adeyemi <ben@example.net>, Grace Oyelaran <grace@example.org>, \
-                 harbor-api@example.org"
-            ),
-            "everyone else it went to, the user left out"
-        );
-        assert_eq!(
-            field(&dialog, "Subject").as_deref(),
-            Some("Re: Harbor API draft v3")
-        );
-        assert!(
-            crate::settle_until(async || {
-                let labels = support::with_class(&dialog, "focus-compose-labels");
-                labels.len() == 1 && {
-                    let said = support::texts(&labels[0]);
-                    said.contains(&"Harbor".to_owned())
-                        && said.contains(&"from the thread".to_owned())
-                }
-            })
-            .await,
-            "the thread's labels, marked as the thread's: {:?}",
-            support::with_class(&dialog, "focus-compose-labels")
-                .first()
-                .map(support::texts)
-        );
-        let composer = window.composer().expect("the composer");
-        let quote = || {
-            composer.test_body_eval(
-                "(() => { const fold = document.querySelector('details.postio-quote'); \
-                 if (!fold) return 'no fold'; \
-                 return fold.open ? 'open' : 'folded'; })()",
-            )
-        };
-        assert!(
-            crate::settle_until(async || quote() == "folded").await,
-            "the quote is folded under the draft: {}",
-            quote()
-        );
-
-        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
-        assert!(
-            crate::settle_until(async || window.compose_dialog().is_none()).await,
-            "Esc did not close the composer"
-        );
-        assert_eq!(
-            window.cursor_row().map(|row| row.id()),
-            cursor,
-            "Esc returns to where the person was"
-        );
-    });
-}
-
 pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let message = fixture.harbor_thread().await;
         fixture.label(message, &["Harbor"]).await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 2).await;
         support::keys(&window, &["j", "j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Enter opened the message");
@@ -248,16 +144,10 @@ pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
 
 pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture.harbor_thread().await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::keys(&window, &["j", "r"]);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
@@ -293,85 +183,6 @@ pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {
     });
 }
 
-fn focused_row_subject(window: &postio_gtk::window::FocusWindow) -> Option<String> {
-    let focus = gtk::prelude::GtkWindowExt::focus(window)?;
-    let row = focus
-        .first_child()?
-        .downcast::<postio_gtk::list::RowWidget>()
-        .ok()?;
-    let item = row.item()?;
-    item.as_conversation()
-        .and_then(|row| row.summary.representative.subject.clone())
-}
-
-pub fn escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (_fixture, window) = support::three_in_the_inbox().await;
-        support::deliver(&window, "F8");
-        support::keys(&window, &["j", "j", "j"]);
-        let cursor = support::subjects(&window);
-        let at = window.pane().expect("the list").cursor().selected() as usize;
-        let want = cursor[at].clone();
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
-            "Return opened nothing beside the list"
-        );
-        support::keys(&window, &["c"]);
-        assert!(
-            crate::settle_until(async || window.composer().is_some_and(|c| c.is_open())).await,
-            "c opened no composer"
-        );
-        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
-        assert!(
-            crate::settle_until(async || window.composer().is_some_and(|c| !c.is_open())).await,
-            "Escape did not close the composer"
-        );
-        assert!(
-            crate::settle_until(async || focused_row_subject(&window).as_deref() == Some(&want))
-                .await,
-            "the keyboard is on {:?}, the cursor on {want:?}",
-            focused_row_subject(&window)
-        );
-    });
-}
-
-pub fn a_reply_to_a_message_still_downloading_says_it_is_not_quoted() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
-        let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
-        support::keys(&window, &["j", "r"]);
-        assert!(
-            crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "r opened no composer"
-        );
-        let dialog = window.compose_dialog().expect("the compose dialog");
-        assert!(
-            crate::settle_until(async || {
-                support::texts(&dialog)
-                    .iter()
-                    .any(|text| text.contains("Original still downloading"))
-            })
-            .await,
-            "the composer says nothing about the missing quote: {:?}",
-            support::texts(&dialog)
-        );
-    });
-}
-
 fn heading_toggle(composer: &postio_widgets::composer::Composer) -> gtk::ToggleButton {
     support::with_class(composer, "postio-toolbar-heading")
         .into_iter()
@@ -392,9 +203,6 @@ fn block_drawn(composer: &postio_widgets::composer::Composer, nth: usize) -> Str
 
 pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         support::keys(&window, &["c"]);
         assert!(

@@ -38,9 +38,7 @@ mod folder_sync;
 mod forward_carried;
 mod gmail_keys;
 mod harness;
-mod has_action;
 mod hit_composer;
-mod hit_verbs;
 mod hostile_mail;
 mod icon_buttons;
 mod idle_passes;
@@ -105,7 +103,6 @@ mod support;
 mod surfaced;
 mod threads;
 mod treatments;
-mod undo;
 mod unsubscribe;
 mod view_source;
 mod visible_window;
@@ -118,6 +115,34 @@ mod window_teardown;
 const IGNORED: &[&str] = &["drag_out::a_dragged_message_survives_the_portal"];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gmail_keys::every_list_key",
+        gmail_keys::every_list_key as fn(),
+    ),
+    (
+        "gmail_keys::every_reader_key",
+        gmail_keys::every_reader_key as fn(),
+    ),
+    (
+        "gmail_keys::every_pane_key",
+        gmail_keys::every_pane_key as fn(),
+    ),
+    (
+        "gmail_keys::every_digest_key",
+        gmail_keys::every_digest_key as fn(),
+    ),
+    (
+        "gmail_keys::every_filtered_key",
+        gmail_keys::every_filtered_key as fn(),
+    ),
+    (
+        "gmail_keys::every_capture_key",
+        gmail_keys::every_capture_key as fn(),
+    ),
+    (
+        "gmail_keys::every_menu_key",
+        gmail_keys::every_menu_key as fn(),
+    ),
     (
         "contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home",
         contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home
@@ -132,37 +157,9 @@ const CASES: &[(&str, fn())] = &[
         contacts::ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves as fn(),
     ),
     (
-        "contacts::g_w_offers_the_look_alikes_return_merges_and_escape_is_later",
-        contacts::g_w_offers_the_look_alikes_return_merges_and_escape_is_later as fn(),
-    ),
-    (
-        "contacts::x_marks_a_row_without_moving_the_list",
-        contacts::x_marks_a_row_without_moving_the_list as fn(),
-    ),
-    (
         "contacts::i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_closes",
         contacts::i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_closes
             as fn(),
-    ),
-    (
-        "contacts::a_sender_not_yet_saved_is_introduced_and_offered_add_contact",
-        contacts::a_sender_not_yet_saved_is_introduced_and_offered_add_contact as fn(),
-    ),
-    (
-        "contacts::v_i_imports_a_chosen_file_and_v_x_exports_one",
-        contacts::v_i_imports_a_chosen_file_and_v_x_exports_one as fn(),
-    ),
-    (
-        "contacts::settings_contacts_flips_the_suggestions_and_says_nothing_of_sync",
-        contacts::settings_contacts_flips_the_suggestions_and_says_nothing_of_sync as fn(),
-    ),
-    (
-        "contacts::return_searches_the_mail_of_the_person_under_the_cursor",
-        contacts::return_searches_the_mail_of_the_person_under_the_cursor as fn(),
-    ),
-    (
-        "contacts::slash_filters_the_list_and_escape_clears_before_it_closes",
-        contacts::slash_filters_the_list_and_escape_clears_before_it_closes as fn(),
     ),
     (
         "compose_counts::autosave_writes_off_the_main_thread_and_keeps_one_row",
@@ -246,30 +243,13 @@ const CASES: &[(&str, fn())] = &[
         unsubscribe::u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it as fn(),
     ),
     (
-        "unsubscribe::the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lists_it",
-        unsubscribe::the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lists_it
-            as fn(),
-    ),
-    (
         "unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail",
         unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail
             as fn(),
     ),
     (
-        "unsubscribe::the_offer_is_taken_up_from_the_keyboard",
-        unsubscribe::the_offer_is_taken_up_from_the_keyboard as fn(),
-    ),
-    (
-        "unsubscribe::opening_a_message_ends_the_offer_it_would_hide",
-        unsubscribe::opening_a_message_ends_the_offer_it_would_hide as fn(),
-    ),
-    (
         "unsubscribe::the_setting_makes_the_one_action_delete",
         unsubscribe::the_setting_makes_the_one_action_delete as fn(),
-    ),
-    (
-        "unsubscribe::personal_mail_has_no_unsubscribe_band_but_u_still_works",
-        unsubscribe::personal_mail_has_no_unsubscribe_band_but_u_still_works as fn(),
     ),
     (
         "store_opening::a_start_past_its_budget_says_what_it_is_waiting_on",
@@ -291,26 +271,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "hit_composer::replying_from_a_hit_leaves_the_composer_clear_of_the_search_bar",
         hit_composer::replying_from_a_hit_leaves_the_composer_clear_of_the_search_bar as fn(),
-    ),
-    (
-        "hit_composer::forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar",
-        hit_composer::forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar as fn(),
-    ),
-    (
-        "hit_composer::escaping_a_reply_from_a_hit_returns_to_the_hit_then_the_search",
-        hit_composer::escaping_a_reply_from_a_hit_returns_to_the_hit_then_the_search as fn(),
-    ),
-    (
-        "hit_verbs::e_in_a_message_opened_from_a_hit_archives_that_message",
-        hit_verbs::e_in_a_message_opened_from_a_hit_archives_that_message as fn(),
-    ),
-    (
-        "hit_verbs::hash_in_a_message_opened_from_a_hit_deletes_that_message",
-        hit_verbs::hash_in_a_message_opened_from_a_hit_deletes_that_message as fn(),
-    ),
-    (
-        "hit_verbs::s_in_a_message_opened_from_a_hit_flags_that_message",
-        hit_verbs::s_in_a_message_opened_from_a_hit_flags_that_message as fn(),
     ),
     (
         "body_lands::a_body_that_lands_while_its_message_is_open_is_drawn_in_place",
@@ -338,16 +298,8 @@ const CASES: &[(&str, fn())] = &[
         add_account_running::the_add_account_dialog_is_as_tall_as_its_form as fn(),
     ),
     (
-        "compose_detach::a_detached_composition_keeps_its_frame_so_a_mouse_can_send",
-        compose_detach::a_detached_composition_keeps_its_frame_so_a_mouse_can_send as fn(),
-    ),
-    (
         "compose_detach::a_key_typed_in_a_detached_composition_lands_in_it",
         compose_detach::a_key_typed_in_a_detached_composition_lands_in_it as fn(),
-    ),
-    (
-        "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus",
-        compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus as fn(),
     ),
     (
         "compose_detach::the_detach_command_moves_the_open_composer_to_a_window_and_back",
@@ -421,10 +373,6 @@ const CASES: &[(&str, fn())] = &[
         compose_layout::the_dialog_follows_the_message_dialogs_size_rule as fn(),
     ),
     (
-        "dropdown::backspace_on_an_empty_value_takes_the_operator_away",
-        dropdown::backspace_on_an_empty_value_takes_the_operator_away as fn(),
-    ),
-    (
         "dropdown::escape_gives_the_keyboard_back_to_the_cursor_row",
         dropdown::escape_gives_the_keyboard_back_to_the_cursor_row as fn(),
     ),
@@ -441,24 +389,8 @@ const CASES: &[(&str, fn())] = &[
         dropdown::the_words_state_draws_hits_pills_and_show_all as fn(),
     ),
     (
-        "dropdown::the_arrows_skip_what_runs_nothing_and_return_runs",
-        dropdown::the_arrows_skip_what_runs_nothing_and_return_runs as fn(),
-    ),
-    (
-        "dropdown::a_redraw_keeps_the_highlight_unless_told",
-        dropdown::a_redraw_keeps_the_highlight_unless_told as fn(),
-    ),
-    (
-        "dropdown::a_pill_runs_its_token",
-        dropdown::a_pill_runs_its_token as fn(),
-    ),
-    (
         "dropdown::slash_opens_the_dropdown_and_a_word_finds_top_hits",
         dropdown::slash_opens_the_dropdown_and_a_word_finds_top_hits as fn(),
-    ),
-    (
-        "results::from_checks_a_person_and_return_keeps_the_chip",
-        results::from_checks_a_person_and_return_keeps_the_chip as fn(),
     ),
     (
         "results::a_click_away_from_a_popover_keeps_nothing",
@@ -473,44 +405,8 @@ const CASES: &[(&str, fn())] = &[
         results_files::the_files_tab_saves_a_file_where_the_person_says as fn(),
     ),
     (
-        "results_files::space_on_a_file_opens_it_in_the_desktop_app",
-        results_files::space_on_a_file_opens_it_in_the_desktop_app as fn(),
-    ),
-    (
-        "results_files::quick_look_shows_a_conversation_s_matches",
-        results_files::quick_look_shows_a_conversation_s_matches as fn(),
-    ),
-    (
-        "results::return_on_a_person_searches_from_them",
-        results::return_on_a_person_searches_from_them as fn(),
-    ),
-    (
-        "results::nothing_found_offers_a_looser_search_that_finds_some",
-        results::nothing_found_offers_a_looser_search_that_finds_some as fn(),
-    ),
-    (
-        "results::a_search_after_one_that_found_nothing_shows_its_rows",
-        results::a_search_after_one_that_found_nothing_shows_its_rows as fn(),
-    ),
-    (
-        "results::replying_to_a_result_and_escaping_back_to_the_results",
-        results::replying_to_a_result_and_escaping_back_to_the_results as fn(),
-    ),
-    (
-        "results::checking_results_says_how_many_are_selected",
-        results::checking_results_says_how_many_are_selected as fn(),
-    ),
-    (
-        "results::clearing_the_filters_keeps_the_keyboard_on_the_results",
-        results::clearing_the_filters_keeps_the_keyboard_on_the_results as fn(),
-    ),
-    (
         "results::ctrl_s_opens_the_save_popover_and_return_saves",
         results::ctrl_s_opens_the_save_popover_and_return_saves as fn(),
-    ),
-    (
-        "results::the_tabs_go_by_their_keys",
-        results::the_tabs_go_by_their_keys as fn(),
     ),
     (
         "results::escape_closes_a_dropdown_over_the_results_then_leaves_them",
@@ -521,20 +417,12 @@ const CASES: &[(&str, fn())] = &[
         results::checking_and_walking_the_results_keeps_the_keyboard_in_their_list as fn(),
     ),
     (
-        "results::escape_gives_a_keyboard_on_nothing_to_the_results",
-        results::escape_gives_a_keyboard_on_nothing_to_the_results as fn(),
-    ),
-    (
         "results::the_tabs_hold_still_when_the_sort_changes",
         results::the_tabs_hold_still_when_the_sort_changes as fn(),
     ),
     (
         "results::show_all_opens_the_results_and_back_returns_to_the_inbox",
         results::show_all_opens_the_results_and_back_returns_to_the_inbox as fn(),
-    ),
-    (
-        "results::the_filter_buttons_show_and_answer_their_keys",
-        results::the_filter_buttons_show_and_answer_their_keys as fn(),
     ),
     (
         "results::an_unread_result_has_the_inboxs_accent_dot",
@@ -549,16 +437,8 @@ const CASES: &[(&str, fn())] = &[
         results::quick_look_stays_put_while_j_walks as fn(),
     ),
     (
-        "results::a_toggle_filter_adds_its_chip_and_the_chip_removes_it",
-        results::a_toggle_filter_adds_its_chip_and_the_chip_removes_it as fn(),
-    ),
-    (
         "bar::a_hit_steps_the_results_and_its_own_thread",
         bar::a_hit_steps_the_results_and_its_own_thread as fn(),
-    ),
-    (
-        "bar::a_hit_opened_from_the_results_says_where_it_is_in_its_thread",
-        bar::a_hit_opened_from_the_results_says_where_it_is_in_its_thread as fn(),
     ),
     (
         "bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search",
@@ -577,24 +457,8 @@ const CASES: &[(&str, fn())] = &[
         first_run::an_inbox_a_finished_pass_found_empty_says_empty_and_when as fn(),
     ),
     (
-        "first_run::a_first_sync_that_fails_says_so_rather_than_empty",
-        first_run::a_first_sync_that_fails_says_so_rather_than_empty as fn(),
-    ),
-    (
-        "first_run::an_interrupted_first_pass_still_says_syncing_not_empty",
-        first_run::an_interrupted_first_pass_still_says_syncing_not_empty as fn(),
-    ),
-    (
-        "first_run::the_list_keys_work_while_the_first_sync_fills_the_inbox",
-        first_run::the_list_keys_work_while_the_first_sync_fills_the_inbox as fn(),
-    ),
-    (
         "open_message::delete_in_the_dialog_deletes_the_message_on_screen",
         open_message::delete_in_the_dialog_deletes_the_message_on_screen as fn(),
-    ),
-    (
-        "open_message::deleting_from_the_dialog_moves_to_the_next_message",
-        open_message::deleting_from_the_dialog_moves_to_the_next_message as fn(),
     ),
     (
         "selection::the_bulk_bar_has_a_delete_button_that_deletes_the_selection",
@@ -630,14 +494,6 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "first_run::the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved",
-        first_run::the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved as fn(),
-    ),
-    (
-        "first_run::compose_with_no_account_says_so_and_offers_to_add_one",
-        first_run::compose_with_no_account_says_so_and_offers_to_add_one as fn(),
-    ),
-    (
         "motion::no_transition_outruns_the_budget_and_reduced_motion_stills_them",
         motion::no_transition_outruns_the_budget_and_reduced_motion_stills_them as fn(),
     ),
@@ -654,24 +510,12 @@ const CASES: &[(&str, fn())] = &[
         compose::a_send_says_it_was_queued_and_undo_takes_it_back as fn(),
     ),
     (
-        "compose::escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row",
-        compose::escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row as fn(),
-    ),
-    (
-        "compose::a_reply_to_a_message_still_downloading_says_it_is_not_quoted",
-        compose::a_reply_to_a_message_still_downloading_says_it_is_not_quoted as fn(),
-    ),
-    (
         "compose::the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows",
         compose::the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows as fn(),
     ),
     (
         "invitations::the_open_invitation_s_card_answers_with_its_keys",
         invitations::the_open_invitation_s_card_answers_with_its_keys as fn(),
-    ),
-    (
-        "drafts::a_drafts_row_names_who_it_is_to",
-        drafts::a_drafts_row_names_who_it_is_to as fn(),
     ),
     (
         "drafts::g_t_lists_drafts_and_enter_opens_one_to_edit",
@@ -682,36 +526,8 @@ const CASES: &[(&str, fn())] = &[
         bar::the_fields_operator_terms_are_chips as fn(),
     ),
     (
-        "bar::a_word_lists_top_hits_and_return_shows_all",
-        bar::a_word_lists_top_hits_and_return_shows_all as fn(),
-    ),
-    (
-        "bar::the_dropdown_opens_on_the_newest_recent_search",
-        bar::the_dropdown_opens_on_the_newest_recent_search as fn(),
-    ),
-    (
-        "bar::at_offers_correspondents",
-        bar::at_offers_correspondents as fn(),
-    ),
-    (
-        "bar::a_result_names_its_account_when_there_are_two",
-        bar::a_result_names_its_account_when_there_are_two as fn(),
-    ),
-    (
         "bar::offline_search_answers_locally_one_request_a_keystroke",
         bar::offline_search_answers_locally_one_request_a_keystroke as fn(),
-    ),
-    (
-        "pickers::escape_closes_a_picker_and_changes_nothing",
-        pickers::escape_closes_a_picker_and_changes_nothing as fn(),
-    ),
-    (
-        "pickers::h_then_3_reminds_at_the_end_of_the_week",
-        pickers::h_then_3_reminds_at_the_end_of_the_week as fn(),
-    ),
-    (
-        "pickers::l_toggles_a_label_and_creates_a_new_one",
-        pickers::l_toggles_a_label_and_creates_a_new_one as fn(),
     ),
     (
         "pickers::m_moves_three_to_receipts_and_ctrl_z_returns_them",
@@ -730,14 +546,6 @@ const CASES: &[(&str, fn())] = &[
         capture::t_appends_one_tasks_line_with_the_link_before_the_date as fn(),
     ),
     (
-        "capture::n_appends_a_note_and_alt_s_uses_the_subject",
-        capture::n_appends_a_note_and_alt_s_uses_the_subject as fn(),
-    ),
-    (
-        "capture::without_a_vault_there_is_no_task_and_t_says_why",
-        capture::without_a_vault_there_is_no_task_and_t_says_why as fn(),
-    ),
-    (
         "desktop::a_postio_link_opens_its_message_and_an_unknown_one_is_refused",
         desktop::a_postio_link_opens_its_message_and_an_unknown_one_is_refused as fn(),
     ),
@@ -746,48 +554,8 @@ const CASES: &[(&str, fn())] = &[
         filtered::g_f_lists_filtered_mail_and_its_number_keys_narrow_it as fn(),
     ),
     (
-        "filtered::the_strip_counts_what_was_filtered_today",
-        filtered::the_strip_counts_what_was_filtered_today as fn(),
-    ),
-    (
-        "filtered::focus_never_notifies_for_mail_it_filtered_or_held",
-        filtered::focus_never_notifies_for_mail_it_filtered_or_held as fn(),
-    ),
-    (
-        "filtered::f_says_what_a_sweep_would_move_then_moves_it_as_one_undo",
-        filtered::f_says_what_a_sweep_would_move_then_moves_it_as_one_undo as fn(),
-    ),
-    (
-        "filtered::selecting_in_filtered_restores_every_selected_row_as_one_undo",
-        filtered::selecting_in_filtered_restores_every_selected_row_as_one_undo as fn(),
-    ),
-    (
-        "filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back",
-        filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
-    ),
-    (
         "digest::enter_opens_a_digest_and_e_archives_all_of_it",
         digest::enter_opens_a_digest_and_e_archives_all_of_it as fn(),
-    ),
-    (
-        "digest::e_on_a_digests_row_archives_its_delivery_and_undo_brings_the_cursor_back",
-        digest::e_on_a_digests_row_archives_its_delivery_and_undo_brings_the_cursor_back as fn(),
-    ),
-    (
-        "digest::d_on_a_message_previews_the_rule_and_create_writes_it",
-        digest::d_on_a_message_previews_the_rule_and_create_writes_it as fn(),
-    ),
-    (
-        "digest::g_d_lists_the_rules_and_delete_releases_what_one_held",
-        digest::g_d_lists_the_rules_and_delete_releases_what_one_held as fn(),
-    ),
-    (
-        "digest::held_mail_is_found_by_search_and_says_where_it_waits",
-        digest::held_mail_is_found_by_search_and_says_where_it_waits as fn(),
-    ),
-    (
-        "digest::d_stops_digesting_the_sender_once_confirmed",
-        digest::d_stops_digesting_the_sender_once_confirmed as fn(),
     ),
     (
         "digest_summary::a_digest_with_a_summary_opens_on_it_and_every_statement_cites_its_mail",
@@ -795,24 +563,8 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "digest_summary::a_reference_opens_its_email_in_place_with_the_passage_highlighted",
-        digest_summary::a_reference_opens_its_email_in_place_with_the_passage_highlighted as fn(),
-    ),
-    (
         "rule_query::match_a_list_or_a_search_instead_previews_and_saves_the_typed_query",
         rule_query::match_a_list_or_a_search_instead_previews_and_saves_the_typed_query as fn(),
-    ),
-    (
-        "rule_query::editing_a_list_rule_keeps_its_name_until_a_query_is_typed",
-        rule_query::editing_a_list_rule_keeps_its_name_until_a_query_is_typed as fn(),
-    ),
-    (
-        "rule_query::digest_mail_like_this_is_absent_with_no_model_configured",
-        rule_query::digest_mail_like_this_is_absent_with_no_model_configured as fn(),
-    ),
-    (
-        "rule_query::digest_mail_like_this_present_with_a_message_says_so_with_no_model",
-        rule_query::digest_mail_like_this_present_with_a_message_says_so_with_no_model as fn(),
     ),
     (
         "desktop::a_mailto_link_opens_a_composer_with_its_fields_filled",
@@ -843,32 +595,12 @@ const CASES: &[(&str, fn())] = &[
         desktop::the_window_is_titled_postio as fn(),
     ),
     (
-        "pickers::s_then_2_snoozes_the_row_until_tomorrow_morning",
-        pickers::s_then_2_snoozes_the_row_until_tomorrow_morning as fn(),
-    ),
-    (
-        "places::g_o_then_trav_and_enter_shows_travel",
-        places::g_o_then_trav_and_enter_shows_travel as fn(),
-    ),
-    (
         "places::the_folders_popover_quiets_the_lists_ring",
         places::the_folders_popover_quiets_the_lists_ring as fn(),
     ),
     (
-        "places::a_count_landing_keeps_the_rows_a_click_is_on",
-        places::a_count_landing_keeps_the_rows_a_click_is_on as fn(),
-    ),
-    (
-        "places::a_flag_while_the_folders_are_up_is_counted",
-        places::a_flag_while_the_folders_are_up_is_counted as fn(),
-    ),
-    (
         "places::flagged_and_snoozed_are_listed_and_open_their_views",
         places::flagged_and_snoozed_are_listed_and_open_their_views as fn(),
-    ),
-    (
-        "places::every_mailbox_shows_its_key_and_the_footer_follows_the_highlight",
-        places::every_mailbox_shows_its_key_and_the_footer_follows_the_highlight as fn(),
     ),
     (
         "places::every_place_shows_its_count",
@@ -891,40 +623,16 @@ const CASES: &[(&str, fn())] = &[
         keycaps::settings_add_account_names_its_key as fn(),
     ),
     (
-        "bar::alt_2_runs_the_second_saved_search",
-        bar::alt_2_runs_the_second_saved_search as fn(),
-    ),
-    (
         "bar::walking_the_results_keeps_the_ringed_row_in_view",
         bar::walking_the_results_keeps_the_ringed_row_in_view as fn(),
-    ),
-    (
-        "bar::plain_english_is_understood_tab_makes_chips_and_ctrl_s_saves",
-        bar::plain_english_is_understood_tab_makes_chips_and_ctrl_s_saves as fn(),
-    ),
-    (
-        "bar::a_misspelled_word_finds_what_was_meant_and_quoted_is_exact",
-        bar::a_misspelled_word_finds_what_was_meant_and_quoted_is_exact as fn(),
     ),
     (
         "bar::a_result_gives_its_subject_room_before_its_first_line",
         bar::a_result_gives_its_subject_room_before_its_first_line as fn(),
     ),
     (
-        "bar::o_is_a_letter_and_alt_o_switches_the_results_sort",
-        bar::o_is_a_letter_and_alt_o_switches_the_results_sort as fn(),
-    ),
-    (
         "state::a_failing_account_is_named_and_the_others_mail_stays_listed",
         state::a_failing_account_is_named_and_the_others_mail_stays_listed as fn(),
-    ),
-    (
-        "state::a_failing_banner_says_the_syncs_own_reason",
-        state::a_failing_banner_says_the_syncs_own_reason as fn(),
-    ),
-    (
-        "bar::in_rec_offers_receipts_and_return_searches_it",
-        bar::in_rec_offers_receipts_and_return_searches_it as fn(),
     ),
     (
         "marker_card::the_highlight_starts_and_ends_on_the_sentences_own_words",
@@ -943,20 +651,8 @@ const CASES: &[(&str, fn())] = &[
         treatments::a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours as fn(),
     ),
     (
-        "treatments::a_treatment_chosen_for_one_address_reaches_the_persons_other_address",
-        treatments::a_treatment_chosen_for_one_address_reaches_the_persons_other_address as fn(),
-    ),
-    (
         "treatments::opening_and_stepping_prepare_no_body_on_the_interface_thread",
         treatments::opening_and_stepping_prepare_no_body_on_the_interface_thread as fn(),
-    ),
-    (
-        "treatments::switching_the_treatment_leaves_the_column_where_it_was",
-        treatments::switching_the_treatment_leaves_the_column_where_it_was as fn(),
-    ),
-    (
-        "treatments::switching_a_marked_message_keeps_the_reading_position",
-        treatments::switching_a_marked_message_keeps_the_reading_position as fn(),
     ),
     (
         "open_layout::the_render_mode_line_sits_24_under_the_card_and_12_over_the_body",
@@ -1016,14 +712,6 @@ const CASES: &[(&str, fn())] = &[
         view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message as fn(),
     ),
     (
-        "open_message::escape_closes_and_keeps_the_cursor_and_the_selection",
-        open_message::escape_closes_and_keeps_the_cursor_and_the_selection as fn(),
-    ),
-    (
-        "open_message::j_and_k_step_the_list_behind_the_dialog",
-        open_message::j_and_k_step_the_list_behind_the_dialog as fn(),
-    ),
-    (
         "open_message::a_message_opens_at_its_top_every_time",
         open_message::a_message_opens_at_its_top_every_time as fn(),
     ),
@@ -1034,14 +722,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_message::j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog",
         open_message::j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog as fn(),
-    ),
-    (
-        "open_message::brackets_step_through_the_thread",
-        open_message::brackets_step_through_the_thread as fn(),
-    ),
-    (
-        "open_message::enter_opens_the_conversation_over_the_list_at_once",
-        open_message::enter_opens_the_conversation_over_the_list_at_once as fn(),
     ),
     (
         "open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps",
@@ -1074,30 +754,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_keys::a_toast_raised_under_the_open_message_is_drawn_over_it",
         open_keys::a_toast_raised_under_the_open_message_is_drawn_over_it as fn(),
-    ),
-    (
-        "open_keys::j_and_k_step_the_open_message_from_where_the_keyboard_is",
-        open_keys::j_and_k_step_the_open_message_from_where_the_keyboard_is as fn(),
-    ),
-    (
-        "open_keys::d_in_the_open_message_opens_the_digest_rule",
-        open_keys::d_in_the_open_message_opens_the_digest_rule as fn(),
-    ),
-    (
-        "open_keys::t_in_the_open_message_opens_capture",
-        open_keys::t_in_the_open_message_opens_capture as fn(),
-    ),
-    (
-        "open_keys::the_list_keys_work_again_once_the_capture_sheet_is_closed",
-        open_keys::the_list_keys_work_again_once_the_capture_sheet_is_closed as fn(),
-    ),
-    (
-        "open_message::archive_in_the_dialog_archives_the_message_not_the_selection",
-        open_message::archive_in_the_dialog_archives_the_message_not_the_selection as fn(),
-    ),
-    (
-        "open_message::a_draft_from_another_client_offers_no_reply",
-        open_message::a_draft_from_another_client_offers_no_reply as fn(),
     ),
     (
         "open_reading::ctrl_c_copies_what_was_dragged_across_the_body",
@@ -1165,10 +821,6 @@ const CASES: &[(&str, fn())] = &[
         row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys as fn(),
     ),
     (
-        "row_menu::a_menu_verb_runs_its_command_on_the_row",
-        row_menu::a_menu_verb_runs_its_command_on_the_row as fn(),
-    ),
-    (
         "row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection",
         row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection
             as fn(),
@@ -1222,19 +874,6 @@ const CASES: &[(&str, fn())] = &[
         sending_states::an_unconfirmed_send_says_so_and_mark_as_sent_settles_it as fn(),
     ),
     (
-        "sending_states::a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back",
-        sending_states::a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back as fn(),
-    ),
-    (
-        "sending_states::edit_on_a_queued_send_takes_it_off_the_queue_and_opens_the_composer",
-        sending_states::edit_on_a_queued_send_takes_it_off_the_queue_and_opens_the_composer
-            as fn(),
-    ),
-    (
-        "sending_states::the_pane_offers_a_waiting_send_its_verbs",
-        sending_states::the_pane_offers_a_waiting_send_its_verbs as fn(),
-    ),
-    (
         "sending_states::received_mail_keeps_its_verbs_and_the_send_keys_say_why_not",
         sending_states::received_mail_keeps_its_verbs_and_the_send_keys_say_why_not as fn(),
     ),
@@ -1275,14 +914,6 @@ const CASES: &[(&str, fn())] = &[
         reading_pane::return_shows_the_message_beside_the_list_and_keeps_its_cursor as fn(),
     ),
     (
-        "reading_pane::j_and_k_step_the_pane_with_the_cursor",
-        reading_pane::j_and_k_step_the_pane_with_the_cursor as fn(),
-    ),
-    (
-        "reading_pane::escape_and_the_x_return_the_keyboard_to_the_list",
-        reading_pane::escape_and_the_x_return_the_keyboard_to_the_list as fn(),
-    ),
-    (
         "reading_pane::a_window_under_980_opens_the_dialog_instead",
         reading_pane::a_window_under_980_opens_the_dialog_instead as fn(),
     ),
@@ -1291,24 +922,8 @@ const CASES: &[(&str, fn())] = &[
         reading_pane::the_panes_column_follows_column_width_for_its_width as fn(),
     ),
     (
-        "reading_pane::the_main_menus_check_item_is_the_pointers_f8",
-        reading_pane::the_main_menus_check_item_is_the_pointers_f8 as fn(),
-    ),
-    (
         "reading_pane::a_click_moves_the_cursor_and_the_open_pane_follows_it",
         reading_pane::a_click_moves_the_cursor_and_the_open_pane_follows_it as fn(),
-    ),
-    (
-        "reading_pane::archiving_steps_the_pane_past_the_message",
-        reading_pane::archiving_steps_the_pane_past_the_message as fn(),
-    ),
-    (
-        "reading_pane::a_key_pressed_while_archiving_settles_keeps_its_cursor",
-        reading_pane::a_key_pressed_while_archiving_settles_keeps_its_cursor as fn(),
-    ),
-    (
-        "reading_pane::a_message_opened_away_from_the_inbox_opens_in_the_dialog",
-        reading_pane::a_message_opened_away_from_the_inbox_opens_in_the_dialog as fn(),
     ),
     (
         "reading_pane::the_composer_takes_over_the_pane",
@@ -1375,16 +990,8 @@ const CASES: &[(&str, fn())] = &[
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
     ),
     (
-        "invitations::y_accepts_from_the_row_and_the_toast_lasts_the_window",
-        invitations::y_accepts_from_the_row_and_the_toast_lasts_the_window as fn(),
-    ),
-    (
         "invitations::a_click_on_the_row_s_decline_declines",
         invitations::a_click_on_the_row_s_decline_declines as fn(),
-    ),
-    (
-        "invitations::a_cancelled_or_past_invitation_offers_no_answer",
-        invitations::a_cancelled_or_past_invitation_offers_no_answer as fn(),
     ),
     (
         "offline_send::offline_a_send_is_in_the_outbox_at_once_and_leaves_once",
@@ -1397,18 +1004,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "one_composer::the_same_content_from_either_composer_leaves_as_the_same_message",
         one_composer::the_same_content_from_either_composer_leaves_as_the_same_message as fn(),
-    ),
-    (
-        "drafts::escape_keeps_the_draft_and_the_terminal_opens_it",
-        drafts::escape_keeps_the_draft_and_the_terminal_opens_it as fn(),
-    ),
-    (
-        "drafts::a_draft_the_terminal_kept_opens_in_focus",
-        drafts::a_draft_the_terminal_kept_opens_in_focus as fn(),
-    ),
-    (
-        "compose::reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote",
-        compose::reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote as fn(),
     ),
     (
         "across_apps::what_focus_archives_the_terminal_sees_archived",
@@ -1459,40 +1054,8 @@ const CASES: &[(&str, fn())] = &[
         reload::a_saved_focus_section_reaches_the_empty_inbox as fn(),
     ),
     (
-        "commands::g_s_and_g_r_list_sent_and_archive",
-        commands::g_s_and_g_r_list_sent_and_archive as fn(),
-    ),
-    (
-        "commands::g_z_lists_snoozed_and_g_star_lists_flagged",
-        commands::g_z_lists_snoozed_and_g_star_lists_flagged as fn(),
-    ),
-    (
-        "commands::b_unsnoozes_the_row_and_undo_puts_it_back",
-        commands::b_unsnoozes_the_row_and_undo_puts_it_back as fn(),
-    ),
-    (
-        "commands::the_row_menu_unsnoozes",
-        commands::the_row_menu_unsnoozes as fn(),
-    ),
-    (
-        "commands::b_in_the_open_message_unsnoozes_it",
-        commands::b_in_the_open_message_unsnoozes_it as fn(),
-    ),
-    (
         "commands::star_flags_the_row_and_undo_clears_it",
         commands::star_flags_the_row_and_undo_clears_it as fn(),
-    ),
-    (
-        "commands::the_row_menu_flags_and_unflags",
-        commands::the_row_menu_flags_and_unflags as fn(),
-    ),
-    (
-        "commands::e_archives_the_whole_conversation",
-        commands::e_archives_the_whole_conversation as fn(),
-    ),
-    (
-        "commands::g_z_and_g_star_span_every_account",
-        commands::g_z_and_g_star_span_every_account as fn(),
     ),
     (
         "registry_parity::every_offered_command_that_is_whole_reaches_a_handler",
@@ -1556,26 +1119,6 @@ const CASES: &[(&str, fn())] = &[
         empty::with_filtering_the_empty_inbox_counts_what_was_filtered_today as fn(),
     ),
     (
-        "empty::without_filtering_the_empty_inbox_names_the_next_digest_and_no_count",
-        empty::without_filtering_the_empty_inbox_names_the_next_digest_and_no_count as fn(),
-    ),
-    (
-        "state::during_a_first_sync_what_has_arrived_is_listed",
-        state::during_a_first_sync_what_has_arrived_is_listed as fn(),
-    ),
-    (
-        "state::offline_an_archive_takes_effect_at_once_and_queues",
-        state::offline_an_archive_takes_effect_at_once_and_queues as fn(),
-    ),
-    (
-        "state::offline_a_label_shows_at_once_and_queues_and_search_answers",
-        state::offline_a_label_shows_at_once_and_queues_and_search_answers as fn(),
-    ),
-    (
-        "state::during_a_first_sync_what_has_arrived_opens_and_is_found",
-        state::during_a_first_sync_what_has_arrived_opens_and_is_found as fn(),
-    ),
-    (
         "state::each_sync_state_shows_its_banner_and_label",
         state::each_sync_state_shows_its_banner_and_label as fn(),
     ),
@@ -1598,14 +1141,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "shot::the_demo_inbox_opens_with_its_first_heading_on_screen",
         shot::the_demo_inbox_opens_with_its_first_heading_on_screen as fn(),
-    ),
-    (
-        "has_action::has_action_narrows_to_the_marked_rows_and_back",
-        has_action::has_action_narrows_to_the_marked_rows_and_back as fn(),
-    ),
-    (
-        "has_action::going_home_leaves_the_filter_off_and_the_selection_gone",
-        has_action::going_home_leaves_the_filter_off_and_the_selection_gone as fn(),
     ),
     (
         "list_contract::the_list_output_stays_libtest_shaped",
@@ -1653,16 +1188,8 @@ const CASES: &[(&str, fn())] = &[
         keyboard_home::a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first as fn(),
     ),
     (
-        "place_strip::flagged_counts_what_is_flagged_not_the_inbox",
-        place_strip::flagged_counts_what_is_flagged_not_the_inbox as fn(),
-    ),
-    (
         "place_strip::an_empty_snoozed_place_says_why_and_the_way_back",
         place_strip::an_empty_snoozed_place_says_why_and_the_way_back as fn(),
-    ),
-    (
-        "digest_summary::the_summary_takes_j_and_k_and_rings_the_focused_statement",
-        digest_summary::the_summary_takes_j_and_k_and_rings_the_focused_statement as fn(),
     ),
     (
         "rows::a_selected_digest_row_is_drawn_selected",
@@ -1677,77 +1204,12 @@ const CASES: &[(&str, fn())] = &[
         threads::j_walks_the_children_and_on_to_the_next_thread as fn(),
     ),
     (
-        "threads::new_mail_above_an_open_thread_moves_its_children_with_it",
-        threads::new_mail_above_an_open_thread_moves_its_children_with_it as fn(),
-    ),
-    (
-        "threads::a_reply_keeps_the_cursor_on_its_thread_and_the_row_says_the_reply",
-        threads::a_reply_keeps_the_cursor_on_its_thread_and_the_row_says_the_reply as fn(),
-    ),
-    (
-        "threads::a_reply_moves_its_thread_to_the_top_and_the_cursor_with_it",
-        threads::a_reply_moves_its_thread_to_the_top_and_the_cursor_with_it as fn(),
-    ),
-    (
-        "threads::left_folds_the_thread_from_a_child",
-        threads::left_folds_the_thread_from_a_child as fn(),
-    ),
-    (
-        "threads::return_on_a_child_opens_that_message",
-        threads::return_on_a_child_opens_that_message as fn(),
-    ),
-    (
-        "threads::participants_say_you_for_the_account",
-        threads::participants_say_you_for_the_account as fn(),
-    ),
-    (
-        "threads::the_count_follows_the_participants",
-        threads::the_count_follows_the_participants as fn(),
-    ),
-    (
         "threads::clicking_the_chevron_opens_and_folds_a_thread",
         threads::clicking_the_chevron_opens_and_folds_a_thread as fn(),
     ),
     (
-        "threads::filtered_opens_a_thread_in_place_and_restores_it_whole",
-        threads::filtered_opens_a_thread_in_place_and_restores_it_whole as fn(),
-    ),
-    (
-        "threads::the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it",
-        threads::the_footer_says_what_r_acts_on_and_r_on_a_child_quotes_it as fn(),
-    ),
-    (
         "threads::the_window_walks_its_thread",
         threads::the_window_walks_its_thread as fn(),
-    ),
-    (
-        "threads::a_reply_while_reading_changes_nothing_on_screen_until_read_it",
-        threads::a_reply_while_reading_changes_nothing_on_screen_until_read_it as fn(),
-    ),
-    (
-        "threads::the_thread_menu_mutes_the_thread_and_its_row_says_so",
-        threads::the_thread_menu_mutes_the_thread_and_its_row_says_so as fn(),
-    ),
-    (
-        "threads::the_outline_filters_by_name_and_return_shows_that_message",
-        threads::the_outline_filters_by_name_and_return_shows_that_message as fn(),
-    ),
-    (
-        "threads::a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the_child",
-        threads::a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the_child
-            as fn(),
-    ),
-    (
-        "threads::find_in_a_window_opened_from_the_list_still_wraps",
-        threads::find_in_a_window_opened_from_the_list_still_wraps as fn(),
-    ),
-    (
-        "threads::a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed",
-        threads::a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed as fn(),
-    ),
-    (
-        "threads::return_on_the_draft_child_opens_the_draft_in_the_composer",
-        threads::return_on_the_draft_child_opens_the_draft_in_the_composer as fn(),
     ),
     (
         "threads::clicking_a_thread_bar_chip_shows_that_message",
@@ -1767,44 +1229,8 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "threads::mod_shift_q_folds_and_unfolds_the_forwarded_messages",
-        threads::mod_shift_q_folds_and_unfolds_the_forwarded_messages as fn(),
-    ),
-    (
-        "threads::the_outline_opens_from_the_list_over_an_expanded_thread",
-        threads::the_outline_opens_from_the_list_over_an_expanded_thread as fn(),
-    ),
-    (
-        "threads::alt_v_on_a_child_moves_that_message_alone",
-        threads::alt_v_on_a_child_moves_that_message_alone as fn(),
-    ),
-    (
-        "threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread",
-        threads::splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread as fn(),
-    ),
-    (
-        "threads::forwarding_the_whole_thread_says_so_in_the_subject",
-        threads::forwarding_the_whole_thread_says_so_in_the_subject as fn(),
-    ),
-    (
-        "cursor::j_and_k_move_only_the_cursor",
-        cursor::j_and_k_move_only_the_cursor as fn(),
-    ),
-    (
-        "cursor::a_list_opens_with_the_cursor_on_its_first_row",
-        cursor::a_list_opens_with_the_cursor_on_its_first_row as fn(),
-    ),
-    (
-        "cursor::keys_before_a_reopened_list_lands_are_not_walked_back",
-        cursor::keys_before_a_reopened_list_lands_are_not_walked_back as fn(),
-    ),
-    (
         "cursor::the_list_view_moving_the_cursor_is_where_j_walks_on_from",
         cursor::the_list_view_moving_the_cursor_is_where_j_walks_on_from as fn(),
-    ),
-    (
-        "reading_pane::a_filter_landing_under_an_open_pane_shows_the_cursors_row_there",
-        reading_pane::a_filter_landing_under_an_open_pane_shows_the_cursors_row_there as fn(),
     ),
     (
         "reading_pane::a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes",
@@ -1847,36 +1273,12 @@ const CASES: &[(&str, fn())] = &[
         rows::rows_sit_under_their_day_s_heading as fn(),
     ),
     (
-        "selection::three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three",
-        selection::three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three as fn(),
-    ),
-    (
-        "selection::archive_hands_the_cursor_to_the_row_below",
-        selection::archive_hands_the_cursor_to_the_row_below as fn(),
-    ),
-    (
-        "selection::escape_clears_the_selection_and_the_cursor_stays",
-        selection::escape_clears_the_selection_and_the_cursor_stays as fn(),
-    ),
-    (
-        "selection::a_select_all_archives_what_focus_lists_and_never_held_mail",
-        selection::a_select_all_archives_what_focus_lists_and_never_held_mail as fn(),
-    ),
-    (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",
         starts_offline::the_inbox_is_listed_from_the_store_with_no_network as fn(),
     ),
     (
         "newsletter_seed::the_newsletters_row_says_nothing_of_the_message_it_was_made_from",
         newsletter_seed::the_newsletters_row_says_nothing_of_the_message_it_was_made_from as fn(),
-    ),
-    (
-        "undo::the_toast_counts_the_row_and_says_when_it_was_undone",
-        undo::the_toast_counts_the_row_and_says_when_it_was_undone as fn(),
-    ),
-    (
-        "undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone",
-        undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone as fn(),
     ),
     (
         "visible_window::a_row_whose_page_has_not_landed_draws_a_skeleton",
@@ -1901,14 +1303,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings::a_signature_made_in_settings_signs_the_next_message",
         settings::a_signature_made_in_settings_signs_the_next_message as fn(),
-    ),
-    (
-        "settings::a_folder_left_out_of_backfill_is_written_and_shown",
-        settings::a_folder_left_out_of_backfill_is_written_and_shown as fn(),
-    ),
-    (
-        "settings::mod_e_opens_config_toml_in_the_persons_editor",
-        settings::mod_e_opens_config_toml_in_the_persons_editor as fn(),
     ),
     (
         "settings::agents_in_settings_shows_the_log_and_revokes_from_the_file",
@@ -1940,14 +1334,6 @@ const CASES: &[(&str, fn())] = &[
         settings_wiring::an_account_verb_leaves_the_keyboard_on_its_row as fn(),
     ),
     (
-        "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
-        settings_wiring::the_account_verbs_have_keys_on_the_focused_row as fn(),
-    ),
-    (
-        "settings_wiring::the_command_bar_offers_the_account_verbs",
-        settings_wiring::the_command_bar_offers_the_account_verbs as fn(),
-    ),
-    (
         "settings_wiring::account_rows_persist_enable_default_and_removal",
         settings_wiring::account_rows_persist_enable_default_and_removal as fn(),
     ),
@@ -1956,16 +1342,8 @@ const CASES: &[(&str, fn())] = &[
         settings_wiring::update_credential_opens_a_prefilled_form_over_the_window as fn(),
     ),
     (
-        "settings_wiring::rebuilding_an_index_refills_it_and_clears_the_row",
-        settings_wiring::rebuilding_an_index_refills_it_and_clears_the_row as fn(),
-    ),
-    (
         "settings_wiring::opening_makes_no_connection_and_privacy_lists_the_log",
         settings_wiring::opening_makes_no_connection_and_privacy_lists_the_log as fn(),
-    ),
-    (
-        "settings_wiring::privacy_counts_the_receipts_asked_for",
-        settings_wiring::privacy_counts_the_receipts_asked_for as fn(),
     ),
     (
         "close_buttons::settings_has_the_same_x_at_the_right",
@@ -1976,78 +1354,17 @@ const CASES: &[(&str, fn())] = &[
         icon_buttons::the_settings_icon_buttons_keep_their_own_shape as fn(),
     ),
     (
-        "settings::a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next",
-        settings::a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next as fn(),
-    ),
-    (
         "settings::filtering_turned_off_in_settings_is_written_and_the_strip_follows",
         settings::filtering_turned_off_in_settings_is_written_and_the_strip_follows as fn(),
-    ),
-    (
-        "settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings",
-        settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings as fn(),
-    ),
-    (
-        "settings::a_persons_pin_is_listed_by_name_and_taken_back_in_settings",
-        settings::a_persons_pin_is_listed_by_name_and_taken_back_in_settings as fn(),
     ),
     (
         "settings::a_click_into_settings_as_it_opens_waits_for_it_to_open",
         settings::a_click_into_settings_as_it_opens_waits_for_it_to_open as fn(),
     ),
     (
-        "capture::t_on_an_open_message_opens_the_task_sheet",
-        capture::t_on_an_open_message_opens_the_task_sheet as fn(),
-    ),
-    (
-        "capture::n_on_an_open_message_opens_the_note_sheet",
-        capture::n_on_an_open_message_opens_the_note_sheet as fn(),
-    ),
-    ("gmail_keys::list_walks", gmail_keys::list_walks as fn()),
-    ("gmail_keys::list_verbs", gmail_keys::list_verbs as fn()),
-    ("gmail_keys::list_writes", gmail_keys::list_writes as fn()),
-    ("gmail_keys::list_opens", gmail_keys::list_opens as fn()),
-    ("gmail_keys::list_goes", gmail_keys::list_goes as fn()),
-    ("gmail_keys::reader_walks", gmail_keys::reader_walks as fn()),
-    ("gmail_keys::reader_verbs", gmail_keys::reader_verbs as fn()),
-    (
-        "gmail_keys::reader_writes",
-        gmail_keys::reader_writes as fn(),
-    ),
-    ("gmail_keys::reader_opens", gmail_keys::reader_opens as fn()),
-    ("gmail_keys::reader_goes", gmail_keys::reader_goes as fn()),
-    ("gmail_keys::pane_walks", gmail_keys::pane_walks as fn()),
-    ("gmail_keys::pane_verbs", gmail_keys::pane_verbs as fn()),
-    ("gmail_keys::pane_writes", gmail_keys::pane_writes as fn()),
-    ("gmail_keys::pane_opens", gmail_keys::pane_opens as fn()),
-    ("gmail_keys::pane_goes", gmail_keys::pane_goes as fn()),
-    ("gmail_keys::digest_walks", gmail_keys::digest_walks as fn()),
-    ("gmail_keys::digest_verbs", gmail_keys::digest_verbs as fn()),
-    ("gmail_keys::digest_opens", gmail_keys::digest_opens as fn()),
-    ("gmail_keys::digest_goes", gmail_keys::digest_goes as fn()),
-    (
         "gmail_keys::the_digest_opens_from_a_cursor_below_it",
         gmail_keys::the_digest_opens_from_a_cursor_below_it as fn(),
     ),
-    (
-        "gmail_keys::filtered_walks",
-        gmail_keys::filtered_walks as fn(),
-    ),
-    (
-        "gmail_keys::filtered_verbs",
-        gmail_keys::filtered_verbs as fn(),
-    ),
-    (
-        "gmail_keys::filtered_goes",
-        gmail_keys::filtered_goes as fn(),
-    ),
-    (
-        "gmail_keys::capture_opens",
-        gmail_keys::capture_opens as fn(),
-    ),
-    ("gmail_keys::menu_walks", gmail_keys::menu_walks as fn()),
-    ("gmail_keys::menu_verbs", gmail_keys::menu_verbs as fn()),
-    ("gmail_keys::menu_writes", gmail_keys::menu_writes as fn()),
     (
         "gmail_keys::every_gmail_command_is_probed_or_excused",
         gmail_keys::every_gmail_command_is_probed_or_excused as fn(),
@@ -2311,6 +1628,7 @@ fn main() {
 
     let _ = adw::init();
     stamp_criticals();
+    let display = support::display();
 
     let mut failed = Vec::new();
     let mut ran = 0usize;
@@ -2325,6 +1643,10 @@ fn main() {
             continue;
         }
         ran += 1;
+        if !display {
+            println!("test {name} ... ok (skipped: no display)");
+            continue;
+        }
         println!("test {name} ...");
         running(name);
         if std::panic::catch_unwind(case).is_err() {

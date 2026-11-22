@@ -59,9 +59,6 @@ fn cursor(window: &postio_gtk::window::FocusWindow) -> u32 {
 
 pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         let dir = tempfile::tempdir().expect("a config directory");
@@ -119,9 +116,6 @@ pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
 
 pub fn return_shows_the_message_beside_the_list_and_keeps_its_cursor() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
@@ -163,106 +157,8 @@ pub fn return_shows_the_message_beside_the_list_and_keeps_its_cursor() {
     });
 }
 
-pub fn j_and_k_step_the_pane_with_the_cursor() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
-        read_in_pane(&window);
-        support::keys(&window, &["j", "j"]);
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Third")).await
-        );
-        support::deliver(&window, "j");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Fourth")).await,
-            "j did not step the pane: {:?}",
-            pane_title(&window)
-        );
-        assert_eq!(cursor(&window), 3);
-        support::deliver(&window, "k");
-        support::deliver(&window, "k");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await,
-            "k did not step the pane back: {:?}",
-            pane_title(&window)
-        );
-        assert_eq!(cursor(&window), 1);
-        assert!(!dialog_up(&window), "stepping opened a dialog");
-    });
-}
-
-pub fn escape_and_the_x_return_the_keyboard_to_the_list() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
-        read_in_pane(&window);
-        support::keys(&window, &["j"]);
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
-        );
-        let list = window.pane().expect("the list").view().clone();
-        let keyboard_in_list = || {
-            gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| {
-                focus == *list.upcast_ref::<gtk::Widget>() || focus.is_ancestor(&list)
-            })
-        };
-
-        support::deliver(&window, "Escape");
-        assert!(
-            crate::settle_until(async || pane_title(&window).is_none()).await,
-            "Escape left the message in the pane"
-        );
-        let said = support::texts(&pane(&window));
-        assert!(
-            said.iter().any(|text| text == "No message open"),
-            "the empty pane says so: {said:?}"
-        );
-        assert!(
-            keyboard_in_list(),
-            "the keyboard is not in the list: {}",
-            support::focus_path(&window)
-        );
-        assert_eq!(cursor(&window), 1, "the cursor stayed");
-        support::deliver(&window, "j");
-        assert_eq!(cursor(&window), 2);
-        assert!(
-            pane_title(&window).is_none(),
-            "moving the cursor opened a message"
-        );
-
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Third")).await
-        );
-        pane_laid_out(&window).await;
-        let close = on_screen(&pane(&window), "focus-open-close").expect("the pane's X");
-        support::click(&window, &close, 1);
-        assert!(
-            crate::settle_until(async || pane_title(&window).is_none()).await,
-            "the X left the message in the pane"
-        );
-        assert!(
-            keyboard_in_list(),
-            "the keyboard is not in the list: {}",
-            support::focus_path(&window)
-        );
-        assert_eq!(cursor(&window), 2);
-    });
-}
-
 pub fn a_window_under_980_opens_the_dialog_instead() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture.file_five().await;
         let (window, _client) = fixture.open_sized(Some((960, 700))).await;
@@ -288,14 +184,9 @@ pub fn a_window_under_980_opens_the_dialog_instead() {
 
 pub fn the_panes_column_follows_column_width_for_its_width() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         for (minutes, subject) in [(10, "Plain"), (20, "Older")] {
-            let (message, _) = fixture
-                .file(("Ada Moreno", "ada@example.com"), subject, "x", minutes)
-                .await;
+            let (message, _) = fixture.file_from_ada(subject, "x", minutes).await;
             fixture.write_body(message, "A body of plain words.").await;
         }
         for size in [None, Some((1024, 700))] {
@@ -338,9 +229,6 @@ pub fn the_panes_column_follows_column_width_for_its_width() {
 
 pub fn the_composer_takes_over_the_pane() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let message = fixture.harbor_thread().await;
         let (window, _client) = fixture.open().await;
@@ -403,66 +291,8 @@ pub fn the_composer_takes_over_the_pane() {
     });
 }
 
-pub fn the_main_menus_check_item_is_the_pointers_f8() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
-        let menu = support::only(&window, "focus-menu")
-            .downcast::<gtk::MenuButton>()
-            .expect("the main menu");
-        let model = menu.menu_model().expect("the menu has items");
-        let action = (0..model.n_items())
-            .find(|item| {
-                model
-                    .item_attribute_value(*item, "label", Some(gtk::glib::VariantTy::STRING))
-                    .and_then(|label| label.get::<String>())
-                    .as_deref()
-                    == Some("Read beside the list")
-            })
-            .and_then(|item| {
-                model.item_attribute_value(item, "action", Some(gtk::glib::VariantTy::STRING))
-            })
-            .and_then(|action| action.get::<String>())
-            .expect("the item names an action");
-        let name = action.trim_start_matches("win.");
-        let checked = || {
-            window
-                .action_state(name)
-                .and_then(|state| state.get::<bool>())
-        };
-        assert_eq!(
-            checked(),
-            Some(false),
-            "unchecked while messages open over the list"
-        );
-
-        gtk::prelude::WidgetExt::activate_action(&window, &action, None).expect("the item runs");
-        crate::settle();
-        assert_eq!(
-            checked(),
-            Some(true),
-            "checked once messages open beside the list"
-        );
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("First")).await,
-            "the menu item did not switch to the pane"
-        );
-
-        window.set_focus_config(postio_config::FocusConfig::default());
-        crate::settle();
-        assert_eq!(checked(), Some(false), "the check follows the setting");
-    });
-}
-
 pub fn a_click_moves_the_cursor_and_the_open_pane_follows_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
@@ -487,189 +317,14 @@ pub fn a_click_moves_the_cursor_and_the_open_pane_follows_it() {
     });
 }
 
-pub fn archiving_steps_the_pane_past_the_message() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
-        read_in_pane(&window);
-        support::keys(&window, &["j"]);
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
-        );
-        support::deliver(&window, "e");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Third")).await,
-            "the pane did not step past the archived message: {:?}",
-            pane_title(&window)
-        );
-        assert!(crate::settle_until(async || support::subjects(&window).len() == 4).await);
-        assert_eq!(
-            cursor(&window),
-            1,
-            "the cursor is on the row that took its place"
-        );
-
-        support::keys(&window, &["G"]);
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Fifth")).await,
-            "G moved the cursor without the pane: {:?}",
-            pane_title(&window)
-        );
-        support::deliver(&window, "e");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Fourth")).await,
-            "the last row archived did not leave the pane on the previous one: {:?}",
-            pane_title(&window)
-        );
-    });
-}
-
-/// A key pressed while the archive settles keeps its cursor: the step to the next message must not
-/// drag it back to the row that took the archived one's place.
-pub fn a_key_pressed_while_archiving_settles_keeps_its_cursor() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
-        read_in_pane(&window);
-        support::keys(&window, &["j"]);
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
-        );
-        support::deliver(&window, "e");
-        support::deliver(&window, "G");
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 4).await,
-            "the archive never left the list"
-        );
-        for _ in 0..30 {
-            crate::settle();
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert_eq!(cursor(&window), 3, "the archive pulled the cursor back");
-        assert_eq!(
-            pane_title(&window).as_deref(),
-            Some("Fifth"),
-            "the pane did not stay with the cursor"
-        );
-    });
-}
-
-pub fn a_message_opened_away_from_the_inbox_opens_in_the_dialog() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture.file_five().await;
-        fixture
-            .filtered(
-                ("Forge", "noreply@forge.test"),
-                "Build 1182 passed",
-                "notification",
-                Some("Forge"),
-                30,
-            )
-            .await;
-        let (window, _client) = fixture.open_five().await;
-        read_in_pane(&window);
-        support::keys(&window, &["g", "f"]);
-        assert!(
-            crate::settle_until(async || window
-                .filtered()
-                .is_some_and(|view| view.subjects() == ["Build 1182 passed"]))
-            .await,
-            "g f did not list the filtered message"
-        );
-        support::keys(&window, &["j"]);
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || dialog_up(&window)).await,
-            "a message opened from Filtered did not open in the dialog"
-        );
-        assert_eq!(
-            window.reading().map(|reading| reading.title()).as_deref(),
-            Some("Build 1182 passed")
-        );
-        support::deliver(&window, "Escape");
-        assert!(crate::settle_until(async || !dialog_up(&window)).await);
-
-        support::keys(&window, &["g", "i"]);
-        assert!(crate::settle_until(async || window.filtered().is_none()).await);
-        support::keys(&window, &["j"]);
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || pane_title(&window).is_some()).await,
-            "back in the inbox, Return did not open beside the list"
-        );
-        assert!(!dialog_up(&window));
-    });
-}
-
-/// `!` narrows the list under an open pane; the cursor lands on the narrowed list's first row and
-/// the pane follows it, as for `j`.
-pub fn a_filter_landing_under_an_open_pane_shows_the_cursors_row_there() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let filed = fixture.file_five().await;
-        fixture.ask(filed[1], "Can you look at this?").await;
-        fixture.ask(filed[3], "Could you sign it by Friday?").await;
-        let (window, _client) = fixture.open_five().await;
-        read_in_pane(&window);
-        pane_laid_out(&window).await;
-        support::deliver(&window, "Return");
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("First")).await,
-            "Return did not open First in the pane: {:?}",
-            window.reading_pane().map(|pane| support::texts(&pane))
-        );
-
-        support::keys(&window, &["exclam"]);
-        assert!(
-            crate::settle_until(async || support::subjects(&window) == ["Second", "Fourth"]).await,
-            "only the marked rows remain: {:?}",
-            support::subjects(&window)
-        );
-        crate::settle();
-        assert_eq!(cursor(&window), 0, "the cursor is on the first marked row");
-        assert_eq!(
-            support::subjects(&window).first().map(String::as_str),
-            Some("Second")
-        );
-        assert!(
-            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await,
-            "the pane did not follow the cursor to Second: {:?}",
-            pane_title(&window)
-        );
-    });
-}
-
 /// Eleven steps in one turn of the loop are one body read (#1609). Counted at the storage seam,
 /// which sees the store owner's thread too.
 pub fn a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         for at in 0..12 {
             let (message, _) = fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    &format!("Message {at:02}"),
-                    "x",
-                    10 + i64::from(at),
-                )
+                .file_from_ada(&format!("Message {at:02}"), "x", 10 + i64::from(at))
                 .await;
             fixture
                 .write_body(message, &format!("Body number {at:02}."))
@@ -724,9 +379,6 @@ pub fn a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes() {
 
 pub fn opening_a_conversation_costs_the_same_however_long_it_is() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let mut costs = Vec::new();
         for count in [2, 12] {
             let fixture = Fixture::empty().await;

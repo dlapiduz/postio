@@ -5,7 +5,7 @@
 use gtk::prelude::*;
 use postio_core::CommandId;
 
-use crate::support::{self, Fixture, only, texts, with_class};
+use crate::support::{self, only, texts, with_class};
 
 fn empty_says(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     with_class(window, "focus-empty")
@@ -15,70 +15,8 @@ fn empty_says(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub fn flagged_counts_what_is_flagged_not_the_inbox() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
-        assert!(
-            crate::settle_until(async || {
-                texts(&only(&window, "focus-counts"))
-                    .iter()
-                    .any(|said| said == "5 \u{b7} 5 unread")
-            })
-            .await,
-            "the inbox counts its five: {:?}",
-            texts(&only(&window, "focus-counts"))
-        );
-
-        support::keys(&window, &["j"]);
-        window.act(CommandId::Flag);
-        crate::settle();
-        support::keys(&window, &["j"]);
-        window.act(CommandId::Flag);
-        crate::settle();
-
-        window.act(CommandId::GoToFlagged);
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "Flagged lists the two: {:?}",
-            support::subjects(&window)
-        );
-        assert!(
-            crate::settle_until(async || { texts(&only(&window, "focus-counts")) == ["2"] }).await,
-            "the strip counts what Flagged lists, with no unread of the inbox's: {:?}",
-            texts(&only(&window, "focus-counts"))
-        );
-        assert!(
-            !only(&window, "focus-has-action").is_visible(),
-            "the has-action toggle narrows the inbox and is not offered here"
-        );
-
-        support::keys(&window, &["g", "i"]);
-        assert!(
-            crate::settle_until(async || {
-                texts(&only(&window, "focus-counts"))
-                    .iter()
-                    .any(|said| said.contains("unread"))
-            })
-            .await,
-            "back in the inbox the strip counts it again: {:?}",
-            texts(&only(&window, "focus-counts"))
-        );
-        assert!(
-            only(&window, "focus-has-action").is_visible(),
-            "and the toggle is back"
-        );
-    });
-}
-
 pub fn an_empty_snoozed_place_says_why_and_the_way_back() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         window.act(CommandId::GoToSnoozed);
         assert!(

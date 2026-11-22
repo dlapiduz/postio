@@ -6,14 +6,8 @@ use postio_model::MessageBody;
 use postio_widgets::body_view::BodyView;
 use postio_widgets::reader::Reader;
 
-fn display() -> bool {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return false;
-    }
-    let display = gdk::Display::default().unwrap();
-    crate::support_reader::prepare(&display);
-    true
+fn prepare() {
+    crate::support_reader::prepare(&gdk::Display::default().unwrap());
 }
 
 fn settle_for(how_long: std::time::Duration) {
@@ -76,9 +70,7 @@ fn on_screen(view: &BodyView, offset: usize) -> f64 {
 }
 
 pub fn showing_a_messages_images_keeps_its_place() {
-    if !display() {
-        return;
-    }
+    prepare();
     let dir = tempfile::tempdir().expect("a scratch directory");
     let reader = Reader::with_allowlist(
         Rc::new(|_content_id: &str| None),

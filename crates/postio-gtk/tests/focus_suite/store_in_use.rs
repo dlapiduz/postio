@@ -136,9 +136,6 @@ pub fn a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone(
         open_focus(&hex);
         return;
     }
-    if !support::display() {
-        return;
-    }
 
     let directory = tempfile::tempdir().expect("a scratch directory");
     let store = directory.path().join("postio.db");

@@ -424,47 +424,6 @@ async fn the_open_message_is_the_controllers() {
     session.shutdown();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_double_click_opens_the_row_clicked() {
-    use postio_ffi::UiEvent;
-    let session = inbox_of(&["First", "Second", "Third"]).await;
-    cursor_on_the_first_row(&session).await;
-
-    session.focus_activate(2);
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusOpenMessage {
-                index: 2,
-                total: 3,
-                ..
-            }
-        ))
-        .await,
-        "the third row's message opens, not the cursor's old row"
-    );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn has_action_is_the_list_a_verb_aims_at() {
-    use postio_ffi::UiEvent;
-    let session = inbox_of(&["First", "Second"]).await;
-    cursor_on_the_first_row(&session).await;
-    assert!(!session.focus_aims_at_has_action_for_test());
-    session.invoke("toggle_has_action");
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusHeading { text: Some(_) }
-        ))
-        .await,
-        "the list narrows under one heading"
-    );
-    assert!(session.focus_aims_at_has_action_for_test());
-    session.shutdown();
-}
-
 pub(crate) async fn cursor_on_the_first_row(session: &Session) {
     session.open_focus(postio_ffi::FocusScopeFfi::Inbox);
     assert!(

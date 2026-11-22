@@ -36,13 +36,8 @@ fn assert_compact(what: &str, button: &gtk::Widget, at_most: i32) {
 
 pub fn the_open_message_toolbar_is_compact_with_its_keycaps_inside() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "The body").await;
         let (window, _client) = fixture.open().await;
         assert!(crate::settle_until(async || support::subjects(&window).len() == 1).await);
@@ -87,13 +82,8 @@ pub fn the_open_message_toolbar_is_compact_with_its_keycaps_inside() {
 
 pub fn the_compose_dialog_draws_every_button_one_way() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        fixture.file_from_ada("Budget", "x", 10).await;
         let (window, _client) = fixture.open().await;
         assert!(
             crate::settle_until(async || window.composer().is_some()).await,

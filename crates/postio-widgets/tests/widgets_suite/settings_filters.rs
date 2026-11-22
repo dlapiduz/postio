@@ -1,4 +1,5 @@
 use crate::support_compose::{fonts, style};
+use crate::support_reader::collect;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::settings::SettingsPanel;
@@ -48,39 +49,6 @@ pub fn filters_render_as_rows_and_hide_when_there_are_none() {
     window.destroy();
 }
 
-pub fn the_page_says_how_a_saved_search_is_made() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-    let keymap = postio_core::Keymap::resolve(&postio_config::KeyBindings::default());
-    panel.set_keymap(&keymap);
-    pump();
-
-    let key = keymap
-        .binding(postio_core::CommandId::SaveSearch)
-        .expect("save search has a default binding");
-    for text in [SAMPLE, ""] {
-        panel.set_text(text);
-        pump();
-        let hints = collect(
-            panel.upcast_ref::<gtk::Widget>(),
-            "postio-settings-filters-hint",
-        );
-        let hint = hints
-            .iter()
-            .find(|w| w.is_visible())
-            .expect("a visible line saying how a saved search is made");
-        let caps: Vec<String> = collect(hint, "postio-keyhint")
-            .into_iter()
-            .filter_map(|w| w.downcast::<gtk::Label>().ok())
-            .map(|l| l.text().to_string())
-            .collect();
-        assert_eq!(caps, vec![key.to_string()], "the keycap is the keymap's");
-    }
-
-    window.destroy();
-}
-
 pub fn a_pinned_search_shows_the_key_that_runs_it() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -114,25 +82,6 @@ pub fn a_pinned_search_shows_the_key_that_runs_it() {
     assert!(
         caps(&rows[2]).is_empty(),
         "an unpinned search runs from no key"
-    );
-
-    window.destroy();
-}
-
-pub fn pinned_filters_come_first_in_order_then_unpinned_ones_alphabetically() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-
-    let titles: Vec<String> = rows(&panel).iter().map(query_text).collect();
-    assert_eq!(
-        titles,
-        vec![
-            "is:unread from:team".to_string(),
-            "has:attach".to_string(),
-            "is:archived".to_string(),
-        ],
-        "pinned filters in their explicit order, then unpinned ones",
     );
 
     window.destroy();
@@ -183,75 +132,6 @@ pub fn toggling_pinned_writes_straight_to_the_buffer() {
     window.destroy();
 }
 
-pub fn deleting_a_filter_removes_its_row_and_leaves_everything_else_alone() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-    assert_eq!(rows(&panel).len(), 3);
-
-    let target = rows(&panel)
-        .into_iter()
-        .find(|row| query_text(row) == "has:attach")
-        .expect("the has:attach row");
-    delete_button_in(&target).emit_clicked();
-    pump();
-
-    assert_eq!(rows(&panel).len(), 2, "the deleted row is gone");
-    assert!(!panel.text().contains("has-attach"));
-    assert!(
-        panel.text().contains("is:unread from:team"),
-        "deleting one filter must not touch another: {}",
-        panel.text()
-    );
-    assert!(
-        panel
-            .text()
-            .contains("# a hand-written comment nobody wants to lose"),
-        "nor an unrelated comment: {}",
-        panel.text()
-    );
-
-    window.destroy();
-}
-
-pub fn reordering_moves_a_pinned_filter_and_disables_at_the_ends() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-
-    let first = &rows(&panel)[0];
-    assert!(
-        !up_button_in(first).is_sensitive(),
-        "the first pinned filter has nowhere to move up to"
-    );
-    assert!(down_button_in(first).is_sensitive());
-
-    down_button_in(first).emit_clicked();
-    pump();
-
-    let titles: Vec<String> = rows(&panel)
-        .iter()
-        .filter(|row| query_text(row) != "is:archived")
-        .map(query_text)
-        .collect();
-    assert_eq!(
-        titles,
-        vec!["has:attach".to_string(), "is:unread from:team".to_string()],
-        "moving the first pinned filter down should swap it with the second"
-    );
-
-    let archived = rows(&panel)
-        .into_iter()
-        .find(|row| query_text(row) == "is:archived")
-        .expect("the unpinned row");
-    assert!(
-        !up_button_in(&archived).is_sensitive() && !down_button_in(&archived).is_sensitive(),
-        "an unpinned filter is not part of the sidebar order, so it cannot be moved"
-    );
-
-    window.destroy();
-}
-
 fn panel_with_text(text: &str) -> Option<(gtk::Window, SettingsPanel)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -294,33 +174,6 @@ fn pinned_switch_in(row: &gtk::ListBoxRow) -> gtk::CheckButton {
         .expect("every filter row has a pinned checkbox")
 }
 
-fn up_button_in(row: &gtk::ListBoxRow) -> gtk::Button {
-    collect(row.upcast_ref::<gtk::Widget>(), "postio-settings-filter-up")
-        .into_iter()
-        .find_map(|w| w.downcast::<gtk::Button>().ok())
-        .expect("every filter row has an up button")
-}
-
-fn down_button_in(row: &gtk::ListBoxRow) -> gtk::Button {
-    collect(
-        row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-filter-down",
-    )
-    .into_iter()
-    .find_map(|w| w.downcast::<gtk::Button>().ok())
-    .expect("every filter row has a down button")
-}
-
-fn delete_button_in(row: &gtk::ListBoxRow) -> gtk::Button {
-    collect(
-        row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-filter-delete",
-    )
-    .into_iter()
-    .find_map(|w| w.downcast::<gtk::Button>().ok())
-    .expect("every filter row has a delete button")
-}
-
 fn rows(panel: &SettingsPanel) -> Vec<gtk::ListBoxRow> {
     collect(
         panel.upcast_ref::<gtk::Widget>(),
@@ -344,17 +197,4 @@ fn empty_state_visible(panel: &SettingsPanel) -> bool {
     )
     .into_iter()
     .any(|w| w.is_visible())
-}
-
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }

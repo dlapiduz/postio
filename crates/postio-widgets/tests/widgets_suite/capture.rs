@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::capture;
 
@@ -21,10 +20,6 @@ fn window() -> gtk::Window {
 }
 
 pub fn a_window_the_compositor_never_showed_is_an_error() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let window = window();
     // Realized but never presented: GTK refuses to snapshot an unmapped widget, and no path renders
     // a widget tree without a compositor.
@@ -38,10 +33,6 @@ pub fn a_window_the_compositor_never_showed_is_an_error() {
 }
 
 pub fn a_capture_that_fails_leaves_no_file() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let directory = tempfile::tempdir().expect("a directory to not write into");
     let path = directory.path().join("never-written.png");
 
@@ -58,10 +49,6 @@ pub fn a_capture_that_fails_leaves_no_file() {
 }
 
 pub fn a_presented_window_is_captured_without_the_caller_counting_frames() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let window = window();
     window.present();
     // No settle, pump or frame count: capturing a presented window must not need them (#809).
@@ -86,10 +73,6 @@ pub fn a_presented_window_is_captured_without_the_caller_counting_frames() {
 
 /// A popover is a surface of its own, so a window's widgets drawn alone leave it out.
 pub fn an_open_popover_is_in_the_picture() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let window = gtk::Window::new();
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let anchor = gtk::Button::with_label("places");

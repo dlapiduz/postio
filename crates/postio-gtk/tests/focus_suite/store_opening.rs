@@ -31,9 +31,6 @@ fn opening() -> (FocusWindow, async_channel::Sender<Progress>) {
 
 pub fn a_start_past_its_budget_says_what_it_is_waiting_on() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let started = std::time::Instant::now();
         let (window, progress) = opening();
@@ -73,9 +70,7 @@ pub fn a_start_past_its_budget_says_what_it_is_waiting_on() {
             window.waiting_text()
         );
 
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         progress
             .send(Progress::Done(Ok(fixture.host())))
             .await
@@ -90,13 +85,8 @@ pub fn a_start_past_its_budget_says_what_it_is_waiting_on() {
 
 pub fn an_ordinary_start_draws_nothing_that_is_then_removed() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let started = std::time::Instant::now();
         let (window, progress) = opening();
         progress

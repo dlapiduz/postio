@@ -1,4 +1,3 @@
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::BodyView;
 
@@ -29,10 +28,6 @@ fn quoted_shown(view: &BodyView) -> bool {
 }
 
 pub fn a_quote_is_folded_behind_its_line_count_and_opens_when_clicked() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (view, window) = shown("plain-text-flowed-reply");
     let document = view.document().expect("rendered");
     let fold = document.folds.first().expect("a fold").clone();
@@ -61,10 +56,6 @@ pub fn a_quote_is_folded_behind_its_line_count_and_opens_when_clicked() {
 }
 
 pub fn the_dialog_s_fold_line_opens_the_quote_it_names() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (view, window) = shown("plain-text-flowed-reply");
     assert_eq!(
         view.folds(),

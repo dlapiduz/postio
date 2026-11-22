@@ -14,9 +14,6 @@ fn run(args: &[&str]) -> Result<String, String> {
 /// Smaller than the references' 1440x900: the suite's compositor has a 1280x800 monitor, and mutter
 /// maximizes a window that nearly fills one.
 pub fn screen_01_is_written_as_a_png() {
-    if !support::display() {
-        return;
-    }
     let directory = tempfile::tempdir().expect("a scratch directory");
     let path = directory.path().join("01.png");
     let path_text = path.to_str().expect("a UTF-8 path");
@@ -27,9 +24,6 @@ pub fn screen_01_is_written_as_a_png() {
 }
 
 pub fn an_unknown_screen_writes_nothing_and_says_so() {
-    if !support::display() {
-        return;
-    }
     let directory = tempfile::tempdir().expect("a scratch directory");
     let path = directory.path().join("99.png");
     let path_text = path.to_str().expect("a UTF-8 path");
@@ -43,9 +37,6 @@ pub fn an_unknown_screen_writes_nothing_and_says_so() {
 
 pub fn the_demo_inbox_opens_with_its_first_heading_on_screen() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (database, _) = postio_gtk::demo::demo().await;
         let blobs = tempfile::tempdir().expect("a blob directory");
         let store = postio_storage::BlobStore::open(

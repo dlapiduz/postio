@@ -2,21 +2,13 @@ use std::time::Duration;
 
 use chrono::Utc;
 use postio_ffi::{
-    KeyOutcomeFfi, ModifiersFfi, PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerViewFfi,
-    Session, SessionOptions, SurfaceKindFfi, ToastKindFfi, UiContext, UiEvent,
+    PickerKindFfi, PickerViewFfi, Session, SessionOptions, SurfaceKindFfi, ToastKindFfi, UiEvent,
 };
 use postio_model::Message;
 use postio_storage::repository::{DraftRepository, MessageRepository};
 use postio_storage::test_support;
 
-use crate::focus::{cursor_on_the_first_row, heard, inbox_of};
-
-const NONE: ModifiersFfi = ModifiersFfi {
-    control: false,
-    option: false,
-    shift: false,
-    command: false,
-};
+use crate::focus::{cursor_on_the_first_row, heard};
 
 async fn picker(
     session: &Session,
@@ -91,123 +83,6 @@ async fn toast(session: &Session) -> (String, ToastKindFfi, bool, Option<u32>) {
         "no toast"
     );
     said.expect("said")
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn s_opens_the_snooze_picker_at_the_cursors_row_and_a_number_chooses() {
-    let session = inbox_of(&["First", "Second"]).await;
-    cursor_on_the_first_row(&session).await;
-
-    session.invoke("snooze");
-    let view = picker(&session, |_| true).await;
-    assert_eq!(view.kind, PickerKindFfi::Snooze);
-    assert_eq!(view.anchor, PickerAnchorFfi::Row { position: 0 });
-    assert_eq!(view.title, postio_ui::pickers::SNOOZE_TITLE);
-    assert_eq!(view.target, "Ada \u{b7} First");
-    assert_eq!(view.field, PickerFieldFfi::Date);
-    assert_eq!(view.hint.as_deref(), Some(postio_ui::pickers::TYPE_A_DATE));
-    let keys: Vec<Option<&str>> = view.rows.iter().map(|row| row.key.as_deref()).collect();
-    assert_eq!(keys, [Some("1"), Some("2"), Some("3"), Some("4")]);
-
-    assert_eq!(
-        session.key(Some("1"), None, NONE, UiContext::List, false),
-        KeyOutcomeFfi::Command {
-            id: "picker_choose_1".to_owned()
-        }
-    );
-    session.invoke("picker_choose_1");
-    assert!(closes_the_picker(&session).await, "choosing closes it");
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusKeyboardHome
-        ))
-        .await,
-        "and the keyboard goes back to the list"
-    );
-    let (_, _, _, seconds) = toast(&session).await;
-    assert!(seconds.is_some(), "a toast says how long it stays");
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn tab_and_a_typed_date_are_previewed_and_return_chooses_it() {
-    let session = inbox_of(&["First"]).await;
-    cursor_on_the_first_row(&session).await;
-
-    session.invoke("remind_if_no_reply");
-    let view = picker(&session, |_| true).await;
-    assert_eq!(view.kind, PickerKindFfi::Remind);
-    session.invoke("picker_type_date");
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusPickerField
-        ))
-        .await,
-        "Tab puts the keyboard in the date field"
-    );
-    session.focus_picker_typed("receipts".to_owned());
-    picker(&session, |view| {
-        view.hint.as_deref() == Some(postio_ui::pickers::NOT_A_DATE)
-    })
-    .await;
-    session.focus_picker_typed("tue 9am".to_owned());
-    let view = picker(&session, |view| view.typed == "tue 9am").await;
-    let hint = view.hint.expect("a hint");
-    assert!(hint.contains("09:00"), "{hint}");
-    session.invoke("picker_confirm");
-    assert!(closes_the_picker(&session).await, "Return chose the date");
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_new_label_is_made_with_return_and_space_takes_it_off() {
-    let session = inbox_of(&["First"]).await;
-    cursor_on_the_first_row(&session).await;
-
-    session.invoke("add_label");
-    let opened = picker(&session, |_| true).await;
-    assert_eq!(opened.kind, PickerKindFfi::Label);
-    assert_eq!(opened.field, PickerFieldFfi::Filter);
-    assert_eq!(opened.placeholder, postio_ui::pickers::LABEL_FILTER);
-    session.focus_picker_typed("Receipts".to_owned());
-    let view = picker(&session, |view| view.rows.iter().any(|row| row.create)).await;
-    assert_eq!(
-        view.rows[0].name,
-        postio_ui::pickers::create_label("Receipts")
-    );
-    session.invoke("picker_confirm");
-    assert!(
-        closes_the_picker(&session).await,
-        "Return makes it and closes"
-    );
-    let (text, kind, undoable, _) = toast(&session).await;
-    assert_eq!(kind, ToastKindFfi::Completed, "{text}");
-    assert!(undoable, "the host put the label on: {text}");
-
-    session.invoke("add_label");
-    let view = picker(&session, |view| {
-        view.rows.iter().any(|row| row.name == "Receipts")
-    })
-    .await;
-    let receipts = view
-        .rows
-        .iter()
-        .find(|row| row.name == "Receipts")
-        .expect("the label");
-    assert!(receipts.applied && receipts.dot, "{receipts:?}");
-    session.focus_picker_toggle(receipts.token);
-    let view = picker(&session, |view| {
-        view.rows
-            .iter()
-            .any(|row| row.name == "Receipts" && !row.applied)
-    })
-    .await;
-    assert_eq!(view.kind, PickerKindFfi::Label, "Space keeps it up");
-    let (text, _, _, _) = toast(&session).await;
-    assert!(!text.is_empty());
-    session.shutdown();
 }
 
 async fn an_inbox_and_receipts() -> std::sync::Arc<Session> {

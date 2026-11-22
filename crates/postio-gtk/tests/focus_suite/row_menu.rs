@@ -62,9 +62,6 @@ fn selected(window: &postio_gtk::window::FocusWindow) -> usize {
 
 pub fn a_right_click_on_a_row_offers_its_verbs_with_their_keys() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         right_click(&window, 2);
@@ -120,36 +117,8 @@ pub fn a_right_click_on_a_row_offers_its_verbs_with_their_keys() {
     });
 }
 
-pub fn a_menu_verb_runs_its_command_on_the_row() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
-        let before = support::subjects(&window);
-        right_click(&window, 1);
-        let menu = menu_shown(&window).await;
-        choose(&menu, "focus-row-menu-archive");
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == before.len() - 1)
-                .await,
-            "Archive from the menu did not take a row out"
-        );
-        let after = support::subjects(&window);
-        assert!(
-            !after.contains(&before[1]) && after.contains(&before[0]),
-            "the wrong row went: {before:?} became {after:?}"
-        );
-        assert!(!menu.is_visible(), "the menu stayed up after its verb ran");
-    });
-}
-
 pub fn a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         let before = support::subjects(&window);

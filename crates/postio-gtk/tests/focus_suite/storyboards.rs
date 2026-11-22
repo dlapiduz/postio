@@ -12,8 +12,6 @@ use postio_storyboard::check::Outcome;
 use postio_storyboard::format::parse;
 use postio_storyboard::run::{Status, StepOutcome};
 
-use crate::support;
-
 const WALK: &str = r#"
 source = { kind = "flow", ref = "T076 fixture" }
 
@@ -37,9 +35,6 @@ command = "send"
 
 pub fn a_storyboard_plays_on_focus_and_writes_its_run() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let walk = parse(WALK, Path::new("storyboards/list/fixture-walk.toml")).expect("it loads");
         let out = tempfile::tempdir().expect("an output directory");
         let played = run(

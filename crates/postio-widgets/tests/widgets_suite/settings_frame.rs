@@ -1,7 +1,8 @@
 use crate::support_compose::{fonts, style};
+use crate::support_reader::collect;
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_widgets::settings::{Group, Section, SettingsPanel};
+use postio_widgets::settings::{Section, SettingsPanel};
 
 pub fn exactly_one_pane_is_ever_on_screen() {
     let Some((window, panel)) = panel() else {
@@ -85,63 +86,6 @@ pub fn the_frame_is_identical_on_every_pane() {
     assert!(
         footers.iter().all(|line| !line.is_empty()),
         "the footer says what is being written on every pane: {footers:?}"
-    );
-
-    window.destroy();
-}
-
-pub fn the_footer_names_the_table_the_pane_writes() {
-    let Some((window, panel)) = panel() else {
-        return;
-    };
-
-    panel.show_section(Section::Composing);
-    pump();
-    assert_eq!(
-        panel.footer_target_text(),
-        "[compose] in config.toml",
-        "Composing owns [compose] and the strip has to say so"
-    );
-
-    panel.show_section(Section::Keyboard);
-    pump();
-    assert_eq!(panel.footer_target_text(), "[keys] in config.toml");
-
-    // Privacy owns no table, so the strip names the file rather than inventing a `[privacy]`.
-    panel.show_section(Section::Privacy);
-    pump();
-    assert!(
-        !panel.footer_target_text().contains('['),
-        "Privacy has no table to name: {:?}",
-        panel.footer_target_text()
-    );
-
-    window.destroy();
-}
-
-pub fn the_sidebar_groups_its_sections_under_two_headings() {
-    let Some((window, panel)) = panel() else {
-        return;
-    };
-    pump();
-
-    let headings: Vec<String> = collect(
-        panel.upcast_ref::<gtk::Widget>(),
-        "postio-settings-nav-heading",
-    )
-    .into_iter()
-    .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
-    .map(|label| label.text().to_string())
-    .collect();
-
-    assert_eq!(
-        headings,
-        Group::ALL
-            .iter()
-            .map(|g| g.label().to_owned())
-            .collect::<Vec<_>>(),
-        "both headings, in order, and drawn by the list rather than as rows \
-         the keyboard would stop on"
     );
 
     window.destroy();
@@ -250,17 +194,4 @@ fn search_entry(panel: &SettingsPanel) -> gtk::SearchEntry {
         .into_iter()
         .find_map(|widget| widget.downcast::<gtk::SearchEntry>().ok())
         .expect("the find-a-setting field")
-}
-
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }

@@ -8,13 +8,8 @@ use crate::support::{self, Fixture};
 
 pub fn a_window_startup_wired_and_used_still_frees_when_destroyed() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "Numbers.", 5).await;
         fixture
             .write_body(message, "The numbers are attached.")
             .await;
@@ -54,9 +49,6 @@ pub fn a_window_startup_wired_and_used_still_frees_when_destroyed() {
 /// Destroying is GTK's requirement: a window joins the toplevel list when constructed and leaves on
 /// destroy, so dropping the handle is never enough.
 pub fn dropping_a_window_without_destroying_it_is_not_enough() {
-    if !support::display() {
-        return;
-    }
     let window = {
         let window = postio_gtk::window::FocusWindow::new(None);
         window.downgrade()
@@ -75,13 +67,8 @@ pub fn dropping_a_window_without_destroying_it_is_not_enough() {
 
 pub fn a_destroyed_window_releases_its_composer() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let weak_composer = {
             let (window, _client) = fixture.open().await;
             let composer = window.composer().expect("the composer is mounted");

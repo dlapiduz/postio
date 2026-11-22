@@ -12,9 +12,6 @@ use crate::support::{self, Fixture};
 
 pub fn a_jump_to_the_bottom_reads_the_ends_and_nothing_between() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::large(6_000).await;
         let (window, client) = fixture.open().await;
         let pane = window.pane().expect("the inbox is showing");
@@ -79,9 +76,6 @@ pub fn a_row_whose_page_has_not_landed_draws_a_skeleton() {
     use postio_widgets::list_model::ModelRow;
 
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let row = RowWidget::default();
         row.bind(&RowObject::placeholder());
         let window = gtk::Window::new();
@@ -113,9 +107,6 @@ pub fn a_row_whose_page_has_not_landed_draws_a_skeleton() {
 /// number on any machine.
 pub fn opening_and_switching_large_folders_asks_a_bounded_number_of_pages() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::large(12_000).await;
         let (window, client) = fixture.open().await;
         let pane = window.pane().expect("the inbox is showing");

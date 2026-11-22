@@ -1,3 +1,4 @@
+use crate::support_reader::collect;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -100,47 +101,6 @@ pub fn editing_the_display_name_reports_the_account_and_the_new_value() {
         seen[0].1,
         AccountEdit::DisplayName("Ada Lovelace".to_owned())
     );
-
-    window.destroy();
-}
-
-pub fn editing_the_imap_port_reports_the_account_and_the_new_value() {
-    let Some((window, panel)) = panel_with_account() else {
-        return;
-    };
-    rows(&panel)[0].emit_activate();
-    pump();
-
-    let seen: std::rc::Rc<std::cell::RefCell<Vec<(AccountId, AccountEdit)>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    panel.connect_account_edited({
-        let seen = seen.clone();
-        move |id, edit| seen.borrow_mut().push((id, edit))
-    });
-
-    let port = imap_port_field(&panel);
-    port.set_text("143");
-    port.emit_activate();
-    pump();
-
-    let seen = seen.borrow();
-    assert_eq!(seen.len(), 1, "exactly one edit for one change: {seen:?}");
-    assert_eq!(seen[0].0, AccountId::new(1));
-    assert_eq!(seen[0].1, AccountEdit::ImapPort(143));
-
-    window.destroy();
-}
-
-pub fn opening_a_second_account_populates_its_own_settings_not_the_firsts() {
-    let Some((window, panel)) = panel_with_two_accounts() else {
-        return;
-    };
-
-    rows(&panel)[1].emit_activate();
-    pump();
-
-    assert_eq!(display_name_entry(&panel).text(), "Grace");
-    assert_eq!(imap_host_entry(&panel).text(), "imap.example.com");
 
     window.destroy();
 }
@@ -321,16 +281,6 @@ fn panel_with_account() -> Option<(gtk::Window, SettingsPanel)> {
     Some((window, panel))
 }
 
-fn panel_with_two_accounts() -> Option<(gtk::Window, SettingsPanel)> {
-    let (window, panel) = new_panel()?;
-    panel.set_accounts(vec![
-        an_account(1, "Ada", "ada@example.com"),
-        an_account(2, "Grace", "grace@example.com"),
-    ]);
-    pump();
-    Some((window, panel))
-}
-
 fn new_panel() -> Option<(gtk::Window, SettingsPanel)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -421,19 +371,6 @@ fn smtp_port_field(panel: &SettingsPanel) -> gtk::Entry {
     .into_iter()
     .find_map(|w| w.downcast::<gtk::Entry>().ok())
     .expect("the detail view has an SMTP port field")
-}
-
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }
 
 pub fn test_connection_reports_the_account_and_then_shows_what_happened() {

@@ -6,8 +6,6 @@ use adw::prelude::*;
 use postio_gtk::window::FocusWindow;
 use postio_widgets::state::path;
 
-use crate::support;
-
 const DEFAULT: (i32, i32) = (1440, 900);
 
 async fn with_clean_state(body: impl std::future::Future<Output = ()>) {
@@ -23,9 +21,6 @@ fn write_state(text: &str) {
 
 pub fn a_restarted_window_opens_at_the_size_it_was_closed_at() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         with_clean_state(async {
             let first = FocusWindow::new(None);
             assert_eq!(
@@ -52,9 +47,6 @@ pub fn a_restarted_window_opens_at_the_size_it_was_closed_at() {
 
 pub fn a_state_file_that_cannot_be_read_opens_at_the_default() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         with_clean_state(async {
             write_state("this is not a key file at all\u{1}");
             let corrupt = FocusWindow::new(None);

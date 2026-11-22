@@ -10,10 +10,6 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
     let state_dir_guard = tempfile::tempdir().expect("a state directory");
     let state_dir = state_dir_guard.path();
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

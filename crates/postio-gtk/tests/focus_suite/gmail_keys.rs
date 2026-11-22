@@ -241,9 +241,7 @@ impl World {
                 first = 1;
             }
             Flavor::Filtered => {
-                fixture
-                    .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 5)
-                    .await;
+                fixture.file_from_ada("Atlas budget", "x", 5).await;
                 for (from, subject, reason, minutes) in [
                     (
                         ("Forge", "noreply@forge.test"),
@@ -275,12 +273,7 @@ impl World {
             for n in first..20 {
                 let subject = format!("M{:02}", n + 1);
                 let (id, _) = fixture
-                    .file(
-                        ("Ada Moreno", "ada@example.com"),
-                        &subject,
-                        "x",
-                        (n as i64 + 1) * 10 + 20,
-                    )
+                    .file_from_ada(&subject, "x", (n as i64 + 1) * 10 + 20)
                     .await;
                 fixture.write_body(id, &format!("{subject} body.")).await;
                 fixture
@@ -1497,14 +1490,12 @@ fn report(reds: &[Red]) -> String {
 }
 
 macro_rules! cases {
-    ($($name:ident: $surface:ident, $group:ident;)*) => {
+    ($($name:ident: $surface:ident, [$($group:ident),*];)*) => {
         $(
             pub fn $name() {
                 crate::gtk_case(async {
-                    if !support::display() {
-                        return;
-                    }
-                    let reds = press_all(Surface::$surface, Group::$group).await;
+                    let mut reds = Vec::new();
+                    $(reds.extend(press_all(Surface::$surface, Group::$group).await);)*
                     assert!(reds.is_empty(), "red:{}", report(&reds));
                 });
             }
@@ -1513,32 +1504,13 @@ macro_rules! cases {
 }
 
 cases! {
-    list_walks: List, Walk;
-    list_verbs: List, Verbs;
-    list_writes: List, Writes;
-    list_opens: List, Opens;
-    list_goes: List, Go;
-    reader_walks: Reader, Walk;
-    reader_verbs: Reader, Verbs;
-    reader_writes: Reader, Writes;
-    reader_opens: Reader, Opens;
-    reader_goes: Reader, Go;
-    pane_walks: Pane, Walk;
-    pane_verbs: Pane, Verbs;
-    pane_writes: Pane, Writes;
-    pane_opens: Pane, Opens;
-    pane_goes: Pane, Go;
-    digest_walks: Digest, Walk;
-    digest_verbs: Digest, Verbs;
-    digest_opens: Digest, Opens;
-    digest_goes: Digest, Go;
-    filtered_walks: Filtered, Walk;
-    filtered_verbs: Filtered, Verbs;
-    filtered_goes: Filtered, Go;
-    capture_opens: Capture, Opens;
-    menu_walks: Menu, Walk;
-    menu_verbs: Menu, Verbs;
-    menu_writes: Menu, Writes;
+    every_list_key: List, [Walk, Verbs, Writes, Opens, Go];
+    every_reader_key: Reader, [Walk, Verbs, Writes, Opens, Go];
+    every_pane_key: Pane, [Walk, Verbs, Writes, Opens, Go];
+    every_digest_key: Digest, [Walk, Verbs, Opens, Go];
+    every_filtered_key: Filtered, [Walk, Verbs, Go];
+    every_capture_key: Capture, [Opens];
+    every_menu_key: Menu, [Walk, Verbs, Writes];
 }
 
 pub fn every_gmail_command_is_probed_or_excused() {
@@ -1730,9 +1702,6 @@ fn only<'a>(all: Words<'a>, wanted: &[&str]) -> Vec<(&'a str, &'a [CommandId])> 
 
 pub fn the_controls_teach_the_gmail_keys_and_no_old_ones() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let mut problems = Vec::new();
 
         let world = World::new(Flavor::Plain, Surface::List).await;
@@ -1869,9 +1838,6 @@ pub fn the_controls_teach_the_gmail_keys_and_no_old_ones() {
 
 pub fn the_attachment_and_unsubscribe_controls_teach_their_keys() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let mut problems = Vec::new();
         let world = World::new(Flavor::Newsletter, Surface::Reader).await;
         world.enter(Surface::Reader).await;
@@ -1935,9 +1901,6 @@ pub fn the_attachment_and_unsubscribe_controls_teach_their_keys() {
 
 pub fn the_key_map_shows_the_gmail_keys_and_no_old_ones() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let world = World::new(Flavor::Plain, Surface::List).await;
         let window = &world.window;
         press_binding(window, "?");
@@ -2005,9 +1968,6 @@ pub fn the_key_map_shows_the_gmail_keys_and_no_old_ones() {
 
 pub fn the_palette_shows_the_gmail_keys_and_no_old_ones() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let world = World::new(Flavor::Plain, Surface::List).await;
         let window = &world.window;
         press_binding(window, "ctrl+k");
@@ -2060,9 +2020,6 @@ pub fn the_palette_shows_the_gmail_keys_and_no_old_ones() {
 
 pub fn settings_keyboard_lists_the_gmail_keys() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, _directory, _path) = crate::settings::one_message_under("").await;
         support::deliver_with(&window, "comma", Mods::CONTROL_MASK);
         let dialog = crate::settings::settings_shown(&window)
@@ -2108,9 +2065,6 @@ pub fn settings_keyboard_lists_the_gmail_keys() {
 
 pub fn gmail_letters_type_in_the_composer_and_in_the_search_bar() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         const LETTERS: &[&str] = &[
             "e", "r", "a", "f", "#", "s", "b", "v", "I", "U", "z", "o", "u", "j", "k", "n", "p",
             ";", "x", "T", "E", "V", "A", "N", "M", "Z", "*", "g",
@@ -2197,9 +2151,6 @@ pub fn the_reader_names_the_key_that_checks_for_new_mail() {
 /// placed leaves it anywhere (#1800).
 pub fn the_digest_opens_from_a_cursor_below_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let world = World::new(Flavor::Digest, Surface::Digest).await;
         let window = &world.window;
         window.act(CommandId::LastMessage);
@@ -2216,13 +2167,8 @@ pub fn the_digest_opens_from_a_cursor_below_it() {
 
 pub fn z_takes_back_a_removed_account_in_settings() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
-            .await;
+        fixture.file_from_ada("Budget", "A line.", 10).await;
         let (second, _) = fixture.second_account().await;
         let (window, _directory, _path) = crate::settings::open_under(&fixture, "").await;
         support::deliver_with(&window, "comma", Mods::CONTROL_MASK);

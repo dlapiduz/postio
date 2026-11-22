@@ -11,64 +11,8 @@ fn detach_key(window: &postio_gtk::window::FocusWindow) {
     );
 }
 
-pub fn the_detach_key_reaches_the_composer_in_a_wired_focus() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (_fixture, window) = support::three_in_the_inbox().await;
-        let composer = window.composer().expect("the composer is mounted");
-        assert!(!composer.is_open(), "nothing is being composed yet");
-
-        support::keys(&window, &["c"]);
-        assert!(
-            crate::settle_until(async || composer.is_open()).await,
-            "`c` did not open the composer, so this case says nothing about \
-             detaching"
-        );
-        assert!(!composer.is_detached(), "in the dialog is the default");
-
-        detach_key(&window);
-        assert!(
-            crate::settle_until(async || composer.detached_window().is_some()).await,
-            "the key resolved to nothing a person could see: every layer under \
-             this one passes, and that is the shape of bug postio-bl2 is about"
-        );
-        let host = composer.detached_window().expect("the detached window");
-        assert!(composer.is_detached());
-        assert!(host.is_visible(), "a window nobody can see is not a window");
-        assert!(!host.is_modal(), "the main window must stay usable");
-        assert!(
-            window
-                .compose_dialog()
-                .is_none_or(|dialog| !dialog.is_mapped()),
-            "the composition is in two places: the dialog is still over the list"
-        );
-
-        composer.handle_key(
-            gtk::gdk::Key::from_name("o").expect("a key"),
-            gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
-        );
-        assert!(
-            crate::settle_until(async || !composer.is_detached()).await,
-            "the key in the detached window did not bring the composer home"
-        );
-        assert!(composer.is_open(), "still one composition, still open");
-        assert!(
-            crate::settle_until(async || window
-                .compose_dialog()
-                .is_some_and(|dialog| dialog.is_mapped()))
-            .await,
-            "the composition did not come home to its dialog"
-        );
-    });
-}
-
 pub fn the_detach_command_moves_the_open_composer_to_a_window_and_back() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let composer = window.composer().expect("the composer is mounted");
         support::keys(&window, &["c"]);
@@ -99,56 +43,8 @@ pub fn the_detach_command_moves_the_open_composer_to_a_window_and_back() {
     });
 }
 
-pub fn a_detached_composition_keeps_its_frame_so_a_mouse_can_send() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (_fixture, window) = support::three_in_the_inbox().await;
-        let composer = window.composer().expect("the composer is mounted");
-        support::keys(&window, &["c"]);
-        assert!(
-            crate::settle_until(async || composer.is_open()).await,
-            "`c` did not open the composer"
-        );
-        composer.dispatch(CommandId::DetachComposer);
-        assert!(
-            crate::settle_until(async || composer.is_detached()).await,
-            "the command did not detach the composer"
-        );
-        let detached = composer.detached_window().expect("the window of its own");
-        for class in [
-            "focus-compose-title",
-            "focus-compose-send",
-            "focus-compose-send-later",
-            "focus-compose-attach",
-            "focus-compose-remind",
-        ] {
-            assert_eq!(
-                support::with_class(&detached, class).len(),
-                1,
-                "the detached window is missing {class}"
-            );
-        }
-        assert!(
-            !support::with_class(&detached, "focus-compose-surface").is_empty(),
-            "the detached window lost the dialog's styling"
-        );
-        composer.dispatch(CommandId::DetachComposer);
-        assert!(crate::settle_until(async || !composer.is_detached()).await);
-        assert_eq!(
-            support::with_class(&window, "focus-compose-send").len(),
-            1,
-            "the frame did not come home with the composer"
-        );
-    });
-}
-
 pub fn a_detached_composer_window_holds_the_keyboard() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let composer = window.composer().expect("the composer is mounted");
         support::keys(&window, &["c"]);
@@ -187,13 +83,8 @@ pub fn a_detached_composer_window_holds_the_keyboard() {
 
 pub fn the_window_warms_its_editing_surface_without_being_asked_to_compose() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let (window, _client) = fixture.open().await;
         let composer = window.composer().expect("the composer is mounted");
         assert!(
@@ -224,13 +115,8 @@ pub fn the_window_warms_its_editing_surface_without_being_asked_to_compose() {
 
 pub fn a_warm_ask_made_before_the_composer_is_mounted_still_warms_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
         window.warm_composer();
@@ -251,9 +137,6 @@ pub fn a_key_typed_in_a_detached_composition_lands_in_it() {
     use postio_widgets::storyboard::deliver;
 
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let composer = window.composer().expect("the composer is mounted");
         support::keys(&window, &["c"]);

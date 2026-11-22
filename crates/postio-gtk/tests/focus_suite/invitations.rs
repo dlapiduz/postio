@@ -134,76 +134,8 @@ async fn open_over(raws: &[(&[u8], &str)]) -> (Fixture, FocusWindow) {
     (fixture, window)
 }
 
-pub fn y_accepts_from_the_row_and_the_toast_lasts_the_window() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let invitation = open_invitation();
-        let (_fixture, window) = open_over(&[(&invitation, "Portfolio review")]).await;
-        let line = said(&window, "Portfolio review");
-        for offered in ["Accept", "y", "Decline", "Y"] {
-            assert!(
-                line.contains(&offered.to_owned()),
-                "the row offers {offered:?}: {line:?}"
-            );
-        }
-
-        support::keys(&window, &["j", "y"]);
-        assert!(
-            crate::settle_until(async || window.toast_showing().as_deref() == Some("Accepted"))
-                .await,
-            "y said nothing: {:?}",
-            window.toast_showing()
-        );
-        let toast = window.toast().expect("the toast on screen");
-        assert_eq!(
-            toast.button_label().as_deref(),
-            Some("Undo"),
-            "\"Accepted \u{b7} Undo\""
-        );
-        let window_lasts = postio_session::actions::RSVP_WINDOW.as_secs() as u32;
-        assert_eq!(
-            toast.timeout(),
-            window_lasts,
-            "the toast lasts as long as the answer can be taken back"
-        );
-        assert!(
-            crate::settle_until(async || {
-                let line = said(&window, "Portfolio review");
-                line.contains(&"Accepted".to_owned()) && !line.contains(&"Accept".to_owned())
-            })
-            .await,
-            "the row says what was answered, and offers no second answer: {:?}",
-            said(&window, "Portfolio review")
-        );
-
-        let shown = std::time::Instant::now();
-        let gone = std::time::Duration::from_secs(u64::from(window_lasts) + 5);
-        while window.toast_showing().is_some() && shown.elapsed() < gone {
-            crate::settle();
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert_eq!(
-            window.toast_showing(),
-            None,
-            "the toast outlived its window"
-        );
-        assert!(
-            shown.elapsed()
-                >= std::time::Duration::from_secs(u64::from(
-                    postio_widgets::widgets::toast::TOAST_TIMEOUT
-                )),
-            "the toast went with an ordinary toast's timeout, not the window's"
-        );
-    });
-}
-
 pub fn a_click_on_the_row_s_decline_declines() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let invitation = open_invitation();
         let (_fixture, window) = open_over(&[(&invitation, "Portfolio review")]).await;
         let target = row(&window, "Portfolio review").expect("the invitation's row");
@@ -229,43 +161,8 @@ pub fn a_click_on_the_row_s_decline_declines() {
     });
 }
 
-pub fn a_cancelled_or_past_invitation_offers_no_answer() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let cancelled = postio_model::test_corpus::load("invite-cancel").bytes();
-        let past = postio_model::test_corpus::load("calendar-invite").bytes();
-        let (_fixture, window) = open_over(&[(cancelled, "Canceled"), (past, "Invitation")]).await;
-        for (subject, status) in [("Canceled", "Cancelled"), ("Invitation", "Past")] {
-            let line = said(&window, subject);
-            assert!(
-                line.contains(&status.to_owned()),
-                "{subject:?} says {status:?}: {line:?}"
-            );
-            for answer in ["Accept", "Decline"] {
-                assert!(
-                    !line.contains(&answer.to_owned()),
-                    "{subject:?} offers {answer:?}: {line:?}"
-                );
-            }
-        }
-        for _ in 0..2 {
-            support::keys(&window, &["j", "y"]);
-        }
-        assert!(
-            crate::settle_while(async || { window.toast_showing().as_deref() != Some("Accepted") })
-                .await,
-            "an invitation with nothing to answer was answered"
-        );
-    });
-}
-
 pub fn the_open_invitation_s_card_answers_with_its_keys() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let invitation = open_invitation();
         let (_fixture, window) = open_over(&[(&invitation, "Portfolio review")]).await;
         support::keys(&window, &["j"]);

@@ -18,10 +18,6 @@ fn draft_saying(text: &str) -> Draft {
 }
 
 pub fn the_composer_asks_before_the_two_things_it_cannot_take_back() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().expect("a display");
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

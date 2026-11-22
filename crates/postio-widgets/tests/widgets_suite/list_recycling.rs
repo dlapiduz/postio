@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gtk::prelude::*;
-use gtk::{gdk, gio, glib};
+use gtk::{gio, glib};
 
 /// Far larger than the read-ahead window, so "bounded" and "one per item" cannot be the same
 /// number.
@@ -19,11 +19,6 @@ struct Case {
 }
 
 pub fn a_list_view_builds_a_bounded_window_however_big_the_model_is() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
     let cases = vec![
         measure("as the application builds it", |_| {}),
         measure("horizontal policy Automatic", |setup| {

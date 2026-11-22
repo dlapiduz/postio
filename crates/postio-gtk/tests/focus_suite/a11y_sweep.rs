@@ -205,9 +205,6 @@ fn row_height(window: &FocusWindow) -> i32 {
 
 pub fn every_widget_in_focus_s_surfaces_has_a_role_and_a_name() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (fixture, _delivery, _held) = crate::digest::delivered_holding().await;
         let (window, _client) = fixture.open().await;
         assert!(
@@ -268,9 +265,6 @@ fn normal_dpi(settings: &gtk::Settings) -> i32 {
 
 pub fn at_200_percent_text_the_window_stays_usable() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let settings = gtk::Settings::default().expect("a settings object");
         let normal = normal_dpi(&settings);
@@ -293,9 +287,6 @@ pub fn at_200_percent_text_the_window_stays_usable() {
 /// Held out (see `IGNORED`): Focus's rows are 40 and 72 pixels whatever the text size.
 pub fn at_200_percent_text_rows_grow_with_the_type() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let settings = gtk::Settings::default().expect("a settings object");
         let normal = normal_dpi(&settings);
