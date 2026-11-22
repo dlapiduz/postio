@@ -1,6 +1,6 @@
 # 0046 — Content identity is distinct from mailbox identity
 
-Status: Accepted (2026-10-05), implementation in #1780
+Status: Accepted (2026-10-05), implementation in #1780; amended 2026-11-22 (#1526)
 
 ## Context
 
@@ -47,10 +47,33 @@ The forward migration gives each existing occurrence independent content.
 It never infers identity from old RFC IDs or mailbox coordinates. Derived
 search data may be rebuilt. Unknown schema fingerprints remain refused.
 
+### Exact copies collapse in search
+
+> **Amended 2026-11-22, by the maintainer (#1526).** IMAP occurrences still
+> never share content. Search alone also collapses an occurrence into
+> another that is an **exact copy** of it: the same account, the same
+> `rfc_message_id`, the same size (non-zero), the same `Date`, and the same
+> people, From included (`people_ids`). A message a person filed in both
+> `Sent` and iCloud's `Sent Messages` is then one hit, as a Gmail message
+> with two labels is.
+
+The collapse extends the content path rather than adding one. The earliest
+qualifying occurrence stands for the copies as for content siblings, and the
+counts and folder facets count it once, in every folder that holds a copy.
+A copy stands only if it matched as well: it has content of its own, whose
+body may not be indexed yet. Storage, flags, bodies and mutation targets are
+untouched.
+
 ## Alternatives
 
-* RFC Message-ID search collapse was rejected: it cannot establish byte
-  identity, saves no body storage and can conceal distinct messages.
+* RFC Message-ID search collapse **alone** was rejected: it cannot establish
+  byte identity, saves no body storage and can conceal distinct messages. A
+  reused or forged Message-ID on a message of another size, date or sender
+  still shows as its own hit; the amendment above collapses only when every
+  one of those agrees.
+* Sharing content between exact IMAP copies was not taken: matching
+  envelopes do not prove the bodies identical, and a shared body is what the
+  reader would then show for both.
 * Inferring content identity from `remote_id` was rejected: IMAP coordinates
   can repeat in different folders and other backends have different scopes.
 * Replacing occurrence IDs with content IDs was rejected: it would make

@@ -122,6 +122,20 @@ async fn a_word_with_a_date_filter_seeks_each_hit_by_its_content() {
                     "{text}, {order:?}: the sibling check must seek the content's \
                      other memberships, not a range: {siblings:?}\n{sql}"
                 );
+                // An exact copy (#1526) is sought by its `Message-ID`, both
+                // columns bound, and nothing about it is a walk.
+                let copies: Vec<&String> = steps
+                    .iter()
+                    .filter(|step| step.starts_with("SEARCH copy "))
+                    .collect();
+                assert!(
+                    !copies.is_empty()
+                        && copies.iter().all(|step| step.as_str()
+                            == "SEARCH copy USING INDEX idx_messages_rfc_message_id \
+                                (account_id=? AND rfc_message_id=?)"),
+                    "{text}, {order:?}: the copy check must seek the message's \
+                     copies by its Message-ID: {copies:?}\n{sql}\n{steps:#?}"
+                );
             }
             for start in ["SELECT count(*)", "SELECT m.id", "WITH capped"] {
                 assert!(

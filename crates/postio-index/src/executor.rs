@@ -1189,13 +1189,80 @@ const HITS_JOIN_WITH_FILES: &str = "FROM (
 /// and `m.id IN (SELECT rowid ...)` builds an ephemeral b-tree of every
 /// posting. On a word in most of the mailbox either is ~120 ms of setup to
 /// answer a `LIMIT 50`.
-const CORRELATED_MATCH: &str = "(EXISTS (SELECT 1 FROM search_documents d
-               WHERE d.content_id = m.content_id
-                 AND fts_match(d.sender, d.recipients, d.subject, d.filenames, d.list_id, ?))
-   OR EXISTS (SELECT 1 FROM message_search_bodies b
-               WHERE b.content_id = m.content_id AND fts_match(b.body_search, ?)))";
+///
+/// `alias` names the occurrence asked about: `m`, or an exact copy of it
+/// ([`copy_of`]). `meta` and `body` number the two terms, which are `?1`
+/// and `?2` in the driven form and follow the conditions in the probed one.
+fn correlated_match(alias: &str, meta: usize, body: usize) -> String {
+    format!(
+        "(EXISTS (SELECT 1 FROM search_documents {alias}_d
+               WHERE {alias}_d.content_id = {alias}.content_id
+                 AND fts_match({alias}_d.sender, {alias}_d.recipients, {alias}_d.subject,
+                               {alias}_d.filenames, {alias}_d.list_id, ?{meta}))
+   OR EXISTS (SELECT 1 FROM message_search_bodies {alias}_b
+               WHERE {alias}_b.content_id = {alias}.content_id
+                 AND fts_match({alias}_b.body_search, ?{body})))"
+    )
+}
 
-/// Which plan a statement asks for. See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
+/// Whether the occurrence `copy` is an exact copy of `m` with content of its
+/// own: an IMAP message filed in two folders (#1526), which no backend names
+/// as one content (ADR 0046, as amended 2026-11-22).
+///
+/// Exact is every fact the row keeps about the message: the account, the
+/// `Message-ID`, the size, the `Date`, and the people (`people_ids`, From
+/// and every recipient, as the row keeps them). A `Message-ID` alone never
+/// collapses: a reused or forged one names another message. A row missing
+/// any of them is a copy of nothing, since `=` holds for no `NULL`, and a
+/// size of zero is a size nobody measured.
+///
+/// The seek is `idx_messages_rfc_message_id (account_id, rfc_message_id)`,
+/// named for the reason [`HITS_JOIN`] gives: without it the planner may take
+/// a two-column range the same `WHERE` offers. Only real copies get past
+/// it, so what follows is evaluated for almost nothing. A content sibling
+/// is the other check's (`earlier`), and is left out here so a Gmail row,
+/// whose every label is a sibling, costs that seek and nothing more.
+fn copy_of(copy: &str) -> String {
+    format!(
+        "{copy}.account_id = m.account_id AND {copy}.rfc_message_id = m.rfc_message_id \
+         AND {copy}.size = m.size AND m.size > 0 AND {copy}.date = m.date \
+         AND {copy}.people_ids = m.people_ids AND {copy}.content_id <> m.content_id"
+    )
+}
+
+/// [`COPY_KEY`]'s columns as one value, for a walk that folds its rows in
+/// Rust: two rows with the same key are exact copies by [`copy_of`]'s
+/// rule, and a row that is a copy of nothing has none. The numbers come
+/// first and the `Message-ID`, the one free-text part, last, so no two
+/// different rows spell the same key.
+const COPY_KEY: &str = "CASE WHEN m.rfc_message_id IS NOT NULL AND m.size > 0
+               AND m.date IS NOT NULL AND m.people_ids IS NOT NULL
+          THEN m.account_id || ' ' || m.size || ' ' || m.date || ' '
+               || m.people_ids || ' ' || m.rfc_message_id END";
+
+/// `sql` with the occurrence alias `m.` written as `alias.`, and nothing
+/// else touched: not the suffix of another alias, such as contact-group
+/// membership's `gm.`.
+fn realias(sql: &str, alias: &str) -> String {
+    let mut out = String::new();
+    let mut cursor = 0;
+    for (offset, _) in sql.match_indices("m.") {
+        if offset > 0
+            && (sql.as_bytes()[offset - 1].is_ascii_alphanumeric()
+                || sql.as_bytes()[offset - 1] == b'_')
+        {
+            continue;
+        }
+        out.push_str(&sql[cursor..offset]);
+        out.push_str(alias);
+        out.push('.');
+        cursor = offset + 2;
+    }
+    out.push_str(&sql[cursor..]);
+    out
+}
+
+/// Which plan a statement asks for. See [`HITS_JOIN`] and [`correlated_match`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Form {
     /// Driven by the match: walk the postings, look each hit up.
@@ -1522,28 +1589,28 @@ impl Plan {
     ///
     /// Not a tuning knob: the two forms have different *plans*, and which one
     /// is right depends on what the statement is about to do with the rows.
-    /// See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
+    /// See [`HITS_JOIN`] and [`correlated_match`].
     fn where_sql(&self, form: Form) -> String {
-        let eligible = self.occurrence_where_sql(form);
+        let (eligible, next) = self.numbered(form);
         // A sibling must satisfy the same location predicates before it can
         // represent this content. Reusing numbered parameters keeps this a
         // bounded indexed sibling seek, including on the recency-driven path.
-        // Replace the occurrence alias, not the suffix of another alias
-        // such as contact-group membership's `gm`.
-        let mut earlier = String::new();
-        let mut cursor = 0;
-        for (offset, _) in eligible.match_indices("m.") {
-            if offset > 0
-                && (eligible.as_bytes()[offset - 1].is_ascii_alphanumeric()
-                    || eligible.as_bytes()[offset - 1] == b'_')
-            {
-                continue;
-            }
-            earlier.push_str(&eligible[cursor..offset]);
-            earlier.push_str("earlier.");
-            cursor = offset + 2;
-        }
-        earlier.push_str(&eligible[cursor..]);
+        let earlier = realias(&eligible, "earlier");
+        // An exact copy (#1526) stands for this one on the same terms, and
+        // on one more: it must match too. A content sibling matches whenever
+        // this one does, since the indexes are keyed by content; a copy has
+        // content of its own, whose body may not be here yet, and a copy
+        // that did not match hiding one that did would lose the message.
+        let (meta, body) = match form {
+            Form::Driven => (1, 2),
+            Form::Probed => (next, next + 1),
+        };
+        let copy = realias(&eligible, "copy");
+        let copy_matched = if self.has_match {
+            format!(" AND {}", correlated_match("copy", meta, body))
+        } else {
+            String::new()
+        };
         let mut conditions = vec![
             eligible,
             format!(
@@ -1551,15 +1618,17 @@ impl Plan {
              WHERE earlier.content_id = m.content_id AND earlier.id < m.id \
                AND ({earlier}))"
             ),
+            format!(
+                "NOT EXISTS (SELECT 1 FROM messages copy INDEXED BY idx_messages_rfc_message_id \
+             WHERE {} AND copy.id < m.id AND ({copy}){copy_matched})",
+                copy_of("copy")
+            ),
         ];
         if self.has_match {
-            conditions.push(
-                match form {
-                    Form::Driven => "hits.rid IS NOT NULL",
-                    Form::Probed => CORRELATED_MATCH,
-                }
-                .to_string(),
-            );
+            conditions.push(match form {
+                Form::Driven => "hits.rid IS NOT NULL".to_string(),
+                Form::Probed => correlated_match("m", meta, body),
+            });
         }
         conditions.join(" AND ")
     }
@@ -1567,6 +1636,12 @@ impl Plan {
     /// Location predicates, with reusable bindings for selecting siblings and
     /// measuring facets. Content matches are identical across memberships.
     fn occurrence_where_sql(&self, form: Form) -> String {
+        self.numbered(form).0
+    }
+
+    /// [`Plan::occurrence_where_sql`], and the number the next parameter
+    /// after it takes.
+    fn numbered(&self, form: Form) -> (String, usize) {
         let mut parameter = if self.has_match && form == Form::Driven {
             3
         } else {
@@ -1581,7 +1656,7 @@ impl Plan {
                 sql.push(character);
             }
         }
-        sql
+        (sql, parameter)
     }
 
     /// Every parameter one statement binds, in the order its `?`s appear.
@@ -1715,6 +1790,9 @@ impl Plan {
         // Cap content identities first, then measure every qualifying
         // membership. Summing per-folder counts would double-count content;
         // choosing one folder first would hide valid folder refinements.
+        // An exact copy (#1526) is a membership of the content it copies:
+        // counted under that content's id, in its own folder, when it
+        // qualifies and matches as `where_sql` asks of it.
         let sql = format!(
             "WITH capped AS (
                  SELECT DISTINCT m.content_id {from} WHERE {where_sql} LIMIT ?
@@ -1724,6 +1802,15 @@ impl Plan {
                      ON m.content_id = c.content_id
                    JOIN mailboxes mb ON mb.id = m.mailbox_id
                   WHERE {eligible}
+                 UNION ALL
+                 SELECT m.content_id, mb.name, copy.seen, copy.flagged, copy.has_attachments,
+                        copy.size
+                   FROM capped c CROSS JOIN messages m INDEXED BY idx_messages_content
+                     ON m.content_id = c.content_id
+                   CROSS JOIN messages copy INDEXED BY idx_messages_rfc_message_id
+                     ON {copy_of}
+                   JOIN mailboxes mb ON mb.id = copy.mailbox_id
+                  WHERE {eligible} AND {copy_eligible}{copy_matched}
              )
              SELECT NULL, count(DISTINCT content_id),
                     count(DISTINCT CASE WHEN seen = 0 THEN content_id END),
@@ -1737,6 +1824,13 @@ impl Plan {
             from = self.source_sql(Form::Driven),
             where_sql = self.where_sql(Form::Driven),
             eligible = self.occurrence_where_sql(Form::Driven),
+            copy_of = copy_of("copy"),
+            copy_eligible = realias(&self.occurrence_where_sql(Form::Driven), "copy"),
+            copy_matched = if self.has_match {
+                format!(" AND {}", correlated_match("copy", 1, 2))
+            } else {
+                String::new()
+            },
         );
         let mut params = self.params_for(Form::Driven);
         params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
@@ -2824,6 +2918,74 @@ mod tests {
                 .any(|step| step.starts_with("SCAN") && step.contains("contact")),
             "a contacts table is being scanned per candidate; plan:\n{steps:#?}"
         );
+    }
+
+    /// The probed form, which only a match of more than
+    /// [`PROBED_FORM_LIMIT`] messages takes, collapses an exact copy
+    /// (#1526) as the driven one does: its terms follow the conditions, and
+    /// the copy's probe binds the same two. A body-only word whose earlier
+    /// copy has no body yet still finds the copy that has one.
+    #[tokio::test]
+    async fn the_probed_form_collapses_an_exact_copy() {
+        use postio_model::{EmailAddress, Mailbox, MailboxRole, Message, RfcMessageId};
+        use postio_storage::repository::{MailboxRepository, MessageRepository};
+
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        crate::index::ensure_schema(&connection)
+            .await
+            .expect("schema");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
+        let mut sent = Mailbox::new(account.id, "Sent Messages", Some('/'));
+        sent.role = MailboxRole::Sent;
+        MailboxRepository::new(&connection)
+            .create(&mut sent)
+            .await
+            .expect("a folder");
+        let mut ids = Vec::new();
+        for (mailbox, body) in [(inbox, None), (sent.id, Some("the nebula, mapped"))] {
+            let mut message = Message::new(account.id, mailbox, at(1));
+            message.rfc_message_id = Some(RfcMessageId::new("<survey-1@example.com>"));
+            message.date = Some(at(1));
+            message.size = 4_096;
+            message.from = vec![EmailAddress::new(Some("Ada"), "ada@example.com")];
+            message.subject = Some("Nebula survey".to_owned());
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("file it");
+            if let Some(body) = body {
+                crate::index::index_body(&connection, message.id.get(), Some(body))
+                    .await
+                    .expect("index its body");
+            }
+            ids.push(message.id.get());
+        }
+
+        for (text, expected) in [
+            ("nebula", ids[0]),
+            ("nebula after:2026-01-01", ids[0]),
+            ("mapped after:2026-01-01", ids[1]),
+        ] {
+            let query = postio_search::parse(text, at(0).date_naive());
+            let request = SearchRequest {
+                account: AccountScope::Account(account.id),
+                query: &query,
+                scope: postio_search::facets::Scope::AllMail,
+                limit: 10,
+                order: postio_search::ResultOrder::Newest,
+            };
+            let plan = Plan::build(&request);
+            assert_eq!(plan.fetch_form(false, PROBED_FORM_LIMIT + 1), Form::Probed);
+            let found: Vec<i64> = plan
+                .fetch_candidates(&connection, 10, false, PROBED_FORM_LIMIT + 1, at(0))
+                .await
+                .expect("the probed pool")
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            assert_eq!(found, [expected], "{text}");
+        }
     }
 
     #[test]

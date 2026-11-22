@@ -26,6 +26,7 @@ mod content_membership;
 mod conversations;
 mod digest_matcher;
 mod driven_join_plan;
+mod exact_copies;
 mod executor;
 mod facets_one_pass;
 mod group_filter;
