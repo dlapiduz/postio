@@ -48,6 +48,29 @@ pub fn quote_line() -> String {
 
 /// `document` as the view's text, with the caret at `caret`'s character.
 pub fn open(document: &Document, caret: Option<&DocPosition>) -> Opened {
+    // A reply opens with empty lines above the quote to type into: the
+    // composer's room, not the person's text, and in Markdown it could only
+    // be `<br>`s. The view starts at the first words; a caret in the room
+    // goes to the start.
+    let room = typing_room(document);
+    let document = &Document {
+        blocks: document.blocks[room..].to_vec(),
+    };
+    let shifted = caret.map(|caret| match caret.path.split_first() {
+        Some((first, rest)) if *first >= room => {
+            let mut path = vec![first - room];
+            path.extend_from_slice(rest);
+            DocPosition {
+                path,
+                offset: caret.offset,
+            }
+        }
+        _ => DocPosition {
+            path: vec![0],
+            offset: 0,
+        },
+    });
+    let caret = shifted.as_ref();
     let mut text = String::new();
     let mut at = None;
     let mut quotes = Vec::new();
@@ -197,6 +220,19 @@ pub fn markdown_of(text: &str) -> String {
     kept.join("\n").trim_end().to_owned()
 }
 
+/// How many paragraphs of nothing but line breaks the document starts with:
+/// the room a reply leaves above its quote to type into.
+pub fn typing_room(document: &Document) -> usize {
+    document
+        .blocks
+        .iter()
+        .take_while(|block| {
+            matches!(block, Block::Paragraph(inlines)
+                if inlines.iter().all(|inline| matches!(inline, postio_body::Inline::Break)))
+        })
+        .count()
+}
+
 /// `text` without the quote line's private character: what typing and
 /// pasting into the view may insert.
 pub fn strip_quote_marks(text: &str) -> String {
@@ -290,5 +326,22 @@ mod tests {
     #[test]
     fn the_quote_mark_cannot_be_typed() {
         assert_eq!(strip_quote_marks("a\u{E001}b"), "ab");
+    }
+
+    #[test]
+    fn a_replys_room_to_type_is_not_markdown() {
+        let mut document = reply();
+        document
+            .blocks
+            .insert(0, Block::Paragraph(vec![postio_body::Inline::Break]));
+        let opened = open(
+            &document,
+            Some(&DocPosition {
+                path: vec![0],
+                offset: 0,
+            }),
+        );
+        assert!(opened.text.starts_with("Thanks,"), "{:?}", opened.text);
+        assert_eq!(opened.caret, Some(0));
     }
 }

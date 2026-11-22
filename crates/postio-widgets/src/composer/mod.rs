@@ -1235,6 +1235,12 @@ impl Composer {
         if self.imp().filling.get() {
             return;
         }
+        // A "for now" answer lasts until the next edit; a narrowing notice,
+        // which has an Undo, lasts until the next switch.
+        let imp = self.imp();
+        if imp.source_notice.is_visible() && !imp.source_notice_undo.is_visible() {
+            imp.source_notice.set_visible(false);
+        }
         self.refresh();
     }
 
@@ -2215,10 +2221,18 @@ impl Composer {
             id if self.is_open() && WAITS_FOR_MARKDOWN.contains(&id) => {
                 let keymap = self.keymap_now();
                 let key = hints::key(&keymap, CommandId::ToggleMarkdownSource).unwrap_or_default();
-                self.set_status(&postio_ui::compose::in_markdown_view_for_now(
+                let words = postio_ui::compose::in_markdown_view_for_now(
                     postio_core::registry::get(id).title,
                     &key,
-                ));
+                );
+                // On the status line, and on the line under the editor,
+                // which every host shows: a framed host hides the status.
+                self.set_status(&words);
+                let imp = self.imp();
+                imp.source_typed.take();
+                imp.source_notice_label.set_label(&words);
+                imp.source_notice_undo.set_visible(false);
+                imp.source_notice.set_visible(true);
             }
             CommandId::Bold if self.is_open() => {
                 self.imp().body.format(editor::Format::Bold);
@@ -2593,7 +2607,11 @@ impl Composer {
         // A document the view only rewrote is the same document: what the
         // view loses nothing of is the normal form (FR-024).
         let before = imp.body.document();
-        let document = if postio_body::markdown::normalize(before.clone()) == returned.document {
+        let room = postio_ui::editor::source::typing_room(&before);
+        let unroomed = postio_body::Document {
+            blocks: before.blocks[room..].to_vec(),
+        };
+        let document = if postio_body::markdown::normalize(unroomed) == returned.document {
             before
         } else {
             returned.document
@@ -2602,6 +2620,7 @@ impl Composer {
         match postio_ui::compose::narrowed_notice(returned.lost) {
             Some(words) => {
                 imp.source_notice_label.set_label(&words);
+                imp.source_notice_undo.set_visible(true);
                 imp.source_notice.set_visible(true);
                 imp.source_typed.replace(Some(text));
             }
@@ -4511,7 +4530,7 @@ const WAITS_FOR_MARKDOWN: [CommandId; 16] = [
 ];
 
 /// Under this width the source view's strip says less.
-const NARROW_SOURCE: i32 = 560;
+const NARROW_SOURCE: i32 = 760;
 
 const FORMAT_TOGGLES: [(CommandId, &str, &str); 6] = [
     (

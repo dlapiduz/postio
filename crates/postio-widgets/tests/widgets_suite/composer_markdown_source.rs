@@ -278,6 +278,11 @@ pub fn the_rich_view_says_where_a_waiting_command_is() {
         composer.status(),
         "Strikethrough is in the Markdown view for now \u{b7} ctrl+alt+s"
     );
+    assert_eq!(
+        composer.test_source_notice().as_deref(),
+        Some("Strikethrough is in the Markdown view for now \u{b7} ctrl+alt+s"),
+        "a framed host hides the status line, so the line under the editor says it"
+    );
     assert_eq!(composer.document(), document, "something changed");
     assert_eq!(composer.test_source_text(), None);
 }

@@ -55,7 +55,7 @@ expect  = "The rich view is back: the words, then an open task, \"☐ call the v
 [[step]]
 command = "strikethrough"
 check   = { app.focus.composer.view = "rich", app.focus.composer.status = "Strikethrough is in the Markdown view for now · ctrl+alt+s" }
-expect  = "In the rich view, Strikethrough says where it is for now, with the key to get there, and nothing in the message changes."
+expect  = "In the rich view, Strikethrough says where it is for now on a line under the editor -- \"Strikethrough is in the Markdown view for now · ctrl+alt+s\" -- and nothing in the message changes."
 
 [[step]]
 key     = "mod+z"

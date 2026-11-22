@@ -7,6 +7,9 @@
 # command already makes, so the toolbar shows the heading as a lit toggle
 # whichever way it was made, and the key undoes what the sequence did.
 #
+# The plain part underlines a first-level heading (spec 014 D6), so the
+# typed text reads "Agenda" over "======" while it is a heading.
+#
 # Typed above a reply's quote, where a reply's own words go. Red on the
 # base, which has no heading command to press and leaves `# ` as typed.
 apps   = ["focus"]
@@ -29,7 +32,7 @@ expect  = "The `# ` is gone: the line is a heading now, empty, and the toolbar's
 
 [[step]]
 type    = "Agenda"
-check   = { keyboard.field = "body", app.focus.composer.marks = "heading_1", app.focus.compose.typed = "Agenda" }
+check   = { keyboard.field = "body", app.focus.composer.marks = "heading_1", app.focus.compose.typed = "Agenda\n======" }
 expect  = "Agenda is written as a heading -- larger and heavier than body text, with no `#` in front of it -- and the Heading toggle stays lit."
 
 [[step]]
@@ -39,5 +42,5 @@ expect  = "The heading key takes it back to an ordinary line of body text, the t
 
 [[step]]
 command = "heading_1"
-check   = { keyboard.field = "body", keyboard.typing = true, app.focus.composer.marks = "heading_1", app.focus.compose.typed = "Agenda" }
+check   = { keyboard.field = "body", keyboard.typing = true, app.focus.composer.marks = "heading_1", app.focus.compose.typed = "Agenda\n======" }
 expect  = "Pressed again it is a heading again, the toggle lit, and nothing else in the reply moved."
