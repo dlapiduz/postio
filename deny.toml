@@ -102,6 +102,19 @@ confidence-threshold = 0.93
 # number is visible, it can be driven down deliberately, and this becomes
 # "deny" when it is low enough to mean something.
 multiple-versions = "warn"
+# ...except the reader stack, which must be one copy of each. Blitz, the
+# sanitiser and the Markdown converter share these crates' types, so a second
+# version is a second parser and a second set of interned atoms in one
+# process, and `cargo update` alone makes one whenever a dependant lags
+# (#1722). Each is not banned, only denied a second version.
+deny = [
+    { crate = "html5ever", deny-multiple-versions = true },
+    { crate = "markup5ever", deny-multiple-versions = true },
+    { crate = "markup5ever_rcdom", deny-multiple-versions = true },
+    { crate = "cssparser", deny-multiple-versions = true },
+    { crate = "selectors", deny-multiple-versions = true },
+    { crate = "stylo", deny-multiple-versions = true },
+]
 wildcards = "deny"
 # ...except between Postio's own crates. `postio-config.workspace = true`
 # resolves to a path dependency carrying no version requirement, which is a

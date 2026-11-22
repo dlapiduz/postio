@@ -32,17 +32,16 @@ pub fn from_html(sanitized: &str) -> String {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use htmd::element_handler::Handlers;
+    use htmd::element_handler::{Context, Handlers};
     use htmd::{Element, HtmlToMarkdown};
 
     let images = Arc::new(AtomicUsize::new(0));
     let converter = HtmlToMarkdown::builder()
-        .add_handler(vec!["img"], move |_: &dyn Handlers, element: Element| {
+        .add_handler(vec!["img"], move |_: &dyn Handlers, element: &Element| {
             let alt = element
-                .attrs
-                .iter()
-                .find(|attribute| &*attribute.name.local == "alt")
-                .map(|attribute| attribute.value.trim().to_owned())
+                .node
+                .attr("alt")
+                .map(|alt| alt.trim().to_owned())
                 .filter(|alt| !alt.is_empty())
                 .unwrap_or_else(|| "image".to_owned());
             let number = images.fetch_add(1, Ordering::Relaxed);
@@ -53,14 +52,15 @@ pub fn from_html(sanitized: &str) -> String {
         })
         .add_handler(
             vec!["details"],
-            |handlers: &dyn Handlers, element: Element| {
-                let inner = handlers.walk_children(element.node);
+            |handlers: &dyn Handlers, element: &Element| {
+                // A fold is a container: its quote begins blocks of its own.
+                let inner = handlers.walk_children(element.node, Context::BLOCK);
                 Some(format!("\n\n{FOLD}\n\n{}\n\n{END_FOLD}\n\n", inner.content.trim()).into())
             },
         )
         // The terminal draws its own line for a fold; the sanitiser's summary
         // words would only repeat it.
-        .add_handler(vec!["summary"], |_: &dyn Handlers, _: Element| {
+        .add_handler(vec!["summary"], |_: &dyn Handlers, _: &Element| {
             Some("".into())
         })
         .build();
