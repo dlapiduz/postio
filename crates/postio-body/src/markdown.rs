@@ -76,44 +76,77 @@ pub fn from_html(sanitized: &str) -> String {
 /// the same content makes the same HTML from either (`contracts/markdown.md`,
 /// SC-006). Total -- every input is some document, and it never panics.
 ///
-/// What the document has no node for stays the words the person typed: a
-/// table, strikethrough, raw HTML. A link to anything but `http`, `https` or
-/// `mailto` is its words and no link. An image is an image only when it names
-/// a part attached to this draft (`cid:`); one that names the network stays
-/// the text that was written and is **never fetched** -- nothing in compose
-/// may reach a remote URL (ADR 0003's privacy rule, which holds here).
+/// CommonMark with GFM's tables, strikethrough, task lists and bare
+/// autolinks (spec 014 R1, R2). What the document has no node for stays the
+/// words the person typed: raw HTML, a footnote. A link to anything but
+/// `http`, `https` or `mailto` is its words and no link. An image is an image
+/// when it names a part attached to this draft (`cid:`), and a
+/// [`crate::Inline::RemoteImage`] when it names the web: a chip the person
+/// may press to download and attach, sent as a link if they never do. Nothing
+/// here fetches it (spec 014 D7; ADR 0003's privacy rule holds).
 pub fn to_document(markdown: &str) -> crate::Document {
-    use pulldown_cmark::{Event, Parser, Tag};
+    use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
+    // GFM's tables, strikethrough and task lists (spec 014 R1). Its bare
+    // autolinks are not in the parser; `autolink` finds them below.
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut stack = vec![Frame::Blocks(Vec::new())];
-    for event in Parser::new(markdown) {
+    for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
         match event {
             Event::Start(tag) => stack.push(match tag {
                 Tag::Paragraph => Frame::Inlines(Holder::Paragraph, Vec::new()),
                 Tag::Heading { level, .. } => Frame::Inlines(
                     Holder::Heading(
                         crate::HeadingLevel::from_digit(level as u8)
-                            .unwrap_or(crate::HeadingLevel::Three),
+                            .unwrap_or(crate::HeadingLevel::Six),
                     ),
                     Vec::new(),
                 ),
                 Tag::BlockQuote(_) => Frame::Quote(Vec::new()),
-                Tag::CodeBlock(_) => Frame::Code(String::new()),
+                Tag::CodeBlock(kind) => {
+                    // The info string's first word, if the type will hold it;
+                    // the rest of the info string is dropped.
+                    let language = match kind {
+                        CodeBlockKind::Fenced(info) => info
+                            .split_whitespace()
+                            .next()
+                            .and_then(crate::Language::parse),
+                        CodeBlockKind::Indented => None,
+                    };
+                    Frame::Code(language, String::new())
+                }
                 Tag::List(first) => Frame::List(
-                    if first.is_some() {
-                        crate::ListKind::NUMBERED
-                    } else {
-                        crate::ListKind::Bullet
+                    match first {
+                        Some(start) => crate::ListKind::Ordered {
+                            start: u32::try_from(start).unwrap_or(u32::MAX),
+                        },
+                        None => crate::ListKind::Bullet,
                     },
                     Vec::new(),
                 ),
-                Tag::Item => Frame::Item(Vec::new(), Vec::new()),
+                Tag::Item => Frame::Item(None, Vec::new(), Vec::new()),
                 Tag::Emphasis => Frame::Inlines(Holder::Emphasis, Vec::new()),
                 Tag::Strong => Frame::Inlines(Holder::Strong, Vec::new()),
+                Tag::Strikethrough => Frame::Inlines(Holder::Strikethrough, Vec::new()),
                 Tag::Link { dest_url, .. } => {
                     Frame::Inlines(Holder::Link(crate::Href::parse(&dest_url)), Vec::new())
                 }
                 Tag::Image { dest_url, .. } => Frame::Image(dest_url.into_string(), String::new()),
+                Tag::Table(alignments) => Frame::Table(
+                    alignments
+                        .into_iter()
+                        .map(|alignment| match alignment {
+                            pulldown_cmark::Alignment::None => crate::Alignment::None,
+                            pulldown_cmark::Alignment::Left => crate::Alignment::Left,
+                            pulldown_cmark::Alignment::Center => crate::Alignment::Center,
+                            pulldown_cmark::Alignment::Right => crate::Alignment::Right,
+                        })
+                        .collect(),
+                    Vec::new(),
+                ),
+                Tag::TableHead | Tag::TableRow => Frame::Row(Vec::new()),
+                Tag::TableCell => Frame::Inlines(Holder::Cell, Vec::new()),
                 // Anything else the parser was not asked to know is not
                 // reached; what is, keeps its words below.
                 _ => Frame::Inlines(Holder::Transparent, Vec::new()),
@@ -127,8 +160,23 @@ pub fn to_document(markdown: &str) -> crate::Document {
                 close(&mut stack, frame);
             }
             Event::Text(text) => match stack.last_mut() {
-                Some(Frame::Code(code)) => code.push_str(&text),
+                Some(Frame::Code(_, code)) => code.push_str(&text),
                 Some(Frame::Image(_, alt)) => alt.push_str(&text),
+                // Inside a link the words are its label, never another link.
+                Some(Frame::Inlines(Holder::Link(_), _)) => {
+                    push_inline(&mut stack, crate::Inline::Text(text.into_string()));
+                }
+                // A bare address is a link (GFM's extended autolinks) only
+                // where it was typed as it reads: a backslash or an entity
+                // in its source is someone saying "this is text", which is
+                // how `from_document` keeps text text.
+                _ if markdown.get(range.clone()) == Some(&*text) => {
+                    for inline in
+                        crate::autolink::link_inlines(vec![crate::Inline::Text(text.into_string())])
+                    {
+                        push_inline(&mut stack, inline);
+                    }
+                }
                 _ => push_inline(&mut stack, crate::Inline::Text(text.into_string())),
             },
             Event::Code(code) => push_inline(&mut stack, crate::Inline::Code(code.into_string())),
@@ -138,6 +186,15 @@ pub fn to_document(markdown: &str) -> crate::Document {
             Event::SoftBreak => push_inline(&mut stack, crate::Inline::Text(" ".to_owned())),
             Event::HardBreak => push_inline(&mut stack, crate::Inline::Break),
             Event::Rule => push_block(&mut stack, crate::Block::Rule),
+            Event::TaskListMarker(done) => {
+                if let Some(Frame::Item(task, ..)) = stack.last_mut() {
+                    *task = Some(if done {
+                        crate::Task::Done
+                    } else {
+                        crate::Task::Open
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -203,13 +260,19 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
                 if index > 0 {
                     out.push('\n');
                 }
-                let marker = if kind.is_ordered() {
-                    format!("{}. ", index + 1)
-                } else {
-                    "- ".to_owned()
+                let marker = match kind {
+                    crate::ListKind::Ordered { start } => {
+                        format!("{}. ", u64::from(*start) + index as u64)
+                    }
+                    crate::ListKind::Bullet => "- ".to_owned(),
                 };
                 out.push_str(&marker);
                 let indent = " ".repeat(marker.len());
+                match item.task {
+                    None => {}
+                    Some(crate::Task::Open) => out.push_str("[ ] "),
+                    Some(crate::Task::Done) => out.push_str("[x] "),
+                }
                 let mut inner = String::new();
                 write_item(&mut inner, &item.blocks, &indent);
                 out.push_str(inner.trim_end_matches('\n'));
@@ -231,9 +294,15 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
                 .collect();
             out.push_str(&quoted.join("\n"));
         }
-        Block::Code { text: code, .. } => {
+        Block::Code {
+            text: code,
+            language,
+        } => {
             let fence = if code.contains("```") { "~~~" } else { "```" };
             out.push_str(fence);
+            if let Some(language) = language {
+                out.push_str(language.as_str());
+            }
             out.push('\n');
             out.push_str(code);
             if !code.ends_with('\n') {
@@ -342,14 +411,31 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline]) {
 }
 
 /// Text, with everything Markdown would read as markup escaped.
+///
+/// Including what GFM would read as a bare autolink: a backslash before its
+/// first `.`, `:` or `@` keeps it the text it was, because `to_document`
+/// links only an address typed as it reads.
 fn escape(text: &str) -> String {
+    let breaks: Vec<usize> = crate::autolink::find(text)
+        .iter()
+        .filter_map(|link| {
+            text[link.range.clone()]
+                .find(['.', ':', '@'])
+                .map(|at| link.range.start + at)
+        })
+        .collect();
     let mut out = String::with_capacity(text.len());
     for (index, c) in text.char_indices() {
+        if breaks.contains(&index) {
+            out.push('\\');
+            out.push(c);
+            continue;
+        }
         let at_line_start = index == 0 || text[..index].ends_with('\n');
         let special = matches!(
             c,
-            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '!' | '|'
-        ) || (at_line_start && matches!(c, '#' | '-' | '+' | '=' | '~'))
+            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '!' | '|' | '~'
+        ) || (at_line_start && matches!(c, '#' | '-' | '+' | '='))
             || (c == '.'
                 && text[..index]
                     .chars()
@@ -375,6 +461,9 @@ enum Holder {
     Heading(crate::HeadingLevel),
     Emphasis,
     Strong,
+    Strikethrough,
+    /// One table cell.
+    Cell,
     /// A link, when its target is one the document can carry.
     Link(Option<crate::Href>),
     /// Something the document has no node for: its words pass through.
@@ -386,17 +475,21 @@ enum Frame {
     Blocks(Vec<crate::Block>),
     Quote(Vec<crate::Block>),
     List(crate::ListKind, Vec<crate::ListItem>),
-    /// A list item: its blocks, and the words of a tight item not yet
-    /// wrapped in a paragraph.
-    Item(Vec<crate::Block>, Vec<crate::Inline>),
+    /// A list item: its box, its blocks, and the words of a tight item not
+    /// yet wrapped in a paragraph.
+    Item(Option<crate::Task>, Vec<crate::Block>, Vec<crate::Inline>),
     Inlines(Holder, Vec<crate::Inline>),
-    Code(String),
+    Code(Option<crate::Language>, String),
     Image(String, String),
+    /// A table: its alignments, and its rows so far, the header first.
+    Table(Vec<crate::Alignment>, Vec<Vec<crate::Cell>>),
+    /// A table row's cells so far.
+    Row(Vec<crate::Cell>),
 }
 
 fn push_inline(stack: &mut [Frame], inline: crate::Inline) {
     match stack.last_mut() {
-        Some(Frame::Inlines(_, inlines) | Frame::Item(_, inlines)) => {
+        Some(Frame::Inlines(_, inlines) | Frame::Item(_, _, inlines)) => {
             // One run of words is one text, however the parser split it -- at
             // an escape, a soft break -- so a document reads back the same.
             if let (crate::Inline::Text(more), Some(crate::Inline::Text(last))) =
@@ -407,7 +500,7 @@ fn push_inline(stack: &mut [Frame], inline: crate::Inline) {
                 inlines.push(inline);
             }
         }
-        Some(Frame::Code(code)) => {
+        Some(Frame::Code(_, code)) => {
             if let crate::Inline::Text(text) = inline {
                 code.push_str(&text);
             }
@@ -424,7 +517,7 @@ fn push_inline(stack: &mut [Frame], inline: crate::Inline) {
 fn push_block(stack: &mut [Frame], block: crate::Block) {
     match stack.last_mut() {
         Some(Frame::Blocks(blocks) | Frame::Quote(blocks)) => blocks.push(block),
-        Some(Frame::Item(blocks, loose)) => {
+        Some(Frame::Item(_, blocks, loose)) => {
             if !loose.is_empty() {
                 blocks.push(crate::Block::Paragraph(std::mem::take(loose)));
             }
@@ -432,7 +525,14 @@ fn push_block(stack: &mut [Frame], block: crate::Block) {
         }
         Some(Frame::List(_, items)) => items.push(crate::ListItem::new(vec![block])),
         // A block inside an inline container: close it into the words.
-        Some(Frame::Inlines(..) | Frame::Code(_) | Frame::Image(..)) | None => {
+        Some(
+            Frame::Inlines(..)
+            | Frame::Code(..)
+            | Frame::Image(..)
+            | Frame::Table(..)
+            | Frame::Row(_),
+        )
+        | None => {
             if let Some(Frame::Blocks(blocks)) = stack.first_mut() {
                 blocks.push(block);
             }
@@ -453,6 +553,30 @@ fn close(stack: &mut [Frame], frame: Frame) {
         }
         Frame::Inlines(Holder::Emphasis, inlines) => push_inline(stack, Inline::Emphasis(inlines)),
         Frame::Inlines(Holder::Strong, inlines) => push_inline(stack, Inline::Strong(inlines)),
+        Frame::Inlines(Holder::Strikethrough, inlines) => {
+            push_inline(stack, Inline::Strikethrough(inlines));
+        }
+        Frame::Inlines(Holder::Cell, inlines) => {
+            if let Some(Frame::Row(cells)) = stack.last_mut() {
+                cells.push(inlines);
+            }
+        }
+        Frame::Row(cells) => {
+            if let Some(Frame::Table(_, rows)) = stack.last_mut() {
+                rows.push(cells);
+            }
+        }
+        Frame::Table(alignments, mut rows) => {
+            let header = if rows.is_empty() {
+                Vec::new()
+            } else {
+                rows.remove(0)
+            };
+            push_block(
+                stack,
+                Block::Table(crate::Table::new(alignments, header, rows)),
+            );
+        }
         Frame::Inlines(Holder::Link(Some(href)), inlines) => {
             push_inline(stack, Inline::Link { href, inlines });
         }
@@ -463,27 +587,24 @@ fn close(stack: &mut [Frame], frame: Frame) {
         }
         Frame::Image(dest, alt) => {
             let attached = dest.strip_prefix("cid:").and_then(crate::ContentId::parse);
-            match attached {
-                Some(content_id) => push_inline(stack, Inline::Image { content_id, alt }),
-                // Never fetched: the words that were typed, and nothing more.
-                None => push_inline(stack, Inline::Text(format!("![{alt}]({dest})"))),
+            match (attached, crate::WebHref::parse(&dest)) {
+                (Some(content_id), _) => push_inline(stack, Inline::Image { content_id, alt }),
+                // Never fetched here: a chip the person may press to
+                // download and attach it, and a link if they never do
+                // (spec 014 D7).
+                (None, Some(href)) => push_inline(stack, Inline::RemoteImage { href, alt }),
+                (None, None) => push_inline(stack, Inline::Text(format!("![{alt}]({dest})"))),
             }
         }
-        Frame::Code(code) => push_block(
-            stack,
-            Block::Code {
-                language: None,
-                text: code,
-            },
-        ),
+        Frame::Code(language, text) => push_block(stack, Block::Code { language, text }),
         Frame::Quote(blocks) => push_block(stack, Block::Quote(blocks)),
         Frame::List(kind, items) => push_block(stack, Block::List { kind, items }),
-        Frame::Item(mut blocks, loose) => {
+        Frame::Item(task, mut blocks, loose) => {
             if !loose.is_empty() {
                 blocks.push(Block::Paragraph(loose));
             }
             if let Some(Frame::List(_, items)) = stack.last_mut() {
-                items.push(crate::ListItem::new(blocks));
+                items.push(crate::ListItem { task, blocks });
             } else {
                 for block in blocks {
                     push_block(stack, block);
@@ -649,7 +770,7 @@ mod tests {
             assert_eq!(
                 document.blocks[2],
                 Block::Code {
-                    language: None,
+                    language: crate::Language::parse("rust"),
                     text: "fn x() {}\n".into()
                 }
             );
@@ -695,10 +816,101 @@ mod tests {
         }
 
         #[test]
-        fn a_table_stays_the_text_that_was_typed() {
-            let document = to_document("| a | b |\n|---|---|\n| 1 | 2 |");
-            let html = render(&document).1;
-            assert!(html.contains("| a | b |"), "{html}");
+        fn a_table_is_a_table() {
+            let document = to_document("| a | b |\n|:--|--:|\n| 1 | 2 |\n| 3 |");
+            assert_eq!(
+                document.blocks,
+                vec![Block::Table(crate::Table::new(
+                    vec![crate::Alignment::Left, crate::Alignment::Right],
+                    vec![vec![text("a")], vec![text("b")]],
+                    vec![
+                        vec![vec![text("1")], vec![text("2")]],
+                        vec![vec![text("3")], vec![]],
+                    ],
+                ))]
+            );
+        }
+
+        #[test]
+        fn strikethrough_tasks_and_a_list_start() {
+            let document = to_document("~~gone~~\n\n- [ ] open\n- [x] done\n\n7. seventh");
+            assert_eq!(
+                document.blocks[0],
+                Block::Paragraph(vec![Inline::Strikethrough(vec![text("gone")])])
+            );
+            let Block::List { kind, items } = &document.blocks[1] else {
+                panic!("{document:?}")
+            };
+            assert_eq!(*kind, crate::ListKind::Bullet);
+            assert_eq!(items[0].task, Some(crate::Task::Open));
+            assert_eq!(items[1].task, Some(crate::Task::Done));
+            assert_eq!(items[0].blocks, vec![Block::Paragraph(vec![text("open")])]);
+            assert!(matches!(
+                &document.blocks[2],
+                Block::List {
+                    kind: crate::ListKind::Ordered { start: 7 },
+                    ..
+                }
+            ));
+        }
+
+        #[test]
+        fn a_fence_keeps_its_first_word_as_the_language() {
+            let code = |markdown: &str| match &to_document(markdown).blocks[0] {
+                Block::Code { language, .. } => language.as_ref().map(|l| l.as_str().to_owned()),
+                other => panic!("{other:?}"),
+            };
+            assert_eq!(code("```rust\nx\n```").as_deref(), Some("rust"));
+            assert_eq!(code("~~~c++ extra words\nx\n~~~").as_deref(), Some("c++"));
+            assert_eq!(code("```a\"b\nx\n```"), None);
+            assert_eq!(code("```\nx\n```"), None);
+            assert_eq!(code("    indented\n"), None);
+        }
+
+        #[test]
+        fn a_web_image_is_a_remote_image_and_an_attached_one_an_image() {
+            let document = to_document("![x](https://example.com/x.png) ![y](cid:y@example.com)");
+            let Block::Paragraph(inlines) = &document.blocks[0] else {
+                panic!("{document:?}")
+            };
+            assert!(matches!(&inlines[0], Inline::RemoteImage { href, alt }
+                if href.as_str() == "https://example.com/x.png" && alt == "x"));
+            assert!(matches!(&inlines[2], Inline::Image { .. }));
+            // An address the web does not serve stays the words written.
+            let other = to_document("![z](ftp://example.com/z.png)");
+            assert_eq!(
+                other.blocks[0],
+                Block::Paragraph(vec![text("![z](ftp://example.com/z.png)")])
+            );
+        }
+
+        #[test]
+        fn a_bare_address_is_a_link_but_not_inside_code() {
+            let document = to_document("see www.example.com and `www.example.com`");
+            let Block::Paragraph(inlines) = &document.blocks[0] else {
+                panic!("{document:?}")
+            };
+            assert!(
+                matches!(&inlines[1], Inline::Link { href, .. }
+                if href.as_str() == "http://www.example.com"),
+                "{inlines:?}"
+            );
+            assert_eq!(
+                inlines.last(),
+                Some(&Inline::Code("www.example.com".into()))
+            );
+        }
+
+        #[test]
+        fn reference_links_and_entities_read_as_what_they_mean() {
+            let document = to_document("[the plan][p] &amp; more\n\n[p]: https://example.com/plan");
+            assert_eq!(document.blocks.len(), 1, "{document:?}");
+            let Block::Paragraph(inlines) = &document.blocks[0] else {
+                panic!("{document:?}")
+            };
+            assert!(matches!(&inlines[0], Inline::Link { href, .. }
+                if href.as_str() == "https://example.com/plan"));
+            assert_eq!(inlines[1], text(" & more"));
         }
 
         #[test]
@@ -737,6 +949,14 @@ mod tests {
             "a `tick`` pair and \\*escaped\\*",
             "**bold *and italic* inside**",
             "| a | b |\n|---|---|",
+            "~~struck~~ and ~a tilde",
+            "- [ ] open\n- [x] done",
+            "7. seventh\n8. eighth",
+            "```rust\nfn x() {}\n```",
+            "| a | b |\n|:--|--:|\n| 1 | 2 |",
+            "![x](https://example.com/x.png)",
+            "see www.example.com and ada@example.com",
+            "#### four\n\n###### six",
         ];
 
         #[test]
@@ -750,6 +970,36 @@ mod tests {
                     "{sample:?} wrote {written:?}"
                 );
             }
+        }
+
+        #[test]
+        fn the_gfm_forms_are_what_it_writes() {
+            for (markdown, written) in [
+                ("~~x~~", "~~x~~"),
+                ("- [ ] a\n- [x] b", "- [ ] a\n- [x] b"),
+                ("7. a\n8. b", "7. a\n8. b"),
+                ("```rust\nx\n```", "```rust\nx\n```"),
+                (
+                    "| a | b |\n|:--|--:|\n| 1 | 2 |",
+                    "| a | b |\n|:--|--:|\n| 1 | 2 |",
+                ),
+                (
+                    "![x](https://example.com/x.png)",
+                    "![x](https://example.com/x.png)",
+                ),
+            ] {
+                assert_eq!(from_document(&to_document(markdown)).trim_end(), written);
+            }
+        }
+
+        #[test]
+        fn text_that_looks_like_an_address_is_written_so_it_stays_text() {
+            let document = crate::Document {
+                blocks: vec![crate::Block::Paragraph(vec![crate::Inline::Text(
+                    "www.example.com and ada@example.com".into(),
+                )])],
+            };
+            assert_eq!(to_document(&from_document(&document)), document);
         }
 
         #[test]

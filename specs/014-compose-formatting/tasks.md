@@ -112,14 +112,14 @@ in the registry where something answers it.
 
 - [x] T022 [P] [US6] Write failing unit cases for `postio_body::autolink` in `crates/postio-body/src/autolink.rs` (research R2)
 - [x] T023 [US6] Implement `crates/postio-body/src/autolink.rs`, and export it
-- [ ] T024 [US6] Write failing cases in `crates/postio-body/src/markdown.rs`'s `writing` and `reopening` modules, and in `crates/postio-body/tests/body_suite/markdown_parity.rs`, covering:
+- [x] T024 [US6] Write failing cases in `crates/postio-body/src/markdown.rs`'s `writing` and `reopening` modules, and in `crates/postio-body/tests/body_suite/markdown_parity.rs`, covering:
   - every construct;
   - reference links, indented code and entities;
   - `![x](https://…)` becoming a remote image and `![x](cid:…)` an image;
   - the GFM forms written by `from_document`.
 
   Rewrite `a_table_stays_the_text_that_was_typed` to expect a table.
-- [ ] T025 [US6] Implement them in `crates/postio-body/src/markdown.rs`: the `pulldown-cmark` options (research R1), the new events, and the autolink post-pass
+- [x] T025 [US6] Implement them in `crates/postio-body/src/markdown.rs`: the `pulldown-cmark` options (research R1), the new events, and the autolink post-pass
 - [ ] T026 [US6] Move the terminal's marker edits (`wrap`, `toggle_prefix`) from `crates/postio-tui/src/composer.rs` into a new `crates/postio-ui/src/editor/markdown_edit.rs`, as pure functions over text and a selection. The TUI's existing cases move with them first, as guards.
 - [ ] T027 [US6] Write failing cases in `markdown_edit.rs` for every now-phase formatting command:
   - strikethrough;

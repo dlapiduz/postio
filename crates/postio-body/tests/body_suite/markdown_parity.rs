@@ -29,7 +29,28 @@ const CONSTRUCTS: &[&str] = &[
     "---",
     "first line\\\nsecond line",
     "**bold with *italic* inside**",
+    "~~struck~~",
+    "- [ ] open\n- [x] done",
+    "7. seventh",
+    "```rust\nfn x() {}\n```",
+    "| a | b |\n|:--|--:|\n| 1 | 2 |",
+    "![chart](https://example.com/c.png)",
+    "#### Four\n\n##### Five\n\n###### Six",
+    "see www.example.com",
 ];
+
+#[test]
+fn the_golden_markdown_reads_into_the_golden_document() {
+    // spec 014 contracts/wire.md: the document is written there as the
+    // Markdown that reads into it.
+    let golden = postio_body::golden::golden();
+    assert_eq!(to_document(postio_body::golden::GOLDEN_MARKDOWN), golden);
+    assert_eq!(
+        to_document(&postio_body::markdown::from_document(&golden)),
+        golden,
+        "the golden document does not survive being written as Markdown"
+    );
+}
 
 #[test]
 fn the_html_the_terminal_sends_is_html_the_desktop_would_hold() {
