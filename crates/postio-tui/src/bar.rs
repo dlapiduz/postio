@@ -781,7 +781,6 @@ mod tests {
         alt, app, ctrl, key, open_list, places, press, saved_search, screen, seed_places, serve,
         type_text,
     };
-    use crate::view::hit::Target;
 
     fn opened() -> crate::app::App {
         let mut app = app((120, 36));

@@ -575,16 +575,6 @@ mod tests {
         }
     }
 
-    fn sent(effects: &[crate::app::Effect]) -> Vec<postio_core::Command> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                crate::app::Effect::Send(command) => Some(command.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
     /// The cell where `word` starts on the screen's first line holding it.
     fn at_word(drawn: &str, word: &str) -> (u16, u16) {
         let (y, line) = drawn

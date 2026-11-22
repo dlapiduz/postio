@@ -1,5 +1,4 @@
 use gtk::gdk;
-use gtk::prelude::*;
 
 use crate::support::{self};
 

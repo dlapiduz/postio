@@ -1,6 +1,5 @@
 use chrono::Duration;
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_core::{Command, MessageTarget};
 use postio_model::{Flag, MessageId};
 use postio_storage::repository::MessageRepository;

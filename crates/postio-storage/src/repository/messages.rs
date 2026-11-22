@@ -525,12 +525,12 @@ impl<'a> MessageRepository<'a> {
     /// Takes a `Vec` and shortens it, so the batch means "what was stored" for the callers that go
     /// on to thread each message and record correspondents. It drops:
     /// - the server's copy of a draft this client wrote, which the composer owns (#51); a draft
-    /// from another client has no local draft row and stays ordinary mail;
+    ///   from another client has no local draft row and stays ordinary mail;
     /// - a message with an undrained `Move` or `Delete` out of this mailbox (#368): archiving is
-    /// local-first, so a resync would otherwise re-create the row and the archived message would
-    /// reappear until the queue drains. The shadow is keyed on the queue row's snapshot of server
-    /// coordinates (#289) and lifts when the operation settles, `Done` or `Failed`, so a refused
-    /// move cannot lose mail.
+    ///   local-first, so a resync would otherwise re-create the row and the archived message would
+    ///   reappear until the queue drains. The shadow is keyed on the queue row's snapshot of server
+    ///   coordinates (#289) and lifts when the operation settles, `Done` or `Failed`, so a refused
+    ///   move cannot lose mail.
     pub async fn upsert_batch(&self, batch: &mut Vec<Message>) -> Result<UpsertReport> {
         sql::in_scope(self.connection, |transaction| async move {
             let mut report = UpsertReport::default();

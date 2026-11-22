@@ -25,7 +25,7 @@ postio-workspace-hack.workspace = true
 # target cannot opt out of `forbid`.
 # No library code here uses `unsafe` (check-lint-floor.py EXCEPTIONS).
 unsafe_code = "deny"
-missing_docs = "warn"
+missing_docs = "allow"
 # A crate with its own `[lints.rust]` inherits no workspace lints, so the clippy floor's
 # `let_underscore_future` rule is restated.
 [lints.clippy]

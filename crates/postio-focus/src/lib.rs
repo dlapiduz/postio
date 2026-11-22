@@ -1031,10 +1031,10 @@ impl FocusController {
         let through = self.through(raw);
         let rows: &dyn Rows = through.as_ref().map_or(raw, |through| through);
         let mut stepped = self.filtered_thread_input(&input);
-        if stepped.is_none() || Self::also_for_the_rest(&input) {
-            if let Some(steps) = self.thread_input(&input, raw, rows) {
-                stepped.get_or_insert_with(Vec::new).extend(steps);
-            }
+        if (stepped.is_none() || Self::also_for_the_rest(&input))
+            && let Some(steps) = self.thread_input(&input, raw, rows)
+        {
+            stepped.get_or_insert_with(Vec::new).extend(steps);
         }
         let mut effects = match stepped {
             Some(steps) => {

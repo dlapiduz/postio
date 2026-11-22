@@ -39,9 +39,10 @@ impl From<Progress> for SyncProgress {
 
 /// Where an account's sync stands. `Idle` and `Syncing` carry the last completed sync's timestamp
 /// for "last sync 12s".
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SyncStatus {
     Offline,
+    #[default]
     Connecting,
     Idle {
         last_sync: Option<DateTime<Utc>>,
@@ -56,12 +57,6 @@ pub enum SyncStatus {
         needs_credentials: bool,
         no_password: bool,
     },
-}
-
-impl Default for SyncStatus {
-    fn default() -> Self {
-        Self::Connecting
-    }
 }
 
 #[derive(Debug)]

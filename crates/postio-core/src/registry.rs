@@ -1857,7 +1857,6 @@ static SPECS: &[CommandSpec] = &[
         destructive: true,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
-        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactRestore,
@@ -2070,7 +2069,6 @@ static SPECS: &[CommandSpec] = &[
         destructive: true,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
-        ..BASE
     },
     CommandSpec {
         id: CommandId::ForwardWhat1,

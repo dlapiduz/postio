@@ -353,16 +353,6 @@ mod tests {
         assert!(!bottom(&drawn).contains("selected"), "{drawn}");
     }
 
-    fn done(app: &mut App, description: &str, undoable: bool) {
-        update(
-            app,
-            crate::app::Input::Host(postio_core::Event::ActionCompleted {
-                description: description.into(),
-                undoable,
-            }),
-        );
-    }
-
     #[test]
     fn the_unsubscribe_notice_draws_its_one_action_and_a_click_takes_it_up() {
         let mut app = inbox((120, 24));

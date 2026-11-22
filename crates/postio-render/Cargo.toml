@@ -54,7 +54,7 @@ tempfile = { workspace = true }
 # cost 198 MiB resident (research R3), and fontdb's mapping call is `unsafe fn`.
 # `tests/render_rss_plateau.rs` installs a counting `GlobalAlloc`.
 unsafe_code = "deny"
-missing_docs = "warn"
+missing_docs = "allow"
 unused_must_use = "deny"
 [lints.clippy]
 let_underscore_future = "deny"

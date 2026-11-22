@@ -1,5 +1,4 @@
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_gtk::digest::DigestPage;
 
 use crate::digest::{delivered_holding, open_digest};
