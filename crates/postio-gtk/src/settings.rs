@@ -567,6 +567,16 @@ impl crate::window::FocusWindow {
             let keymap = self.keymap();
             let (_, problems) = crate::keys::resolver(&keymap);
             settings.set_keymap(&keymap, &problems);
+            // Told at once that it went, as the open message is: the
+            // footer behind it comes back (#2218).
+            settings.dialog().connect_closed({
+                let window = self.downgrade();
+                move |_| {
+                    if let Some(window) = window.upgrade() {
+                        window.sync_surfaces();
+                    }
+                }
+            });
             self.imp_settings().replace(Some(Rc::clone(&settings)));
             settings
         });
@@ -575,6 +585,8 @@ impl crate::window::FocusWindow {
             .panel()
             .set_contact_rules(self.imp().focus_config.borrow().contacts().to_vec());
         settings.present(self.upcast_ref());
+        // And that it came: Settings has no footer behind it (#2218).
+        self.sync_surfaces();
     }
 
     /// `mod+e`, from anywhere in Focus: `config.toml` in `$VISUAL` or

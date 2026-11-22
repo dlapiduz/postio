@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use crate::search_support::shown;
+use crate::search_support::{shown, shown_but_the_footer};
 use chrono::{NaiveDate, TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId};
@@ -178,7 +178,7 @@ fn c_opens_a_new_message_in_the_composer() {
         let rows = List::received(2);
         let effects = composing(&mut focus, &rows);
         assert_eq!(
-            shown(&effects),
+            shown_but_the_footer(&effects),
             vec![Intent::Composer {
                 kind: ComposerKind::New,
                 message: None,
@@ -208,7 +208,7 @@ fn e_cap_e_and_f_answer_the_cursors_row() {
         assert!(focus.answers(command), "{command} is the controller's");
         let effects = run(&mut focus, command, &rows);
         assert_eq!(
-            shown(&effects),
+            shown_but_the_footer(&effects),
             vec![Intent::Composer {
                 kind,
                 message: Some(MessageId::new(101)),
@@ -227,7 +227,7 @@ fn from_the_open_message_they_answer_it_and_on_the_mac_replace_its_window() {
     let _ = run(&mut focus, CommandId::OpenMessage, &rows);
     let effects = run(&mut focus, CommandId::ReplyAll, &rows);
     assert_eq!(
-        shown(&effects),
+        shown_but_the_footer(&effects),
         vec![
             Intent::CloseSurface(SurfaceKind::Message),
             Intent::Composer {
@@ -249,7 +249,7 @@ fn on_linux_the_composer_stacks_over_the_open_message() {
     let _ = run(&mut focus, CommandId::OpenMessage, &rows);
     let effects = run(&mut focus, CommandId::Reply, &rows);
     assert_eq!(
-        shown(&effects),
+        shown_but_the_footer(&effects),
         vec![Intent::Composer {
             kind: ComposerKind::Reply,
             message: Some(MessageId::new(100)),
@@ -301,7 +301,7 @@ fn a_sent_message_and_a_forward_are_not_refused() {
     let effects = run(&mut focus, CommandId::Reply, &rows);
     assert!(
         matches!(
-            shown(&effects).as_slice(),
+            shown_but_the_footer(&effects).as_slice(),
             [Intent::Composer {
                 kind: ComposerKind::Reply,
                 ..
@@ -316,7 +316,7 @@ fn a_sent_message_and_a_forward_are_not_refused() {
     let effects = run(&mut focus, CommandId::Forward, &rows);
     assert!(
         matches!(
-            shown(&effects).as_slice(),
+            shown_but_the_footer(&effects).as_slice(),
             [Intent::Composer {
                 kind: ComposerKind::Forward {
                     form: postio_model::ForwardForm::This,
@@ -350,7 +350,7 @@ fn with_no_account_to_write_from_c_offers_add_account() {
     let _ = focus.handle(Input::Accounts(vec![AccountId::new(1)]));
     let effects = run(&mut focus, CommandId::Compose, &rows);
     assert!(matches!(
-        shown(&effects).as_slice(),
+        shown_but_the_footer(&effects).as_slice(),
         [Intent::Composer {
             kind: ComposerKind::New,
             ..
@@ -454,7 +454,7 @@ fn esc_on_a_composer_nothing_was_written_in_saves_nothing_and_says_nothing() {
     let _ = composing(&mut focus, &rows);
     let effects = run(&mut focus, CommandId::Back, &rows);
     assert_eq!(
-        shown(&effects),
+        shown_but_the_footer(&effects),
         vec![
             Intent::CloseSurface(SurfaceKind::Composer),
             Intent::KeyboardHome
@@ -549,7 +549,7 @@ fn a_draft_row_opens_in_the_composer() {
     landed(&mut focus, &rows);
     let effects = run(&mut focus, CommandId::OpenMessage, &rows);
     assert_eq!(
-        shown(&effects),
+        shown_but_the_footer(&effects),
         vec![Intent::Composer {
             kind: ComposerKind::Draft,
             message: Some(MessageId::new(100)),
@@ -576,7 +576,7 @@ fn edit_on_an_open_draft_on_its_way_opens_it_in_the_composer() {
         );
         let effects = run(&mut focus, CommandId::OpenMessage, &rows);
         assert_eq!(
-            shown(&effects),
+            shown_but_the_footer(&effects),
             vec![
                 Intent::CloseSurface(SurfaceKind::Message),
                 Intent::Composer {

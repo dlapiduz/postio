@@ -275,6 +275,13 @@ impl Surfaces {
             .flatten()
     }
 
+    /// The message open, on top or under the composer that answers it.
+    pub(crate) fn shown(&self) -> Option<MessageId> {
+        self.has(SurfaceKind::Message)
+            .then_some(self.reading)
+            .flatten()
+    }
+
     /// Whether `id` is the top surface's to answer, `None` when the surface
     /// has no say and the list's rules apply.
     pub(crate) fn answers(&self, id: CommandId) -> Option<bool> {

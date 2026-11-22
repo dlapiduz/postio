@@ -90,6 +90,15 @@ pub fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
         })
 }
 
+/// [`shown`] without the footer: what a case about another surface asserts
+/// on. Whose footer is up is `footers.rs`'s question (#2218).
+pub fn shown_but_the_footer(effects: &[Effect]) -> Vec<Intent> {
+    shown(effects)
+        .into_iter()
+        .filter(|intent| !matches!(intent, Intent::Footer(_)))
+        .collect()
+}
+
 pub fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
     effects
         .iter()

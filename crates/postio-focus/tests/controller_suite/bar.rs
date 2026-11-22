@@ -9,7 +9,7 @@
 //! the list with the cursor on its first row, the go-to keys go by role, and
 //! the places are read in one request however many accounts there are.
 
-use crate::search_support::{asks, shown};
+use crate::search_support::{asks, shown, shown_but_the_footer};
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
@@ -331,7 +331,7 @@ fn compose_from_the_bar_opens_the_composer_itself() {
         .clone();
     let effects = focus.handle_on(Input::BarRun(compose.token), &rows);
     assert_eq!(
-        shown(&effects),
+        shown_but_the_footer(&effects),
         vec![
             Intent::CloseSurface(SurfaceKind::Bar),
             Intent::KeyboardHome,

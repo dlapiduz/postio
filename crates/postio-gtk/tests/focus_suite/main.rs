@@ -53,6 +53,7 @@ mod every_command;
 mod filtered;
 mod first_run;
 mod folder_sync;
+mod footers;
 mod forward_carried;
 mod gmail_keys;
 mod harness;
@@ -2120,6 +2121,26 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_layout::a_folded_thread_bar_keeps_its_height_at_a_narrow_window",
         open_layout::a_folded_thread_bar_keeps_its_height_at_a_narrow_window as fn(),
+    ),
+    (
+        "footers::a_message_alone_has_its_own_footer",
+        footers::a_message_alone_has_its_own_footer as fn(),
+    ),
+    (
+        "footers::a_waiting_send_offers_what_settles_it",
+        footers::a_waiting_send_offers_what_settles_it as fn(),
+    ),
+    (
+        "footers::the_composer_has_no_footer",
+        footers::the_composer_has_no_footer as fn(),
+    ),
+    (
+        "footers::settings_has_no_footer",
+        footers::settings_has_no_footer as fn(),
+    ),
+    (
+        "footers::the_capture_sheet_has_no_footer",
+        footers::the_capture_sheet_has_no_footer as fn(),
     ),
 ];
 

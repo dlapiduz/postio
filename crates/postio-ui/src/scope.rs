@@ -244,6 +244,24 @@ pub fn digest_footer(rule: &str, count: usize, keymap: &Keymap) -> FooterView {
     }
 }
 
+/// The footer of a window on a draft on its way or stopped (#2218): its
+/// subject, and the verbs its action row offers (`verbs`, from
+/// [`crate::focus_dialog::send_verbs`]) in that row's words. Reply, forward
+/// and archive are not this message's to offer.
+pub fn outgoing(subject: &str, verbs: &[CommandId], keymap: &Keymap) -> FooterView {
+    let keys = crate::focus_dialog::SEND_TOOLBAR
+        .iter()
+        .filter(|verb| verbs.contains(&verb.command))
+        .filter_map(|verb| hints::hint(keymap, verb.command, &verb.label.to_lowercase()))
+        .map(|hint| (hints::short(&hint.key), hint.label))
+        .collect();
+    FooterView {
+        title: subject.to_owned(),
+        keys,
+        note: None,
+    }
+}
+
 /// [`footer`] for a window opened over the search results: Escape goes back
 /// to them, as the match banner says, and the footer says so too, where the
 /// results' own footer said "back to inbox" (#2193).

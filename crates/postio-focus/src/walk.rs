@@ -142,8 +142,9 @@ impl FocusController {
             let from_a_match = self.walk.take().is_some_and(|walk| walk.matches.is_some());
             self.walk_asked = None;
             self.walk_seed = None;
-            // The window is gone, and its bar with it.
+            // The window is gone, and its bar and footer with it.
             self.bar_up = false;
+            self.footer.lone = None;
             // A window opened on a match is closed: the ring goes back to
             // the child it came from.
             return if from_a_match {
@@ -171,8 +172,10 @@ impl FocusController {
         }
         self.walk = None;
         self.walk_asked = None;
-        if host != Host::Own || self.surfaces.origin() != Origin::List {
-            return self.unbarred_over_results(message);
+        self.footer.lone = None;
+        let over_list = host == Host::Own && self.surfaces.origin() == Origin::List;
+        if !over_list {
+            return self.unbarred(message, false, rows);
         }
         // The row the cursor is on, when it is the message shown (or the
         // row a thread opened it from), says which thread it is of.
@@ -183,10 +186,10 @@ impl FocusController {
             .filter(|facts| facts.id == message || self.opened_for(facts.id, Some(message)))
             .or_else(|| self.hit_facts(message));
         let Some(facts) = facts else {
-            return self.unbarred_over_results(message);
+            return self.unbarred(message, true, rows);
         };
         let Some(&thread) = facts.threads.first() else {
-            return self.unbarred_over_results(message);
+            return self.unbarred(message, true, rows);
         };
         // A result of one message has no thread to walk.
         if self
@@ -195,7 +198,7 @@ impl FocusController {
             .and_then(|results| results.lone_subject(message))
             .is_some()
         {
-            return self.unbarred_over_results(message);
+            return self.unbarred(message, true, rows);
         }
         // A conversation of one message has no thread to walk: nothing is
         // asked for it.
@@ -208,7 +211,7 @@ impl FocusController {
             .is_some_and(|count| count <= 1)
             && seed.is_none()
         {
-            return self.unbarred_over_results(message);
+            return self.unbarred(message, true, rows);
         }
         match seed.filter(|view| view.thread == thread) {
             Some(view) => self.begin_walk(
@@ -253,27 +256,60 @@ impl FocusController {
         }
     }
 
+    /// [`FocusController::walk_unbarred`] for a window on `message` that
+    /// walks no thread, with the footer it opens with: a draft on its way
+    /// says the verbs that settle it, and a message alone over the results,
+    /// or over the list it was opened from (`over_list`), says its own
+    /// reply, forward and archive (#2193, #2218).
+    /// [`FocusController::settle_footer`] says it.
+    fn unbarred(&mut self, message: MessageId, over_list: bool, rows: &dyn Rows) -> Vec<Step> {
+        self.footer.lone = self
+            .lone_footer(message, over_list, rows)
+            .map(|footer| crate::footer::Lone { message, footer });
+        self.walk_unbarred()
+    }
+
+    /// What the window on `message`, which walks no thread, says in its
+    /// footer, when it is one that has a footer of its own.
+    fn lone_footer(
+        &self,
+        message: MessageId,
+        over_list: bool,
+        rows: &dyn Rows,
+    ) -> Option<postio_ui::scope::FooterView> {
+        let keymap = self.keymap();
+        let row = rows
+            .position_of(message)
+            .and_then(|position| rows.row(position));
+        let row = row.as_ref().and_then(|row| row.as_conversation());
+        let subject = |row: &postio_ui::focus_list::Conversation| {
+            row.summary
+                .representative
+                .subject
+                .clone()
+                .unwrap_or_else(|| crate::thread_expand::NO_SUBJECT.to_owned())
+        };
+        if over_list
+            && let Some(row) = row
+            && let Some(verbs) =
+                postio_ui::focus_dialog::send_verbs(row.summary.representative.send_state)
+        {
+            return Some(scope::outgoing(&subject(row), verbs, keymap));
+        }
+        if let Some(subject) = self
+            .results
+            .as_ref()
+            .and_then(|results| results.lone_subject(message))
+        {
+            return Some(scope::over_results(scope::lone(&subject, keymap), keymap));
+        }
+        let row = row.filter(|_| over_list)?;
+        Some(scope::lone(&subject(row), keymap))
+    }
+
     /// The bar, kicker and banners of a walk that is over, taken away. Said
     /// once, and only when one is up: a window whose walk never began has
     /// nothing to clear (spec 013 T085).
-    /// [`FocusController::walk_unbarred`] for a window on `message` that
-    /// walks no thread, with its own footer when it is over the results:
-    /// theirs, Escape "back to inbox" among it, is not the window's
-    /// (#2193).
-    fn unbarred_over_results(&mut self, message: MessageId) -> Vec<Step> {
-        let subject = self
-            .results
-            .as_ref()
-            .and_then(|results| results.lone_subject(message));
-        let footer = subject.map(|subject| {
-            let keymap = self.keymap();
-            scope::over_results(scope::lone(&subject, keymap), keymap)
-        });
-        let mut steps = self.walk_unbarred();
-        steps.extend(footer.map(|footer| Step::Show(Intent::Footer(footer))));
-        steps
-    }
-
     pub(crate) fn walk_unbarred(&mut self) -> Vec<Step> {
         if !std::mem::take(&mut self.bar_up) {
             return Vec::new();
@@ -579,31 +615,42 @@ impl FocusController {
         if let Some(banner) = self.match_banner(walk) {
             steps.push(Step::Show(Intent::MatchBanner(Some(banner))));
         }
-        // The footer behind the window says what r acts on from here: the
-        // message on screen, whatever row the window came from. Over the
-        // results a message alone has one too: the results' is not the
-        // window's (#2193).
-        if many || self.results.is_some() {
-            let member = &walk.view.members[at];
-            let about = FooterAbout {
-                subject: walk.view.subject.as_deref().unwrap_or("(no subject)"),
-                count: walk.view.members.len(),
-                index: at,
-                sender: crate::thread_expand::sender_of(member),
-            };
-            let focus = ScopeFocus::Window {
-                thread: walk.view.thread,
-                message: member.id,
-            };
-            let footer = scope::footer(focus, &about, keymap);
-            // Over the results, Escape goes back to them.
-            let footer = match self.results {
-                Some(_) => scope::over_results(footer, keymap),
-                None => footer,
-            };
-            steps.push(Step::Show(Intent::Footer(footer)));
-        }
         steps
+    }
+
+    /// The footer behind the window on its walk (spec 013 US2): what r acts
+    /// on from here, the message on screen, whatever row the window came
+    /// from. A thread of one is a message alone and says so, as one with no
+    /// thread does (#2218); over the results, Escape goes back to them
+    /// (#2193). [`FocusController::settle_footer`] says it.
+    pub(crate) fn walk_footer(&self) -> Option<scope::FooterView> {
+        let walk = self.walk.as_ref()?;
+        let at = walk.at()?;
+        let keymap = self.keymap();
+        let subject = walk
+            .view
+            .subject
+            .as_deref()
+            .unwrap_or(crate::thread_expand::NO_SUBJECT);
+        if walk.view.members.len() <= 1 && self.results.is_none() {
+            return Some(scope::lone(subject, keymap));
+        }
+        let member = &walk.view.members[at];
+        let about = FooterAbout {
+            subject,
+            count: walk.view.members.len(),
+            index: at,
+            sender: crate::thread_expand::sender_of(member),
+        };
+        let focus = ScopeFocus::Window {
+            thread: walk.view.thread,
+            message: member.id,
+        };
+        let footer = scope::footer(focus, &about, keymap);
+        Some(match self.results {
+            Some(_) => scope::over_results(footer, keymap),
+            None => footer,
+        })
     }
 
     /// The banner of a window opened from a search: where the shown match

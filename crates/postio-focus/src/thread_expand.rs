@@ -217,7 +217,7 @@ pub(crate) fn sender_of(member: &postio_model::ThreadMember) -> &str {
 }
 
 /// What a thread without a subject is called in the footer.
-const NO_SUBJECT: &str = "(no subject)";
+pub(crate) const NO_SUBJECT: &str = "(no subject)";
 
 /// The frontend's rows with an expanded thread's children among them.
 pub(crate) struct Through<'a> {

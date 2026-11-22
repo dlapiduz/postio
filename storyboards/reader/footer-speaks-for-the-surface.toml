@@ -1,0 +1,90 @@
+# The footer speaks for the surface that has the keyboard (#2218).
+#
+# The defect: the footer under the window kept the list's keys under other
+# surfaces. Under a message that is a conversation of its own it said j/k
+# move, Return open and Right expand. Under a queued message opened from the
+# Outbox it said reply, forward and archive, never Cancel send or Edit.
+# Under the composer it said r, f and e, which type letters there, and
+# under Settings it said the list's keys.
+#
+# The decision on #2218: a window on one message says that message's reply,
+# forward and archive. A draft on its way says the verbs its action row
+# offers. The composer and Settings draw no footer: their keys are on their
+# own controls. When a surface goes, the footer of what was under it comes
+# back.
+#
+# The fourth row of the demo inbox is a single message (three Downs from
+# the first; `single-message-has-one-reply-bar.toml`).
+apps   = ["focus"]
+source = { kind = "issue", ref = "#2218" }
+proof  = "base"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+check   = { cursor.index = 3, app.focus.footer.labels = "move | open | reply | forward | archive" }
+expect  = "The cursor is on a single message. The footer names it and offers move, open, reply, forward and archive."
+
+[[step]]
+id      = "single"
+command = "open_message"
+check   = { view = "reader", app.focus.reading.position = "Message 3 of 60", app.focus.footer.labels = "reply | forward | archive" }
+expect  = "The single message is open over the list. The footer under it names the message and offers only what acts on it: reply, forward and archive. It no longer offers move, open or expand."
+
+[[step]]
+id      = "composer"
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body", app.focus.footer.title = { absent = true } }
+expect  = "The reply opens over the message. No footer is drawn under the composer. Its verbs show their keys on its own controls, and r, f and e type letters here."
+
+[[step]]
+id      = "back-to-the-message"
+command = "back"
+check   = { composer.open = false, view = "reader", app.focus.footer.labels = "reply | forward | archive" }
+expect  = "The composer closes, keeping the draft, and the message is back with its own footer: reply, forward, archive."
+
+[[step]]
+command = "back"
+check   = { view = "list", cursor.index = 3, app.focus.footer.labels = "move | open | reply | forward | archive" }
+expect  = "The message closes onto the row it came from, and the row's footer is back."
+
+[[step]]
+id      = "settings"
+command = "settings"
+check   = { keyboard.region = "settings", app.focus.footer.title = { absent = true } }
+expect  = "Settings opens. The window's footer behind it is gone: Settings has no mail verbs, and the list's keys do not act here."
+
+[[step]]
+command = "back"
+check   = { keyboard.region = "list", app.focus.footer.labels = "move | open | reply | forward | archive" }
+expect  = "Settings closes and the row's footer is back."
+
+# A queued reply in the Outbox, as `compose/send-can-be-taken-back.toml`
+# makes one.
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+[[step]]
+type    = "Thanks, looks fine."
+[[step]]
+command = "send"
+check   = { composer.open = false, keyboard.region = "list" }
+[[step]]
+command = "go_to_folders"
+check   = { overlay.kind = "picker", keyboard.region = "picker" }
+[[step]]
+type    = "Outbox"
+[[step]]
+key     = "Return"
+check   = { scope = "Outbox", rows.count = 1 }
+
+[[step]]
+id      = "queued"
+command = "open_message"
+check   = { view = "reader", composer.open = false, app.focus.footer.labels = "cancel send | edit" }
+expect  = "The queued reply opens to be read. Its footer offers what settles it, cancel send and edit, as its action row does. It never offers reply, forward or archive."

@@ -35,6 +35,7 @@ mod digest;
 mod dropdown;
 mod feed;
 mod filtered;
+mod footer;
 mod history;
 mod keys;
 mod perform;
@@ -1685,6 +1686,8 @@ pub struct FocusController {
     /// The thread of the message on screen, while a window is up (spec 013
     /// US3).
     walk: Option<walk::Walk>,
+    /// Who the footer speaks for, and what a surface's own says (#2218).
+    footer: footer::Footer,
     /// A window opened whose thread read has not come back.
     walk_asked: Option<walk::Opening>,
     /// The thread a read in hand gave to the message just opened, so its
@@ -1735,6 +1738,7 @@ impl FocusController {
             pending: None,
             opened_from: None,
             walk: None,
+            footer: footer::Footer::default(),
             walk_asked: None,
             walk_seed: None,
             bar_up: false,
@@ -1787,19 +1791,8 @@ impl FocusController {
             effects.extend(self.effects(steps));
         }
         // A message put up in the window begins its thread's walk.
-        let was_walking = self.walk.is_some();
         let steps = self.walk_after(&effects, rows);
         effects.extend(self.effects(steps));
-        // The window closed: the footer behind it was the window's, and is
-        // the cursor's row's again.
-        if was_walking
-            && self.walk.is_none()
-            && let Some(position) = self.cursor.position()
-            && let Some(footer) =
-                thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
-        {
-            effects.push(Effect::Show(Intent::Footer(footer)));
-        }
         // The composer gone however it went -- its window's close button,
         // another window in its place (M4) -- ends its composition, saved.
         let steps = self.composer_gone();
@@ -1824,6 +1817,8 @@ impl FocusController {
         if let Some(footer) = footer {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
+        // The footer is the surface's that has the keyboard (#2218).
+        self.settle_footer(&mut effects, raw);
         effects
     }
 
@@ -2358,6 +2353,7 @@ impl FocusController {
         if let Some(footer) = footer {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
+        self.settle_footer(&mut effects, raw);
         effects.push(self.refresh_counts());
         effects
     }

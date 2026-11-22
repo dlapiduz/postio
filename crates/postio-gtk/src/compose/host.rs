@@ -245,6 +245,9 @@ impl ComposerHost for DialogHost {
             } else {
                 self.dialog.present(Some(&window));
             }
+            // Told at once, as the open message is: the footer behind the
+            // composer is not the list's (#2218).
+            window.sync_surfaces();
         }
         crate::a11y::teach_shortcuts(&self.surface);
         crate::motion::keep_to_budget(&self.surface);
@@ -283,6 +286,8 @@ impl ComposerHost for DialogHost {
                 },
                 None => window.focus_cursor(),
             }
+            // The footer of what the composer was over comes back (#2218).
+            window.sync_surfaces();
         }
     }
 
