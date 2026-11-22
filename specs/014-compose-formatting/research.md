@@ -183,6 +183,10 @@ enforced.
 
 ## R6 — Edits `execCommand` cannot make
 
+*Superseded in timing by R15. These edits are held for ADR 0039, where
+they become arms of its `apply`; they are no longer built against the
+WebKit surface. The design below stands as the algebra's first arms.*
+
 WebKit's `execCommand` has bold, italic, strikethrough, lists, `formatBlock`
 (`h1`–`h6`, `pre`, `blockquote`), `insertHorizontalRule` and `indent`/
 `outdent`. It has nothing for tables, tasks, list starts, code languages,
@@ -256,11 +260,13 @@ of six levels on one chord. To avoid racing it:
 
 1. A comment on #1485 points at D3, so the implementer can land the
    seven-command shape directly.
-2. If #1485 lands one `heading` command anyway, T004 reshapes it before
+2. If #1485 lands one `heading` command anyway, T013 reshapes it before
    any release ships the old id. The ids are a file format, and there are
    no installs to protect (no backwards compatibility).
 
 ## R9 — The formatting picker is the shared picker frame
+
+*Held for ADR 0039 (R15).*
 
 **Decision.** `postio_widgets::widgets::pickers::Picker` (the frame
 snooze, remind, label and move share) hosts the formatting, table and code
@@ -320,3 +326,114 @@ The gate is structural:
 
 The Rust-side edits (R6) are linear in the edited block, not the document,
 and a unit case pins that too, on a document of 1,000 blocks.
+
+## R13 — The remote image fetch (spec D7, FR-030 to FR-035)
+
+**Decision.**
+- **Where it lives.** `postio_session::attaching` gains
+  `fetch_remote_image(href) -> Result<InlineImage, FetchRefusal>`. It goes
+  through a `Fetcher` trait whose production implementation is Pimalaya's
+  `io-http` client, already in the tree for account autoconfiguration.
+  Tests use a counting fake, so no test reaches the network.
+- **What a press does.** It runs on the session's runtime, and the
+  composer is told the outcome by event. The UI never awaits it
+  (Constitution I).
+- **The request.** One GET with:
+  - no cookies, no credentials and no `Referer`;
+  - `User-Agent: Postio` and nothing that identifies the user;
+  - at most 3 redirects, http(s) only;
+  - a 15 s total limit.
+- **Acceptance.** The body is streamed and stopped at 10 MB. It is
+  accepted only if its magic bytes are PNG, JPEG, GIF or WebP; the
+  `Content-Type` is not trusted. SVG is refused, because it can carry
+  script, and Postio's reader treats it as a document, not a picture.
+- **Attaching.** The accepted bytes go through
+  `attaching::inline_image`, as a paste does, so the content id, the blob
+  and the draft's attachment row are the existing ones.
+
+**Why 10 MB.** An inline image larger than that is not meant to be inline,
+and the attachment path already warns about large files. The limit is one
+constant beside the attachment warning's, not a setting.
+
+**The privacy argument, stated as the check it is.** The only call site of
+`fetch_remote_image` is the handler of `CommandId::AttachRemoteImage`.
+Three tests hold the rule:
+- a unit test asserts that call graph by grep, in the same style as the
+  `scripts/checks` rules;
+- the counting fake asserts zero calls across every other gesture
+  (FR-032);
+- `check-crate-boundaries.py` keeps the network out of `postio-widgets`
+  and `postio-body`, as it already does.
+
+**Alternatives.**
+- Fetch at type time, to show a preview. Rejected: that is the
+  speculative request Constitution VI forbids.
+- Queue a failed fetch for later. Rejected: a request the person did not
+  press for.
+- Send the remote `<img>` as it is. Rejected: the recipient's client would
+  fetch it, so a tracking pixel goes out under the user's name.
+
+## R14 — The source view's widget and its caret
+
+**Decision.** The view is a plain text widget, `GtkTextView` in
+`postio-widgets` and `NSTextView` on the Mac. There is no rich text in it,
+no WebKit, and no syntax colouring in this spec.
+
+It replaces the WebKit view in the composer's editor slot while it is
+shown, and keeps the column, the surface and the ground of spec 007's
+composer. The quote chip is a `GtkTextChildAnchor` (and an
+`NSTextAttachment`) on a line holding `U+E001`.
+
+**The caret, rich to source.** The WebKit bridge reports the caret as a
+`DocPosition` (a block index path and a text offset). That is a small
+addition to `editor.js`'s existing selection reporting. It is the one
+`editor.js` change in the now phase, so T001 (one copy of the bridge) is
+kept in the now phase. On return, the host sets the WebKit selection
+from a `DocPosition` the same way.
+
+**Alternatives.**
+- Rebuild the caret from text matching. Rejected: it fails when a word
+  repeats.
+- Drop the caret to the end. Rejected: the person loses their place, which
+  the ux-architect rules count as state loss.
+
+## R15 — What is built now, and what waits for ADR 0039 (Q4 = C)
+
+**Decision.**
+- **Now:** everything that is Rust over the document and survives any
+  surface, plus two plain-text surfaces: the terminal composer (which
+  exists) and the source view.
+- **Held:** everything that draws or edits rich text:
+  - typed sequences live;
+  - the constructs' rich rendering;
+  - the toolbar's new buttons and their reflection;
+  - the three pickers;
+  - the structural edit ops;
+  - Paste as Markdown;
+  - the inline chip;
+  - `line_break`.
+
+**Registry rows follow the phase** (`data-model.md`). A command is
+registered when something answers it. In the rich view, a now-phase
+formatting command answers with its reason and the source view's key
+(FR-029), so the Mac's `ComposeCommands` and the registry's coverage sweep
+both count it as answered.
+
+**The source view is the interim surface,** for the reasons in spec D8.
+Its cost against the alternative (a WebKit implementation thrown away by
+ADR 0039) is two plain-text widgets and one source map, all kept after
+ADR 0039.
+
+**The sequence table** (`postio_ui::editor::markdown::SEQUENCES`) grows
+now, as the contract the native surface will meet, with its unit tests.
+The generated `POSTIO_MARKDOWN` for `editor.js` stays filtered to the
+seven rows the WebKit bridge implements today, plus #1485's headings,
+so the bridge's own "implements this table and no more" test stays true.
+
+**What blocks the held phase.** ADR 0039's steps 1 to 3:
+1. `EditIntent` and `apply` in `postio-body`;
+2. the existing composer routed through `apply`;
+3. the native surface passing the composer suites.
+
+ADR 0039 has no tracking issue on 2026-11-22. The plan raises that as a
+question.

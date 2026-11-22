@@ -28,6 +28,7 @@ Inline
   Code(String)
   Link { href: Href, inlines }
   Image { content_id: ContentId, alt }
+  RemoteImage { href: Href, alt }                     new: a chip (spec D7)
   Break
 ```
 
@@ -96,6 +97,39 @@ Alignment
 
 The same shape as `Strong`. It nests with the others in any order.
 
+### `Inline::RemoteImage` — new
+
+An image the person named by address but has not attached. `href` is an
+`Href` whose scheme is `http` or `https` (a `mailto:` image is not an
+image, so it stays text).
+- Only `markdown::to_document` creates one, and `parse` reads back the
+  marker this spec emits.
+- `parse` never makes one from a remote `<img>`, which still narrows away.
+- It is never emitted as `<img>`. The type is what keeps "Postio cannot
+  send a tracking pixel" true.
+- A successful fetch replaces it with `Image { content_id, alt }` at the
+  same place, as one undo step.
+
+## `markdown::SourceMap` — new
+
+```text
+from_document_mapped(&Document) -> (String, SourceMap)
+to_document_mapped(&str) -> (Document, SourceMap)
+SourceMap
+  to_source(DocPosition) -> usize       a byte offset in the Markdown
+  to_document(usize) -> DocPosition     the nearest text position (spec "The caret on each switch")
+DocPosition { path: Vec<usize>, offset: usize }   block index path, then a char offset in that block's text
+```
+
+It is built from `pulldown-cmark`'s `into_offset_iter` on the way in, and
+by the writer recording each text run's offset on the way out. It is used
+only to place the caret, and is not stored.
+
+The carried quote's line in the source view is one private-use character
+(`U+E001`), with the quote's index held beside the text. `to_document`
+reads that line as the quote. The view strips `U+E001` from typed and
+pasted text, so it cannot be forged.
+
 ## The HTML subset, after this spec
 
 `to_html` emits, and `parse` reads back, these forms. They are the normal
@@ -113,6 +147,7 @@ form, so `to_html(parse(h)) == h` holds for each:
 | An item with `task: Done` | `<li data-postio-task="done">☑ …</li>` |
 | `Code { language: None }` | `<pre>…</pre>` |
 | `Code { language: Some(l) }` | `<pre data-postio-lang="l">…</pre>` |
+| `RemoteImage` | `<a href="…" data-postio-remote-image>alt</a>` (a recipient sees a link) |
 | `Table` | `<table border="1" cellpadding="6" cellspacing="0"><thead><tr><th align?>…</th></tr></thead><tbody><tr><td align?>…</td></tr></tbody></table>` |
 
 - **`parse` reads the markers.** It reads `data-postio-task` and removes
@@ -149,30 +184,38 @@ Trigger
 Every entry is in `Context::Composer`, with `Recovery::None` (the editor's
 own undo takes an edit back, as for `bold`) and `MAIL`, unless noted.
 
-| Id | Title | Default | Alternate | Notes |
-|---|---|---|---|---|
-| `heading_1`…`heading_6` | Heading 1…6 | `mod+alt+1`…`6` | `alt+1`…`6` | D3; reshapes #1485's command |
-| `normal_text` | Normal text | `mod+alt+0` | `alt+0` | |
-| `strikethrough` | Strikethrough | `mod+shift+s` | `alt+asciitilde` | |
-| `inline_code` | Inline code | `mod+e` | `alt+grave` | |
-| `code_block` | Code block | `mod+alt+c` | `alt+C` | |
-| `code_language` | Code language… | `mod+alt+C` | — | `GRAPHICAL_MAIL` |
-| `task_list` | Task list | `mod+shift+6` | `alt+t` | |
-| `toggle_task` | Done or not done | `mod+alt+x` | `alt+X` | |
-| `indent` | Indent | `mod+bracketright` | `alt+greater` | Tab in a list item runs it |
-| `outdent` | Outdent | `mod+bracketleft` | `alt+less` | Shift+Tab in a list item runs it |
-| `divider` | Divider | `mod+alt+minus` | `alt+minus` | |
-| `line_break` | Line break | `shift+Return` | — | `GRAPHICAL_MAIL` |
-| `table` | Table… | `mod+shift+t` | `alt+bar` | inserts, or opens the table picker |
-| `clear_formatting` | Clear formatting | `mod+backslash` | `alt+backslash` | |
-| `formatting` | Formatting… | `mod+alt+f` | `alt+F` | opens the formatting picker |
-| `paste_markdown` | Paste as Markdown | `mod+alt+v` | `alt+V` | |
-| `table_row_below`, `table_row_above` | Add row below / above | `1`, `2` | — | `Context::TablePicker`, `GRAPHICAL_MAIL` |
-| `table_column_right`, `table_column_left` | Add column right / left | `3`, `4` | — | as above |
-| `table_delete_row`, `table_delete_column` | Delete row / column | `5`, `6` | — | as above |
-| `table_align_left`, `table_align_center`, `table_align_right` | Align column left / centre / right | `l`, `c`, `r` | — | as above; repeating clears it |
-| `table_delete` | Delete table | `Delete` | — | as above |
-| `picker_choose_0`, `picker_choose_5`…`9` | Choose option N | `0`, `5`…`9` | — | `Context::Picker`; widens the frame (R9) |
+**Phase** says when the row is registered (spec D8):
+- **Now**: answered in the terminal and in the Markdown source view. In
+  the rich view it gives its reason (FR-029).
+- **Held**: registered with the native composer that answers it, so that
+  no row exists that nothing runs.
+
+| Id | Title | Default | Alternate | Phase | Notes |
+|---|---|---|---|---|---|
+| `heading_1`…`heading_6` | Heading 1…6 | `mod+alt+1`…`6` | `alt+1`…`6` | Now | D3; reshapes #1485's command |
+| `normal_text` | Normal text | `mod+alt+0` | `alt+0` | Now | |
+| `strikethrough` | Strikethrough | `mod+shift+s` | `alt+asciitilde` | Now | |
+| `inline_code` | Inline code | `mod+e` | `alt+grave` | Now | |
+| `code_block` | Code block | `mod+alt+c` | `alt+C` | Now | |
+| `code_language` | Code language… | `mod+alt+C` | — | Held | `GRAPHICAL_MAIL` |
+| `task_list` | Task list | `mod+shift+6` | `alt+t` | Now | |
+| `toggle_task` | Done or not done | `mod+alt+x` | `alt+X` | Now | |
+| `indent` | Indent | `mod+bracketright` | `alt+greater` | Now | in the source view and the terminal, shifts the item one level; Tab in a rich list item runs it (held) |
+| `outdent` | Outdent | `mod+bracketleft` | `alt+less` | Now | the reverse; Shift+Tab in a rich list item runs it (held) |
+| `divider` | Divider | `mod+alt+minus` | `alt+minus` | Now | |
+| `line_break` | Line break | `shift+Return` | — | Held | `GRAPHICAL_MAIL` |
+| `table` | Table… | `mod+shift+t` | `alt+bar` | Now | now: inserts a two-by-two template; held: inside a table, opens the table picker |
+| `clear_formatting` | Clear formatting | `mod+backslash` | `alt+backslash` | Now | |
+| `formatting` | Formatting… | `mod+alt+f` | `alt+F` | Held | opens the formatting picker |
+| `paste_markdown` | Paste as Markdown | `mod+alt+v` | `alt+V` | Held | |
+| `toggle_markdown_source` | Edit as Markdown or rich text | `mod+alt+s` | — | Now | `GRAPHICAL_MAIL` |
+| `attach_remote_image` | Download and attach image | `mod+alt+i` | `alt+I` | Now | the one network gesture (FR-031) |
+| `table_row_below`, `table_row_above` | Add row below / above | `1`, `2` | — | Held | `Context::TablePicker`, `GRAPHICAL_MAIL` |
+| `table_column_right`, `table_column_left` | Add column right / left | `3`, `4` | — | Held | as above |
+| `table_delete_row`, `table_delete_column` | Delete row / column | `5`, `6` | — | Held | as above |
+| `table_align_left`, `table_align_center`, `table_align_right` | Align column left / centre / right | `l`, `c`, `r` | — | Held | as above; repeating clears it |
+| `table_delete` | Delete table | `Delete` | — | Held | as above |
+| `picker_choose_0`, `picker_choose_5`…`9` | Choose option N | `0`, `5`…`9` | — | Held | `Context::Picker`; widens the frame (R9) |
 
 `menu.rs` puts every `Composer` entry above in `Format`. The table picker's
 entries and the picker's choose keys appear in no menu, like

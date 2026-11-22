@@ -30,7 +30,19 @@ git diff docs/keybindings.md                          # only the new rows
 Expected: no collision in `Composer` or `Everywhere`, and every new id has
 a key a legacy terminal can deliver, or carries `GRAPHICAL_MAIL`.
 
-## 3. Typing, in the real GTK composer
+## 3. The Markdown source view and remote images (now)
+
+```bash
+cargo nextest run -p postio-body --test body_suite markdown_parity     # FR-024's property test, the spellings
+cargo nextest run -p postio-widgets --test widgets_suite composer_markdown_source
+cargo nextest run -p postio-session --test session_suite remote_image  # the counting fake: 0 requests but on a press
+cargo nextest run -p postio-widgets --test widgets_suite composer_remote_image
+```
+
+Expected: the rows of `contracts/source-view.md` and
+`contracts/remote-image.md`.
+
+## 3b. Typing, in the real composer (Part B, after ADR 0039)
 
 ```bash
 cargo nextest run -p postio-widgets --test widgets_suite composer_formatting
@@ -48,8 +60,9 @@ opens at the caret, filters, runs and closes.
 scripts/storyboards.sh storyboards/compose/formatting-*.toml
 ```
 
-Then `/ux-review` on the branch. The storyboards are written from US1,
-US2, US4 and US5 and must be red on `main` first.
+Then `/ux-review` on the branch. Part A's storyboards are
+`markdown-source.toml` and `remote-image.toml`. US1, US2, US4 and US5's
+come with Part B. All of them must be red on `main` first.
 
 ## 5. The terminal and the Mac
 
@@ -61,7 +74,7 @@ scripts/macos-test.sh                                  # on the Mac: ComposeComm
 ## 6. Look at it
 
 ```bash
-scripts/run-isolated.sh --shot                         # the composer with the golden document pasted (Paste as Markdown)
+scripts/run-isolated.sh --shot                         # the golden document pasted into the Markdown view, then the rich view
 ```
 
 Compare with spec 007's composer shots at 1440 × 900 and 1024 × 768, light

@@ -1,7 +1,7 @@
 # Contract: what a formatted message is on the wire
 
 The test that holds this contract is `postio-body`'s
-`tests/body_suite/formatting_wire.rs` (T010). It renders the document
+`tests/body_suite/formatting_wire.rs` (T011, T019). It renders the document
 below through `postio_body::render`, then:
 - pins both parts byte for byte;
 - requires `harden` to change nothing;
@@ -66,7 +66,7 @@ between blocks (the normal form).
 ```
 
 The exact place of the glyph against an item's first paragraph (inside the
-`<p>` or before it) is pinned by T010 against how the reader draws it. The
+`<p>` or before it) is pinned by T011 against how the reader draws it. The
 rule is fixed: the glyph comes first and is followed by one space.
 
 ## The plain-text part (`format=flowed`)
@@ -107,7 +107,7 @@ line one
 line two
 ```
 
-- The link form (`label <url>`) is `Links::Spelled` as it is today; T010
+- The link form (`label <url>`) is `Links::Spelled` as it is today; T019
   pins whatever today's form is and does not change it.
 - Every code line and table row is a fixed line, with no trailing space.
 - A line in a code block that begins with ` `, `>` or `From ` is

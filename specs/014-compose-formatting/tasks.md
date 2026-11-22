@@ -11,9 +11,15 @@ description: "Task list for spec 014, compose formatting"
 **This file is the tracker.** These tasks get no issues (CLAUDE.md,
 spec-driven work). Tick a box in the commit that finishes it.
 
-**No task starts until the maintainer has reviewed the spec** and answered
-Q1–Q4, or accepted the assumed options. `plan.md` ("If Q1–Q4 go the other
-way") says which tasks change.
+**Two parts** (spec D8, the maintainer's Q4 = C):
+- **Part A — Build now.** This branch lands it, as one PR with
+  `--full-suite`.
+- **Part B — Held for ADR 0039.** Every task in it is **blocked on ADR
+  0039's native composer**, steps 1 to 3: `EditIntent`/`apply`, the
+  composer routed through it, and the native surface passing the composer
+  suites. Part B is a later branch (`feature/compose-formatting-native`),
+  cut when ADR 0039 has landed. ADR 0039 has no tracking issue yet (plan
+  Q5).
 
 **Tests are required** (constitution IV). Each implementation task comes
 after the task that writes its test, and that test task names what is seen
@@ -22,280 +28,249 @@ red. A test that is green on arrival is a guard and says so.
 ## Conventions
 
 - `[P]` means the task touches different files and depends on no
-  unfinished task. `[USn]` is the spec's user story.
+  unfinished task. `[USn]` is the spec's user story. `⛔ ADR 0039` marks a
+  held task.
 - **Commits** end with `Refs: specs/014-compose-formatting` and the task
   ids. Never write a closing keyword.
-- **The fast tier carries most of this feature.** `scripts/test-fast.sh`
-  after each edit; `cargo nextest run -p <crate> --test <suite> <case>` to
-  confirm. The landing is `scripts/issue-land.sh --detach --full-suite
-  --title 'feat(body,ui,widgets): compose every Markdown construct'`.
-- **Swift** tasks run on the Mac (`macos/CLAUDE.md`); GTK tasks on Linux.
-  CI's `Frontends` check proves the combination.
-- **Storyboards** (ADR 0044) are written from the story, seen red on
-  `main`, then built. `/ux-review` runs before landing.
-- **Fixtures** use `example.com` and invented names only.
+- **The fast tier carries most of this.** Run `scripts/test-fast.sh`
+  between edits, and `cargo nextest run -p <crate> --test <suite> <case>`
+  to confirm.
+- **Swift** tasks run on the Mac (`macos/CLAUDE.md`), and GTK tasks on
+  Linux. CI's `Frontends` check proves the combination.
+- **Storyboards** (ADR 0044) are seen red on `main` before they are built.
+  `/ux-review` runs before landing.
+- **Fixtures** use `example.com` and invented names only. No test reaches
+  the network: the fetch is tested against a counting fake.
 
 ---
 
-## Phase 1: Setup
+# Part A — Build now
 
-- [ ] T001 Make GTK load the one editing bridge. `crates/postio-widgets/src/composer/editor.rs` uses `postio_ui::compose::editor_script()`, and `crates/postio-widgets/src/composer/editor.js` and its private `markdown_table_js` are deleted. First, a guard in `crates/postio-widgets/tests/widgets_suite/composer_document.rs` asserts the script GTK injects equals `postio_ui::compose::editor_script()`; it is red only if the copies have drifted, so say which.
+## Phase A1: Setup
+
+- [ ] T001 Make GTK load the one editing bridge. `crates/postio-widgets/src/composer/editor.rs` uses `postio_ui::compose::editor_script()`, and `crates/postio-widgets/src/composer/editor.js` and its private `markdown_table_js` are deleted. It is needed now because T033 changes the bridge. First, a guard in `crates/postio-widgets/tests/widgets_suite/composer_document.rs` asserts the script GTK injects equals `postio_ui::compose::editor_script()`; it is red only if the copies have drifted, so say which.
 - [x] T002 [P] Correct `docs/PRODUCT.md` §10 to this spec's scope (FR-022), citing `specs/014-compose-formatting`
 - [x] T003 [P] Comment on #1485 with D3 (seven heading commands, `mod+alt+0`–`6`, six levels), so its implementer can land that shape directly (research R8)
-- [ ] T004 [P] Create `storyboards/compose/formatting-inline.toml`, `formatting-blocks.toml`, `formatting-picker.toml` and `formatting-table.toml` from US1, US2, US4 and US5's acceptance scenarios, and see each red on `main` with `scripts/storyboards.sh`
+- [x] T004 [P] Update `docs/PRODUCT.md` §10 for the maintainer's answers: the source view, the chip, and the rich editing held for ADR 0039
+- [ ] T005 [P] Write `storyboards/compose/markdown-source.toml` (US7) and `storyboards/compose/remote-image.toml` (US8) from their acceptance scenarios, and see both red on `main` with `scripts/storyboards.sh`
 
----
-
-## Phase 2: Foundational (blocks every story)
-
-**Purpose**: the widened document and its HTML, the registry rows, the
-sequence table's new shape and the picker frame's keys. After this phase,
-every new construct exists in the model and on the wire with no surface.
+## Phase A2: Foundational (blocks every now-phase story)
 
 ### The document
 
-- [ ] T005 Write failing unit cases in `crates/postio-body/src/document.rs` for:
-  - `HeadingLevel` 1–6 round-tripping through `digit` and `from_digit`, with no narrowing;
+- [ ] T006 Write failing unit cases in `crates/postio-body/src/document.rs` for:
+  - `HeadingLevel` 1–6, with no narrowing;
   - `ListKind::Ordered { start }`;
   - `ListItem.task`;
   - `Language::parse` (accepts `rust`, `c++`, `objective-c`; refuses `a b`, `"x"`, 33 characters, an empty string);
-  - `Table::new` padding and truncating ragged rows;
-  - `Inline::Strikethrough`.
+  - `Table::new` padding and truncating;
+  - `Inline::Strikethrough`;
+  - `Inline::RemoteImage` accepting only `http`/`https`.
 
-  The existing `headings_narrow_to_three_levels` case in `markdown.rs` is rewritten to expect level 4.
-- [ ] T006 Implement the types of `data-model.md` in `crates/postio-body/src/document.rs`. `Block::Pre` becomes `Block::Code { language, text }`, and every match in the workspace follows (`grep -rn "Block::Pre\|ordered:" crates/`). The crate-level doc's closed-set count is updated.
-- [ ] T007 Write failing cases in `crates/postio-body/tests/body_suite/document.rs` for `parse(to_html(d)) == d` and `to_html(parse(h)) == h`, over every row of `data-model.md`'s HTML subset table. Include the `☐ `/`☑ ` glyph being removed on the way in, a GitHub-style `<input type=checkbox checked>` list read as tasks, and a `colspan` table narrowing to paragraphs.
-- [ ] T008 Implement `to_html` and `editor_html` for the new shapes in `crates/postio-body/src/document.rs`, and their reading in `crates/postio-body/src/parse.rs` (`<del>`, `<s>`, `<strike>`, `h4`–`h6` kept, `<ol start>`, `data-postio-task`, `data-postio-lang`, simple tables). Truncated cells are reported through `crates/postio-body/src/narrow.rs`'s `Lost`.
-- [ ] T009 Widen `harden` in `crates/postio-body/src/outgoing.rs` (research R3): `h4`–`h6`, `del`, `start` on `ol`, and the `data-postio-*` attributes on `pre`, `ul` and `li`. First widen the property generator in `crates/postio-body/tests/body_suite/outgoing.rs` so it produces the new shapes, and see "harden changes nothing" fail.
-- [ ] T010 Write `crates/postio-body/tests/body_suite/formatting_wire.rs` with the HTML half of `contracts/wire.md`'s golden document, red before T008 and T009 and green after. The plain-text half is T034's to add, as its failing case. It is not added here behind `#[ignore]`, which means only "this machine may lack what the test needs" (CLAUDE.md).
+  Rewrite `markdown.rs`'s `headings_narrow_to_three_levels` to expect level 4.
+- [ ] T007 Implement `data-model.md`'s types in `crates/postio-body/src/document.rs`. `Block::Pre` becomes `Block::Code { language, text }`, and every match in the workspace follows (`grep -rn "Block::Pre\|ordered:" crates/`). The crate doc's closed-set count is updated.
+- [ ] T008 Write failing cases in `crates/postio-body/tests/body_suite/document.rs` for `parse(to_html(d)) == d` and `to_html(parse(h)) == h` over every row of `data-model.md`'s HTML subset table. Include:
+  - the `☐ `/`☑ ` glyph removed on the way in;
+  - a GitHub-style checkbox list read as tasks;
+  - a `colspan` table narrowing to paragraphs;
+  - `data-postio-remote-image` read back as a remote image, while a remote `<img>` still narrows away.
+- [ ] T009 Implement `to_html` and `editor_html` for the new shapes in `crates/postio-body/src/document.rs`, and their reading in `crates/postio-body/src/parse.rs`. Truncated cells go to `crates/postio-body/src/narrow.rs`'s `Lost`.
+- [ ] T010 Widen `harden` in `crates/postio-body/src/outgoing.rs` (research R3), adding `data-postio-remote-image` on `a`. First widen the property generator in `crates/postio-body/tests/body_suite/outgoing.rs` to the new shapes, and see "harden changes nothing" fail.
+- [ ] T011 Write the HTML half of `crates/postio-body/tests/body_suite/formatting_wire.rs` (`contracts/wire.md`), red before T009–T010 and green after. The plain-text half is T019's.
 
-### The registry
+### The registry (now-phase rows only)
 
-- [ ] T011 Write failing cases in `crates/postio-core/src/registry.rs`'s tests for:
-  - every id in `data-model.md`'s registry table, with its title, keys, context and requirement;
-  - no collision in `Composer`, `Everywhere`, `Picker` or `TablePicker` (FR-005);
-  - every `Composer` id offered in the terminal having a `legacy_deliverable` binding.
-- [ ] T012 Add the ids to `crates/postio-core/src/command.rs`, the rows to `crates/postio-core/src/registry.rs`, and `Context::TablePicker` to `crates/postio-core/src/context.rs`. If #1485 has landed one `heading` command, reshape it into `heading_1`–`heading_6` and `normal_text` here (D3).
-- [ ] T013 Put every new `Composer` id in `M::Format` in `crates/postio-core/src/menu.rs`, and the table picker's and choose keys in no menu. The menu test is updated first and seen red.
-- [ ] T014 Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui --test ui_suite keybindings_doc`). The diff is only the new rows.
+- [ ] T012 Write failing cases in `crates/postio-core/src/registry.rs`'s tests for:
+  - every **Now** row in `data-model.md`'s registry table;
+  - no collision in `Composer` or `Everywhere` (FR-005);
+  - every terminal-offered id having a `legacy_deliverable` binding;
+  - no **Held** id registered.
+- [ ] T013 Add the ids to `crates/postio-core/src/command.rs` and the rows to `crates/postio-core/src/registry.rs`. If #1485 has landed one `heading` command, reshape it here (D3).
+- [ ] T014 Put the new `Composer` ids in `M::Format` in `crates/postio-core/src/menu.rs`, with the menu test red first. Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui --test ui_suite keybindings_doc`).
 
-### The sequence table and the picker frame
+### The sequence table, as a contract
 
 - [ ] T015 Write failing cases in `crates/postio-ui/src/editor/markdown.rs` for:
-  - `Marker` and `Trigger` as in `data-model.md`;
+  - `Marker` and `Trigger` (`data-model.md`);
   - longest-first across patterns;
-  - the widened FR-068 set (`every_sequence_reaches_a_formatting_command_and_nothing_else`);
-  - retiring `no_heading_sequence_until_there_is_a_heading_command` once the heading ids exist.
-- [ ] T016 Implement the new `Sequence` shape in `crates/postio-ui/src/editor/markdown.rs`. Extend the generator in `crates/postio-ui/src/compose.rs` (`markdown_table_js`) to emit patterns and the two new triggers. `editor.js` still ignores them, which is a guard for the next phases.
-- [ ] T017 [P] Widen the picker frame's keys to `picker_choose_0`–`9` in `crates/postio-widgets/src/widgets/pickers/mod.rs`. A guard in the existing picker cases shows snooze, remind, label and move ignore `5`–`9` and `0`.
+  - the widened FR-068 set;
+  - the generated `POSTIO_MARKDOWN` staying filtered to the rows today's bridge implements (research R15).
+- [ ] T016 Implement the new `Sequence` shape and every row of `contracts/sequences.md` in `crates/postio-ui/src/editor/markdown.rs`. Filter the generator in `crates/postio-ui/src/compose.rs` (`markdown_table_js`).
 
-**Checkpoint**: every construct is in the model, on the wire (HTML), in the
-registry and the key map. Nothing is typed or drawn yet.
+**Checkpoint**: every construct is in the model, in HTML on the wire, and
+in the registry where something answers it.
 
----
+## Phase A3: User Story 3 — a recipient sees what was written (P1)
 
-## Phase 3: User Story 1 — type the inline constructs (P1) 🎯 MVP
+- [ ] T017 [US3] Write failing cases in `crates/postio-body/src/document.rs` for `to_text` and `to_flowed_text` over every row of research R4, plus the remote image's `alt <url>`
+- [ ] T018 [US3] Implement them in `crates/postio-body/src/document.rs`. `to_search_text` drops every marker (one case).
+- [ ] T019 [US3] Add the golden plain-text half to `formatting_wire.rs`, red before T018 and green after
+- [ ] T020 [P] [US3] Add a `postio-render` snapshot of the golden HTML through the reader's sanitiser, in `crates/postio-render/tests/render_suite/`, with every construct visible
+- [ ] T021 [P] [US3] Add a send case in `crates/postio-session/tests/session_suite/` against the `MailBackend` mock. The golden document goes out as `multipart/alternative`, and a plain document as `text/plain; format=flowed` alone (FR-018).
 
-**Goal**: strikethrough, inline code, `__bold__`, `***both***`, links and
-autolinks, and escapes, typed and by key. Intraword `_` is safe.
+## Phase A4: User Story 6 — Markdown in and out, and the terminal (P2, now part)
 
-**Independent test**: `crates/postio-widgets/tests/widgets_suite/composer_formatting.rs`
-types each inline row of `contracts/sequences.md`. It asserts the
-document, the sent parts and one-undo, plus `storyboards/compose/formatting-inline.toml`.
+- [ ] T022 [P] [US6] Write failing unit cases for `postio_body::autolink` in `crates/postio-body/src/autolink.rs` (research R2)
+- [ ] T023 [US6] Implement `crates/postio-body/src/autolink.rs`, and export it
+- [ ] T024 [US6] Write failing cases in `crates/postio-body/src/markdown.rs`'s `writing` and `reopening` modules, and in `crates/postio-body/tests/body_suite/markdown_parity.rs`, covering:
+  - every construct;
+  - reference links, indented code and entities;
+  - `![x](https://…)` becoming a remote image and `![x](cid:…)` an image;
+  - the GFM forms written by `from_document`.
 
-- [ ] T018 [P] [US1] Write failing unit cases for `postio_body::autolink` in `crates/postio-body/src/autolink.rs` (research R2): GFM §6.9's examples, trailing punctuation, parenthesis balance, `www.` getting `http://`, and an address becoming `mailto:`
-- [ ] T019 [US1] Implement `crates/postio-body/src/autolink.rs`, and export it from `crates/postio-body/src/lib.rs`
-- [ ] T020 [US1] Add the inline rows to `SEQUENCES` in `crates/postio-ui/src/editor/markdown.rs`, with the flanking rule as a pure function the script calls through the generated table. Unit cases first: `snake_case_name` is not converted, `2 * 3 * 4` is not, `~5` is not.
-- [ ] T021 [US1] Write failing cases in `crates/postio-widgets/tests/widgets_suite/composer_formatting.rs` for US1's acceptance scenarios 1–7, through the real composer
-- [ ] T022 [US1] Implement in `crates/postio-ui/data/editor.js`:
-  - the `~~`, `__`, `***`, `___` and backtick-run wrappings;
-  - `[text](url)` and `<url>` closing;
-  - `WordComplete` autolinks, calling a generated predicate that mirrors R2, or posting the word to the host for `autolink`;
-  - escapes and the "never inside code or a carried quote" guard.
+  Rewrite `a_table_stays_the_text_that_was_typed` to expect a table.
+- [ ] T025 [US6] Implement them in `crates/postio-body/src/markdown.rs`: the `pulldown-cmark` options (research R1), the new events, and the autolink post-pass
+- [ ] T026 [US6] Move the terminal's marker edits (`wrap`, `toggle_prefix`) from `crates/postio-tui/src/composer.rs` into a new `crates/postio-ui/src/editor/markdown_edit.rs`, as pure functions over text and a selection. The TUI's existing cases move with them first, as guards.
+- [ ] T027 [US6] Write failing cases in `markdown_edit.rs` for every now-phase formatting command:
+  - strikethrough;
+  - inline code;
+  - headings 1–6 and normal text;
+  - code block (a fence);
+  - task list, and toggling a task;
+  - indent and outdent of a list item;
+  - divider;
+  - a two-by-two table template;
+  - clear formatting (markers removed from the selection).
 
-  Strikethrough runs through `execCommand('strikeThrough')`, with the element form pinned to `<del>` by a dialect case in `crates/postio-widgets/tests/widgets_suite/composer_document.rs`.
-- [ ] T023 [US1] Add `strikethrough`, `inline_code` and `clear_formatting` to `postio_ui::compose::mark_script` in `crates/postio-ui/src/compose.rs`. Inline code over a selection is an edit op (T024).
-- [ ] T024 [US1] Write failing cases, then implement `toggle_inline_code(&Document, Selection) -> Document`, in a new `crates/postio-body/src/edit_ops.rs` (research R6)
-- [ ] T025 [US1] Wire the commands in `crates/postio-widgets/src/composer/mod.rs`. Add the Strikethrough and Inline code toolbar buttons (`contracts/formatting-picker.md`, "The toolbar"). Extend the reflection channel in `editor.js` and `crates/postio-widgets/src/composer/editor.rs` for `strikethrough` and `inline_code` (FR-014). A toolbar case in `crates/postio-widgets/tests/widgets_suite/composer_toolbar.rs` is first and red.
-- [ ] T026 [US1] Make `storyboards/compose/formatting-inline.toml` green, and render the composer with each inline construct (`/gtk-design`'s PNG loop), light and dark
+  Then implement them.
+- [ ] T028 [US6] Route the new commands to `markdown_edit` in `crates/postio-tui/src/app.rs` and `crates/postio-tui/src/composer.rs`. A TUI case per command is red first (US6 scenario 4).
+- [ ] T029 [US6] Write a failing case in `crates/postio-widgets/tests/widgets_suite/composer_resume.rs`: a draft holding the golden document reopens to the same document (FR-003)
 
-**Checkpoint**: US1 is usable on GTK. The Mac gets the sequences through
-the shared script (verified in US6).
+## Phase A5: User Story 7 — the Markdown source view (P1) 🎯 the interim surface
 
----
+**Independent test**: `contracts/source-view.md`. `postio-body` property and
+unit cases, `composer_markdown_source.rs`, and
+`storyboards/compose/markdown-source.toml`.
 
-## Phase 4: User Story 2 — type the block constructs (P1)
+- [ ] T030 [US7] Write the FR-024 property test and the golden spellings table's cases in `crates/postio-body/tests/body_suite/markdown_parity.rs` (`contracts/source-view.md`, "The round trip"). See it fail on the awkward shapes.
+- [ ] T031 [US7] Implement `normalize`, and the spellings in `from_document`/`to_document`, in `crates/postio-body/src/markdown.rs`. This covers `<br>`, a `<br>` line, `<!-- -->`, `&#32;`, and the `U+E001` quote line.
+- [ ] T032 [US7] Write failing source-map cases in `crates/postio-body/src/markdown.rs` (`contracts/source-view.md`, "The caret"). Then implement `from_document_mapped` and `to_document_mapped` with `into_offset_iter`.
+- [ ] T033 [US7] Report the caret as a `DocPosition`, and set it from one, in `crates/postio-ui/data/editor.js`, with the host side in `crates/postio-widgets/src/composer/editor.rs` (research R14). A `composer_document.rs` case is red first. This is the phase's only bridge change.
+- [ ] T034 [US7] Write failing cases in a new `crates/postio-widgets/tests/widgets_suite/composer_markdown_source.rs` for every row of `contracts/source-view.md`'s surface table, except the Mac
+- [ ] T035 [US7] Build the view in a new `crates/postio-widgets/src/composer/source_view.rs`: a `GtkTextView` in the editor slot, the strip, and formatting commands through `markdown_edit`. Wire `toggle_markdown_source` and the toolbar's toggle button in `crates/postio-widgets/src/composer/mod.rs`.
+- [ ] T036 [US7] Add the quote chip: a `GtkTextChildAnchor` on the `U+E001` line, atomic deletion with undo, and `U+E001` stripped from typed and pasted text (FR-025)
+- [ ] T037 [US7] Add the narrowing notice line with Undo on return (FR-026). Make the view session one undo step in `EditHistory`, and save `body_markdown` from the view and reopen into it (FR-028).
+- [ ] T038 [US7] Answer every now-phase formatting command in the rich view with its reason and the view's key (FR-029), from one word in `crates/postio-ui/src/compose.rs`. The registry's coverage sweep and a `composer_formatting.rs` case are red first.
+- [ ] T039 [US7] Mac:
+  - add the now-phase ids to `ComposeCommands.handled` in `macos/Sources/PostioKit/ComposeCommands.swift`, with `ComposeCommandsTests` red first;
+  - expose `from_document_mapped`, `to_document_mapped` and `markdown_edit` through `crates/postio-ffi/src/session.rs`;
+  - build the source view as an `NSTextView` with the quote chip as an `NSTextAttachment`, with Swift tests first.
+- [ ] T040 [US7] Make `storyboards/compose/markdown-source.toml` green. Run the PNG loop at 1440 × 900 and 1024 × 768, light and dark, and `/ux-review`.
 
-**Goal**: headings 1–6 (ATX and setext), nested quotes, list starts,
-nesting by Tab, task lists, fenced code with a language, dividers and line
-breaks.
+## Phase A6: User Story 8 — remote images, on a press (P2)
 
-**Independent test**: `composer_formatting.rs`'s block cases, and
-`storyboards/compose/formatting-blocks.toml`.
+**Independent test**: `contracts/remote-image.md`. A counting fake
+`Fetcher`, `composer_remote_image.rs`, and
+`storyboards/compose/remote-image.toml`.
 
-- [ ] T027 [US2] Add the block rows to `SEQUENCES` in `crates/postio-ui/src/editor/markdown.rs` (`LinePrefix` headings, tasks, `+`, ordered pattern; `LineComplete` setext, divider, fence). Unit cases first: `---` under a one-line paragraph after a line break is H2, and alone in a block is a divider.
-- [ ] T028 [US2] Write failing edit-op cases, then implement in `crates/postio-body/src/edit_ops.rs`:
-  - `toggle_task_list`;
-  - `toggle_task`;
-  - `set_list_start`;
-  - `set_code_language`;
-  - `indent` and `outdent` over lists and quotes, with quote nesting.
-- [ ] T029 [US2] Write failing cases in `composer_formatting.rs` for US2's acceptance scenarios 1–8. Then implement:
-  - `editor.js`'s `LineComplete` trigger, the ordered pattern, and `> ` inside a quote reaching `indent`;
-  - Tab and Shift+Tab inside list items running `indent` and `outdent`, with Tab elsewhere leaving the body as today;
-  - the heading, `normal_text`, `divider`, `code_block` and `line_break` marks through `formatBlock`, `insertHorizontalRule` and `insertLineBreak` in `mark_script`;
-  - the edit ops through the host's re-render-and-restore-caret path in `crates/postio-widgets/src/composer/editor.rs`.
-- [ ] T030 [US2] Draw the new blocks in `crates/postio-ui/data/editor.css`:
-  - the heading scale for h4–h6 from the reader's tokens;
-  - the code block ground and its language label;
-  - nested quote rules;
-  - the task box as a `role="checkbox"` control over the glyph, which a click toggles through `toggle_task`.
+- [ ] T041 [US8] Write the privacy cases (`contracts/remote-image.md`, "The privacy cases") in `crates/postio-session/tests/session_suite/remote_image.rs`, against a counting fake `Fetcher`. They are red because nothing exists yet.
+- [ ] T042 [US8] Implement the `Fetcher` trait and `attaching::fetch_remote_image` in `crates/postio-session/src/attaching.rs`, with the production `Fetcher` on `io-http` (research R13). Add the limits, and the magic-byte check refusing SVG.
+- [ ] T043 [US8] Write failing cases for every row of "The outcomes", then implement the refusals. A remote image is replaced by an `Image` as one undo step.
+- [ ] T044 [P] [US8] Add the call-site check: `fetch_remote_image`'s only caller is the `AttachRemoteImage` handler. Put it in `scripts/checks/check-remote-image-fetch-site.py`, wired into `scripts/check.sh`, with its own test in `scripts/tests/`.
+- [ ] T045 [US8] Write failing cases in a new `crates/postio-widgets/tests/widgets_suite/composer_remote_image.rs` for "The composer". Then build the "Not attached yet" rows in the attachment list, the button with its keycap, remove-to-link, "Downloading…", and the warning line before Send, in `crates/postio-widgets/src/composer/mod.rs`. The words go in `crates/postio-ui/src/compose.rs`.
+- [ ] T046 [US8] Add a log case: the fetch logs the draft id, the outcome and the byte count, and never the address
+- [ ] T047 [P] [US8] Draw the same row in the terminal composer's attachment list, `crates/postio-tui/src/view/composer.rs`, with TUI cases first
+- [ ] T048 [US8] Mac: claim `attach_remote_image` in `ComposeCommands`, expose the fetch through `crates/postio-ffi/src/session.rs`, and draw the row in `macos/Sources/PostioKit/ComposeColumn.swift`, with tests first
+- [ ] T049 [US8] Make `storyboards/compose/remote-image.toml` green, and run `/ux-review`
 
-  Check them with the PNG loop, light and dark.
-- [ ] T031 [US2] Add the Task list toolbar button. Extend the reflection channel for headings, `task_list`, `code_block` and `divider`.
-- [ ] T032 [US2] Write failing cases for the code language picker's words in `crates/postio-ui/src/format_picker.rs` (`acts_on` "Code block", the last four languages as presets, the refusal reason for a bad name). Then implement it, and its GTK use on the picker frame in `crates/postio-widgets/src/composer/mod.rs`.
-- [ ] T033 [US2] Make `storyboards/compose/formatting-blocks.toml` green
+## Phase A7: Polish, and land the now phase
 
----
-
-## Phase 5: User Story 3 — a recipient sees what was written (P1)
-
-**Goal**: D6's plain text, the golden document whole, and Postio's own
-reader showing it.
-
-**Independent test**: `crates/postio-body/tests/body_suite/formatting_wire.rs`,
-both halves.
-
-- [ ] T034 [US3] Write failing cases in `crates/postio-body/src/document.rs` for `to_text` and `to_flowed_text` over every row of research R4. Cover:
-  - setext underlines at the heading's width;
-  - `~~`;
-  - `- [x] `;
-  - `N. ` from a start;
-  - fenced code, stuffed and never reflowed;
-  - the padded pipe table with its alignment row;
-  - nested quotes as `>> `.
-
-  Add the golden plain-text half to `formatting_wire.rs` here too, red.
-- [ ] T035 [US3] Implement them in `crates/postio-body/src/document.rs`. `to_search_text` drops every marker (one case). T034's cases, the golden half included, go green.
-- [ ] T036 [US3] Add a `postio-render` snapshot of the golden document's HTML through the reader's sanitiser, in `crates/postio-render/tests/render_suite/`. Every construct must be visible: the task glyphs, the table borders, the struck words.
-- [ ] T037 [US3] Add a send case in `crates/postio-session/tests/session_suite/` against the `MailBackend` mock. The golden document goes out as `multipart/alternative`, and a plain document as `text/plain; format=flowed` alone (FR-018).
-
-**Checkpoint**: P1 complete. Everything typed reaches recipients correctly.
+- [ ] T050 [P] Cite this spec beside spec 002 in the module docs of `crates/postio-ui/src/editor/markdown.rs` and `crates/postio-body/src/document.rs`. `docs/archive/` is frozen (`check-archive-frozen.py`), so spec 002 is not edited.
+- [ ] T051 [P] Add cross-references to ADR 0039 and ADR 0004:
+  - ADR 0039 names Part B as work waiting on it, the R6 edit ops as its `apply`'s first arms, and tables in a native text view as a second thing to spike;
+  - ADR 0004's closed-set count is updated, and D5 cited.
+- [ ] T052 [P] Record the recipient-client results (`quickstart.md` §7) in `docs/notes/2026-<mm>-<dd>-formatting-in-recipient-clients.md`, and list it in `docs/notes/README.md`. The maintainer runs the send.
+- [ ] T053 Run `quickstart.md` end to end, then `scripts/target-sweep.py`. Land with `scripts/issue-land.sh --detach --full-suite --title 'feat(body,ui,widgets): compose every Markdown construct'`.
 
 ---
 
-## Phase 6: User Story 4 — the formatting picker and toolbar (P2)
+# Part B — Held for ADR 0039 ⛔
 
-**Goal**: every construct findable from `mod+alt+f` and the toolbar's last
-button, with keys and Markdown taught in the rows.
+**Blocked until** ADR 0039's steps 1–3 have landed: `EditIntent`/`apply` in
+`postio-body`, the composer routed through it, and the native surface
+passing the composer suites. The paths below name the native surface as
+`crates/postio-widgets/src/composer/native/`, which ADR 0039 will settle.
+On a later branch, `feature/compose-formatting-native`.
 
-**Independent test**: `crates/postio-gtk/tests/focus_suite/formatting_picker.rs`,
-and `storyboards/compose/formatting-picker.toml`.
+## Phase B1: Foundational (held)
 
-- [ ] T038 [US4] Write failing unit cases for `crates/postio-ui/src/format_picker.rs` (`contracts/formatting-picker.md`, "Model"):
-  - the groups and their order;
-  - filtering by title prefix and by sequence;
-  - `acts_on` for each caret kind;
-  - `in_force`;
-  - the unavailable reasons;
-  - the empty line.
-- [ ] T039 [US4] Implement `crates/postio-ui/src/format_picker.rs`, and export it from `crates/postio-ui/src/lib.rs`
-- [ ] T040 [US4] Write failing cases in `crates/postio-gtk/tests/focus_suite/formatting_picker.rs` for US4's acceptance scenarios 1–6, with real keys
-- [ ] T041 [US4] Build the formatting picker on the picker frame in `crates/postio-widgets/src/composer/mod.rs`, anchored at the caret's line (from the bridge's caret rectangle) or below the toolbar button. Each row draws its keycap with `hints::short` from the keymap in force.
-- [ ] T042 [US4] Add the toolbar's Formatting button, and the overflow rule (buttons leave from Image leftwards; Formatting stays). A `composer_toolbar.rs` case at the 615 px column is first and red.
-- [ ] T043 [US4] Make `storyboards/compose/formatting-picker.toml` green. Run `/ux-review` on US1, US2 and US4's storyboards, and fix or contest every finding.
+- [ ] T054 ⛔ ADR 0039. Register the **Held** rows of `data-model.md` in `crates/postio-core/src/registry.rs`, with `Context::TablePicker`, cases first. These are `code_language`, `line_break`, `formatting`, `paste_markdown`, the table picker's ten, and `picker_choose_0`, `5`–`9`.
+- [ ] T055 ⛔ ADR 0039. Widen the picker frame's keys to `picker_choose_0`–`9` in `crates/postio-widgets/src/widgets/pickers/mod.rs`. A guard shows the four existing pickers ignore the new keys.
+- [ ] T056 ⛔ ADR 0039. Write failing cases, then add the edit ops as arms of ADR 0039's `apply` in `crates/postio-body/` (research R6). Each is pinned linear in its block:
+  - inline code over a selection;
+  - toggle task list, and toggle task;
+  - set a list's start, and set a code language;
+  - indent and outdent;
+  - insert a table, add or delete a row or column, align a column, delete a table.
 
----
+## Phase B2: User Story 1 — type the inline constructs (P1) ⛔
 
-## Phase 7: User Story 5 — tables (P2)
+- [ ] T057 ⛔ ADR 0039. Write failing native-composer cases for US1's scenarios 1–7 in `crates/postio-widgets/tests/widgets_suite/composer_formatting.rs`, and `storyboards/compose/formatting-inline.toml` red on `main`
+- [ ] T058 ⛔ ADR 0039. Implement the inline rows of `contracts/sequences.md` on the native surface: wrappings, links, autolinks, escapes and flanking, and "never inside code or a carried quote". Draw strikethrough and inline code. Retire their FR-029 refusals. Make the storyboard green.
 
-**Goal**: type a table, edit its structure and alignment, Tab through
-cells.
+## Phase B3: User Story 2 — type the block constructs (P1) ⛔
 
-**Independent test**: `postio-body` edit-op cases, `composer_formatting.rs`'s
-table cases, and `storyboards/compose/formatting-table.toml`.
+- [ ] T059 ⛔ ADR 0039. Write failing cases for US2's scenarios 1–8, and `storyboards/compose/formatting-blocks.toml` red
+- [ ] T060 ⛔ ADR 0039. Implement the block rows (`LinePrefix`, `LineComplete`), Tab and Shift+Tab in list items, `line_break`, and the drawing of each block. This covers the heading scale, the code ground and its label, nested quote rules, and the task box as a `role="checkbox"` control toggled by click. Retire their refusals.
+- [ ] T061 ⛔ ADR 0039. Build the code language picker's words in `crates/postio-ui/src/format_picker.rs`, cases first, and the picker on the frame
 
-- [ ] T044 [P] [US5] Write failing cases, then implement in `crates/postio-body/src/edit_ops.rs`:
-  - `insert_table` (two by two, with a header);
-  - `add_row` above and below;
-  - `add_column` left and right;
-  - `delete_row` and `delete_column`, where the last one deletes the table;
-  - `align_column`, where repeating clears it;
-  - `delete_table`.
+## Phase B4: User Story 4 — the formatting picker and toolbar (P2) ⛔
 
-  Each is pinned linear in its table on a 1,000-block document (research R12).
-- [ ] T045 [US5] Add the `DelimiterRow` pattern's row to `SEQUENCES` (unit cases first: the cell count must match the pipe row above), and its recogniser in `crates/postio-ui/data/editor.js`
-- [ ] T046 [US5] Write failing cases in `composer_formatting.rs` for US5's acceptance scenarios 1–5. Then implement in `crates/postio-widgets/src/composer/`:
-  - `table` (insert, or open the table picker);
-  - the table picker on the frame, with `Context::TablePicker`'s commands;
-  - Tab and Shift+Tab between cells, with Tab in the last cell adding a row;
-  - Enter moving down a column, and Shift+Enter breaking a line in a cell.
-- [ ] T047 [US5] Draw tables in `crates/postio-ui/data/editor.css` (hairline grid, bold header, alignment), and check them with the PNG loop at 1440 × 900 and 1024 × 768
-- [ ] T048 [US5] Make `storyboards/compose/formatting-table.toml` green, and run `/ux-review` on it
+- [ ] T062 ⛔ ADR 0039. Write failing cases, then implement `crates/postio-ui/src/format_picker.rs` (`contracts/formatting-picker.md`, "Model")
+- [ ] T063 ⛔ ADR 0039. Write failing `crates/postio-gtk/tests/focus_suite/formatting_picker.rs` cases for US4's scenarios 1–6, and `storyboards/compose/formatting-picker.toml` red
+- [ ] T064 ⛔ ADR 0039. Build the picker at the caret on the frame, and the toolbar's new buttons, their reflection and the overflow rule. Then the Mac's SwiftUI picker, and `/ux-review`.
 
----
+## Phase B5: User Story 5 — tables (P2) ⛔
 
-## Phase 8: User Story 6 — paste Markdown, reopen, every composer (P2)
+- [ ] T065 ⛔ ADR 0039. Write failing cases for US5's scenarios 1–5, and `storyboards/compose/formatting-table.toml` red
+- [ ] T066 ⛔ ADR 0039. Implement the delimiter-row sequence, `table` opening the table picker inside a table, the table picker, and cell navigation (Tab, Enter, Shift+Enter). Draw the grid, then run the PNG loop and `/ux-review`.
 
-**Goal**: Paste as Markdown. Drafts reopen identical. The terminal and the
-Mac author every construct.
+## Phase B6: User Story 6 and 8, the rich parts ⛔
 
-**Independent test**: `postio-body` round trips, TUI unit cases, the Mac's
-`ComposeCommandsTests`.
-
-- [ ] T049 [US6] Write failing cases in `crates/postio-body/src/markdown.rs`'s `writing` and `reopening` modules, and in `crates/postio-body/tests/body_suite/markdown_parity.rs`. Every construct, reference links, indented code and entities must read in. `from_document` must write the GFM forms. `to_document(from_document(d)) == d` over the golden document. Rewrite `a_table_stays_the_text_that_was_typed` to expect a table.
-- [ ] T050 [US6] Implement them in `crates/postio-body/src/markdown.rs`: the `pulldown-cmark` options (research R1), the new events, and the autolink post-pass
-- [ ] T051 [US6] Write failing cases in `crates/postio-widgets/tests/widgets_suite/composer_formatting.rs` for `paste_markdown` and for an ordinary paste staying literal (US6 scenarios 1–2). Then implement `paste_markdown` in `crates/postio-widgets/src/composer/mod.rs`, inserting `to_document`'s blocks at the caret through an edit op.
-- [ ] T052 [US6] Write a failing case in `crates/postio-widgets/tests/widgets_suite/composer_resume.rs`: a draft with the golden document reopens to the same document (FR-003)
-- [ ] T053 [P] [US6] Write failing cases in `crates/postio-tui/src/composer.rs`'s tests. Then add `Format` arms for every new command the terminal offers (`~~` wraps, `- [ ] ` prefix, `#`×n prefix, fences, `---`, a table template, indent/outdent by two spaces), and route them in `crates/postio-tui/src/app.rs`.
-- [ ] T054 [US6] Mac: add the new marks to `ComposeCommands.marks` and `handled` in `macos/Sources/PostioKit/ComposeCommands.swift`, with `ComposeCommandsTests` red first. Expose the edit ops and `format_picker` through `crates/postio-ffi/src/session.rs`. Draw the formatting, table and code language pickers in SwiftUI from `postio_ui::format_picker` (`macos/Sources/PostioKit/`), with Swift tests first.
-
----
-
-## Phase 9: Polish and cross-cutting
-
-- [ ] T055 [P] Cite this spec beside spec 002 in the module docs of `crates/postio-ui/src/editor/markdown.rs` and `crates/postio-body/src/document.rs`, as the owner of the sequence set and of the closed set's size. `docs/archive/` is frozen (`check-archive-frozen.py`), so spec 002 itself is not edited.
-- [ ] T056 [P] Add ADR 0039 and ADR 0004 cross-references to this spec. ADR 0039's "What would falsify this" gains tables in a native text view as a second thing to spike. ADR 0004's closed-set count is updated, and D5 cited.
-- [ ] T057 [P] Record recipient-client results (`quickstart.md` §7) in `docs/notes/2026-<mm>-<dd>-formatting-in-recipient-clients.md`, and list it in `docs/notes/README.md`. The maintainer runs the send.
-- [ ] T058 Run `quickstart.md` §1–6 end to end, and `scripts/target-sweep.py`. Land with `scripts/issue-land.sh --detach --full-suite --title 'feat(body,ui,widgets): compose every Markdown construct'`.
+- [ ] T067 ⛔ ADR 0039. Write failing cases for US6's scenarios 1–2, then implement `paste_markdown` on the native surface (FR-019)
+- [ ] T068 ⛔ ADR 0039. Draw the remote image chip inline at the image's place, pressing the same `attach_remote_image`, with cases first
+- [ ] T069 ⛔ ADR 0039. Assert no FR-029 refusal remains: every formatting command is answered in the rich view. Then land Part B with `--full-suite`.
 
 ---
 
 ## Dependencies and order
 
-- **Setup** (T001–T004) first. T001 comes before any `editor.js` edit.
-- **Foundational** (T005–T017) blocks every story. Within it:
-  - T005 → T006 → T007 → T008 → T009 → T010;
-  - T011 → T012 → T013 → T014;
-  - T015 → T016;
-  - T017 is independent.
-- **US1** (T018–T026) then **US2** (T027–T033): they share `editor.js` and
-  `composer_formatting.rs`, so they run in order.
-- **US3** (T034–T037) depends only on Foundational. It can run beside US1
-  and US2, because it touches `document.rs`'s text half, `postio-render`
-  and `postio-session` tests.
-- **US4** (T038–T043) needs US1 and US2's commands to list. T038–T039 can
-  start after Foundational.
-- **US5** (T044–T048): T044 can start after Foundational. The rest needs
-  US2's edit-op path (T029).
-- **US6**: T049–T050 and T053 need only Foundational. T051 and T052 need
-  T050. T054 needs US1, US2 and US4.
-- **Polish** last.
+### Part A
 
-## Parallel examples
+- **Setup**: T001 comes before T033. T002 and T003 are done. T004 and T005
+  are independent.
+- **Foundational**: T006 → T007 → T008 → T009 → T010 → T011; T012 → T013
+  → T014; T015 → T016.
+- **US3** (T017–T021) needs Foundational only.
+- **US6** (T022–T029): T022–T025 need Foundational, and T026 → T027 →
+  T028.
+- **US7** (T030–T040) needs T025 and T027. Within it, T030 → T031 → T032
+  → T033 → T034 → T035 → T036 → T037 → T038. T039 (the Mac) can follow
+  T032 on the Mac.
+- **US8** (T041–T049) needs T025 (remote images from Markdown). It can run
+  beside US7, except T045, which shares `composer/mod.rs` with T035–T038.
+  Run T045 after T038.
+- **Polish** last. T053 lands Part A.
 
-- After Foundational: T018 (autolink), T034 (plain text), T038 (picker
-  words), T044 (table ops), T049 (Markdown) and T053 (terminal). These are
-  six files in four crates.
-- Within US1: T018 beside T020 and T021.
+### Part B
+
+- Everything is blocked on ADR 0039. Then: T054–T056, then US1 → US2 →
+  US4 → US5 → T067–T069.
+
+## Parallel examples (Part A)
+
+- After Foundational: T017 (plain text), T022 (autolinks), T026 (moving
+  the marker edits) and T041 (the privacy cases) run in parallel. They
+  touch four crates.
+- Within US8: T044 (the check) and T047 (the terminal row).
 
 ## Implementation strategy
 
-- **MVP**: Setup, Foundational and US1. A person can strike through, code
-  and link by typing, and recipients get correct HTML.
-- **Then** US2 and US3, which complete P1: every construct typed and sent
-  well.
-- **Then** US4 (discoverability), US5 (tables) and US6 (paste, terminal,
-  Mac).
-- **Each phase ends runnable**, committed and green at the fast tier.
-  The branch lands once, with `--full-suite`.
+- **MVP**: Part A's Setup, Foundational, US3 and US6. Every construct is
+  in the model, sent well, and authored in the terminal.
+- **Then US7**: GTK and Mac users author every construct through the
+  source view. This is the interim surface, and the maintainer's
+  sentence holds from here.
+- **Then US8**: remote images, on a press.
+- **Part B** follows ADR 0039, and replaces each FR-029 refusal with the
+  real thing.

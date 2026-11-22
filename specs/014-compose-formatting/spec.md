@@ -4,7 +4,8 @@
 
 **Created**: 2026-11-22
 
-**Status**: Draft — for the maintainer's review before any task starts
+**Status**: Draft. The maintainer answered Q1–Q4 on 2026-11-22
+(Clarifications); the spec is ready for review of the folded answers
 
 **Input**: The maintainer, 2026-11-22: "I want to be able to do everything
 that I can do on a Markdown file", and "I think we need to add more
@@ -73,10 +74,11 @@ to replace the WebKit surface with a native text view over an edit algebra in
 These are design calls an agent can make. Each is reviewable; the three
 that only the maintainer can make are under Clarifications.
 
-**D1. Markdown stays the way in, not the format.** A draft is a `Document`.
-The maintainer's 2026-08-24 rejection of a Markdown-authored composer
-(ADR 0003, restated by ADR 0039) is not reopened by this spec; Q1 asks
-whether they now want a Markdown source view alongside it.
+**D1. Markdown is a way in, and a view, but never the stored format.** A
+draft is a `Document`, and ADR 0003 stands. Markdown reaches it two ways:
+- typed sequences;
+- the Markdown source view (Q1 = B, "The Markdown source view"), which
+  edits the same draft as Markdown text and reads it back on return.
 
 **D2. Every construct has a command, a key, a typed sequence, a picker row
 and a rendering.** That is FR-068 read forwards: rather than forbid a
@@ -92,7 +94,8 @@ ships the old id.
 
 **D4. The formatting window is a picker.** It is a popover anchored at the
 caret, in spec 007's one picker pattern. It is not a window, not a second
-command bar and not a panel. See "The formatting picker" and Q2.
+command bar and not a panel (Q2 = A). See "The formatting picker". It is
+built on ADR 0039's native composer (D8).
 
 **D5. Generated presentation is not styling.** ADR 0004 forbids styling the
 *user* controls. The serialiser may emit a fixed set of presentational
@@ -115,15 +118,47 @@ code fences and tables, because without them the words read differently:
 "~~Tuesday~~ Wednesday" is not "Tuesday Wednesday". The table is under
 "Every construct".
 
-**D7. Typed remote images are never fetched.** This is unchanged from
-today. Q3 asks whether the maintainer wants an explicit way to attach one.
+**D7. A remote image is fetched once, on a press, or never.** A remote
+image (`![alt](https://…)`) typed or pasted as Markdown becomes a "Download
+and attach" chip (Q3 = B):
+- pressing it fetches the image once and attaches it as a `cid:` inline
+  image;
+- until it is pressed, nothing is fetched;
+- if it is never pressed, it is sent as a link.
 
-**D8. The model, the input, the send path and the terminal come first, the
-surface last.** The document, `parse`, `to_html`, the text alternatives,
-`markdown::to_document` and `from_document` are surface-independent. So is
-the sequence table in `postio_ui::editor::markdown`. All of it survives
-ADR 0039. The WebKit surface gets the input and the rendering on top. Q4
-asks whether the surface should wait for ADR 0039.
+See "Remote images: the Download and attach chip".
+
+**D8. Build the model, the wire, Markdown in and out, the terminal, the
+registry, the source view and the chip now. Hold the rich editing surface
+for ADR 0039's native composer (Q4 = C).**
+
+| Now | Held for ADR 0039 |
+|---|---|
+| The document, `parse`, `to_html`, the text alternatives, `harden` | Typed sequences in the rich surface (US1, US2) |
+| `markdown::to_document`, `from_document`, GFM autolinks | Drawing the new constructs in the rich surface |
+| The terminal composer, all of it | The formatting picker, the table picker and the code language picker (US4, US5) |
+| The registry rows for what can be answered now (`data-model.md`) | The new toolbar buttons and their reflection |
+| The Markdown source view in GTK and on the Mac (US7) | The structural edit ops (ADR 0039's `apply`) |
+| The chip as a row under the editor, the fetch, and the send fallback (US8) | Paste as Markdown, the inline chip, `line_break` |
+
+**The source view is the interim editing surface.** Until the native
+composer exists, every construct is authored in GTK and on the Mac by
+switching to Markdown, just as the terminal already authors them. The
+reasons for this choice:
+- **It is not throwaway work.** The source view is a plain text widget
+  over `from_document` and `to_document`, which are built now anyway.
+  ADR 0039's composer keeps the same toggle, and none of it is WebKit.
+- **It delivers the maintainer's sentence now.** "Everything I can do on a
+  Markdown file" holds on the day this lands, without a line of
+  `editor.js` written to be thrown away.
+- **The rich view does not lose a construct while it waits.** It shows
+  what the source view made through `editor_html`, drawn by WebKit's
+  defaults, and `parse` reads it back (FR-002).
+
+**In the rich view, a new formatting command** is answered with its reason
+and the way forward ("Strikethrough is in the Markdown view for now ·
+ctrl+alt+s"). It is never silently dead. Bold, italic, the lists, quote,
+link and image keep working as they do today.
 
 **D9. Vocabulary.** The UI says "Divider" (not "horizontal rule" or
 "thematic break"), "Task list" and "Done" (not "checklist" or "checked"),
@@ -133,44 +168,26 @@ skill asks to be named.
 
 ## Clarifications
 
-Three questions only the maintainer can answer. Each one names the option
-the spec assumes, so planning is not blocked; an answer that differs
-changes the tasks it names.
+### Session 2026-11-22 (the maintainer)
 
-### Q1 — Does "everything I can do on a Markdown file" include editing the Markdown itself?
-
-[NEEDS CLARIFICATION: is a Markdown source view wanted in the rich composers?]
-
-| Option | Answer | Implications |
-|---|---|---|
-| A *(assumed)* | No. Every construct is reachable by typing, the picker and keys; the draft is rich text | This spec as written. No mode |
-| B | Add `toggle_markdown_source`: the same draft as Markdown text, editable, read back on toggle (the terminal's `from_document`/`to_document` round trip) | One new command and a mode to make unmistakable; lossless except a carried reply quote, which stays a block. About one user story more (US8) |
-| C | Markdown becomes the draft's stored form | Reverses ADR 0003 and the 2026-08-24 decision; reopens ADR 0004's model. Out of this spec |
-
-### Q2 — What should the "formatting window" be?
-
-[NEEDS CLARIFICATION: confirm the formatting picker over the alternatives]
-
-| Option | Answer | Implications |
-|---|---|---|
-| A *(assumed)* | A picker anchored at the caret (`mod+alt+f`, and the toolbar's last button), listing every construct with its key and Markdown, filtering as you type | Spec 007's one picker pattern; no new kind of surface |
-| B | The command bar (`mod+k`) opened on its Format group | No new surface at all, but the bar sits in the window's header, far from the caret, and cannot show what is active at the caret |
-| C | A second toolbar row, shown or hidden with a key | Everything visible at once; it costs a row of the composer on every message, and it is a mode |
-
-### Q3 — A typed `![alt](https://…)`: what happens?
-
-[NEEDS CLARIFICATION: should a typed remote image be fetchable on request?]
-
-| Option | Answer | Implications |
-|---|---|---|
-| A *(assumed)* | It stays the literal text, never fetched; images come from Insert image, paste and drop, as `cid:` parts | Today's rule (ADR 0003); nothing new leaves the machine |
-| B | It becomes a chip offering "Download and attach" (one fetch, on that press, then a `cid:` part) | The user asks for exactly one request; it needs a network path from compose that does not exist today |
-| C | It becomes a link to the address | No fetch; the recipient sees a link where the writer typed an image |
-
-### Plan-level question
-
-**Q4** (sequencing against ADR 0039) is in `plan.md`. It changes the order
-of the work, not the behaviour.
+- **Q1.** Does "everything I can do on a Markdown file" include editing the
+  Markdown itself?
+  → **B: a Markdown source toggle.** The draft can be switched to edit as
+  Markdown text and back. The stored format stays the `Document`, so
+  ADR 0003 stands. See "The Markdown source view", US7 and FR-023 to
+  FR-029.
+- **Q2.** What should the formatting window be?
+  → **A: the picker anchored at the caret.** See "The formatting picker".
+- **Q3.** What happens to a typed `![alt](https://…)`?
+  → **B: a "Download and attach" chip.** It fetches the image once on a
+  press and attaches it as a `cid:` inline image. Nothing is fetched until
+  then. See "Remote images", US8 and FR-030 to FR-035.
+- **Q4.** Build the surface now, or after ADR 0039?
+  → **C: land the model, the wire, the Markdown input, the terminal and the
+  registry now; hold the editing surface** (the visual formatting in the
+  composer, and the formatting window's UI) for ADR 0039's native composer.
+  This spec puts the source view and the chip's row form in the now
+  phase (D8).
 
 ## Every construct
 
@@ -190,7 +207,8 @@ because there the Markdown is typed as text.
 | Strikethrough | `strikethrough` · `mod+shift+s`, `alt+asciitilde` | `~~x~~` | A line through, muted ink | `<del>` | `~~x~~` (D6) |
 | Inline code | `inline_code` · `mod+e`, `alt+grave` | `` `x` ``, and longer backtick runs | Adwaita Mono on the code ground | `<code>` | `x`, backticks kept only when the run holds a space at its edge |
 | Link | `insert_link` · `mod+shift+k`, `alt+k` *(exists)* | `[text](url)`; `<url>`; a bare `https://…`, `www.…` or address followed by a space or punctuation (GFM's autolinks) | Accent, underlined | `<a href>` (http, https, mailto only) | `text <url>`; the bare address when the text is the address |
-| Image | `insert_image` · `mod+shift+g`, `alt+g` *(exists)* | `![alt](cid:…)` in the terminal; a remote address stays literal (D7, Q3) | Inline, at its size, capped to the column | `<img src="cid:…" alt>` in `multipart/related` | `[image: alt]` |
+| Image | `insert_image` · `mod+shift+g`, `alt+g` *(exists)* | `![alt](cid:…)`, naming a part of this draft | Inline, at its size, capped to the column | `<img src="cid:…" alt>` in `multipart/related` | `[image: alt]` |
+| Remote image | `attach_remote_image` · `mod+alt+i`, `alt+I` | `![alt](https://…)` (or `http://`) | A "Download and attach" chip (D7) | until pressed: `<a href>alt</a>`; once pressed: as Image | until pressed: `alt <url>` |
 | Hard line break | `line_break` · `shift+Return` (not the terminal) | two spaces then Enter, or `\` then Enter | A new line in the same paragraph | `<br>` | a newline |
 | Escape | none: an escape is the way *not* to run a command | `\` before any ASCII punctuation | The punctuation, literally; it never pairs with a later marker | the character | the character |
 | Clear formatting | `clear_formatting` · `mod+backslash`, `alt+backslash` | — | Removes inline marks from the selection | — | — |
@@ -227,7 +245,8 @@ are not CommonMark or GFM and are out of scope.
 
 ## The formatting picker
 
-The surface the maintainer called the formatting window (D4, Q2).
+The surface the maintainer called the formatting window (D4, Q2 = A).
+**Held for ADR 0039** (D8): it is drawn on the native composer.
 
 - **Opening it.** `formatting` ("Formatting…", `mod+alt+f`, `alt+F`)
   anchors it at the caret's line. The toolbar's last button, an icon menu
@@ -289,9 +308,155 @@ The surface the maintainer called the formatting window (D4, Q2).
 | Loading, partial, offline, failing | Cannot happen: everything is local and nothing it does reaches the network |
 | Narrow (1024 × 768) | It fits the 615 px column. The Paragraph row wraps to two lines before any row is cut |
 
+## The Markdown source view
+
+Q1 = B. **Built now**, and the interim editing surface until ADR 0039
+(D8).
+
+- **The command.** `toggle_markdown_source`, titled "Edit as Markdown or
+  rich text", on `mod+alt+s`. It is GTK and Mac only (`GRAPHICAL_MAIL`):
+  the terminal composer is always Markdown. A toggle button sits at the
+  toolbar's right end, before Formatting once that exists. Its tooltip
+  carries the key, and it shows pressed while the view is Markdown.
+- **What it shows.** The draft as `from_document` writes it, in a plain
+  text view set in Adwaita Mono on the editor's surface. A one-line strip
+  at the top says "Editing as Markdown · ctrl+alt+s for rich text", so the
+  mode cannot be missed. The subtitle still says what will be sent
+  ("Formatted · 58 words").
+- **Formatting commands in the view** edit the Markdown: bold wraps the
+  selection in `**`, Task list prefixes `- [ ] `. These are the same pure
+  functions the terminal composer uses, moved to
+  `postio_ui::editor::markdown_edit` so the two cannot differ. Every
+  formatting command in `data-model.md`'s "now" rows works here.
+- **Returning.** The text is read with `to_document`, and the result
+  becomes the draft. The whole session in the view is one undo step in
+  the draft's history. Inside the view, ordinary text undo works keystroke
+  by keystroke.
+- **The round trip is lossless (FR-024).** `to_document(from_document(d))
+  == d` holds for every document in normal form: adjacent text merged, and
+  nothing empty but a paragraph. That covers every construct in scope.
+  Where CommonMark has no spelling for a shape, `from_document` writes a
+  spelling `to_document` reads back:
+  - `<br>` for a line break Markdown cannot place: in a heading, in a
+    table cell, or at the start or end of a paragraph;
+  - a line holding only `<br>` for an empty paragraph;
+  - an empty `<!-- -->` line between two adjacent lists of the same kind,
+    which is CommonMark's own idiom for splitting them;
+  - `&#32;` for a space Markdown would strip at the start or end of a
+    paragraph.
+
+  `<br>` and `<!-- -->` are the only raw HTML `to_document` reads as
+  structure. Any other HTML stays the literal text, as today. The reverse
+  direction, Markdown → document → Markdown, keeps the meaning but not the
+  spelling (`*` may come back as `-`). That is why the draft also keeps
+  the person's own text (next point).
+- **What Markdown cannot express.** In a document, only a carried reply
+  quote or forwarded message (`Block::Quoted`, ADR 0033) has no Markdown,
+  because it is the sender's HTML kept as it was sent. In the view it is
+  one atomic, read-only line, drawn as the "▸ Quoted message · kept as
+  sent" chip, at its place among the blocks:
+  - text can be typed above and below it;
+  - Backspace or Delete removes it whole, and undo brings it back;
+  - it cannot be edited, split or copied;
+  - the private character that marks it is stripped from pasted or typed
+    text, so it cannot be forged.
+
+  On return, it is restored at that line. Typed Markdown that would
+  narrow is reported: a ragged table's extra cells, a link to a refused
+  scheme, an image naming a part this draft does not carry. The report is
+  one notice line under the editor ("2 table cells were dropped: their rows
+  are longer than the header"), with Undo. Nothing narrows silently.
+- **The person's own spelling survives.** While the view is open, and when
+  a draft is saved from it, the draft's existing `body_markdown` holds the
+  text as typed, beside the HTML. A draft last edited as Markdown reopens
+  in the view with that text, in GTK, on the Mac and in the terminal. When
+  the rich view next saves, it clears `body_markdown`, as it does today.
+- **The caret on each switch.** It lands on the same character of the
+  person's text.
+  - **Rich → Markdown.** The caret's position in the document (a block
+    path and an offset into the block's text) maps through
+    `from_document`'s source map to the offset of that character in the
+    Markdown. The selection maps both ends.
+  - **Markdown → rich.** The offset maps through `to_document`'s source
+    map to the nearest text character:
+    - inside a marker (`**`, `## `, `- [ ] `, a fence line, a delimiter
+      row), the caret goes to the start of the text that marker formats;
+    - on the quote chip's line, it goes to the start of the block after
+      the quote;
+    - in text that narrowed away, it goes to the nearest surviving
+      character before it.
+  - A selection keeps both ends if both map, and otherwise collapses to
+    the caret. The caret's line stays at the same height in the view.
+
+| State | What the source view shows |
+|---|---|
+| Empty draft | An empty text view with the strip; the caret at the start |
+| A reply | The person's text, then the quote chip |
+| Offline, failing | The same: the view is local, and nothing in it waits |
+| Narrow | The strip shortens to "Markdown · ctrl+alt+s"; the text wraps at the column |
+
+## Remote images: the Download and attach chip
+
+Q3 = B. **Built now** in its row form; the inline chip waits for ADR 0039
+(D8).
+
+- **What makes a chip.** A remote image (`![alt](https://…)` or `http://`,
+  through `Href::parse`) becomes a remote image in the document, a chip.
+  It can arrive from any Markdown the composer reads:
+  - the source view;
+  - the terminal;
+  - Paste as Markdown, once that is built.
+
+  HTML pasted into the rich view keeps narrowing a remote `<img>` away, as
+  today. The parser that reads hostile mail does not mint chips.
+- **Where it shows now.** The composer's attachment list holds one row per
+  remote image, under a heading "Not attached yet":
+  - it names the alt text and the host ("Chart · from example.com");
+  - it has a "Download and attach" button with the key `mod+alt+i` in it;
+  - it has a remove button, which turns the image into its link.
+
+  The terminal draws the same row in its attachment list. Once ADR 0039's
+  native composer exists, the chip is drawn inline at the image's place
+  as well.
+- **The press.** `attach_remote_image` acts on the chip at the caret, or
+  on the first unattached chip in reading order, which its row names. It
+  makes exactly one HTTP(S) GET to that address, without blocking the UI:
+  - no cookies, no credentials, no `Referer`, and a generic `User-Agent`;
+  - at most 3 redirects, never to another scheme, and only to http(s);
+  - a 15 s limit.
+
+  The row says "Downloading…" while it runs. On success, the bytes are
+  attached through the path Insert image uses (`postio_session::attaching`).
+  The chip becomes the image, and the document's remote image becomes
+  `Image { content_id }`.
+- **Failure states.** Each says why, keeps the chip, and offers the same
+  key again. A second press is a second request, and nothing retries by
+  itself.
+
+  | Failure | The row says |
+  |---|---|
+  | Unreachable (DNS, connection, TLS, timeout, an HTTP error status) | "Couldn't download from example.com · {reason} · Try again ctrl+alt+i" |
+  | Too large (over 10 MB, by `Content-Length` or as the bytes arrive, when the download stops) | "Larger than 10 MB · not attached · it will be sent as a link" |
+  | Not an image (the bytes are not PNG, JPEG, GIF or WebP, whatever the server's header says; SVG is refused because it can carry script) | "example.com sent something that isn't a picture · it will be sent as a link" |
+  | Offline | "You're offline · press again when you're online". Nothing is queued: a fetch never happens later on its own |
+
+- **If it is never pressed**, the chip is sent as a link: HTML
+  `<a href="…">alt</a>`, and plain text `alt <url>`. Postio fetches
+  nothing. The recipient sees a link, which their client fetches only if
+  they follow it. Before Send, the composer's warning line says "1 image
+  isn't attached and will be sent as a link · ctrl+alt+i to attach". Send
+  stays live and does not ask: a link is a safe outcome, and Postio prefers
+  undo to confirmation. Pressing Send while a download is running sends a
+  link for that image, and the warning line has already said so.
+- **What is logged**: the draft id, the outcome and the byte count. The
+  address is never logged: it is message content.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Type the inline constructs and get them (Priority: P1)
+
+**Held for ADR 0039** (D8). It is built on the native composer. Until then, the
+same constructs are written in the Markdown source view (US7).
 
 A person writes `~~Tuesday~~ Wednesday works, run `make check` first, see
 https://example.com/plan`. As they type, the strikethrough, the inline code
@@ -332,6 +497,9 @@ restores the characters. The sequence rules themselves are unit cases in
 ---
 
 ### User Story 2 - Type the block constructs and get them (Priority: P1)
+
+**Held for ADR 0039** (D8). It is built on the native composer. Until then, the
+same constructs are written in the Markdown source view (US7).
 
 A person writes a short plan: `## Plan` and a space makes a heading. `- [ ] `
 starts a task list. Tab nests an item. `3. ` starts a numbered list at
@@ -376,6 +544,8 @@ cases in `postio-body` (`parse(to_html(d)) == d` for every new shape, and
 
 ### User Story 3 - A recipient sees what was written, in any client (Priority: P1)
 
+**Now** (D8).
+
 What the person formatted reaches every recipient readably. The HTML part
 draws the constructs in clients that strip styles, and in Outlook's Word
 engine. The plain-text part reads as well-formed Markdown, with the markers
@@ -414,6 +584,9 @@ with every construct visible (a `postio-render` snapshot).
 
 ### User Story 4 - Find any formatting without knowing Markdown (Priority: P2)
 
+**Held for ADR 0039** (D8). It is built on the native composer. Until then, the
+same constructs are written in the Markdown source view (US7).
+
 A person who has never typed Markdown presses `mod+alt+f`, or the toolbar's
 Formatting button. They type "tab", press Return, and get a table. The
 picker shows each command's key and its Markdown, so next time they type
@@ -448,6 +621,9 @@ written from this story and red on the base, is filmed and judged by
 
 ### User Story 5 - Write and edit a table (Priority: P2)
 
+**Held for ADR 0039** (D8). It is built on the native composer. Until then, the
+same constructs are written in the Markdown source view (US7).
+
 A person types `| Item | Qty |`, Enter, and `|---|--:|`, Enter, and gets a
 two-column table with Qty right-aligned. Tab walks the cells and adds a row
 from the last one. `mod+shift+t` inside the table opens the table picker,
@@ -477,6 +653,9 @@ ragged rows. The surface is a GTK composer case plus a storyboard.
 ---
 
 ### User Story 6 - Paste Markdown, reopen a draft, use any composer (Priority: P2)
+
+**Now**, except Paste as Markdown into the rich view (scenarios 1 and 2),
+which is held for ADR 0039 (D8).
 
 A person copies a README section and presses `mod+alt+v`. It arrives
 formatted. An ordinary paste of the same text arrives as the text, because
@@ -511,6 +690,105 @@ The terminal composer's format commands are TUI unit cases. The Mac's
 
 ---
 
+### User Story 7 - Write any construct by switching to Markdown (Priority: P1)
+
+**Now** (D8): the interim editing surface.
+
+A person writing a reply in GTK wants a table and a task list.
+1. They press `mod+alt+s`. The draft becomes Markdown text, with the
+   caret on the same word, and the quote is a chip at the end.
+2. They type the table's pipes and `- [ ] call the vendor`, and press
+   `mod+alt+s` again.
+3. The rich view shows the table and the task. The caret is in the task's
+   text. The quote is untouched.
+
+One undo returns the draft to before the switch.
+
+**Why this priority**: It is how GTK and Mac users get every construct
+before the native composer exists. It is the maintainer's Q1 answer, and
+it reuses the round trip the terminal needs anyway.
+
+**Independent Test**:
+- **Model, at `--lib`:**
+  - a property case: `to_document(from_document(d)) == d` over generated
+    normal-form documents (FR-024);
+  - the source maps on every construct, for the caret.
+- **The toggle itself:** a `widgets_suite` case
+  (`composer_markdown_source.rs`) with real keys, plus
+  `storyboards/compose/markdown-source.toml`, red on `main`.
+
+**Acceptance Scenarios**:
+
+1. **Given** a draft holding every construct in scope, **When** it is
+   switched to Markdown and back with no edit, **Then** the document is
+   identical.
+2. **Given** the caret after "Wed" in "Wednesday" inside a struck run,
+   **When** the view switches to Markdown, **Then** the caret is after
+   "Wed" in `~~Wednesday~~`. Switching back puts it after "Wed" again.
+3. **Given** the caret between the two asterisks of `**`, **When** the
+   view switches to rich, **Then** the caret is at the start of the bold
+   text.
+4. **Given** a reply, **When** it is switched to Markdown, **Then** the
+   quote is one chip line that cannot be edited. Deleting it and undoing
+   brings it back, and switching back keeps it where it was.
+5. **Given** a table row with more cells than its header, typed in the
+   view, **When** the view returns to rich, **Then** the extra cells are
+   dropped, a notice line says so, and Undo restores the text.
+6. **Given** the view open, **When** `mod+b` is pressed over a selection,
+   **Then** the selection is wrapped in `**`.
+7. **Given** a draft saved while in Markdown, **When** it is reopened in
+   GTK, on the Mac or in the terminal, **Then** it opens as the same text,
+   in the Markdown view.
+8. **Given** the rich view, **When** `mod+shift+s` (Strikethrough) is
+   pressed, **Then** the composer says "Strikethrough is in the Markdown
+   view for now · ctrl+alt+s", and nothing else changes.
+
+---
+
+### User Story 8 - Attach a remote image on purpose, and only then (Priority: P2)
+
+**Now** (D8), in its row form.
+
+A person writing in Markdown types `![Q3 chart](https://example.com/q3.png)`.
+1. Back in rich text, nothing has been fetched. The attachment list shows
+   "Not attached yet · Q3 chart · from example.com", with "Download and
+   attach ctrl+alt+i".
+2. They press it. The image downloads once, and it appears in the body and
+   the attachment list as an inline image.
+3. Had they not pressed it, the message would have gone with a link.
+
+**Why this priority**: It is the maintainer's Q3 answer. It is P2 because
+Insert image, paste and drop already cover attaching an image.
+
+**Independent Test**:
+- **The fetch, against a fake fetcher.** `postio-session` cases count the
+  calls:
+  - zero across typing, the source view, Paste as Markdown, draft
+    open, autosave, draft sync and send;
+  - exactly one per press.
+
+  The failure states are covered the same way. No test reaches the
+  network.
+- **The row:** a `widgets_suite` case.
+
+**Acceptance Scenarios**:
+
+1. **Given** `![x](https://example.com/x.png)` in the draft, **When** the
+   draft is saved, reopened, synced to the server's Drafts and sent
+   without a press, **Then** no request is made, and the sent HTML has
+   `<a href="https://example.com/x.png">x</a>`.
+2. **Given** the press, **When** the server returns a 40 KB PNG, **Then**
+   the draft carries it as a `cid:` inline image, and exactly one request
+   was made.
+3. **Given** the press, **When** the server returns `text/html`, an SVG,
+   or 11 MB, **Then** nothing is attached and the row names the reason.
+4. **Given** the press while offline, **Then** the row says so. Going
+   online later makes no request until the next press.
+5. **Given** the row's remove button, **Then** the chip becomes a plain
+   link in the body and its row goes.
+
+---
+
 ### Edge Cases
 
 - **A sequence inside inline code or a code block** never fires. Markdown
@@ -540,7 +818,10 @@ The terminal composer's format commands are TUI unit cases. The Mac's
   `<s>` and `<strike>`; `<h4>`–`<h6>`; simple tables; `<ol start>`; and a
   GitHub-style checkbox list (`<li><input type=checkbox checked>`) as
   tasks. Everything else narrows as today.
-- **A remote image typed as Markdown** stays its literal text (D7, Q3).
+- **A remote image typed as Markdown** becomes a chip that fetches only
+  when pressed, and is sent as a link otherwise (D7).
+- **The source view and a carried quote**: only `Block::Quoted` has no
+  Markdown, and it is an atomic chip line in the view.
 - **Undo** reverses a conversion in one step and a command in one step
   (spec 002 FR-070, ADR 0004 Q5's `EditHistory`).
 - **Reduced motion and speed**: nothing here animates. A sequence converts
@@ -580,8 +861,10 @@ The terminal composer's format commands are TUI unit cases. The Mac's
   prove it.
 - **FR-006**: Every formatting command MUST be in the Mac's Format menu,
   and MUST be claimed by the Mac's `ComposeCommands`.
+- **FR-006a**: A command MUST be registered only once something answers
+  it. The registry rows follow `data-model.md`'s Phase column (D8).
 
-**Typed sequences**
+**Typed sequences** (the table and its contract now; the rich surface's implementation held for ADR 0039)
 
 - **FR-007**: Every typed sequence in "Every construct" MUST be a row of
   `postio_ui::editor::markdown::SEQUENCES`, reaching only a formatting
@@ -597,7 +880,7 @@ The terminal composer's format commands are TUI unit cases. The Mac's
   carried reply quote. An escaped marker MUST NOT pair with any later one.
 - **FR-011**: Emphasis with `_` MUST NOT open or close inside a word.
 
-**The formatting picker and toolbar**
+**The formatting picker and toolbar** (held for ADR 0039)
 
 - **FR-012**: The `formatting` command and the toolbar's last button MUST
   open the formatting picker described in "The formatting picker", built on
@@ -627,15 +910,70 @@ The terminal composer's format commands are TUI unit cases. The Mac's
 
 **Paste and the other composers**
 
-- **FR-019**: `paste_markdown` ("Paste as Markdown", `mod+alt+v`, `alt+V`)
-  MUST convert the clipboard's text through `markdown::to_document` and
-  insert the result at the caret. Ordinary paste MUST keep today's
-  behaviour.
+- **FR-019** *(held for ADR 0039)*: `paste_markdown` ("Paste as Markdown",
+  `mod+alt+v`, `alt+V`) MUST convert the clipboard's text through
+  `markdown::to_document` and insert the result at the caret. Ordinary
+  paste MUST keep today's behaviour. Until it is built, pasting into the
+  Markdown source view is the way to paste Markdown.
 - **FR-020**: The terminal composer MUST read and write every construct as
   Markdown (`to_document` and `from_document`, with GFM's tables,
   strikethrough and task lists enabled). Its format commands MUST insert
   the markers for the new commands it offers.
-- **FR-021**: A typed or pasted remote image MUST NOT be fetched (D7).
+- **FR-021**: A remote image MUST NOT be fetched except by FR-031's press
+  (D7).
+
+**The Markdown source view** (now)
+
+- **FR-023**: `toggle_markdown_source` ("Edit as Markdown or rich text",
+  `mod+alt+s`, `GRAPHICAL_MAIL`) MUST switch the GTK and Mac composers
+  between the rich view and a plain-text view of the same draft as
+  `from_document`'s Markdown. The Markdown view MUST be unmistakable: a
+  strip naming it and its key, and the toggle shown pressed.
+- **FR-024**: For every document in normal form,
+  `to_document(from_document(d)) == d` MUST hold, for every construct in
+  scope. A property test over generated documents is the proof. Shapes
+  CommonMark cannot spell MUST be written with the spellings in "The
+  Markdown source view", and MUST be read back.
+- **FR-025**: A `Block::Quoted` MUST appear in the view as one atomic,
+  read-only line. It MAY be deleted whole, MUST NOT be editable or
+  forgeable, and MUST be restored at its line on return.
+- **FR-026**: On return, anything the typed Markdown narrowed MUST be
+  reported in a notice line with Undo. Nothing may be dropped silently.
+- **FR-027**: The caret MUST land on the same character of text on each
+  switch, by the rules in "The Markdown source view". A selection MUST
+  keep both ends where both map.
+- **FR-028**: A session in the view MUST be one step in the draft's undo
+  history. A draft saved from the view MUST keep the typed text in
+  `body_markdown`, and MUST reopen in the view in every composer.
+- **FR-029**: In the view, every formatting command offered now MUST edit
+  the Markdown through `postio_ui::editor::markdown_edit`, the functions
+  the terminal composer uses. In the rich view, a formatting command not
+  yet built there MUST say so, with the view's key, and MUST change
+  nothing.
+
+**Remote images** (now)
+
+- **FR-030**: Markdown naming an `http` or `https` image MUST become a
+  remote image (a chip). HTML pasted into the rich view MUST keep
+  narrowing a remote `<img>` away.
+- **FR-031**: The image MUST be fetched only in response to
+  `attach_remote_image` (`mod+alt+i`, `alt+I`), or the chip's button,
+  pressed for that chip. The press MUST make exactly one GET, under the
+  limits in "Remote images". It MUST NOT block the UI.
+- **FR-032**: Nothing else MAY cause a request for a remote image: not
+  typing, not opening or switching views, not autosave, not draft sync,
+  not send, not a retry. There MUST be no prefetch, DNS lookup or HEAD
+  request.
+- **FR-033**: A fetched image MUST be attached through the existing inline
+  image path, as a `cid:` part, only if its bytes are PNG, JPEG, GIF or
+  WebP and it is at most 10 MB.
+- **FR-034**: Each failure (unreachable, too large, not an image, offline)
+  MUST leave the chip, name the reason, and offer the key again. Nothing
+  MAY be retried or queued without a press.
+- **FR-035**: A chip that is not attached when the message is sent MUST be
+  sent as a link (HTML `<a href>alt</a>`, plain text `alt <url>`). The
+  composer's warning line MUST say so before Send. Logs MUST carry the
+  draft id, the outcome and the byte count, never the address.
 
 **Product truth**
 
@@ -651,14 +989,21 @@ The terminal composer's format commands are TUI unit cases. The Mac's
 - **Formatting command**: a registry entry in the `Composer` context. It has
   a title, a default key, a terminal alternate, an icon, and its typed
   sequence shown in the picker.
+- **Remote image**: an image named by an `http(s)` address, not yet
+  attached. It is shown as a chip, sent as a link, and becomes an `Image`
+  when its one fetch succeeds.
+- **Source map**: the correspondence between character offsets in
+  `from_document`'s Markdown and positions in the document, both ways.
+  It is used only to place the caret.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: Every CommonMark and GFM construct in scope can be authored
-  in each composer in at least two ways: by typing its Markdown and by a
-  key. All but the escape can also be authored from the picker.
+- **SC-001**: When the now phase lands, every CommonMark and GFM construct
+  in scope can be authored in every composer through Markdown: the
+  terminal's text, or GTK's and the Mac's source view. When the held phase
+  lands, each can also be typed live and reached by a key and the picker.
 - **SC-002**: A document holding every construct survives each of these
   round trips with nothing lost:
   - sent HTML read back;
@@ -672,16 +1017,19 @@ The terminal composer's format commands are TUI unit cases. The Mac's
   interaction budget on the reference machine.
 - **SC-005**: A first-time user finds any construct through the picker in
   one search, by typing part of its name.
-- **SC-006**: No composer gesture causes a network request.
+- **SC-006**: Exactly one composer gesture causes a network request: the
+  press of a remote image's chip, one request per press.
 
 ## Assumptions
 
 - #1485 lands a heading command before or during this branch. D3's reshape
   is this spec's first task either way.
-- The WebKit composer surface is still the shipped one when the surface
-  tasks run (Q4). Its `execCommand` vocabulary has no table or task
-  operations, so those edits are done in Rust on the `Document` and
-  re-rendered, which is ADR 0039's step 2 for these commands.
+- The rich editing work waits for ADR 0039's native composer (Q4 = C).
+  Until then, the WebKit composer shows what the source view writes
+  through `editor_html`, drawn by WebKit's defaults, and edits nothing
+  new.
+- The fetch uses Pimalaya's `io-http`, already in the tree for account
+  autoconfiguration (`postio-account`).
 - `pulldown-cmark` 0.13, already a dependency of `postio-body`, parses GFM
   tables, strikethrough and task lists behind options. The Pimalaya family
   has no Markdown crate; the survey is recorded in `research.md`.

@@ -6,40 +6,61 @@
 
 ## Summary
 
-The composer authors every CommonMark and GFM construct. It keeps Markdown
-as a way in, not the format (D1). The work goes in layers, cheapest and
-most surface-independent first (D8):
+The composer authors every CommonMark and GFM construct, with Markdown as a
+way in and a view, never the stored format (D1). The maintainer answered
+Q1–Q4 on 2026-11-22. The work is now two phases (D8, research R15).
+
+### Build now
 
 1. **The document** widens (`data-model.md`). `parse`, `to_html`, the two
    text renderings and `harden` follow, pinned by one golden document
    (`contracts/wire.md`).
 2. **Markdown in and out.** `to_document` and `from_document` gain the GFM
-   options and the new shapes, which gives Paste as Markdown and the
-   terminal composer.
-3. **The registry.** The seven heading commands (reshaping #1485), the new
-   formatting commands, the table picker's context and the picker's wider
-   choose keys. The Format menu and `docs/keybindings.md` follow.
-4. **Typed sequences.** The table grows two triggers and patterns
-   (`contracts/sequences.md`). `editor.js` implements them on both WebKit
-   surfaces.
-5. **Edits `execCommand` cannot make** (tables, tasks, list starts, code
-   languages, inline code) run as pure functions on the `Document`, and the
-   surface re-renders the block (research R6).
-6. **The formatting picker and toolbar** (`contracts/formatting-picker.md`),
-   on the shared picker frame. GTK first, then the Mac.
-7. **`PRODUCT.md` §10** and the spec 002 cross-references.
+   options, the new shapes, autolinks, the remote image and source maps.
+   The lossless round trip is a property test (FR-024).
+3. **The registry**: the now-phase rows only. That means the seven heading
+   commands (reshaping #1485), the formatting commands the terminal and
+   the source view answer, `toggle_markdown_source` and
+   `attach_remote_image`. The Format menu and `docs/keybindings.md`
+   follow.
+4. **The terminal composer** authors every construct through
+   `postio_ui::editor::markdown_edit`, the marker functions moved out of
+   `postio-tui`.
+5. **The Markdown source view** in GTK and on the Mac
+   (`contracts/source-view.md`), the interim editing surface. In the rich
+   view, the new commands give their reason (FR-029).
+6. **Remote images**: the chip's row, the one-request fetch through
+   `io-http`, the failure states and the link fallback
+   (`contracts/remote-image.md`).
+7. **`PRODUCT.md` §10**, already done.
+
+### Held for ADR 0039's native composer
+
+- typed sequences in the rich surface;
+- the constructs' rich rendering;
+- the new toolbar buttons and their reflection;
+- the formatting, table and code language pickers;
+- the structural edit ops (as arms of ADR 0039's `apply`);
+- Paste as Markdown;
+- the inline chip;
+- `line_break`.
+
+The sequence table and its contract are written now, so the native
+surface has a test to meet.
 
 ## Technical Context
 
-**Language/Version**: Rust 1.99.0 (`rust-toolchain.toml`); JavaScript for
-`editor.js` (the WebKit editing bridge, until ADR 0039); Swift tools 6.0 for
-the Mac.
+**Language/Version**: Rust 1.99.0 (`rust-toolchain.toml`); Swift tools 6.0
+for the Mac. The now phase changes `editor.js` only to report and set the
+caret as a document position (research R14).
 
 **Primary Dependencies**:
 - `postio-body` (document, parse, render, markdown, autolinks, edit ops);
 - `postio-ui` (sequence table, picker words, `compose` scripts);
 - `postio-core` (registry, menu);
 - `postio-widgets` (composer, toolbar, picker frame);
+- `postio-session` (the remote image fetch, through `io-http`, already in
+  the tree);
 - `postio-gtk` (focus suite only);
 - `postio-tui` (composer);
 - `postio-ffi` and `macos/` (the Mac's composer).
@@ -75,7 +96,8 @@ frontends).
 
 **Constraints**:
 - `postio-body` stays a pure leaf (Constitution VII).
-- No composer gesture reaches the network (FR-021, SC-006).
+- One composer gesture reaches the network: the chip's press, one request
+  (FR-031, FR-032).
 - ADR 0004's closed set holds: no user-controlled style or class (D5).
 - Never touch the `issue-1722` or `issue-1485` worktrees. Rebase over what
   they land.
@@ -83,8 +105,10 @@ frontends).
 
 **Scale/Scope**:
 - 8 constructs gain document shapes;
-- 37 registry ids: 21 in `Composer`, 10 in the table picker and 6
-  picker choose keys;
+- 39 registry ids. 19 are now, all in `Composer`. 20 are held:
+  - 4 in `Composer`;
+  - 10 in the table picker;
+  - 6 picker choose keys.
 - about 20 sequence rows;
 - 3 composers;
 - 1 new picker use, plus 2 smaller ones.
@@ -100,8 +124,8 @@ frontends).
 | III. One query language | Untouched | ✅ |
 | IV. Test-first | Every task in `tasks.md` starts with its failing case. The golden wire document is written before the serialiser changes. Storyboards are red on `main` first | ✅ |
 | V. Performance | No read path changes. The per-keystroke work is bounded by structure and pinned by unit cases (R12) | ✅ |
-| VI. Privacy | No remote image is fetched (D7, FR-021). Fixtures use `example.com`. Logs carry no body content (no new logging of the document) | ✅ |
-| VII. Boundaries | `postio-body` gains no dependency and stays a leaf. `postio-widgets` takes no store crate. Pimalaya surveyed: no crate applies (R11) | ✅ |
+| VI. Privacy | **The remote image rule.** There is no prefetch, and no request until the chip is pressed. A press makes one GET with no cookies, credentials or `Referer`. Nothing is retried or queued without a press. An unattached chip is sent as a link, never an `<img>` (D7, FR-030 to FR-035). The proofs are a counting fake fetcher asserting zero calls across every other gesture and one per press, and a check that `fetch_remote_image` has the press handler as its only caller (research R13). Logs carry the draft id, the outcome and the byte count, never the address. Fixtures use `example.com` | ✅ |
+| VII. Boundaries | `postio-body` gains no dependency and stays a leaf. `postio-widgets` takes no store crate and no network. The fetch is in `postio-session` over Pimalaya's `io-http`. Pimalaya was surveyed for Markdown: no crate applies (R11) | ✅ |
 | Spec-driven work | One branch, a commit per task, `Refs: specs/014-compose-formatting T0nn` | ✅ |
 | One fact, one home | The decisions live in this spec, with no parallel ADR. ADR 0003, 0004 and 0039 are cited, not restated | ✅ |
 
@@ -110,39 +134,23 @@ one place this spec reads ADR 0004 narrowly. It is argued in the spec and
 in research R3: the attributes are constant, emitted by the serialiser,
 ignored by `parse`, and admitted by `harden` explicitly.
 
-## Open question for the maintainer
+## The maintainer's answers (2026-11-22)
 
-### Q4 — Build the surface now, or after ADR 0039?
+Q1 = B (the source toggle), Q2 = A (the picker at the caret), Q3 = B (the
+Download and attach chip), Q4 = C (now and held). They are recorded in
+the spec's Clarifications. The source view and the chip's row are in the
+now phase, and the reason is spec D8.
 
-ADR 0039 (accepted 2026-09-18, not built) replaces the WebKit composer with
-a native text view over an edit algebra. Layers 1–3 and 5 of this plan are
-in Rust and survive it. Layers 4 and 6 touch the surface.
+### Raised by the answers
 
-| Option | Answer | Implications |
-|---|---|---|
-| A *(assumed)* | Build on the WebKit surface now | Everything ships in this branch. `editor.js` grows by the new triggers (perhaps 250 lines), and ADR 0039's step 3 later reimplements them against the same table and contracts. R6's Rust-side edits are ADR 0039's step 2, done early |
-| B | Do ADR 0039 first, then this spec's surface layers | No JavaScript is written to be thrown away. The surface work waits on the riskiest part of ADR 0039 (the caret mapping, and tables in a native text view) |
-| C | Land layers 1–3 and 5 now (model, wire, Markdown, terminal, registry, Paste as Markdown); stop before the surface | The terminal and Paste as Markdown get everything at once. Typed sequences and the picker wait for the choice between A and B |
+**Q5 — Who starts ADR 0039?** The held phase is blocked on ADR 0039's
+steps 1 to 3, and ADR 0039 has no tracking issue. Until one exists,
+nothing schedules the held phase. The options:
 
-## If Q1–Q4 go the other way
-
-- **Q1 = B (source view):** add a US8 phase:
-  - a `toggle_markdown_source` command;
-  - a source pane over `from_document`, read back with `to_document` on
-    toggle;
-  - the mode shown in the subtitle.
-
-  Layers 1–2 already provide the round trip.
-- **Q2 = B (command bar):** drop T060–T066. Add a Format group to the
-  command bar's `>` mode, with in-force checks. The toolbar's last button
-  opens the bar on that group.
-- **Q2 = C (second toolbar row):** replace T060–T066 with the row and its
-  toggle. The picker words module is still used, for the row's tooltips.
-- **Q3 = B (download and attach):** a new task in US6 for the chip and a
-  one-request fetch path from compose, with an egress-log entry. **Q3 =
-  C:** one change to `to_document`'s image arm.
-- **Q4 = B or C:** Phases 5 and 7 (US1/US2 surface, US4) move behind
-  ADR 0039. The rest is unchanged.
+| Option | Implications |
+|---|---|
+| A | File ADR 0039 as an issue now, and start its step 1 (`EditIntent`/`apply`) in parallel with this spec's now phase. Its first arms are R6's edit ops |
+| B | Land the now phase, live with the source view, and decide ADR 0039 afterwards |
 
 ## Project Structure
 
@@ -157,8 +165,10 @@ specs/014-compose-formatting/
 ├── quickstart.md
 ├── contracts/
 │   ├── wire.md               # the golden document, its HTML and its plain text
-│   ├── sequences.md          # every typed row and its rules
-│   └── formatting-picker.md  # the picker's model, keys, anchoring, toolbar
+│   ├── source-view.md        # now: the toggle, the round trip, the caret
+│   ├── remote-image.md       # now: the chip row, the fetch, the failures
+│   ├── sequences.md          # held: every typed row and its rules
+│   └── formatting-picker.md  # held: the picker's model, keys, anchoring, toolbar
 ├── checklists/
 │   └── requirements.md
 └── tasks.md
@@ -173,11 +183,16 @@ crates/postio-body/
 ├── src/outgoing.rs        # harden: EMITTED_TAGS and attributes
 ├── src/markdown.rs        # GFM options; new events; from_document for every shape
 ├── src/autolink.rs        # new: GFM extended autolinks (R2)
-├── src/edit_ops.rs        # new: table, task, list start, code language, inline code edits (R6)
+├── src/edit_ops.rs        # held: arms of ADR 0039's apply (R6)
 ├── src/narrow.rs          # Lost gains truncated table cells
 └── tests/body_suite/formatting_wire.rs  # new: contracts/wire.md
 crates/postio-core/src/{command.rs,registry.rs,menu.rs,context.rs}
-crates/postio-ui/src/editor/markdown.rs     # SEQUENCES, Marker, Trigger
+crates/postio-ui/src/editor/markdown.rs     # SEQUENCES, Marker, Trigger (the contract, now)
+crates/postio-ui/src/editor/markdown_edit.rs  # new, now: marker edits shared by the terminal and the source view
+crates/postio-session/src/attaching.rs      # now: fetch_remote_image, the Fetcher trait
+crates/postio-widgets/src/composer/source_view.rs   # new, now: the Markdown source view
+crates/postio-widgets/tests/widgets_suite/composer_markdown_source.rs   # new, now
+crates/postio-widgets/tests/widgets_suite/composer_remote_image.rs      # new, now
 crates/postio-ui/src/compose.rs             # mark_script for the new execCommand marks; edit-op bridge
 crates/postio-ui/src/format_picker.rs       # new: the picker's words and model
 crates/postio-ui/data/editor.js             # the bridge both WebKit surfaces run
@@ -207,5 +222,6 @@ surfaces drift apart in the first task.
 | Concern | Why it is needed | Simpler alternative rejected because |
 |---|---|---|
 | Generated presentation attributes (D5) | Without borders and `align`, tables reach Gmail and Outlook as loose words. Without `list-style-type:none`, a task list shows two markers | No attributes: unreadable tables. User-controlled style: reopens ADR 0004's whole argument |
-| Rust-side edits re-rendering a block (R6) | `execCommand` has no table or task operations | DOM surgery in JavaScript: a second implementation in a language ADR 0039 removes, and not testable at `--lib` |
+| A plain-text source view before the native composer | The maintainer's Q1 answer. With Q4 = C, it is also the only way GTK and Mac users author the new constructs before ADR 0039 | WebKit implementations of each construct, which ADR 0039 deletes |
+| A network request from compose | The maintainer's Q3 answer: a remote image is attached on purpose | Never fetching, which leaves a typed remote image a dead end |
 | Seven heading commands, not one | Six levels on one chord each; no cycling to count | One cycling command: six presses to reach H6, and nothing for the picker to show as a key |

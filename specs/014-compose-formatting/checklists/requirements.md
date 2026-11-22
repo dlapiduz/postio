@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain — *three, Q1 to Q3, each with an assumed option*
+- [x] No [NEEDS CLARIFICATION] markers remain — *Q1–Q4 answered by the maintainer, 2026-11-22*
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -35,10 +35,8 @@
    because the ids are a file format (`[keys]`), and the HTML sent is the
    user-visible outcome for a recipient. Specs 007 and 013 do the same. The
    construct tables are the acceptance criteria, not a design.
-2. The three clarifications are the maintainer's, by their nature (scope,
-   privacy, the shape of a new surface). Each names the option the spec
-   assumes, so `/speckit-plan` ran on the assumptions. An answer that
-   differs changes the tasks the plan names under "If Q1–Q4 go the other
-   way".
-3. Q4 (sequencing against ADR 0039) is a plan question, recorded in
-   `plan.md`.
+2. The maintainer answered Q1–Q4 on 2026-11-22 (spec, Clarifications):
+   Q1 = B, Q2 = A, Q3 = B and Q4 = C. They are folded into the spec, plan
+   and tasks.
+3. The answers raise Q5 (who starts ADR 0039), recorded in `plan.md`. It
+   blocks only Part B of `tasks.md`.
