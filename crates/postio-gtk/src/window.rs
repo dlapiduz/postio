@@ -2390,6 +2390,11 @@ impl FocusWindow {
             results.focus();
             return;
         }
+        // An empty page stands in the list's place the same way, and holds
+        // the keyboard itself: the list behind it is not shown (#2195).
+        if self.take_keyboard_to_the_empty_page() {
+            return;
+        }
         // The view takes it on its cursor's row: given to the view alone,
         // GTK puts it on whichever row it last had, and a row other than
         // the cursor's is a second place the keyboard seems to be.
@@ -2429,13 +2434,37 @@ impl FocusWindow {
 
     /// The keyboard on the cursor's row: the list's, or a search's results'
     /// while they stand in its place -- the inbox's row behind them is not
-    /// shown, and a keyboard left there reaches nothing.
+    /// shown, and a keyboard left there reaches nothing -- or the empty page
+    /// while it stands there, which has no row.
     pub fn focus_cursor(&self) {
         if let Some(results) = self.results() {
             results.focus();
-        } else if let Some(pane) = self.pane() {
+        } else if !self.take_keyboard_to_the_empty_page()
+            && let Some(pane) = self.pane()
+        {
             pane.focus_cursor();
         }
+    }
+
+    /// Whether the empty page is the one showing in the list's place.
+    fn empty_page_showing(&self) -> bool {
+        self.imp()
+            .list_or_empty
+            .borrow()
+            .as_ref()
+            .is_some_and(|stack| stack.visible_child_name().as_deref() == Some(EMPTY))
+    }
+
+    /// The keyboard on the empty page, while it is the one showing: true if
+    /// it is there now.
+    fn take_keyboard_to_the_empty_page(&self) -> bool {
+        self.empty_page_showing()
+            && self
+                .imp()
+                .empty
+                .borrow()
+                .as_ref()
+                .is_some_and(|page| page.take_the_keyboard())
     }
 
     /// Whether nothing is holding the keyboard for itself: no dialog over
@@ -3245,6 +3274,7 @@ impl FocusWindow {
             move |position, at| window.open_row_menu(position, at)
         ));
         let empty = crate::empty::EmptyInbox::new();
+        empty.hold_the_keyboard();
         empty.connect_command(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -3568,12 +3598,22 @@ impl FocusWindow {
         let Some(stack) = imp.list_or_empty.borrow().clone() else {
             return;
         };
+        // Whether the keyboard was at home, in the list or on the page, or
+        // nowhere: then it goes with the switch to the page that comes in,
+        // and never where GTK's own hand-over would put it -- the page's
+        // first shortcut, or the list's last-focused row (#2195).
+        let was_home =
+            gtk::prelude::GtkWindowExt::focus(self).is_none_or(|focus| focus.is_ancestor(&stack));
+        let before = stack.visible_child_name();
         match (page, imp.empty.borrow().as_ref()) {
             (Some(page), Some(widget)) => {
                 widget.show(page);
                 stack.set_visible_child_name(EMPTY);
             }
             _ => stack.set_visible_child_name(LIST),
+        }
+        if was_home && before != stack.visible_child_name() && self.keyboard_is_free() {
+            self.focus_list();
         }
         // An empty inbox takes the window: there is nothing to read beside it.
         let beside = self.imp().placement.get() == postio_ui::focus_dialog::Placement::Pane;
@@ -6750,6 +6790,17 @@ impl FocusWindow {
                 );
             }
         }
+        // Whether the keyboard is on a control Space or Return would press:
+        // its home, the list or the page in its place, never is (#2195).
+        app.insert(
+            "focus.keyboard.on_control".to_owned(),
+            serde_json::json!(focus.as_ref().is_some_and(|widget| {
+                widget.is::<gtk::Button>()
+                    || widget.ancestor(gtk::Button::static_type()).is_some()
+                    || widget.is::<gtk::CheckButton>()
+                    || widget.is::<gtk::Switch>()
+            })),
+        );
         // The mark the list's cursor row wears: the accent ring while the
         // list holds the keyboard, a quiet one while the composer or a
         // dialog does. Read off the class the style sheet reads.

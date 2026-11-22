@@ -1661,6 +1661,14 @@ const CASES: &[(&str, fn())] = &[
         keyboard_home::going_to_a_place_leaves_the_keyboard_in_the_list as fn(),
     ),
     (
+        "keyboard_home::going_to_an_empty_place_rests_the_keyboard_on_its_page",
+        keyboard_home::going_to_an_empty_place_rests_the_keyboard_on_its_page as fn(),
+    ),
+    (
+        "keyboard_home::an_empty_inbox_at_launch_rests_the_keyboard_on_its_page",
+        keyboard_home::an_empty_inbox_at_launch_rests_the_keyboard_on_its_page as fn(),
+    ),
+    (
         "keyboard_home::the_keyboard_follows_the_cursor_row",
         keyboard_home::the_keyboard_follows_the_cursor_row as fn(),
     ),

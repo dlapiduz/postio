@@ -104,6 +104,100 @@ pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
     });
 }
 
+/// Whether the keyboard rests on the empty page that stands in the list's
+/// place: the page itself, not a shortcut on it, where Space or Return would
+/// press the shortcut (#2195).
+fn on_the_empty_page(window: &postio_gtk::window::FocusWindow) -> bool {
+    gtk::prelude::GtkWindowExt::focus(window)
+        .is_some_and(|focus| focus.is_mapped() && focus.has_css_class("focus-empty"))
+}
+
+/// Whether the keyboard is on a control Space or Return would press.
+fn on_a_control(window: &postio_gtk::window::FocusWindow) -> bool {
+    gtk::prelude::GtkWindowExt::focus(window).is_some_and(|focus| {
+        focus.is::<gtk::Button>()
+            || focus.ancestor(gtk::Button::static_type()).is_some()
+            || focus.is::<gtk::CheckButton>()
+            || focus.is::<gtk::Switch>()
+    })
+}
+
+/// An empty place puts its page where the list was, and the keyboard rests
+/// on the page: not on its first shortcut, which GTK would otherwise hand it
+/// to as the page came in, nor on the top bar (#2195). Going back to mail
+/// puts it in the list again, on the cursor's row.
+pub fn going_to_an_empty_place_rests_the_keyboard_on_its_page() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        assert!(
+            crate::settle_until(async || in_the_list(&window)).await,
+            "{}",
+            said(&window)
+        );
+        support::keys(&window, &["g", "b"]);
+        assert!(
+            crate::settle_until(
+                async || window.place_name() == "Snoozed" && on_the_empty_page(&window)
+            )
+            .await,
+            "{}: {}",
+            window.place_name(),
+            said(&window)
+        );
+        // The page came in on a stack switch, which hands the keyboard on as
+        // it goes; let every pending turn run, then ask again.
+        crate::settle();
+        assert!(
+            on_the_empty_page(&window) && !on_a_control(&window),
+            "{}",
+            said(&window)
+        );
+
+        support::keys(&window, &["g", "i"]);
+        assert!(
+            crate::settle_until(async || window.place_name() == "Inbox"
+                && support::subjects(&window).len() == 3
+                && in_the_list(&window))
+            .await,
+            "{}: {}",
+            window.place_name(),
+            said(&window)
+        );
+    });
+}
+
+/// An inbox that is empty at launch shows its page, and the keyboard is on
+/// the page from the first frame: nothing else is there to hold it.
+pub fn an_empty_inbox_at_launch_rests_the_keyboard_on_its_page() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = support::Fixture::empty().await;
+        let window = postio_gtk::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_gtk::startup::adopt(
+            &window,
+            fixture.host(),
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || on_the_empty_page(&window)).await,
+            "{}",
+            said(&window)
+        );
+        crate::settle();
+        assert!(
+            on_the_empty_page(&window) && !on_a_control(&window),
+            "{}",
+            said(&window)
+        );
+    });
+}
+
 pub fn the_keyboard_follows_the_cursor_row() {
     crate::gtk_case(async {
         if !support::display() {

@@ -80,6 +80,29 @@ impl EmptyInbox {
         self.tray.set_visible(false);
     }
 
+    /// Let the page itself hold the keyboard while it stands in the list's
+    /// place (#2195): focusable, drawing no ring, and named by its heading
+    /// for a screen reader. Without it GTK gives the keyboard to the first
+    /// shortcut as the page comes in, where Space or Return would press it.
+    /// The shortcuts stay reachable by Tab, and by their own keys.
+    pub fn hold_the_keyboard(&self) {
+        self.root.set_focusable(true);
+        self.root.set_accessible_role(gtk::AccessibleRole::Group);
+        self.name_for_a_screen_reader();
+    }
+
+    /// Give the page the keyboard: true if it took it.
+    pub fn take_the_keyboard(&self) -> bool {
+        self.root.grab_focus()
+    }
+
+    fn name_for_a_screen_reader(&self) {
+        if self.root.is_focusable() {
+            self.root
+                .update_property(&[gtk::accessible::Property::Label(&self.heading.text())]);
+        }
+    }
+
     /// The bold line the page says now.
     pub fn heading(&self) -> String {
         self.heading.text().to_string()
@@ -98,6 +121,7 @@ impl EmptyInbox {
     /// Say `said`.
     pub fn show(self: &Rc<Self>, said: &postio_ui::focus_state::EmptyInbox) {
         self.heading.set_text(&said.heading);
+        self.name_for_a_screen_reader();
         match &said.detail {
             Some(line) => {
                 self.detail.set_text(line);
