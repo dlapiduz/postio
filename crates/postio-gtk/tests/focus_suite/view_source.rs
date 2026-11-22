@@ -11,27 +11,14 @@ The numbers are attached.\r\n";
 
 pub fn v_shows_the_raw_message_from_the_list_and_from_the_open_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Budget",
-                "The numbers.",
-                5,
-            )
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "The numbers.", 5).await;
         fixture
             .write_body(message, "The numbers are attached.")
             .await;
         fixture.write_raw(message, RAW).await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::keys(&window, &["j", "V"]);
         let shows = |window: &postio_gtk::window::FocusWindow| {
             window.source_shown().is_some_and(|text| {

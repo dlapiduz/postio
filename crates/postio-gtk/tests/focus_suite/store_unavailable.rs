@@ -25,9 +25,6 @@ fn refused() -> FocusWindow {
 /// nothing either.
 pub fn the_close_button_closes_the_window_when_the_store_will_not_open() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let window = refused();
         let close = support::only(&window, "focus-close");
         assert!(
@@ -52,9 +49,6 @@ pub fn the_close_button_closes_the_window_when_the_store_will_not_open() {
 
 pub fn ctrl_q_closes_the_window_when_the_store_will_not_open() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let window = refused();
         support::deliver_with(&window, "q", gtk::gdk::ModifierType::CONTROL_MASK);
         assert!(
@@ -66,9 +60,6 @@ pub fn ctrl_q_closes_the_window_when_the_store_will_not_open() {
 
 pub fn ctrl_w_closes_the_window_when_the_store_will_not_open() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let window = refused();
         support::deliver_with(&window, "w", gtk::gdk::ModifierType::CONTROL_MASK);
         assert!(
@@ -90,9 +81,6 @@ fn keyring(key: &StoreKey) -> Arc<dyn SecretStore> {
 
 pub fn a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a scratch directory");
         let store = directory.path().join("postio.db");
         let key = StoreKey::generate();
@@ -184,9 +172,6 @@ pub fn a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account(
 
 pub fn a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a scratch directory");
         let store = directory.path().join("postio.db");
         {

@@ -22,9 +22,6 @@ fn bound(window: &postio_gtk::window::FocusWindow, command: CommandId) -> String
 
 pub fn the_undo_toast_names_the_key_that_undoes() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         support::keys(&window, &["j", "e"]);
         assert!(
@@ -42,13 +39,8 @@ pub fn the_undo_toast_names_the_key_that_undoes() {
 
 pub fn the_offline_banner_names_the_key_that_retries() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let (host, sink) = fixture.host_telling();
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
@@ -81,9 +73,6 @@ pub fn the_offline_banner_names_the_key_that_retries() {
 
 pub fn try_again_names_the_key_that_runs_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
         window.show_unavailable("Another Postio has the store open.", || {});
@@ -99,9 +88,6 @@ pub fn try_again_names_the_key_that_runs_it() {
 
 pub fn settings_add_account_names_its_key() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, _directory, _path) = crate::settings::one_message_under("").await;
         support::deliver_with(&window, "comma", gtk::gdk::ModifierType::CONTROL_MASK);
         let dialog = crate::settings::settings_shown(&window)

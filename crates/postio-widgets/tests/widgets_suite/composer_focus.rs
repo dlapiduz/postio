@@ -39,10 +39,6 @@ fn settle_until(done: impl Fn() -> bool) {
 }
 
 pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
@@ -84,10 +80,6 @@ pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
 /// POSTIO-MEASUREMENT: it walks every control of the composer and settles after each,
 /// 9 s on a CI runner, so it runs on the nightly timer.
 pub fn the_keyboard_walks_the_composer_in_a_defined_order() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

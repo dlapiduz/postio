@@ -48,9 +48,6 @@ fn attachment_notes(composer: &postio_widgets::composer::Composer) -> Vec<String
 
 pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let backend = MockBackend::builder()
             .mailbox(MockMailbox::new("INBOX").message(report()))

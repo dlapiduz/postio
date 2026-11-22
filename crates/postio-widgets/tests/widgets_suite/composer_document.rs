@@ -4,10 +4,6 @@ use postio_model::ids::AccountId;
 use postio_model::{Draft, MessageBody};
 
 pub fn the_body_round_trips_through_the_neutral_document() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
     // `open` is a no-op on a composer that is already visible, and a bare widget is.
     let window = Window::default();
 

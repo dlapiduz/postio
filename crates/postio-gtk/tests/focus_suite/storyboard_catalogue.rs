@@ -8,16 +8,11 @@ use postio_storyboard::check::Outcome;
 use postio_storyboard::format::{Proof, load};
 use postio_storyboard::run::{Status, StepOutcome};
 
-use crate::support;
-
 /// Frames off: this is the checks, not the pictures. A storyboard whose defect is open (`proof =
 /// "open"`) is red by design and counts as expected;
 /// one that starts passing is reported so it can be pinned.
 pub fn the_catalogue_holds_on_focus() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../storyboards");
         let mut files = Vec::new();
         let mut pending = vec![root.clone()];

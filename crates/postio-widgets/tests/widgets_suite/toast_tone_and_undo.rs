@@ -2,10 +2,6 @@ use postio_ui::observe::Tone;
 use postio_widgets::widgets::toast::Toast;
 
 pub fn a_toast_says_its_tone_and_whether_it_offers_undo() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
     let toast = Toast::new();
     assert_eq!(toast.tone(), None, "nothing is showing yet");
     assert!(!toast.offers_undo());

@@ -39,18 +39,13 @@ fn column_child(view: &impl IsA<gtk::Widget>) -> gtk::Widget {
 }
 
 async fn long_message(fixture: &Fixture) {
-    let (message, _) = fixture
-        .file(("Ada Moreno", "ada@example.com"), "Long", "A line.", 10)
-        .await;
+    let (message, _) = fixture.file_from_ada("Long", "A line.", 10).await;
     let body = "A line long enough to scroll. ".repeat(600);
     fixture.write_body(message, &body).await;
 }
 
 pub fn the_open_message_is_one_scrolling_column() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         long_message(&fixture).await;
         let window = opened(&fixture, 1).await;
@@ -94,9 +89,6 @@ pub fn the_open_message_is_one_scrolling_column() {
 
 pub fn the_column_draws_only_the_window_of_a_long_body() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         long_message(&fixture).await;
         let window = opened(&fixture, 1).await;
@@ -126,19 +118,12 @@ pub fn the_column_draws_only_the_window_of_a_long_body() {
 
 pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (plain, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Plain", "x", 10)
-            .await;
+        let (plain, _) = fixture.file_from_ada("Plain", "x", 10).await;
         fixture
             .write_body(plain, &"Some words in a plain message. ".repeat(80))
             .await;
-        let (page, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Paged", "x", 20)
-            .await;
+        let (page, _) = fixture.file_from_ada("Paged", "x", 20).await;
         fixture
             .write_html_body(
                 page,
@@ -189,9 +174,6 @@ pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
 
 pub fn the_header_card_names_from_to_and_cc_and_dates_today_relatively() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let today = chrono::Utc::now() - chrono::Duration::minutes(1);
         fixture
@@ -258,9 +240,6 @@ pub fn the_header_card_names_from_to_and_cc_and_dates_today_relatively() {
 
 pub fn the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
             .file_addressed(
@@ -294,9 +273,6 @@ pub fn the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full() {
 
 pub fn an_attachment_is_a_card_under_the_body() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let message = fixture
             .file_with_attachment("Attached", "Harbor-API-v3.pdf")
@@ -363,13 +339,8 @@ pub fn an_attachment_is_a_card_under_the_body() {
 
 pub fn a_label_pill_carries_its_colour_dot() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Labelled", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Labelled", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         fixture.label_in(message, "Harbor", "#3a7d44").await;
         let window = opened(&fixture, 1).await;
@@ -391,13 +362,8 @@ pub fn a_label_pill_carries_its_colour_dot() {
 
 pub fn close_is_the_header_s_square_and_the_verbs_are_30px() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
@@ -415,13 +381,8 @@ pub fn close_is_the_header_s_square_and_the_verbs_are_30px() {
 
 pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
@@ -456,13 +417,8 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
 
 pub fn the_steps_carry_their_keys_inside_and_stay_compact() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
@@ -510,13 +466,8 @@ const QUOTE_WORDS: [&str; 12] = [
 /// would: the Mac's WKWebView body once opened its fold and kept its old height (#1897).
 pub fn opening_the_quoted_fold_grows_the_body_and_shows_the_quote() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Re: Plan", "Agreed.", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Re: Plan", "Agreed.", 10).await;
         let quoted: String = QUOTE_WORDS
             .iter()
             .cycle()
@@ -595,18 +546,8 @@ pub fn opening_the_quoted_fold_grows_the_body_and_shows_the_quote() {
 
 pub fn ctrl_c_copies_what_was_dragged_across_the_body() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Directions",
-                "Gate code",
-                10,
-            )
-            .await;
+        let (message, _) = fixture.file_from_ada("Directions", "Gate code", 10).await;
         // Far enough down a long body that the column must scroll to reach it: taking the selection
         // must not move the page.
         let body = format!(

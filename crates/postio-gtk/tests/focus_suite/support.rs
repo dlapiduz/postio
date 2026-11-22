@@ -76,6 +76,16 @@ impl Fixture {
         }
     }
 
+    pub async fn file_from_ada(
+        &self,
+        subject: &str,
+        preview: &str,
+        minutes: i64,
+    ) -> (MessageId, ThreadId) {
+        self.file(("Ada Moreno", "ada@example.com"), subject, preview, minutes)
+            .await
+    }
+
     pub async fn file(
         &self,
         from: (&str, &str),
@@ -272,12 +282,7 @@ pub async fn three_in_the_inbox() -> (Fixture, postio_gtk::window::FocusWindow) 
     use gtk::prelude::*;
     let fixture = Fixture::empty().await;
     fixture
-        .file(
-            ("Ada Moreno", "ada@example.com"),
-            "Atlas budget",
-            "The numbers are attached.",
-            30,
-        )
+        .file_from_ada("Atlas budget", "The numbers are attached.", 30)
         .await;
     fixture
         .file(
@@ -978,12 +983,7 @@ impl Fixture {
             ("Fifth", 50),
         ] {
             let (message, _) = self
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    subject,
-                    "A line of text.",
-                    minutes,
-                )
+                .file_from_ada(subject, "A line of text.", minutes)
                 .await;
             filed.push(message);
         }
@@ -1528,4 +1528,11 @@ pub fn settle_still(
         }
         last = now;
     }
+}
+
+pub async fn rows_shown(window: &postio_gtk::window::FocusWindow, count: usize) {
+    assert!(
+        crate::settle_until(async || subjects(window).len() == count).await,
+        "the inbox never reached {count} rows"
+    );
 }

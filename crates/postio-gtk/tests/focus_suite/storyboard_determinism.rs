@@ -40,9 +40,6 @@ pub fn two_processes_film_a_storyboard_identically() {
         child(PathBuf::from(out));
         return;
     }
-    if !support::display() {
-        return;
-    }
 
     let first = tempfile::tempdir().expect("a directory for the first run");
     let second = tempfile::tempdir().expect("a directory for the second run");

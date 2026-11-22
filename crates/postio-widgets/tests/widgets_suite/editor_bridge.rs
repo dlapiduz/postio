@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_body::{Block, Document, Inline};
 use postio_widgets::composer::editor::Editor;
@@ -48,11 +47,6 @@ fn paragraph(text: &str) -> Block {
 }
 
 pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
-
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_secs(3600));
@@ -224,10 +218,6 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
 /// The page's script is injected at document end, after the body is already editable; typing into
 /// that gap is never reported (#1716). `editor.js` sets the marker last.
 pub fn the_editor_page_says_when_its_script_is_listening() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_millis(1));
@@ -255,10 +245,6 @@ pub fn the_editor_page_says_when_its_script_is_listening() {
 /// A reply is written above the quote. A caret requested by a script sent straight after `load` ran
 /// against the page being replaced, so typing went nowhere.
 pub fn a_loaded_page_takes_typing_at_the_start_of_the_body() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_millis(1));
@@ -304,10 +290,6 @@ pub fn a_loaded_page_takes_typing_at_the_start_of_the_body() {
 /// even while the keyboard is in To, so the page paints it transparent until the view has the
 /// keyboard.
 pub fn the_caret_is_drawn_only_while_the_body_has_the_keyboard() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let row = gtk::Box::new(gtk::Orientation::Vertical, 0);

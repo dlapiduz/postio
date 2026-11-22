@@ -6,10 +6,6 @@ use postio_model::{AccountId, Draft};
 use crate::support_compose::settle;
 
 pub fn a_draft_the_desktop_saves_carries_no_markdown() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().expect("a display");
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

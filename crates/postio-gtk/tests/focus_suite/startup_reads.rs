@@ -62,9 +62,6 @@ async fn opening(size: usize) -> Opened {
 
 pub fn opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let small = opening(SMALL).await;
         let large = opening(LARGE).await;
         eprintln!("  opening over {SMALL:>6} messages: {:?}", small.counts);

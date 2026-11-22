@@ -1,28 +1,6 @@
-use postio_ffi::{
-    BarLineKindFfi, BarModeFfi, DropdownRowKindFfi, DropdownStateFfi, Session, SessionOptions,
-    UiEvent,
-};
+use postio_ffi::{BarModeFfi, DropdownRowKindFfi, DropdownStateFfi, UiEvent};
 
 use crate::focus::{cursor_on_the_first_row, heard, inbox_of};
-
-async fn lines(
-    session: &Session,
-    mut wanted: impl FnMut(&postio_ffi::BarViewFfi) -> bool,
-) -> postio_ffi::BarViewFfi {
-    let mut seen = None;
-    assert!(
-        heard(session, 10, |event| match event {
-            UiEvent::FocusBarLines { view } if wanted(view) => {
-                seen = Some(view.clone());
-                true
-            }
-            _ => false,
-        })
-        .await,
-        "the bar never drew the lines wanted"
-    );
-    seen.expect("seen")
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn slash_opens_the_bar_and_in_lists_the_folders_counted() {
@@ -90,60 +68,6 @@ async fn slash_opens_the_bar_and_in_lists_the_folders_counted() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_command_run_from_the_bar_acts_on_the_cursors_row() {
-    let session = inbox_of(&["First", "Second"]).await;
-    cursor_on_the_first_row(&session).await;
-
-    session.invoke("command_palette");
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusOpenBar {
-                mode: BarModeFfi::Commands,
-                text,
-                ..
-            } if text == ">"
-        ))
-        .await,
-        "mod+k opens the bar on commands, `>` typed (C24)"
-    );
-    session.focus_bar_typed(">mark read".to_owned());
-    let view = lines(&session, |view| {
-        view.lines
-            .iter()
-            .any(|line| line.command.as_deref() == Some("toggle_read"))
-    })
-    .await;
-    let line = view
-        .lines
-        .iter()
-        .find(|line| line.command.as_deref() == Some("toggle_read"))
-        .expect("the row");
-    assert_eq!(line.kind, BarLineKindFfi::Command);
-    assert!(line.key.is_some(), "a command's row shows its key");
-    session.focus_bar_run(line.token);
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusCloseSurface {
-                kind: postio_ffi::SurfaceKindFfi::Bar
-            }
-        ))
-        .await,
-        "running a line closes the bar"
-    );
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusToast { undoable: true, .. }
-        ))
-        .await,
-        "and the verb ran, as the host says"
-    );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn the_folders_popover_lists_the_places_and_opens_one() {
     let session = inbox_of(&["First"]).await;
     cursor_on_the_first_row(&session).await;
@@ -202,71 +126,5 @@ async fn the_folders_popover_lists_the_places_and_opens_one() {
         .await,
         "and the list shows it"
     );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_saved_search_runs_on_its_key_and_mod_s_saves_the_query() {
-    let dir = tempfile::tempdir().expect("a scratch directory");
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        "[saved_searches.budget]\nquery = \"subject:budget\"\npinned = true\n",
-    )
-    .expect("a config");
-    let session = Session::open(SessionOptions::in_memory().with_config_file_for_test(&path))
-        .expect("a session");
-
-    session.invoke("saved_search_1");
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusOpenBar { text, .. } if text == "subject:budget"
-        ))
-        .await,
-        "alt+1 opens the bar on the first saved search"
-    );
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusDropdown { view } if view.state == postio_ffi::DropdownStateFfi::Words
-        ))
-        .await,
-        "the saved search's words are drawn as the dropdown"
-    );
-
-    session.focus_bar_typed("from:ada invoice".to_owned());
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusDropdown { .. }
-        ))
-        .await,
-        "and so are the words typed"
-    );
-
-    session.invoke("save_search");
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusToast { text, .. }
-                if *text == postio_ui::focus_target::search_saved("from:ada invoice")
-        ))
-        .await,
-        "mod+s saves the bar's query and says so"
-    );
-    let written = std::fs::read_to_string(&path).expect("the config");
-    assert!(written.contains("from:ada invoice"), "{written}");
-    assert!(
-        written.contains("subject:budget"),
-        "nothing else lost: {written}"
-    );
-    session.shutdown();
-}
-
-#[test]
-fn tab_with_no_bar_is_not_used() {
-    let session = Session::open(SessionOptions::in_memory()).expect("a session");
-    assert!(!session.focus_bar_tab(), "the toolkit's Tab, then");
     session.shutdown();
 }

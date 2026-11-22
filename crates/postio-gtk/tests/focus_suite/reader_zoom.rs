@@ -6,9 +6,6 @@ const CONTROL: ModifierType = ModifierType::CONTROL_MASK;
 
 pub fn the_zoom_keys_work_in_the_dialog_and_the_pane_and_the_level_is_kept() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         for pane in [false, true] {
             let fixture = Fixture::empty().await;
             for (minutes, subject) in [(10, "First"), (20, "Second")] {

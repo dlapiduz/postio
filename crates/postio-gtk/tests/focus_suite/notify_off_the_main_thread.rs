@@ -11,17 +11,9 @@ use crate::support::{self, Fixture};
 
 pub fn a_new_mail_notification_reads_nothing_on_the_main_thread() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "The numbers.",
-                5,
-            )
+            .file_from_ada("Atlas budget", "The numbers.", 5)
             .await;
         let (host, sink) = fixture.host_telling();
         let window = postio_gtk::window::FocusWindow::new(None);
@@ -31,10 +23,7 @@ pub fn a_new_mail_notification_reads_nothing_on_the_main_thread() {
             host,
             &postio_config::Config::default(),
         ));
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         let told: Rc<RefCell<Vec<String>>> = Rc::default();
         window.set_notification_sink({
             let told = Rc::clone(&told);

@@ -1,4 +1,3 @@
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::BodyView;
 
@@ -20,10 +19,6 @@ fn long_message() -> String {
 }
 
 pub fn a_highlighted_range_is_drawn_over_its_rectangles_and_scrolled_into_view() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()

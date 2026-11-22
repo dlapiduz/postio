@@ -6,9 +6,7 @@ use crate::support::{self, Fixture};
 
 async fn composing(size: Option<(i32, i32)>) -> (postio_gtk::window::FocusWindow, adw::Dialog) {
     let fixture = Fixture::empty().await;
-    fixture
-        .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-        .await;
+    fixture.file_from_ada("Budget", "x", 10).await;
     let (window, _client) = fixture.open_sized(size).await;
     support::keep(fixture);
     if size.is_some() {
@@ -26,10 +24,7 @@ async fn composing(size: Option<(i32, i32)>) -> (postio_gtk::window::FocusWindow
         crate::settle_until(async || window.composer().is_some()).await,
         "Focus mounted no composer"
     );
-    assert!(
-        crate::settle_until(async || support::subjects(&window).len() == 1).await,
-        "the inbox never reached the screen"
-    );
+    support::rows_shown(&window, 1).await;
     assert!(support::deliver(&window, "c"), "nothing took c");
     assert!(
         crate::settle_until(async || window.compose_dialog().is_some()).await,
@@ -77,9 +72,6 @@ fn caps(root: &impl IsA<gtk::Widget>) -> Vec<String> {
 
 pub fn the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_window, dialog) = composing(None).await;
         let header = shown(&dialog, "focus-compose-header")
             .downcast::<gtk::CenterBox>()
@@ -176,9 +168,6 @@ pub fn the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own() 
 
 pub fn send_is_the_one_primary_and_nothing_wears_the_accent() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_window, dialog) = composing(None).await;
         let send = shown(&dialog, "focus-compose-send");
         let primaries: Vec<gtk::Widget> = support::with_class(&dialog, "postio-button-primary")
@@ -212,9 +201,6 @@ pub fn send_is_the_one_primary_and_nothing_wears_the_accent() {
 
 pub fn the_keycaps_are_short() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_window, dialog) = composing(None).await;
         for (class, cap) in [
             ("focus-compose-send", "ctrl+\u{21b5}"),
@@ -241,9 +227,6 @@ pub fn the_keycaps_are_short() {
 
 pub fn the_field_rows_share_their_edges() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, dialog) = composing(None).await;
         let content = dialog.child().expect("content");
         let rows: Vec<gtk::Widget> = support::with_class(&dialog, "postio-compose-row")
@@ -328,9 +311,6 @@ fn pixel(texture: &gdk::Texture, x: i32, y: i32) -> [u8; 3] {
 
 pub fn the_editor_is_drawn_on_the_dialogs_surface() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         manager.set_color_scheme(adw::ColorScheme::ForceLight);
         let (window, dialog) = composing(None).await;
@@ -376,9 +356,6 @@ pub fn the_editor_is_drawn_on_the_dialogs_surface() {
 
 pub fn the_field_holding_the_keyboard_shows_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, dialog) = composing(None).await;
         let composer = window.composer().expect("the composer");
         let rows: Vec<gtk::Widget> = support::with_class(&dialog, "postio-compose-row")
@@ -426,9 +403,6 @@ pub fn the_field_holding_the_keyboard_shows_it() {
 
 pub fn the_close_is_the_shared_x() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, dialog) = composing(None).await;
         let close = shown(&dialog, "focus-compose-close");
         assert!(
@@ -459,9 +433,6 @@ pub fn the_close_is_the_shared_x() {
 
 pub fn the_dialog_follows_the_message_dialogs_size_rule() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, dialog) = composing(Some((1024, 700))).await;
         let want = (
             focus_dialog::dialog_width(window.width()),
@@ -538,27 +509,18 @@ async fn column_is_the_readers_at(size: Option<(i32, i32)>) {
 
 pub fn the_composer_column_is_the_readers_at_900() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         column_is_the_readers_at(Some((900, 700))).await;
     });
 }
 
 pub fn the_composer_column_is_the_readers_at_the_screens_width() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         column_is_the_readers_at(None).await;
     });
 }
 
 pub fn the_composer_column_is_the_readers_at_1024() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         column_is_the_readers_at(Some((1024, 700))).await;
     });
 }

@@ -66,9 +66,6 @@ fn names(paths: &[std::path::PathBuf]) -> Vec<String> {
 
 pub fn a_dragged_row_hands_a_file_manager_its_message_as_an_eml() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, messages) = five_with_sources().await;
 
         let offer = window
@@ -98,9 +95,6 @@ pub fn a_dragged_row_hands_a_file_manager_its_message_as_an_eml() {
 
 pub fn a_dragged_selection_is_every_selected_message_and_nothing_is_written_early() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, messages) = five_with_sources().await;
         support::keys(&window, &["x", "j", "j", "x"]);
 
@@ -130,9 +124,6 @@ pub fn a_dragged_selection_is_every_selected_message_and_nothing_is_written_earl
 
 pub fn a_select_all_drag_offers_no_files() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, messages) = five_with_sources().await;
         support::keys(&window, &["X"]);
         assert!(window.selection().is_everything());
@@ -151,9 +142,6 @@ const PORTAL_MIME: &str = "application/vnd.portal.filetransfer";
 /// only where the file-transfer portal answers, so a CI runner has nothing to offer it with.
 pub fn a_dragged_row_offers_the_portal_spelling_too() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         if !portal_available() {
             eprintln!("skipping: no working org.freedesktop.portal.FileTransfer on this bus");
             return;
@@ -235,9 +223,6 @@ fn portal_key(offer: &gdk::ContentProvider) -> String {
 /// Needs a working document portal, so it is ignored by name (see `IGNORED`).
 pub fn a_dragged_message_survives_the_portal() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         if !portal_available() {
             eprintln!("skipping: no working org.freedesktop.portal.FileTransfer on this bus");
             return;

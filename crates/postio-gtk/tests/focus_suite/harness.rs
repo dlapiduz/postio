@@ -42,9 +42,6 @@ pub fn an_empty_case_is_listed_and_runs() {
 pub fn settle_outlasts_the_runtimes_budget() {
     use std::{cell::Cell, rc::Rc};
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let landed = Rc::new(Cell::new(0_usize));
         for _ in 0..300 {
             let (answer, answered) = tokio::sync::oneshot::channel::<()>();

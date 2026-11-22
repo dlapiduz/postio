@@ -29,9 +29,6 @@ fn rows_shown(window: &postio_gtk::window::FocusWindow) -> Vec<(String, Vec<Stri
 
 pub fn every_key_the_key_map_shows_runs_its_command() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         question(&window);
         assert!(

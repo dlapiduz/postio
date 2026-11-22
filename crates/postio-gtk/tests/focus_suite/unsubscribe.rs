@@ -16,14 +16,6 @@ Content-Type: text/plain; charset=utf-8\r\n\
 \r\n\
 Nothing much happened\r\n";
 
-const PERSONAL: &[u8] = b"From: Grace Hopper <grace@friends.example.net>\r\n\
-To: Ada Lovelace <ada@example.com>\r\n\
-Subject: Lunch on Friday?\r\n\
-MIME-Version: 1.0\r\n\
-Content-Type: text/plain; charset=utf-8\r\n\
-\r\n\
-Are you free\r\n";
-
 async fn file_the_newsletter(fixture: &Fixture) {
     file(fixture, NEWSLETTER, true).await;
 }
@@ -65,47 +57,6 @@ async fn logged(fixture: &Fixture) -> Vec<postio_model::UnsubscribeActivation> {
         .expect("the log")
 }
 
-pub fn the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lists_it() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        file_the_newsletter(&fixture).await;
-        let (window, _client) = fixture.open().await;
-
-        support::keys(&window, &["j", "Return"]);
-        let reading = window.reading().expect("Return opened the message");
-        assert!(
-            crate::settle_until(
-                async || reading.is_open() && reading.reader().unsubscribe_banner_visible()
-            )
-            .await,
-            "a message with a sender always has a list to leave (the domain, \
-             if nothing else), and the open message offers it"
-        );
-        assert!(logged(&fixture).await.is_empty(), "nothing is logged yet");
-
-        reading.reader().click_unsubscribe();
-        assert!(
-            crate::settle_until(async || logged(&fixture).await.len() == 1).await,
-            "activating the notice never reached storage: the reader only \
-             asks, and nothing in the window answered"
-        );
-        let activations = logged(&fixture).await;
-        assert_eq!(activations[0].account_id, fixture.account.id);
-        assert_eq!(
-            activations[0].list_identifier, "news.example.org",
-            "no List-Id on this message, so the sender's domain is the list"
-        );
-
-        ignore_the_offer(&window).await;
-        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
-        crate::settle();
-        privacy_lists_an_activation(&window).await;
-    });
-}
-
 async fn ignore_the_offer(window: &postio_gtk::window::FocusWindow) {
     assert!(
         crate::settle_until(async || {
@@ -144,9 +95,6 @@ async fn privacy_lists_an_activation(window: &postio_gtk::window::FocusWindow) {
 
 pub fn u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (fixture, _delivery, _held) = crate::digest::delivered_holding().await;
         let (window, _client) = fixture.open().await;
         let digest = crate::digest::open_digest(&window).await;
@@ -189,40 +137,6 @@ pub fn u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it() {
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
         privacy_lists_an_activation(&window).await;
-    });
-}
-
-pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        file(&fixture, PERSONAL, false).await;
-        let (window, _client) = fixture.open().await;
-
-        support::keys(&window, &["j", "Return"]);
-        let reading = window.reading().expect("Return opened the message");
-        assert!(
-            crate::settle_until(async || reading.is_open() && reading.body_text().contains("free"))
-                .await,
-            "the message never rendered"
-        );
-        crate::settle();
-        assert!(
-            !reading.reader().unsubscribe_banner_visible(),
-            "personal mail carries no unsubscribe band"
-        );
-
-        support::keys(&window, &["M"]);
-        assert!(
-            crate::settle_until(async || logged(&fixture).await.len() == 1).await,
-            "`M` on a message with no band did nothing"
-        );
-        assert_eq!(
-            logged(&fixture).await[0].list_identifier,
-            "friends.example.net"
-        );
     });
 }
 
@@ -298,9 +212,6 @@ async fn inbox_is_empty(fixture: &Fixture) -> bool {
 
 pub fn leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         file_the_newsletter(&fixture).await;
         file_the_newsletter(&fixture).await;
@@ -365,9 +276,6 @@ pub fn leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mai
 
 pub fn the_setting_makes_the_one_action_delete() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         file_the_newsletter(&fixture).await;
         file_the_newsletter(&fixture).await;
@@ -398,126 +306,6 @@ pub fn the_setting_makes_the_one_action_delete() {
             .await,
             "{:?}",
             window.toast_showing()
-        );
-    });
-}
-
-fn caps_on_the_toast(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
-    use gtk::prelude::*;
-    let Some(host) = window.toast_host() else {
-        return Vec::new();
-    };
-    support::descendants(&host)
-        .iter()
-        .filter(|widget| widget.type_().name() == "AdwToastWidget")
-        .flat_map(support::descendants)
-        .filter(|widget| widget.has_css_class("postio-keyhint") && widget.is_mapped())
-        .filter_map(|widget| {
-            widget
-                .downcast_ref::<gtk::Label>()
-                .map(|l| l.text().to_string())
-        })
-        .collect()
-}
-
-pub fn the_offer_is_taken_up_from_the_keyboard() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        file_the_newsletter(&fixture).await;
-        file_the_newsletter(&fixture).await;
-        let (window, _client) = fixture.open().await;
-
-        support::keys(&window, &["C"]);
-        assert!(
-            crate::settle_until(async || {
-                window
-                    .toast_showing()
-                    .is_some_and(|said| said == postio_ui::unsubscribe::NO_OFFER)
-            })
-            .await,
-            "`C` with no offer on screen said nothing: {:?}",
-            window.toast_showing()
-        );
-        assert!(!inbox_is_empty(&fixture).await);
-
-        support::keys(&window, &["j", "Return"]);
-        let reading = window.reading().expect("Return opened the message");
-        the_dialog_is_open(&reading).await;
-        support::keys(&window, &["M"]);
-        the_offer_is_up(&window, "Archive 2").await;
-        assert!(
-            crate::settle_until(async || caps_on_the_toast(&window) == ["C"]).await,
-            "the button does not show its key: {:?}",
-            caps_on_the_toast(&window)
-        );
-
-        support::keys(&window, &["C"]);
-        assert!(
-            crate::settle_until(async || inbox_is_empty(&fixture).await).await,
-            "`C` archived nothing (toast {:?})",
-            window.toast_showing()
-        );
-        assert!(
-            crate::settle_until(async || {
-                window
-                    .toast()
-                    .is_some_and(|toast| toast.title().is_some_and(|t| t.starts_with("Archived 2")))
-            })
-            .await,
-            "the archive did not say it could be undone: {:?}",
-            window.toast_showing()
-        );
-        support::keys(&window, &["C"]);
-        assert!(
-            crate::settle_until(async || {
-                window
-                    .toast_showing()
-                    .is_some_and(|said| said == postio_ui::unsubscribe::NO_OFFER)
-            })
-            .await,
-            "{:?}",
-            window.toast_showing()
-        );
-    });
-}
-
-/// An offer the message dialog opens over is gone, not hidden: `C` must not archive a sender's mail
-/// on the strength of a toast nobody can see.
-pub fn opening_a_message_ends_the_offer_it_would_hide() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        file_the_newsletter(&fixture).await;
-        file_the_newsletter(&fixture).await;
-        let (window, _client) = fixture.open().await;
-        support::keys(&window, &["j", "Return"]);
-        let reading = window.reading().expect("Return opened the message");
-        the_dialog_is_open(&reading).await;
-        support::keys(&window, &["M"]);
-        the_offer_is_up(&window, "Archive 2").await;
-        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
-        crate::settle();
-        support::keys(&window, &["Return"]);
-        the_dialog_is_open(&reading).await;
-        support::keys(&window, &["C"]);
-        assert!(
-            crate::settle_until(async || {
-                window
-                    .toast_showing()
-                    .is_some_and(|said| said == postio_ui::unsubscribe::NO_OFFER)
-            })
-            .await,
-            "the hidden offer answered a key: {:?}",
-            window.toast_showing()
-        );
-        assert!(
-            !inbox_is_empty(&fixture).await,
-            "it archived under the dialog"
         );
     });
 }

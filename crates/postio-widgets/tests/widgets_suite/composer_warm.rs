@@ -4,10 +4,6 @@ use crate::support_compose::{fonts, style};
 use gtk::gdk;
 
 pub fn the_editing_surface_can_be_warmed_before_anyone_composes() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

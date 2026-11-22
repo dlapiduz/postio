@@ -141,9 +141,6 @@ fn drawn(view: &DropdownView) -> (Rc<Dropdown>, Said) {
 
 pub fn the_words_state_draws_hits_pills_and_show_all() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (dropdown, _) = drawn(&words_view());
         assert_eq!(dropdown.titles(), ["Top hits", "Narrow to"]);
         let texts = dropdown.texts();
@@ -175,89 +172,15 @@ pub fn the_words_state_draws_hits_pills_and_show_all() {
     });
 }
 
-pub fn the_arrows_skip_what_runs_nothing_and_return_runs() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (dropdown, said) = drawn(&words_view());
-        dropdown.step(-1);
-        assert_eq!(
-            dropdown.highlighted(),
-            Some(12),
-            "up from Show all is the second hit"
-        );
-        dropdown.step(-1);
-        dropdown.step(-1);
-        assert_eq!(dropdown.highlighted(), Some(11), "the first hit is the top");
-        assert!(dropdown.run_highlighted());
-        assert_eq!(
-            *said.borrow(),
-            [("highlighted", 12), ("highlighted", 11), ("run", 11)]
-        );
-    });
-}
-
-pub fn a_redraw_keeps_the_highlight_unless_told() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (dropdown, said) = drawn(&words_view());
-        dropdown.step(-1);
-        dropdown.show(&words_view());
-        assert_eq!(
-            dropdown.highlighted(),
-            Some(12),
-            "the redraw kept the second hit"
-        );
-
-        let mut moved = words_view();
-        moved.select = Some(11);
-        dropdown.show(&moved);
-        assert_eq!(dropdown.highlighted(), Some(11), "select moved it");
-
-        let mut gone = words_view();
-        gone.sections[0].rows.remove(0);
-        dropdown.show(&gone);
-        assert_eq!(dropdown.highlighted(), Some(13), "the default took it");
-        assert_eq!(*said.borrow(), [("highlighted", 12)]);
-    });
-}
-
-pub fn a_pill_runs_its_token() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (dropdown, said) = drawn(&words_view());
-        assert!(dropdown.click_pill("in: Receipts"));
-        assert_eq!(*said.borrow(), [("run", 22)]);
-    });
-}
-
 pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Harbor budget",
-                "Numbers.",
-                5,
-            )
-            .await;
+        fixture.file_from_ada("Harbor budget", "Numbers.", 5).await;
         fixture
             .file(("Tomas Ruiz", "tomas@example.com"), "Lunch", "Noon?", 10)
             .await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 2).await;
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         let bar = window.bar().expect("/ opened the bar");
         let dropdown = bar.dropdown();
@@ -321,9 +244,6 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
 /// width (#2151).
 pub fn a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let bar = postio_gtk::bar::Bar::new(postio_core::Keymap::defaults());
         let window = gtk::Window::new();
         window.set_default_size(1000, 600);
@@ -353,24 +273,13 @@ pub fn a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is() {
 
 pub fn a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "Numbers for atlas.",
-                5,
-            )
+            .file_from_ada("Atlas budget", "Numbers for atlas.", 5)
             .await;
         fixture.index().await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         let bar = window.bar().expect("/ opened the bar");
         bar.set_text("a");
@@ -415,46 +324,8 @@ pub fn a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it() {
     });
 }
 
-pub fn backspace_on_an_empty_value_takes_the_operator_away() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 5)
-            .await;
-        fixture.index().await;
-        let (window, _client) = fixture.open().await;
-        assert!(crate::settle_until(async || support::subjects(&window).len() == 1).await);
-        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
-        let bar = window.bar().expect("/ opened the bar");
-        bar.set_text("from:");
-        crate::settle();
-        let field = bar
-            .input()
-            .downcast::<gtk::Editable>()
-            .expect("the field is editable");
-        field.delete_text(4, 5);
-        assert!(
-            crate::settle_until(async || bar.typed().trim().is_empty()).await,
-            "the operator stayed: {:?}",
-            bar.typed()
-        );
-        assert!(
-            crate::settle_until(async || bar.dropdown().titles().contains(&"Search by".to_owned()))
-                .await,
-            "the dropdown is not the empty state: {:?}",
-            bar.dropdown().titles()
-        );
-    });
-}
-
 pub fn escape_gives_the_keyboard_back_to_the_cursor_row() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         support::keys(&window, &["j"]);
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());

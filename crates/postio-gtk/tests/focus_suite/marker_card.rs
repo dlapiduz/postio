@@ -4,9 +4,6 @@ const SENTENCE: &str = "Please leave comments by Wednesday";
 
 pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(
@@ -26,10 +23,7 @@ pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
             .await;
         fixture.ask(message, SENTENCE).await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
@@ -64,9 +58,6 @@ pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
 
 pub fn the_card_dismisses_its_marker() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(
@@ -81,10 +72,7 @@ pub fn the_card_dismisses_its_marker() {
             .await;
         fixture.ask(message, SENTENCE).await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
@@ -117,9 +105,6 @@ pub fn the_card_dismisses_its_marker() {
 /// of its "?".
 pub fn the_highlight_starts_and_ends_on_the_sentences_own_words() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         const ASK: &str = "Can you approve these by Friday so finance can close the quarter?";
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
@@ -138,10 +123,7 @@ pub fn the_highlight_starts_and_ends_on_the_sentences_own_words() {
             .await;
         fixture.ask(message, ASK).await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");

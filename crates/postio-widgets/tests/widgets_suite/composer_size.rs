@@ -21,10 +21,6 @@ fn draft_carrying(size: u64, name: &str) -> Draft {
 }
 
 pub fn an_oversize_draft_is_refused_before_it_reaches_the_send_handler() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().expect("a display");
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

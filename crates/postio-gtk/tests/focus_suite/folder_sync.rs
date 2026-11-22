@@ -7,13 +7,8 @@ use crate::support::{self, Fixture};
 
 pub fn a_folder_the_server_will_not_open_is_marked_until_it_syncs() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         fixture.folder("Receipts").await;
         let backend = Arc::new(
             MockBackend::builder()

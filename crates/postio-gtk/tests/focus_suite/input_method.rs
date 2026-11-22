@@ -4,13 +4,8 @@
 
 use gtk::prelude::*;
 
-use crate::support;
-
 pub fn a_focused_field_uses_gtks_simple_input_method() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let window = gtk::Window::new();
         let entry = gtk::Entry::new();
         window.set_child(Some(&entry));

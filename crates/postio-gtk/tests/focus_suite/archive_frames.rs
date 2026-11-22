@@ -50,8 +50,7 @@ async fn fifty() -> Fixture {
     let fixture = Fixture::empty().await;
     for n in 1..=50 {
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
+            .file_from_ada(
                 &format!("Mail {n:02}"),
                 "A line of text.",
                 i64::from(n) * 480,
@@ -63,9 +62,6 @@ async fn fifty() -> Fixture {
 
 pub fn archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = fifty().await;
         let (window, _client) = fixture.open().await;
         let pane = window.pane().expect("the inbox");

@@ -152,9 +152,6 @@ fn focus_commands_on_linux() -> impl Iterator<Item = &'static CommandSpec> {
 
 pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let keymap = Keymap::defaults();
         let bar = window.command_bar_rows();
@@ -203,9 +200,6 @@ const NOT_RUN: &[CommandId] = &[CommandId::Quit];
 /// once passed those checks while pressing it did nothing.
 pub fn every_offered_command_that_is_whole_reaches_a_handler() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let mut unanswered = Vec::new();
         for spec in focus_commands_on_linux() {

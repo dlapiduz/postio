@@ -8,9 +8,6 @@ use crate::support;
 
 pub fn the_inbox_top_bar_is_a_window_handle() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = support::Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         crate::settle();
@@ -56,9 +53,6 @@ async fn maximize_and_restore(window: &postio_gtk::window::FocusWindow) {
 
 pub fn maximize_and_restore_work_before_and_after_mail_opens() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let window = postio_gtk::window::FocusWindow::new(None);
         window.set_default_size(1024, 700);
         window.present();
@@ -76,9 +70,6 @@ pub fn maximize_and_restore_work_before_and_after_mail_opens() {
 
 pub fn the_top_bars_icon_buttons_hover_in_their_own_shape() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = support::Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         crate::settle();

@@ -75,10 +75,6 @@ fn pixels(widget: &impl IsA<gtk::Widget>) -> Option<(usize, Vec<u8>)> {
 }
 
 pub fn a_snapshot_fills_the_view_and_scrolls_with_it() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(crate::support_reader::reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()
@@ -128,10 +124,6 @@ fn near(a: Option<[u8; 3]>, b: [u8; 3]) -> bool {
 /// A render in flight leaves the last frame up, and an unready tile draws from the low-resolution
 /// copy rather than the bare ground.
 pub fn no_frame_shows_only_the_ground() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(crate::support_reader::reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()
@@ -213,10 +205,6 @@ pub fn no_frame_shows_only_the_ground() {
 
 /// The render is held by the test, so nothing depends on a clock.
 pub fn a_render_past_its_deadline_shows_the_plain_text() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(std::time::Duration::from_millis(1));
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()
@@ -274,10 +262,6 @@ pub fn a_render_past_its_deadline_shows_the_plain_text() {
 /// POSTIO-MEASUREMENT: it renders a very tall message to its end, 8 s on a CI runner,
 /// so it runs on the nightly timer.
 pub fn a_very_tall_message_scrolls_to_its_end_within_budget() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(crate::support_reader::reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()

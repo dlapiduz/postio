@@ -39,11 +39,6 @@ fn eval(view: &webkit6::WebView, script: &str) -> String {
 }
 
 pub fn the_editing_profile_runs_our_script_and_nothing_else() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
-
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback listener");
     let port = listener.local_addr().unwrap().port();
     let (hit_tx, hit_rx) = mpsc::channel::<()>();

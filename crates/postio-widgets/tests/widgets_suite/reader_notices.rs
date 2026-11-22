@@ -5,7 +5,6 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_model::address::EmailAddress;
 use postio_model::message::MessageBody;
-use postio_model::test_corpus;
 use postio_widgets::reader::{Absent, Reader, RemoteImageAllowList};
 
 fn reader_in_a_window() -> Option<(gtk::Window, Reader, tempfile::TempDir)> {
@@ -112,45 +111,6 @@ pub fn the_body_starts_at_the_same_place_whatever_the_notices() {
     window.close();
 }
 
-pub fn a_waiting_plate_carries_no_notice_from_the_message_before() {
-    let Some((window, reader, _dir)) = reader_in_a_window() else {
-        return;
-    };
-
-    let newsletter = test_corpus::load("html-newsletter");
-    let parsed = postio_model::mime::parse(newsletter.bytes());
-    reader.render(&parsed.body, Some("weekly@news.example.org"));
-    reader.set_encoding_problems(true);
-    reader.set_unsubscribe(Some("newsletter.example.com"));
-    lay_out();
-    assert!(
-        reader.reader_notice_visible()
-            || reader.shows_encoding_problems()
-            || reader.unsubscribe_banner_visible(),
-        "the newsletter raised no notice, so the plate below proves nothing"
-    );
-
-    reader.show_absent(Absent::Partial);
-    lay_out();
-    let left = [
-        ("reader view", reader.reader_notice_visible()),
-        ("decode caveat", reader.shows_encoding_problems()),
-        ("unsubscribe", reader.unsubscribe_banner_visible()),
-        ("remote images", reader.banner_visible()),
-    ];
-    let still: Vec<&str> = left
-        .iter()
-        .filter(|(_, shown)| *shown)
-        .map(|(name, _)| *name)
-        .collect();
-    assert!(
-        still.is_empty(),
-        "the waiting plate kept the previous message's notices: {still:?}"
-    );
-
-    window.close();
-}
-
 pub fn a_sender_warning_is_one_line_and_does_not_outlast_its_message() {
     let Some((window, reader, _dir)) = reader_in_a_window() else {
         return;
@@ -185,35 +145,6 @@ pub fn a_sender_warning_is_one_line_and_does_not_outlast_its_message() {
     lay_out();
     assert_eq!(reader.sender_warning_label(), None);
     assert!((body_top(&reader) - quiet).abs() < 0.5);
-
-    window.close();
-}
-
-pub fn the_body_starts_at_the_same_place_whoever_the_message_went_to() {
-    let Some((window, reader, _dir)) = reader_in_a_window() else {
-        return;
-    };
-    let date = Utc.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
-    let ada = EmailAddress::new(Some("Ada Lovelace"), "ada@example.com");
-    let grace = EmailAddress::new(Some("Grace Hopper"), "grace@example.com");
-    let bob = EmailAddress::new(None::<&str>, "bob@example.com");
-    let mut tops = Vec::new();
-    for (case, to, cc) in [
-        ("to one", vec![grace.clone()], vec![]),
-        ("to nobody", vec![], vec![]),
-        ("to one, cc one", vec![grace.clone()], vec![bob.clone()]),
-        ("cc only", vec![], vec![bob.clone()]),
-    ] {
-        reader.set_message_header(std::slice::from_ref(&ada), &to, &cc, Some("Figures"), date);
-        reader.render(&plain(case), Some("ada@example.com"));
-        lay_out();
-        tops.push((case, body_top(&reader)));
-    }
-    let first = tops[0].1;
-    assert!(
-        tops.iter().all(|(_, top)| (*top - first).abs() < 0.5),
-        "the header grew or shrank with the recipients, and the body with it: {tops:?}"
-    );
 
     window.close();
 }

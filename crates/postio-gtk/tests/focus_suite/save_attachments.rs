@@ -13,10 +13,7 @@ async fn opened(
 ) -> (postio_gtk::window::FocusWindow, Rc<RefCell<Vec<SavePick>>>) {
     fixture.file_with_kept_attachment("Invoice").await;
     let (window, _client) = fixture.open().await;
-    assert!(
-        crate::settle_until(async || support::subjects(&window).len() == 1).await,
-        "the inbox never reached the screen"
-    );
+    support::rows_shown(&window, 1).await;
     let asked: Rc<RefCell<Vec<SavePick>>> = Rc::default();
     window.set_file_picker({
         let asked = Rc::clone(&asked);
@@ -52,9 +49,6 @@ async fn written(path: &std::path::Path) -> Option<Vec<u8>> {
 
 pub fn save_in_the_chooser_writes_the_part_where_the_person_chose() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let into = tempfile::tempdir().expect("a directory");
         let target = into.path().join("chosen name.pdf");
@@ -86,9 +80,6 @@ pub fn save_in_the_chooser_writes_the_part_where_the_person_chose() {
 
 pub fn save_all_in_the_chooser_writes_every_part_into_the_chosen_folder() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let into = tempfile::tempdir().expect("a directory");
         let (window, asked) = opened(&fixture, Some(into.path().to_path_buf())).await;
@@ -109,9 +100,6 @@ pub fn save_all_in_the_chooser_writes_every_part_into_the_chosen_folder() {
 
 pub fn a_cancelled_portal_writes_nothing() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, asked) = opened(&fixture, None).await;
         support::keys(&window, &["A"]);
@@ -131,9 +119,6 @@ pub fn a_cancelled_portal_writes_nothing() {
 
 pub fn a_click_on_a_chip_shows_the_chooser_at_that_part() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         for pane in [false, true] {
             let fixture = Fixture::empty().await;
             let into = tempfile::tempdir().expect("a directory");

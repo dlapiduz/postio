@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::composer::editor;
 use postio_widgets::reader::BlobSource;
@@ -59,10 +58,6 @@ fn channels(colour: &str) -> Option<(u32, u32, u32)> {
 }
 
 pub fn the_editing_surface_is_dark_in_dark_mode_and_never_white() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
     settle();
 

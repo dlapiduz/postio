@@ -3,11 +3,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub fn picking_a_window_updates_the_estimate_and_start_sync_fires_it() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
-
     let screen = Onboarding::new();
     screen.set_address("ada@example.com");
 

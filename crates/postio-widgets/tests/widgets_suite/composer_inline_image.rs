@@ -21,10 +21,6 @@ fn png_bytes() -> Vec<u8> {
 }
 
 pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

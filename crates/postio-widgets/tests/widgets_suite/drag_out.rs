@@ -21,18 +21,7 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     glib::MainContext::default().block_on(future)
 }
 
-fn display() -> bool {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return false;
-    }
-    true
-}
-
 pub fn nothing_is_written_until_the_drop_asks() {
-    if !display() {
-        return;
-    }
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("Lunch on Thursday.eml");
     std::fs::write(
@@ -76,9 +65,6 @@ pub fn nothing_is_written_until_the_drop_asks() {
 
 /// Under Flatpak this is the spelling that carries files out of the sandbox.
 pub fn the_sandboxed_spelling_is_offered_too() {
-    if !display() {
-        return;
-    }
     let calls = Rc::new(Cell::new(0));
     let provider = provider(&calls, Vec::new());
     // GDK folds the registered serialisers in before a drag; `formats()` alone is a type-only list,
@@ -145,9 +131,6 @@ fn portal_is_reachable() -> bool {
 }
 
 pub fn an_export_that_produced_nothing_refuses_the_drop() {
-    if !display() {
-        return;
-    }
     // `gdk_file_list_new_from_array` returns NULL for an empty array and gdk4-rs panics, so this
     // guards an abort too.
     let empty = LazyFiles::for_messages(
@@ -167,9 +150,6 @@ pub fn an_export_that_produced_nothing_refuses_the_drop() {
 }
 
 pub fn a_failed_export_fails_the_drop() {
-    if !display() {
-        return;
-    }
     let materialise: Materialise =
         Rc::new(|_| Box::pin(async { Err("That message is still downloading".to_string()) }));
     let provider = LazyFiles::for_messages(vec![postio_model::MessageId::new(1)], materialise);

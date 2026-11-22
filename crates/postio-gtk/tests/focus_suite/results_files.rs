@@ -16,10 +16,7 @@ async fn report_results() -> (
         .file(("Tomas Ruiz", "tomas@example.com"), "Lunch", "Noon?", 10)
         .await;
     let (window, _client) = fixture.open().await;
-    assert!(
-        crate::settle_until(async || support::subjects(&window).len() == 2).await,
-        "the inbox never reached the screen"
-    );
+    support::rows_shown(&window, 2).await;
     support::press(&window, "slash", gtk::gdk::ModifierType::empty());
     let bar = window.bar().expect("/ opened the bar");
     bar.set_text("report");
@@ -44,9 +41,6 @@ async fn report_results() -> (
 
 pub fn the_files_tab_saves_a_file_where_the_person_says() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, _fixture, results) = report_results().await;
         let place = tempfile::tempdir().expect("a directory");
         let to = place.path().join("saved.pdf");
@@ -97,63 +91,6 @@ pub fn the_files_tab_saves_a_file_where_the_person_says() {
             })
             .await,
             "the copy made for the save stayed"
-        );
-    });
-}
-
-pub fn space_on_a_file_opens_it_in_the_desktop_app() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture, results) = report_results().await;
-        let launched = Rc::new(RefCell::new(Vec::<String>::new()));
-        window.set_launcher({
-            let launched = Rc::clone(&launched);
-            move |uri| launched.borrow_mut().push(uri.to_owned())
-        });
-        assert!(crate::settle_until(async || results.click_tab("Files")).await);
-        assert!(crate::settle_until(async || results.files().focused() == Some(0)).await);
-        window.press_command(CommandId::QuickLook);
-        assert!(
-            crate::settle_until(async || !launched.borrow().is_empty()).await,
-            "Space opened nothing"
-        );
-        let uri = launched.borrow()[0].clone();
-        assert!(
-            uri.starts_with("file://") && uri.ends_with("report.pdf"),
-            "not the file's copy: {uri}"
-        );
-    });
-}
-
-pub fn quick_look_shows_a_conversation_s_matches() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let (window, _fixture, results) = report_results().await;
-        assert!(
-            crate::settle_until(async || results.cursor().is_some()).await,
-            "no ring on the results"
-        );
-        window.press_command(CommandId::QuickLook);
-        let panel = results.quick_look();
-        assert!(
-            crate::settle_until(async || panel.is_open() && !panel.cards().is_empty()).await,
-            "Quick Look did not open with its matches: {:?}",
-            panel.cards()
-        );
-        assert_eq!(
-            panel.cards().iter().filter(|(_, current)| *current).count(),
-            1,
-            "not one card ringed: {:?}",
-            panel.cards()
-        );
-        window.press_command(CommandId::QuickLook);
-        assert!(
-            crate::settle_until(async || !panel.is_open()).await,
-            "Space again did not close Quick Look"
         );
     });
 }

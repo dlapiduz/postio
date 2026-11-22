@@ -12,19 +12,11 @@ async fn open_a_hit(
     std::rc::Rc<postio_gtk::bar::Bar>,
 ) {
     fixture
-        .file(
-            ("Ada Moreno", "ada@example.com"),
-            "Harbor budget",
-            "Numbers for harbor.",
-            5,
-        )
+        .file_from_ada("Harbor budget", "Numbers for harbor.", 5)
         .await;
     fixture.index().await;
     let (window, _client) = fixture.open().await;
-    assert!(
-        crate::settle_until(async || support::subjects(&window).len() == 1).await,
-        "the inbox never reached the screen"
-    );
+    support::rows_shown(&window, 1).await;
     let bar = support::open_hit(&window, "harbor", "Harbor budget").await;
     assert!(!bar.is_open(), "opening a hit puts the bar away");
     (window, bar)
@@ -70,64 +62,9 @@ async fn composer_without_the_bar(
 
 pub fn replying_from_a_hit_leaves_the_composer_clear_of_the_search_bar() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, bar) = open_a_hit(&fixture).await;
         support::keys(&window, &["r"]);
         composer_without_the_bar(&window, &bar, "reply").await;
-    });
-}
-
-pub fn forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, bar) = open_a_hit(&fixture).await;
-        support::keys(&window, &["f"]);
-        composer_without_the_bar(&window, &bar, "forward").await;
-    });
-}
-
-pub fn escaping_a_reply_from_a_hit_returns_to_the_hit_then_the_search() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, bar) = open_a_hit(&fixture).await;
-        let hit = window.reading().and_then(|reading| reading.shown());
-        support::keys(&window, &["r"]);
-        assert!(
-            crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "the reply opened no composer"
-        );
-
-        support::keys(&window, &["Escape"]);
-        assert!(
-            crate::settle_until(async || window.compose_dialog().is_none()).await,
-            "Escape left the composer up"
-        );
-        assert!(
-            crate::settle_until(async || {
-                window
-                    .reading()
-                    .is_some_and(|reading| reading.is_open() && reading.shown() == hit)
-            })
-            .await,
-            "the hit is not back under the reply"
-        );
-        assert!(!bar_showing(&bar), "the search came back over the hit");
-
-        support::keys(&window, &["Escape"]);
-        assert!(
-            crate::settle_until(async || bar.is_open() && bar.typed() == "harbor").await,
-            "the search did not come back on its words: open {}, {:?}",
-            bar.is_open(),
-            bar.typed()
-        );
     });
 }

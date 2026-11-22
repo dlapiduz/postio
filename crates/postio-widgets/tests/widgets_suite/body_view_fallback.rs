@@ -1,7 +1,6 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_model::message::MessageBody;
 use postio_render::{FallbackReason, Outcome};
@@ -16,10 +15,6 @@ use crate::support::{content, until};
 /// POSTIO-MEASUREMENT: it sleeps two seconds so the main loop is late, which no fake
 /// clock can stand in for under GTK, so it runs on the nightly timer.
 pub fn a_finished_render_is_shown_when_the_main_loop_was_late() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let deadline = Duration::from_millis(200);
     let view = BodyView::new(deadline);
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
@@ -99,10 +94,6 @@ fn drawn_words(reader: &Reader) -> Vec<(f64, f64, f64, f64)> {
 /// Compared glyph for glyph against the same words sent as plain text: same column edges, face,
 /// size and line rhythm.
 pub fn a_fallback_is_laid_out_as_a_plain_text_body() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     for treated in [true, false] {
         let (window, reader) = reader("layout", treated, 560);
         let sent_as_text = MessageBody {
@@ -181,10 +172,6 @@ pub fn a_fallback_is_laid_out_as_a_plain_text_body() {
 
 /// The body carries no notice of its own, so the render-mode line is the only place it says so.
 pub fn the_render_mode_line_says_a_body_fell_back() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, reader) = reader("line", true, 700);
     reader.view().hold_renders();
     reader.render(

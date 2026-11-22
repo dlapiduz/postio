@@ -2,7 +2,7 @@ use gtk::prelude::*;
 use postio_widgets::capture;
 use postio_widgets::storyboard::outline::outlined;
 
-use super::storyboard_support::{display, show, until};
+use super::storyboard_support::{show, until};
 
 struct Pixels {
     bytes: Vec<u8>,
@@ -64,9 +64,6 @@ fn plain(window: &gtk::Window) -> gtk::gdk::Texture {
 }
 
 pub fn the_focused_widgets_bounds_are_drawn_over() {
-    if !display() {
-        return;
-    }
     let (window, button) = window();
     let before = Pixels::of(&plain(&window));
 
@@ -90,9 +87,6 @@ pub fn the_focused_widgets_bounds_are_drawn_over() {
 }
 
 pub fn the_caption_carries_the_region_name() {
-    if !display() {
-        return;
-    }
     let (window, button) = window();
     let before = Pixels::of(&plain(&window));
     let bounds = button.compute_bounds(&window).expect("bounds");
@@ -112,9 +106,6 @@ pub fn the_caption_carries_the_region_name() {
 }
 
 pub fn the_plain_frame_is_untouched() {
-    if !display() {
-        return;
-    }
     let (window, _button) = window();
     let hash = |texture: &gtk::gdk::Texture| blake3::hash(&Pixels::of(texture).bytes);
     let before = hash(&plain(&window));

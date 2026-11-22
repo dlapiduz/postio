@@ -25,10 +25,6 @@ fn rgb(color: gdk::RGBA) -> (u8, u8, u8) {
 }
 
 pub fn the_shared_sheet_dresses_the_shared_widgets() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     let roles = gtk::CssProvider::new();
     roles.load_from_string(ROLES);
@@ -94,10 +90,6 @@ pub fn the_shared_sheet_dresses_the_shared_widgets() {
 }
 
 pub fn the_shared_sheet_brings_the_shared_metrics() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     let roles = gtk::CssProvider::new();
     roles.load_from_string(ROLES);
@@ -177,10 +169,6 @@ fn wearing(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
 }
 
 pub fn the_shared_sheet_dresses_the_account_form() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     let roles = gtk::CssProvider::new();
     roles.load_from_string(ROLES);

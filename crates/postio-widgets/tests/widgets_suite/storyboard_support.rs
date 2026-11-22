@@ -2,14 +2,6 @@ use std::time::{Duration, Instant};
 
 use gtk::prelude::*;
 
-pub fn display() -> bool {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return false;
-    }
-    true
-}
-
 pub fn until(condition: impl Fn() -> bool) -> bool {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
     let context = gtk::glib::MainContext::default();

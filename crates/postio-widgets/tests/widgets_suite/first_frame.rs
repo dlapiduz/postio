@@ -3,11 +3,6 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 pub fn work_deferred_to_the_first_frame_runs_even_if_the_window_is_up() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
     let early = gtk::Window::new();
     let ran_early = Rc::new(Cell::new(false));
     {

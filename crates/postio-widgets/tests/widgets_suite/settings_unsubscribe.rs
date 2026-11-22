@@ -1,4 +1,5 @@
 use crate::support_compose::{fonts, style};
+use crate::support_reader::collect;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::settings::{Section, SettingsPanel};
@@ -80,17 +81,4 @@ fn segment(panel: &SettingsPanel, label: &str) -> gtk::ToggleButton {
         .filter_map(|widget| widget.downcast::<gtk::ToggleButton>().ok())
         .find(|button| button.label().is_some_and(|text| text == label))
         .unwrap_or_else(|| panic!("no segment labelled {label:?}"))
-}
-
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }

@@ -7,9 +7,6 @@ use crate::support::{self, Fixture};
 /// is GTK's `activate`.
 pub fn a_double_click_on_a_row_opens_its_message_as_enter_does() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         let pane = window.pane().expect("the inbox");
@@ -46,9 +43,6 @@ pub fn a_double_click_on_a_row_opens_its_message_as_enter_does() {
 
 pub fn a_press_in_a_rows_gutter_toggles_its_selection() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         let pane = window.pane().expect("the inbox");
@@ -76,9 +70,6 @@ pub fn a_press_in_a_rows_gutter_toggles_its_selection() {
 
 pub fn escape_closes_the_message_and_the_key_map() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         support::keys(&window, &["j"]);
@@ -121,9 +112,6 @@ fn selected_label(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
 
 pub fn ctrl_click_toggles_a_rows_selection() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         let pane = window.pane().expect("the inbox");
@@ -155,9 +143,6 @@ pub fn ctrl_click_toggles_a_rows_selection() {
 
 pub fn shift_click_extends_the_selection_to_a_range() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         let pane = window.pane().expect("the inbox");

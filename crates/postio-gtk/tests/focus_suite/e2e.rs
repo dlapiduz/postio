@@ -44,9 +44,6 @@ async fn local(
 
 pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let server = TestServer::builder()
             .account("test@example.com")
             .password("hunter2")

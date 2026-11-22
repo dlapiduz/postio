@@ -138,9 +138,6 @@ async fn opened_at(
 /// rather than scroll the header off.
 pub fn the_window_opens_with_its_header_in_view_and_the_sentence_marked() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         every_block(&fixture).await;
         let window = opened_at(&fixture, 1, WIDE).await;
@@ -263,14 +260,9 @@ async fn without_the_notice(reading: &postio_gtk::open::OpenMessage) {
 
 pub fn the_dialog_is_sized_by_the_window_and_never_by_the_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         for minutes in [10, 20] {
-            let (message, _) = fixture
-                .file(("Ada Moreno", "ada@example.com"), "Sized", "x", minutes)
-                .await;
+            let (message, _) = fixture.file_from_ada("Sized", "x", minutes).await;
             fixture.write_body(message, "A body.").await;
         }
         let window = opened_at(&fixture, 2, NARROW).await;
@@ -335,9 +327,6 @@ fn same(seen: [u8; 3], want: [u8; 3]) -> bool {
 
 pub fn recipient_addresses_keep_the_reader_centered() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let message = fixture
             .file_addressed(
@@ -370,14 +359,9 @@ pub fn recipient_addresses_keep_the_reader_centered() {
 
 pub fn the_list_behind_is_dimmed_by_black_at_20_and_45_percent() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Dimmed", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Dimmed", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         for (scheme, kept) in [
             (adw::ColorScheme::ForceLight, 0.80),
@@ -435,9 +419,6 @@ const BLOCKS: [&str; 6] = [
 
 pub fn every_block_shares_both_edges_of_one_centred_column() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         for size in [WIDE, NARROW] {
             let fixture = Fixture::empty().await;
             every_block(&fixture).await;
@@ -491,9 +472,6 @@ pub fn every_block_shares_both_edges_of_one_centred_column() {
 
 pub fn the_blocks_keep_the_handoffs_rhythm() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         every_block(&fixture).await;
         let window = opened_at(&fixture, 1, WIDE).await;
@@ -681,9 +659,6 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
 
 pub fn an_absent_block_takes_its_gap_with_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(("Lena Park", "lena@example.com"), "Alone", "x", 10)
@@ -730,9 +705,6 @@ pub fn an_absent_block_takes_its_gap_with_it() {
 /// The accent is libadwaita's, never the handoff's teal: set another and the card follows it.
 pub fn the_dialog_wears_its_palette_in_light_and_dark() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         let fixture = Fixture::empty().await;
         every_block(&fixture).await;
@@ -824,13 +796,8 @@ pub fn the_dialog_wears_its_palette_in_light_and_dark() {
 
 pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Narrow", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Narrow", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened_at(&fixture, 1, NARROW).await;
         let reading = window.reading().expect("open");
@@ -883,9 +850,6 @@ fn office_html() -> String {
 
 pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         for card in [true, false] {
             let fixture = Fixture::empty().await;
             let (message, _) = fixture
@@ -952,9 +916,6 @@ pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
 
 pub fn the_action_cards_sentence_wraps_and_is_never_cut() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         const LONG: &str = "Could you please leave your comments on the pagination \
             section and the rate-limit headers by Wednesday afternoon";
         let fixture = Fixture::empty().await;
@@ -991,13 +952,8 @@ pub fn the_action_cards_sentence_wraps_and_is_never_cut() {
 
 pub fn delete_s_cap_reads_its_gmail_key_in_the_action_row() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Wide", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Wide", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened_at(&fixture, 1, WIDE).await;
         let reading = window.reading().expect("open");
@@ -1015,9 +971,6 @@ pub fn delete_s_cap_reads_its_gmail_key_in_the_action_row() {
 
 pub fn a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_floor() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let newsletter = postio_model::mime::parse(
             postio_model::test_corpus::load("html-newsletter-own-page").bytes(),
         )
@@ -1106,9 +1059,6 @@ pub fn a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_fl
 
 pub fn the_dialogs_chrome_is_set_in_the_system_faces() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         every_block(&fixture).await;
         let window = opened_at(&fixture, 1, WIDE).await;
@@ -1145,9 +1095,6 @@ pub fn the_dialogs_chrome_is_set_in_the_system_faces() {
 
 pub fn paper_fit_multiplies_under_the_zoom() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let newsletter = postio_model::mime::parse(
             postio_model::test_corpus::load("html-newsletter-own-page").bytes(),
         )
@@ -1199,9 +1146,6 @@ pub fn paper_fit_multiplies_under_the_zoom() {
 
 pub fn the_senders_address_is_never_cut_while_there_is_room() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(
@@ -1237,9 +1181,6 @@ pub fn the_senders_address_is_never_cut_while_there_is_room() {
 
 pub fn every_band_starts_at_the_messages_left_edge() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let ids = fixture.thread_of("Harbor API draft v3", 2, 10).await;
         fixture.read_all_but_last(&ids).await;
@@ -1304,9 +1245,6 @@ fn baseline(label: &gtk::Label, root: &impl IsA<gtk::Widget>) -> f32 {
 
 pub fn a_folded_thread_bar_keeps_its_height_at_a_narrow_window() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let ids = fixture.thread_of("Harbor API draft v3", 6, 10).await;
         fixture.read_all_but_last(&ids).await;

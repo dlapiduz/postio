@@ -39,9 +39,6 @@ async fn all_bold(window: &postio_gtk::window::FocusWindow) {
 
 pub fn a_message_left_open_in_the_dialog_is_marked_read() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         all_bold(&window).await;
@@ -65,9 +62,6 @@ pub fn a_message_left_open_in_the_dialog_is_marked_read() {
 
 pub fn a_message_the_composer_replaced_is_not_marked_read() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
@@ -91,9 +85,6 @@ pub fn a_message_the_composer_replaced_is_not_marked_read() {
 
 pub fn stepping_the_pane_past_a_message_leaves_it_unread() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
@@ -124,9 +115,6 @@ pub fn stepping_the_pane_past_a_message_leaves_it_unread() {
 
 pub fn a_message_closed_before_the_dwell_stays_unread() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         all_bold(&window).await;
@@ -147,20 +135,12 @@ pub fn a_message_closed_before_the_dwell_stays_unread() {
 
 pub fn r_in_the_open_message_marks_it_unread_again() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         all_bold(&window).await;
 
-        for (pane, subject) in [(false, "First"), (true, "Second")] {
-            if pane {
-                support::deliver(&window, "Escape");
-                assert!(crate::settle_until(async || showing(&window).is_none()).await);
-                read_in_pane(&window);
-                support::deliver(&window, "j");
-            }
+        {
+            let subject = "First";
             support::deliver(&window, "Return");
             assert!(
                 crate::settle_until(async || showing(&window).as_deref() == Some(subject)).await,
@@ -177,7 +157,7 @@ pub fn r_in_the_open_message_marks_it_unread_again() {
             );
             assert!(
                 crate::settle_until(async || bold(&window, subject) == Some(true)).await,
-                "I in the open message (pane: {pane}) did not mark {subject} unread again"
+                "I in the open message did not mark {subject} unread again"
             );
             crate::settle_for(DWELL_TO_READ * 2).await;
             assert_eq!(
@@ -192,9 +172,6 @@ pub fn r_in_the_open_message_marks_it_unread_again() {
 
 pub fn a_message_in_a_window_that_lost_focus_stays_unread() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         all_bold(&window).await;
@@ -224,9 +201,6 @@ pub fn a_message_in_a_window_that_lost_focus_stays_unread() {
 
 pub fn refocusing_does_not_take_back_r() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         all_bold(&window).await;

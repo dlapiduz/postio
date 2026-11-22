@@ -1,14 +1,9 @@
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::{BodyView, zoom::ZoomIndicator};
 
 use crate::body_view::{content, until};
 
 pub fn zoom_steps_keep_the_place_and_the_selection() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(crate::support_reader::reader_deadline());
     let indicator = ZoomIndicator::new(&view);
     let scroller = gtk::ScrolledWindow::builder()
@@ -102,10 +97,6 @@ pub fn zoom_steps_keep_the_place_and_the_selection() {
 }
 
 pub fn a_pinch_snaps_to_a_step_and_renders_once() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(crate::support_reader::reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()

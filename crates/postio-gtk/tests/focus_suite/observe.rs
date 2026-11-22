@@ -21,9 +21,6 @@ fn press(window: &postio_gtk::window::FocusWindow, chord: &str) {
 
 pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
 
         let seen = window.observe();

@@ -1,3 +1,4 @@
+use crate::support_reader::collect;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -197,17 +198,4 @@ fn buttons(panel: &SettingsPanel, class: &str) -> Vec<gtk::Button> {
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
         .collect()
-}
-
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }

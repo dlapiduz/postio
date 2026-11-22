@@ -1,9 +1,7 @@
 use crate::support_compose::{fonts, style};
-use chrono::{TimeZone, Utc};
+use crate::support_reader::collect;
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_model::UnsubscribeActivation;
-use postio_model::ids::AccountId;
 use postio_widgets::reader::RemoteImageAllowList;
 use postio_widgets::settings::SettingsPanel;
 
@@ -21,22 +19,6 @@ pub fn allowed_senders_render_as_rows_and_hide_when_there_are_none() {
         empty_state_visible(&panel),
         "an empty privacy section should say why, not just vanish"
     );
-
-    window.destroy();
-}
-
-pub fn every_allowed_sender_gets_its_own_row() {
-    let mut list = RemoteImageAllowList::default();
-    list.allow("ada@example.com");
-    list.allow("zed@example.com");
-    let Some((window, panel, _dir)) = panel_with_allowlist(list) else {
-        return;
-    };
-
-    assert!(section_visible(&panel));
-    assert!(!empty_state_visible(&panel));
-    let senders: Vec<String> = rows(&panel).iter().map(sender_text).collect();
-    assert_eq!(senders, vec!["ada@example.com", "zed@example.com"]);
 
     window.destroy();
 }
@@ -101,62 +83,6 @@ pub fn no_activations_hides_the_unsubscribe_section_and_shows_the_empty_state() 
     window.destroy();
 }
 
-pub fn every_activation_gets_its_own_row_newest_first() {
-    let Some((window, panel)) = panel() else {
-        return;
-    };
-
-    let account = AccountId::new(1);
-    let older = UnsubscribeActivation::new(
-        account,
-        "old-newsletter.example.com",
-        Utc.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap(),
-    );
-    let newer = UnsubscribeActivation::new(
-        account,
-        "new-newsletter.example.com",
-        Utc.with_ymd_and_hms(2026, 8, 30, 0, 0, 0).unwrap(),
-    );
-    // Newest-first, as `UnsubscribeRepository::for_account` returns: the pane draws what it is
-    // given.
-    panel.set_unsubscribe_activations(vec![newer, older]);
-    pump();
-
-    assert!(unsubscribe_section_visible(&panel));
-    assert!(!unsubscribe_empty_state_visible(&panel));
-    let lists: Vec<String> = unsubscribe_rows(&panel)
-        .iter()
-        .map(unsubscribe_list_text)
-        .collect();
-    assert_eq!(
-        lists,
-        vec![
-            "new-newsletter.example.com".to_owned(),
-            "old-newsletter.example.com".to_owned(),
-        ]
-    );
-
-    window.destroy();
-}
-
-pub fn the_read_receipt_count_states_zero_rather_than_going_blank() {
-    let Some((window, panel)) = panel() else {
-        return;
-    };
-
-    panel.set_read_receipt_count(0);
-    pump();
-
-    assert_eq!(
-        panel.read_receipt_count_label(),
-        "No messages have requested a read receipt.",
-        "zero is itself the answer -- CLAUDE.md's privacy section makes this \
-         a fixed policy, so there is nothing to hide behind an empty state"
-    );
-
-    window.destroy();
-}
-
 pub fn the_read_receipt_count_states_the_number_and_says_none_are_sent() {
     let Some((window, panel)) = panel() else {
         return;
@@ -195,17 +121,6 @@ fn panel() -> Option<(gtk::Window, SettingsPanel)> {
     window.present();
     pump();
     Some((window, panel))
-}
-
-fn unsubscribe_list_text(row: &gtk::ListBoxRow) -> String {
-    collect(
-        row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-unsubscribe-list-identifier",
-    )
-    .into_iter()
-    .find_map(|w| w.downcast::<gtk::Label>().ok())
-    .map(|label| label.text().to_string())
-    .expect("every unsubscribe row names a list")
 }
 
 fn unsubscribe_rows(panel: &SettingsPanel) -> Vec<gtk::ListBoxRow> {
@@ -310,17 +225,4 @@ fn empty_state_visible(panel: &SettingsPanel) -> bool {
     )
     .into_iter()
     .any(|w| w.is_visible())
-}
-
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }

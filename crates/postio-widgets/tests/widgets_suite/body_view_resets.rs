@@ -1,4 +1,3 @@
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_render::Presentation;
 use postio_widgets::body_view::BodyView;
@@ -19,10 +18,6 @@ fn window_with(view: &BodyView) -> gtk::Window {
 /// A single message's scope is the empty string, so a darkened scope names every message shown
 /// after it.
 pub fn a_message_shown_after_a_darkened_one_is_not_darkened() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let style = adw::StyleManager::default();
     style.set_color_scheme(adw::ColorScheme::ForceDark);
     let view = BodyView::new(reader_deadline());
@@ -67,10 +62,6 @@ pub fn a_message_shown_after_a_darkened_one_is_not_darkened() {
 /// Drawn over another message, a selection and a focused link would highlight words the user never
 /// chose, and Return would follow the link.
 pub fn a_message_shown_after_another_has_no_selection_and_no_focused_link() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(reader_deadline());
     let window = window_with(&view);
     let first = conversation(
@@ -127,10 +118,6 @@ pub fn a_message_shown_after_another_has_no_selection_and_no_focused_link() {
 }
 
 pub fn a_message_shown_again_folds_as_it_was_sent() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(reader_deadline());
     let window = window_with(&view);
     let body = "<p>Agreed, Thursday.</p>\

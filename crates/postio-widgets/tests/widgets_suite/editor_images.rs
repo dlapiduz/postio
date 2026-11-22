@@ -47,11 +47,6 @@ fn image_paragraph(id: &str, alt: &str) -> Document {
 }
 
 pub fn inline_images_render_from_the_blob_store_and_remote_ones_never_load() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
-
     let png = png_bytes();
     let source = Rc::new(move |content_id: &str| {
         (content_id == "photo-1@postio.invalid" || content_id == "photo-2@postio.invalid")

@@ -5,17 +5,9 @@ use crate::support::{self, Fixture};
 
 pub fn a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (budget, thread) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "The numbers are attached.",
-                30,
-            )
+            .file_from_ada("Atlas budget", "The numbers are attached.", 30)
             .await;
         fixture
             .file(
@@ -101,9 +93,6 @@ pub fn a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once() {
 
 pub fn a_delivered_digest_is_one_row_where_it_came_due() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         for (from, subject, minutes) in [
             (("Ada Moreno", "ada@example.com"), "Atlas budget", 30),

@@ -14,9 +14,6 @@ fn html_of(name: &str) -> String {
 
 pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (pixel, _) = fixture
             .file(("Shop", "offers@shop.example"), "New lamps", "Brass.", 5)
@@ -36,10 +33,7 @@ pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
             .write_html_body(scripted, &html_of("html-script-forms"))
             .await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 2).await;
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
         let asked: Rc<RefCell<Vec<String>>> = Rc::default();
@@ -131,9 +125,6 @@ async fn shop(
 
 pub fn show_fetches_once_and_asks_for_nothing_before() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, asked) = shop(&[
             ("Shop", "once@shop.example", "New lamps"),
             ("Shop", "once@shop.example", "More lamps"),
@@ -182,9 +173,6 @@ pub fn show_fetches_once_and_asks_for_nothing_before() {
 
 pub fn always_holds_for_the_senders_next_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, asked) = shop(&[
             ("Shop", "always@shop.example", "New lamps"),
             ("Shop", "always@shop.example", "More lamps"),

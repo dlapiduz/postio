@@ -74,10 +74,6 @@ fn toggle(composer: &composer::Composer, class: &str) -> gtk::ToggleButton {
 }
 
 pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
@@ -190,10 +186,6 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
 }
 
 pub fn the_toolbar_offers_attaching_a_file() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

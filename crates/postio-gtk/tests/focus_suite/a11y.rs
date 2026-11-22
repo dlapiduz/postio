@@ -33,18 +33,10 @@ fn controls_with_caps(root: &gtk::Widget) -> Vec<(gtk::Widget, gtk::Widget)> {
 
 pub fn a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         require_an_accessibility_backend();
         let fixture = support::Fixture::empty().await;
         let (budget, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "The numbers are attached.",
-                10,
-            )
+            .file_from_ada("Atlas budget", "The numbers are attached.", 10)
             .await;
         fixture
             .ask(budget, "Can you approve these by Friday?")

@@ -6,13 +6,8 @@ use crate::support::{self, Fixture};
 
 pub fn what_focus_archives_the_terminal_sees_archived() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let window = postio_gtk::window::FocusWindow::new(None);
         gtk::prelude::GtkWindowExt::present(&window);
         let session =

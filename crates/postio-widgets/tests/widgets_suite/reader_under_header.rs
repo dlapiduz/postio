@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_model::message::MessageBody;
 use postio_widgets::reader::{Reader, RemoteImageAllowList};
@@ -27,10 +26,6 @@ fn drawn() -> (gtk::Window, Reader) {
 }
 
 pub fn a_card_placed_under_the_header_sits_between_it_and_the_body() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, reader) = drawn();
     let card = gtk::Label::new(Some("the marker card"));
     reader.set_under_header(Some(card.upcast_ref::<gtk::Widget>()));

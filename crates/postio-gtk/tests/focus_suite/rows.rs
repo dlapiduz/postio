@@ -5,13 +5,9 @@ use crate::support::{self, Fixture, with_class};
 
 pub fn a_row_shows_the_subject_and_first_line_exactly_as_they_arrived() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
+            .file_from_ada(
                 "RE: Q3 numbers!!",
                 "Hi all \u{2014} the numbers are in the sheet.",
                 5,
@@ -41,9 +37,6 @@ pub fn a_row_shows_the_subject_and_first_line_exactly_as_they_arrived() {
 
 pub fn a_third_label_draws_no_third_pill_and_none_is_the_accent() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(
@@ -89,18 +82,8 @@ pub fn a_third_label_draws_no_third_pill_and_none_is_the_accent() {
 
 pub fn rows_sit_under_their_day_s_heading() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "Numbers.",
-                5,
-            )
-            .await;
+        fixture.file_from_ada("Atlas budget", "Numbers.", 5).await;
         let (window, _client) = fixture.open().await;
         let day = (support::now() - chrono::Duration::minutes(5))
             .with_timezone(&chrono::Local)
@@ -126,16 +109,12 @@ pub fn rows_sit_under_their_day_s_heading() {
 /// heading hidden says nothing about what day it is.
 pub fn the_inbox_opens_with_its_first_heading_on_screen() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         // More than a screen, over several days, every third row marked: rows arrive as one-line
         // placeholders and grow when their page lands, and GTK lays the list out again then.
         let fixture = Fixture::empty().await;
         for step in 0..120_i64 {
             let (message, _) = fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
+                .file_from_ada(
                     &format!("Message {step}"),
                     "A line of preview.",
                     1 + step * 60 * 3,
@@ -220,9 +199,6 @@ pub fn a_selected_digest_row_is_drawn_selected() {
     use postio_widgets::list_model::ModelRow;
 
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let digest = FocusRow::Digest(Digest {
             delivery: postio_model::DeliveryId::new(1),
             rule: "Newsletters".to_owned(),

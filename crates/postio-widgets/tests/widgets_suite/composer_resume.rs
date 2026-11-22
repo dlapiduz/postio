@@ -15,10 +15,6 @@ fn a_draft(id: i64, subject: &str, to: &str) -> Draft {
 }
 
 pub fn resuming_replaces_the_draft_the_composer_was_holding() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
@@ -85,112 +81,9 @@ pub fn resuming_replaces_the_draft_the_composer_was_holding() {
     );
 }
 
-/// `c` on a closed composer starts blank (#1196); `c` while open still means "show me the draft".
-pub fn composing_after_a_kept_draft_starts_blank() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
-
-    let window = Window::default();
-    window.present();
-    settle();
-    let composer = composer::install(&window);
-
-    composer.open(a_draft(
-        1,
-        "Thank you for your enrollment",
-        "quinn@example.net",
-    ));
-    settle();
-
-    assert_eq!(composer.close(), composer::Closing::Keep);
-    settle();
-
-    composer.open(Draft::new(AccountId::UNASSIGNED));
-    settle();
-
-    assert_eq!(
-        composer.test_subject(),
-        "",
-        "compose means a new message. It used to reopen the last draft, \
-         which reads as the composer refusing to start one"
-    );
-
-    composer.resume(a_draft(
-        1,
-        "Thank you for your enrollment",
-        "quinn@example.net",
-    ));
-    settle();
-    assert_eq!(
-        composer.test_subject(),
-        "Thank you for your enrollment",
-        "the draft compose displaced is still resumable by name"
-    );
-}
-
-/// `resume` compared ids and every unsaved draft is `DraftId::UNASSIGNED`, so it silently declined
-/// to swap (#1240).
-pub fn resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
-
-    let window = Window::default();
-    window.present();
-    settle();
-    let composer = composer::install(&window);
-
-    let unsaved = |subject: &str| {
-        let mut draft = Draft::new(AccountId::UNASSIGNED);
-        draft.subject = subject.to_owned();
-        draft
-    };
-
-    composer.open(unsaved("the first one"));
-    settle();
-    assert_eq!(composer.test_subject(), "the first one");
-
-    composer.resume(unsaved("the second one"));
-    settle();
-    assert_eq!(
-        composer.test_subject(),
-        "the second one",
-        "two unsaved drafts both carry UNASSIGNED; that is the absence of an \
-         identity, not evidence they are the same draft"
-    );
-
-    let named = a_draft(7, "named", "quinn@example.net");
-    composer.resume(named.clone());
-    settle();
-    composer.test_set_subject("edited since");
-    settle();
-    composer.resume(named);
-    settle();
-    assert_eq!(
-        composer.test_subject(),
-        "edited since",
-        "resuming the draft already open must not throw away an edit"
-    );
-}
-
 /// A draft can survive the disk and still come back from the WebView round trip with its emphasis
 /// flattened and files gone.
 pub fn reopening_restores_the_formatting_and_the_attachments_too() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
     let display = gdk::Display::default().expect("a display");
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);

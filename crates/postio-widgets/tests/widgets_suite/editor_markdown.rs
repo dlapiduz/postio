@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_body::{Block, Document, HeadingLevel, Inline};
 use postio_widgets::composer::editor::Editor;
@@ -104,11 +103,6 @@ fn has_strong(blocks: &[Block], text: &str) -> bool {
 }
 
 pub fn typed_markdown_becomes_the_formatting_its_command_produces() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
-
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let editor = Editor::with_coalesce(

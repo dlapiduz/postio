@@ -56,3 +56,16 @@ fn register_faces() {
 pub fn settle() {
     while glib::MainContext::default().iteration(false) {}
 }
+
+pub fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
+    let mut found = Vec::new();
+    if class.is_empty() || widget.has_css_class(class) {
+        found.push(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        found.extend(collect(&current, class));
+        child = current.next_sibling();
+    }
+    found
+}

@@ -1,11 +1,6 @@
 use postio_widgets::onboarding::{Onboarding, Server, Settings, Status};
 
 pub fn a_repair_arrives_with_the_address_and_the_servers_already_filled_in() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
-
     let known = Settings {
         imap: Server {
             host: "imap.example.com".to_owned(),
@@ -46,10 +41,6 @@ pub fn a_repair_arrives_with_the_address_and_the_servers_already_filled_in() {
 }
 
 pub fn a_disabled_browser_sign_in_says_what_it_waits_for() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
     let found = Settings {
         imap: Server {
             host: "imap.example.com".to_owned(),

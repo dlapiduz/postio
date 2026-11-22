@@ -4,7 +4,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use postio_widgets::storyboard::deliver::{Delivery, press};
 
-use super::storyboard_support::{display, show, until};
+use super::storyboard_support::{show, until};
 
 fn chord(text: &str) -> postio_ui::keymap::Chord {
     text.parse().expect("a chord")
@@ -36,9 +36,6 @@ fn window_with_list() -> (gtk::Window, gtk::ListBox, Rc<Cell<u32>>) {
 }
 
 pub fn a_key_reaches_the_window_from_inside_a_list() {
-    if !display() {
-        return;
-    }
     let (window, list, seen) = window_with_list();
     show(&window);
     list.row_at_index(0).expect("a row").grab_focus();
@@ -54,9 +51,6 @@ pub fn a_key_reaches_the_window_from_inside_a_list() {
 }
 
 pub fn a_dialog_over_the_window_keeps_the_key_from_it() {
-    if !display() {
-        return;
-    }
     let (window, _list, seen) = window_with_list();
     show(&window);
 
@@ -89,9 +83,6 @@ pub fn a_dialog_over_the_window_keeps_the_key_from_it() {
 }
 
 pub fn a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered() {
-    if !display() {
-        return;
-    }
     let (window, list, seen) = window_with_list();
     show(&window);
     let row = list.row_at_index(1).expect("a row");
@@ -109,9 +100,6 @@ pub fn a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered() {
 }
 
 pub fn return_in_a_text_field_activates_it() {
-    if !display() {
-        return;
-    }
     let window = adw::Window::new();
     let entry = gtk::Entry::new();
     window.set_content(Some(&entry));
