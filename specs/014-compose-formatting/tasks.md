@@ -175,8 +175,8 @@ unit cases, `composer_markdown_source.rs`, and
 
 ## Phase A7: Polish, and land the now phase
 
-- [ ] T050 [P] Cite this spec beside spec 002 in the module docs of `crates/postio-ui/src/editor/markdown.rs` and `crates/postio-body/src/document.rs`. `docs/archive/` is frozen (`check-archive-frozen.py`), so spec 002 is not edited.
-- [ ] T051 [P] Add cross-references to ADR 0039 and ADR 0004:
+- [x] T050 [P] Cite this spec beside spec 002 in the module docs of `crates/postio-ui/src/editor/markdown.rs` and `crates/postio-body/src/document.rs`. `docs/archive/` is frozen (`check-archive-frozen.py`), so spec 002 is not edited.
+- [x] T051 [P] Add cross-references to ADR 0039 and ADR 0004:
   - ADR 0039 names Part B as work waiting on it, the R6 edit ops as its `apply`'s first arms, and tables in a native text view as a second thing to spike;
   - ADR 0004's closed-set count is updated, and D5 cited.
 - [ ] T052 [P] Record the recipient-client results (`quickstart.md` §7) in `docs/notes/2026-<mm>-<dd>-formatting-in-recipient-clients.md`, and list it in `docs/notes/README.md`. The maintainer runs the send.

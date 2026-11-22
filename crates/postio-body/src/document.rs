@@ -34,6 +34,13 @@
 //!   the *normal form*, so re-saving a draft is a no-op rather than a slow
 //!   rewrite of the user's markup.
 //!
+//! # Every construct (spec 014)
+//!
+//! The shapes beyond spec 002's are spec 014's (`specs/014-compose-formatting`,
+//! `data-model.md`): six heading levels, a list's start and task boxes, a code
+//! block's language, tables, strikethrough and a remote image not yet
+//! attached. Their wire forms are `contracts/wire.md`'s.
+//!
 //! [`to_html`]: Document::to_html
 //! [ADR 0004]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0004-composer-document-model.md
 
