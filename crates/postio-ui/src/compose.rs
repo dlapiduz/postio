@@ -1,18 +1,7 @@
-//! What the composer says about itself.
-//!
-//! Two frontends write mail and both have a footer that names what will
-//! leave. The words are here so they cannot differ, for the same reason the
-//! reader's document assembly is shared: a claim about what Postio puts on
-//! the wire is one it should be willing to make identically everywhere.
+//! What the composer says about itself, shared so both frontends' footers cannot differ.
 
-/// The MIME shape an outgoing message will have: `html + text/plain`, or
-/// `text/plain, format=flowed`.
-///
-/// **The plain part is not optional.** Rich mail sends `text/html` *and* a
-/// `text/plain` alternative, always — a recipient reading in a terminal, a
-/// screen reader, or a client that refuses HTML gets the message rather than
-/// an apology. Plain mail is wrapped at 72 columns and flowed (RFC 3676), so
-/// it reads correctly whether the receiving client rewraps it or not.
+/// The plain part is not optional: rich mail always sends a `text/plain` alternative. Plain mail is
+/// wrapped at 72 columns and flowed (RFC 3676).
 pub fn outgoing_shape(rich: bool) -> String {
     if rich {
         "html + text/plain".to_owned()
@@ -27,64 +16,28 @@ mod tests {
 
     #[test]
     fn rich_always_carries_a_plain_alternative() {
-        // The half that is easy to drop and expensive to notice: it is
-        // invisible to the sender and it is the whole message to some
-        // recipients.
         assert!(outgoing_shape(true).contains("text/plain"));
     }
 
     #[test]
     fn plain_says_it_is_flowed_rather_than_just_plain() {
-        // `format=flowed` is the difference between a paragraph that rewraps
-        // in a narrow window and one that arrives with a ragged 72-column
-        // edge, and the footer is where a person can see which they chose.
         assert_eq!(outgoing_shape(false), "text/plain, format=flowed");
     }
 }
 
-/// The composer's editing bridge — the one script Postio runs in a web view.
-///
-/// Both frontends put a `contenteditable` document inside a web view and
-/// both need the same three things from it: the paragraph separator and
-/// `styleWithCSS` settings that pin the dialect [`postio_body::parse()`] reads
-/// back, an edit channel carrying `innerHTML`, and a reflection channel
-/// saying what formatting is in force at the caret.
-///
-/// One copy, because a second one is a second dialect. The classic app's reader
-/// `gtk_editable_dialect.rs` proved the surface emits `<p>` paragraphs and
-/// element-form bold/italic; a macOS surface running a *different* script
-/// would emit `<div>`s and `<span style>`s, `parse` would narrow them to
-/// something else, and the two composers would disagree about what the same
-/// keystrokes wrote — invisibly, because both would still round-trip
-/// through a `Document`.
-///
-/// `window.webkit.messageHandlers` is the same API on WebKitGTK and on
-/// `WKWebView`, which is why one file can serve both without a shim.
+/// One copy, because a second one is a second dialect: a macOS script emitting `<div>`s and `<span
+/// style>`s would be narrowed differently by `parse`.
 pub const EDITOR_SCRIPT: &str = include_str!("../data/editor.js");
 
-/// The bridge as a frontend should run it: the markdown table, then the body.
-///
-/// [`EDITOR_SCRIPT`] alone is not runnable. It reads `POSTIO_MARKDOWN` and
-/// does not define it, because the set of supported sequences is
-/// [`crate::editor::markdown::SEQUENCES`] and a hand-written copy in
-/// JavaScript is a copy that drifts from the contract both frontends
-/// implement. So the table is generated and prepended here, once, rather
-/// than once per frontend.
-///
-/// Built on first use and kept: the table is a few hundred bytes derived
-/// from a `&'static` table, so it cannot change while the process runs, and
-/// the composer asks for it every time a window opens.
+/// `EDITOR_SCRIPT` reads `POSTIO_MARKDOWN` and does not define it: the table is generated from
+/// `crate::editor::markdown::SEQUENCES` so no JavaScript copy drifts.
+/// Built once and kept.
 pub fn editor_script() -> &'static str {
     static SCRIPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     SCRIPT.get_or_init(|| format!("{}{EDITOR_SCRIPT}", markdown_table_js()))
 }
 
-/// `POSTIO_MARKDOWN`, as a JavaScript literal.
-///
-/// The markers are `&'static str` from a table in this workspace, not
-/// anybody's input, and every one of them is punctuation — but they are
-/// being written into source, so they are escaped rather than trusted to
-/// stay that way.
+/// Escaped rather than trusted to stay punctuation, since the markers are written into source.
 pub fn markdown_table_js() -> String {
     use crate::editor::markdown::{Trigger, bridged};
     use std::fmt::Write as _;
@@ -108,35 +61,22 @@ pub fn markdown_table_js() -> String {
     out
 }
 
-/// What Download and attach says when the body names no remote image
-/// (spec 014 US8): the press is answered, and nothing is fetched.
 pub const NO_REMOTE_IMAGE: &str = "There's no image to download in this message";
 
-/// The heading over the rows of remote images not yet attached.
 pub const NOT_ATTACHED_YET: &str = "Not attached yet";
 
-/// The row's button.
 pub const DOWNLOAD_AND_ATTACH: &str = "Download and attach";
 
-/// What a row says while its image downloads.
 pub const DOWNLOADING: &str = "Downloading\u{2026}";
 
-/// Why Download and attach left an image as a link (spec 014
-/// `contracts/remote-image.md`, "The outcomes"), for every frontend's row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RemoteRefusal {
-    /// It could not be reached, and why, in a few words.
     Unreachable(String),
-    /// Larger than the limit.
     TooLarge,
-    /// Not a picture.
     NotAnImage,
-    /// Offline, so nothing was asked.
     Offline,
 }
 
-/// What a refused row says. `host` is the address's host, `key` the
-/// Download and attach key.
 pub fn remote_refusal(refusal: &RemoteRefusal, host: &str, key: &str) -> String {
     match refusal {
         RemoteRefusal::Unreachable(reason) => {
@@ -152,7 +92,6 @@ pub fn remote_refusal(refusal: &RemoteRefusal, host: &str, key: &str) -> String 
     }
 }
 
-/// The line before Send while remote images are not attached, or `None`.
 pub fn remote_images_warning(count: usize, key: &str) -> Option<String> {
     match count {
         0 => None,
@@ -165,7 +104,6 @@ pub fn remote_images_warning(count: usize, key: &str) -> Option<String> {
     }
 }
 
-/// The host a remote image is on, for its row: `example.com`.
 pub fn remote_host(href: &str) -> String {
     let rest = href.split_once("://").map_or(href, |(_, rest)| rest);
     let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
@@ -175,8 +113,6 @@ pub fn remote_host(href: &str) -> String {
     host.split(':').next().unwrap_or(host).to_ascii_lowercase()
 }
 
-/// The strip at the top of the Markdown source view (spec 014): what mode
-/// the body is in and the key back, short where the column is narrow.
 pub fn source_strip(key: &str, narrow: bool) -> String {
     if narrow {
         format!("Markdown \u{b7} {key}")
@@ -185,14 +121,10 @@ pub fn source_strip(key: &str, narrow: bool) -> String {
     }
 }
 
-/// What a formatting command says in the rich view while only the Markdown
-/// view can make it (spec 014 D8, FR-029): its way there, never silence.
 pub fn in_markdown_view_for_now(title: &str, key: &str) -> String {
     format!("{title} is in the Markdown view for now \u{b7} {key}")
 }
 
-/// The notice under the editor when typed Markdown narrowed (spec 014
-/// FR-026), or `None` when nothing did.
 pub fn narrowed_notice(lost: postio_body::markdown::Lost) -> Option<String> {
     let mut parts = Vec::new();
     let mut say = |count: usize, one: &str, many: &str, why: &str| match count {
@@ -303,12 +235,8 @@ mod source_words {
 mod editor_script_tests {
     use super::EDITOR_SCRIPT;
 
-    /// The body names `POSTIO_MARKDOWN` and does not define it — the table
-    /// is generated from [`crate::editor::markdown::SEQUENCES`] so the set of
-    /// supported sequences has one source. A frontend handed the body alone
-    /// gets a `ReferenceError` on the first keystroke, and nothing on either
-    /// side of the boundary would say so: the script is loaded into a WebView
-    /// and its failures stay there.
+    /// A frontend handed the body alone gets a `ReferenceError` on the first keystroke, and the
+    /// WebView hides it.
     #[test]
     fn the_assembled_script_defines_the_table_before_it_reads_it() {
         let script = super::editor_script();
@@ -331,10 +259,8 @@ mod editor_script_tests {
 
     #[test]
     fn every_command_a_sequence_reaches_is_one_the_script_can_run_and_report() {
-        // A row in the table whose command the script has no entry for is a
-        // sequence that consumes the marker and formats nothing; one the
-        // reflection never reports is a toolbar toggle that stays off over
-        // the very formatting it made (#1485).
+        // A row with no script entry consumes the marker and formats nothing; one never reflected
+        // leaves a toolbar toggle off (#1485).
         for (marker, command, _) in crate::editor::markdown::bridged() {
             assert!(
                 EDITOR_SCRIPT.contains(&format!("\n    {command}: [")),
@@ -349,32 +275,17 @@ mod editor_script_tests {
     }
 }
 
-/// The script that applies one of the composer's marks to the selection.
-///
-/// The mapping from a registry command to what a `contenteditable` document
-/// does about it is a *decision* — `quote_block` is the interesting one,
-/// because `formatBlock` does not toggle and the toggle is Postio's. Writing
-/// it once here rather than once per frontend is the same argument as
-/// [`EDITOR_SCRIPT`]: two hosts running different scripts for `bold` would
-/// produce different markup, `postio_body::parse` would narrow it
-/// differently, and the two composers would disagree about what the same
-/// button did.
-///
-/// `None` for a command that is not one of the marks, which is how a caller
-/// tells "this button does something else" from "this button is broken".
-///
-/// Every script ends by dispatching `input`, because `execCommand` does not
-/// always raise one (bold yes, `insertUnorderedList` no) and the host's
-/// record is only updated by that event. A duplicate event is absorbed as a
-/// no-change; a missing one loses the edit.
+/// Written once for both frontends: different scripts for `bold` would produce different markup.
+/// `None` for a command that is not a mark.
+/// Every script ends by dispatching `input`, because `execCommand` does not always raise one and
+/// the host's record updates only on it.
 pub fn mark_script(command: &str) -> Option<String> {
     let body = match command {
         "bold" => "document.execCommand('bold');",
         "italic" => "document.execCommand('italic');",
         "bullet_list" => "document.execCommand('insertUnorderedList');",
         "numbered_list" => "document.execCommand('insertOrderedList');",
-        // `formatBlock` toggles nothing on its own; the toggle is ours, here
-        // and for the quote.
+        // `formatBlock` does not toggle; the toggle is ours.
         "heading_1" => {
             "if (document.queryCommandValue('formatBlock') === 'h1') { \
                  document.execCommand('formatBlock', false, 'p'); \
@@ -396,18 +307,12 @@ pub fn mark_script(command: &str) -> Option<String> {
     ))
 }
 
-/// The script that turns the selection into a link to `href`.
-///
-/// `None` when `href` is not something a message may link to. The gate is
-/// the canonical subset's — `postio_body::Href` refuses anything but http,
-/// https and mailto — and it is applied *here*, before the document is
-/// touched, so the composer can say so rather than have the link silently
-/// disappear at the next parse.
+/// `None` when `postio_body::Href` refuses `href`; checked here so the composer can say so rather
+/// than have the link vanish at the next parse.
 pub fn link_script(href: &str) -> Option<String> {
     postio_body::Href::parse(href)?;
-    // Single quotes and backslashes escaped: the href has been through
-    // `Href::parse`, which refuses control characters, but it is still
-    // somebody's input going into a script literal.
+    // Escaped although `Href::parse` refuses control characters: it is still somebody's input in a
+    // script literal.
     let escaped = href.replace('\\', "\\\\").replace('\'', "\\'");
     Some(format!(
         "document.execCommand('createLink', false, '{escaped}'); \
@@ -415,21 +320,10 @@ pub fn link_script(href: &str) -> Option<String> {
     ))
 }
 
-/// The script that puts an inline image at the caret (#1571).
-///
-/// `content_id` is the part's `Content-ID`, as
-/// `postio_session::attaching::inline_image` minted it; the source written is
-/// the editing shell's `postio-cid:` form, which the composer's scheme handler
-/// resolves while the draft is open and the send path rewrites to the wire's
-/// `cid:`. `None` for an id [`postio_body::ContentId`] refuses -- anything that
-/// could be read as a URL -- so nothing but a part of this message can ever
-/// become an image source here.
-///
-/// The same shape as [`link_script`], and for its reason: both composers run
-/// this, so an image inserted on a Mac and one inserted on Linux are the same
-/// edit. The caret fallback is the one the classic app's editor learned: a
-/// picture can be the first gesture into a fresh body, and `insertHTML`
-/// silently does nothing without a selection.
+/// `None` for an id `postio_body::ContentId` refuses, so only a part of this message can become an
+/// image source. Written in the `postio-cid:` form, which the send path rewrites to `cid:`.
+/// The caret fallback matters: a picture can be the first gesture into a fresh body, and
+/// `insertHTML` does nothing without a selection.
 pub fn image_script(content_id: &str, alt: &str) -> Option<String> {
     let content_id = postio_body::ContentId::parse(content_id)?;
     let mut img = String::from("<img src=\"");
@@ -445,8 +339,6 @@ pub fn image_script(content_id: &str, alt: &str) -> Option<String> {
         }
     }
     img.push_str("\">");
-    // Into a single-quoted script literal: its own escapes first, then the
-    // quote, and line breaks, which a literal cannot hold.
     let escaped = img
         .replace('\\', "\\\\")
         .replace('\'', "\\'")
@@ -471,8 +363,6 @@ mod mark_tests {
 
     #[test]
     fn every_mark_the_bar_offers_has_a_script() {
-        // The bar is built from the registry ids; a mark with no script is a
-        // button that does nothing, which is what #1271 reported.
         for command in [
             "bold",
             "italic",
@@ -490,17 +380,14 @@ mod mark_tests {
 
     #[test]
     fn a_command_that_is_not_a_mark_has_none() {
-        // So a caller can tell "does something else" from "broken".
         assert_eq!(mark_script("archive"), None);
         assert_eq!(mark_script("insert_link"), None, "link needs an href");
     }
 
     #[test]
     fn every_script_raises_the_event_the_host_records_on() {
-        // `execCommand` does not always raise `input` -- bold does,
-        // `insertUnorderedList` does not -- and the host's record is only
-        // updated by that event. A mark that skipped it would apply on
-        // screen and be lost on save.
+        // `execCommand` does not always raise `input` (bold does, `insertUnorderedList` does not);
+        // a mark that skipped it would be lost on save.
         for command in ["bold", "bullet_list", "heading_1", "quote_block"] {
             let script = mark_script(command).expect("a script");
             assert!(
@@ -512,8 +399,6 @@ mod mark_tests {
 
     #[test]
     fn quoting_toggles_rather_than_only_applying() {
-        // `formatBlock` has no toggle of its own, so pressing Quote twice
-        // would otherwise nest rather than undo.
         let script = mark_script("quote_block").expect("a script");
         assert!(script.contains("queryCommandValue"), "no toggle: {script}");
         assert!(
@@ -524,8 +409,6 @@ mod mark_tests {
 
     #[test]
     fn a_heading_toggles_back_to_a_paragraph_rather_than_only_applying() {
-        // The same `formatBlock` as the quote, so the same missing toggle:
-        // pressing Heading on a heading must give the paragraph back.
         let script = mark_script("heading_1").expect("a script");
         assert!(
             script.contains("queryCommandValue('formatBlock') === 'h1'"),
@@ -545,8 +428,6 @@ mod mark_tests {
 
     #[test]
     fn a_link_the_subset_refuses_is_refused_here_rather_than_at_the_next_parse() {
-        // Refused up front so the composer can say so. Left to the parse, the
-        // link would be created, look right, and vanish on save.
         assert_eq!(link_script("javascript:alert(1)"), None);
         assert_eq!(link_script("file:///etc/passwd"), None);
         assert_eq!(
@@ -558,19 +439,13 @@ mod mark_tests {
 
     #[test]
     fn a_quote_in_an_href_cannot_close_the_script_literal() {
-        // `Href::parse` refuses control characters, not quotes.
         let script = link_script("https://example.com/a'b").expect("a script");
         assert!(script.contains("a\\'b"), "unescaped quote: {script}");
     }
 
-    // -- an inline image (#1571) ---------------------------------------------
-
     #[test]
     fn an_image_is_inserted_in_the_editing_scheme_at_the_caret() {
         let script = image_script("0a1b@postio.invalid", "inline-image.png").expect("a script");
-        // The editing shell's scheme, the one its handler resolves -- the
-        // wire's `cid:` is what the *sent* message says, and a composer that
-        // wrote it would draw a broken picture while the draft was open.
         assert!(
             script.contains("src=\"postio-cid:0a1b%40postio.invalid\""),
             "{script}"
@@ -584,16 +459,12 @@ mod mark_tests {
 
     #[test]
     fn a_fresh_body_with_no_caret_still_takes_the_image() {
-        // A picture can be the first gesture into a new message, before any
-        // click has given the document a caret, and `insertHTML` silently
-        // does nothing without one.
         let script = image_script("a@postio.invalid", "x").expect("a script");
         assert!(script.contains("rangeCount === 0"), "{script}");
     }
 
     #[test]
     fn an_id_that_could_be_read_as_a_url_has_no_script() {
-        // `ContentId`'s rule: a colon or a slash could make a source of it.
         assert_eq!(image_script("//evil.example/pixel", "x"), None);
         assert_eq!(image_script("", "x"), None);
     }
@@ -611,21 +482,9 @@ mod mark_tests {
     }
 }
 
-/// How many recipients this message has, and on which field.
-///
-/// FR-023, and the surprise it exists to prevent: **a reply-to-all to a large
-/// list looks exactly like a reply until it is sent.** The count says *which
-/// field* because "42 recipients" reads very differently from "1 To, 41 Cc".
-///
-/// `None` for the ordinary case, deliberately. A banner that is always there
-/// is a banner nobody reads, so this says nothing until there is more than
-/// one person on the message.
-///
-/// Shared because both composers need it and the macOS one had neither this
-/// nor the Bcc field it counts — so a reply-all there showed one address and
-/// silently addressed everybody else. Counts rather than the addresses
-/// themselves: this is a reassurance about scale, and the fields beside it
-/// are where the names are.
+/// `None` for the ordinary case: a banner that is always there is one nobody reads.
+/// The count says which field ("1 To, 41 Cc") because a reply-all to a large list looks like a
+/// reply until sent.
 pub fn recipient_summary(to: usize, cc: usize, bcc: usize) -> Option<String> {
     if to + cc + bcc <= 1 {
         return None;
@@ -644,15 +503,12 @@ mod recipient_tests {
 
     #[test]
     fn one_person_gets_no_banner_at_all() {
-        // A banner that is always there is a banner nobody reads.
         assert_eq!(recipient_summary(1, 0, 0), None);
         assert_eq!(recipient_summary(0, 0, 0), None);
     }
 
     #[test]
     fn a_reply_all_to_a_list_says_which_field_the_crowd_is_on() {
-        // "42 recipients" reads very differently from "1 To, 41 Cc", and the
-        // second is the one that tells somebody what they are about to do.
         assert_eq!(recipient_summary(1, 41, 0).as_deref(), Some("1 To, 41 Cc"));
     }
 
@@ -671,22 +527,14 @@ mod recipient_tests {
     }
 }
 
-/// One thing *Schedule send…* offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchedulePreset {
-    /// What the row says — "Tomorrow morning".
     pub label: &'static str,
-    /// When that is, in the local zone.
     pub when: chrono::DateTime<chrono::Local>,
 }
 
-/// The four times *Schedule send…* offers, computed against `now`, as named
-/// values rather than tuples.
-///
-/// The rule is [`crate::schedule::schedule_presets`]'s, which the desktop and
-/// terminal composers read too: the four times *are* the feature, and two
-/// frontends each deciding what "tomorrow morning" means is two products, the
-/// wrong one sending somebody's mail at the wrong hour without ever saying so.
+/// Shared with the other composers: two frontends deciding what "tomorrow morning" means would send
+/// mail at the wrong hour.
 pub fn schedule_presets(now: chrono::DateTime<chrono::Local>) -> [SchedulePreset; 4] {
     crate::schedule::schedule_presets(now).map(|(label, when)| SchedulePreset { label, when })
 }
@@ -711,17 +559,12 @@ mod schedule_tests {
 
     #[test]
     fn an_hour_from_now_is_an_hour_from_now() {
-        // The one preset that is relative rather than a wall-clock time, and
-        // the reason the whole set is recomputed when the picker opens.
         let now = local(2026, 3, 4, 9, 30);
         assert_eq!(schedule_presets(now)[0].when, now + Duration::hours(1));
     }
 
     #[test]
     fn this_evening_rolls_to_tomorrow_once_it_has_gone() {
-        // A picker opened at 5:58pm must not offer "this evening" for an
-        // instant two minutes away — and one opened at 7pm must not offer a
-        // time already an hour behind.
         let before = local(2026, 3, 4, 12, 0);
         assert_eq!(schedule_presets(before)[1].when.day(), 4);
 
@@ -733,9 +576,6 @@ mod schedule_tests {
 
     #[test]
     fn monday_morning_is_never_today() {
-        // Opening the picker on a Monday offers next week's Monday, not the
-        // one already underway — scheduling into a morning that has started
-        // is scheduling into the past.
         let monday = local(2026, 3, 2, 10, 0);
         assert_eq!(monday.weekday(), chrono::Weekday::Mon);
         let next = schedule_presets(monday)[3].when;
@@ -745,9 +585,6 @@ mod schedule_tests {
 
     #[test]
     fn every_preset_is_in_the_future() {
-        // The invariant under all four: a picker that offers a time already
-        // gone hands the send queue something it can only fire immediately,
-        // which is not what anybody chose.
         for hour in [0, 7, 8, 12, 17, 18, 23] {
             let now = local(2026, 3, 4, hour, 0);
             for preset in schedule_presets(now) {
@@ -761,9 +598,6 @@ mod schedule_tests {
     }
 }
 
-/// What the toast says when Escape leaves a composition that holds writing:
-/// that it was kept, and the way back to it. `drafts_key` is the key that
-/// goes to Drafts, when one is bound.
 pub fn kept_note(drafts_key: Option<&str>) -> String {
     match drafts_key {
         Some(key) => format!("Draft saved to Drafts ({key})"),
@@ -771,8 +605,6 @@ pub fn kept_note(drafts_key: Option<&str>) -> String {
     }
 }
 
-/// What the header calls a composition (contracts/focus-surface.md,
-/// "Compose"): "New message", or what it answers.
 pub fn title(kind: postio_model::DraftKind) -> &'static str {
     match kind {
         postio_model::DraftKind::New => "New message",
@@ -782,16 +614,12 @@ pub fn title(kind: postio_model::DraftKind) -> &'static str {
     }
 }
 
-/// What the composer says when the message a reply or forward answers has
-/// no body here yet: the quote below the attribution is not there, and the
-/// person should not send believing it is. `None` when the body is local.
+/// `None` when the body is local; otherwise the person should not send believing the quote is
+/// there.
 pub fn unquoted_note(source: &postio_model::Message) -> Option<&'static str> {
     (!source.sync.body_state.has_body()).then_some("Original still downloading \u{2014} not quoted")
 }
 
-/// What the subtitle says will be sent: "Plain text · 58 words", or "Rich
-/// text" once the body carries structure the text part cannot (the
-/// composer sends an HTML part only then).
 pub fn summary(draft: &postio_model::Draft) -> String {
     let words = draft
         .body
@@ -813,9 +641,6 @@ pub fn summary(draft: &postio_model::Draft) -> String {
     format!("{kind} \u{b7} {words}")
 }
 
-/// The header's subtitle: what will be sent, then what has happened to the
-/// draft, when anything has -- "Plain text · 58 words · Draft saved locally
-/// 16:12" -- as the message dialog's says "Message 5 of 60 · thread of 6".
 pub fn subtitle(summary: &str, note: &str) -> String {
     if note.is_empty() {
         summary.to_owned()
@@ -824,7 +649,6 @@ pub fn subtitle(summary: &str, note: &str) -> String {
     }
 }
 
-/// "Draft saved locally 16:12", for a save that landed at `at`.
 pub fn saved_at(at: chrono::DateTime<chrono::Utc>) -> String {
     format!(
         "Draft saved locally {}",
@@ -832,19 +656,12 @@ pub fn saved_at(at: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
-/// What the status line says of a draft that has no row anywhere yet.
 pub const NOT_SAVED: &str = "draft is in the composer only";
 
-/// What the status line says of a draft that was queued to send and is
-/// reopened while it still waits in the Outbox.
 pub const IN_OUTBOX: &str = "waiting in the Outbox";
 
-/// What a reopened draft's status line says about where it lives (#1759).
-///
-/// A draft with an id is a row in Drafts -- or, once queued, in the Outbox --
-/// so it never says it is "in the composer only"; that is for a composition
-/// nobody has saved. A saved draft names when that save landed, as the
-/// subtitle does after an autosave.
+/// A draft with an id is a row in Drafts or the Outbox, so it never says "in the composer only"
+/// (#1759).
 pub fn resumed_status(draft: &postio_model::Draft) -> String {
     use postio_model::DraftState;
     if !draft.id.is_assigned() {
@@ -856,9 +673,7 @@ pub fn resumed_status(draft: &postio_model::Draft) -> String {
     }
 }
 
-/// The MIME sections a forward carries whose bytes are not on this machine:
-/// the parts to ask for when the forward opens (#1690). A part with no
-/// `part_id` is a file the composer is still writing, not a carried one.
+/// A part with no `part_id` is a file the composer is still writing, not a carried one (#1690).
 pub fn carried_sections(attachments: &[postio_model::Attachment]) -> Vec<String> {
     attachments
         .iter()
@@ -867,10 +682,6 @@ pub fn carried_sections(attachments: &[postio_model::Attachment]) -> Vec<String>
         .collect()
 }
 
-/// What an attachment row in the composer says beside the name: its size,
-/// and whether it is large or still downloading from the message it was
-/// forwarded from (#1690). "Downloading" is the reader's word for bytes on
-/// their way.
 pub fn attachment_note(size: &str, large: bool, downloading: bool) -> String {
     match (large, downloading) {
         (false, false) => size.to_owned(),
@@ -880,12 +691,8 @@ pub fn attachment_note(size: &str, large: bool, downloading: bool) -> String {
     }
 }
 
-/// What the reminder verb says: "Remind", as the message dialog's action
-/// row names the same command, and the day once one is chosen ("Remind ·
-/// Tue 29 Sep"), in the person's own time zone. The whole of it -- "if no
-/// reply" -- is the verb's tooltip and accessible name ([`remind_meaning`]),
-/// the palette's title and the picker's heading; the row has room for the
-/// day, not for both (T221).
+/// The full "if no reply" is the verb's tooltip and accessible name (`remind_meaning`); the row has
+/// room for the day only.
 pub fn remind_words(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
     match at {
         Some(at) => format!(
@@ -896,8 +703,6 @@ pub fn remind_words(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
     }
 }
 
-/// What the reminder verb means, said in full: "Remind if no reply", and
-/// the day once one is chosen.
 pub fn remind_meaning(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
     match at {
         Some(at) => format!(
@@ -908,33 +713,22 @@ pub fn remind_meaning(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
     }
 }
 
-/// A reply's quote, folded under what is being written (screen 06): the
-/// words before it, the quote itself, and what the fold says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuoteFold {
-    /// Everything before the quote: what the person writes in. With
-    /// [`quote`](Self::quote) after it, the body as it was, byte for byte.
     pub written: String,
-    /// The attribution line and the quoted lines under it.
     pub quote: String,
-    /// What the fold says: "On 2026-09-26, Lena Park wrote · 18 quoted
-    /// lines".
     pub summary: String,
 }
 
-/// `body` with the quote it ends in folded away, as `postio_model::reply`
-/// builds one: an attribution line ending "wrote:", then only quoted
-/// lines (`>`). `None` for a body that ends in no quote.
+/// `None` for a body that ends in no quote.
 pub fn fold_quote(body: &str) -> Option<QuoteFold> {
-    // Each line with the byte it starts at, last first.
     let mut starts = Vec::new();
     let mut at = 0;
     for line in body.split('\n') {
         starts.push((at, line));
         at += line.len() + 1;
     }
-    // Blank lines after the quote are the quote's: a body often ends in a
-    // newline.
+    // Blank lines after the quote are the quote's: a body often ends in a newline.
     let trailing = starts
         .iter()
         .rev()
@@ -965,57 +759,35 @@ pub fn fold_quote(body: &str) -> Option<QuoteFold> {
     })
 }
 
-// ---- Spec 013 US7: replying to an older message, forwarding a thread ----
-
-/// One message newer than the one a reply answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewerMessage {
-    /// Who wrote it, as a first name.
     pub who: String,
-    /// When it arrived.
     pub at: chrono::DateTime<chrono::Utc>,
 }
 
-/// The message a reply answers, when it is not the thread's latest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OlderReplyFacts {
-    /// Its place in the thread, from 1.
     pub number: usize,
-    /// How many messages the thread has.
     pub total: usize,
-    /// Who wrote it, as a first name.
     pub who: String,
-    /// When it arrived.
     pub at: chrono::DateTime<chrono::Utc>,
-    /// The messages after it, oldest first.
     pub newer: Vec<NewerMessage>,
 }
 
-/// One of the older-reply bar's two buttons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BarAction {
-    /// "Show them", "Reply to latest".
     pub label: String,
-    /// Its key, as the keymap has it.
     pub key: Option<String>,
 }
 
-/// The bar under the composer's title on a reply to a message that is not
-/// the latest (spec 013 FR-022, screen 09).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OlderReplyView {
-    /// "You're replying to message 4 of 6, not the latest".
     pub title: String,
-    /// Which newer messages there are, and what the reply quotes.
     pub detail: String,
-    /// Show them (or Hide them), then Reply to latest.
     pub actions: [BarAction; 2],
-    /// Whether the newer messages are on show: "Show them" reads "Hide
-    /// them" then.
     pub newer_shown: bool,
 }
 
-/// How a thread's member is named in these words: "You", or the first name.
 pub fn member_name(member: &postio_model::thread_view::ThreadMember) -> String {
     match (&member.from, member.own) {
         (_, true) => "You".to_owned(),
@@ -1040,7 +812,6 @@ fn clock_and_day(at: chrono::DateTime<chrono::Utc>) -> (String, String) {
     )
 }
 
-/// The older-reply bar's words, from the keymap's keys.
 pub fn older_reply(
     facts: &OlderReplyFacts,
     newer_shown: bool,
@@ -1089,33 +860,21 @@ pub fn older_reply(
     }
 }
 
-/// One card of the *What to forward* chooser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChooserCard {
-    /// What choosing it does.
     pub form: postio_model::ForwardForm,
-    /// Its number key, as the keymap has it.
     pub key: Option<String>,
-    /// "This message".
     pub title: String,
-    /// One line under it.
     pub detail: String,
 }
 
-/// The chooser the composer shows above To when a thread of two or more is
-/// forwarded (spec 013 FR-023, screen 10).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChooserView {
-    /// "What to forward".
     pub heading: String,
-    /// The three cards, in key order.
     pub cards: Vec<ChooserCard>,
-    /// The one chosen.
     pub selected: postio_model::ForwardForm,
 }
 
-/// The chooser's cards. `of` is whose message "This message" would forward,
-/// and the day it arrived, when the thread says.
 pub fn forward_chooser(
     selected: postio_model::ForwardForm,
     messages: usize,
@@ -1166,8 +925,6 @@ pub fn forward_chooser(
     }
 }
 
-/// What is said when a forward form was refused because `missing` of the
-/// thread's messages are not on this machine: nothing was fetched.
 pub fn forward_not_local(form: postio_model::ForwardForm, missing: usize) -> String {
     let which = match missing {
         1 => "1 message isn\u{2019}t".to_owned(),
@@ -1327,7 +1084,6 @@ mod frame_tests {
             "nothing lost"
         );
 
-        // A quote that ends in a newline, as a message body often does.
         let trailing = "\n\nOn 2026-09-26, Ada wrote:\n> Hi\n";
         let fold = fold_quote(trailing).expect("a trailing newline is still the quote's");
         assert_eq!(fold.written, "\n\n");
@@ -1343,14 +1099,11 @@ mod frame_tests {
     fn a_body_that_ends_in_no_quote_folds_nothing() {
         assert_eq!(fold_quote(""), None);
         assert_eq!(fold_quote("Hi Ada,\n\nSee you Monday."), None);
-        // Writing under the quote: the quote is no longer at the end.
         assert_eq!(
             fold_quote("On 2026-09-26, Ada wrote:\n> Hi\nAnd below it."),
             None
         );
-        // An attribution with nothing quoted under it.
         assert_eq!(fold_quote("Hi\nOn 2026-09-26, Ada wrote:"), None);
-        // Quoted lines with no attribution above them are someone's own.
         assert_eq!(fold_quote("> a quote\n> of my own"), None);
     }
 

@@ -1,17 +1,8 @@
 //! The terminal frontend's state, and the one function that changes it.
-//!
-//! `update` takes an [`Input`] and returns the [`Effect`]s it asks for --
-//! a request of the host, a redraw, quitting -- and does no I/O itself.
-//! That is what lets every behaviour be driven by synthetic input in a test,
-//! with no terminal and no host (research R11).
-//!
-//! # The list is a window
-//!
-//! A mailbox is never loaded (Principle V). The list is
-//! `postio_ui::list::ListWindow`, the desktop app's and the macOS frontend's
-//! own window, paged by `postio_ui::paging::Paging`; after every input,
-//! [`App`] walks only the rows in view and asks for whichever of their pages
-//! is not already here or on its way.
+//! `update` takes an `Input` and returns the `Effect`s it asks for and does no I/O, so every
+//! behaviour is driven by synthetic input (research R11).
+//! The list is a window (Principle V): after every input, `App` asks only for pages of rows in view
+//! that are not here or on their way.
 
 use crossterm::event::KeyEvent;
 use postio_model::ListScope;
@@ -36,717 +27,388 @@ use crate::row::Row;
 use crate::view::list::{Heading, Visible};
 use postio_body::replying::ReplyKind;
 
-/// What the mouse did, resolved against the last frame drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pointer {
-    /// A left click.
     Click {
-        /// What was under it.
         hit: crate::view::hit::Hit,
-        /// Whether Ctrl was held: toggle, rather than move.
         ctrl: bool,
-        /// Whether Shift was held: extend, rather than move.
         shift: bool,
     },
-    /// A turn of the wheel.
     Wheel {
-        /// What was under the pointer.
         hit: crate::view::hit::Hit,
-        /// Towards the end, rather than the start.
         down: bool,
     },
 }
 
-/// Something that happened, from the terminal or from the host.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    /// The terminal is now this many columns and rows.
     Resize(u16, u16),
-    /// The clipboard answered an [`Effect::ReadClipboardImage`]: a PNG,
-    /// no image, or why it could not be read.
     ClipboardImage(Result<Option<Vec<u8>>, String>),
-    /// The host stored an [`Effect::InlineImage`]: the inline part, or
-    /// nothing when it could not.
     InlineStored(Option<postio_model::Attachment>),
-    /// The host answered an [`Effect::AttachRemoteImage`].
     RemoteImage {
-        /// Which composition asked.
         generation: u64,
-        /// The image's address.
         href: String,
-        /// The inline part, or why the image stays a link.
         outcome: Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>,
     },
-    /// `config.toml` came back from the person's editor, and was read again.
     ConfigEdited(Result<(), String>),
-    /// The external editor exited: what it saved, or why not.
     Edited {
-        /// Which composition.
         generation: u64,
-        /// The body it saved.
         edited: Result<String, String>,
     },
-    /// The host answered an [`Effect::BeginOAuth`]: where the sign-in
-    /// waits for the person, or why it could not begin.
     Consent(Result<postio_ui::onboarding::BrowserSignIn, String>),
-    /// The host answered an [`Effect::Discover`].
     Discovered(Result<postio_ui::onboarding::Status, String>),
-    /// The host answered an [`Effect::AddAccount`]: saved, or the sentence
-    /// for why not.
     AccountAdded(Result<(), String>),
-    /// The mouse did something over what was drawn.
     Pointer(Pointer),
-    /// Text was pasted, or files were dropped: a drop arrives as a paste of
-    /// their paths.
     Paste(String),
-    /// The host answered an [`Effect::Attach`]: the stored attachment, or
-    /// nothing when the file could not be read.
     Attached {
-        /// What was asked to be attached.
         path: std::path::PathBuf,
-        /// The attachment.
         attached: Option<postio_model::Attachment>,
     },
-    /// A key was pressed.
     Key(KeyEvent),
-    /// The controller's request was answered.
     FocusReply(postio_focus::Ticket, postio_focus::Reply),
-    /// A timer the controller armed ran out.
     FocusTimer(u64),
-    /// The host said something happened.
     Host(postio_core::Event),
     /// A conversation asked for by [`Effect::ReadConversation`] arrived.
     Conversation {
-        /// Which.
         thread: postio_model::ThreadId,
-        /// Its messages, oldest first, or why there are none.
         members: Result<Vec<postio_model::listing::MessageSummary>, String>,
     },
-    /// Whom a message asked for by [`Effect::ReadBody`] was written to, for
-    /// the open message's header. Arrives just before its body, from the
-    /// same read.
     Addressed {
-        /// Whose.
         message: postio_model::MessageId,
-        /// Whom it was sent to.
         to: Vec<postio_model::EmailAddress>,
-        /// Who was copied.
         cc: Vec<postio_model::EmailAddress>,
-        /// The one line about a sender who may not be who they say, if any
-        /// (#1928).
         warning: Option<String>,
     },
-    /// A body asked for by [`Effect::ReadBody`] arrived.
     Body {
-        /// Whose.
         message: postio_model::MessageId,
-        /// The body, or why there is none.
         answer: Result<postio_client::protocol::Body, String>,
     },
-    /// The host answered an [`Effect::Ask`].
     Answer(crate::ask::Answer),
-    /// The host answered an [`Effect::Unsubscribe`]: the list's name, or
-    /// why not.
     Unsubscribed {
-        /// The message `M` was pressed over.
         message: postio_model::MessageId,
-        /// The list left, or why not.
         answer: Result<String, String>,
     },
-    /// The host answered an [`Effect::ReadListMail`] (#1931).
     ListMail {
-        /// The message the unsubscribe was from.
         message: postio_model::MessageId,
-        /// The list or sender it left, as the confirmation names it.
         name: String,
-        /// What the list left behind, or why it could not be read.
         found: Result<postio_client::protocol::ListMailFound, String>,
     },
-    /// The host answered an [`Effect::ReadSource`]: the bytes, or why not.
     Source {
-        /// Whose.
         message: postio_model::MessageId,
-        /// What came off the wire.
         raw: Result<Vec<u8>, String>,
     },
-    /// An [`Effect::Settle`]'s time is up: paint the open message as it is.
     Settled {
-        /// Which hold it was asked for.
         generation: u64,
     },
-    /// An [`Effect::ArmDwell`]'s time is up.
     DwellDue {
-        /// Which clock.
         generation: u64,
-        /// The message it was armed for.
         message: postio_model::MessageId,
     },
-    /// An [`Effect::ExpireNotice`]'s time is up.
     NoticeDue {
-        /// Which notice it was asked for.
         generation: u64,
     },
-    /// An [`Effect::Autosave`]'s time is up.
     AutosaveDue {
-        /// Which composition asked.
         generation: u64,
-        /// How many edits it had when it asked.
         edit: u64,
     },
-    /// A signature was saved or removed, or why it could not be: the
-    /// store's sentence, which is for the person who typed.
     SignatureSaved(Result<(), String>),
-    /// The privacy pane's log, as the store has it now.
     Privacy {
-        /// Unsubscribes and read-receipt requests.
         log: postio_client::protocol::PrivacyLog,
-        /// The newest outbound connections, newest first.
         connections: Vec<postio_model::egress::EgressEvent>,
     },
-    /// The host answered an [`Effect::SaveDraft`]: the draft's id, or why
-    /// it could not be saved.
     DraftSaved {
-        /// Which composition.
         generation: u64,
-        /// Its id, or the sentence for the status line.
         saved: Result<postio_model::DraftId, String>,
     },
-    /// New mail worth telling the person about, as the host decided it.
     Notified(postio_ui::notify::Notification),
-    /// What a label picker lists, read ([`Effect::ReadLabelPicker`]).
     LabelPicker {
-        /// The account the labels are of.
         account: postio_model::AccountId,
-        /// Its labels.
         labels: Vec<postio_model::Label>,
-        /// How many conversations carry each.
         counts: Vec<(postio_model::LabelId, u32)>,
-        /// Which every conversation the picker acts on carries.
         applied: std::collections::BTreeSet<postio_model::LabelId>,
     },
-    /// The host answered an [`Effect::CreateLabel`]: the new label.
     LabelMade {
-        /// The label, or nothing when it could not be made.
         label: Option<postio_model::Label>,
-        /// Whether the picker closes now.
         close: bool,
     },
-    /// The last folders mail was moved to ([`Effect::ReadRecentMoves`]).
     RecentMoves(Vec<postio_model::MailboxId>),
-    /// The host answered an [`Effect::BarSearch`].
     BarFound {
-        /// Which question it answers.
         sequence: u64,
-        /// What matched, nothing when the store could not be read, or why
-        /// the host could not be asked.
         found: Result<Option<postio_client::protocol::Hits>, String>,
-        /// Which of the hits a digest holds: the message, the rule and
-        /// whether it has been delivered.
         held: Vec<(postio_model::MessageId, String, bool)>,
     },
-    /// The host answered an [`Effect::BarFolder`].
     BarFolder {
-        /// Which question it answers.
         sequence: u64,
-        /// How many conversations the folder holds.
         count: u32,
-        /// The newest of them.
         rows: Vec<crate::bar::ResultRow>,
     },
-    /// The labels and correspondents of every account, read for the bar
-    /// ([`Effect::ReadPlaceDetails`]).
     PlaceDetails(crate::places::PlaceDetails),
-    /// The host answered an [`Effect::Recipients`].
     Recipients {
-        /// What was looked up.
         prefix: String,
-        /// Who it could be, best first.
         found: Vec<postio_model::contact_group::RecipientCandidate>,
     },
-    /// The host answered an [`Effect::QueueSend`].
     Queued {
-        /// When it was scheduled for, if it was.
         at: Option<chrono::DateTime<chrono::Utc>>,
-        /// Whether it was queued, or why not.
         queued: Result<(), String>,
     },
-    /// The host answered an [`Effect::Resume`]: the draft behind the row,
-    /// taken back from the Outbox if it was queued; nothing when there is no
-    /// local draft or its send has already started.
+    /// Taken back from the Outbox if queued; nothing when there is no local draft or its send has
+    /// already started.
     Resumed {
-        /// The draft, or nothing.
         found: Option<Box<postio_model::Draft>>,
-        /// Why its last send failed, for a draft that did.
         failure: Option<String>,
     },
-    /// The host answered an [`Effect::ReplySource`]: the message and its
-    /// account, or nothing when it could not be read.
     ReplySource {
-        /// Which draft to start.
         kind: ReplyKind,
-        /// The message and its account.
         found: Option<Box<(postio_model::Message, postio_model::Account)>>,
     },
-    /// A message's parts arrived.
     Parts {
-        /// Whose.
         message: postio_model::MessageId,
-        /// Its parts, or why there are none.
         parts: Result<Vec<postio_model::Attachment>, String>,
     },
-    /// A part was written, to be opened or just kept.
     PartWritten {
-        /// Where, or why not.
         written: Result<std::path::PathBuf, String>,
-        /// Whether it was written to be opened.
         open: bool,
     },
-    /// What the places hold, read afresh.
     Places(crate::places::Places),
 }
 
-/// Something `update` asks the loop to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Draw a frame.
     Redraw,
-    /// Leave.
     Quit,
-    /// Ask the host something for a Focus surface and answer with
-    /// [`Input::Answer`].
     Ask(crate::ask::Ask),
-    /// Read a conversation and answer with [`Input::Conversation`].
     ReadConversation(postio_model::ThreadId),
-    /// Read a body and answer with [`Input::Body`].
     ReadBody(postio_model::MessageId),
-    /// Read the places again and answer with [`Input::Places`].
     RefreshPlaces,
-    /// Leave the list this message came from; answer with
-    /// [`Input::Unsubscribed`].
     Unsubscribe(postio_model::MessageId),
-    /// Read what the list this message came from has sent, and answer with
-    /// [`Input::ListMail`]: the offer after an unsubscribe (#1931). `name` is
-    /// what the confirmation says it left.
     ReadListMail {
-        /// The message `M` was pressed over.
         message: postio_model::MessageId,
-        /// The list or sender left.
         name: String,
     },
-    /// Read a message's parts and answer with [`Input::Parts`].
     ReadParts(postio_model::MessageId),
-    /// Hand a new-mail notice to the desktop's notification service, where
-    /// one is reachable.
     DesktopNotify {
-        /// What it says first.
         title: String,
-        /// The rest.
         body: String,
     },
-    /// Read a label picker's labels, their counts, and which the
-    /// conversations carry; the answer comes back as [`Input::LabelPicker`].
     ReadLabelPicker {
-        /// The message whose account's labels are offered.
         message: postio_model::MessageId,
-        /// The account to offer when the message's cannot be found.
         account: postio_model::AccountId,
-        /// The conversations whose labels are shown as applied.
         threads: Vec<postio_model::ThreadId>,
     },
-    /// Make a label; the answer comes back as [`Input::LabelMade`].
     CreateLabel {
-        /// Whose.
         account: postio_model::AccountId,
-        /// Its name.
         name: String,
-        /// Whether the picker closes once it is made.
         close: bool,
     },
-    /// Read the folders mail was last moved to; the answer comes back as
-    /// [`Input::RecentMoves`].
     ReadRecentMoves,
-    /// Remember a move, for the picker's Recent.
     NoteMove(postio_model::MailboxId),
-    /// Write a part to a file, and answer with [`Input::PartWritten`].
     SavePart {
-        /// Whose.
         message: postio_model::MessageId,
-        /// Which.
         attachment: postio_model::ids::AttachmentId,
-        /// Where; `None` for a private copy to open.
         to: Option<std::path::PathBuf>,
     },
-    /// Hand a file to the system's opener.
     Launch(std::path::PathBuf),
-    /// Write the remote-image allow list, which the desktop app reads too.
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
-    /// Write `[focus] reading` to `config.toml`: where messages open.
     SetReading(postio_config::Reading),
-    /// Read a message's source and answer with [`Input::Source`].
     ReadSource(postio_model::MessageId),
-    /// Ask for [`Input::Settled`] after `after`: the longest the paint is
-    /// held for a message's reads ([`App::holds_paint`]).
     Settle {
-        /// Which hold.
         generation: u64,
-        /// How long.
         after: std::time::Duration,
     },
-    /// Ask for [`Input::DwellDue`] after `after`: how long the message has
-    /// to stay open to count as read.
     ArmDwell {
-        /// Which clock.
         generation: u64,
-        /// The message on screen.
         message: postio_model::MessageId,
-        /// How long.
         after: std::time::Duration,
     },
-    /// Ask for [`Input::NoticeDue`] after `after`: the toast's time.
     ExpireNotice {
-        /// Which notice, so a newer one is not taken down by an older timer.
         generation: u64,
-        /// How long it stays.
         after: std::time::Duration,
     },
-    /// Ask again for [`Input::AutosaveDue`] after [`AUTOSAVE`].
     Autosave {
-        /// Which composition.
         generation: u64,
-        /// How many edits it has now.
         edit: u64,
     },
-    /// Save a draft through the host's draft writer.
     SaveDraft {
-        /// Which composition.
         generation: u64,
-        /// The draft.
         draft: Box<postio_model::Draft>,
     },
-    /// A composition closed with nothing worth keeping: drop its row.
     DiscardDraft {
-        /// Which composition.
         generation: u64,
-        /// Its id, when it has one.
         known: Option<postio_model::DraftId>,
     },
-    /// Queue a draft to send, through the same writer as its saves, so it
-    /// goes after the last of them.
+    /// Through the same writer as its saves, so it goes after the last of them.
     QueueSend {
-        /// Which composition.
         generation: u64,
-        /// The draft.
         draft: Box<postio_model::Draft>,
-        /// When, for a scheduled send.
         at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// Hand the body to the person's own editor; the loop suspends the
-    /// screen while it runs.
     EditExternally {
-        /// Which composition.
         generation: u64,
-        /// The body, as typed.
         markdown: String,
     },
-    /// Read an image off the clipboard: on the paste key, never otherwise.
+    /// On the paste key, never otherwise.
     ReadClipboardImage,
-    /// Store pasted image bytes as an inline part of the draft.
     InlineImage {
-        /// The image.
         bytes: Vec<u8>,
-        /// Its type.
         mime_type: String,
     },
-    /// Store the file at this path as an attachment of the draft.
     Attach(std::path::PathBuf),
-    /// Download one remote image the draft names and attach it inline: on
-    /// a Download and attach press, never otherwise (spec 014 FR-031).
+    /// Only on a Download and attach press.
     AttachRemoteImage {
-        /// Which composition asked.
         generation: u64,
-        /// The draft, for the log.
         draft: postio_model::DraftId,
-        /// The image's address.
         href: String,
     },
-    /// Save this query as a saved search in `config.toml`, as the desktop's
-    /// Ctrl+S does.
     SaveSearch(String),
-    /// Run the bar's search; its answer comes back as [`Input::BarFound`].
     BarSearch(crate::bar::Ask),
-    /// List a folder's conversations for the bar; the answer comes back as
-    /// [`Input::BarFolder`].
     BarFolder {
-        /// Which question this is.
         sequence: u64,
-        /// The folder.
         mailbox: postio_model::MailboxId,
     },
-    /// Read every account's labels and correspondents; the answer comes back
-    /// as [`Input::PlaceDetails`].
     ReadPlaceDetails,
-    /// Look up who a recipient being typed could be.
     Recipients {
-        /// Whose contacts.
         account: postio_model::AccountId,
-        /// What has been typed.
         prefix: String,
     },
-    /// Open the local draft behind a Drafts or Outbox row.
     Resume(postio_model::MessageId),
-    /// Edit `config.toml` in the person's own editor, at a section.
     EditConfig(Option<postio_ui::settings::Section>),
-    /// Change an account, as the settings' account commands do.
     Account(postio_client::protocol::AccountOp),
-    /// Begin a browser sign-in for a new account.
     BeginOAuth(Box<postio_ui::onboarding::Submission>),
-    /// Wait for the sign-in for this address to end.
     FinishOAuth(String),
-    /// Give up the sign-in for this address.
     CancelOAuth(String),
-    /// Put this text on the clipboard of the terminal's own machine.
     CopyText(String),
-    /// Look up a new account's servers.
     Discover(String),
-    /// Prove and save a new account.
     AddAccount(Box<postio_ui::onboarding::Submission>),
-    /// Save how far back the first sync reaches.
     SaveSyncWindow(postio_ui::onboarding::SyncWindow),
-    /// Read the privacy pane's log: what left this machine.
     ReadPrivacy,
-    /// Hand a signature's text to the person's editor, then save what it
-    /// wrote under `name`: a new signature when `signature` is `None`.
     EditSignature {
-        /// Whose.
         account: postio_model::AccountId,
-        /// Which, or a new one.
         signature: Option<postio_model::SignatureId>,
-        /// What it is called.
         name: String,
-        /// Its text before the edit.
         text: String,
     },
-    /// Save a signature as it is given, as a rename does.
     SaveSignature {
-        /// Whose.
         account: postio_model::AccountId,
-        /// Which, or a new one.
         signature: Option<postio_model::SignatureId>,
-        /// What it is called.
         name: String,
-        /// Its text.
         text: String,
     },
-    /// Remove a signature.
     DeleteSignature(postio_model::SignatureId),
-    /// Open a link with the system's opener, the person having clicked it
-    /// twice.
     OpenLink(String),
-    /// Read the message a reply or forward starts from, and its account.
     ReplySource {
-        /// Which draft to start.
         kind: ReplyKind,
-        /// The message.
         message: postio_model::MessageId,
     },
-    /// Send a command to the host, aimed with [`App::state`].
     Send(postio_core::Command),
-    /// Ask the controller's request of the host and answer with
-    /// [`Input::FocusReply`].
     Focus {
         ticket: postio_focus::Ticket,
         request: postio_focus::Request,
     },
-    /// Run the controller's timer.
     FocusTimer {
         token: u64,
         after: std::time::Duration,
     },
 }
 
-/// How long the typing has to pause before a draft is saved: the desktop
-/// composer's autosave interval.
 pub const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1500);
 
-/// How long a toast stays on the bottom line.
 pub const TOAST: std::time::Duration =
     std::time::Duration::from_secs(postio_ui::focus_target::TOAST_SECONDS as u64);
 
-/// How many lines one turn of the wheel scrolls.
 const WHEEL: isize = 3;
 
-/// Everything the terminal frontend knows.
 pub struct App {
     size: (u16, u16),
     keys: Keys,
     list: ListWindow<Held>,
     ctl: postio_focus::FocusController,
     selection_words: Option<String>,
-    /// The row the keyboard is on.
     cursor: u32,
-    /// The first row in view.
     top: u32,
-    /// What the host aims this frontend's commands with; the client sends
-    /// a snapshot of it with each one (ADR 0041).
+    /// The client sends a snapshot of it with each command (ADR 0041).
     state: postio_core::SharedState,
-    /// What is marked.
     selection: postio_ui::selection::SelectionState,
-    /// What the strip counts, once read.
     counts: Option<postio_client::protocol::FocusCounts>,
-    /// Which of Focus's features `config.toml` has in use.
     features: crate::places::Features,
-    /// The accounts whose connection has been heard of.
     tracked: Vec<postio_model::AccountId>,
-    /// When mail last arrived, as far as is known.
     last_synced: Option<chrono::DateTime<chrono::Utc>>,
-    /// The list being shown.
     scope: Option<ListScope>,
-    /// What the status line says about the last thing done: the undo offer,
-    /// a refusal, an error.
     notice: Option<String>,
-    /// What kind of news the notice is, for its mark and colour.
     notice_tone: Tone,
-    /// The key the notice offers undo on, when it offers it.
     notice_undo: Option<String>,
-    /// The one button the notice offers, when it offers one (#1952): its
-    /// label and the command a click runs.
     notice_offer: Option<(String, postio_core::Command)>,
-    /// Which notice is on the line: a timer is for one of them.
     notice_generation: u64,
-    /// An answer to an invitation was sent, and its toast is the next one:
-    /// it lasts as long as the reply waits.
+    /// An answer to an invitation was sent; its toast lasts as long as the reply waits.
     answering: bool,
-    /// Where the keyboard is.
     focus: Focus,
-    /// The folders, views and saved searches the finder and `g l` read.
     places: crate::places::Places,
-    /// The privacy pane's log, once read.
     privacy: Option<Privacy>,
-    /// What the palette is naming, while it is.
     renaming: Option<Renaming>,
-    /// Each account's sync status, folded from the host's events.
     trackers: postio_ui::status::Trackers,
-    /// Which account the list on screen belongs to.
     account: Option<postio_model::AccountId>,
-    /// Every folder, to find the account a list belongs to.
     folders: Vec<postio_model::mailbox::Mailbox>,
-    /// The message the reader shows, and how.
     reading: Option<crate::conversation::Reading>,
-    /// The first reader line in view.
     reader_top: usize,
-    /// What the open message holds besides the message.
     open: open::Open,
-    /// Where saved parts go.
     downloads: std::path::PathBuf,
-    /// Senders whose remote images are always allowed, shared with the
-    /// desktop app (`postio_ui::allowlist`).
     allowlist: postio_ui::allowlist::RemoteImageAllowList,
-    /// The draft being written, which takes the reading pane while it is.
     composer: Option<crate::composer::Composer>,
-    /// How many compositions this frontend has started: each is named by the
-    /// next, for the host's draft writer.
     compositions: u64,
-    /// Every account, for the addresses a composer can send as.
     accounts: Vec<postio_model::Account>,
-    /// The schedule-send picker's times, while it is open.
     scheduling: Option<[(&'static str, chrono::DateTime<chrono::Local>); 4]>,
-    /// The composer's edit count when "send it anyway?" was asked: sending
-    /// again with nothing changed is the answer.
     asked_at: Option<u64>,
-    /// The path being typed to attach a file (FR-027), while it is.
     path_prompt: Option<tui_input::Input>,
-    /// How the composer shows its preview (`[tui].preview`).
     preview: postio_config::Preview,
-    /// Whether the preview is showing.
     previewing: bool,
-    /// When the draft was last saved on this machine, for the subtitle.
     saved_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Where the keyboard goes when the composer closes: the message it was
-    /// started from, or the list.
     composed_from: Focus,
-    /// Whether the draft is in a tab of its own rather than the reading
-    /// pane: the desktop's composer window (FR-003).
     detached: bool,
-    /// The command bar, while it is open.
     bar: Option<crate::bar::Bar>,
-    /// The folders popover, while it is open.
     places_box: Option<crate::folders::Folders>,
-    /// The snooze, remind, label or move picker, while it is open.
     picker: Option<crate::pickers::Picker>,
-    /// The palette, while it is open.
     palette: Option<PaletteState>,
-    /// Whether the terminal speaks the kitty keyboard protocol, so every
-    /// chord arrives; otherwise only what a legacy terminal can send does.
+    /// Otherwise only the chords a legacy terminal can send arrive.
     enhanced_keys: bool,
-    /// The key map, while it is open.
     sheet: Option<crate::sheet::Sheet>,
-    /// A link clicked once: shown in full, and opened by a second click
-    /// on it (US2 scenario 4).
     armed_link: Option<String>,
-    /// Whether the mouse is listened to (`[tui].mouse`).
     mouse: bool,
-    /// The first run, while there is no account yet.
     first_run: Option<crate::first_run::FirstRun>,
-    /// The settings, while they are open.
     settings: Option<crate::settings::Settings>,
-    /// What Focus's surfaces hold: Filtered and its sweep.
     surfaces: crate::surface::Surfaces,
 }
 
-/// What the strip says, with no drawing in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Strip {
-    /// The place's name.
     pub place: postio_ui::terminal::SafeText,
-    /// `312 · 41 unread`.
     pub counts: String,
-    /// The has-action toggle, in Focus's inbox.
     pub toggle: Option<Toggle>,
-    /// `Showing 7 of 312 · ! again to show all`, while the filter is on.
     pub showing: Option<String>,
-    /// `186 filtered today`, while filtering is on and has filed anything.
     pub filtered: Option<String>,
-    /// `4 digest rules`, while there are rules.
     pub rules: Option<String>,
 }
 
-/// The has-action toggle: its words and whether it is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toggle {
-    /// `Has action · 7`.
     pub label: String,
-    /// Whether the filter is on.
     pub on: bool,
 }
 
-/// What fills the window's body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Front {
-    /// Day headings and rows.
     List,
-    /// The open message.
     Reader,
-    /// The draft being written.
     Composer,
 }
 
-/// What kind of news a notice is: the status line marks each with more
-/// than a colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
-    /// Something to know.
     Plain,
-    /// Something done.
     Worked,
-    /// Something refused or failed.
     Failed,
 }
 
-/// What a name typed in the palette is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Renaming {
-    /// A signature of `account`: `signature`, or a new one, whose text is
-    /// `text`.
     Signature {
         account: postio_model::AccountId,
         signature: Option<postio_model::SignatureId>,
@@ -754,27 +416,19 @@ enum Renaming {
     },
 }
 
-/// What the privacy pane shows that is not in `config.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Privacy {
-    /// Unsubscribes and read-receipt requests.
     pub log: postio_client::protocol::PrivacyLog,
-    /// The newest outbound connections, newest first.
     pub connections: Vec<postio_model::egress::EgressEvent>,
 }
 
-/// Which of the finder's modes the palette is in (`postio_ui::finder`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Finding {
-    /// `M` in the settings: which of an account's roles to point somewhere.
     Roles(postio_model::AccountId),
-    /// Then which folder that role is, or automatic.
     RoleFolder(postio_model::AccountId, postio_model::mailbox::MailboxRole),
-    /// A new name for the saved search in `App::renaming`.
     Rename,
 }
 
-/// A role's name in a sentence.
 fn role_name(role: postio_model::mailbox::MailboxRole) -> &'static str {
     use postio_model::mailbox::MailboxRole;
     match role {
@@ -789,8 +443,6 @@ fn role_name(role: postio_model::mailbox::MailboxRole) -> &'static str {
     }
 }
 
-/// The palette: what is typed, which row is chosen, and where it was opened
-/// from, which is where what it runs runs.
 #[derive(Debug)]
 struct PaletteState {
     input: tui_input::Input,
@@ -799,47 +451,31 @@ struct PaletteState {
     finding: Finding,
 }
 
-/// The palette as it is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteView {
-    /// The finder mode's marker: `>`, `#`, `+` or `@`.
     pub marker: &'static str,
-    /// What is typed.
     pub query: String,
-    /// The rows, best first.
     pub rows: Vec<PaletteRow>,
-    /// The chosen row.
     pub selected: usize,
 }
 
-/// One palette row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteRow {
-    /// What it says.
     pub title: String,
-    /// What the row says at its right: the key that does the same, as this
-    /// terminal can send it.
     pub chord: Option<String>,
-    /// Which characters of the title the query matched.
     pub positions: Vec<usize>,
 }
 
-/// What a palette row does.
 enum PaletteAction {
-    /// Ask which folder this role is.
     PickRole(postio_model::AccountId, postio_model::mailbox::MailboxRole),
-    /// Point the role at this folder's path, or back to automatic.
     MapRole(
         postio_model::AccountId,
         postio_model::mailbox::MailboxRole,
         Option<String>,
     ),
-    /// Call the saved search being renamed this.
     Rename(String),
 }
 
-/// Rows offered by title, matched against `query` with the palette's
-/// matcher, best first; an empty query keeps the order they were offered in.
 fn best_first(
     query: &str,
     offered: impl Iterator<Item = (String, PaletteAction)>,
@@ -865,39 +501,23 @@ fn best_first(
         .collect()
 }
 
-/// Which pane the keyboard is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Focus {
-    /// The message list.
     #[default]
     List,
-    /// The reading pane.
     Reader,
-    /// The composer, in the reading pane.
     Composer,
-    /// The command bar.
     Bar,
-    /// The folders popover.
     Folders,
-    /// A picker over the focused row.
     Picker,
-    /// The key map.
     Keys,
-    /// The first run, while there is no account.
     FirstRun,
-    /// The settings.
     Settings,
-    /// The command palette, or another of the finder's modes.
     Palette,
-    /// The Filtered view, which takes the window's body.
     Filtered,
-    /// A digest's window, in the message frame.
     Digest,
-    /// The digest rules, which take the window's body.
     Rules,
-    /// The rule dialog, over whatever opened it.
     RuleDialog,
-    /// The capture sheet, over whatever opened it.
     Capture,
 }
 
@@ -912,7 +532,6 @@ impl std::fmt::Debug for App {
 }
 
 impl App {
-    /// A frontend in a terminal of `size`, resolving keys with `keys`.
     pub fn new(size: (u16, u16), keys: Keys) -> App {
         App {
             size,
@@ -972,39 +591,32 @@ impl App {
         }
     }
 
-    /// The same app, saving parts into `downloads`.
     pub fn with_downloads(mut self, downloads: std::path::PathBuf) -> App {
         self.downloads = downloads;
         self
     }
 
-    /// The same app, honouring `allowlist`.
     pub fn with_allowlist(mut self, allowlist: postio_ui::allowlist::RemoteImageAllowList) -> App {
         self.allowlist = allowlist;
         self
     }
 
-    /// The list position of the first row in view.
     pub fn top(&self) -> u32 {
         self.top
     }
 
-    /// The first reader line in view.
     pub fn reader_top(&self) -> usize {
         self.reader_top
     }
 
-    /// The row for `message`, if it is resident.
     pub fn row(&self, message: postio_model::MessageId) -> Option<&Row> {
         self.list.row_of(message).map(|held| &held.row)
     }
 
-    /// What the reader shows: the message, and its rendered body.
     pub fn reading(&self) -> Option<&crate::conversation::Reading> {
         self.reading.as_ref()
     }
 
-    /// Which account `scope` belongs to.
     fn account_of(&self, scope: ListScope) -> Option<postio_model::AccountId> {
         match scope {
             ListScope::Mailbox(mailbox) => self
@@ -1020,30 +632,23 @@ impl App {
         }
     }
 
-    /// Where the keyboard is.
     pub fn focus(&self) -> Focus {
         self.focus
     }
 
-    /// The same app, showing the composer's preview as `preview` says.
     pub fn with_preview(mut self, preview: postio_config::Preview) -> App {
         self.preview = preview;
         self
     }
 
-    /// How the preview is shown, when it is: instead of the text, or beside
-    /// it; `None` when it is not showing.
     pub fn preview_shown(&self) -> Option<postio_config::Preview> {
         self.previewing.then_some(self.preview)
     }
 
-    /// Whether the draft is in a tab of its own.
     pub fn composer_detached(&self) -> bool {
         self.detached
     }
 
-    /// What fills the window's body: the list, or, in front of it, the
-    /// message being read or the draft being written.
     pub fn front(&self) -> Front {
         let at = self.palette.as_ref().map_or(self.focus, |open| open.from);
         match at {
@@ -1053,13 +658,10 @@ impl App {
         }
     }
 
-    /// The draft being written, if one is.
     pub fn composer(&self) -> Option<&crate::composer::Composer> {
         self.composer.as_ref()
     }
 
-    /// Start writing `draft`: the composer takes the reading pane and the
-    /// keyboard.
     pub fn compose(&mut self, draft: postio_model::Draft) -> Vec<Effect> {
         self.compositions += 1;
         let identities = self
@@ -1079,14 +681,10 @@ impl App {
         self.saved_at = None;
         self.focus = Focus::Composer;
         self.detached = false;
-        // Side by side is shown from the start; the toggle starts on the text.
         self.previewing = self.preview == postio_config::Preview::Split;
         vec![Effect::Redraw]
     }
 
-    /// Leave the composer, back to the list where it was: saving what was
-    /// written, and dropping a composition nothing was written in, by the
-    /// desktop's own rule (`postio_model::draft::closing`).
     fn close_composer(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
         if let Some(composer) = self.composer.take() {
@@ -1109,7 +707,6 @@ impl App {
         effects
     }
 
-    /// Where the keyboard goes once the composer is done with it.
     fn after_composing(&self) -> Focus {
         if self.composed_from == Focus::Reader && self.reading.is_some() {
             Focus::Reader
@@ -1118,12 +715,10 @@ impl App {
         }
     }
 
-    /// The subtitle's note on the draft: when it was last saved here.
     pub fn saved_note(&self) -> Option<String> {
         self.saved_at.map(postio_ui::compose::saved_at)
     }
 
-    /// A save is due, if nothing was typed since it was asked for.
     fn autosave_due(&mut self, generation: u64, edit: u64) -> Vec<Effect> {
         match &self.composer {
             Some(composer) if composer.generation() == generation && composer.edits() == edit => {
@@ -1136,8 +731,6 @@ impl App {
         }
     }
 
-    /// Whether the list on screen is where drafts are: the Drafts folder, or
-    /// the Outbox that is a view of it.
     fn listing_drafts(&self) -> bool {
         match self.scope {
             Some(ListScope::Outbox(_)) => true,
@@ -1148,9 +741,8 @@ impl App {
         }
     }
 
-    /// A key while the composer has the keyboard: a composer command if it
-    /// names one, and otherwise typed (FR-022a). The keymap is asked in
-    /// text entry, so a plain letter is handed back rather than resolved.
+    /// The keymap is asked in text entry, so a plain letter is handed back rather than resolved
+    /// (FR-022a).
     fn composer_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         if self.scheduling.is_some() {
             return self.schedule_key(key);
@@ -1184,8 +776,7 @@ impl App {
                     effects.push(Effect::Redraw);
                 }
                 if composer.edits() != before {
-                    // Saved once the typing pauses: each edit asks for a
-                    // timer, and only the newest one's still matches.
+                    // Each edit asks for a timer, and only the newest still matches.
                     effects.push(Effect::Autosave {
                         generation: composer.generation(),
                         edit: composer.edits(),
@@ -1202,13 +793,10 @@ impl App {
         }
     }
 
-    /// The path being typed to attach a file, while it is.
     pub fn path_prompt(&self) -> Option<&str> {
         self.path_prompt.as_ref().map(tui_input::Input::value)
     }
 
-    /// A key in the path prompt: Enter attaches, Tab completes from the
-    /// disk, Escape goes back to writing.
     fn path_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
         use tui_input::backend::crossterm::EventHandler;
@@ -1235,9 +823,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// A paste, or a drop, while writing: each file named is attached, a
-    /// file that cannot be is named with why, and anything else is typed
-    /// (US3 scenarios 8, 10, 11).
     fn paste(&mut self, pasted: &str) -> Vec<Effect> {
         if let Some(prompt) = self.path_prompt.as_mut() {
             let joined = format!("{}{}", prompt.value(), pasted.trim());
@@ -1270,35 +855,26 @@ impl App {
         effects
     }
 
-    /// Take up the keys `config.toml` binds now, after it was edited.
     pub fn rekey(&mut self, keys: Keys) {
         self.keys = keys;
     }
 
-    /// The settings, while they are open.
     pub fn settings(&self) -> Option<&crate::settings::Settings> {
         self.settings.as_ref()
     }
 
-    /// The privacy pane's log, once read.
     pub fn privacy(&self) -> Option<&Privacy> {
         self.privacy.as_ref()
     }
 
-    /// The senders allowed remote images, which the privacy pane lists.
     pub fn allowlist(&self) -> &postio_ui::allowlist::RemoteImageAllowList {
         &self.allowlist
     }
 
-    /// The accounts the settings list, in the order the host gives them.
     pub fn accounts(&self) -> &[postio_model::Account] {
         &self.accounts
     }
 
-    /// A key in the settings: the arrows walk the sections, Enter edits
-    /// the one under the cursor, Tab goes into the section's list -- the
-    /// accounts, where the registry's account commands act on the account
-    /// under the cursor, or the senders allowed remote images.
     fn settings_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
         use postio_ui::settings::Section;
@@ -1328,8 +904,6 @@ impl App {
                     }
                 }
             }
-            // The privacy log is read as the pane comes up, as the desktop
-            // reads it when its panel is shown: what it says is now.
             if settings.current() == Section::Privacy && was != Section::Privacy {
                 return vec![Effect::ReadPrivacy, Effect::Redraw];
             }
@@ -1339,8 +913,6 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => settings.step_row(-1, count),
             KeyCode::Down | KeyCode::Char('j') => settings.step_row(1, count),
             KeyCode::Tab | KeyCode::BackTab => settings.set_in_list(false),
-            // The account's signatures, as the desktop's account form
-            // drills into them.
             KeyCode::Char('s') if settings.current() == Section::Accounts => {
                 let account = self
                     .accounts
@@ -1358,17 +930,12 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// A command in the settings: the account commands on the account under
-    /// the cursor, `undo` for a removal, Escape to leave.
     fn settings_command(&mut self, id: &str) -> Vec<Effect> {
         use postio_client::protocol::AccountOp;
         let Some(settings) = self.settings.as_mut() else {
             return Vec::new();
         };
         if settings.current() == postio_ui::settings::Section::Privacy && settings.in_list() {
-            // The one thing to do to an allowed sender is what the desktop's
-            // trash button does: ask again. Removing is the account list's
-            // remove key here as it is for an account.
             if id == "remove_account" {
                 let row = settings.row(self.allowlist.senders().count());
                 let sender = self.allowlist.senders().nth(row).map(str::to_owned);
@@ -1403,8 +970,6 @@ impl App {
             }),
             ("remove_account", Some(account)) => {
                 settings.removed(account.id);
-                // The key undo has, not a letter typed here: the one keymap
-                // moved it (specs/007-postio-focus contracts/keymap.md).
                 let sentence = match self.keys.key_for(KeyContext::Accounts, "undo") {
                     Some(key) => format!("{} removed — {key} to undo", account.display_name),
                     None => format!("{} removed", account.display_name),
@@ -1432,18 +997,15 @@ impl App {
         }
     }
 
-    /// The first run, while there is no account yet.
     pub fn first_run(&self) -> Option<&crate::first_run::FirstRun> {
         self.first_run.as_ref()
     }
 
-    /// A key in the first run.
     fn first_run_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         let Some(first_run) = self.first_run.as_mut() else {
             return Vec::new();
         };
-        // Escape goes back to the mail there is, except while a browser
-        // sign-in waits: there it gives the sign-in up, one step back.
+        // Escape gives a browser sign-in up, one step back, rather than leaving the first run.
         if key.code == crossterm::event::KeyCode::Esc
             && first_run.leavable()
             && *first_run.status() != postio_ui::onboarding::Status::WaitingForBrowser
@@ -1492,34 +1054,28 @@ impl App {
         }
     }
 
-    /// The same app, listening to the mouse or not (`[tui].mouse`). Off, a
-    /// click does nothing at all, and the terminal's own selection works.
+    /// Off, a click does nothing, and the terminal's own selection works.
     pub fn with_mouse(mut self, mouse: bool) -> App {
         self.mouse = mouse;
         self
     }
 
-    /// Put `reading` in the reader, as opening a message would.
     #[cfg(test)]
     pub(crate) fn set_reading_for_tests(&mut self, reading: crate::conversation::Reading) {
         self.reading = Some(reading);
         self.focus = Focus::Reader;
     }
 
-    /// What is marked.
     pub fn selection(&self) -> &postio_ui::selection::SelectionState {
         &self.selection
     }
 
-    /// What the bulk bar says is selected, when anything is.
     pub fn selection_summary(&self) -> Option<String> {
         self.selection_words.clone()
     }
 
-    /// A mouse event, on what it landed on: the same things the keys do.
     fn pointer(&mut self, pointer: Pointer) -> Vec<Effect> {
         use crate::view::hit::Target;
-        // A menu over the message holds the pointer as it holds the keyboard.
         if self.open.menu.is_some()
             && !matches!(pointer, Pointer::Click { hit, .. } if matches!(hit.target, Target::MenuRow(_)))
         {
@@ -1571,8 +1127,6 @@ impl App {
                 Pointer::Click { .. } => {}
             }
         }
-        // The bar holds the pointer as it holds the keyboard: a click outside
-        // it does nothing, and the wheel scrolls its lines.
         if self.bar.is_some() {
             match pointer {
                 Pointer::Click { hit, .. }
@@ -1598,8 +1152,6 @@ impl App {
         match pointer {
             Pointer::Click { hit, ctrl, shift } => match hit.target {
                 Target::Row(position) => {
-                    // Beside the list a click is the pointer's `j`: the
-                    // message stays open and follows.
                     let beside = self.focus == Focus::Reader && self.pane().is_some();
                     if !beside {
                         self.focus = Focus::List;
@@ -1657,13 +1209,10 @@ impl App {
                 }
                 Target::Overlay => Vec::new(),
                 Target::Surface(part, index) => self.surface_click(part, index),
-                // A row of the menu over the message is chosen.
                 Target::MenuRow(at) => self.choose(at),
-                // The notice's one button (#1952).
                 Target::NoticeOffer => self.take_up_offer(),
-                // A row's drawn answer is its key, for that row: an answer
-                // to an invitation is about the invitation wherever the
-                // cursor is; the rest take the cursor there first.
+                // An answer to an invitation is about the invitation wherever the cursor is; the
+                // rest take the cursor there first.
                 Target::RowAction(position, id) => {
                     if self.row_at(position).is_none() {
                         return Vec::new();
@@ -1681,12 +1230,9 @@ impl App {
                         .map(|picker| picker.command(postio_core::CommandId::PickerTypeDate));
                     step.map_or_else(Vec::new, |step| self.picker_step(step))
                 }
-                // The bar's own save and close are its keys'.
                 Target::Command("save_search") if self.bar.is_some() => self.bar_save(),
                 Target::Command("back") if self.bar.is_some() => self.close_bar(),
-                // A control is its command, the same as its key.
                 Target::Command(id) => self.command(id),
-                // A button is its command, the same as its key.
                 Target::ComposerAction(id) => {
                     if self.composer.is_none() {
                         return Vec::new();
@@ -1712,7 +1258,6 @@ impl App {
         }
     }
 
-    /// A click on line `line` of what is being read: what the keys do there.
     fn click_reader(&mut self, line: usize) -> Vec<Effect> {
         use crate::conversation::At;
         let at = self.line_at(line);
@@ -1728,8 +1273,8 @@ impl App {
                 reading.toggle_fold(member, block);
                 vec![Effect::Redraw]
             }
-            // Nothing leaves this machine on one click: the first shows the
-            // whole destination, and only a second on the same link opens it.
+            // Nothing leaves this machine on one click: the first shows the whole destination, and
+            // only a second on the same link opens it.
             At::Link(target) => {
                 if self.armed_link.as_deref() == Some(target.as_str()) {
                     self.armed_link = None;
@@ -1742,8 +1287,6 @@ impl App {
                     effects
                 }
             }
-            // A click on an attachment's line opens it with the system's
-            // opener.
             At::Part { member, part } => {
                 let Some(member) = reading.members.get(member) else {
                     return Vec::new();
@@ -1760,7 +1303,6 @@ impl App {
         }
     }
 
-    /// Scroll the list by `lines`, keeping the cursor on a row in view.
     fn scroll_list(&mut self, lines: isize) {
         let last_top = self.top_for_bottom(self.list.total().saturating_sub(1));
         let top = i64::from(self.top) + lines as i64;
@@ -1769,13 +1311,11 @@ impl App {
         self.cursor = self.cursor.clamp(self.top, self.top + shown - 1);
     }
 
-    /// The same app, knowing the terminal delivers every chord.
     pub fn with_enhanced_keys(mut self, enhanced: bool) -> App {
         self.enhanced_keys = enhanced;
         self
     }
 
-    /// Open the palette in one of its modes, from wherever the keyboard is.
     fn open_palette(&mut self, finding: Finding) -> Vec<Effect> {
         let from = match self.focus {
             Focus::Palette => Focus::List,
@@ -1791,15 +1331,11 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    // -- The command bar (src/bar.rs) ------------------------------------
-
-    /// The bar and what it needs to draw, while it is open.
     pub fn bar(&self) -> Option<(&crate::bar::Bar, crate::bar::Ctx<'_>)> {
         let bar = self.bar.as_ref()?;
         Some((bar, self.bar_ctx(bar.from(), self.keys.keymap())))
     }
 
-    /// What the bar needs of the app, for a bar opened over `from`.
     fn bar_ctx<'a>(&self, from: Focus, keymap: &'a postio_core::Keymap) -> crate::bar::Ctx<'a> {
         crate::bar::Ctx {
             keymap,
@@ -1809,12 +1345,10 @@ impl App {
         }
     }
 
-    /// What is typed in the bar, while it is open.
     pub fn bar_typed(&self) -> Option<&str> {
         self.bar.as_ref().map(crate::bar::Bar::typed)
     }
 
-    /// Open the bar holding `typed`, over where the keyboard is.
     fn open_bar(&mut self, typed: &str) -> Vec<Effect> {
         let from = match (&self.bar, self.focus) {
             (Some(bar), _) => bar.from(),
@@ -1851,7 +1385,6 @@ impl App {
         effects
     }
 
-    /// Run `f` on the bar with the keys and what it needs.
     fn with_bar<T>(
         &mut self,
         f: impl FnOnce(&mut crate::bar::Bar, &mut Keys, &crate::bar::Ctx<'_>) -> T,
@@ -1899,7 +1432,6 @@ impl App {
         }
     }
 
-    /// What a key or a click in the bar asks for.
     fn bar_step(&mut self, step: crate::bar::Step) -> Vec<Effect> {
         use crate::bar::Step;
         match step {
@@ -1925,7 +1457,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// Close the bar and do what its row asked, where it opened.
     fn bar_act(&mut self, action: postio_ui::command_bar::BarAction) -> Vec<Effect> {
         use postio_ui::command_bar::BarAction;
         let Some(bar) = self.bar.take() else {
@@ -1937,7 +1468,6 @@ impl App {
             BarAction::Open { message, .. } => self.open_found(message, bar.result_of(message)),
             BarAction::Command(id) => {
                 if postio_ui::command_bar::ACCOUNT_VERBS.contains(&id) && from != Focus::Settings {
-                    // Account verbs act on the account row Settings has.
                     self.settings = Some(crate::settings::Settings::default());
                     self.focus = Focus::Settings;
                     return self.say("Pick an account in Settings, then run it again");
@@ -1952,8 +1482,6 @@ impl App {
         }
     }
 
-    /// Show `destination` in the list: a label is its search, as Focus lists
-    /// no label on its own.
     fn go_destination(
         &mut self,
         destination: postio_ui::finder::Destination,
@@ -1977,15 +1505,11 @@ impl App {
         }
     }
 
-    /// Open a message a search found, as a row opens it: the one in the list
-    /// when it is there, otherwise on its own.
     fn open_found(
         &mut self,
         message: postio_model::MessageId,
         found: Option<&crate::bar::ResultRow>,
     ) -> Vec<Effect> {
-        // The message itself, wherever it is: the list's row when this list
-        // has one, else what the bar says of it. Its verbs aim at it.
         let row = self
             .list
             .row_of(message)
@@ -2041,8 +1565,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The labels and correspondents arrived: labels are places, and a typed
-    /// name is looked up among the correspondents.
     fn place_details(&mut self, details: crate::places::PlaceDetails) -> Vec<Effect> {
         let labels = details
             .labels
@@ -2063,15 +1585,10 @@ impl App {
         }
     }
 
-    // -- The pickers (src/pickers.rs) --------------------------------------
-
-    /// The picker and its keymap, while one is open.
     pub fn picker(&self) -> Option<(&crate::pickers::Picker, &postio_core::Keymap)> {
         Some((self.picker.as_ref()?, self.keys.keymap()))
     }
 
-    /// The rows a verb acts on: the message open for itself, else those
-    /// selected, or the cursor's.
     fn aimed_rows(&self) -> Vec<&Row> {
         if let Some(own) = self
             .reading
@@ -2098,8 +1615,6 @@ impl App {
         }
     }
 
-    /// What a picker names as its target: the conversation under the cursor,
-    /// or how many are selected.
     fn picker_target(&self) -> Option<String> {
         if let postio_core::Selection::Everything { .. } = self.selection.selection() {
             return Some(postio_ui::pickers::EVERY_THREAD.to_owned());
@@ -2113,7 +1628,6 @@ impl App {
         ))
     }
 
-    /// `b`, `h`, `l` or `v`: the picker, over the row the keyboard is on.
     fn open_picker(&mut self, kind: crate::pickers::Kind) -> Vec<Effect> {
         use crate::pickers::{Kind, Picker};
         let Some(target) = self.picker_target() else {
@@ -2163,9 +1677,6 @@ impl App {
         effects
     }
 
-    /// Open the remind picker for the draft being written, over the
-    /// composer. What it chooses goes on the draft as `remind_at`, and is
-    /// sent with it.
     pub fn open_remind_picker_for_draft(&mut self, target: &str) -> Vec<Effect> {
         let from = match self.focus {
             Focus::Picker => Focus::Composer,
@@ -2214,7 +1725,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// What a choice sends, aimed where the picker opened.
     fn picker_pick(&mut self, pick: crate::pickers::Pick, close: bool) -> Vec<Effect> {
         use crate::pickers::{Kind, Pick};
         use postio_core::{Command, CommandId};
@@ -2288,7 +1798,6 @@ impl App {
         }
     }
 
-    /// A label was made for the picker: it is put on what the picker acts on.
     fn label_made(&mut self, label: Option<postio_model::Label>, close: bool) -> Vec<Effect> {
         let Some(mut label) = label else {
             return self.say("The label could not be made");
@@ -2311,15 +1820,10 @@ impl App {
         })
     }
 
-    // -- The folders popover (src/folders.rs) -----------------------------
-
-    /// The popover and what it lists from, while it is open.
     pub fn folders(&self) -> Option<(&crate::folders::Folders, crate::folders::Reach<'_>)> {
         Some((self.places_box.as_ref()?, self.folders_reach()))
     }
 
-    /// Whether filtering is on, and how many were filtered today when the
-    /// count is in: what Settings' Filtering section says.
     pub fn filtering(&self) -> (bool, Option<u32>) {
         (
             self.features.filtering,
@@ -2337,7 +1841,6 @@ impl App {
         }
     }
 
-    /// `g l`, or a click on the strip's place.
     fn open_folders(&mut self) -> Vec<Effect> {
         let from = match (&self.places_box, self.focus) {
             (Some(open), _) => open.from(),
@@ -2407,7 +1910,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The registry's context for where the keyboard is.
     fn context_of(focus: Focus) -> postio_core::Context {
         match focus {
             Focus::List | Focus::Palette | Focus::FirstRun => postio_core::Context::List,
@@ -2425,10 +1927,8 @@ impl App {
         }
     }
 
-    /// What can run here, given what is on screen.
     fn availability(&self) -> postio_core::Availability {
         postio_core::Availability {
-            // The composer's `$EDITOR` and preview are this frontend's own.
             frontend: postio_core::Frontend::Terminal,
             ..postio_core::Availability::open(
                 self.account
@@ -2437,9 +1937,6 @@ impl App {
         }
     }
 
-    // -- The key map (src/sheet.rs) ----------------------------------------
-
-    /// The key map and its columns, while it is open.
     pub fn key_map(&self) -> Option<(&crate::sheet::Sheet, Vec<Vec<crate::sheet::Line>>)> {
         let sheet = self.sheet.as_ref()?;
         let width = crate::view::sheet::body(self.screen()).width;
@@ -2453,7 +1950,6 @@ impl App {
         ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1)
     }
 
-    /// How far the key map can scroll, and how far a page is.
     fn sheet_limits(&self) -> (usize, usize) {
         let body = crate::view::sheet::body(self.screen());
         let columns = crate::sheet::columns(self.keys.keymap(), self.enhanced_keys, body.width);
@@ -2489,7 +1985,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The palette as it is drawn, while it is open.
     pub fn palette(&self) -> Option<PaletteView> {
         let state = self.palette.as_ref()?;
         let query = state.input.value().to_owned();
@@ -2510,13 +2005,9 @@ impl App {
         })
     }
 
-    /// The rows for what is typed, each with what choosing it does.
     fn palette_rows(&self, state: &PaletteState) -> Vec<(PaletteRow, PaletteAction)> {
         let query = state.input.value();
         match state.finding {
-            // ADR 0035's role map: the desktop's roles in its order, then the
-            // account's folders with "Automatic" first, as its picker lists
-            // them.
             Finding::Roles(account) => {
                 let offered = postio_ui::settings::MAPPABLE_ROLES
                     .iter()
@@ -2573,8 +2064,6 @@ impl App {
         }
     }
 
-    /// A key in the palette: typed into its query, the arrows choose, Enter
-    /// runs the chosen row where the palette was opened, Escape closes.
     fn palette_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
         use tui_input::backend::crossterm::EventHandler;
@@ -2631,13 +2120,10 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The schedule-send picker's times, while it is open.
     pub fn scheduling(&self) -> Option<&[(&'static str, chrono::DateTime<chrono::Local>)]> {
         self.scheduling.as_ref().map(|times| times.as_slice())
     }
 
-    /// A key while the schedule picker is open: a number picks, Escape
-    /// goes back to writing.
     fn schedule_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
         let Some(times) = self.scheduling else {
@@ -2657,9 +2143,6 @@ impl App {
         }
     }
 
-    /// Send what is being written, now or at `at`, unless something stops
-    /// it: nobody to send to, or a question to ask first (FR-018, FR-057),
-    /// asked once and answered by sending again.
     fn send_draft(&mut self, at: Option<chrono::DateTime<chrono::Utc>>) -> Vec<Effect> {
         let Some(composer) = self.composer.as_ref() else {
             return Vec::new();
@@ -2685,8 +2168,7 @@ impl App {
             ));
         }
         let generation = composer.generation();
-        // The send is the write: the composer closes with nothing to save or
-        // discard, and the draft is the queue's now.
+        // The send is the write: the composer closes with nothing to save or discard.
         self.composer = None;
         self.asked_at = None;
         self.focus = self.after_composing();
@@ -2700,7 +2182,6 @@ impl App {
         ]
     }
 
-    /// A command run with the composer in front.
     fn composer_command(&mut self, id: &str) -> Vec<Effect> {
         match id {
             "send" => self.send_draft(None),
@@ -2715,9 +2196,8 @@ impl App {
                 }],
                 None => Vec::new(),
             },
-            // The desktop's Insert image opens a chooser; a terminal's own
-            // paste carries text only, so this is where an image is asked
-            // for -- the one place the clipboard is read (FR-026).
+            // A terminal's own paste carries text only, so this is the one place the clipboard is
+            // read (FR-026).
             "insert_image" => vec![Effect::ReadClipboardImage],
             "attach_file" => {
                 self.path_prompt = Some(tui_input::Input::default());
@@ -2727,9 +2207,8 @@ impl App {
                 self.scheduling = Some(postio_ui::schedule::schedule_presets(chrono::Local::now()));
                 vec![Effect::Redraw]
             }
-            // Escape. The draft is not lost by leaving: it is autosaved, a row
-            // in Drafts, as the desktop's Esc parks one.
-            // A draft that has the whole screen gives it back first.
+            // The draft is not lost by leaving: it is autosaved into Drafts. A draft that has the
+            // whole screen gives it back first.
             "back" if self.detached => {
                 self.detached = false;
                 vec![Effect::Redraw]
@@ -2743,8 +2222,6 @@ impl App {
                 self.open_remind_picker_for_draft(&subject)
             }
             "back" | "discard_draft" => self.close_composer(),
-            // The desktop moves its composer into a window of its own; here
-            // it is a tab, and the reading pane goes back to the reader.
             "detach_composer" => {
                 self.detached = !self.detached;
                 vec![Effect::Redraw]
@@ -2777,8 +2254,6 @@ impl App {
                     },
                 ]
             }
-            // The fetch and its row arrive with spec 014 US8 (T042, T047);
-            // until a body can name a remote image there is none to fetch.
             // One request a press, for the first image not downloading.
             "attach_remote_image" => {
                 let Some(composer) = self.composer.as_mut() else {
@@ -2802,19 +2277,14 @@ impl App {
                 }
                 vec![Effect::Redraw]
             }
-            // Everything else the composer context reaches -- quitting, the
-            // palette -- means what it means anywhere.
             _ => self.command(id),
         }
     }
 
-    /// The key that runs `command`, as this terminal can send it, for a
-    /// hint; `None` when nothing it can send is bound.
     pub fn hint(&self, command: postio_core::CommandId) -> Option<String> {
         postio_ui::terminal::deliverable_binding(self.keys.keymap(), command, self.enhanced_keys)
     }
 
-    /// The keymap context the keyboard is in.
     fn key_context(&self) -> KeyContext {
         match self.focus {
             Focus::List => KeyContext::List,
@@ -2834,24 +2304,19 @@ impl App {
         }
     }
 
-    /// What the status line says about the last thing done.
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
     }
 
-    /// Put `sentence` on the status line. Through `SafeText`: these are
-    /// Postio's own sentences, but an error can quote a folder name, and a
-    /// folder name came from a server.
+    /// Through `SafeText`: an error can quote a folder name, which came from a server.
     fn say(&mut self, sentence: &str) -> Vec<Effect> {
         self.say_as(Tone::Plain, sentence, None)
     }
 
-    /// [`App::say`], as news of `tone`, offering undo on `undo`.
     fn say_as(&mut self, tone: Tone, sentence: &str, undo: Option<String>) -> Vec<Effect> {
         self.say_for(tone, sentence, undo, TOAST)
     }
 
-    /// [`App::say_as`], staying `after` rather than the toast's own time.
     fn say_for(
         &mut self,
         tone: Tone,
@@ -2873,38 +2338,31 @@ impl App {
         ]
     }
 
-    /// What kind of news the status line's notice is.
     pub fn notice_tone(&self) -> Tone {
         self.notice_tone
     }
 
-    /// The key the notice offers undo on, when it does.
     pub fn notice_undo(&self) -> Option<&str> {
         self.notice_undo.as_deref()
     }
 
-    /// The label of the one button the notice offers, when it offers one.
     pub fn notice_offer(&self) -> Option<&str> {
         self.notice_offer.as_ref().map(|(label, _)| label.as_str())
     }
 
-    /// The same app, mirroring into `state`: the one the client snapshots.
     pub fn with_state(mut self, state: postio_core::SharedState) -> App {
         self.state = state;
         self
     }
 
-    /// The state the client snapshots with each command.
     pub fn state(&self) -> postio_core::SharedState {
         self.state.clone()
     }
 
-    /// Whether the has-action filter is on.
     pub fn has_action(&self) -> bool {
         self.scope == Some(ListScope::Focus(postio_model::FocusScope::HasAction))
     }
 
-    /// What the strip says about the place on screen.
     pub fn strip(&self) -> Strip {
         let focus = matches!(
             self.scope,
@@ -2959,8 +2417,6 @@ impl App {
         }
     }
 
-    /// What the top bar's sync label says: where every account whose
-    /// connection has been heard of stands, and when mail last arrived.
     pub fn sync_label(&self) -> postio_ui::focus_state::SyncLabel {
         let folders: Vec<(postio_model::MailboxId, String)> = self
             .folders
@@ -2974,8 +2430,6 @@ impl App {
         )
     }
 
-    /// The one banner under the strip, when there is one: a refused
-    /// password, an account that cannot sync, no network, or a first sync.
     pub fn banner(&self) -> Option<postio_ui::focus_state::Banner> {
         let facts: Vec<postio_ui::focus_state::AccountFacts> = self
             .accounts
@@ -2995,8 +2449,6 @@ impl App {
         postio_ui::focus_state::banner(&self.trackers.statuses(&self.tracked), &facts)
     }
 
-    /// What the list's place says while Focus's inbox has no conversations
-    /// and the has-action filter is off; nothing otherwise.
     pub fn empty_inbox(
         &self,
         now: chrono::DateTime<chrono::Local>,
@@ -3022,7 +2474,6 @@ impl App {
         )
     }
 
-    /// What the strip calls the place on screen.
     pub fn place_name(&self) -> postio_ui::terminal::SafeText {
         match self.scope {
             Some(scope) => crate::places::name_of(&self.places, scope),
@@ -3030,13 +2481,10 @@ impl App {
         }
     }
 
-    /// Whether the terminal has room for the window; when it has not, the
-    /// screen says so and draws nothing else.
     pub fn fits(&self) -> bool {
         crate::layout::fits(self.size.0, self.size.1)
     }
 
-    /// The window's rows at this size.
     pub fn window(&self) -> crate::layout::Window {
         crate::layout::window(
             ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1),
@@ -3044,34 +2492,25 @@ impl App {
         )
     }
 
-    /// The row the keyboard is on.
     pub fn cursor(&self) -> u32 {
         self.cursor
     }
 
-    /// How many rows the list has.
     pub fn total(&self) -> u32 {
         self.list.total()
     }
 
-    /// The lines the list may use.
     fn list_lines(&self) -> u16 {
         self.window().list.height
     }
 
-    /// The row at `position`, when its page is here.
     pub fn row_at(&self, position: u32) -> Option<&Row> {
         self.list.resident_at(position).map(|held| &held.row)
     }
 
-    /// The heading that starts at `position` in a view whose first position
-    /// is `top`: the day its mail arrived on, where that is not the day of
-    /// the row before it. The first row in view always has one. Search
-    /// results are ranked, not dated, and have none.
     fn heading_at(&self, position: u32, top: u32) -> Option<Heading> {
         let row = self.row_at(position)?;
         if self.has_action() {
-            // One heading over the whole list, not a day's.
             return (position == 0).then(|| {
                 Heading::Text(postio_ui::focus_row::has_action_label(
                     self.counts.map(|counts| counts.has_action),
@@ -3087,16 +2526,11 @@ impl App {
         starts.then_some(Heading::Day(day))
     }
 
-    /// How many lines the row at `position` takes with the heading that
-    /// starts there, as the view from `top` draws them. A row whose page is
-    /// still on its way is one line.
     fn lines_at(&self, position: u32, top: u32) -> u16 {
         crate::view::list::lines_of(self.row_at(position))
             + u16::from(self.heading_at(position, top).is_some())
     }
 
-    /// How many rows, from position `top`, fit in the list: at least one.
-    /// Only the rows in view are read.
     fn fit_from(&self, top: u32) -> u32 {
         let room = self.list_lines();
         let mut used = 0u16;
@@ -3112,20 +2546,14 @@ impl App {
         shown.max(1)
     }
 
-    /// The first position of a view that ends with `cursor` at its foot, as
-    /// well as the rows here say: walked back from the cursor, each row with
-    /// the heading it draws inside the view -- one where its day begins --
-    /// and the one heading the view's first row always has.
     fn top_for_bottom(&self, cursor: u32) -> u32 {
         let room = self.list_lines();
-        // The day heading `position` draws when it is not the first in view.
         let day = |position: u32| u16::from(position > 0 && self.heading_at(position, 0).is_some());
         let mut top = cursor;
         let mut used = crate::view::list::lines_of(self.row_at(cursor)) + day(cursor);
         while top > 0 {
             let before = top - 1;
             let lines = crate::view::list::lines_of(self.row_at(before));
-            // With `before` first, its heading is drawn whatever the day.
             if used.saturating_add(lines + 1) > room {
                 break;
             }
@@ -3135,7 +2563,6 @@ impl App {
         top
     }
 
-    /// The rows in view, for drawing. Reads only what is resident.
     pub fn visible(&self) -> Vec<Visible<'_>> {
         let end = (self.top + self.fit_from(self.top)).min(self.list.total());
         (self.top..end)
@@ -3151,7 +2578,6 @@ impl App {
             .collect()
     }
 
-    /// Move the cursor to `position`, keeping it in view.
     fn move_to(&mut self, position: u32) {
         let last = self.list.total().saturating_sub(1);
         self.cursor = position.min(last);
@@ -3163,8 +2589,6 @@ impl App {
         self.reveal();
     }
 
-    /// Scroll just far enough that the cursor's row is in view: rows that
-    /// landed since may be taller than the guess the view was placed by.
     fn reveal(&mut self) {
         let last = self.list.total().saturating_sub(1);
         self.cursor = self.cursor.min(last);
@@ -3177,19 +2601,13 @@ impl App {
         }
     }
 
-    /// The message the cursor is on, if its row is here.
     fn cursor_message(&self) -> Option<postio_model::MessageId> {
         self.list.peek(self.cursor)
     }
 
-    /// Run a command the keymap resolved to.
-    ///
-    /// Moving and marking are this frontend's own: they change what is on
-    /// screen and nothing in the store. Everything else is aimed by
-    /// `postio_core::aim` -- the rule every frontend shares for what a verb
-    /// acts on -- mirrored into [`App::state`], and sent.
-    /// Leave Postio, from wherever the person is. What is being written is
-    /// saved on the way out.
+    /// Moving and marking are this frontend's own; everything else is aimed by `postio_core::aim`,
+    /// mirrored into `App::state`, and sent.
+    /// Leaving saves what is being written on the way out.
     fn quit(&mut self) -> Vec<Effect> {
         let mut effects = if self.composer.is_some() {
             self.close_composer()
@@ -3240,9 +2658,6 @@ impl App {
                     "reply_all" => ReplyKind::ReplyAll,
                     _ => ReplyKind::Forward,
                 };
-                // What is being read, as the desktop's reply reads what its
-                // reading pane shows (#325); the row under the cursor when
-                // nothing is open yet.
                 let message = self
                     .reading
                     .as_ref()
@@ -3253,9 +2668,8 @@ impl App {
                     return vec![Effect::ReplySource { kind, message }];
                 }
             }
-            // A draft being written is resumed, from its row or its open
-            // message; one on its way or stopped is read.
-            // A digest opens in its own window, not as a message.
+            // A draft being written is resumed; one on its way or stopped is read. A digest opens
+            // in its own window.
             "open_message" if self.focus == Focus::List && self.cursor_is_digest() => {
                 return self.open_digest();
             }
@@ -3276,14 +2690,9 @@ impl App {
                     return vec![Effect::Resume(message)];
                 }
             }
-            // Opening is the reader's own business, not a store verb: the
-            // row under the cursor is read if it is not already, and the
-            // keyboard goes into it.
             "open_message" => {
                 return self.open_at_cursor();
             }
-            // One composition at a time, as the desktop's `c` does with a
-            // composer already open: it goes back to it.
             "compose" if self.composer.is_some() => {
                 self.focus = Focus::Composer;
                 return vec![Effect::Redraw];
@@ -3309,19 +2718,14 @@ impl App {
                 self.first_run = Some(crate::first_run::FirstRun::another());
                 self.focus = Focus::FirstRun;
             }
-            // The bar's own keys: it resolves them itself while it is open, and
-            // there is nothing for them to do anywhere else.
             "toggle_result_order" | "save_search" | "back_to_words" => {}
             "back" if self.focus == Focus::Reader => return self.back_from_message(),
-            // A picker resolves its own keys while it is open.
             "picker_choose_1" | "picker_choose_2" | "picker_choose_3" | "picker_choose_4"
             | "picker_type_date" | "picker_toggle" | "picker_confirm" => {}
             "back" if self.focus != Focus::List => self.focus = Focus::List,
             "expand_all" => self.toggle_folds(),
             "show_images" => return self.allow_images(false),
             "always_show_images" => return self.allow_images(true),
-            // The notice's own button, from the keyboard (#1953): the offer
-            // on the status line if there is one, else a sentence saying so.
             "clear_list_mail" => {
                 if self.notice_offer.is_some() {
                     return self.take_up_offer();
@@ -3350,15 +2754,10 @@ impl App {
             }
             "scroll_reader_down" => self.scroll_reader(1),
             "scroll_reader_up" => self.scroll_reader(-1),
-            // One toggle in a terminal: reader view is the readable form of
-            // bulk mail here, and both commands move between it and the
-            // sender's own markup (spec 006 FR-031).
+            // One toggle in a terminal: reader view is the readable form of bulk mail here
+            // (FR-031).
             "view_original" | "toggle_reader_view" => return self.view_original(),
-            // One message is shown at a time, so there is none to fold to
-            // its header.
             "toggle_fold" => {
-                // The keys are whatever the keymap has them on, Gmail's
-                // `n` and `p` by default.
                 let key = |command| {
                     self.keys
                         .key_for(KeyContext::Reader, command)
@@ -3371,8 +2770,6 @@ impl App {
                 );
                 return self.say(&sentence);
             }
-            // The invitation on the open message, or on the cursor's row:
-            // the host queues the reply for its window (FR-102).
             "accept_invite" | "decline_invite" => {
                 let message = self
                     .reading
@@ -3389,7 +2786,6 @@ impl App {
                     return self.answer(message, command);
                 }
             }
-            // The banner's button: sign in again to the account it names.
             "update_credential" => {
                 if let Some(postio_ui::focus_state::Banner::SignIn { address, .. }) = self.banner()
                     && let Some(account) = self
@@ -3407,7 +2803,6 @@ impl App {
             "digest_like_this" => return self.digest_like_this(),
             "capture_task" => return self.open_capture(postio_ui::capture::Mode::Task),
             "capture_note" => return self.open_capture(postio_ui::capture::Mode::Note),
-            // The sheet's own, with no sheet open.
             "capture_change_project" | "capture_use_subject" | "capture_write" => {
                 return Vec::new();
             }
@@ -3416,8 +2811,6 @@ impl App {
             "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
             "go_to_drafts" => return self.go_to(postio_model::mailbox::MailboxRole::Drafts),
             "go_to_flagged" => return self.go_to(postio_model::mailbox::MailboxRole::Flagged),
-            // The one keymap's two new destinations (specs/007-postio-focus
-            // T162), by role like the others, as the desktop reaches them.
             "go_to_archive" => return self.go_to(postio_model::mailbox::MailboxRole::Archive),
             "go_to_snoozed" => return self.go_to(postio_model::mailbox::MailboxRole::Snoozed),
             "go_to_outbox" => return self.go_to(postio_model::mailbox::MailboxRole::Outbox),
@@ -3427,8 +2820,6 @@ impl App {
             "saved_search_2" => return self.pinned_search(1),
             "saved_search_3" => return self.pinned_search(2),
             "saved_search_4" => return self.pinned_search(3),
-            // Gmail's `u`, back to the list: from an open message that is
-            // closing it, as `Escape` does, not the view before this one.
             "prev_view" if self.focus == Focus::Reader => return self.back_from_message(),
             "prev_view" => {
                 return self.tell(postio_focus::Input::Command(
@@ -3441,8 +2832,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The message on screen in the sender's own markup, or back in reader
-    /// view: redrawn from the body it arrived with, nothing asked again.
     fn view_original(&mut self) -> Vec<Effect> {
         let Some(member) = self
             .reading
@@ -3468,8 +2857,6 @@ impl App {
         )
     }
 
-    /// The account the go-to keys and the scope cycle start from: the one
-    /// on screen, or the first.
     fn account_here(&self) -> Option<postio_model::AccountId> {
         self.account.or_else(|| {
             self.accounts
@@ -3479,20 +2866,15 @@ impl App {
         })
     }
 
-    /// The account's folder with `role`, or its Flagged view, as the
-    /// desktop's `g` keys open them.
     fn go_to(&mut self, role: postio_model::mailbox::MailboxRole) -> Vec<Effect> {
         use postio_model::mailbox::MailboxRole;
         let Some(account) = self.account_here() else {
             return Vec::new();
         };
         let scope = match role {
-            // Views, not folders (ADR 0036): opened by their role.
             MailboxRole::Flagged => Some(ListScope::Flagged(account)),
             MailboxRole::Snoozed => Some(ListScope::Snoozed(account)),
-            // A view over Drafts, not a folder.
             MailboxRole::Outbox => Some(ListScope::Outbox(account)),
-            // Focus's inbox is every account's, as one.
             MailboxRole::Inbox => Some(ListScope::Focus(postio_model::FocusScope::Inbox)),
             role => self
                 .folders
@@ -3506,9 +2888,6 @@ impl App {
         }
     }
 
-    /// The saved search pinned `index`th, run as the finder runs it:
-    /// `alt+1`...`alt+4`, as the desktop's are (specs/007-postio-focus
-    /// T162). A place with nothing pinned in it is said.
     fn pinned_search(&mut self, index: usize) -> Vec<Effect> {
         let Some(query) = self
             .places
@@ -3521,8 +2900,6 @@ impl App {
         self.open_bar(&query)
     }
 
-    /// Each account's inbox in turn, then every account at once when there
-    /// is more than one -- the desktop's `next_scope`.
     fn next_scope(&mut self) -> Vec<Effect> {
         use postio_model::mailbox::MailboxRole;
         let mut scopes: Vec<ListScope> = self
@@ -3560,8 +2937,6 @@ impl App {
         self.open_scope(scopes[next])
     }
 
-    /// Answer the invitation `message` carries, as `id` says: through the
-    /// host, which queues the reply for the answer's window.
     fn answer(
         &mut self,
         message: postio_model::MessageId,
@@ -3577,11 +2952,7 @@ impl App {
         })]
     }
 
-    /// Aim a verb at what the user is looking at, and send it.
-    ///
-    /// A move with no folder and a label with no label are half a request:
-    /// `None` means "ask", and this is the terminal asking, as the desktop's
-    /// window opens its finder for them.
+    /// A move with no folder and a label with no label are half a request: `None` means "ask".
     fn send(&mut self, id: &str) -> Vec<Effect> {
         let Ok(id) = id.parse::<postio_core::CommandId>() else {
             return Vec::new();
@@ -3597,8 +2968,6 @@ impl App {
         }
     }
 
-    /// Send `id` aimed as [`App::send`] aims it, with the answer to what it
-    /// asked filled in.
     fn send_answered(
         &mut self,
         id: postio_core::CommandId,
@@ -3614,7 +2983,6 @@ impl App {
         effects
     }
 
-    /// Aim a verb at what the user is looking at, and send it as it is.
     fn send_aimed(&mut self, id: postio_core::CommandId) -> Vec<Effect> {
         let reachable: Vec<postio_model::AccountId> = self
             .accounts
@@ -3623,8 +2991,6 @@ impl App {
             .map(|account| account.id)
             .collect();
         let (quiet, _) = postio_core::bridge::event_channel();
-        // A message opened for itself is what the verb is about; the list's
-        // cursor and marks are somewhere else.
         if let Some(own) = self.own_aim() {
             let nothing = postio_core::Selection::These(Vec::new());
             let aim = postio_core::aim::Aim {
@@ -3648,21 +3014,17 @@ impl App {
         };
         let command = postio_core::aim::command_for(id, &aim);
         postio_core::aim::mirror(&self.state, &quiet, &aim);
-        // What was selected has been acted on: the selection lets go.
         self.selection.clear();
         vec![Effect::Send(command)]
     }
 
-    /// Expand every fold in what is being read, or fold them all again.
     fn toggle_folds(&mut self) {
         if let Some(reading) = self.reading.as_mut() {
             reading.toggle_folds();
         }
     }
 
-    /// Allow the current message's remote images: this once, or from its
-    /// sender always -- which is written to the allow list the desktop app
-    /// reads too, so the sender is trusted in both.
+    /// "Always" writes the allow list the desktop app reads too.
     fn allow_images(&mut self, always: bool) -> Vec<Effect> {
         let Some(reading) = self.reading.as_mut() else {
             return Vec::new();
@@ -3693,9 +3055,7 @@ impl App {
         ]
     }
 
-    /// Open `message` for reading: its body is read now, and its
-    /// conversation when it has several messages (FR-195). Nothing is read
-    /// by the cursor passing over a row.
+    /// Nothing is read by the cursor passing over a row.
     pub fn open_reading(&mut self, message: postio_model::MessageId) -> Vec<Effect> {
         let shown = self.reading.as_ref().map(|reading| reading.row) == Some(message);
         if shown {
@@ -3705,7 +3065,6 @@ impl App {
             return Vec::new();
         };
         if row.kind == crate::row::Kind::Digest {
-            // A digest opens in its own window (T323), not as a message.
             return Vec::new();
         }
         match row.thread {
@@ -3731,8 +3090,6 @@ impl App {
         }
     }
 
-    /// A conversation's members arrived: read each one's body, and open on
-    /// the newest.
     fn conversation(
         &mut self,
         thread: postio_model::ThreadId,
@@ -3753,8 +3110,6 @@ impl App {
             .map(crate::conversation::Member::from_summary)
             .collect();
         reading.current = reading.members.len().saturating_sub(1);
-        // Only the message shown is read; the others when they are stepped
-        // to (FR-195).
         let mut effects = vec![Effect::Redraw];
         if let Some(member) = reading.members.get_mut(reading.current) {
             member.asked = true;
@@ -3765,7 +3120,6 @@ impl App {
         effects
     }
 
-    /// A body arrived: put it on its member, if it is still being read.
     fn show(
         &mut self,
         message: postio_model::MessageId,
@@ -3777,8 +3131,6 @@ impl App {
         };
         let absent = |state| crate::reader::from_html(&absent_html(state));
         let mut held_back = postio_ui::reader::document::HeldBack::default();
-        // Asked for by `view_original`: this message's own markup, whatever
-        // the rule would have chosen.
         let asked_original = self
             .reading
             .as_ref()
@@ -3788,8 +3140,6 @@ impl App {
         let mut reader_view = false;
         let rendered = match answer {
             Ok(Body::Ready { body, .. }) if body.html.is_some() => {
-                // The rule every reader applies: reader view for bulk mail,
-                // the sender's own markup (sanitised, folded) otherwise.
                 let rendering = if !asked_original && suits_reader_view(&body) {
                     Rendering::Reader
                 } else {
@@ -3797,8 +3147,8 @@ impl App {
                 };
                 reader_view = rendering == Rendering::Reader;
                 source = Some(body.clone());
-                // Blocked always: a terminal draws no image, so allowing them
-                // changes what the notice says and never what is fetched.
+                // Blocked always: a terminal draws no image, so allowing changes what the notice
+                // says, never what is fetched.
                 let drawn = body_html(&body, postio_body::RemoteImages::Blocked, rendering);
                 held_back = drawn.held_back;
                 crate::reader::from_html(&drawn.html)
@@ -3838,8 +3188,6 @@ impl App {
         effects
     }
 
-    /// Take in the places, keeping the account the list on screen belongs
-    /// to.
     fn fill_places(&mut self, contents: &crate::places::Places) -> Vec<Effect> {
         self.places = contents.clone();
         if let Some(bar) = self.bar.as_mut() {
@@ -3881,18 +3229,14 @@ impl App {
             self.account = self.account_of(scope);
         }
         if contents.accounts.is_empty() {
-            // No account: the first screen offers to add one rather than
-            // showing an empty shell (US7 scenario 1).
             if self.first_run.is_none() {
                 self.first_run = Some(crate::first_run::FirstRun::default());
                 self.focus = Focus::FirstRun;
             }
             return vec![Effect::Redraw];
         }
-        // An account arrived from elsewhere -- added on the desktop, say --
-        // while the first run was still asking for one: it is done, unless
-        // it is this run's own account and the last question is still open,
-        // or the run was asked for from the mail, which it leaves by itself.
+        // An account arriving from elsewhere ends the first run, unless it is this run's own
+        // account with the last question still open.
         if self.first_run.as_ref().is_some_and(|run| {
             !run.leavable() && *run.status() != postio_ui::onboarding::Status::SyncWindow
         }) {
@@ -3907,17 +3251,13 @@ impl App {
                 .iter()
                 .any(|folder| folder.role == postio_model::mailbox::MailboxRole::Inbox)
         {
-            // Every account's inbox, as one, once there is some to show.
             effects.extend(self.open_scope(ListScope::Focus(postio_model::FocusScope::Inbox)));
         }
         effects
     }
 
-    /// A name typed in the palette, for what asked for it.
     fn named(&mut self, name: String) -> Vec<Effect> {
         let effect = match self.renaming.take() {
-            // The picker shows the name, so a signature without one is
-            // refused here, as the desktop's form refuses it.
             Some(Renaming::Signature { .. }) if name.is_empty() => {
                 return self.say("A signature needs a name");
             }
@@ -3946,15 +3286,9 @@ impl App {
         vec![effect, Effect::Redraw]
     }
 
-    /// A key in an account's signatures: Enter writes the one under the
-    /// cursor in the person's editor, `n` starts one, `r` renames, the
-    /// keymap's remove key (`remove_account`, as the privacy pane's allowed
-    /// senders use it) deletes once asked twice, and Escape goes back to
-    /// the accounts.
     fn signatures_key(&mut self, account: postio_model::AccountId, key: &KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
-        // Asked of the keymap only for a key the list does not use itself,
-        // so a letter it moves or names with never reaches a chord.
+        // Asked of the keymap only for a key the list does not use itself.
         let listed = matches!(
             key.code,
             KeyCode::Up
@@ -4042,15 +3376,9 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The host said something happened.
-    ///
-    /// What a command said about itself goes on the status line; what
-    /// changed in the store goes through the same paging plan the desktop
-    /// list follows, so the two lists react to one event the same way.
+    /// What changed in the store goes through the same paging plan the desktop list follows.
     fn hear(&mut self, event: &postio_core::Event) -> Vec<Effect> {
         use postio_core::Event;
-        // Every event is offered to the status line first: an error is both
-        // something to say and the reason a failing account's line gives.
         let moved = self.trackers.apply(event, self.account);
         if let Event::ConnectionChanged { account, .. }
         | Event::SyncProgress { account, .. }
@@ -4066,9 +3394,8 @@ impl App {
         }
         match event {
             Event::Error { message, .. } => return self.say_as(Tone::Failed, message, None),
-            // The words of a message on screen just landed (#1788): read that
-            // one again, in place. Only one already drawn: a read still on
-            // its way will see them anyway, and the list is never re-read.
+            // Only a message already drawn is read again: a read still on its way will see the
+            // words, and the list is never re-read (#1788).
             Event::BodyLoaded { message, .. }
             | Event::BodyFailed { message, .. }
             | Event::BodyReachable { message, .. } => {
@@ -4098,15 +3425,12 @@ impl App {
     }
 }
 
-/// Take in one input; say what should happen next.
 pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
     let mut effects = match input {
         Input::Resize(width, height) => {
             app.size = (width, height);
             vec![Effect::Redraw]
         }
-        // Quit's key means the same on every surface, a text field's and a
-        // frame's included, so no surface gets to answer it first.
         Input::Key(key) if app.keys.is_primary(&key, postio_core::CommandId::Quit) => app.quit(),
         Input::Key(key) if app.focus == Focus::Keys => app.keys_key(&key),
         Input::Key(key) if app.open.menu.is_some() && app.focus == Focus::Reader => {
@@ -4181,7 +3505,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         } => app.dwelt(generation, message),
         Input::AutosaveDue { generation, edit } => app.autosave_due(generation, edit),
         Input::SignatureSaved(saved) => match saved {
-            // The account list carries the signatures; read it again.
             Ok(()) => vec![Effect::RefreshPlaces, Effect::Redraw],
             Err(reason) => app.say(&reason),
         },
@@ -4265,7 +3588,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             if let Some(first_run) = app.first_run.as_mut() {
                 match found {
                     Ok(status) => first_run.discovered(status),
-                    // Asking failed: type the servers, as when nothing was found.
                     Err(_) => first_run
                         .discovered(postio_ui::onboarding::Status::Manual { suggestion: None }),
                 }
@@ -4279,7 +3601,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             match consent {
                 Ok(sign_in) => {
                     first_run.consent(sign_in);
-                    // Its end comes back as the account being added, or not.
                     vec![Effect::FinishOAuth(first_run.address()), Effect::Redraw]
                 }
                 Err(sentence) => {
@@ -4292,7 +3613,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             if let Some(first_run) = app.first_run.as_mut() {
                 match added {
                     Ok(()) if first_run.repairing() => {
-                        // Signed in again: back where it was asked from.
                         app.first_run = None;
                         app.focus = if app.settings.is_some() {
                             Focus::Settings
@@ -4414,8 +3734,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             None => app.say("That message could not be read to reply to"),
         },
         Input::Unsubscribed { message, answer } => match answer {
-            // Said once, with the offer if the list left mail behind: a
-            // local read, so the one notice is not late.
             Ok(name) => vec![Effect::ReadListMail { message, name }],
             Err(reason) => app.say(&reason),
         },
@@ -4467,8 +3785,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         }
         Input::Settled { generation } => app.settled(generation),
     };
-    // A message open follows the cursor wherever it went: `j`, a click, or
-    // the row it was opened from leaving.
     effects.extend(app.follow_cursor());
     effects.extend(app.fetches());
     effects.extend(app.filtered_fetches());
@@ -4489,7 +3805,6 @@ mod tests {
         composer.focus_field(crate::composer::Field::Body);
         composer.replace_body("See ![chart](https://example.com/x.png).");
         let generation = composer.generation();
-        // Drawn as the desktop draws it, under the body.
         let drawn = crate::test_support::screen(120, 40, &app);
         assert!(drawn.contains("Not attached yet"), "{drawn}");
         assert!(
@@ -4531,7 +3846,6 @@ mod tests {
 
     #[test]
     fn every_now_phase_formatting_command_edits_the_body_and_autosaves() {
-        // Spec 014 T028: each command the terminal offers reaches the body.
         for id in [
             "strikethrough",
             "inline_code",
@@ -4547,9 +3861,6 @@ mod tests {
             "table",
             "clear_formatting",
         ] {
-            // The caret starts on the first line, which some commands change
-            // and some leave: a heading for `normal_text`, a nested task
-            // for the rest.
             let changed = ["  - [ ] **two**", "## **Plan**"].iter().any(|body| {
                 let mut app = app((120, 40));
                 composing(&mut app);

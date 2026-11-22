@@ -19,7 +19,6 @@ use postio_model::{Draft, DraftId};
 use crate::counting::Counts;
 use crate::protocol::{ListMailFound, Queued, Req, Resp};
 
-/// The answer when it is the one variant asked for; any other is an unexpected answer.
 macro_rules! only {
     ($variant:path) => {
         |answer| match answer {
@@ -44,21 +43,18 @@ pub enum SendError {
 pub type Call<'a> = Pin<Box<dyn Future<Output = Result<Resp, Disconnected>> + Send + 'a>>;
 
 pub trait Transport: Send + Sync + 'static {
-    /// The request is handed over by this call, not when the answer is first polled: two calls made
-    /// in
-    /// order reach the host in that order. Hence `'static`.
+    /// Handed over by this call, not when first polled: two calls in order reach the host in that
+    /// order. Hence `'static`.
     fn call(&self, request: Req) -> Call<'static>;
 
-    /// For facts a later read acts on, said from a synchronous caller.
     fn post(&self, request: Req);
 
     fn events(&self) -> async_channel::Receiver<EventEnvelope>;
 }
 
 impl Req {
-    /// True for Focus's search reads, which a keystroke supersedes. Everything else is answered to
-    /// the
-    /// end: a write stopped halfway is worse than a wasted answer.
+    /// True for Focus's search reads, which a keystroke supersedes; a write stopped halfway is
+    /// worse than a wasted answer.
     pub fn cancellable(&self) -> bool {
         matches!(
             self,
@@ -232,8 +228,6 @@ impl Client {
         }
     }
 
-    /// The frontend's own selection, focus and view, which the host adopts before running each
-    /// command (ADR 0041).
     pub fn with_state(mut self, state: SharedState) -> Self {
         self.state = state;
         self
@@ -247,15 +241,12 @@ impl Client {
         self.transport.events()
     }
 
-    /// Posted: the body arrives as `Event::BodyLoaded`.
     pub fn fetch_body(&self, message: MessageId) {
         self.counts.record("FetchBody");
         self.transport.post(Req::FetchBody(message));
     }
 
-    /// Asks for the `parts` a forward carries now rather than when the send drains (#1690). The
-    /// bytes
-    /// land as an `Event::BodyLoaded` naming them.
+    /// Asks for the `parts` now rather than when the send drains (#1690).
     pub async fn fetch_carried(
         &self,
         message: MessageId,
@@ -324,8 +315,7 @@ impl Client {
         .await
     }
 
-    /// Its new replies are archived on arrival, except one addressed to the person alone. One undo
-    /// takes it back.
+    /// New replies are archived on arrival, except one addressed to the person alone.
     pub async fn mute(&self, thread: postio_model::ThreadId) -> Result<(), StoreError> {
         self.read(Req::Mute(thread), "a mute", |answer| match answer {
             Resp::Done => Some(()),
@@ -359,7 +349,6 @@ impl Client {
         .await
     }
 
-    /// Reads the local store; nothing is fetched.
     pub async fn forward_thread(
         &self,
         thread: postio_model::ThreadId,
@@ -403,8 +392,6 @@ impl Client {
         .await
     }
 
-    /// The answer names what the offer after it acts on: the `List-Id`, else the sender's exact
-    /// address.
     pub async fn unsubscribe(&self, message: MessageId) -> Result<String, StoreError> {
         self.read(
             Req::Unsubscribe(message),
@@ -414,8 +401,6 @@ impl Client {
         .await
     }
 
-    /// For the offer after `unsubscribe`, which acts on `ids` with one ordinary `Archive` or
-    /// `Delete` (#1931).
     pub async fn list_mail(&self, message: MessageId) -> Result<ListMailFound, StoreError> {
         self.read(
             Req::ListMail(message),
@@ -497,7 +482,6 @@ impl Client {
             .await
     }
 
-    /// The answer is how many could not be written.
     pub async fn save_parts(
         &self,
         message: MessageId,
@@ -529,7 +513,6 @@ impl Client {
         }
     }
 
-    /// Handed over at the call, like the other draft writes (see `Transport::call`).
     pub fn save_draft(
         &self,
         generation: u64,
@@ -597,7 +580,6 @@ impl Client {
         .await
     }
 
-    /// `(address, "app" | "paper")`.
     pub async fn treatments(&self) -> Result<Vec<(String, String)>, StoreError> {
         self.read(
             Req::Treatments,
@@ -626,8 +608,7 @@ impl Client {
         .await
     }
 
-    /// Made from the stored mail if the catch-up has not reached them; `None` for an address the
-    /// store never saw.
+    /// `None` for an address the store never saw.
     pub async fn contact_for_address(
         &self,
         address: &str,
@@ -643,7 +624,6 @@ impl Client {
         .await
     }
 
-    /// `None` for an address the store never saw.
     pub async fn contact_glance(
         &self,
         address: &str,
@@ -706,7 +686,6 @@ impl Client {
         .await
     }
 
-    /// `None` for someone who is gone.
     pub async fn contact_card(
         &self,
         person: postio_model::ContactId,
@@ -722,7 +701,6 @@ impl Client {
         .await
     }
 
-    /// A dry run: nothing is written to either side.
     pub async fn contacts_sync_plan(
         &self,
         records: Vec<postio_contact_sync::ExternalRecord>,
@@ -744,8 +722,7 @@ impl Client {
         .await
     }
 
-    /// Applies the Postio side of the plan the person was shown, if
-    /// `shown` is still its fingerprint. Postio's own database only.
+    /// Only if `shown` is still the plan's fingerprint.
     pub async fn contacts_sync_bring_in(
         &self,
         records: Vec<postio_contact_sync::ExternalRecord>,
@@ -804,7 +781,6 @@ impl Client {
         .await
     }
 
-    /// `None` when `person` is not in `tab`'s list.
     pub async fn contact_position(
         &self,
         person: postio_model::ContactId,
@@ -907,7 +883,6 @@ impl Client {
             .await
     }
 
-    /// A label nothing carries is left out.
     pub async fn label_counts(
         &self,
         account: AccountId,
@@ -920,7 +895,6 @@ impl Client {
         .await
     }
 
-    /// Answers the existing label of that name in any case; `None` when the store refused.
     pub async fn create_label(
         &self,
         account: AccountId,
@@ -951,7 +925,6 @@ impl Client {
             .await
     }
 
-    /// In the toast's words, or `None` when nothing can be undone. Read, not taken.
     pub async fn undo_top(&self) -> Result<Option<String>, StoreError> {
         self.read(Req::UndoTop, "the undo top", only!(Resp::UndoTop))
             .await
@@ -1052,7 +1025,6 @@ impl Client {
         .await
     }
 
-    /// Takes back the draft `account` was writing when the last session died, if it did.
     pub async fn recover_draft(&self, account: AccountId) -> Result<Option<Draft>, StoreError> {
         self.read(
             Req::RecoverDraft(account),
@@ -1123,8 +1095,6 @@ impl Client {
         .await
     }
 
-    /// The answer is the consent URL, unopened. Once the sign-in is proved and saved, the account's
-    /// sync starts.
     pub async fn begin_oauth(
         &self,
         submission: postio_ui::onboarding::Submission,
@@ -1149,7 +1119,6 @@ impl Client {
         .await
     }
 
-    /// The error is the sentence for the screen.
     pub async fn finish_oauth(&self, address: String) -> Result<(), StoreError> {
         self.read(
             Req::FinishOAuth(address),
@@ -1174,7 +1143,6 @@ impl Client {
         .await
     }
 
-    /// The error is the sentence the first-run screen shows.
     pub async fn add_account(
         &self,
         submission: postio_ui::onboarding::Submission,
@@ -1183,7 +1151,6 @@ impl Client {
             .await
     }
 
-    /// The error is the sentence the form shows; a refused proof writes nothing.
     pub async fn add_account_then(
         &self,
         submission: postio_ui::onboarding::Submission,
@@ -1317,7 +1284,6 @@ impl Client {
         self.read(request, "the files", only!(Resp::Files)).await
     }
 
-    /// The person's own addresses are left out.
     pub async fn people(
         &self,
         account: postio_model::AccountScope,
@@ -1334,7 +1300,6 @@ impl Client {
         self.read(request, "the people", only!(Resp::People)).await
     }
 
-    /// Where the copy is, or nothing when the bytes are not on this machine.
     pub async fn attachment_copy(
         &self,
         attachment: postio_model::ids::AttachmentId,
@@ -1430,7 +1395,6 @@ impl Client {
         .await
     }
 
-    /// Keys not listed lose their seen-progress.
     pub async fn saved_counts(
         &self,
         account: postio_model::AccountScope,
@@ -1492,7 +1456,6 @@ impl Client {
             .await
     }
 
-    /// A refusal's sentence is for the person who typed it.
     pub async fn save_signature(
         &self,
         account: AccountId,
@@ -1628,8 +1591,6 @@ impl Client {
         self.done(Req::NoteMove(mailbox), "a recent move").await
     }
 
-    /// The password goes to the keyring, then the row. The error is the first-run screen's
-    /// sentence.
     pub async fn save_account(
         &self,
         submission: postio_ui::onboarding::Submission,
@@ -1642,15 +1603,12 @@ impl Client {
         self.done(request, "a saved account").await
     }
 
-    /// Asked first so the person sees the count before anything moves.
     pub async fn sweep_preview(&self) -> Result<u32, StoreError> {
         self.read(Req::SweepPreview, "a sweep's count", only!(Resp::Count))
             .await
     }
 
-    /// Read from this machine when it is here; otherwise fetched on this call and no other: the
-    /// person
-    /// asked for these bytes by name.
+    /// Fetched on this call and no other when not here: the person asked for these bytes by name.
     pub async fn raw_source(&self, message: MessageId) -> Result<Vec<u8>, StoreError> {
         self.read(
             Req::RawSource(message),
@@ -1660,13 +1618,11 @@ impl Client {
         .await
     }
 
-    /// Read again on `Event::SurfacedChanged`.
     pub async fn surfaced(&self) -> Result<Vec<postio_model::listing::Surfaced>, StoreError> {
         self.read(Req::Surfaced, "the surfaced rows", only!(Resp::Surfaced))
             .await
     }
 
-    /// Fails with a sentence when no `[focus.vault]` is configured.
     pub async fn vault(&self, subject: &str) -> Result<crate::protocol::VaultPicture, StoreError> {
         self.read(
             Req::Vault {
@@ -1705,7 +1661,6 @@ impl Client {
         .await
     }
 
-    /// `None` when there is no model with `like_this` on, or the model picked none.
     pub async fn digest_like_this(
         &self,
         message: MessageId,
@@ -1718,8 +1673,6 @@ impl Client {
         .await
     }
 
-    /// Every statement is resolved again as it is read. `None` when no summary is written or none
-    /// is left to show.
     pub async fn digest_summary(
         &self,
         delivery: postio_model::DeliveryId,
@@ -1743,7 +1696,6 @@ impl Client {
             .await
     }
 
-    /// The error is a sentence for the dialog.
     pub async fn save_digest_rule(
         &self,
         replacing: Option<String>,
@@ -1756,7 +1708,6 @@ impl Client {
         .await
     }
 
-    /// Releases what it held into the inbox; answers how many messages it released.
     pub async fn delete_digest_rule(&self, name: String) -> Result<u32, StoreError> {
         self.read(
             Req::DeleteDigestRule(name),
@@ -1782,7 +1733,6 @@ impl Client {
         }
     }
 
-    /// A whole search's selection, said as a predicate.
     pub async fn send_matching(
         &self,
         command: Command,
@@ -2073,9 +2023,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_draft_write_is_handed_over_when_asked_not_when_awaited() {
-        // The order the autosave, send and discard reach the host must be the order they were made,
-        // so
-        // each is handed over at the call.
+        // The autosave, send and discard must reach the host in the order they were made, so each
+        // is handed over at the call.
         let (client, fake) = client(vec![
             Ok(Resp::DraftSaved(DraftId::new(9))),
             Ok(Resp::Queued(Queued {

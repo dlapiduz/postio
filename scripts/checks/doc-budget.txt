@@ -21,12 +21,12 @@
 CLAUDE.md 951
 docs/ARCHITECTURE.md 1157
 docs/PERFORMANCE.md 840
-docs/PRODUCT.md 4133
+docs/PRODUCT.md 4194
 docs/config.md 2650
 docs/decisions/0001-imap-library.md 304
 docs/decisions/0002-extensible-command-vocabulary.md 331
 docs/decisions/0003-rich-text-compose.md 373
-docs/decisions/0004-composer-document-model.md 412
+docs/decisions/0004-composer-document-model.md 461
 docs/decisions/0005-multiple-accounts.md 681
 docs/decisions/0006-oauth-and-provider-presets.md 482
 docs/decisions/0008-filters-and-rules.md 522
@@ -60,7 +60,7 @@ docs/decisions/0035-mailbox-roles-are-mapped-per-account.md 408
 docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md 402
 docs/decisions/0037-a-misspelling-is-answered-with-a-suggestion.md 485
 docs/decisions/0038-the-store-is-turso-not-sqlcipher.md 353
-docs/decisions/0039-the-composer-is-a-native-surface-over-the-document.md 432
+docs/decisions/0039-the-composer-is-a-native-surface-over-the-document.md 504
 docs/decisions/0040-the-store-keeps-few-connections-maintains-its-counts-and-budgets-its-index.md 586
 docs/decisions/0041-one-app-opens-the-store-at-a-time.md 465
 docs/decisions/0042-the-reading-renderer-is-disconnected-and-memory-safe.md 377

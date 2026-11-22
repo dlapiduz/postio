@@ -1,33 +1,9 @@
-//! HTML in: narrowing arbitrary markup down to a [`Document`].
-//!
-//! # This function does not fail
-//!
-//! Its input on the quoting path is a message somebody else wrote, which is
-//! to say attacker-controlled. A parse *error* there would mean a hostile
-//! message you cannot reply to — a denial of service delivered by mail. So
-//! [`parse`] is total: it never returns an error, it **narrows**. Anything
-//! outside the subset is unwrapped to its text, or dropped entirely.
-//!
-//! # Why narrowing is safe rather than merely tidy
-//!
-//! Because the target type cannot express the dangerous thing. A `<script>`
-//! is not "removed by a rule that might have a hole in it" — [`Inline`] has
-//! no variant that could hold one. Same for a remote `<img src>`, an
-//! `<iframe>`, a `style` attribute and a `javascript:` href. The narrowing
-//! here is what makes the *shape* right; the type is what makes it safe.
-//!
-//! That is why `parse` is the outgoing path's whole defence and the ammonia
-//! pass on the way out is only a backstop. See ADR 0004 Q4.
-//!
-//! # Dropped tag *and* contents
-//!
-//! Most unknown elements are unwrapped — a `<div>` or a `<span>` is a
-//! container, and its text is the author's. `DROPPED` is the list where
-//! that is wrong, and `<noscript>` is the interesting one: with scripting
-//! off, the HTML spec has the parser treat its content as *markup* rather
-//! than inert text, which turns a sender's "if you can't run our JavaScript,
-//! at least load this" fallback into exactly the tracking pixel disabling
-//! JavaScript was supposed to stop.
+//! HTML in: narrowing arbitrary markup down to a `Document`. `parse` is total because its
+//! quoting-path input is attacker-controlled.
+//! Narrowing is safe because the target type cannot express a script, remote image or `javascript:`
+//! href; the outgoing ammonia pass is a backstop (ADR 0004 Q4).
+//! `DROPPED` removes tag and contents; `<noscript>` is listed because, parsed with scripting off,
+//! its content becomes markup.
 
 use html5ever::driver::ParseOpts;
 use html5ever::tendril::TendrilSink;
@@ -40,37 +16,17 @@ use crate::document::{
     Table, Task, WebHref,
 };
 
-/// Elements whose *contents* go with them.
-///
-/// Everything else unknown is unwrapped, keeping its text.
 pub(crate) const DROPPED: [&str; 10] = [
     "script", "style", "iframe", "object", "embed", "svg", "math", "noscript", "template",
-    // Not a hazard like the rest of this list — chrome. A reply's quote is
-    // wrapped in `<details><summary>Quoted message</summary>` by
-    // `postio_ui::editor::document::fold_quotes` so it opens folded, and that
-    // wrapper is in the editor's DOM, which the bridge posts straight back
-    // here on every edit. Without this the summary's text was collected as
-    // ordinary content: typing one character into a reply put a line saying
-    // "Quoted message" in the draft, and the recipient got it.
-    //
-    // Tag *and* contents, which is what this list means and what is wanted: a
-    // `<summary>` is never something a person wrote. A sender's own
-    // `<details>` inside a quote is untouched, because a quote's markup is
-    // carried opaquely (`Block::Quoted`) and never walked here.
+    // Chrome, not a hazard: the editor wraps a reply's quote in `<details><summary>` and the bridge
+    // posts it back on every edit; without this "Quoted message" ended up in the draft.
     "summary",
 ];
 
-/// Narrow `html` to the subset Postio can hold.
-///
-/// Total. See the module docs for why that is a security property and not a
-/// convenience.
 pub fn parse(html: &str) -> Document {
     narrow(&fragment(html))
 }
 
-/// `html` as html5ever reads it inside a `<body>`: the tree [`parse`]
-/// narrows, for a caller that has something to take out of it first
-/// ([`crate::own_text()`]).
 pub(crate) fn fragment(html: &str) -> RcDom {
     parse_fragment(
         RcDom::default(),
@@ -82,7 +38,6 @@ pub(crate) fn fragment(html: &str) -> RcDom {
     .one(html)
 }
 
-/// The subset a [`fragment`] narrows to. Total, as [`parse`] is.
 pub(crate) fn narrow(dom: &RcDom) -> Document {
     let mut blocks = Vec::new();
     let mut loose: Vec<Inline> = Vec::new();
@@ -91,11 +46,7 @@ pub(crate) fn narrow(dom: &RcDom) -> Document {
     Document { blocks }
 }
 
-/// Turn whatever inline content has accumulated into a paragraph.
-///
-/// Bare text between blocks is real content — `hello<p>world</p>` means two
-/// paragraphs, not one — so it cannot simply be discarded when a block
-/// element arrives.
+/// Bare text between blocks is content: `hello<p>world</p>` is two paragraphs.
 fn flush(blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) {
     let trimmed = trim_inlines(std::mem::take(loose));
     if !trimmed.is_empty() {
@@ -121,7 +72,6 @@ fn attribute(handle: &Handle, wanted: &str) -> Option<String> {
         .map(|attr| attr.value.to_string())
 }
 
-/// Walk `node`'s children, appending blocks and accumulating loose inlines.
 fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) {
     for child in node.children.borrow().iter() {
         match &child.data {
@@ -130,17 +80,9 @@ fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) 
                 if !text.trim().is_empty() {
                     loose.push(Inline::Text(collapse(&text)));
                 } else if !ends_with_space(loose) {
-                    // Whitespace-only, and whether that is content depends on
-                    // what is beside it (#1486). Between two inlines --
-                    // `<b>x</b> <i>y</i>` -- it is the space somebody typed,
-                    // and dropping it joins two words. Before anything, or
-                    // between two blocks, it is the newline and indent of
-                    // someone's markup and means nothing.
-                    //
-                    // `ends_with_space` answers both: an empty run is the
-                    // leading case, and `flush` empties the run at every
-                    // block boundary, so only a genuine gap between inlines
-                    // reaches this.
+                    // Whitespace-only is content only between two inlines (`<b>x</b> <i>y</i>`);
+                    // `flush` empties the run at block boundaries, so `ends_with_space` tells them
+                    // apart (#1486).
                     loose.push(Inline::Text(" ".to_owned()));
                 }
             }
@@ -150,13 +92,9 @@ fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) 
                     continue;
                 }
                 match block_for(child, &name) {
-                    // An empty paragraph records nothing, so it is narrowed
-                    // away like any other content the subset cannot say.
-                    // Editing machinery produces them: WebKit nests a new
-                    // list inside the paragraph it formats, and spec
-                    // recovery splits that into an empty `<p>` each side. A
-                    // deliberate blank line is `<p><br></p>` — a Break —
-                    // and is unaffected.
+                    // An empty paragraph is narrowed away: editors make them (WebKit nests a new
+                    // list inside the paragraph). A deliberate blank line is `<p><br></p>`, a
+                    // Break.
                     Some(Block::Paragraph(inlines)) if inlines.is_empty() => {
                         flush(blocks, loose);
                     }
@@ -164,8 +102,6 @@ fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) 
                         flush(blocks, loose);
                         blocks.push(block);
                     }
-                    // Not a block. Either an inline this subset knows, or a
-                    // container whose children are the author's content.
                     None => match inline_for(child, &name) {
                         Some(inline) => loose.push(inline),
                         None => {
@@ -180,26 +116,12 @@ fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) 
     }
 }
 
-/// Keeps a table's parts from running into each other (#1482).
-///
-/// A table has no [`Block`] — that is the authoring subset working as
-/// designed, and this is not a step towards giving it one. What it fixes is
-/// that narrowing concatenated the cells with *nothing* between them, so
-/// `<td>Gate</td><td>Interlock</td>` became `GateInterlock` and a row ran
-/// straight into the row below.
-///
-/// Where that shows is the `text/plain` half of a reply to a table-based
-/// message, which is most commercial mail: a recipient whose client prefers
-/// plain text got the quote as one run-on word.
-///
-/// A cell ends with a space and a row ends the run, which is as close to a
-/// table as a document with no table can come.
+/// A cell ends with a space and a row ends the run, so `<td>Gate</td><td>Interlock</td>`
+/// does not become `GateInterlock` in the text half (#1482).
 fn separate_table_part(name: &str, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) {
     match name {
         "td" | "th" => {
-            // Only where something was actually collected, and only once: a
-            // cell that already ends in whitespace needs no help, and an
-            // empty one would otherwise pad the row for nothing.
+            // A cell that already ends in whitespace needs no help; an empty one would pad the row.
             if !ends_with_space(loose) {
                 loose.push(Inline::Text(" ".to_owned()));
             }
@@ -209,7 +131,6 @@ fn separate_table_part(name: &str, blocks: &mut Vec<Block>, loose: &mut Vec<Inli
     }
 }
 
-/// Whether the run so far already ends in whitespace, or is empty.
 fn ends_with_space(loose: &[Inline]) -> bool {
     match loose.last() {
         None => true,
@@ -218,7 +139,6 @@ fn ends_with_space(loose: &[Inline]) -> bool {
     }
 }
 
-/// The block this element is, if it is one.
 pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
     match name {
         "p" => Some(Block::Paragraph(inlines_of(handle))),
@@ -234,7 +154,6 @@ pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
             items: items_of(handle),
         }),
         "ol" => Some(Block::List {
-            // `start` as HTML reads it: digits, or the default.
             kind: ListKind::Ordered {
                 start: attribute(handle, "start")
                     .and_then(|start| start.trim().parse().ok())
@@ -244,15 +163,10 @@ pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
         }),
         "table" => table_of(handle).map(|(table, _)| Block::Table(table)),
         "blockquote" => {
-            // A reply quote comes back as one (ADR 0033, FR-046): what is in
-            // the editor is what is sent, and narrowing it here would mean
-            // the fidelity survived until the user typed a character.
-            //
-            // Rebuilt through `quote_of` rather than trusted, so the gate
-            // holds on the way back in as well as on the way out. The content
-            // was sanitised when the quote was made, but it has since been
-            // through a `contenteditable` DOM, and "it was safe when we put it
-            // there" is exactly the assumption worth not making.
+            // A reply quote comes back as one (ADR 0033): narrowing would lose its fidelity once
+            // the user types.
+            // Rebuilt through `quote_of`, not trusted, since it has been through a
+            // `contenteditable` DOM.
             if attribute(handle, crate::document::QUOTED_MARKER).is_some() {
                 let (html, text) = quoted_halves(handle);
                 Some(Block::Quoted(crate::quote_of(
@@ -264,36 +178,24 @@ pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
                 Some(Block::Quote(blocks_of(handle)))
             }
         }
-        // Whitespace is the content of a `<pre>`, so it is taken raw rather
-        // than collapsed the way flowing text is.
+        // Whitespace is the content of a `<pre>`: taken raw.
         "pre" => Some(Block::Code {
             language: attribute(handle, LANGUAGE_MARKER).and_then(|word| Language::parse(&word)),
             text: raw_text(handle),
         }),
         "hr" => Some(Block::Rule),
-        // A forward's carried body, which is a `div` rather than a
-        // `blockquote` because a forward is not a quote (#1483). Only when it
-        // carries the marker: an ordinary `div` is somebody's layout and its
-        // children are the content.
+        // A forward's carried body is a `div` because a forward is not a quote (#1483); an ordinary
+        // `div` is layout.
         "div" => attribute(handle, crate::document::QUOTED_MARKER)
             .map(|marker| carried_block(handle, &marker)),
         _ => None,
     }
 }
 
-/// The scope a re-parsed quote is rewritten under.
-///
-/// Fixed rather than carried through the round trip: the scope only has to be
-/// unique within the document it is emitted into, and a draft holds one reply
-/// quote. Carrying the original message's id here would put a database id in
-/// markup that goes out on the wire for no gain.
+/// Fixed: the scope only has to be unique within the document, and the original message's id would
+/// put a database id on the wire.
 pub const QUOTE_SCOPE: &str = "quote";
 
-/// A marked element back into the block it was emitted from.
-///
-/// Rebuilt through `quote_of` rather than trusted, for the reason `block_for`
-/// gives: the content was sanitised when it was made and has been through a
-/// `contenteditable` DOM since.
 fn carried_block(handle: &Handle, marker: &str) -> Block {
     let (html, text) = quoted_halves(handle);
     let quoted = crate::quote_of(Some(&html), &text, QUOTE_SCOPE);
@@ -304,25 +206,16 @@ fn carried_block(handle: &Handle, marker: &str) -> Block {
     })
 }
 
-/// A marked blockquote's two renderings: its markup verbatim, and its text.
-///
-/// Both are taken from the same nodes rather than the text being remembered
-/// separately, because the editor's DOM is the only thing that knows what the
-/// user did to the quote — deleting half of it, most commonly — and a
-/// remembered text alternative would still describe the whole of it.
-///
-/// The text half goes through the ordinary narrowing, and that is the right
-/// place for it: `text/plain` *is* a reduction, so the subset that loses a
-/// table costs nothing here, while `raw_text` would run the cells together
-/// with no separator at all. The HTML half is what must not be narrowed.
+/// Both halves come from the same nodes: only the editor's DOM knows what the user deleted from the
+/// quote.
+/// The text half is narrowed (a reduction anyway); the HTML half must not be.
 fn quoted_halves(handle: &Handle) -> (String, String) {
     let mut html = String::new();
     for child in handle.children.borrow().iter() {
         let mut buffer = Vec::new();
         let node = markup5ever_rcdom::SerializableHandle::from(child.clone());
-        // `IncludeNode`, not the default `ChildrenOnly`: the child's own tag
-        // is the part that carries the structure, and serializing only its
-        // children hands back a table's text with the table gone.
+        // `IncludeNode`: the child's own tag carries the structure; its children alone lose the
+        // table.
         let options = html5ever::serialize::SerializeOpts {
             traversal_scope: html5ever::serialize::TraversalScope::IncludeNode,
             ..Default::default()
@@ -338,7 +231,6 @@ fn quoted_halves(handle: &Handle) -> (String, String) {
     (html, text)
 }
 
-/// The inline this element is, if it is one.
 pub(crate) fn inline_for(handle: &Handle, name: &str) -> Option<Inline> {
     match name {
         "strong" | "b" => Some(Inline::Strong(inlines_of(handle))),
@@ -348,9 +240,7 @@ pub(crate) fn inline_for(handle: &Handle, name: &str) -> Option<Inline> {
         "br" => Some(Inline::Break),
         "a" => {
             let raw = attribute(handle, "href")?;
-            // The marker this crate writes for a remote image not yet
-            // attached (spec 014 D7). Only a link carries it, so a remote
-            // `<img>` still has no shape.
+            // Only a link carries the marker, so a remote `<img>` still has no shape.
             if attribute(handle, REMOTE_IMAGE_MARKER).is_some()
                 && let Some(href) = WebHref::parse(&raw)
             {
@@ -369,14 +259,11 @@ pub(crate) fn inline_for(handle: &Handle, name: &str) -> Option<Inline> {
                 inlines: inlines_of(handle),
             })
         }
-        // The one place a remote reference could try to get in, and it
-        // cannot: only a `cid:` source has anywhere to go, because
-        // `Inline::Image` holds a `ContentId` and nothing else.
+        // Only a `cid:` source has anywhere to go: `Inline::Image` holds a `ContentId`.
         "img" => {
             let src = attribute(handle, "src")?;
-            // The editing shell's own scheme comes back through the bridge;
-            // percent-decoding first and then `ContentId::parse` means a
-            // crafted src can never decode into something URL-shaped.
+            // Percent-decode first, then `ContentId::parse`, so a crafted src cannot decode into
+            // something URL-shaped.
             let cid = if let Some(encoded) = src.strip_prefix("postio-cid:") {
                 crate::sanitize::percent_decode(encoded)
             } else {
@@ -396,7 +283,6 @@ pub(crate) fn inline_for(handle: &Handle, name: &str) -> Option<Inline> {
     }
 }
 
-/// The blocks inside a container element.
 fn blocks_of(handle: &Handle) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut loose = Vec::new();
@@ -405,7 +291,6 @@ fn blocks_of(handle: &Handle) -> Vec<Block> {
     blocks
 }
 
-/// One run of blocks per `<li>`; anything not in an `<li>` is not an item.
 fn items_of(handle: &Handle) -> Vec<ListItem> {
     handle
         .children
@@ -418,8 +303,6 @@ fn items_of(handle: &Handle) -> Vec<ListItem> {
             if task.is_some() && attribute(item, TASK_MARKER).is_some() {
                 strip_box(&mut blocks);
             }
-            // A one-paragraph item is the common case and reads better
-            // unwrapped, but the type wants blocks either way.
             if blocks.is_empty() {
                 blocks = vec![Block::Paragraph(Vec::new())];
             }
@@ -428,9 +311,7 @@ fn items_of(handle: &Handle) -> Vec<ListItem> {
         .collect()
 }
 
-/// The box on an `<li>`: the marker this crate writes, or, without one,
-/// GitHub's `<input type="checkbox">` as its first element (pasted HTML,
-/// before any sanitiser). Any other leading glyph is text.
+/// The marker this crate writes, or a pasted GitHub `<input type="checkbox">` as the first element.
 fn task_of(item: &Handle) -> Option<Task> {
     match attribute(item, TASK_MARKER).as_deref() {
         Some("open") => return Some(Task::Open),
@@ -454,7 +335,6 @@ fn task_of(item: &Handle) -> Option<Task> {
     })
 }
 
-/// Take the generated `☐ ` or `☑ ` off the front of a marked item.
 fn strip_box(blocks: &mut [Block]) {
     let Some(Block::Paragraph(inlines)) = blocks.first_mut() else {
         return;
@@ -470,15 +350,9 @@ fn strip_box(blocks: &mut [Block]) {
     }
 }
 
-/// A `<table>` the document can hold, and how many cells fitting it to its
-/// header cut off; `None` for one it cannot, which narrows to paragraphs as
-/// before (FR-002).
-///
-/// It cannot hold a span or a block in a cell: the type has nowhere to put
-/// either. The header is the `<thead>` row, or the first row when there is
-/// none, as GFM has no headerless table. Alignment is read from the header
-/// cells' `align`. A headerless table one row or one column wide is layout,
-/// not a grid.
+/// `None` for a table with a span or a block in a cell. The header is `<thead>`'s row or the first
+/// row;
+/// a headerless table one row or column wide is layout, not a grid.
 pub(crate) fn table_of(handle: &Handle) -> Option<(Table, usize)> {
     let mut head = Vec::new();
     let mut body = Vec::new();
@@ -495,9 +369,8 @@ pub(crate) fn table_of(handle: &Handle) -> Option<(Table, usize)> {
     let count = head.len() + body.len();
     let mut rows = head.into_iter().chain(body);
     let header = rows.next()?;
-    // A table that names no header and is one row or one column wide is
-    // somebody's layout -- most commercial mail wraps itself in one -- and
-    // reads as its words, as before (#1482), not as a grid.
+    // A headerless table one row or column wide is layout (most commercial mail wraps itself in
+    // one) (#1482).
     let named = declared
         || header
             .children
@@ -540,7 +413,6 @@ fn rows_of(section: &Handle) -> Vec<Handle> {
         .collect()
 }
 
-/// A row's cells, or `None` if one of them spans.
 fn cells_of(row: &Handle) -> Option<Vec<Handle>> {
     let cells: Vec<Handle> = row
         .children
@@ -558,7 +430,6 @@ fn cells_of(row: &Handle) -> Option<Vec<Handle>> {
     (!cells.iter().any(spans)).then_some(cells)
 }
 
-/// A cell's inlines, or `None` if a block is inside it.
 fn cell_inlines(cell: &Handle) -> Option<Cell> {
     fn holds_block(node: &Handle) -> bool {
         node.children.borrow().iter().any(|child| {
@@ -575,7 +446,6 @@ fn cell_inlines(cell: &Handle) -> Option<Cell> {
     (!holds_block(cell)).then(|| inlines_of(cell))
 }
 
-/// The inline content of an element, with block children flattened into it.
 fn inlines_of(handle: &Handle) -> Vec<Inline> {
     let mut inlines = Vec::new();
     gather_inlines(handle, &mut inlines);
@@ -598,8 +468,6 @@ fn gather_inlines(node: &Handle, out: &mut Vec<Inline>) {
                 }
                 match inline_for(child, &name) {
                     Some(inline) => out.push(inline),
-                    // A block inside inline context — a `<div>` in a `<p>`,
-                    // which real mail does constantly. Its text is content.
                     None => gather_inlines(child, out),
                 }
             }
@@ -608,7 +476,6 @@ fn gather_inlines(node: &Handle, out: &mut Vec<Inline>) {
     }
 }
 
-/// All descendant text, uncollapsed. For `<pre>` and `<code>`.
 fn raw_text(handle: &Handle) -> String {
     let mut out = String::new();
     fn walk(node: &Handle, out: &mut String) {
@@ -629,14 +496,9 @@ fn raw_text(handle: &Handle) -> String {
     out
 }
 
-/// Collapse runs of HTML whitespace to single spaces, as a browser would.
-///
-/// A node's *edge* whitespace is content, and has to survive: the space in
-/// `<strong>bold</strong> and <em>italic</em>` lives at the start of a text
-/// node all by itself, and eating it silently welds two words together. That
-/// is a bug the round-trip property found, which is what the property is for.
-/// Paragraph edges are trimmed later, by [`trim_inlines`], where there is
-/// enough context to know it is an edge.
+/// Edge whitespace is content: eating the space in `<strong>bold</strong> and <em>italic</em>`
+/// welds two words.
+/// Paragraph edges are trimmed later by `trim_inlines`.
 fn collapse(text: &str) -> String {
     let leading = text.starts_with(char::is_whitespace);
     let trailing = text.ends_with(char::is_whitespace);
@@ -648,7 +510,6 @@ fn collapse(text: &str) -> String {
         words.push_str(word);
     }
     if words.is_empty() {
-        // Whitespace-only: one space, or nothing if there was nothing.
         return if leading || trailing {
             " ".to_owned()
         } else {
@@ -666,8 +527,7 @@ fn collapse(text: &str) -> String {
     out
 }
 
-/// Drop leading and trailing whitespace-only text, so `<p> hi </p>` and
-/// `<p>hi</p>` parse the same. Without this the round trip cannot hold.
+/// So `<p> hi </p>` and `<p>hi</p>` parse the same; the round trip needs it.
 fn trim_inlines(mut inlines: Vec<Inline>) -> Vec<Inline> {
     while matches!(inlines.first(), Some(Inline::Text(t)) if t.trim().is_empty()) {
         inlines.remove(0);
