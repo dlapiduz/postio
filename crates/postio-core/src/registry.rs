@@ -250,6 +250,19 @@ const GO_SURFACES: &[Context] = &[
 
 const CONTACTS: &[Context] = &[Context::Contacts];
 
+/// A row states only what differs; `id`, `title`, `default_binding` and `contexts` are always
+/// written out.
+const BASE: CommandSpec = CommandSpec {
+    id: CommandId::NextMessage,
+    title: "",
+    default_binding: "",
+    alternate_bindings: &[],
+    contexts: ContextSet::ANY,
+    destructive: false,
+    recovery: Recovery::None,
+    requires: MAIL,
+};
+
 static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::NextMessage,
@@ -262,9 +275,7 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Results)
             .with(Context::Contacts)
             .with(Context::Outline),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PrevMessage,
@@ -277,9 +288,7 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Results)
             .with(Context::Contacts)
             .with(Context::Outline),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FirstMessage,
@@ -287,21 +296,15 @@ static SPECS: &[CommandSpec] = &[
         // A binding string spells a sequence with a space between chords; `gg` would read as a key
         // named "gg".
         default_binding: "g g",
-        alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES).with(Context::Results),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::LastMessage,
         title: "Last message",
         default_binding: "G",
-        alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES).with(Context::Results),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::OpenMessage,
@@ -315,23 +318,18 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Digest)
             .with(Context::Results)
             .with(Context::Outline),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleSelection,
         title: "Toggle selection",
         default_binding: "x",
-        alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES)
             .with(Context::Results)
             .with(Context::Filtered)
             .with(Context::Contacts),
-        destructive: false,
         // Changing what an action would hit changes no durable state.
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ExtendSelectionDown,
@@ -342,9 +340,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(SELECTION_SURFACES)
             .with(Context::Filtered)
             .with(Context::Contacts),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ExtendSelectionUp,
@@ -354,9 +350,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(SELECTION_SURFACES)
             .with(Context::Filtered)
             .with(Context::Contacts),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SelectAll,
@@ -368,41 +362,31 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Results)
             .with(Context::Filtered)
             .with(Context::Contacts),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PrevView,
         title: "Previous view",
         // `h` is Focus's remind key, and `Left` is `collapse_thread`'s.
         default_binding: "u",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Back,
         title: "Back",
         default_binding: "Escape",
-        alternate_bindings: &[],
         contexts: ContextSet::ANY,
-        destructive: false,
-        recovery: Recovery::None,
         requires: CHROME,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleResultOrder,
         // `alt+o`: the query holds the keyboard, so a bare `O` is a letter in it (#499).
         title: "Toggle result order",
         default_binding: "alt+o",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Search]).with(Context::Results),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::NextInConversation,
@@ -413,9 +397,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "]",
         alternate_bindings: &["n", "alt+Down"],
         contexts: ctx(&[Context::Conversation, Context::Reader]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PrevInConversation,
@@ -423,9 +405,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "[",
         alternate_bindings: &["p", "alt+Up"],
         contexts: ctx(&[Context::Conversation, Context::Reader]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleFold,
@@ -433,11 +413,8 @@ static SPECS: &[CommandSpec] = &[
         // surface turns pages with (#1402).
         title: "Fold or unfold this message",
         default_binding: "Z",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Conversation]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ViewOriginal,
@@ -447,11 +424,8 @@ static SPECS: &[CommandSpec] = &[
         // the tables to differ only in the primary modifier. Not a bare letter: a rare gesture on a
         // surface of constant verbs.
         default_binding: "mod+o",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleReaderView,
@@ -462,9 +436,7 @@ static SPECS: &[CommandSpec] = &[
         // A terminal cannot tell `ctrl+shift+o` from `ctrl+o`, so it needs a key it can send.
         alternate_bindings: &["alt+o"],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::DarkenMessage,
@@ -472,34 +444,27 @@ static SPECS: &[CommandSpec] = &[
         // `alt+d`: `D` stops digesting a sender under the one keymap. The title reads "Show as
         // sent" while darkened.
         default_binding: "alt+d",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SwitchTreatment,
         title: "Show original or app colours",
         // The shifted open: shows the whole message as sent. Gmail binds no `O`.
         default_binding: "O",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Reader]),
-        destructive: false,
-        recovery: Recovery::None,
         // Focus's open message is where the treatments are drawn; the three-pane readers draw
         // reader view and the terminal draws text.
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FindInMessage,
         title: "Find in message",
         default_binding: "mod+f",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FindNext,
@@ -507,9 +472,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+g",
         alternate_bindings: &["F3"],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FindPrevious,
@@ -518,9 +481,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+g",
         alternate_bindings: &["shift+F3"],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ZoomIn,
@@ -529,9 +490,8 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+plus",
         alternate_bindings: &["mod+equal", "mod+KP_Add"],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ZoomOut,
@@ -539,9 +499,8 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+minus",
         alternate_bindings: &["mod+KP_Subtract"],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ZoomReset,
@@ -549,9 +508,8 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+0",
         alternate_bindings: &["mod+KP_0"],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ExpandAll,
@@ -559,9 +517,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: ";",
         alternate_bindings: &["mod+shift+e"],
         contexts: ctx(&[Context::Conversation]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Reply,
@@ -569,9 +525,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "r",
         alternate_bindings: &["mod+r"],
         contexts: ctx(REPLY_SURFACES).with(Context::Results),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ReplyAll,
@@ -579,9 +533,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "a",
         alternate_bindings: &["mod+shift+r"],
         contexts: ctx(REPLY_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Forward,
@@ -589,9 +541,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "f",
         alternate_bindings: &["mod+shift+f"],
         contexts: ctx(REPLY_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Archive,
@@ -603,7 +553,7 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Digest),
         destructive: true,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Delete,
@@ -618,30 +568,27 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Filtered),
         destructive: true,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Move,
         title: "Move to…",
         default_binding: "v",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
-        destructive: false,
         recovery: Recovery::Undo,
         // A unified view has no single account to hold a destination; unavailable beats a no-op
         // (#182, ADR 0005 Q4).
         requires: needs(&[Requirement::SingleAccount, Requirement::StoreOpen]),
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Flag,
         title: "Flag",
         default_binding: "s",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Filtered),
-        destructive: false,
         recovery: Recovery::Undo,
         // A flag another client set must be clearable from every app.
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleRead,
@@ -653,29 +600,24 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES)
             .with(Context::Results)
             .with(Context::Filtered),
-        destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Snooze,
         title: "Snooze",
         default_binding: "b",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
-        destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Unsnooze,
         title: "Unsnooze",
         default_binding: "B",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::RemindIfNoReply,
@@ -683,110 +625,94 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "h",
         alternate_bindings: &["mod+h"],
         contexts: ctx(REPLY_SURFACES),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::AddLabel,
         title: "Add label…",
         default_binding: "l",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
-        destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::AcceptInvite,
         title: "Accept invitation",
         default_binding: "y",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
         // Undone inside a short window, like a send, not from the undo stack (research R9).
         recovery: Recovery::Window,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::DeclineInvite,
         title: "Decline invitation",
         default_binding: "Y",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
         recovery: Recovery::Window,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::DigestRule,
         title: "Digest rule…",
         default_binding: "d",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::StopDigestingSender,
         title: "Stop digesting this sender",
         default_binding: "D",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Digest, Context::Reader]),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ViewSource,
         title: "View source",
         default_binding: "V",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::OpenAttachmentOrLink,
         title: "Open attachment or link…",
         default_binding: "A",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::DismissMarker,
         title: "Dismiss marker",
         default_binding: "-",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::MoreActions,
         title: "More actions",
         default_binding: ".",
-        alternate_bindings: &[],
         contexts: Context::Reader.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleReadingPane,
         title: "Read beside the list or over it",
         default_binding: "F8",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::List]),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Search,
@@ -796,20 +722,15 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(GO_SURFACES)
             .with(Context::Results)
             .with(Context::Outline),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SaveSearch,
         title: "Save search as folder",
         // Shares `mod+s` with `save_draft`: the contexts do not overlap.
         default_binding: "mod+s",
-        alternate_bindings: &[],
         contexts: Context::Search.as_set().with(Context::Results),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::BackToWords,
@@ -820,20 +741,17 @@ static SPECS: &[CommandSpec] = &[
         // In the results, where nothing matched, the same key clears the filters rather than add a
         // second meaning.
         contexts: Context::Search.as_set().with(Context::Results),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ShowAllResults,
         title: "Show all results",
         // Where `mod+Return` sends in the composer: contexts do not overlap.
         default_binding: "mod+Return",
-        alternate_bindings: &[],
         contexts: Context::Search.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ForgetRecent,
@@ -843,219 +761,176 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "alt+BackSpace",
         alternate_bindings: &["alt+Delete"],
         contexts: Context::Search.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ExcludeSuggestion,
         title: "Exclude suggestion",
         default_binding: "alt+Return",
-        alternate_bindings: &[],
         contexts: Context::Search.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::HistoryBack,
         title: "Back in history",
         default_binding: "mod+bracketleft",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Results]),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::HistoryForward,
         title: "Forward in history",
         default_binding: "mod+bracketright",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Results]),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ResultsConversations,
         title: "Show threads",
         default_binding: "mod+1",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ResultsFiles,
         title: "Show files",
         default_binding: "mod+2",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ResultsPeople,
         title: "Show people",
         default_binding: "mod+3",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilterFrom,
         title: "Filter by sender",
         default_binding: "alt+f",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilterTo,
         title: "Filter by recipient",
         default_binding: "alt+t",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilterDate,
         title: "Filter by date",
         default_binding: "alt+d",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilterAnywhere,
         title: "Filter by folder",
         default_binding: "alt+w",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilterLabel,
         title: "Filter by label",
         default_binding: "alt+l",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::StepRangeBack,
         title: "Earlier month",
         default_binding: "alt+Left",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::StepRangeForward,
         title: "Later month",
         default_binding: "alt+Right",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::QuickLook,
         title: "Quick Look",
         default_binding: "space",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::NextMatch,
         title: "Next match",
         default_binding: "]",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PrevMatch,
         title: "Previous match",
         default_binding: "[",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickRelaxation1,
         title: "Run looser search 1",
         default_binding: "1",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickRelaxation2,
         title: "Run looser search 2",
         default_binding: "2",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickRelaxation3,
         title: "Run looser search 3",
         default_binding: "3",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickRelaxation4,
         title: "Run looser search 4",
         default_binding: "4",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SaveFile,
         title: "Save file",
         default_binding: "mod+Down",
-        alternate_bindings: &[],
         contexts: Context::Results.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Compose,
@@ -1063,9 +938,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "c",
         alternate_bindings: &["mod+n"],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Send,
@@ -1077,9 +950,8 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         // Not destructive — but it is externally visible and irreversible once
         // the queue drains, so it earns an undo-send window rather than a modal.
-        destructive: false,
         recovery: Recovery::Window,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ScheduleSend,
@@ -1088,30 +960,24 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+Return",
         alternate_bindings: &["alt+S"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SaveDraft,
         title: "Save draft",
         default_binding: "mod+s",
-        alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::DiscardDraft,
         title: "Discard draft",
         default_binding: "mod+d",
-        alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         // Typed prose has no other copy anywhere, so this one asks first.
         destructive: true,
         recovery: Recovery::Confirm,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::MarkSent,
@@ -1121,12 +987,10 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+m",
         alternate_bindings: &["alt+m"],
         contexts: ctx(&[Context::List, Context::Composer]),
-        destructive: false,
         // No `Undo`: this settles a claim about the world, so the correction is to send again
         // (#674;
         // see `Actions::mark_sent`).
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::RetrySend,
@@ -1138,9 +1002,7 @@ static SPECS: &[CommandSpec] = &[
         // List for the Outbox and Drafts; Composer because the same draft can be open there with
         // its failure showing (#1487).
         contexts: ctx(&[Context::List, Context::Composer]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CancelSend,
@@ -1148,10 +1010,8 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+x",
         alternate_bindings: &["alt+x"],
         contexts: ctx(&[Context::List, Context::Composer]),
-        destructive: false,
         // Refused once the submission is in flight (ADR 0021); asking again is `RetrySend`.
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::AttachFile,
@@ -1159,9 +1019,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+a",
         alternate_bindings: &["alt+a"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::DetachComposer,
@@ -1171,9 +1029,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+o",
         alternate_bindings: &["alt+o"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CopyFields,
@@ -1181,9 +1037,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+c",
         alternate_bindings: &["alt+c"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::InsertImage,
@@ -1191,9 +1045,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+g",
         alternate_bindings: &["alt+g"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::EditExternally,
@@ -1203,9 +1055,8 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+e",
         alternate_bindings: &["alt+shift+e"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: TERMINAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::TogglePreview,
@@ -1213,21 +1064,17 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+p",
         alternate_bindings: &["alt+p"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: TERMINAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Bold,
         title: "Bold",
         default_binding: "mod+b",
-        alternate_bindings: &[],
         // ctrl+b is the sidebar everywhere mail is read; the composer is not
         // a message surface, so the convention every editor shares wins here.
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Italic,
@@ -1235,9 +1082,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+i",
         alternate_bindings: &["alt+i"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Heading1,
@@ -1248,9 +1093,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+alt+1",
         alternate_bindings: &["alt+1"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::BulletList,
@@ -1258,9 +1101,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+8",
         alternate_bindings: &["alt+8"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::NumberedList,
@@ -1268,9 +1109,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+7",
         alternate_bindings: &["alt+7"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::InsertLink,
@@ -1280,9 +1119,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+k",
         alternate_bindings: &["alt+k"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::QuoteBlock,
@@ -1290,9 +1127,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+shift+9",
         alternate_bindings: &["alt+9"],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Undo,
@@ -1312,30 +1147,24 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Contacts)
             .with(Context::ContactPopover)
             .with(Context::Results),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CommandPalette,
         title: "Command palette",
         default_binding: "mod+k",
-        alternate_bindings: &[],
         contexts: ContextSet::ANY,
-        destructive: false,
-        recovery: Recovery::None,
         requires: CHROME,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CheatSheet,
         title: "Keyboard shortcuts",
         default_binding: "?",
-        alternate_bindings: &[],
         // Not while composing or searching: there `?` is a character.
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: CHROME,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Settings,
@@ -1343,9 +1172,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+comma",
         alternate_bindings: &["alt+comma"],
         contexts: ContextSet::ANY,
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::AddAccount,
@@ -1356,19 +1183,15 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &["alt+n"],
         // Without Contacts, where `mod+shift+n` is New contact.
         contexts: ContextSet::ANY.without(Context::Contacts),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::EditConfig,
         title: "Edit configuration",
         default_binding: "mod+e",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: CHROME,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Quit,
@@ -1376,43 +1199,33 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "mod+q",
         alternate_bindings: &["mod+w"],
         contexts: ContextSet::ANY,
-        destructive: false,
-        recovery: Recovery::None,
         requires: CHROME,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ShowImages,
         title: "Show remote images",
         // The bare `i` is the contact popover's, so images take the modified pair.
         default_binding: "alt+i",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::AlwaysShowImages,
         title: "Always show images from this sender",
         default_binding: "alt+I",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Unsubscribe,
         title: "Unsubscribe from this list",
         // Shifted and deliberate: an unsubscribe tells the sender the address is read.
         default_binding: "M",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES)
             .with(Context::Digest)
             .with(Context::Contacts),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ClearListMail,
@@ -1420,21 +1233,16 @@ static SPECS: &[CommandSpec] = &[
         // `C` for clear: a shifted letter spells a deliberate act, pressed only after `M` and a
         // look at the count (#1953).
         default_binding: "C",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
-        destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToFolders,
         title: "Go to folders",
         default_binding: "g l",
-        alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToInbox,
@@ -1442,205 +1250,153 @@ static SPECS: &[CommandSpec] = &[
         // Targets the role, not a name, so an inbox a provider names otherwise is still where `g i`
         // goes.
         default_binding: "g i",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES)
             .with(Context::Filtered)
             .with(Context::Digest),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToDrafts,
         title: "Go to drafts",
         default_binding: "g d",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToSent,
         title: "Go to sent",
         default_binding: "g t",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToFlagged,
         title: "Go to flagged",
         default_binding: "g s",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToArchive,
         title: "Go to archive",
         default_binding: "g a",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToSnoozed,
         title: "Go to snoozed",
         default_binding: "g b",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToOutbox,
         title: "Go to outbox",
         default_binding: "g o",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToJunk,
         title: "Go to junk",
         default_binding: "g j",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToTrash,
         title: "Go to trash",
         default_binding: "g #",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToFiltered,
         title: "Go to Filtered",
         default_binding: "g f",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::GoToDigestRules,
         title: "Go to digest rules",
         default_binding: "g r",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SavedSearch1,
         title: "Saved search 1",
         default_binding: "alt+1",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SavedSearch2,
         title: "Saved search 2",
         default_binding: "alt+2",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SavedSearch3,
         title: "Saved search 3",
         default_binding: "alt+3",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SavedSearch4,
         title: "Saved search 4",
         default_binding: "alt+4",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleHasAction,
         title: "Show only what has an action",
         default_binding: "!",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::List]).with(Context::Results),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleAccountEnabled,
         title: "Enable or disable account",
         default_binding: "Return",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::RemoveAccount,
         title: "Remove account",
         default_binding: "Delete",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
         destructive: true,
         // Removal is a soft delete with a toast wired to `AccountRepository::restore`, so there is
         // something to undo while the toast is up (#464).
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::UpdateCredential,
         title: "Update account credential",
         default_binding: "c",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::RebuildAccountIndex,
         title: "Rebuild search index",
         default_binding: "r",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SetDefaultAccount,
@@ -1648,44 +1404,33 @@ static SPECS: &[CommandSpec] = &[
         // (#960).
         title: "Set as default account",
         default_binding: "m",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::MapMailboxRole,
         title: "Map mailbox role",
         default_binding: "M",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
-        destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::NextScope,
         title: "Next scope",
         default_binding: "g n",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Sidebar, Context::List]),
-        destructive: false,
-        recovery: Recovery::None,
         // Deliberately not `SingleAccount`: this is the command that *leaves*
         // a single-account scope, so requiring one would switch itself off.
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::Refresh,
         title: "Refresh",
         // Also the retry for empty and error states: "retry now" and "check now" are one command.
         default_binding: "F5",
-        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     // -- Reader --------------------------------------------------------
     CommandSpec {
@@ -1696,9 +1441,7 @@ static SPECS: &[CommandSpec] = &[
         // The conversation is here too so `Page_Up` and `Page_Down` serve the same surfaces
         // (#1402).
         contexts: ctx(&[Context::List, Context::Reader, Context::Conversation]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ScrollReaderUp,
@@ -1706,239 +1449,194 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "Page_Up",
         alternate_bindings: &["shift+space"],
         contexts: ctx(MESSAGE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickerChoose1,
         title: "Choose option 1",
         default_binding: "1",
-        alternate_bindings: &[],
         contexts: Context::Picker.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickerChoose2,
         title: "Choose option 2",
         default_binding: "2",
-        alternate_bindings: &[],
         contexts: Context::Picker.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickerChoose3,
         title: "Choose option 3",
         default_binding: "3",
-        alternate_bindings: &[],
         contexts: Context::Picker.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickerChoose4,
         title: "Choose option 4",
         default_binding: "4",
-        alternate_bindings: &[],
         contexts: Context::Picker.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickerTypeDate,
         title: "Type a date",
         default_binding: "tab",
-        alternate_bindings: &[],
         contexts: Context::Picker.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickerToggle,
         title: "Toggle option",
         default_binding: "space",
-        alternate_bindings: &[],
         contexts: Context::Picker.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PickerConfirm,
         title: "Confirm",
         default_binding: "Return",
-        alternate_bindings: &[],
         contexts: Context::Picker.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::NextReference,
         title: "Next reference",
         default_binding: "]",
-        alternate_bindings: &[],
         contexts: Context::Digest.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::PrevReference,
         title: "Previous reference",
         default_binding: "[",
-        alternate_bindings: &[],
         contexts: Context::Digest.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ToggleDigestSummary,
         title: "Summary or messages",
         default_binding: "tab",
-        alternate_bindings: &[],
         contexts: Context::Digest.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::RestoreFiltered,
         title: "Restore to inbox",
         default_binding: "R",
-        alternate_bindings: &[],
         contexts: Context::Filtered.as_set(),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilteredTab1,
         title: "Reason 1",
         default_binding: "1",
-        alternate_bindings: &[],
         contexts: Context::Filtered.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilteredTab2,
         title: "Reason 2",
         default_binding: "2",
-        alternate_bindings: &[],
         contexts: Context::Filtered.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilteredTab3,
         title: "Reason 3",
         default_binding: "3",
-        alternate_bindings: &[],
         contexts: Context::Filtered.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilteredTab4,
         title: "Reason 4",
         default_binding: "4",
-        alternate_bindings: &[],
         contexts: Context::Filtered.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilteredTab5,
         title: "Reason 5",
         default_binding: "5",
-        alternate_bindings: &[],
         contexts: Context::Filtered.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilteredTab6,
         title: "Reason 6",
         default_binding: "6",
-        alternate_bindings: &[],
         contexts: Context::Filtered.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FilteredTab7,
         title: "Reason 7",
         default_binding: "7",
-        alternate_bindings: &[],
         contexts: Context::Filtered.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SweepInbox,
         title: "Filter what is in the inbox…",
         default_binding: "F",
-        alternate_bindings: &[],
         contexts: Context::List.as_set(),
         destructive: true,
         recovery: Recovery::Undo,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CaptureTask,
         title: "Capture a task…",
         default_binding: "T",
-        alternate_bindings: &[],
         contexts: ctx(CAPTURE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CaptureNote,
         title: "Capture a note…",
         default_binding: "N",
-        alternate_bindings: &[],
         contexts: ctx(CAPTURE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CaptureChangeProject,
         title: "Change project",
         default_binding: "mod+p",
-        alternate_bindings: &[],
         contexts: Context::Capture.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CaptureUseSubject,
         title: "Use the subject instead",
         default_binding: "alt+s",
-        alternate_bindings: &[],
         contexts: Context::Capture.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CaptureWrite,
@@ -1948,9 +1646,8 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Capture.as_set(),
         // It appends a line to a note on this computer, which the person
         // can delete there; Postio never edits a note beyond appending.
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::DigestLikeThis,
@@ -1959,95 +1656,80 @@ static SPECS: &[CommandSpec] = &[
         // not
         // read (`ModelFeature::LikeThis`).
         default_binding: "L",
-        alternate_bindings: &[],
         contexts: Context::List.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_MAIL,
+        ..BASE
     },
     // Focus's, drawn: the terminal has no Contacts surface.
     CommandSpec {
         id: CommandId::OpenContacts,
         title: "Contacts",
         default_binding: "g c",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactPopover,
         title: "Contact popover",
         default_binding: "i",
-        alternate_bindings: &[],
         // Not the search bar: `i` there is a letter being typed.
         contexts: ctx(MESSAGE_SURFACES)
             .with(Context::Results)
             .with(Context::Contacts),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactOpenCard,
         title: "Open card",
         default_binding: "mod+i",
-        alternate_bindings: &[],
         contexts: Context::ContactPopover.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactAdd,
         title: "Add contact",
         default_binding: "mod+Return",
-        alternate_bindings: &[],
         contexts: Context::ContactPopover.as_set(),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactIgnore,
         title: "Ignore sender",
         default_binding: "mod+BackSpace",
-        alternate_bindings: &[],
         contexts: Context::ContactPopover.as_set(),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactArrivalPrev,
         title: "Arrival: previous",
         default_binding: "Left",
-        alternate_bindings: &[],
         contexts: Context::ContactPopover.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactArrivalNext,
         title: "Arrival: next",
         default_binding: "Right",
-        alternate_bindings: &[],
         contexts: Context::ContactPopover.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactSetArrival,
         title: "Choose where this sender's mail arrives",
         default_binding: "0",
-        alternate_bindings: &[],
         contexts: Context::ContactPopover.as_set(),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactShowMail,
@@ -2055,59 +1737,48 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "Return",
         alternate_bindings: &["o"],
         contexts: ctx(CONTACTS).with(Context::ContactPopover),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactCompose,
         title: "Write to",
         default_binding: "c",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS).with(Context::ContactPopover),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsFilter,
         title: "Filter contacts",
         default_binding: "/",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsTabPrevious,
         title: "Previous kind tab",
         default_binding: "[",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsTabNext,
         title: "Next kind tab",
         default_binding: "]",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsToggleEveryone,
         title: "Everyone from mail",
         default_binding: "v e",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactJoin,
@@ -2115,21 +1786,19 @@ static SPECS: &[CommandSpec] = &[
         // `J` extends the selection being merged and `x` marks it; the id keeps 005's word, "join",
         // while the screen says Merge.
         default_binding: "m",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactAddAddress,
         title: "Add address",
         default_binding: "plus",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactDetachAddress,
@@ -2137,22 +1806,20 @@ static SPECS: &[CommandSpec] = &[
         // Bare `-` rather than `minus`: the Mac draws both as one accelerator and its menu test
         // rejects two spellings.
         default_binding: "-",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactSetPreferred,
         title: "Use this address first",
         // Not `*`, the first key of Select all's `* a`, which would wait for a second key.
         default_binding: "P",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactNew,
@@ -2160,31 +1827,28 @@ static SPECS: &[CommandSpec] = &[
         // Contacts is excluded from `add_account`, which holds `mod+shift+n` in every other
         // context.
         default_binding: "mod+shift+n",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactEdit,
         title: "Edit contact",
         default_binding: "mod+e",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactSave,
         title: "Save contact",
         default_binding: "mod+s",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactDelete,
@@ -2195,118 +1859,102 @@ static SPECS: &[CommandSpec] = &[
         destructive: true,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactRestore,
         title: "Restore contact",
         default_binding: "r",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsToggleDeleted,
         title: "Deleted contacts",
         default_binding: "v d",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsSuggestions,
         title: "Review contacts",
         default_binding: "g w",
-        alternate_bindings: &[],
         contexts: ctx(GO_SURFACES).with(Context::Contacts),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SuggestionDismiss,
         title: "Not the same person",
         // Not `X`, which is also Select all's alternate.
         default_binding: "n",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactGroupNew,
         title: "New group",
         default_binding: "g n",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactGroupRename,
         title: "Rename group",
         default_binding: "R",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactGroupAdd,
         title: "Add to group",
         default_binding: "l",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactGroupRemove,
         title: "Remove from group",
         default_binding: "L",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsImport,
         title: "Import contacts",
         default_binding: "v i",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
         // Import only adds, and its summary says what it merged; there is no unit to take back.
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsExport,
         title: "Export contacts",
         default_binding: "v x",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ContactsSync,
         title: "Sync contacts",
         default_binding: "v y",
-        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     // Drawn as pixels: the terminal app keeps its own thread view, so it offers none and keeps the
     // keys free.
@@ -2314,127 +1962,106 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::ExpandThread,
         title: "Expand thread",
         default_binding: "Right",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Results]).with(Context::Filtered),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::CollapseThread,
         title: "Collapse thread",
         default_binding: "Left",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Results]).with(Context::Filtered),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FirstInConversation,
         title: "First message in thread",
         default_binding: "{",
-        alternate_bindings: &[],
         contexts: Context::Reader.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::LatestInConversation,
         title: "Latest message in thread",
         default_binding: "}",
-        alternate_bindings: &[],
         contexts: Context::Reader.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::FirstUnreadInConversation,
         title: "First unread message in thread",
         default_binding: "g u",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Reader, Context::Outline]),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::OutlineFirstUnread,
         title: "First unread message",
         default_binding: "u",
-        alternate_bindings: &[],
         contexts: Context::Outline.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ThreadOutline,
         title: "Thread outline",
         default_binding: "alt+t",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Reader, Context::List]),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ThreadMenu,
         title: "Thread menu",
         default_binding: "alt+period",
-        alternate_bindings: &[],
         contexts: Context::Reader.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ReplyToLatest,
         title: "Reply to latest message",
         // Not the terminal: there `alt+e` is the composer's external editor.
         default_binding: "alt+e",
-        alternate_bindings: &[],
         contexts: ctx(&[
             Context::List,
             Context::Reader,
             Context::Results,
             Context::Composer,
         ]),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::MuteThread,
         title: "Mute thread",
         default_binding: "m",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Reader, Context::Results]),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::SplitThread,
         title: "Split into its own thread",
         default_binding: "alt+shift+s",
-        alternate_bindings: &[],
         contexts: Context::Reader.as_set(),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::MoveThisMessage,
         title: "Move this message",
         default_binding: "alt+v",
-        alternate_bindings: &[],
         contexts: ctx(&[Context::Reader, Context::List, Context::Results]),
-        destructive: false,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::DeleteThisMessage,
@@ -2445,57 +2072,48 @@ static SPECS: &[CommandSpec] = &[
         destructive: true,
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ForwardWhat1,
         title: "Forward this message",
         default_binding: "1",
-        alternate_bindings: &[],
         contexts: Context::ForwardChooser.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ForwardWhat2,
         title: "Forward the whole thread",
         default_binding: "2",
-        alternate_bindings: &[],
         contexts: Context::ForwardChooser.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ForwardWhat3,
         title: "Forward the attachments",
         default_binding: "3",
-        alternate_bindings: &[],
         contexts: Context::ForwardChooser.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ShowNewer,
         title: "Show newer messages",
         // Not the terminal: the reply footer is drawn as pixels.
         default_binding: "mod+shift+Down",
-        alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::ExpandQuoted,
         title: "Expand quoted text",
         default_binding: "mod+shift+q",
-        alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
     },
 ];
 
