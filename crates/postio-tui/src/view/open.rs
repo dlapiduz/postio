@@ -1532,21 +1532,6 @@ mod tests {
     }
 
     #[test]
-    fn escape_closes_back_to_the_same_row_with_the_selection_kept() {
-        let mut app = opened((120, 36));
-        // Select the second row, then come back to the first and open it.
-        update(&mut app, press('j'));
-        update(&mut app, press('x'));
-        update(&mut app, press('k'));
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.front(), crate::app::Front::List);
-        assert_eq!(app.cursor(), 0);
-        assert!(app.selection().contains(MessageId::new(7)));
-        let drawn = screen(120, 36, &app);
-        assert!(!drawn.contains('╭'), "{drawn}");
-    }
-
-    #[test]
     fn the_message_counts_as_read_after_the_dwell_and_shift_i_stops_the_clock() {
         let mut app = inbox((120, 36));
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));

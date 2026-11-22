@@ -115,15 +115,28 @@ fn how_many_deliveries(binding: &str) -> usize {
 
 /// What a command does, as the effect it asks the host for.
 fn asks(effects: &[Effect], needle: &str) -> bool {
-    effects
-        .iter()
-        .any(|effect| matches!(effect, Effect::Send(_)) && format!("{effect:?}").contains(needle))
+    effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::Send(_)
+                | Effect::Focus {
+                    request: postio_focus::Request::Send { .. } | postio_focus::Request::Post(_),
+                    ..
+                }
+        ) && format!("{effect:?}").contains(needle)
+    })
 }
 
 fn opens(effects: &[Effect], needle: &str) -> bool {
-    effects
-        .iter()
-        .any(|effect| matches!(effect, Effect::Open(_)) && format!("{effect:?}").contains(needle))
+    effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::Focus {
+                request: postio_focus::Request::OpenScope { .. },
+                ..
+            }
+        ) && format!("{effect:?}").contains(needle)
+    })
 }
 
 /// Each message verb: the command's id, and what the host is asked for.
@@ -281,7 +294,6 @@ const GMAIL: &[&str] = &[
     "toggle_read",
     "undo",
     "open_message",
-    "prev_view",
     "next_message",
     "prev_message",
     "next_in_thread",

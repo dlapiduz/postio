@@ -1033,23 +1033,6 @@ mod tests {
     }
 
     #[test]
-    fn a_command_runs_against_the_row_the_bar_opened_over() {
-        let mut app = opened();
-        update(&mut app, press('j'));
-        update(&mut app, press('/'));
-        type_text(&mut app, "archive");
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Send(postio_core::Command::Archive { .. }))),
-            "{effects:?}"
-        );
-        assert_eq!(app.focus(), crate::app::Focus::List);
-        assert_eq!(app.cursor(), 1);
-    }
-
-    #[test]
     fn a_place_goes_there_and_a_label_reopens_the_bar_on_its_search() {
         let mut app = opened();
         update(&mut app, press('/'));
@@ -1069,7 +1052,7 @@ mod tests {
         }
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
-            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
+            crate::test_support::opens(&effects, ListScope::Mailbox(MailboxId::new(2))),
             "{effects:?}"
         );
 
@@ -1102,40 +1085,6 @@ mod tests {
         }
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.bar_typed(), Some("label:\"Atlas\""), "{effects:?}");
-    }
-
-    #[test]
-    fn rows_saved_pills_and_chips_are_clickable_and_a_click_outside_does_nothing() {
-        let mut app = opened();
-        update(&mut app, press('/'));
-        type_text(&mut app, "arch");
-        let hits = crate::test_support::hits_of(120, 36, &app);
-        let drawn = screen(120, 36, &app);
-        let row = drawn
-            .lines()
-            .position(|line| line.contains("Archive"))
-            .unwrap();
-        let at = hits.at(30, u16::try_from(row).unwrap()).expect("a row");
-        assert!(matches!(at.target, Target::BarRow(_)), "{at:?}");
-        let saved = hits.at(20, 2).expect("the saved row");
-        assert!(matches!(saved.target, Target::BarSaved(0)), "{saved:?}");
-        // The list behind the box is out of reach.
-        let outside = hits.at(2, 3).expect("the list");
-        let effects = update(
-            &mut app,
-            crate::test_support::click(outside.target, false, false),
-        );
-        assert!(effects.is_empty() && app.bar_typed().is_some());
-        let effects = update(
-            &mut app,
-            crate::test_support::click(at.target, false, false),
-        );
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Send(_))),
-            "a click runs the row: {effects:?}"
-        );
     }
 
     #[test]

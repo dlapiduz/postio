@@ -207,15 +207,12 @@ mod tests {
         );
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
-        update(
-            &mut app,
-            Input::FocusCounts(postio_client::protocol::FocusCounts {
-                conversations: 312,
-                unread: 41,
-                has_action: 7,
-                filtered_today: 186,
-            }),
-        );
+        app.counts_for_tests(postio_client::protocol::FocusCounts {
+            conversations: 312,
+            unread: 41,
+            has_action: 7,
+            filtered_today: 186,
+        });
         app
     }
 
@@ -311,7 +308,7 @@ mod tests {
             crate::test_support::key(KeyCode::Enter, KeyModifiers::NONE),
         );
         assert!(
-            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(6)))),
+            crate::test_support::opens(&effects, ListScope::Mailbox(MailboxId::new(6))),
             "{effects:?}"
         );
         assert!(
@@ -331,9 +328,7 @@ mod tests {
             crate::test_support::key(KeyCode::Enter, KeyModifiers::NONE),
         );
         assert!(
-            effects.contains(&Effect::Open(ListScope::Focus(
-                postio_model::FocusScope::Inbox
-            ))),
+            crate::test_support::opens(&effects, ListScope::Focus(postio_model::FocusScope::Inbox)),
             "{effects:?}"
         );
     }
@@ -346,7 +341,7 @@ mod tests {
         update(&mut app, press('g'));
         let effects = update(&mut app, press('a'));
         assert!(
-            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
+            crate::test_support::opens(&effects, ListScope::Mailbox(MailboxId::new(2))),
             "{effects:?}"
         );
         update(&mut app, press('g'));
@@ -382,7 +377,7 @@ mod tests {
         let at = hits.at(6, u16::try_from(row).unwrap()).expect("a row");
         let effects = update(&mut app, click(at.target, false, false));
         assert!(
-            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
+            crate::test_support::opens(&effects, ListScope::Mailbox(MailboxId::new(2))),
             "{effects:?}"
         );
     }

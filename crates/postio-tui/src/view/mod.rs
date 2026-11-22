@@ -590,30 +590,10 @@ mod tests {
     #[test]
     fn a_click_on_the_third_list_row_is_that_row() {
         // T070.
-        use postio_ui::paging::Page;
         let mut app = with_places((160, 16));
-        let effects = update(
+        crate::test_support::show_rows(
             &mut app,
-            Input::Opened {
-                scope: postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1)),
-                total: 5,
-            },
-        );
-        let generation = effects
-            .iter()
-            .find_map(|effect| match effect {
-                crate::app::Effect::Fetch { generation, .. } => Some(*generation),
-                _ => None,
-            })
-            .expect("a page asked for");
-        let rows = (0..5).map(crate::test_support::row).collect();
-        update(
-            &mut app,
-            Input::Page {
-                generation,
-                page: 0,
-                rows: Ok(Page { rows, total: 5 }),
-            },
+            &(0..5).map(crate::test_support::row).collect::<Vec<_>>(),
         );
         let screen = screen(160, 16, &app);
         let (y, line) = screen
