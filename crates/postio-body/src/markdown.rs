@@ -85,6 +85,13 @@ pub fn from_html(sanitized: &str) -> String {
 /// may press to download and attach, sent as a link if they never do. Nothing
 /// here fetches it (spec 014 D7; ADR 0003's privacy rule holds).
 pub fn to_document(markdown: &str) -> crate::Document {
+    to_document_mapped(markdown).0
+}
+
+/// As [`to_document`], with the [`SourceMap`] between the Markdown and the
+/// document it reads into: what the source view places the caret with
+/// (spec 014 FR-027).
+pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
     use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
     // GFM's tables, strikethrough and task lists (spec 014 R1). Its bare
@@ -92,6 +99,8 @@ pub fn to_document(markdown: &str) -> crate::Document {
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut stack = vec![Frame::Blocks(Vec::new())];
+    // Every visible character read, and where in the source it came from.
+    let mut seen = Seen::default();
     for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
         match event {
             Event::Start(tag) => stack.push(match tag {
@@ -168,10 +177,16 @@ pub fn to_document(markdown: &str) -> crate::Document {
                 close(&mut stack, frame);
             }
             Event::Text(text) => match stack.last_mut() {
-                Some(Frame::Code(_, code)) => code.push_str(&text),
+                Some(Frame::Code(_, code)) => {
+                    seen.run(markdown, &range, &text);
+                    code.push_str(&text);
+                }
+                // An image's words are its alternative text, not a place
+                // the caret can be.
                 Some(Frame::Image(_, alt)) => alt.push_str(&text),
                 // Inside a link the words are its label, never another link.
                 Some(Frame::Inlines(Holder::Link(_), _)) => {
+                    seen.run(markdown, &range, &text);
                     push_inline(&mut stack, crate::Inline::Text(text.into_string()));
                 }
                 // A bare address is a link (GFM's extended autolinks) only
@@ -179,14 +194,21 @@ pub fn to_document(markdown: &str) -> crate::Document {
                 // in its source is someone saying "this is text", which is
                 // how `from_document` keeps text text.
                 _ if markdown.get(range.clone()) == Some(&*text) => {
+                    seen.run(markdown, &range, &text);
                     let before = markdown[..range.start].chars().next_back();
                     for inline in crate::autolink::link_text_after(&text, before) {
                         push_inline(&mut stack, inline);
                     }
                 }
-                _ => push_inline(&mut stack, crate::Inline::Text(text.into_string())),
+                _ => {
+                    seen.run(markdown, &range, &text);
+                    push_inline(&mut stack, crate::Inline::Text(text.into_string()));
+                }
             },
-            Event::Code(code) => push_inline(&mut stack, crate::Inline::Code(code.into_string())),
+            Event::Code(code) => {
+                seen.run(markdown, &range, &code);
+                push_inline(&mut stack, crate::Inline::Code(code.into_string()));
+            }
             // The few tags `from_document` writes where Markdown has no
             // spelling (spec 014's golden spellings): `<br>`, an empty
             // comment between two lists, and a mark CommonMark would not
@@ -200,14 +222,21 @@ pub fn to_document(markdown: &str) -> crate::Document {
                 if breaks > 0 && html.replace("<br>", "").is_empty() {
                     push_block(
                         &mut stack,
-                        crate::Block::Paragraph(vec![crate::Inline::Break; breaks - 1]),
+                        crate::Block::Paragraph({
+                            seen.run(markdown, &range, &"\n".repeat(breaks - 1));
+                            vec![crate::Inline::Break; breaks - 1]
+                        }),
                     );
                 } else {
+                    seen.run(markdown, &range, html);
                     push_inline(&mut stack, crate::Inline::Text(html.to_owned()));
                 }
             }
             Event::InlineHtml(html) => match &*html {
-                "<br>" => push_inline(&mut stack, crate::Inline::Break),
+                "<br>" => {
+                    seen.run(markdown, &range, "\n");
+                    push_inline(&mut stack, crate::Inline::Break);
+                }
                 "<strong>" => stack.push(Frame::Inlines(Holder::Html(Mark::Strong), Vec::new())),
                 "<em>" => stack.push(Frame::Inlines(Holder::Html(Mark::Emphasis), Vec::new())),
                 "<del>" => stack.push(Frame::Inlines(
@@ -224,10 +253,19 @@ pub fn to_document(markdown: &str) -> crate::Document {
                     let frame = stack.pop().expect("the open mark");
                     close(&mut stack, frame);
                 }
-                _ => push_inline(&mut stack, crate::Inline::Text(html.into_string())),
+                _ => {
+                    seen.run(markdown, &range, &html);
+                    push_inline(&mut stack, crate::Inline::Text(html.into_string()));
+                }
             },
-            Event::SoftBreak => push_inline(&mut stack, crate::Inline::Text(" ".to_owned())),
-            Event::HardBreak => push_inline(&mut stack, crate::Inline::Break),
+            Event::SoftBreak => {
+                seen.run(markdown, &range, " ");
+                push_inline(&mut stack, crate::Inline::Text(" ".to_owned()));
+            }
+            Event::HardBreak => {
+                seen.run(markdown, &range, "\n");
+                push_inline(&mut stack, crate::Inline::Break);
+            }
             Event::Rule => push_block(&mut stack, crate::Block::Rule),
             Event::TaskListMarker(done) => {
                 // On the item, which in a loose list is under its paragraph.
@@ -255,7 +293,235 @@ pub fn to_document(markdown: &str) -> crate::Document {
         Some(Frame::Blocks(blocks)) => blocks,
         _ => Vec::new(),
     };
-    crate::Document { blocks }
+    let document = crate::Document { blocks };
+    let map = SourceMap::align(markdown, &document, seen.0);
+    (document, map)
+}
+
+/// [`from_document`], with the [`SourceMap`] of what it wrote.
+///
+/// The map of the written Markdown read back, which is the document's own
+/// map because the view loses nothing (FR-024).
+pub fn from_document_mapped(document: &crate::Document) -> (String, SourceMap) {
+    let written = from_document(document);
+    let (_, map) = to_document_mapped(&written);
+    (written, map)
+}
+
+/// A place in a document: the path of indexes down to the block that holds
+/// text -- a paragraph, a heading, a code block or a table cell, counting a
+/// list's items and a table's cells (header first) on the way -- then a
+/// character offset in that block's text, where a break is one character.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DocPosition {
+    /// Indexes down to the block.
+    pub path: Vec<usize>,
+    /// Characters into its text.
+    pub offset: usize,
+}
+
+/// Where each character of a document is in its Markdown, and back.
+///
+/// Used only to place the caret when the source view opens and closes
+/// (spec 014 FR-027). Never stored.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SourceMap {
+    /// Each visible character: its position, its source byte, and the
+    /// length in the source of what spelled it.
+    entries: Vec<(DocPosition, usize, usize)>,
+    /// The byte offset where each source line starts.
+    lines: Vec<usize>,
+    /// The source's length.
+    len: usize,
+}
+
+impl SourceMap {
+    fn align(source: &str, document: &crate::Document, seen: Vec<(char, usize, usize)>) -> Self {
+        let mut entries = Vec::new();
+        let mut from = 0;
+        for (position, c) in visible(document) {
+            // Greedy: what was read but not kept (a paragraph's last
+            // `<br>`) is passed over.
+            let Some(at) = seen[from..].iter().position(|(read, ..)| *read == c) else {
+                break;
+            };
+            let (_, byte, len) = seen[from + at];
+            entries.push((position, byte, len));
+            from += at + 1;
+        }
+        let lines = std::iter::once(0)
+            .chain(source.match_indices('\n').map(|(at, _)| at + 1))
+            .collect();
+        SourceMap {
+            entries,
+            lines,
+            len: source.len(),
+        }
+    }
+
+    /// The byte offset in the Markdown of `position`.
+    pub fn to_source(&self, position: &DocPosition) -> usize {
+        if let Some((_, byte, _)) = self.entries.iter().find(|(at, ..)| at == position) {
+            return *byte;
+        }
+        // One past a block's last character: after what spelled it.
+        if let Some(before) = position.offset.checked_sub(1) {
+            let previous = DocPosition {
+                path: position.path.clone(),
+                offset: before,
+            };
+            if let Some((_, byte, len)) = self.entries.iter().find(|(at, ..)| *at == previous) {
+                return byte + len;
+            }
+        }
+        // A block with no text: where the next text is, or the end.
+        self.entries
+            .iter()
+            .find(|(at, ..)| at > position)
+            .map_or(self.len, |(_, byte, _)| *byte)
+    }
+
+    /// The position of the byte `offset` in the Markdown.
+    ///
+    /// Inside a marker (`**`, `## `, `- [ ] `), the first character it
+    /// formats, on its line. Past the last character on its line -- text
+    /// that was narrowed away -- the nearest position before it. On a line
+    /// with no text of its own (a fence, a delimiter row), the next
+    /// character; at the end, the end.
+    pub fn to_document(&self, offset: usize) -> DocPosition {
+        let offset = offset.min(self.len);
+        let line = self
+            .lines
+            .partition_point(|start| *start <= offset)
+            .saturating_sub(1);
+        let start = self.lines[line];
+        let end = self.lines.get(line + 1).copied().unwrap_or(self.len + 1);
+        let on_line = |byte: usize| (start..end).contains(&byte);
+        if let Some((at, ..)) = self
+            .entries
+            .iter()
+            .find(|(_, byte, _)| *byte >= offset && on_line(*byte))
+        {
+            return at.clone();
+        }
+        if let Some((at, ..)) = self
+            .entries
+            .iter()
+            .rev()
+            .find(|(_, byte, _)| *byte < offset && on_line(*byte))
+        {
+            return DocPosition {
+                path: at.path.clone(),
+                offset: at.offset + 1,
+            };
+        }
+        if let Some((at, ..)) = self.entries.iter().find(|(_, byte, _)| *byte >= offset) {
+            return at.clone();
+        }
+        self.entries.last().map_or_else(
+            || DocPosition {
+                path: vec![0],
+                offset: 0,
+            },
+            |(at, ..)| DocPosition {
+                path: at.path.clone(),
+                offset: at.offset + 1,
+            },
+        )
+    }
+}
+
+/// What the parser read, character by character.
+#[derive(Default)]
+struct Seen(Vec<(char, usize, usize)>);
+
+impl Seen {
+    /// The characters of `text`, read from `range`: one for one where the
+    /// source spells them as they are, else all at where the run began (an
+    /// escape, an entity).
+    fn run(&mut self, source: &str, range: &std::ops::Range<usize>, text: &str) {
+        let slice = source.get(range.clone()).unwrap_or_default();
+        if let Some(inner) = slice.find(text).filter(|_| !text.is_empty()) {
+            for (at, c) in text.char_indices() {
+                self.0.push((c, range.start + inner + at, c.len_utf8()));
+            }
+        } else {
+            for c in text.chars() {
+                self.0.push((c, range.start, range.len()));
+            }
+        }
+    }
+}
+
+/// Every character the caret can be on, in order, with its position.
+fn visible(document: &crate::Document) -> Vec<(DocPosition, char)> {
+    let mut out = Vec::new();
+    for (index, block) in document.blocks.iter().enumerate() {
+        visible_block(block, vec![index], &mut out);
+    }
+    out
+}
+
+fn visible_block(block: &crate::Block, path: Vec<usize>, out: &mut Vec<(DocPosition, char)>) {
+    use crate::Block;
+    let leaf = |path: Vec<usize>, chars: Vec<char>, out: &mut Vec<(DocPosition, char)>| {
+        for (offset, c) in chars.into_iter().enumerate() {
+            out.push((
+                DocPosition {
+                    path: path.clone(),
+                    offset,
+                },
+                c,
+            ));
+        }
+    };
+    match block {
+        Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+            leaf(path, visible_inlines(inlines), out);
+        }
+        Block::Code { text, .. } => leaf(path, text.chars().collect(), out),
+        Block::List { items, .. } => {
+            for (item, list_item) in items.iter().enumerate() {
+                for (index, block) in list_item.blocks.iter().enumerate() {
+                    let mut inner = path.clone();
+                    inner.extend([item, index]);
+                    visible_block(block, inner, out);
+                }
+            }
+        }
+        Block::Quote(blocks) => {
+            for (index, block) in blocks.iter().enumerate() {
+                let mut inner = path.clone();
+                inner.push(index);
+                visible_block(block, inner, out);
+            }
+        }
+        Block::Table(table) => {
+            for (index, cell) in table.cells().enumerate() {
+                let mut inner = path.clone();
+                inner.push(index);
+                leaf(inner, visible_inlines(cell), out);
+            }
+        }
+        Block::Quoted(_) | Block::Rule => {}
+    }
+}
+
+fn visible_inlines(inlines: &[crate::Inline]) -> Vec<char> {
+    use crate::Inline;
+    let mut out = Vec::new();
+    for inline in inlines {
+        match inline {
+            Inline::Text(text) | Inline::Code(text) => out.extend(text.chars()),
+            Inline::Strong(inner) | Inline::Emphasis(inner) | Inline::Strikethrough(inner) => {
+                out.extend(visible_inlines(inner));
+            }
+            Inline::Link { inlines, .. } => out.extend(visible_inlines(inlines)),
+            Inline::Break => out.push('\n'),
+            Inline::Image { .. } | Inline::RemoteImage { .. } => {}
+        }
+    }
+    out
 }
 
 /// The document in the normal form the Markdown view writes and reads
@@ -1303,6 +1569,93 @@ mod tests {
                 written.trim_end(),
                 "Some **bold** and a [link](https://example.com)."
             );
+        }
+    }
+
+    mod source_map {
+        //! spec 014 `contracts/source-view.md`, "The caret".
+        use super::super::{DocPosition, from_document_mapped, to_document_mapped};
+
+        fn at(path: &[usize], offset: usize) -> DocPosition {
+            DocPosition {
+                path: path.to_vec(),
+                offset,
+            }
+        }
+
+        /// Every visible character of `markdown`'s document, by position.
+        fn positions(markdown: &str) -> Vec<DocPosition> {
+            let (document, _) = to_document_mapped(markdown);
+            super::super::visible(&document)
+                .into_iter()
+                .map(|(position, _)| position)
+                .collect()
+        }
+
+        const EVERY_CONSTRUCT: &str = "# Plan\n\nSome **bold**, ~~struck~~ and `code` and [a link](https://example.com).\n\n- [ ] open\n- two\n  1. nested\n\n> quoted\n\n```rust\nfn x() {}\n```\n\n| a | b |\n|---|--:|\n| c | d |\n\nline one\\\nline two\n";
+
+        #[test]
+        fn every_character_maps_to_the_source_and_back_to_itself() {
+            let (_, map) = to_document_mapped(EVERY_CONSTRUCT);
+            let all = positions(EVERY_CONSTRUCT);
+            assert!(all.len() > 40, "{all:?}");
+            for position in all {
+                let source = map.to_source(&position);
+                assert_eq!(map.to_document(source), position, "via {source}");
+            }
+        }
+
+        #[test]
+        fn a_character_maps_to_where_it_was_typed() {
+            let (_, map) = to_document_mapped(EVERY_CONSTRUCT);
+            let source = map.to_source(&at(&[1], 5));
+            assert_eq!(&EVERY_CONSTRUCT[source..source + 4], "bold");
+            let struck = map.to_source(&at(&[1], 11));
+            assert_eq!(&EVERY_CONSTRUCT[struck..struck + 6], "struck");
+        }
+
+        #[test]
+        fn an_offset_inside_a_marker_is_the_first_character_it_formats() {
+            let (_, map) = to_document_mapped(EVERY_CONSTRUCT);
+            let stars = EVERY_CONSTRUCT.find("**bold").unwrap();
+            assert_eq!(map.to_document(stars), at(&[1], 5));
+            assert_eq!(map.to_document(stars + 1), at(&[1], 5));
+            assert_eq!(map.to_document(0), at(&[0], 0), "`# `");
+            let task = EVERY_CONSTRUCT.find("- [ ]").unwrap();
+            assert_eq!(map.to_document(task + 3), at(&[2, 0, 0], 0), "`- [ ] `");
+            let fence = EVERY_CONSTRUCT.find("```rust").unwrap();
+            assert_eq!(map.to_document(fence + 2), at(&[4], 0), "a fence line");
+            let delimiter = EVERY_CONSTRUCT.find("|---").unwrap();
+            assert_eq!(
+                map.to_document(delimiter + 1),
+                at(&[5, 2], 0),
+                "a delimiter row"
+            );
+        }
+
+        #[test]
+        fn narrowed_text_maps_to_the_nearest_position_before_it() {
+            // A third cell in a two-column table is cut, so its words have
+            // no position: the caret goes to the end of what survived.
+            let ragged = "| a | b |\n|---|---|\n| c | d | cut |\n";
+            let (_, map) = to_document_mapped(ragged);
+            let cut = ragged.find("cut").unwrap();
+            assert_eq!(map.to_document(cut + 1), at(&[0, 3], 1));
+        }
+
+        #[test]
+        fn the_end_of_the_document_is_a_position() {
+            let (_, map) = to_document_mapped("one\n\ntwo");
+            assert_eq!(map.to_document(9), at(&[1], 3));
+            assert_eq!(map.to_source(&at(&[1], 3)), 8);
+        }
+
+        #[test]
+        fn the_written_markdown_maps_as_the_read_markdown_does() {
+            let document = super::super::to_document(EVERY_CONSTRUCT);
+            let (written, map) = from_document_mapped(&document);
+            let bold = map.to_source(&at(&[1], 5));
+            assert_eq!(&written[bold..bold + 4], "bold");
         }
     }
 }

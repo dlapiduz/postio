@@ -144,7 +144,7 @@ unit cases, `composer_markdown_source.rs`, and
 
 - [x] T030 [US7] Write the FR-024 property test and the golden spellings table's cases in `crates/postio-body/tests/body_suite/markdown_parity.rs` (`contracts/source-view.md`, "The round trip"). See it fail on the awkward shapes.
 - [x] T031 [US7] Implement `normalize`, and the spellings in `from_document`/`to_document`, in `crates/postio-body/src/markdown.rs`. This covers `<br>`, a `<br>` line, `<!-- -->`, `&#32;`, and the `U+E001` quote line.
-- [ ] T032 [US7] Write failing source-map cases in `crates/postio-body/src/markdown.rs` (`contracts/source-view.md`, "The caret"). Then implement `from_document_mapped` and `to_document_mapped` with `into_offset_iter`.
+- [x] T032 [US7] Write failing source-map cases in `crates/postio-body/src/markdown.rs` (`contracts/source-view.md`, "The caret"). Then implement `from_document_mapped` and `to_document_mapped` with `into_offset_iter`.
 - [ ] T033 [US7] Report the caret as a `DocPosition`, and set it from one, in `crates/postio-ui/data/editor.js`, with the host side in `crates/postio-widgets/src/composer/editor.rs` (research R14). A `composer_document.rs` case is red first. This is the phase's only bridge change.
 - [ ] T034 [US7] Write failing cases in a new `crates/postio-widgets/tests/widgets_suite/composer_markdown_source.rs` for every row of `contracts/source-view.md`'s surface table, except the Mac
 - [ ] T035 [US7] Build the view in a new `crates/postio-widgets/src/composer/source_view.rs`: a `GtkTextView` in the editor slot, the strip, and formatting commands through `markdown_edit`. Wire `toggle_markdown_source` and the toolbar's toggle button in `crates/postio-widgets/src/composer/mod.rs`.
