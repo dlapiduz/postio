@@ -1,19 +1,15 @@
 ---
 name: preflight
-description: Run every Postio quality gate and report the true state of the tree — build, tests, clippy, fmt, crate boundaries, personal data — plus the two failure modes that look like bugs but are not (stale scratchpad artifacts, and cargo test fast-failing). Use before starting work, before committing, and whenever the workspace looks broken.
+description: Run every Postio quality gate and report the true state of the tree (build, tests, clippy, fmt, crate boundaries, personal data), plus the two failures that look like bugs but are not (stale scratchpad artifacts, cargo test fast-failing). Use before starting work, before committing, and when the workspace looks broken.
 ---
 
 # Preflight
 
-Report the real state of the repository. Run every check even if an early one
-fails — a partial picture is what sends sessions chasing the wrong problem.
+Report the real state. Run every check even if an early one fails; a partial picture sends sessions after the wrong problem.
 
 ## 1. Gates
 
-This is the deliberate full sweep, the same one `/steward` runs. Do not run
-it as an inner loop: use `scripts/test-fast.sh` while working and let
-`scripts/issue-land.sh` gate the landing. The hook refuses a whole-workspace
-test run unless `POSTIO_WORKSPACE_TESTS=1` says it is meant.
+The deliberate full sweep, the same as `/steward`'s. Not an inner loop: use `scripts/test-fast.sh` while working and let `scripts/issue-land.sh` gate the landing. A hook refuses a whole-workspace test run unless `POSTIO_WORKSPACE_TESTS=1`.
 
 ```bash
 cargo build --workspace
@@ -23,32 +19,19 @@ cargo fmt --all --check
 scripts/check.sh
 ```
 
-**Always `--no-fail-fast`.** Plain `cargo test` aborts remaining targets after
-the first failure, so one broken crate hides a thousand passing tests and the
-totals look catastrophic. This has already caused a false alarm.
+- **Always `--no-fail-fast`.** Plain `cargo test` aborts the remaining targets after the first failure, so one broken crate hides a thousand passing tests.
+- **Never drop `--check` from fmt**: writing rewrites files other sessions are mid-edit in.
+- `scripts/check.sh` runs every repository invariant. The personal-data check redacts values because CI logs are public; locally use `python3 scripts/checks/check-no-personal-data.py --reveal`.
 
-`cargo fmt --all --check` is read-only and safe with others working. Never drop
-the `--check` here — writing would rewrite files they are mid-edit in.
+## 2. Stale artifacts: check before believing a failure
 
-`scripts/check.sh` runs every repository invariant. The personal-data check
-redacts values by default because CI logs are public; run
-`python3 scripts/checks/check-no-personal-data.py --reveal` locally when
-fixing what it finds.
-
-## 2. Stale artifacts — check this before believing a failure
-
-If tests fail with `NotFound` on paths containing `/scratchpad/`, or a totals
-drop makes no sense, the `target/` directory holds objects built from a *copy*
-of this repo somewhere else. `CARGO_MANIFEST_DIR` is baked in at compile time,
-so tests that read files from disk look for a directory that no longer exists.
+Tests failing with `NotFound` on paths containing `/scratchpad/`, or totals that make no sense, mean `target/` holds objects built from a *copy* of this repo (`CARGO_MANIFEST_DIR` is baked in at compile time).
 
 ```bash
 POSTIO_WORKSPACE_TESTS=1 cargo test --workspace --no-fail-fast 2>&1 | grep -o '/scratchpad/[^ ]*' | head
 ```
 
-Any hit means stale artifacts, not a regression. Fix with
-`cargo clean -p <affected crates>` and re-run. Never build a copy of this repo
-outside the workspace.
+A hit is stale artifacts, not a regression. `cargo clean -p <affected crates>` and re-run. Never build a copy of this repo outside the workspace.
 
 ## 3. Tree and issue state
 
@@ -60,17 +43,10 @@ gh issue list --label in-progress --json number,title --jq '.[] | "#\(.number) \
 gh pr list --json number,headRefName --jq '.[] | "#\(.number) \(.headRefName)"'
 ```
 
-Two things to flag explicitly:
-
-- **Uncommitted work.** `CLAUDE.md` forbids leaving it. If files are loose,
-  identify which issues they belong to and say so.
-- **Stale claims.** An issue labelled `in-progress` with no worktree and no
-  open PR means a session died mid-task. `scripts/issue-release.sh --stale`
-  sweeps the ones whose worktree is gone; report any others you find.
+Flag:
+- **Uncommitted work** (`CLAUDE.md` forbids leaving it): name the issues the loose files belong to.
+- **Stale claims**: `in-progress` with no worktree and no open PR means a dead session. `scripts/issue-release.sh --stale` sweeps those whose worktree is gone; report any others.
 
 ## 4. Report
 
-State plainly: gates passing or failing, test totals, uncommitted files by
-crate, stale claims, and what is ready. If something failed, say whether it is
-a real regression, another session's in-flight work, or stale artifacts —
-those need completely different responses.
+State: gates passing or failing, test totals, uncommitted files by crate, stale claims, what is ready. For a failure, say whether it is a real regression, another session's in-flight work, or stale artifacts; each needs a different response.

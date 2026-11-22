@@ -1,92 +1,19 @@
 # ADR 0042 — The reading renderer is disconnected and memory-safe
 
-- **Status:** Accepted (2026-09-27), with `docs/archive/specs/006-email-rendering`. Built
-- **Spec:** [`docs/archive/specs/006-email-rendering`](../archive/specs/006-email-rendering/spec.md)
-  (FR-001, FR-023a, FR-025; research R18)
-- **Related:** [ADR 0032](0032-the-conversation-is-one-document.md) (whose
-  one-document conversation this keeps, drawn by a different engine),
-  [ADR 0003](0003-rich-text-compose.md) (whose reader statements point here
-  now), [ADR 0047](0047-one-feature-set-for-the-workspace.md) (which says
-  what "the renderer's graph" is when every crate depends on the
-  workspace-hack)
-- **Decision:** **`postio-render` draws hostile mail in Postio's own
-  process, so it may contain nothing that runs C, reaches the network or
-  asks the system for fonts. Every byte it draws is handed to it; a remote
-  one arrives only through the application's fetcher, on the user's
-  consent. A caught render panic must stay catchable.**
+- **Status:** Accepted (2026-09-27). Built, with `specs/006-email-rendering` (archived).
+- **Decision:** `postio-render` draws hostile mail in Postio's own process, so it contains nothing that runs C, reaches the network or asks the system for fonts. Every byte it draws is handed to it. A remote one arrives only through the application's fetcher, on the user's consent. A caught render panic stays catchable.
 
----
+## Rules
+- No C and no native bindings. Nothing in the renderer's product graph links native code, is a `-sys` crate, or compiles C or C++. The graph is what its code can call: normal and build edges, minus the edge into `postio-workspace-hack` (ADR 0047), with features as built including any the hack switches on. Decoders are the pure-Rust `png`, `jpeg`, `gif` and `webp` paths, and `image` stays out of the workspace-hack.
+- No network. `blitz-dom`'s `net` feature stays off, and so does any HTTP, TLS or socket crate. The renderer resolves URLs only from the resource table it is given (message parts, Postio's faces, data URIs).
+- No system font stack. Fonts come from Postio's `FontSet` (`fontdb`). `fontique` and `parley` `system` features and `blitz-dom` `system-fonts` stay off.
+- Remote bytes arrive through `postio-runtime`'s `RemoteImageFetcher`, for a message the user opened whose sender they allowed or that they chose to show once. The renderer never learns a URL it has no bytes for.
+- `panic = "unwind"`: the render thread catches a panic and shows the plain-text fallback. No profile that links the renderer may abort on panic.
+- Enforcement: `check-renderer-is-memory-safe.py` (rules 1-3 and 5; prunes the workspace-hack but keeps its features); `check-crate-boundaries.py` `RULES["postio-render"]`; `postio-render`'s `egress` suite and `focus_suite::remote_images` for the consent rule (nothing before Show, Show fetches once, Always holds for that sender alone).
 
-## Context
+## Why
+- The reader's process-per-view, start-up cost and dark-mode behaviour were what spec 006 fixed (`docs/notes/2026-09-26-blitz-or-webkit.md`).
+- Rejected: WebKit for the reader; a sandboxed render process (memory safety plus no network removes what a sandbox is for); a setting that turns the network off (a crate not in the graph cannot be turned back on).
 
-Spec 006 moved the reader from WebKit, a separate process with its own
-sandbox, to `postio-render` (Blitz, parley, vello_cpu) inside the
-application. The maintainer accepted that on one condition: everything that
-parses or decodes message content is memory-safe code, and the renderer
-cannot reach the network by construction rather than by a setting. The
-feature's reasoning, the evaluation and the alternatives are the spec's
-(`research.md` R0, R3–R6, R18). This records only the rules other work must
-keep obeying after the feature has landed.
-
-## Decision
-
-1. **No C, no native bindings.** Nothing in `postio-render`'s product graph
-   links native code, is a `-sys` crate, or compiles C or C++ at build time.
-   That graph is **what the renderer's code can call**: its normal and build
-   edges, without the edge into `postio-workspace-hack` -- a crate with no
-   code that names third-party crates only for their features (ADR 0047) --
-   and with every crate's features as they are actually built, including
-   any the workspace-hack switches on. The image decoders are the pure-Rust
-   `png`, `jpeg`, `gif` and `webp` paths; nothing else is enabled, and
-   `image` is kept out of the workspace-hack so that holds on every
-   platform.
-2. **No network.** No crate in that graph can open a connection:
-   `blitz-dom`'s `net` feature stays off, and so does any HTTP, TLS or
-   socket crate. The renderer resolves a URL from the resource table it is
-   handed -- a message's parts, Postio's faces, data URIs -- and nothing
-   else.
-3. **No system font stack.** Fonts come from Postio's `FontSet`, built with
-   `fontdb`; `fontique`'s and `parley`'s `system` features, and
-   `blitz-dom`'s `system-fonts`, stay off. Fontconfig is C and reads
-   configuration the user never thinks of as mail.
-4. **Remote bytes come only through the application.** A remote image is
-   fetched by `postio-runtime`'s `RemoteImageFetcher`, for a message the
-   user opened whose sender they allowed or that they chose to show once,
-   and handed to the renderer's table. The renderer never learns a URL it
-   was not given bytes for.
-5. **`panic = "unwind"`.** The render thread catches a panic and shows the
-   plain-text fallback. A profile that links the renderer may not abort on
-   panic, or a hostile message would take the application down.
-
-## Enforcement
-
-- `scripts/checks/check-renderer-is-memory-safe.py` walks the graph for
-  rules 1--3 and 5 and fails naming the crate and the feature that pulled
-  it in. It prunes the workspace-hack from the graph and keeps its features:
-  a decoder or a `net` feature the hack switches on in a crate the renderer
-  calls is still refused.
-- `scripts/checks/check-crate-boundaries.py`'s `RULES["postio-render"]`
-  bans the network and storage crates by name, on product edges, and does
-  not walk into the workspace-hack.
-- `postio-render`'s `egress` suite holds rule 4 in both directions (the
-  classic app's `gtk_reader` did too, until T256): blocked mail reaches no
-  loopback listener, and the same mail reaches it once consent is given. Focus's
-  `focus_suite::remote_images` holds it in the app: nothing is asked for
-  before Show, Show fetches once, and Always holds for that sender alone.
-
-## Rejected
-
-- **Keep WebKit for the reader.** Its sandbox is real, but its process per
-  view, its start-up cost and its dark-mode behaviour were what spec 006
-  existed to fix, and the evaluation (`docs/notes/2026-09-26-blitz-or-webkit.md`)
-  chose Blitz.
-- **A sandboxed render process.** Memory safety plus no network removes
-  what a sandbox is for, at the cost of a process per reader again.
-- **A setting that turns the network off.** A setting can be turned back
-  on; a crate that is not in the graph cannot.
-
-## Would change this
-
-A format the renderer must decode that has no memory-safe decoder, or a
-need to render remote content the user did not consent to. Either is a new
-decision, not an exception to this one.
+## Revisit when
+- A needed format has no memory-safe decoder, or remote content must render without consent. Either is a new decision.

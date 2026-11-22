@@ -1,0 +1,21 @@
+# Gotchas: builds, caches, worktrees and CI
+
+- **Cargo merges a nested worktree's config with its ancestors'.** Never nest a checkout you build: rustflags repeat and the reflinked cache goes cold (#1818). `scripts/storyboards.sh base` keeps its checkout in `.storyboard-base/<worktree name>` (`STORYBOARD_BASE_DIR` overrides).
+- **`RUSTUP_TOOLCHAIN` overrides `rust-toolchain.toml`, and mise exports it.** Scripts and the session-start hook unset it; your own terminal does not. Move the mise pin with the toolchain pin and sweep stale `target/`. `fuzz/` pins its own nightly: use `scripts/fuzz.sh`. (enforced by: `check-toolchain-pinned.py`)
+- **`refs/stash` is repo-wide.** Commit work in progress instead. (enforced by: `.claude/hooks/guard-shared-tree.py`)
+- **`git commit --only <path>` skips untracked files and exits 0.** `git add` new files by name first.
+- **Append-only registries conflict on every rebase.** `CommandId`, the command registry, `CASES` and generated `docs/keybindings.md`: resolve one item at a time (concatenated hunks fuse literals), and `cargo check` before `rebase --continue`.
+- **sccache reads settings at server start.** A bare `sccache --show-stats` after `--stop-server` starts a 10 GiB default server that evicts the cache; use `scripts/sccache-restart.sh`. `SCCACHE_ERROR_LOG` needs `SCCACHE_LOG`. A wedged daemon shows idle old `rustc` processes and a frozen executed count; stopping it kills other sessions' compiles.
+- **A near-zero hit rate with `Cache write errors` climbing means the cache directory is gone.** `mkdir -p` the `Cache location` from `--show-stats` (macOS `~/Library/Caches/Mozilla.sccache`); no restart.
+- **Never set `CARGO_INCREMENTAL=1` with sccache.** Cargo caches the refusal in `target/.rustc_info.json`, so later builds fail with "incremental compilation is prohibited" even unset; delete that file. Leave it unset locally (incremental is about 4x faster per edit); CI sets `=0`.
+- **A profile or linker flag change evicts the shared compile cache for everyone.** Make it rarely, in one commit. For debugger line tables set `CARGO_PROFILE_DEV_DEBUG` for one build.
+- **Only `readelf -p .comment` shows which linker ran.** gcc obeys the last `-fuse-ld` and rustc appends its own; `scripts/linker.sh` puts mold last.
+- **`.cargo/config.toml` is copied into the Flatpak sandbox.** Neutralise a bare-name tool, path or machine-specific setting in `flatpak/dev.postio.Postio.json`'s `build-options.env`. `gh workflow run Release --ref main` builds the bundle without a tag.
+- **A compiling CI job uses `.github/actions/build-cache` and `build-cache-save`, never `actions/cache` on `target/`.** Bump the action's `epoch` when a codegen setting lies outside the key's inputs.
+- **GitHub path filters are not shell globs.** `*` stops at `/`; `'*.md'` matches only top-level files.
+- **`issue-land.sh` rebases the tree it runs from, and bash reads a script by byte offset.** Keep re-run logic inside the `if [ "$BEHIND" -gt 0 ]` block, before any push.
+- **The attachment text helper is a separate binary beside the app.** `cargo run -p postio-gtk` does not build it, so PDFs record `skipped` until `cargo build -p postio-session --bin postio-extract-helper` (same profile); `scripts/run-isolated.sh` builds both. Build it under an unwinding profile (`release`, not `release-tui`) because it recovers pages with `catch_unwind`. A tarball row's `also` in `.github/release-variants.json` ships it.
+- **A coredump names a worktree whose code may never have landed.** Check `git log` before treating it as evidence about `main`. Run load generators under `timeout`.
+- **Kill only the process you started.** `pkill -f issue-land.sh` ends every session's landing and opens no PR. Stop yours by the pid in `$(git rev-parse --git-dir)/postio-land.pid` (#1928).
+- **`check-crate-boundaries.py` checks only crates in its `RULES` table.** A new crate has no boundary rules until you add them.
+- **A GitHub `container:` job cannot run WebKit's sandbox.** bubblewrap needs a user namespace and `/proc` mount Docker refuses; only `--privileged` passes, and rootless podman passing says nothing about the runner. Linux jobs stay on the bare runner (#1998).
