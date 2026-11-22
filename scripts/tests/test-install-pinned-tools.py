@@ -41,11 +41,21 @@ while [ $# -gt 0 ]; do
     case "$1" in -o) out="$2"; shift ;; http*) url="$1" ;; esac
     shift
 done
-version=$(echo "$url" | sed 's#.*nexte.st/\\([^/]*\\)/.*#\\1#')
 work=$(mktemp -d)
-printf '#!/bin/sh\\necho "cargo-nextest %s"\\n' "$version" > "$work/cargo-nextest"
-chmod +x "$work/cargo-nextest"
-tar -czf "$out" -C "$work" cargo-nextest
+case "$url" in
+*nexte.st/*)
+    tool=cargo-nextest; dir=""
+    version=$(echo "$url" | sed 's#.*nexte.st/\\([^/]*\\)/.*#\\1#') ;;
+*)
+    dir=$(basename "$url" .tar.gz)
+    tool=$(echo "$dir" | grep -oE '^cargo-[a-z]+')
+    version=$(echo "$dir" | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1) ;;
+esac
+printf '#!/bin/sh\\necho "%s %s"\\n' "$tool" "$version" > "$work/$tool"
+chmod +x "$work/$tool"
+members="$tool"
+if [ -n "$dir" ]; then mkdir -p "$work/$dir"; cp "$work/$tool" "$work/$dir/"; members="$members $dir/$tool"; fi
+tar -czf "$out" -C "$work" $members
 """
 
 SUM = """#!/usr/bin/env bash
@@ -173,14 +183,14 @@ def main() -> int:
             a = sb.repo(f"{tool}-a", **{tool: "1.0.0"})
             b = sb.repo(f"{tool}-b", **{tool: "2.0.0"})
             for repo in (a, b):
-                r = sb.run([str(repo / f"scripts/install-{tool}.sh")], repo)
+                pin = re.search(r"\b[0-9a-f]{64}\b", (repo / f"scripts/install-{tool}.sh").read_text())
+                r = sb.run([str(repo / f"scripts/install-{tool}.sh")], repo, EXPECT_DIGEST=pin.group(0))
                 case(f"{name} install from {repo.name}", r.returncode == 0, r.stdout + r.stderr)
             for repo, want in ((a, "1.0.0"), (b, "2.0.0")):
                 r = sb.run([name, "--version"], repo)
                 case(f"{name} resolves {want} in {repo.name}", r.stdout.strip() == f"{name} {want}",
                      r.stdout + r.stderr)
-        locked = [x for x in sb.lines("cargo install") if "--locked" in x]
-        case("cargo installs stay --locked", len(locked) == len(sb.lines("cargo install")) and locked, "")
+        case("no pinned tool compiles from source", not sb.lines("cargo install"), str(sb.lines("cargo install")))
 
         ci_home = Path(raw) / "ci-home"
         ci_home.mkdir()

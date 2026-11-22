@@ -52,7 +52,7 @@ def main() -> int:
 
     full_branch = source.index('echo "--- test (full)')
     default_branch = source.index(
-        "        # The default tier: the unit tests of the crates this branch changed."
+        "        # The default tier: the unit tests of the crates this branch changed"
     )
     if default_branch < full_branch:
         fail("the branches moved; this test is reading the wrong halves")
