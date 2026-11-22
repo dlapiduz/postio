@@ -1279,9 +1279,8 @@ static SPECS: &[CommandSpec] = &[
         // The terminal's body is Markdown already, so it has nothing to switch to.
         default_binding: "mod+alt+s",
         contexts: Context::Composer.as_set(),
-        destructive: false,
-        recovery: Recovery::None,
         requires: GRAPHICAL_MAIL,
+        ..BASE
     },
     CommandSpec {
         id: CommandId::AttachRemoteImage,

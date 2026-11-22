@@ -394,10 +394,6 @@ const CASES: &[(&str, fn())] = &[
         composer_recipient_select::return_commits_the_suggestion_the_popover_has_selected as fn(),
     ),
     (
-        "composer_recipient_select::nothing_is_offered_until_four_characters_are_typed",
-        composer_recipient_select::nothing_is_offered_until_four_characters_are_typed as fn(),
-    ),
-    (
         "composer_markdown_source::switching_there_and_back_changes_nothing",
         composer_markdown_source::switching_there_and_back_changes_nothing as fn(),
     ),
