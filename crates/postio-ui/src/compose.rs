@@ -86,20 +86,22 @@ pub fn editor_script() -> &'static str {
 /// being written into source, so they are escaped rather than trusted to
 /// stay that way.
 pub fn markdown_table_js() -> String {
-    use crate::editor::markdown::{SEQUENCES, Trigger};
+    use crate::editor::markdown::{Trigger, bridged};
     use std::fmt::Write as _;
 
     let mut out = String::from("const POSTIO_MARKDOWN = [\n");
-    for sequence in SEQUENCES {
-        let trigger = match sequence.trigger {
+    for (marker, command, trigger) in bridged() {
+        let trigger = match trigger {
             Trigger::LinePrefix => "line_prefix",
             Trigger::Wrapping => "wrapping",
+            Trigger::LineComplete | Trigger::WordComplete => {
+                unreachable!("the bridge recognises no {trigger:?} row")
+            }
         };
         let _ = writeln!(
             out,
-            "    {{ marker: \"{}\", command: \"{}\", trigger: \"{trigger}\" }},",
-            sequence.marker.replace('\\', "\\\\").replace('"', "\\\""),
-            sequence.command,
+            "    {{ marker: \"{}\", command: \"{command}\", trigger: \"{trigger}\" }},",
+            marker.replace('\\', "\\\\").replace('"', "\\\""),
         );
     }
     out.push_str("];\n");
@@ -142,12 +144,11 @@ mod editor_script_tests {
         // sequence that consumes the marker and formats nothing; one the
         // reflection never reports is a toolbar toggle that stays off over
         // the very formatting it made (#1485).
-        for sequence in crate::editor::markdown::SEQUENCES {
-            let command = sequence.command;
+        for (marker, command, _) in crate::editor::markdown::bridged() {
             assert!(
                 EDITOR_SCRIPT.contains(&format!("\n    {command}: [")),
                 "the script cannot run {command}, which {:?} reaches",
-                sequence.marker
+                marker
             );
             assert!(
                 EDITOR_SCRIPT.contains(&format!("active.push('{command}')")),

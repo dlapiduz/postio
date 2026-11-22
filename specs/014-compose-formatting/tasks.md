@@ -90,12 +90,12 @@ red. A test that is green on arrival is a guard and says so.
 
 ### The sequence table, as a contract
 
-- [ ] T015 Write failing cases in `crates/postio-ui/src/editor/markdown.rs` for:
+- [x] T015 Write failing cases in `crates/postio-ui/src/editor/markdown.rs` for:
   - `Marker` and `Trigger` (`data-model.md`);
   - longest-first across patterns;
   - the widened FR-068 set;
   - the generated `POSTIO_MARKDOWN` staying filtered to the rows today's bridge implements (research R15).
-- [ ] T016 Implement the new `Sequence` shape and every row of `contracts/sequences.md` in `crates/postio-ui/src/editor/markdown.rs`. Filter the generator in `crates/postio-ui/src/compose.rs` (`markdown_table_js`).
+- [x] T016 Implement the new `Sequence` shape and every row of `contracts/sequences.md` in `crates/postio-ui/src/editor/markdown.rs`. Filter the generator in `crates/postio-ui/src/compose.rs` (`markdown_table_js`).
 
 **Checkpoint**: every construct is in the model, in HTML on the wire, and
 in the registry where something answers it.
