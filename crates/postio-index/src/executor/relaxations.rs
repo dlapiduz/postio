@@ -17,7 +17,7 @@ use postio_search::results::{Counted, TOTAL_HITS_CAP};
 use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _};
 
-use super::{Form, HITS_JOIN, Plan, SearchRequest};
+use super::{COPY_KEY, Form, HITS_JOIN, Plan, SearchRequest};
 use crate::error::Result;
 
 /// Each relaxation's conversation total, in the order given: what
@@ -126,7 +126,7 @@ pub(super) async fn counts(
         arms.push(format!(
             "SELECT * FROM (SELECT {index} AS q, -1 AS k, m.id AS id,
                                      coalesce(m.thread_id, -m.id) AS conv,
-                                     m.content_id AS content
+                                     m.content_id AS content, {COPY_KEY} AS copy
                               {walk} LIMIT ?)"
         ));
         for (key, set) in plan.sets.iter().enumerate() {
@@ -134,7 +134,7 @@ pub(super) async fn counts(
                 continue;
             }
             arms.push(format!(
-                "SELECT {index}, {key}, x.message_id, NULL, NULL FROM ({}) x",
+                "SELECT {index}, {key}, x.message_id, NULL, NULL, NULL FROM ({}) x",
                 set.sql
             ));
             params.extend(set.params.iter().cloned());
@@ -142,7 +142,7 @@ pub(super) async fn counts(
         plans.push((plan, driver));
     }
 
-    let mut walked: Vec<Vec<(i64, i64, Option<i64>)>> = vec![Vec::new(); queries.len()];
+    let mut walked: Vec<Vec<Walked>> = vec![Vec::new(); queries.len()];
     let mut sets: Vec<Vec<HashSet<i64>>> = plans
         .iter()
         .map(|(plan, _)| vec![HashSet::new(); plan.sets.len()])
@@ -159,7 +159,7 @@ pub(super) async fn counts(
             }
             Err(_) => {
                 if let Some(rows) = walked.get_mut(query) {
-                    rows.push((id, row.col(3)?, row.col(4)?));
+                    rows.push((id, row.col(3)?, row.col(4)?, row.col(5)?));
                 }
             }
         }
@@ -183,15 +183,29 @@ pub(super) async fn counts(
             };
             // One match per content, as `search_conversations` folds it: a
             // message filed in two folders (#1780) is counted once, in the
-            // conversation of its earliest occurrence that holds.
+            // conversation of its earliest occurrence that holds. So is an
+            // exact copy with content of its own (#1526): its content is
+            // counted under the first content met with the same copy key.
             let mut kept: HashMap<Held, (i64, i64)> = HashMap::new();
+            let mut copies: HashMap<String, Held> = HashMap::new();
+            let mut aliases: HashMap<Held, Held> = HashMap::new();
             // A walk that filled its LIMIT may have more behind it.
             let mut capped = walked.len() as u64 >= cap.saturating_mul(2);
-            for (id, conversation, content) in walked {
+            for (id, conversation, content, copy) in walked {
                 if !holds(id) {
                     continue;
                 }
-                let key = content.map_or(Held::Message(id), Held::Content);
+                let own = content.map_or(Held::Message(id), Held::Content);
+                let key = match aliases.get(&own) {
+                    Some(key) => *key,
+                    None => {
+                        let key = copy
+                            .map(|copy| *copies.entry(copy).or_insert(own))
+                            .unwrap_or(own);
+                        aliases.insert(own, key);
+                        key
+                    }
+                };
                 if let Some(earliest) = kept.get_mut(&key) {
                     if id < earliest.0 {
                         *earliest = (id, conversation);
@@ -215,6 +229,10 @@ pub(super) async fn counts(
         })
         .collect())
 }
+
+/// One row of a query's walk: the message, its conversation, its content and
+/// its copy key ([`COPY_KEY`]).
+type Walked = (i64, i64, Option<i64>, Option<String>);
 
 /// What one counted match is: its content, or the message itself when it has
 /// none.

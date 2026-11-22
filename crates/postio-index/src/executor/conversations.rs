@@ -68,7 +68,7 @@ use postio_storage::repository::from_millis;
 use postio_storage::sql::{self, RowExt as _};
 
 use super::{
-    AGED_FROM, BODY_SCORE_WEIGHT, Candidate, Form, HITS_JOIN_WITH_FILES, MILLIS_PER_YEAR,
+    AGED_FROM, BODY_SCORE_WEIGHT, COPY_KEY, Candidate, Form, HITS_JOIN_WITH_FILES, MILLIS_PER_YEAR,
     POOL_AGE_WEIGHT_PER_YEAR, Plan, SearchRequest, names_a_folder, relevance_keys, scope_role,
 };
 use crate::error::Result;
@@ -406,6 +406,10 @@ struct Fold {
     /// Each content's place in [`Fold::found`]: a message filed in two
     /// folders is one content (#1780), and one match.
     contents: HashMap<i64, usize>,
+    /// Each exact copy's ([`COPY_KEY`]) place in [`Fold::found`]: an IMAP
+    /// message filed in two folders has two contents, and is one match
+    /// all the same (#1526).
+    copies: HashMap<String, usize>,
     /// The occurrences another of the same content stands for, so that
     /// their rows from the other index are passed over too.
     passed: std::collections::HashSet<i64>,
@@ -626,8 +630,22 @@ impl Fold {
         // hands over already passed the plan's conditions and sets, so the
         // earliest met here is the earliest that qualifies. The text score
         // is the content's, whichever occurrence carried it.
+        //
+        // An exact copy is the same message under another content, and
+        // stands the same way. Only rows that matched reach the fold, so
+        // the copy that stands always matched.
         let content: Option<i64> = row.col(15)?;
-        if let Some(at) = content.and_then(|content| self.contents.get(&content).copied()) {
+        let copy: Option<String> = row.col(17)?;
+        let held_at = content
+            .and_then(|content| self.contents.get(&content).copied())
+            .or_else(|| {
+                copy.as_ref()
+                    .and_then(|copy| self.copies.get(copy).copied())
+            });
+        if let Some(at) = held_at {
+            if let Some(content) = content {
+                self.contents.insert(content, at);
+            }
             let held = self.found[at].id;
             if id > held {
                 self.passed.insert(id);
@@ -653,6 +671,9 @@ impl Fold {
         }
         if let Some(content) = content {
             self.contents.insert(content, self.found.len());
+        }
+        if let Some(copy) = copy {
+            self.copies.insert(copy, self.found.len());
         }
         self.at.insert(id, self.found.len());
         let found = Self::found(row, id, scores)?;
@@ -760,7 +781,7 @@ fn projection_sql(plan: &Plan, walk: Walk) -> String {
                 EXISTS (SELECT 1 FROM markers k
                          WHERE k.message_id = m.id AND k.dismissed_at IS NULL),
                 CASE WHEN m.has_attachments = 1 THEN m.attachment_count ELSE 0 END,
-                m.content_id, {file}
+                m.content_id, {file}, {COPY_KEY}
            {from}
           WHERE {where_sql}
           LIMIT ?",
