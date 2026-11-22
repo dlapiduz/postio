@@ -369,6 +369,10 @@ const CASES: &[(&str, fn())] = &[
         composer_document::gtk_injects_the_one_bridge_postio_ui_assembles as fn(),
     ),
     (
+        "composer_document::the_caret_crosses_the_bridge_as_a_place_in_the_document",
+        composer_document::the_caret_crosses_the_bridge_as_a_place_in_the_document as fn(),
+    ),
+    (
         "composer_focus::focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped",
         composer_focus::focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped as fn(),
     ),

@@ -431,6 +431,183 @@ impl SourceMap {
     }
 }
 
+/// The private character a caret is carried in, between the rich editor and
+/// the document (spec 014 R14): the editor marks a copy of its body with it,
+/// and `parse` keeps it where the caret was, so the caret's [`DocPosition`]
+/// is read off the document `parse` builds rather than reasoned out from the
+/// editor's own markup. Private use, so it is nobody's text.
+pub const CARET: char = '\u{E002}';
+
+/// The document with [`CARET`] taken out of it, and the position it marked.
+pub fn take_caret(mut document: crate::Document) -> (crate::Document, Option<DocPosition>) {
+    let position = visible(&document)
+        .into_iter()
+        .find(|(_, c)| *c == CARET)
+        .map(|(position, _)| position);
+    strip_caret_blocks(&mut document.blocks);
+    (document, position)
+}
+
+/// `document` with [`CARET`] at `position`: what the rich editor is loaded
+/// with to put its caret there.
+pub fn put_caret(document: &crate::Document, position: &DocPosition) -> crate::Document {
+    let mut marked = document.clone();
+    if let Some(block) = block_at(&mut marked.blocks, &position.path) {
+        put_caret_in(block, *position.path.last().unwrap_or(&0), position.offset);
+    }
+    marked
+}
+
+/// The block that holds text at `path`, or the cell of a table.
+fn block_at<'a>(blocks: &'a mut [crate::Block], path: &[usize]) -> Option<&'a mut crate::Block> {
+    use crate::Block;
+    let (first, rest) = path.split_first()?;
+    let container =
+        !rest.is_empty() && matches!(blocks.get(*first)?, Block::List { .. } | Block::Quote(_));
+    let block = blocks.get_mut(*first)?;
+    if !container {
+        // A table's cell is the last index, read by `put_caret_in`.
+        return Some(block);
+    }
+    match block {
+        Block::List { items, .. } => {
+            let (item, rest) = rest.split_first()?;
+            block_at(&mut items.get_mut(*item)?.blocks, rest)
+        }
+        Block::Quote(inner) => block_at(inner, rest),
+        _ => None,
+    }
+}
+
+fn put_caret_in(block: &mut crate::Block, cell: usize, offset: usize) {
+    use crate::Block;
+    match block {
+        Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+            put_caret_inlines(inlines, offset);
+        }
+        Block::Code { text, .. } => {
+            let at = text
+                .char_indices()
+                .nth(offset)
+                .map_or(text.len(), |(at, _)| at);
+            text.insert(at, CARET);
+        }
+        Block::Table(table) => {
+            let width = table.width();
+            let mut header = table.header().to_vec();
+            let mut rows = table.rows().to_vec();
+            let target = if cell < width {
+                header.get_mut(cell)
+            } else {
+                rows.get_mut((cell - width) / width)
+                    .and_then(|row| row.get_mut((cell - width) % width))
+            };
+            if let Some(target) = target {
+                put_caret_inlines(target, offset);
+            }
+            *table = crate::Table::new(table.alignments().to_vec(), header, rows);
+        }
+        Block::List { .. } | Block::Quote(_) | Block::Quoted(_) | Block::Rule => {}
+    }
+}
+
+/// Put the caret `offset` visible characters into `inlines`. Returns what
+/// is left of the offset when it runs past them.
+fn put_caret_inlines(inlines: &mut Vec<crate::Inline>, mut offset: usize) -> Option<usize> {
+    use crate::Inline;
+    let mut index = 0;
+    while index < inlines.len() {
+        match &mut inlines[index] {
+            Inline::Text(text) | Inline::Code(text) => {
+                let len = text.chars().count();
+                if offset <= len {
+                    let at = text
+                        .char_indices()
+                        .nth(offset)
+                        .map_or(text.len(), |(at, _)| at);
+                    text.insert(at, CARET);
+                    return None;
+                }
+                offset -= len;
+            }
+            Inline::Strong(inner) | Inline::Emphasis(inner) | Inline::Strikethrough(inner) => {
+                match put_caret_inlines(inner, offset) {
+                    None => return None,
+                    Some(rest) => offset = rest,
+                }
+            }
+            Inline::Link { inlines: inner, .. } => match put_caret_inlines(inner, offset) {
+                None => return None,
+                Some(rest) => offset = rest,
+            },
+            Inline::Break => {
+                if offset == 0 {
+                    inlines.insert(index, Inline::Text(CARET.to_string()));
+                    return None;
+                }
+                offset -= 1;
+            }
+            Inline::Image { .. } | Inline::RemoteImage { .. } => {}
+        }
+        index += 1;
+    }
+    if offset == 0 {
+        inlines.push(Inline::Text(CARET.to_string()));
+        return None;
+    }
+    Some(offset)
+}
+
+fn strip_caret_blocks(blocks: &mut [crate::Block]) {
+    use crate::Block;
+    for block in blocks {
+        match block {
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                strip_caret_inlines(inlines)
+            }
+            Block::Code { text, .. } => text.retain(|c| c != CARET),
+            Block::List { items, .. } => {
+                for item in items {
+                    strip_caret_blocks(&mut item.blocks);
+                }
+            }
+            Block::Quote(inner) => strip_caret_blocks(inner),
+            Block::Table(table) => {
+                let clean = |row: &[crate::Cell]| -> Vec<crate::Cell> {
+                    row.iter()
+                        .map(|cell| {
+                            let mut cell = cell.clone();
+                            strip_caret_inlines(&mut cell);
+                            cell
+                        })
+                        .collect()
+                };
+                *table = crate::Table::new(
+                    table.alignments().to_vec(),
+                    clean(table.header()),
+                    table.rows().iter().map(|row| clean(row)).collect(),
+                );
+            }
+            Block::Quoted(_) | Block::Rule => {}
+        }
+    }
+}
+
+fn strip_caret_inlines(inlines: &mut Vec<crate::Inline>) {
+    use crate::Inline;
+    for inline in inlines.iter_mut() {
+        match inline {
+            Inline::Text(text) | Inline::Code(text) => text.retain(|c| c != CARET),
+            Inline::Strong(inner) | Inline::Emphasis(inner) | Inline::Strikethrough(inner) => {
+                strip_caret_inlines(inner);
+            }
+            Inline::Link { inlines, .. } => strip_caret_inlines(inlines),
+            Inline::Break | Inline::Image { .. } | Inline::RemoteImage { .. } => {}
+        }
+    }
+    inlines.retain(|inline| !matches!(inline, Inline::Text(text) if text.is_empty()));
+}
+
 /// What the parser read, character by character.
 #[derive(Default)]
 struct Seen(Vec<(char, usize, usize)>);
@@ -1656,6 +1833,43 @@ mod tests {
             let (written, map) = from_document_mapped(&document);
             let bold = map.to_source(&at(&[1], 5));
             assert_eq!(&written[bold..bold + 4], "bold");
+        }
+    }
+
+    mod caret {
+        use super::super::{CARET, DocPosition, put_caret, take_caret, to_document};
+
+        #[test]
+        fn a_caret_put_anywhere_is_taken_back_from_the_same_place() {
+            let document = to_document(
+                "# Plan\n\nSome **bold** and `code`\\\nnext\n\n- [ ] task\n\n| a | b |\n|---|---|\n| c | d |\n\n```\nfn x() {}\n```",
+            );
+            for (position, _) in super::super::visible(&document) {
+                let marked = put_caret(&document, &position);
+                assert_ne!(marked, document, "{position:?} was not marked");
+                let (clean, found) = take_caret(marked);
+                assert_eq!(found, Some(position.clone()));
+                assert_eq!(clean, document, "the caret left a trace at {position:?}");
+            }
+        }
+
+        #[test]
+        fn the_end_of_a_block_is_a_place_too() {
+            let document = to_document("one\n\ntwo");
+            let end = DocPosition {
+                path: vec![1],
+                offset: 3,
+            };
+            let (clean, found) = take_caret(put_caret(&document, &end));
+            assert_eq!(found, Some(end));
+            assert_eq!(clean, document);
+        }
+
+        #[test]
+        fn a_document_without_a_caret_has_none() {
+            let document = to_document("words");
+            assert_eq!(take_caret(document.clone()), (document, None));
+            assert!(!"words".contains(CARET));
         }
     }
 }

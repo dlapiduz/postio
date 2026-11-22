@@ -25,6 +25,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use postio_body::markdown::DocPosition;
 use postio_body::{Document, EditHistory, parse};
 use webkit6::prelude::*;
 
@@ -668,6 +669,56 @@ impl Editor {
     /// Whether `Ctrl+Z` has anywhere to go.
     pub fn can_undo(&self) -> bool {
         self.state.history.borrow().can_undo()
+    }
+
+    /// Ask where the caret is, as a place in the document (spec 014 R14),
+    /// and hand it to `done` when the surface answers. `None` when there is
+    /// no caret, or it is in a carried quote.
+    pub fn caret(&self, done: impl FnOnce(Option<DocPosition>) + 'static) {
+        self.view.evaluate_javascript(
+            "window.postioMarkedBody()",
+            None,
+            None,
+            None::<&gtk::gio::Cancellable>,
+            move |outcome| {
+                let marked = outcome
+                    .map(|value| value.to_str().to_string())
+                    .unwrap_or_default();
+                done(postio_body::markdown::take_caret(parse(&marked)).1);
+            },
+        );
+    }
+
+    /// Show `document` with the caret at `at`, as one edit on the record: a
+    /// return from the Markdown view, which is one undo step however much
+    /// was written there (spec 014 FR-028).
+    pub fn show_at(&self, document: Document, at: Option<&DocPosition>) {
+        let before = self.state.document.borrow().clone();
+        if before != document {
+            self.state
+                .history
+                .borrow_mut()
+                .record(before, document.clone());
+        }
+        self.state.last_edit.set(None);
+        let marked = at.map_or_else(
+            || document.clone(),
+            |at| postio_body::markdown::put_caret(&document, at),
+        );
+        self.seed(&marked.editor_html());
+        *self.state.document.borrow_mut() = document;
+        let current = self.state.document.borrow();
+        for handler in self.state.changed.borrow().iter() {
+            handler(&current);
+        }
+    }
+
+    /// [`caret`](Self::caret), waited out. Test plumbing.
+    #[doc(hidden)]
+    pub fn test_caret(&self) -> Option<DocPosition> {
+        self.wait_ready();
+        let marked = self.run_blocking("window.postioMarkedBody()");
+        postio_body::markdown::take_caret(parse(&marked)).1
     }
 
     /// Put `document` on screen and on record, ending any typing run —
