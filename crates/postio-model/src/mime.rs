@@ -64,8 +64,8 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use mail_parser::{
-    AddressList, Encoding, HeaderForm, Message as MpMessage, MessageParser, MessagePart, PartId,
-    PartKind, PartRole, TextList,
+    AddressList, Encoding, HeaderForm, Message as MpMessage, MessageParser, MessagePart, PartFlags,
+    PartId, PartKind, PartRole, TextList,
 };
 
 use crate::address::EmailAddress;
@@ -665,11 +665,12 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         })
         .map(|part| parsed_part(&part, &paths))
         .collect();
-    // Three ways a body can arrive as something other than what was sent, and
+    // Every way a body can arrive as something other than what was sent, and
     // the flag has to carry all of them — it is the only signal Postio has
-    // that the words on screen are not the words that were sent (#901).
-    message.encoding_problems =
-        transfer_encoding_problem(&source) || decoded_lossily(raw, &message.body);
+    // that the words on screen are not the words that were sent (#901, #287).
+    message.encoding_problems = transfer_encoding_problem(&source)
+        || decoded_lossily(raw, &message.body)
+        || structure_guessed(&source);
 
     message
 }
@@ -698,6 +699,32 @@ fn named_html_alternative<'m>(source: &'m MpMessage<'m>) -> Option<MessagePart<'
             && !part
                 .content_disposition()
                 .is_some_and(|disposition| disposition.is_attachment())
+    })
+}
+
+/// Whether the parser had to guess at the MIME structure, so text may have
+/// been cut off or never read.
+///
+/// `mail-parser` 0.11 met a structure it could not walk with a
+/// `debug_assert!` and, in a release build, a message that looked like it
+/// had no body (#287). 1.0 recovers and says so on the part instead, and
+/// these two flags are the ones that mean content was lost:
+///
+/// - `FALLBACK_DELIMITER`: no delimiter at the start of a line ended a part
+///   (or opened a multipart), so one found mid-line did. A truncated
+///   delivery whose body quotes the boundary ends there, and the rest of the
+///   line and everything after it is not in any part.
+/// - `LIMIT_REACHED`: the parse stopped at a depth or part limit, and what
+///   lay beyond it was not parsed.
+///
+/// A missing delimiter or close delimiter (`MISSING_DELIMITER`,
+/// `UNTERMINATED`) loses nothing, because the part runs on to the next
+/// delimiter or the end of the input, so it is not flagged: a caveat on mail
+/// that reads in full would teach people to ignore it.
+fn structure_guessed(source: &MpMessage<'_>) -> bool {
+    source.parts().any(|part| {
+        part.flags()
+            .intersects(PartFlags::FALLBACK_DELIMITER | PartFlags::LIMIT_REACHED)
     })
 }
 
