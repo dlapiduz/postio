@@ -194,6 +194,35 @@ pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> Fo
     FooterView { title, keys, note }
 }
 
+/// The footer of a window on a message that is no thread to walk: its
+/// subject, and plain reply, forward and archive, which reach only it.
+pub fn lone(subject: &str, keymap: &Keymap) -> FooterView {
+    let keys = [
+        (CommandId::Reply, "reply"),
+        (CommandId::Forward, "forward"),
+        (CommandId::Archive, "archive"),
+    ]
+    .into_iter()
+    .filter_map(|(command, label)| hints::hint(keymap, command, label))
+    .map(|hint| (hints::short(&hint.key), hint.label))
+    .collect();
+    FooterView {
+        title: subject.to_owned(),
+        keys,
+        note: None,
+    }
+}
+
+/// [`footer`] for a window opened over the search results: Escape goes back
+/// to them, as the match banner says, and the footer says so too, where the
+/// results' own footer said "back to inbox" (#2193).
+pub fn over_results(mut view: FooterView, keymap: &Keymap) -> FooterView {
+    if let Some(hint) = hints::hint(keymap, CommandId::Back, "back to results") {
+        view.keys.push((hints::short(&hint.key), hint.label));
+    }
+    view
+}
+
 /// "e, b, l, v act on the thread", with the keys the keymap binds to
 /// archive, snooze, label and move. That reply and forward act on this
 /// message is said by their own labels ("reply to this"); the note is only

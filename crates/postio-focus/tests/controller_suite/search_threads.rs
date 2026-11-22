@@ -455,6 +455,87 @@ fn return_on_a_match_opens_the_window_at_that_message_with_every_match_marked() 
     assert_eq!(banner.back, "Back to results");
 }
 
+/// The footer behind a window opened from the results says what the keys
+/// do from there: reply and forward this message, and Escape goes back to
+/// the results, as the banner says, never back to the inbox (#2193).
+#[test]
+fn a_window_opened_from_the_results_says_escape_goes_back_to_them() {
+    let rows = List::of(3);
+    let (_focus, effects) = opened_at_message_3(&rows);
+    let footer = shown(&effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Footer(footer) => Some(footer),
+            _ => None,
+        })
+        .expect("the window's footer");
+    assert!(
+        footer.title.starts_with("Message 3 of 6"),
+        "{:?}",
+        footer.title
+    );
+    let labels: Vec<&str> = footer
+        .keys
+        .iter()
+        .map(|(_, label)| label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "reply to this",
+            "forward this",
+            "archive thread",
+            "back to results"
+        ]
+    );
+    assert_eq!(
+        footer.keys.last().map(|(cap, _)| cap.as_str()),
+        Some("Escape"),
+        "{:?}",
+        footer.keys
+    );
+}
+
+/// A result that is one message, opened over the results: its footer names
+/// the message and says Escape goes back to them too, rather than leaving
+/// no footer at all where the results' own stood (#2193).
+#[test]
+fn a_lone_message_opened_from_the_results_has_a_footer_too() {
+    let rows = List::of(3);
+    let (mut focus, _) = harbor_results(&rows);
+    let mut effects = Vec::new();
+    for _ in 0..8 {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+        effects = run(&mut focus, CommandId::OpenMessage, &rows);
+        effects = flat(&settle_all(&mut focus, effects, &rows));
+        if opened(&effects) == Some(MessageId::new(201)) {
+            break;
+        }
+        let _ = run(&mut focus, CommandId::Back, &rows);
+    }
+    assert_eq!(
+        opened(&effects),
+        Some(MessageId::new(201)),
+        "Gateway opened"
+    );
+    let footer = shown(&effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Footer(footer) => Some(footer),
+            _ => None,
+        })
+        .expect("the window's footer");
+    assert_eq!(footer.title, "Gateway defaults");
+    let labels: Vec<&str> = footer
+        .keys
+        .iter()
+        .map(|(_, label)| label.as_str())
+        .collect();
+    assert_eq!(labels, ["reply", "forward", "archive", "back to results"]);
+}
+
 fn banner_text(effects: &[Effect]) -> Option<String> {
     shown(effects)
         .into_iter()

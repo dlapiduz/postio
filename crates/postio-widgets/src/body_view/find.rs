@@ -22,6 +22,9 @@ pub(super) struct FindState {
     /// The next match found is the last, not the first: a find carried
     /// into a message from the one after it (spec 013 US6).
     from_end: bool,
+    /// The query is a search's words, found as words
+    /// ([`postio_render::TextIndex::find_words`]), not the find bar's text.
+    words: bool,
 }
 
 /// The find bar a reading pane shows above its `BodyView`.
@@ -126,6 +129,24 @@ impl FindBar {
 impl BodyView {
     /// Look for `query`; an empty one clears the find.
     pub fn set_find_query(&self, query: &str) {
+        self.imp().find.borrow_mut().words = false;
+        self.look_for(query);
+    }
+
+    /// Look for a search's words, each as a whole word and however they
+    /// are joined (#2193), the first match to be the last of the message
+    /// when `from_end`; empty words clear the find. What a window opened
+    /// from search results marks in each message it shows.
+    pub fn set_find_words_from(&self, words: &str, from_end: bool) {
+        {
+            let mut find = self.imp().find.borrow_mut();
+            find.from_end = from_end;
+            find.words = true;
+        }
+        self.look_for(words);
+    }
+
+    fn look_for(&self, query: &str) {
         {
             let mut find = self.imp().find.borrow_mut();
             find.query = query.to_owned();
@@ -134,14 +155,6 @@ impl BodyView {
         }
         self.refresh_find();
         self.scroll_to_current();
-    }
-
-    /// Look for `query` as [`set_find_query`](Self::set_find_query) does, the
-    /// first match to be the last of the message when `from_end`: a find
-    /// that walks backwards into a message lands on its last match.
-    pub fn set_find_query_from(&self, query: &str, from_end: bool) {
-        self.imp().find.borrow_mut().from_end = from_end;
-        self.set_find_query(query);
     }
 
     /// The current match's place among the message's matches, and how many
@@ -177,7 +190,12 @@ impl BodyView {
     pub(super) fn refresh_find(&self) {
         let matches = match self.document() {
             Some(doc) if !self.imp().find.borrow().query.is_empty() => {
-                doc.text.find(&self.imp().find.borrow().query)
+                let find = self.imp().find.borrow();
+                if find.words {
+                    doc.text.find_words(&find.query)
+                } else {
+                    doc.text.find(&find.query)
+                }
             }
             _ => Vec::new(),
         };
