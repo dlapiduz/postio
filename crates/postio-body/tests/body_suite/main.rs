@@ -18,6 +18,7 @@
 
 mod document;
 mod edit;
+mod formatting_wire;
 mod markdown_corpus;
 mod markdown_parity;
 mod outgoing;

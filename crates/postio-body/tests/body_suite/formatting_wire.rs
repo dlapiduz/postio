@@ -1,0 +1,130 @@
+//! What a formatted message is on the wire: spec 014's
+//! `contracts/wire.md`, held byte for byte.
+//!
+//! One golden document carries every construct the composer authors. Its
+//! HTML part is pinned here (T011), and its plain-text part beside it
+//! (T019). Both are what a recipient's client is handed, so a change to
+//! either is a change to what people receive, and has to be made here on
+//! purpose.
+
+use postio_body::document::{
+    Alignment, Block, Document, HeadingLevel, Href, Inline, Language, ListItem, ListKind, Table,
+    Task,
+};
+use postio_body::{harden, parse};
+
+fn text(s: &str) -> Inline {
+    Inline::Text(s.to_owned())
+}
+
+fn para(s: &str) -> Block {
+    Block::Paragraph(vec![text(s)])
+}
+
+fn item(s: &str) -> ListItem {
+    ListItem::new(vec![para(s)])
+}
+
+/// `contracts/wire.md`'s document.
+pub fn golden() -> Document {
+    Document {
+        blocks: vec![
+            Block::Heading {
+                level: HeadingLevel::One,
+                inlines: vec![text("Plan")],
+            },
+            Block::Paragraph(vec![
+                text("Some "),
+                Inline::Strong(vec![text("bold")]),
+                text(", "),
+                Inline::Emphasis(vec![text("italic")]),
+                text(", "),
+                Inline::Strikethrough(vec![text("struck")]),
+                text(" and "),
+                Inline::Code("code".to_owned()),
+                text(", and a "),
+                Inline::Link {
+                    href: Href::parse("https://example.com/x").unwrap(),
+                    inlines: vec![text("link")],
+                },
+                text("."),
+            ]),
+            Block::Heading {
+                level: HeadingLevel::Two,
+                inlines: vec![text("Steps")],
+            },
+            Block::List {
+                kind: ListKind::NUMBERED,
+                items: vec![
+                    item("first"),
+                    ListItem::new(vec![
+                        para("second"),
+                        Block::List {
+                            kind: ListKind::Bullet,
+                            items: vec![item("nested")],
+                        },
+                    ]),
+                ],
+            },
+            Block::List {
+                kind: ListKind::Bullet,
+                items: vec![
+                    ListItem::task(Task::Open, vec![para("open task")]),
+                    ListItem::task(Task::Done, vec![para("done task")]),
+                ],
+            },
+            Block::List {
+                kind: ListKind::Ordered { start: 7 },
+                items: vec![item("seventh")],
+            },
+            Block::Quote(vec![
+                para("quoted"),
+                Block::Quote(vec![para("nested quote")]),
+            ]),
+            Block::Code {
+                language: Language::parse("rust"),
+                text: "fn main() {}\n".to_owned(),
+            },
+            Block::Rule,
+            Block::Table(Table::new(
+                vec![Alignment::Left, Alignment::Right],
+                vec![vec![text("Item")], vec![text("Qty")]],
+                vec![vec![vec![text("Widget")], vec![text("3")]]],
+            )),
+            Block::Paragraph(vec![text("line one"), Inline::Break, text("line two")]),
+        ],
+    }
+}
+
+/// The HTML part, one block per line here for reading; the wire has no
+/// whitespace between blocks.
+const GOLDEN_HTML: &[&str] = &[
+    "<h1>Plan</h1>",
+    "<p>Some <strong>bold</strong>, <em>italic</em>, <del>struck</del> and <code>code</code>, and a <a href=\"https://example.com/x\">link</a>.</p>",
+    "<h2>Steps</h2>",
+    "<ol><li><p>first</p></li><li><p>second</p><ul><li><p>nested</p></li></ul></li></ol>",
+    "<ul data-postio-task=\"list\" style=\"list-style-type:none\"><li data-postio-task=\"open\"><p>\u{2610} open task</p></li><li data-postio-task=\"done\"><p>\u{2611} done task</p></li></ul>",
+    "<ol start=\"7\"><li><p>seventh</p></li></ol>",
+    "<blockquote><p>quoted</p><blockquote><p>nested quote</p></blockquote></blockquote>",
+    "<pre data-postio-lang=\"rust\">fn main() {}\n</pre>",
+    "<hr>",
+    "<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr><th align=\"left\">Item</th><th align=\"right\">Qty</th></tr></thead><tbody><tr><td align=\"left\">Widget</td><td align=\"right\">3</td></tr></tbody></table>",
+    "<p>line one<br>line two</p>",
+];
+
+#[test]
+fn the_html_part_is_pinned_byte_for_byte() {
+    let (_, html) = postio_body::render(&golden());
+    assert_eq!(html, GOLDEN_HTML.concat());
+}
+
+#[test]
+fn the_backstop_changes_nothing_in_the_golden_document() {
+    let html = golden().to_html();
+    assert_eq!(harden(&html), html);
+}
+
+#[test]
+fn the_golden_html_reads_back_as_the_golden_document() {
+    assert_eq!(parse(&GOLDEN_HTML.concat()), golden());
+}
