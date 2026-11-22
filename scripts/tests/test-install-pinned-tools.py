@@ -183,8 +183,9 @@ def main() -> int:
             a = sb.repo(f"{tool}-a", **{tool: "1.0.0"})
             b = sb.repo(f"{tool}-b", **{tool: "2.0.0"})
             for repo in (a, b):
-                pin = re.search(r"\b[0-9a-f]{64}\b", (repo / f"scripts/install-{tool}.sh").read_text())
-                r = sb.run([str(repo / f"scripts/install-{tool}.sh")], repo, EXPECT_DIGEST=pin.group(0))
+                pins = re.findall(r"\b[0-9a-f]{64}\b", (repo / f"scripts/install-{tool}.sh").read_text())
+                pin = pins[1] if sys.platform == "darwin" else pins[0]  # the scripts list Linux, then macOS
+                r = sb.run([str(repo / f"scripts/install-{tool}.sh")], repo, EXPECT_DIGEST=pin)
                 case(f"{name} install from {repo.name}", r.returncode == 0, r.stdout + r.stderr)
             for repo, want in ((a, "1.0.0"), (b, "2.0.0")):
                 r = sb.run([name, "--version"], repo)
