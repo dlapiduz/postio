@@ -63,6 +63,8 @@ EXCEPTIONS: dict[str, str] = {
     # all cost 198 MiB resident (spec 006 research R3). The hazard is the one
     # every font stack accepts -- a file truncated underneath a map. Nothing
     # else in the crate is unsafe, and its parsers are Rust's own (FR-023a).
+    # `tests/render_rss_plateau.rs` also installs a counting `GlobalAlloc`, as
+    # `postio-account` does, to see a leak in live bytes (#2189).
     "postio-render": "deny",
 }
 
