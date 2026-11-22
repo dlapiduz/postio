@@ -442,15 +442,17 @@ async fn a_conversations_matches_come_oldest_first_each_with_its_passage() {
     .await;
     // Ada proposed it, Quinn answered it. Each reply also quotes the one
     // before; a quote of a message the conversation holds is that message's
-    // card already, not a second one.
+    // card already, not a second one -- unless the quote is all its message
+    // matched by (#2184).
     assert_eq!(
         places(&found),
         [
             (Some(ids[0]), Source::Body, Some("Ada Norwood".to_owned())),
             (Some(ids[1]), Source::Body, Some("Quinn Abara".to_owned())),
+            (Some(ids[2]), Source::Quoted, None),
         ]
     );
-    for each in &found {
+    for each in &found[..2] {
         assert_eq!(highlighted(&each.found), ["subscriber"]);
         assert!(each.found.when.is_some(), "when it was said");
     }
@@ -481,6 +483,48 @@ async fn a_conversations_matches_come_oldest_first_each_with_its_passage() {
     );
 }
 
+/// #2184: "7 of 12 messages match" counts a reply that matched only by
+/// quoting another message of the thread. Leaving its quote out left it
+/// counted and shown nowhere; it keeps the quote, tagged as one, so every
+/// message the row counts is shown.
+#[tokio::test]
+async fn a_reply_that_matches_only_by_its_quote_keeps_it() {
+    let (world, thread, ids) = thread_of(&[
+        "list-thread-01-root",
+        "list-thread-02-reply",
+        "list-thread-04-reply-deep",
+    ])
+    .await;
+    let found = conversation_matches(
+        &world,
+        "subscriber",
+        postio_search::results::ConversationKey::Thread(thread),
+    )
+    .await;
+    let deep: Vec<_> = found
+        .iter()
+        .filter(|each| each.message == Some(ids[2]))
+        .collect();
+    assert_eq!(
+        deep.len(),
+        1,
+        "one card for the reply: {:?}",
+        places(&found)
+    );
+    assert_eq!(deep[0].found.source, Source::Quoted);
+    assert_eq!(deep[0].from, None, "the quote's writer is not the reply's");
+    let text = &deep[0].found.passage.as_ref().expect("its passage").text;
+    assert!(text.contains("Pure subscriber means"), "{text:?}");
+    // Quinn's reply has words of its own: its quote of Ada is still left out.
+    assert!(
+        !found
+            .iter()
+            .any(|each| each.message == Some(ids[1]) && each.found.source == Source::Quoted),
+        "{:?}",
+        places(&found)
+    );
+}
+
 #[tokio::test]
 async fn a_quote_of_mail_the_conversation_does_not_hold_is_an_earlier_reply() {
     // Ada's proposal never arrived here: Quinn's quote of it is the only
@@ -498,6 +542,8 @@ async fn a_quote_of_mail_the_conversation_does_not_hold_is_an_earlier_reply() {
         [
             (Some(ids[0]), Source::Body, Some("Quinn Abara".to_owned())),
             (Some(ids[0]), Source::Quoted, None),
+            // The deeper reply matched only by quoting Quinn (#2184).
+            (Some(ids[1]), Source::Quoted, None),
         ],
         "who wrote a quote is not known: not the person quoting it"
     );

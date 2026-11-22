@@ -145,11 +145,10 @@ pub async fn files(
             .collect::<Vec<_>>()
             .join(",")
     );
-    // Parts that are shown in the body (a logo by its `cid:`) are not
-    // files anyone sent.
     let rows: Vec<Row> = sql::all_unbounded(
         connection,
-        "SELECT f.id, f.message_id, coalesce(f.filename, ''), f.mime_type, f.size,
+        &format!(
+            "SELECT f.id, f.message_id, coalesce(f.filename, ''), f.mime_type, f.size,
                 sub.subject, sub.received_at, sender.name, a.address
            FROM json_each(?1) j
            JOIN attachments f ON f.message_id = j.value
@@ -161,7 +160,8 @@ pub async fn files(
                   WHERE m.id IN (SELECT value FROM json_each(?1))) sub ON sub.id = f.message_id
            LEFT JOIN recipients sender ON sender.id = sub.from_recipient
            LEFT JOIN addresses a ON a.id = sender.address_id
-          WHERE NOT (f.disposition = 'inline' AND f.content_id IS NOT NULL)",
+          WHERE {SENT}"
+        ),
         [ids.as_str()],
         |row| {
             Ok(Row {
@@ -260,6 +260,129 @@ pub async fn files(
         .min(cards.len());
     Ok(cards.drain(offset..end).collect())
 }
+
+/// What a conversation search reads of its files, in one statement: where
+/// in which attachment the page's rows matched (as [`file_matches`] says
+/// it, for `page`), and how many cards [`files`] lists for the mail that
+/// `carriers` are -- the search's own count, so the Files tab says the same
+/// number before it opens and after (#2178). `in_file` are the walk's
+/// messages whose attachments' text matched; `page` is those of them on the
+/// page. Nothing is read when no message carries a file or matched in one,
+/// so the search keeps its statement budget (spec 010 research R2).
+pub(super) async fn page_and_cards(
+    connection: &Connection,
+    query: &ParsedQuery,
+    carriers: &[super::conversations::Carrier],
+    in_file: &[MessageId],
+    page: &[MessageId],
+) -> Result<(Vec<FileMatch>, u64)> {
+    let words = folded_match(query).filter(|_| !in_file.is_empty());
+    if carriers.is_empty() && words.is_none() {
+        return Ok((Vec::new(), 0));
+    }
+    let list = |ids: &mut dyn Iterator<Item = MessageId>| {
+        format!(
+            "[{}]",
+            ids.map(|id| id.get().to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    let carried = list(&mut carriers.iter().map(|carrier| carrier.id));
+    // The attachments' names, then where their text matched: the match is
+    // read in a subquery and joined out, as `file_matches` reads it, and
+    // only the page's passages carry their text.
+    let names = format!(
+        "SELECT 0, f.message_id, f.id, coalesce(f.filename, ''), 0, 0, '', ''
+           FROM json_each(?1) j
+           JOIN attachments f ON f.message_id = j.value
+          WHERE {SENT}"
+    );
+    type Read = (i64, i64, i64, String, i64, i64, String, String);
+    let read = |row: &turso::Row| -> postio_storage::Result<Read> {
+        Ok((
+            row.col(0)?,
+            row.col(1)?,
+            row.col(2)?,
+            row.col(3)?,
+            row.col(4)?,
+            row.col(5)?,
+            row.col(6)?,
+            row.col(7)?,
+        ))
+    };
+    let mut rows: Vec<Read> = match words {
+        None => sql::all_unbounded(connection, &names, [carried.as_str()], read).await?,
+        Some(words) => {
+            sql::all_unbounded(
+                connection,
+                &format!(
+                    "{names}
+                     UNION ALL
+                     SELECT 1, m.id, a.id, coalesce(a.filename, ''), a.position, p.ordinal,
+                            p.location,
+                            CASE WHEN m.id IN (SELECT value FROM json_each(?4))
+                                 THEN p.text ELSE '' END
+                       FROM (SELECT content_id, position, ordinal, location, text
+                               FROM attachment_passages WHERE fts_match(text_search, ?2)) p
+                       CROSS JOIN messages m INDEXED BY idx_messages_content
+                         ON m.content_id = p.content_id
+                       JOIN attachments a ON a.message_id = m.id AND a.position = p.position
+                      WHERE m.id IN (SELECT value FROM json_each(?3))"
+                ),
+                (
+                    turso::Value::Text(carried),
+                    words,
+                    turso::Value::Text(list(&mut in_file.iter().copied())),
+                    turso::Value::Text(list(&mut page.iter().copied())),
+                ),
+                read,
+            )
+            .await?
+        }
+    };
+    // Each attachment's first matching unit, in the order `file_matches`
+    // gives them: by message, then position, then unit.
+    rows.sort_by_key(|row| (row.0, row.1, row.4, row.5));
+    let mut matched: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut found: Vec<FileMatch> = Vec::new();
+    for (_, message, attachment, name, _, _, location, text) in rows.iter().filter(|row| row.0 == 1)
+    {
+        let Some(location) = crate::index::decode_location(location) else {
+            continue;
+        };
+        if !matched.insert(*attachment) {
+            continue;
+        }
+        let message = MessageId::new(*message);
+        if page.contains(&message) {
+            found.push(FileMatch {
+                message,
+                attachment: AttachmentId::new(*attachment),
+                name: name.clone(),
+                location,
+                text: text.clone(),
+            });
+        }
+    }
+    let name_terms = super::conversations::file_terms(query);
+    let names = rows.iter().filter(|row| row.0 == 0);
+    let cards = if name_terms.is_empty() {
+        names.count()
+    } else {
+        names
+            .filter(|(_, _, attachment, name, ..)| {
+                matched.contains(attachment)
+                    || !postio_search::highlight::find(name, &name_terms).is_empty()
+            })
+            .count()
+    };
+    Ok((found, cards as u64))
+}
+
+/// The attachments that are files someone sent: a part shown in the body
+/// (a logo by its `cid:`) is not one.
+const SENT: &str = "NOT (f.disposition = 'inline' AND f.content_id IS NOT NULL)";
 
 /// One attachment row, as [`files`] reads it.
 struct Row {

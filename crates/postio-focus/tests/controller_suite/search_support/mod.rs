@@ -279,6 +279,12 @@ pub fn conversation(n: i64) -> ConversationHit {
             30 => vec![RankReason::FrequentSender, RankReason::InFileName],
             _ => vec![RankReason::Matches(1)],
         },
+        matched_messages: match n {
+            7 => 3,
+            2 => 2,
+            30 => 0,
+            _ => 1,
+        },
         matches: std::iter::once(Match {
             source: if n == 4 { Source::Quoted } else { Source::Body },
             passage: None,

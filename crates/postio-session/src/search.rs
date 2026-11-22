@@ -711,8 +711,12 @@ const MATCHED_MESSAGES: usize = 50;
 /// A reply quotes the message before it, and that message is in the
 /// conversation with its own card: the quote would be the same words a
 /// second time. A quoted passage found in another message's own words is
-/// left out, and one that is not -- the conversation never held the mail
-/// it quotes -- is the only place those words are, and stays.
+/// left out when its message has a match of its own, and one that is not
+/// -- the conversation never held the mail it quotes -- is the only place
+/// those words are, and stays. A message whose only match is such a quote
+/// keeps it too: the index counts it among the conversation's matches, and
+/// a message counted and shown nowhere makes the row's "K of M" a lie
+/// (#2184).
 ///
 /// # Where, not whether
 ///
@@ -831,32 +835,8 @@ async fn read_matches(
             .filter(|(of, _)| *of == member.id)
             .map(|(_, each)| each.clone())
             .collect();
-        if let Some(body) = &told[at] {
-            if let Some(mut own) = body.own_match(&words, FirstLine::Avoided) {
-                own.when = when;
-                found.push(ConversationMatch {
-                    message: Some(member.id),
-                    to: to.clone(),
-                    from: member.from.clone(),
-                    found: own,
-                });
-            }
-            let quoted = body
-                .quoted_match(&words, FirstLine::Avoided)
-                .filter(|quoted| {
-                    !told.iter().enumerate().any(|(other, body)| {
-                        other != at && body.as_ref().is_some_and(|body| said_in(quoted, &body.own))
-                    })
-                });
-            if let Some(quoted) = quoted {
-                found.push(ConversationMatch {
-                    message: Some(member.id),
-                    to: to.clone(),
-                    from: None,
-                    found: quoted,
-                });
-            }
-        }
+        // Its files' cards, after its words'.
+        let mut in_files = Vec::new();
         // A file whose contents matched is one card, its content's, which
         // is named by the file already.
         for (_, attachment, name) in files.iter().filter(|(of, attachment, _)| {
@@ -866,7 +846,7 @@ async fn read_matches(
             if marks.is_empty() {
                 continue;
             }
-            found.push(ConversationMatch {
+            in_files.push(ConversationMatch {
                 message: Some(member.id),
                 to: to.clone(),
                 from: member.from.clone(),
@@ -881,7 +861,7 @@ async fn read_matches(
             });
         }
         for file in read.iter().filter(|file| file.message == member.id) {
-            found.push(ConversationMatch {
+            in_files.push(ConversationMatch {
                 message: Some(member.id),
                 to: to.clone(),
                 from: member.from.clone(),
@@ -896,6 +876,37 @@ async fn read_matches(
                 },
             });
         }
+        if let Some(body) = &told[at] {
+            let own = body.own_match(&words, FirstLine::Avoided);
+            let has_own = own.is_some() || !in_files.is_empty();
+            if let Some(mut own) = own {
+                own.when = when;
+                found.push(ConversationMatch {
+                    message: Some(member.id),
+                    to: to.clone(),
+                    from: member.from.clone(),
+                    found: own,
+                });
+            }
+            let quoted = body
+                .quoted_match(&words, FirstLine::Avoided)
+                .filter(|quoted| {
+                    !has_own
+                        || !told.iter().enumerate().any(|(other, body)| {
+                            other != at
+                                && body.as_ref().is_some_and(|body| said_in(quoted, &body.own))
+                        })
+                });
+            if let Some(quoted) = quoted {
+                found.push(ConversationMatch {
+                    message: Some(member.id),
+                    to: to.clone(),
+                    from: None,
+                    found: quoted,
+                });
+            }
+        }
+        found.append(&mut in_files);
     }
     let subject = members.iter().find_map(|member| {
         let subject = member.subject.as_deref()?;

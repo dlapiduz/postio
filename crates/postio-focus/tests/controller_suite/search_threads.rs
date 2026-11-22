@@ -28,7 +28,7 @@ fn member(thread: i64, number: i64, who: &EmailAddress) -> ThreadMember {
         from: Some(who.clone()),
         own: false,
         at: chrono::Utc
-            .with_ymd_and_hms(2026, 9, 20 + number as u32, 12, 0, 0)
+            .with_ymd_and_hms(2026, 9, 10 + number as u32, 12, 0, 0)
             .unwrap(),
         seen: true,
         has_attachments: false,
@@ -84,6 +84,7 @@ fn hit(
     hit.has_attachments = false;
     hit.labels = Vec::new();
     hit.reasons = vec![RankReason::Matches(matched)];
+    hit.matched_messages = matched;
     hit
 }
 
@@ -142,7 +143,18 @@ fn engine(request: &Request) -> Option<Reply> {
             let mut answer = page(query, *order, *offset, *limit);
             if *order == ConversationOrder::BestMatch {
                 answer.hits = vec![
-                    hit(HARBOR, 106, 6, 3, "Harbor API draft v3"),
+                    {
+                        // Its subject matches too: the reason line's
+                        // matches count it once, and it is no message
+                        // (#2184).
+                        let mut harbor = hit(HARBOR, 106, 6, 3, "Harbor API draft v3");
+                        harbor.reasons = vec![
+                            RankReason::Replied,
+                            RankReason::InSubject,
+                            RankReason::Matches(4),
+                        ];
+                        harbor
+                    },
                     hit(GATEWAY, 201, 1, 1, "Gateway defaults"),
                     hit(SLOS, 305, 8, 1, "Re: Platform SLOs"),
                 ];
@@ -225,8 +237,9 @@ fn the_top_result_with_several_matches_is_expanded_on_arrival() {
     assert_eq!(
         splice.children.iter().map(said).collect::<Vec<_>>(),
         [
+            "Messages 1\u{2013}2 don't match \u{b7} Tom\u{e1}s, Ben, 11 Sep",
             "message 3",
-            "Message 4 doesn't match \u{b7} Ben, Thu",
+            "Message 4 doesn't match \u{b7} Ben, 14 Sep",
             "message 5",
             "message 6"
         ],
@@ -338,12 +351,12 @@ fn j_walks_into_the_children_and_skips_the_gap() {
     assert_eq!(
         at,
         [
-            (Some(Some(0)), None),
-            (Some(Some(2)), None),
+            (Some(Some(1)), None),
             (Some(Some(3)), None),
+            (Some(Some(4)), None),
             (Some(None), Some(1)),
         ],
-        "message 3, 5, 6, then the next result"
+        "message 3, 5, 6, past the gaps, then the next result"
     );
 }
 
@@ -367,7 +380,11 @@ fn right_and_left_expand_and_collapse_other_results() {
     assert_eq!(splice.anchor, 2);
     assert_eq!(
         splice.children.iter().map(said).collect::<Vec<_>>(),
-        ["message 5"]
+        [
+            "Messages 1\u{2013}4 don't match \u{b7} Tom\u{e1}s, Ben, 11 Sep",
+            "message 5",
+            "Messages 6\u{2013}8 don't match \u{b7} Ben, Tom\u{e1}s, 16 Sep"
+        ]
     );
     // One at a time: Harbor's folded when the other opened.
     let effects = run(&mut focus, CommandId::CollapseThread, &rows);
@@ -523,7 +540,7 @@ fn escape_returns_to_the_results_with_the_ring_on_the_child_it_opened_from() {
         "{shown:?}"
     );
     assert!(
-        shown.contains(&Intent::ResultChildFocus(Some(0))),
+        shown.contains(&Intent::ResultChildFocus(Some(1))),
         "{shown:?}"
     );
     assert!(focus.in_results(), "the results are still up");
@@ -549,6 +566,13 @@ fn a_multi_match_thread_says_how_many_of_its_messages_match_and_a_single_match_s
     assert_eq!(
         focus.result_row(0).expect("harbor").summary.as_deref(),
         Some("3 of 6 messages match")
+    );
+    // The row says its count in messages; the reason line does not say
+    // another one beside it ("7 matches" over "6 of 12", #2178's review),
+    // and names the subject that makes Quick Look's extra card instead.
+    assert_eq!(
+        focus.result_row(0).expect("harbor").reason.as_deref(),
+        Some("you replied \u{b7} subject")
     );
     assert_eq!(
         focus.result_row(1).expect("gateway").summary,

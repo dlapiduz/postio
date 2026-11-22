@@ -531,6 +531,9 @@ address, message count, last date. ↩ runs `from:<person>`.
   messages were searched and whether attachment contents were included.
 - **FR-031**: The Files tab MUST show the grid of design §3.8; Space opens
   the system Quick Look on the file; ↩ opens its message; ⌘↓ saves it.
+  Its heading and footer count the files it shows, not the search's
+  threads. On Linux, Space opens the file in the desktop's app for its
+  type, and its key says "open the file" (#2183).
 - **FR-032**: The People tab MUST list the people in the results (design
   §3.11, D21); ↩ runs `from:<address>`.
 

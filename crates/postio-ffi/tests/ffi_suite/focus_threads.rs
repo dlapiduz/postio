@@ -904,11 +904,11 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
         .collect();
     assert_eq!(
         numbers,
-        [Some(3), None, Some(5), Some(6)],
-        "three matches and one gap: {:?}",
+        [None, Some(3), None, Some(5), Some(6)],
+        "three matches, and a gap before them and between: {:?}",
         splice.children
     );
-    let ResultChildFfi::Gap { text } = &splice.children[1] else {
+    let ResultChildFfi::Gap { text } = &splice.children[2] else {
         panic!("the second line is the gap");
     };
     assert!(
@@ -923,9 +923,9 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
         initials,
         time,
         ..
-    } = &splice.children[0]
+    } = &splice.children[1]
     else {
-        panic!("the first line is message 3");
+        panic!("the second line is message 3");
     };
     assert_eq!(tag, "message 3");
     assert!(
@@ -944,10 +944,10 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
     assert!(
         heard(&session, 10, |event| matches!(
             event,
-            UiEvent::FocusResultChildFocus { child: Some(0) }
+            UiEvent::FocusResultChildFocus { child: Some(1) }
         ))
         .await,
-        "the ring is on the first child"
+        "the ring is on the first match, past the line before it"
     );
     session.invoke("open_message");
     assert!(
@@ -1039,7 +1039,7 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
     assert!(
         heard(&session, 10, |event| matches!(
             event,
-            UiEvent::FocusResultChildFocus { child: Some(0) }
+            UiEvent::FocusResultChildFocus { child: Some(1) }
         ))
         .await,
         "Escape refocuses the child the window opened from"

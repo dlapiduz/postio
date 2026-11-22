@@ -1917,6 +1917,13 @@ impl Results {
             selected: self.tab == tab,
             key: postio_ui::hints::key(with.keymap, id),
         };
+        // The cards once read are the Files tab's count; until then the
+        // search's own.
+        let files = self.files.as_ref().map_or_else(
+            || frame.map_or(0, |frame| frame.files),
+            |files| files.len() as u64,
+        );
+        let on_files = self.tab == ResultsTab::Files;
         let tabs = vec![
             tab(
                 ResultsTab::Conversations,
@@ -1928,12 +1935,7 @@ impl Results {
             tab(
                 ResultsTab::Files,
                 words::TABS[1],
-                // The cards once read are the count; until then the
-                // search's own.
-                self.files.as_ref().map_or_else(
-                    || frame.map_or(0, |frame| frame.files),
-                    |files| files.len() as u64,
-                ),
+                files,
                 // Read over the same capped walk: a floor with it.
                 capped,
                 CommandId::ResultsFiles,
@@ -1982,13 +1984,16 @@ impl Results {
                 self.order
             },
             sortable: self.tab != ResultsTab::Files,
-            count_line: frame.map_or_else(String::new, |_| words::count_line(total, capped)),
+            // The heading counts what the tab shows (#2183).
+            count_line: frame.map_or_else(String::new, |_| {
+                if on_files {
+                    words::files_count_line(files, capped)
+                } else {
+                    words::count_line(total, capped)
+                }
+            }),
             sub_line: frame.map_or_else(String::new, |frame| {
                 // The tabs' own counts, once their rows are read.
-                let files = self
-                    .files
-                    .as_ref()
-                    .map_or(frame.files, |files| files.len() as u64);
                 let people = self
                     .listed
                     .as_ref()
@@ -2031,6 +2036,8 @@ impl Results {
             footer: frame.map_or_else(String::new, |frame| {
                 if self.found_nothing() {
                     words::searched_footer(frame.messages_searched, frame.elapsed)
+                } else if on_files {
+                    words::files_footer(files, capped, frame.elapsed)
                 } else {
                     words::results_footer(total, capped, frame.elapsed)
                 }
@@ -2486,8 +2493,20 @@ impl Results {
         .join(", ");
         let date = words::hit_date(hit.newest_match.with_timezone(&Local), with.now);
         let passage_text: String = passage.iter().map(|run| run.text.as_str()).collect();
+        // A row that says "K of M messages match" has said its count: the
+        // reason line's matches, which count the subject once too, would
+        // be a second number beside it.
+        let reasons: Vec<RankReason> = if matched_messages(hit).is_some() {
+            hit.reasons
+                .iter()
+                .filter(|reason| !matches!(reason, RankReason::Matches(_)))
+                .cloned()
+                .collect()
+        } else {
+            hit.reasons.clone()
+        };
         let reason = top_hit
-            .then(|| words::reason_beside(&hit.reasons, &sources))
+            .then(|| words::reason_beside(&reasons, &sources))
             .filter(|line| !line.is_empty());
         Some(ResultRow {
             message: hit.best,
@@ -2783,10 +2802,9 @@ pub(crate) struct Landed {
 /// How many of a thread's messages matched, when several of its several
 /// did.
 fn matched_messages(hit: &ConversationHit) -> Option<usize> {
-    let matched = hit.reasons.iter().find_map(|reason| match reason {
-        RankReason::Matches(n) => Some(*n as usize),
-        _ => None,
-    })?;
+    // The messages, not the reason line's matches, which count the subject
+    // once too: the row's K is its expansion's children (#2184).
+    let matched = hit.matched_messages as usize;
     (hit.messages > 1 && matched > 1).then_some(matched)
 }
 

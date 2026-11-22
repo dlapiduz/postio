@@ -170,7 +170,7 @@ pub enum ResultChildFfi {
     },
     /// Messages that did not match: a 30-point line to read.
     Gap {
-        /// "Message 4 doesn't match · Ben, Thu".
+        /// "Message 4 doesn't match · Ben, 16 Sep".
         text: String,
     },
 }

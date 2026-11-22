@@ -2650,6 +2650,10 @@ fn the_files_tab_reads_its_cards_and_draws_them() {
     assert!(!view.sortable);
     assert_eq!(view.tabs[1].count, "3", "the tab counts the cards");
     assert!(view.tabs[1].selected);
+    // #2183: the heading and the footer count what the tab shows, the
+    // cards, not the search's threads.
+    assert_eq!(view.count_line, "3 files");
+    assert_eq!(view.footer, "3 files \u{b7} local index \u{b7} 41 ms");
     let header = view.files.as_ref().expect("the Files tab's header");
     assert_eq!(header.title, "Files whose name or contents match");
     assert!(
@@ -2697,6 +2701,35 @@ fn the_files_tab_reads_its_cards_and_draws_them() {
         "matched by its name only: no contents line"
     );
     assert_eq!(focus.result_file(3), None);
+}
+
+/// #2183: Space on a card hands a copy to the system. The Mac's is Quick
+/// Look; GTK's opens it in the desktop's app for its type, and its key
+/// says so.
+#[test]
+fn space_on_a_card_says_what_the_platform_does_with_it() {
+    let rows = List::of(3);
+    let mut linux = FocusController::new(Policy::for_platform(Platform::Freedesktop));
+    let _ = linux.handle(Input::Clock(Some(today())));
+    let effects = on_the_files_tab(&mut linux, &rows);
+    let view = results_view(&effects).expect("the cards");
+    let space: Vec<&str> = view
+        .hints
+        .iter()
+        .filter(|hint| hint.key == "space")
+        .map(|hint| hint.label.as_str())
+        .collect();
+    assert_eq!(space, ["open the file"]);
+    // The Threads tab's Space is Postio's own Quick Look, on every platform.
+    let effects = run(&mut linux, CommandId::ResultsConversations, &rows);
+    let view = results_view(&effects).expect("the threads");
+    assert!(
+        view.hints
+            .iter()
+            .any(|hint| hint.key == "space" && hint.label == "Quick Look"),
+        "{:?}",
+        view.hints
+    );
 }
 
 #[test]

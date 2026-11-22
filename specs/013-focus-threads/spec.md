@@ -315,8 +315,10 @@ message 3's row.
 
 **Acceptance Scenarios**:
 
-1. **Given** a thread where messages 3, 5 and 6 match, **When** results are
-   drawn, **Then** its children are those three, with one line for message 4.
+1. **Given** a thread of six where messages 3, 5 and 6 match, **When**
+   results are drawn, **Then** its children are those three, with one line
+   for messages 1–2 and one for message 4: every message it does not show is
+   in a line, before the first match and after the last too (#2178).
 2. **Given** the window on the last match, **When** `mod+g` is pressed,
    **Then** it stays and says it is the last match.
 3. **Given** a match inside an attachment, **When** its child is drawn,

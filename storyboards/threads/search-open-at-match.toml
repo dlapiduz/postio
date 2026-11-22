@@ -8,9 +8,10 @@
 # the find inside the one message, so the steps that expect message 3 to
 # open and `mod+g` to carry the window on to message 5 and 6 fail there.
 #
-# "rate limit headers" matches Harbor's messages 3, 5 and 6 (not 4). The
-# top result is expanded: three matching children and one line for message 4
-# ("Message 4 doesn't match · Ben, Thu"). `j` goes to message 3 and Return
+# "rate limit headers" matches Harbor's messages 3, 5 and 6 (not 1, 2 or
+# 4). The top result is expanded: three matching children and a line for each
+# run that does not match, messages 1-2 and message 4 (#2178), so every
+# message is said once. `j` passes the first line to message 3 and Return
 # opens the window on it: the bar marks 3, 5 and 6 with a yellow square, the
 # kicker says "Message 3 of 6", and a banner reads "‘rate limit headers’ ·
 # match 1 of 3 in this thread (messages 3, 5 and 6)" with "Next ⌘G" and "Back
@@ -40,13 +41,13 @@ type    = "rate limit headers"
 [[step]]
 id      = "results"
 command = "show_all_results"
-check   = { app.focus.results.children = 4 }
-expect  = "The results group by thread. The top result, Harbor API draft v3, reads \"3 of 6 messages match\" in place of its snippet and is expanded: a child for message 3, one short line \"Message 4 doesn't match · Ben, Thu\", then children for messages 5 and 6, each tagged with its message and with the matched words highlighted."
+check   = { app.focus.results.children = 5 }
+expect  = "The results group by thread. The top result, Harbor API draft v3, reads \"3 of 6 messages match\" in place of its snippet and is expanded: a short line \"Messages 1–2 don't match\" with who wrote them and when, a child for message 3, a line \"Message 4 doesn't match\", then children for messages 5 and 6, each tagged with its message and with the matched words highlighted."
 
 [[step]]
 command = "next_message"
-check   = { app.focus.results.child = 0 }
-expect  = "The ring moves from the result to its first child, message 3."
+check   = { app.focus.results.child = 1 }
+expect  = "The ring moves from the result past the line for messages 1–2 to message 3, its first match."
 
 [[step]]
 id      = "open"
@@ -69,5 +70,5 @@ expect  = "Message 6 is shown, chip 6 ringed, and the banner reads \"match 3 of 
 [[step]]
 id      = "back"
 command = "back"
-check   = { view = "list", keyboard.region = "results", app.focus.results.child = 0 }
+check   = { view = "list", keyboard.region = "results", app.focus.results.child = 1 }
 expect  = "The window closes and the results are back with the ring on message 3's child, the one the window was opened from, not on message 6."
