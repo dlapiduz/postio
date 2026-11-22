@@ -101,7 +101,16 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
     let mut stack = vec![Frame::Blocks(Vec::new())];
     // Every visible character read, and where in the source it came from.
     let mut seen = Seen::default();
+    let mut lost = Lost::default();
     for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
+        // GFM drops a row's cells past its header before any event says
+        // they were there, so they are counted off the source line.
+        if let (Event::Start(Tag::TableRow), Some(Frame::Table(alignments, _))) =
+            (&event, stack.last())
+        {
+            let typed = typed_cells(markdown.get(range.clone()).unwrap_or_default());
+            lost.cells += typed.saturating_sub(alignments.len());
+        }
         match event {
             Event::Start(tag) => stack.push(match tag {
                 Tag::Paragraph => Frame::Inlines(Holder::Paragraph, Vec::new()),
@@ -167,14 +176,14 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
                 // holds it.
                 while matches!(stack.last(), Some(Frame::Inlines(Holder::Html(..), _))) {
                     let frame = stack.pop().expect("an open mark");
-                    close(&mut stack, frame);
+                    close(&mut stack, frame, &mut lost);
                 }
                 let Some(frame) = stack.pop() else { break };
                 if stack.is_empty() {
                     stack.push(frame);
                     break;
                 }
-                close(&mut stack, frame);
+                close(&mut stack, frame, &mut lost);
             }
             Event::Text(text) => match stack.last_mut() {
                 Some(Frame::Code(_, code)) => {
@@ -251,7 +260,7 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
                     ) =>
                 {
                     let frame = stack.pop().expect("the open mark");
-                    close(&mut stack, frame);
+                    close(&mut stack, frame, &mut lost);
                 }
                 _ => {
                     seen.run(markdown, &range, &html);
@@ -287,14 +296,15 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
     // Close whatever an unfinished input left open, innermost first.
     while stack.len() > 1 {
         let frame = stack.pop().expect("more than one");
-        close(&mut stack, frame);
+        close(&mut stack, frame, &mut lost);
     }
     let blocks = match stack.pop() {
         Some(Frame::Blocks(blocks)) => blocks,
         _ => Vec::new(),
     };
     let document = crate::Document { blocks };
-    let map = SourceMap::align(markdown, &document, seen.0);
+    let mut map = SourceMap::align(markdown, &document, seen.0);
+    map.lost = lost;
     (document, map)
 }
 
@@ -333,6 +343,27 @@ pub struct SourceMap {
     lines: Vec<usize>,
     /// The source's length.
     len: usize,
+    /// What the Markdown said that the document could not hold.
+    lost: Lost,
+}
+
+/// What typed Markdown said that its document narrowed away (spec 014
+/// FR-026): the source view reports it rather than dropping it silently.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Lost {
+    /// Table cells past their header's width.
+    pub cells: usize,
+    /// Links to an address mail may not link to (not http, https, mailto).
+    pub links: usize,
+    /// Images naming neither a part of this draft nor the web.
+    pub images: usize,
+}
+
+impl Lost {
+    /// Whether nothing was narrowed.
+    pub fn is_empty(&self) -> bool {
+        *self == Lost::default()
+    }
 }
 
 impl SourceMap {
@@ -356,7 +387,13 @@ impl SourceMap {
             entries,
             lines,
             len: source.len(),
+            lost: Lost::default(),
         }
+    }
+
+    /// What the Markdown said that the document narrowed away.
+    pub fn lost(&self) -> Lost {
+        self.lost
     }
 
     /// The byte offset in the Markdown of `position`.
@@ -1245,6 +1282,29 @@ fn push_block(stack: &mut [Frame], block: crate::Block) {
     }
 }
 
+/// How many cells a pipe-table row was typed with: its `|`s, less the
+/// escaped ones and the optional outer pair.
+fn typed_cells(row: &str) -> usize {
+    let row = row.trim();
+    let inner = row.strip_prefix('|').unwrap_or(row);
+    let inner = inner
+        .strip_suffix('|')
+        .filter(|rest| !rest.ends_with('\\'))
+        .unwrap_or(inner);
+    let mut cells = 1;
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '|' => cells += 1,
+            _ => {}
+        }
+    }
+    cells
+}
+
 /// A paragraph's inlines as the paragraph they spell, or none for none.
 ///
 /// `<br><br>` alone is a paragraph of one break: a paragraph of nothing but
@@ -1260,7 +1320,7 @@ fn paragraph_of(mut inlines: Vec<crate::Inline>) -> Option<crate::Block> {
     (breaks || !inlines.is_empty()).then_some(crate::Block::Paragraph(inlines))
 }
 
-fn close(stack: &mut [Frame], frame: Frame) {
+fn close(stack: &mut [Frame], frame: Frame, lost: &mut Lost) {
     use crate::{Block, Inline};
     match frame {
         Frame::Inlines(Holder::Paragraph, inlines) => {
@@ -1309,15 +1369,17 @@ fn close(stack: &mut [Frame], frame: Frame) {
             } else {
                 rows.remove(0)
             };
-            push_block(
-                stack,
-                Block::Table(crate::Table::new(alignments, header, rows)),
-            );
+            let (table, dropped) = crate::Table::counting(alignments, header, rows);
+            lost.cells += dropped;
+            push_block(stack, Block::Table(table));
         }
         Frame::Inlines(Holder::Link(Some(href)), inlines) => {
             push_inline(stack, Inline::Link { href, inlines });
         }
-        Frame::Inlines(Holder::Link(None) | Holder::Transparent, inlines) => {
+        Frame::Inlines(holder @ (Holder::Link(None) | Holder::Transparent), inlines) => {
+            if matches!(holder, Holder::Link(None)) {
+                lost.links += 1;
+            }
             for inline in inlines {
                 push_inline(stack, inline);
             }
@@ -1330,7 +1392,10 @@ fn close(stack: &mut [Frame], frame: Frame) {
                 // download and attach it, and a link if they never do
                 // (spec 014 D7).
                 (None, Some(href)) => push_inline(stack, Inline::RemoteImage { href, alt }),
-                (None, None) => push_inline(stack, Inline::Text(format!("![{alt}]({dest})"))),
+                (None, None) => {
+                    lost.images += 1;
+                    push_inline(stack, Inline::Text(format!("![{alt}]({dest})")));
+                }
             }
         }
         Frame::Code(language, text) => push_block(stack, Block::Code { language, text }),
@@ -1871,5 +1936,21 @@ mod tests {
             assert_eq!(take_caret(document.clone()), (document, None));
             assert!(!"words".contains(CARET));
         }
+    }
+
+    #[test]
+    fn what_typed_markdown_narrowed_is_counted() {
+        let (_, map) = super::to_document_mapped(
+            "| a |\n|---|\n| b | c | d |\n\n[x](javascript:alert(1)) ![y](ftp://example.com/y.png)",
+        );
+        assert_eq!(
+            map.lost(),
+            super::Lost {
+                cells: 2,
+                links: 1,
+                images: 1
+            }
+        );
+        assert!(super::to_document_mapped("plain").1.lost().is_empty());
     }
 }

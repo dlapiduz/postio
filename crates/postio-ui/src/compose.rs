@@ -112,6 +112,91 @@ pub fn markdown_table_js() -> String {
 /// (spec 014 US8): the press is answered, and nothing is fetched.
 pub const NO_REMOTE_IMAGE: &str = "There's no image to download in this message";
 
+/// The strip at the top of the Markdown source view (spec 014): what mode
+/// the body is in and the key back, short where the column is narrow.
+pub fn source_strip(key: &str, narrow: bool) -> String {
+    if narrow {
+        format!("Markdown \u{b7} {key}")
+    } else {
+        format!("Editing as Markdown \u{b7} {key} for rich text")
+    }
+}
+
+/// What a formatting command says in the rich view while only the Markdown
+/// view can make it (spec 014 D8, FR-029): its way there, never silence.
+pub fn in_markdown_view_for_now(title: &str, key: &str) -> String {
+    format!("{title} is in the Markdown view for now \u{b7} {key}")
+}
+
+/// The notice under the editor when typed Markdown narrowed (spec 014
+/// FR-026), or `None` when nothing did.
+pub fn narrowed_notice(lost: postio_body::markdown::Lost) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut say = |count: usize, one: &str, many: &str, why: &str| match count {
+        0 => {}
+        1 => parts.push(format!("1 {one} {why}")),
+        n => parts.push(format!("{n} {many} {why}")),
+    };
+    say(
+        lost.cells,
+        "table cell was dropped:",
+        "table cells were dropped:",
+        "their rows are longer than the header",
+    );
+    say(
+        lost.links,
+        "link was kept as its words:",
+        "links were kept as their words:",
+        "mail links only to http, https and mailto",
+    );
+    say(
+        lost.images,
+        "image was kept as its words:",
+        "images were kept as their words:",
+        "it names neither an attachment nor the web",
+    );
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+#[cfg(test)]
+mod source_words {
+    use super::*;
+
+    #[test]
+    fn the_strip_shortens_where_it_is_narrow() {
+        assert_eq!(
+            source_strip("ctrl+alt+s", false),
+            "Editing as Markdown \u{b7} ctrl+alt+s for rich text"
+        );
+        assert_eq!(
+            source_strip("ctrl+alt+s", true),
+            "Markdown \u{b7} ctrl+alt+s"
+        );
+    }
+
+    #[test]
+    fn a_command_waiting_for_the_rich_view_says_where_it_is() {
+        assert_eq!(
+            in_markdown_view_for_now("Strikethrough", "ctrl+alt+s"),
+            "Strikethrough is in the Markdown view for now \u{b7} ctrl+alt+s"
+        );
+    }
+
+    #[test]
+    fn the_notice_names_what_narrowed() {
+        use postio_body::markdown::Lost;
+        assert_eq!(narrowed_notice(Lost::default()), None);
+        assert_eq!(
+            narrowed_notice(Lost {
+                cells: 2,
+                ..Lost::default()
+            })
+            .as_deref(),
+            Some("2 table cells were dropped: their rows are longer than the header")
+        );
+    }
+}
+
 #[cfg(test)]
 mod editor_script_tests {
     use super::EDITOR_SCRIPT;
