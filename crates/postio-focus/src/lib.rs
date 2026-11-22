@@ -1063,7 +1063,8 @@ pub enum Request {
     },
     /// The searches run lately, newest first.
     RecentSearches,
-    /// Keep `query` among the searches run, with what it matched.
+    /// Keep `query` among the searches run, with what it matched; answered
+    /// with the recent searches as they then are.
     RememberSearch {
         /// The query, as run.
         query: String,
@@ -1463,8 +1464,8 @@ pub enum Reply {
     },
     /// The answer to [`Request::ReplyToLatest`].
     RepliedToLatest(Result<Box<postio_model::Draft>, String>),
-    /// The answer to [`Request::RecentSearches`] and
-    /// [`Request::ForgetSearch`].
+    /// The answer to [`Request::RecentSearches`],
+    /// [`Request::RememberSearch`] and [`Request::ForgetSearch`].
     RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
     /// The answer to [`Request::SavedCounts`].
     SavedCounts(Result<Vec<postio_client::protocol::SavedCount>, String>),
