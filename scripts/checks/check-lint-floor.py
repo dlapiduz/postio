@@ -37,38 +37,22 @@ import sys
 import tomllib
 from pathlib import Path
 
-# Crates that cannot inherit the floor, and why. The value is the weakest
-# `unsafe_code` setting the crate is allowed to declare.
-#
-# Neither of these is a crate that gets to use `unsafe` freely: `deny` still
-# fails the build everywhere except a site that carries an explicit
-# `#[allow(unsafe_code)]` and a reason. The difference from `forbid` is only
-# that such a site is *possible*.
+# Crates that cannot inherit the floor; the value is the weakest `unsafe_code` setting allowed.
+# `deny` still fails the build
+# except at a site with `#[allow(unsafe_code)]` and a reason.
 EXCEPTIONS: dict[str, str] = {
-    # `tests/imap_body_memory.rs` installs a counting `GlobalAlloc` to prove a
-    # body fetch does not materialise the whole message. Implementing that
-    # trait is `unsafe impl` by definition. No library code in this crate uses
-    # `unsafe` -- and note that a test target cannot opt out of `forbid`, which
-    # is why this is an exception rather than a local allow.
+    # `tests/imap_body_memory.rs` installs a counting `GlobalAlloc` (an `unsafe impl`); a test
+    # target cannot opt out of `forbid`. No library code uses `unsafe`.
     "postio-account": "deny",
-    # `tests/validation_cost.rs` installs a counting `GlobalAlloc` to hold
-    # config validation to a work budget without a stopwatch -- the same
-    # technique and the same reason as `postio-account` above, and #917 is
-    # why: the wall-clock assertion it replaces measured the machine, which
-    # routinely has three sessions compiling on it. No library code in this
-    # crate uses `unsafe`.
+    # `tests/validation_cost.rs` installs a counting `GlobalAlloc` to hold validation to a work
+    # budget, not a stopwatch (#917). No library code uses `unsafe`.
     "postio-config": "deny",
-    # One site in `fonts.rs`: installed font files are memory-mapped through
-    # fontdb's `make_shared_face_data`, an `unsafe fn`, because reading them
-    # all cost 198 MiB resident (spec 006 research R3). The hazard is the one
-    # every font stack accepts -- a file truncated underneath a map. Nothing
-    # else in the crate is unsafe, and its parsers are Rust's own (FR-023a).
-    # `tests/render_rss_plateau.rs` also installs a counting `GlobalAlloc`, as
-    # `postio-account` does, to see a leak in live bytes (#2189).
+    # One site in `fonts.rs`: font files are memory-mapped through fontdb's `unsafe fn` because
+    # reading them all cost 198 MiB resident (spec 006 R3).
+    # `tests/render_rss_plateau.rs` installs a counting `GlobalAlloc` (#2189).
     "postio-render": "deny",
 }
 
-# Ordered weakest to strongest, so "at least as strong as" is an index test.
 STRENGTH = ["allow", "warn", "deny", "forbid"]
 
 
@@ -140,12 +124,8 @@ def main() -> int:
                     f"{name}: unsafe_code = {declared!r} is weaker than the "
                     f"{weakest!r} its exception allows."
                 )
-            # A crate with its own [lints.rust] inherits none of the workspace
-            # lints -- including the clippy floor. `let_underscore_future` is
-            # the one that must survive: it is how a dropped async future (a
-            # sent draft that went on existing) is caught, and its silent
-            # absence from these five crates is exactly the hole this check
-            # now closes. Each exception restates it.
+            # A crate with its own [lints.rust] inherits no workspace lints, including
+            # `let_underscore_future` (dropped async futures); each exception restates it.
             clippy = level_of(lints.get("clippy", {}).get("let_underscore_future"))
             if clippy != "deny":
                 failures.append(

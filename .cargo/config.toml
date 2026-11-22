@@ -1,169 +1,51 @@
-# Several Claude sessions build this workspace at the same time, on one
-# machine.
-#
-# Cargo defaults to one job per core. Four concurrent sessions on eight cores
-# therefore asked for ~32 parallel compile jobs, and linking the desktop app
-# pulls in the whole GTK and WebKit stack -- seven `rust-lld` processes at ~210 MB
-# each were once resident together, with 150 MB of 15 GB free. Nothing was
-# slow; everything was starved, and the machine spent its time in btrfs and
-# dm-crypt kworkers servicing the swap that followed. `jobs = 2` was the
-# answer, and it cost the common case: measured over every session's
-# transcript, ONE session was building 60% of the time and two 26%, so six
-# cores sat idle most of the day (#1104).
-#
-# The real limit is now a machine-wide jobserver -- `scripts/jobserver.sh`,
-# a fifo of N tokens every cargo on the box draws from, named by MAKEFLAGS
-# (which .claude/settings.json exports for every session and the repo
-# scripts export for themselves). Cargo ignores `jobs` while it has one, so
-# a lone session gets the whole box and four sessions share one ceiling.
-# This value is the fallback for a cargo with no fifo to join -- it warns
-# and uses this -- and it is the same conservative number as before.
+# `jobs = 2` is only the fallback: the machine-wide jobserver (`scripts/jobserver.sh`, via
+# MAKEFLAGS)
+# is the real limit and makes cargo ignore it (#1104).
 [build]
 jobs = 2
-# One compile cache for the whole machine, in every worktree, without every
-# session remembering `export RUSTC_WRAPPER=sccache`. The wrapper execs plain
-# rustc when sccache is not installed, so nothing breaks on a fresh box; an
-# explicit RUSTC_WRAPPER in the environment still wins over this.
+# The wrapper execs plain rustc when sccache is absent; an explicit RUSTC_WRAPPER wins.
 rustc-wrapper = "scripts/rustc-wrapper.sh"
 
-# Linking is the memory peak, not compiling. One fat binary that pulls in GTK,
-# WebKit and SQLite is where the resident set spikes, so keep the linker's own
-# parallelism modest too.
-#
-# `--threads=4`, raised from 2, because the thing that made 2 necessary is
-# gone. The peak this defends against is proportional to what the linker has
-# to hold, and `[profile.dev]` in the root Cargo.toml now strips debug info
-# rather than merging it: measured on the app's suite, that is 162 MB of DWARF
-# per binary that the linker no longer reads, out of 232 MB. The isolated
-# link step was already only ~1.1 GB RSS when it was last measured against
-# mold (docs/archive/engineering-notes.md, 2026-09-01), which is not pressure on this
-# box; with the DWARF gone there is headroom to spend on threads.
-#
-# Still capped rather than left to lld's default of one thread per core:
-# `jobs = 2` means two links can be in flight per session, several sessions
-# share the machine, and an uncapped linker would multiply out again.
-#
-# Scoped to one triple deliberately, and it is *not* an oversight the way the
-# runner below was (#551). `-Wl,--threads=2` is a linker flag whose support
-# depends on the binutils on the box, not on the target: GNU ld only learned
-# `--threads` recently, and widening this to a triple nobody here can build for
-# would trade a memory-pressure tuning for a link that fails outright. It is a
-# comfort setting for the machine this is developed on; the runner is a
-# correctness one.
-#
-# A bare program name, not `scripts/linker.sh`, and the difference is the
-# whole compile cache (#1101). Cargo resolves a config-relative path per
-# worktree, so this used to reach rustc as
-# `-C linker=/home/.../postio-worktrees/issue-N/scripts/linker.sh` -- a
-# different string in every tree. sccache hashes that argument and cargo
-# folds it into its fingerprints, so the "machine-wide" cache hit 1.1% of
-# the time and a `target/` copied from a sibling rebuilt everything. A name
-# is identical everywhere; `scripts/install-shims.sh` puts a copy of
-# `scripts/linker.sh` on PATH under it, and the claim, land and test scripts
-# run that before every build. A box that never ran any of them gets
-# `error: linker \`postio-linker\` not found`, which names the fix.
+# Linking is the memory peak, so the linker's threads are capped; several sessions link at once.
+# A bare program name, not a path: a per-worktree path changes every sccache key and cargo
+# fingerprint (#1101).
+# `scripts/install-shims.sh` puts `postio-linker` on PATH. One triple only: `--threads` support
+# depends on the binutils.
 [target.x86_64-unknown-linux-gnu]
 linker = "postio-linker"
 rustflags = [
-    # `gcc` and not the default `gnu-lld-cc`, because the default is what
-    # makes `linker` above unable to choose: rustc appends its own `-B` and
-    # `-fuse-ld=lld` after anything the script passes, so mold is silently
-    # ignored and LLD links the binary anyway. `scripts/linker.sh` puts lld
-    # back itself when mold is absent, so nothing is lost on a box without it.
+    # `gcc`, not the default `gnu-lld-cc`: rustc appends its own `-fuse-ld=lld` after the script's
+    # flags,
+    # which silently ignores mold. `scripts/linker.sh` restores lld when mold is absent.
     "-C", "linker-flavor=gcc",
     "-C", "link-arg=-Wl,--threads=4",
 ]
 
-# The Mac links through the same shim for one reason: it strips test
-# binaries' symbols after the link, a third of each binary, and leaves every
-# other link to plain `cc` (`scripts/linker.sh`). A bare name for the reason
-# above. No `rustflags` here, so the cfg tables' flags below still apply.
-#
-# Switching this costs one full rebuild per tree: cargo passes `-C linker` to
-# every unit, so it is in every fingerprint and every sccache key.
+# The Mac uses the same shim to strip test binaries' symbols after the link. Changing it rebuilds
+# every unit.
 [target.aarch64-apple-darwin]
 linker = "postio-linker"
 
-# Every test binary on **every Linux target** runs on a compositor of its own,
-# so `cargo test` is headless by default and nobody has to remember a wrapper.
-# The GTK suites present real windows; without this they land on whoever is
-# at the keyboard, steal focus mid-keystroke, and — until it was fixed — left
-# a save dialog behind that outlived the run.
-#
-# `cfg(target_os = "linux")` rather than a triple, because a triple is what
-# #551 was: this sat under `[target.x86_64-unknown-linux-gnu]`, so on aarch64
-# it never applied, no compositor started, and all ~117 GTK test files took
-# their "no display, skip" branch and reported success having asserted nothing.
-# A runner's absence is invisible by construction — that is the whole hazard —
-# so it is scoped to the property that actually decides it: this is a Linux box
-# with a compositor to talk to. macOS keeps getting no runner, which is right;
-# `headless-runner.sh` reads /proc and needs XDG_RUNTIME_DIR.
-#
-# `runner` is resolved from the matching `[target.<cfg>]` table when no
-# `[target.<triple>]` table names one — verified against this cargo, not
-# assumed. Note this is *not* how `rustflags` composes: a triple table's
-# rustflags suppress the cfg tables' entirely, which is why the two settings
-# live apart above rather than being merged into one block.
-#
-# The runner fails open: no mutter, no XDG_RUNTIME_DIR, or a compositor that
-# will not start, and it execs the binary unchanged. POSTIO_HEADLESS=0
-# bypasses it. Only cargo's hash-suffixed test and bench binaries are sent to
-# the compositor; `cargo run -p postio-gtk` and examples pass through to
-# the real display (#315).
-#
-# `widgets_suite`'s `display_required` is what notices when this stops
-# applying.
-# The store's pages are AES-256-GCM, and every page read is a decryption.
-# `aes` 0.8 and `polyval` 0.6 use the ARMv8 AES and PMULL instructions only
-# when told to with these two cfgs; without them an aarch64 build runs the
-# portable bit-sliced fallback. On x86_64 they detect AES-NI at runtime and
-# need nothing, which is how this went unnoticed: on Apple silicon a first
-# sync spent three quarters of its CPU in `aes::soft` (2026-10-01, sampled
-# live). Measured on that machine, one 4 KiB page: 37.6 us in software,
-# 3.6 us with the instructions. Both crates still check the CPU at runtime
-# and fall back, so a core without the extensions loses nothing.
-#
-# A cfg table, not a triple one, so ARM Linux gets it too. It sets no other
-# rustflags, so it suppresses nothing: no cfg table above sets any, and the
-# one triple table that does is x86_64's.
+# Every Linux test binary runs on a private headless compositor. A `cfg`, not a triple: a triple
+# skipped
+# aarch64 and every GTK test took its "no display" branch (#551). The runner fails open;
+# POSTIO_HEADLESS=0 bypasses it.
+# `aes` and `polyval` use ARMv8 AES/PMULL only with these cfgs (37.6 us vs 3.6 us per page in
+# software).
+# A cfg table, so ARM Linux gets it too; it sets no other rustflags.
 [target.'cfg(target_arch = "aarch64")']
 rustflags = ["--cfg", "aes_armv8", "--cfg", "polyval_armv8"]
 
 [target.'cfg(target_os = "linux")']
 runner = "scripts/headless-runner.sh"
 
-# rustc and the linker write intermediate files to TMPDIR, which on this
-# machine is a tmpfs — memory, with a 6 GB quota. Linking the GTK stack put
-# gigabytes of scratch into RAM and then failed with "Disk quota exceeded",
-# which reads like a compile error and is not one.
-#
-# `relative = true` resolves against the workspace root, so this stays correct
-# for anyone who clones the repo rather than naming one machine's paths.
-#
-# This governs the *no-sccache* path only, and that is not a shortcoming —
-# with sccache the compiler runs inside the shared daemon, which fixes its own
-# TMPDIR when it is spawned and ignores every later client's. Setting this
-# per-worktree is what pinned that daemon to a directory `issue-release.sh`
-# would later delete, so `scripts/rustc-wrapper.sh` overrides it on that path;
-# see the note there and #359. Leave the two in step: this is the fallback for
-# a box with no sccache, where cargo runs rustc directly.
+# TMPDIR on a tmpfs overflows when linking the GTK stack ("Disk quota exceeded").
+# This covers the no-sccache path only; the sccache daemon fixes its own TMPDIR, so
+# `scripts/rustc-wrapper.sh` overrides it (#359).
 [env]
 TMPDIR = { value = "target/tmp", relative = true }
-# The C half of the compile cache. `rustc-wrapper` above covers only rustc;
-# the C compiler inside the openssl-src, libsqlite3-sys and zstd-sys build
-# scripts is invoked by make/cc directly and never saw a cache — 77% of a
-# fresh worktree's postio-storage build was uncached C (#736), which ADR 0014
-# had priced as "absorbed by sccache". The wrapper fronts **ccache**, not
-# sccache: openssl-src builds inside each target dir and sccache cannot
-# normalize the paths out of the hash, so it never hits across worktrees —
-# measured, see the wrapper. Same fail-open shape as the rustc wrapper: no
-# ccache on the box and the script is exactly `cc`. Cargo's [env] never
-# overrides an environment variable that is already set, so an exported CC
-# still wins, the way an exported RUSTC_WRAPPER does above.
-#
-# A bare name for the same reason as `linker` above: the `cc` crate emits
-# `rerun-if-env-changed=CC`, so a per-worktree path here reran every C build
-# script (OpenSSL, SQLCipher, zstd) in every new tree, seeded or not.
-# `scripts/install-shims.sh` installs `scripts/cc-wrapper.sh` under this
-# name. #1101.
+# The C half of the cache fronts ccache, since sccache cannot normalize openssl-src's paths across
+# worktrees (#736).
+# A bare name: the `cc` crate emits rerun-if-env-changed=CC, so a per-worktree path reruns every C
+# build script (#1101).
 CC = "postio-cc"

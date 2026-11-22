@@ -16,8 +16,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -27,8 +25,6 @@ CHECK = ROOT / "scripts" / "checks" / "check-target-sections-last.py"
 
 WORKSPACE = '[workspace]\nmembers = ["crates/leaf"]\n'
 
-# #642: the header lands mid-list and swallows everything below it, including
-# the whole of [build-dependencies] and [dev-dependencies] that follow.
 SWALLOWING = """\
 [package]
 name = "leaf"
@@ -44,7 +40,6 @@ tokio = "1"
 cc = "1"
 """
 
-# The same dependencies, with the platform table where it cannot swallow.
 SAFE = """\
 [package]
 name = "leaf"
@@ -61,7 +56,6 @@ cc = "1"
 security-framework = "3"
 """
 
-# A crate with no platform section at all: the ordinary case, must pass.
 PLAIN = """\
 [package]
 name = "leaf"

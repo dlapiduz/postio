@@ -32,10 +32,8 @@ import patience  # noqa: E402
 SCRIPTS = Path(__file__).resolve().parent.parent
 FAILURES: list[str] = []
 
-# The tool every stub installs: reports which version it is.
 TOOL = '#!/bin/sh\necho "{name} {version}"\necho "$PWD ran {name} {version} $*" >> "$TOOL_LOG"\n'
 
-# curl: write a tarball holding a cargo-nextest of the version in the URL.
 CURL = """#!/usr/bin/env bash
 echo "curl $*" >> "$TOOL_LOG"
 out=""; url=""
@@ -50,14 +48,12 @@ chmod +x "$work/cargo-nextest"
 tar -czf "$out" -C "$work" cargo-nextest
 """
 
-# sha256sum/shasum: accept only the digest the script pins.
 SUM = """#!/usr/bin/env bash
 read -r line
 echo "sum $line" >> "$TOOL_LOG"
 case "$line" in "$EXPECT_DIGEST  "*) exit 0 ;; *) echo "checksum mismatch" >&2; exit 1 ;; esac
 """
 
-# cargo: `cargo install <name> --version V --locked --root R` or --force.
 CARGO = """#!/usr/bin/env bash
 echo "cargo $*" >> "$TOOL_LOG"
 [ "$1" = install ] || exit 0
@@ -138,7 +134,6 @@ def main() -> int:
         store = sb.home / ".local/share/postio-tools/cargo-nextest"
         shim = sb.home / ".cargo/bin/cargo-nextest"
 
-        # ── two pins install side by side and the shim picks per checkout ──
         for repo in (old, new):
             r = sb.run([str(repo / "scripts/install-nextest.sh")], repo, EXPECT_DIGEST=digest)
             case(f"install from {repo.name}", r.returncode == 0, r.stderr)
@@ -151,7 +146,6 @@ def main() -> int:
             case(f"shim in {repo.name}/scripts runs {want}", r.stdout.strip() == f"cargo-nextest {want}",
                  r.stdout + r.stderr)
 
-        # ── checksum is checked against the pinned digest, not skipped ──
         sums = sb.lines("sum ")
         case("checksum verified against the pin", sums and all(s.startswith(f"sum {digest}") for s in sums), str(sums))
         bad = sb.repo("bad", nextest="0.9.100")
@@ -161,24 +155,20 @@ def main() -> int:
         case("a failed install leaves no staging directory",
              not list(store.glob(".stage-*")), str(list(store.glob("*"))))
 
-        # ── idempotent: nothing downloaded the second time ──
         before = len(sb.lines("curl"))
         r = sb.run([str(new / "scripts/install-nextest.sh")], new, EXPECT_DIGEST=digest)
         case("second run downloads nothing", r.returncode == 0 and len(sb.lines("curl")) == before
              and "already installed" in r.stdout, r.stdout + r.stderr)
 
-        # ── a version that is not installed yet installs on first use ──
         fresh = sb.repo("fresh", nextest="0.9.200")
         r = sb.run(["cargo-nextest", "nextest"], fresh, EXPECT_DIGEST=digest)
         case("shim installs a missing pin, then runs it",
              r.returncode == 0 and r.stdout.strip() == "cargo-nextest 0.9.200", r.stdout + r.stderr)
 
-        # ── outside a checkout: the newest installed ──
         r = sb.run(["cargo-nextest", "nextest"], sb.home)
         case("outside a checkout the newest installed runs", r.stdout.strip() == "cargo-nextest 0.9.200",
              r.stdout + r.stderr)
 
-        # ── cargo-install tools share the layout ──
         for tool, name in (("hakari", "cargo-hakari"), ("machete", "cargo-machete"), ("cargo-deny", "cargo-deny")):
             a = sb.repo(f"{tool}-a", **{tool: "1.0.0"})
             b = sb.repo(f"{tool}-b", **{tool: "2.0.0"})
@@ -192,7 +182,6 @@ def main() -> int:
         locked = [x for x in sb.lines("cargo install") if "--locked" in x]
         case("cargo installs stay --locked", len(locked) == len(sb.lines("cargo install")) and locked, "")
 
-        # ── CI keeps the plain install into ~/.cargo/bin ──
         ci_home = Path(raw) / "ci-home"
         ci_home.mkdir()
         r = patience.run([str(new / "scripts/install-nextest.sh")], cwd=new,

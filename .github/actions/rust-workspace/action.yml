@@ -45,16 +45,9 @@ inputs:
 runs:
   using: composite
   steps:
-    # `mold` is the odd one out: not a system library the workspace links
-    # against, but the linker `scripts/linker.sh` prefers. Installed here so
-    # the runner takes the same path a developer's box does rather than the
-    # script's fallback, which shells out to `rustc --print sysroot` on every
-    # single link -- 141 test binaries in the test job alone.
-    #
-    # It is not installed for speed. Measured on the largest binary here, mold
-    # and rust-lld are within noise of each other (docs/archive/engineering-notes.md);
-    # what mold gives is ~265 MB lower peak RSS per link, and this job has
-    # already had a debug build exhaust a runner and kill lld mid-link.
+    # `mold` is the linker `scripts/linker.sh` prefers; installing it puts the runner on the
+    # developer's path
+    # and cuts ~265 MB peak RSS per link, after a debug build once exhausted a runner.
     #
     # Ubuntu equivalents of the Fedora packages in README.md:
     #   gtk4-devel        -> libgtk-4-dev
@@ -64,23 +57,10 @@ runs:
     #   libsecret-devel   -> libsecret-1-dev
     #   glib2-devel       -> libglib2.0-dev
     #
-    # # The packages come from a cache, not the mirror
-    #
-    # These pull in about two hundred packages, and the runner fetched every
-    # one from azure.archive.ubuntu.com on every job. That mirror is often
-    # slow: in the 30 CI runs before 2026-10-22, 18 had a job spend more than
-    # 10 minutes here -- up to 40 -- on a step that is otherwise under one,
-    # and those runs took 40.5 minutes against 14.9 for the rest. One
-    # `libwebkitgtk-6.0-4` download took 8 minutes alone.
-    #
-    # So the downloaded `.deb`s are cached and handed to apt as its archive
-    # directory: it still resolves against a fresh index, so a package Ubuntu
-    # has since updated is fetched, and only that one. The key ends in a hash
-    # of the archive's file names -- the package versions -- so `main` writes
-    # a new cache only when a version moved, never on every run, and a pull
-    # request restores `main`'s (`.github/actions/build-cache` says why only
-    # `main` writes). `autoclean` drops a superseded version before the save,
-    # so the cache does not grow.
+    # The downloaded `.deb`s are cached as apt's archive directory because the Ubuntu mirror is
+    # often slow.
+    # The key ends in a hash of the archive's file names, so `main` writes only when a version
+    # moved.
     - name: Name the system packages
       id: apt
       shell: bash
@@ -105,32 +85,22 @@ runs:
       id: apt-install
       shell: bash
       run: |
-        # The runner image ships apt sources this workspace never installs
-        # from -- Google Chrome, Microsoft, and whatever else the image adds
-        # -- and `apt-get update` exits 100 when *any* of them has a bad
-        # index, even though it says itself that it ignored them and used
-        # the old ones. Two green jobs died in fifteen seconds on a CDN's
-        # hash-sum mismatch that way (#1420). Everything below comes from
-        # the Ubuntu archive, so only the Ubuntu sources are kept, and a
-        # stale Ubuntu index still fails loudly rather than quietly.
+        # `apt-get update` exits 100 when any image-supplied source has a bad index; keep only the
+        # Ubuntu sources (#1420).
         sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu*' -print -delete
         sudo apt-get update
         archives="$HOME/apt-archives"
         mkdir -p "$archives/partial"
-        # apt downloads as `_apt`; a partial directory it cannot write makes
-        # it fall back to root with a warning on every job.
+        # apt downloads as `_apt`; without a writable partial directory it falls back to root with a
+        # warning.
         sudo chown _apt "$archives/partial"
         echo "restored $(ls "$archives" | grep -c '\.deb$' || true) packages from the cache"
         # shellcheck disable=SC2086 # the list is words on purpose
         sudo apt-get install --no-install-recommends -y \
           -o Dir::Cache::Archives="$archives" $APT_PACKAGES
         sudo apt-get autoclean -o Dir::Cache::Archives="$archives"
-        # apt leaves `lock` (root, 0640) and `partial/` (_apt, 0700) behind,
-        # and the save runs as the runner, whose tar can open neither:
-        # "Failed to save: tar failed with exit code 2" on every main run
-        # since #1998, so no cache was ever written and every job still
-        # fetched from the mirror. Both come back on the next install; the
-        # `.deb`s are what the cache is for.
+        # apt leaves root-owned `lock` and `partial/` that the runner's tar cannot save; both come
+        # back on the next install.
         sudo rm -rf "$archives/partial" "$archives/lock"
         versions=$(cd "$archives" && { ls -- *.deb 2>/dev/null || true; } | sort | sha256sum | cut -c1-12)
         echo "key=${{ steps.apt.outputs.prefix }}$versions" >> "$GITHUB_OUTPUT"
@@ -144,21 +114,9 @@ runs:
         path: ~/apt-archives
         key: ${{ steps.apt-install.outputs.key }}
 
-    # Ask the runner how big it is rather than hardcoding a number.
-    #
-    # `ci.yml` used to say `CARGO_BUILD_JOBS: 4`, chosen when a public repo's
-    # standard runner had four vCPUs. That is a number that goes stale in
-    # silence: on a larger runner it leaves cores idle, and on a smaller one it
-    # oversubscribes. Neither shows up as a failure, only as a slower job.
-    #
-    # It matters more since the test job moved to nextest, which runs one
-    # process per test and scales its own concurrency with the core count --
-    # so the runner's width now sets how fast the *tests* go, not just the
-    # compile.
-    #
-    # Printed, not just set: this is the only place the number is visible, and
-    # "how many cores does CI have" turned out to be unanswerable from the
-    # logs when it was asked.
+    # Ask the runner how big it is: a hardcoded job count goes stale silently, and nextest's
+    # concurrency scales with cores.
+    # Printed, because the logs are the only place the number is visible.
     - name: Match cargo's parallelism to the runner
       shell: bash
       run: |
@@ -166,23 +124,19 @@ runs:
         echo "runner has $cores cores, $(free -g | awk '/^Mem:/{print $2}') GB RAM"
         echo "CARGO_BUILD_JOBS=$cores" >> "$GITHUB_ENV"
 
-    # The pin decides; see the note in the `fmt` job.
     - name: Install Rust toolchain
       shell: bash
       run: |
         rustup show active-toolchain
         rustc --version && cargo clippy --version
 
-    # `.cargo/config.toml` names `postio-linker` and `postio-cc` rather than
-    # paths, so sccache and copied target dirs work across worktrees on the
-    # development box (#1101). The names have to resolve here too.
+    # `.cargo/config.toml` names `postio-linker` and `postio-cc` rather than paths (#1101); they
+    # must resolve here too.
     - name: Install the linker and cc shims
       shell: bash
       run: scripts/install-shims.sh
 
-    # Restored here; written back by `.github/actions/build-cache-save` at the
-    # end of the job, from `main` only (#1710). The key, the fallback and why a
-    # pull request never writes are that action's description.
+    # Written back by `.github/actions/build-cache-save`, from `main` only (#1710).
     - name: Restore the build cache
       if: inputs.build-cache == 'true'
       uses: ./.github/actions/build-cache

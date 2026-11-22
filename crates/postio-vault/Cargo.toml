@@ -9,15 +9,12 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Due and done dates, as the Tasks plugin writes them.
 chrono = { workspace = true }
-# `MessageId`, which a task's `postio://` link names.
 postio-model.workspace = true
 thiserror = { workspace = true }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
-# A throwaway vault for every test.
 tempfile = { workspace = true }
 
 [lints]

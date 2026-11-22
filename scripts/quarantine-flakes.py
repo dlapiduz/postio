@@ -37,8 +37,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# The table-driven suites, the crate whose changes make a failure "related",
-# and the file whose IGNORED table holds a case out.
 SUITES = {
     "postio-gtk::focus_suite": ("crates/postio-gtk/", "crates/postio-gtk/tests/focus_suite/main.rs"),
     "postio-widgets::widgets_suite": (
@@ -47,7 +45,6 @@ SUITES = {
     ),
 }
 
-# Two unrelated places: one is bad luck, two is a pattern.
 PLACES = 2
 WINDOW = timedelta(days=7)
 
@@ -61,9 +58,7 @@ class Occurrence:
     """One failure of one case, in one place."""
 
     test: str
-    # A pull request (`pr#1805`) or a run on main (`main@<sha>`).
     source: str
-    # Whether the place changed the case's own crate.
     related: bool
     at: datetime
     url: str
@@ -138,8 +133,6 @@ def _table(text: str):
     return re.search(r"const IGNORED: &\[&str\] = &\[(?:[^\]]*)\];[^\n]*", text)
 
 
-# -- GitHub ------------------------------------------------------------------
-
 
 def gh(*args: str) -> str:
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
@@ -181,7 +174,6 @@ def gather(days: int) -> list[Occurrence]:
                         f"repos/{{owner}}/{{repo}}/actions/jobs/{job['id']}/logs",
                     )
                 except subprocess.CalledProcessError:
-                    # Expired, or still being written: nothing to read yet.
                     print(f"  (no log for job {job['id']}; skipped)", file=sys.stderr)
                     continue
                 for suite, test in failures_in_log(log):

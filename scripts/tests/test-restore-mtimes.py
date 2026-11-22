@@ -102,9 +102,6 @@ def test_each_file_gets_its_own_commits_date() -> None:
             root, "new.txt", "second\n", "write new.txt", date="2026-06-15T00:00:00+00:00"
         )
 
-        # Give every file a fresh, identical "checkout" mtime -- the exact
-        # state a runner hands the script, and the state that would make
-        # this test pass by accident if the script did nothing at all.
         now = os.stat(root / "old.txt").st_mtime
         for name in ("old.txt", "new.txt"):
             os.utime(root / name, (now, now))
@@ -176,12 +173,6 @@ def test_a_changed_file_always_rebuilds() -> None:
         subprocess.run([*GIT, "init", "-q"], cwd=root, check=True)
         fixture_toolchain.write(root)  # untracked: cargo needs the pinned compiler
 
-        # No pinned dates for these two: real time is always safely *before*
-        # the build that follows, which is the property this fixture needs
-        # from them. `v2`, below, needs the opposite -- safely *after* it --
-        # and that one is pinned relative to the actual build time rather
-        # than to the clock, so the assertion cannot go flaky depending on
-        # how fast this machine happens to build a two-line crate.
         write_and_commit(
             root,
             "Cargo.toml",
@@ -215,13 +206,6 @@ def test_a_changed_file_always_rebuilds() -> None:
             "the binary's mtime moved even though nothing changed",
         )
 
-        # This is the commit standing in for "a PR landed after the cache was
-        # built" -- what matters is that it is later than the artifact's own
-        # build time, the same relationship a real new commit always has to
-        # a cache seeded by an earlier run. A fixed calendar date could
-        # easily be *before* `built_once` (this machine's real clock), which
-        # would make the assertion below fail for a reason that has nothing
-        # to do with the script.
         v2_date = (
             datetime.fromtimestamp(built_once, tz=timezone.utc) + timedelta(seconds=5)
         ).isoformat()

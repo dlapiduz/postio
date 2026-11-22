@@ -1,56 +1,24 @@
 #!/usr/bin/env bash
-# Cargo's test runner: put every test binary on a compositor of its own.
-#
-# Wired up as `runner` in .cargo/config.toml, so plain `cargo test` is headless
-# without anyone remembering a wrapper. The GTK suites present real windows;
-# on a live session they land on the maintainer's desktop
-# and steal focus, and one of them opened a save dialog that outlived the run.
-#
-# This sits in front of EVERY binary cargo executes for this target, so its
-# first duty is to be invisible:
-#
-#   * If anything is wrong -- no mutter, no XDG_RUNTIME_DIR, a compositor that
-#     will not start -- it execs the binary unchanged. A broken runner must
-#     never be a broken test suite.
-#   * POSTIO_HEADLESS=0 bypasses it entirely, for when you want to watch a run.
-#   * It reuses one compositor across every binary in a run rather than
-#     starting twenty.
-#
-# It fronts `cargo run` too, but passes it through: only cargo's test and
-# bench binaries -- the ones named with the 16-hex metadata suffix, like
-# deps/gtk_list-0123456789abcdef -- are sent to the compositor. A plain-named
-# binary (`cargo run -p postio-gtk`, an example) is someone launching a
-# program to look at it, and gets the real display. #315.
+# Cargo's test runner: put every test binary on a compositor of its own. Wired up as `runner` in
+# .cargo/config.toml.
+# It sits in front of EVERY binary cargo executes for this target, so it must be invisible: if
+# anything is wrong (no mutter,
+# no XDG_RUNTIME_DIR, a compositor that will not start) it execs the binary unchanged.
+# POSTIO_HEADLESS=0 bypasses it.
+# Only test and bench binaries (16-hex metadata suffix, like deps/gtk_list-0123456789abcdef) go to
+# the compositor;
+# `cargo run` and examples get the real display (#315).
 set -uo pipefail
 
-# "The runner ran." Exported before anything can bail out, and on every path
-# including the fail-open ones, because the question this answers is not "did a
-# compositor start" but "did cargo route this binary through here at all".
-#
-# Those are different failures and they want different answers (#551). A
-# contributor with no mutter should get the skips; a target `.cargo/config.toml`
-# forgot to name should get a hard failure. Without a marker the two are
-# indistinguishable from inside the test binary, which is how the aarch64 gap
-# stayed green. `widgets_suite`'s `display_required` is the reader.
+# "The runner ran." Exported on every path, fail-open ones included: it answers whether cargo routed
+# this binary here at all,
+# not whether a compositor started (#551). `widgets_suite`'s `display_required` reads it.
 export POSTIO_TEST_RUNNER=headless-runner
 
-# `.cargo/config.toml` points TMPDIR at `target/tmp`, relative to the workspace
-# root, to keep rustc's and the linker's scratch off the tmpfs -- and nothing
-# creates it. `tempfile` opens a file inside `$TMPDIR` and reports what the OS
-# said, so the first temp file in a fresh tree fails with `NotFound` naming a
-# `.tmpXXXXXX` nobody wrote, under a `target/` that plainly exists, three
-# directories from the config that pointed there. It reads as a bug in whatever
-# you just ran (#613).
-#
-# `issue-claim.sh` already did this for the worktrees it makes (#178, #219).
-# Here it covers the trees it does not: a plain `git clone`, and a hand-made
-# `git worktree add`.
-#
-# Up here with the marker, before the bail-outs below, and for the same reason:
-# this has to happen on every path including the fail-open ones, because a
-# binary that reaches the real display still wants somewhere to write. Fail
-# open like the rest of the file -- a directory that cannot be created costs
-# the pinning, never the run.
+# `.cargo/config.toml` points TMPDIR at `target/tmp` and nothing creates it, so the first `tempfile`
+# in a fresh tree fails with an
+# unexplained `NotFound` (#613). Done before the bail-outs, on every path; a directory that cannot
+# be created costs the pinning, never the run.
 if [ -n "${TMPDIR:-}" ]; then
     mkdir -p "$TMPDIR" 2>/dev/null || true
 fi
@@ -61,23 +29,13 @@ exec_target() { exec "$@"; }
 [ -n "${XDG_RUNTIME_DIR:-}" ]     || exec_target "$@"
 command -v mutter >/dev/null 2>&1 || exec_target "$@"
 
-# The two examples whose entire output is a file, not a window.
-#
-# #315 sends examples to the real display on the grounds that an example is
-# someone launching a program to look at it. `shot` and `surface` are not
-# that: they render a PNG and exit, and nobody ever sees their window. Sending
-# them to the session's display made the visual check `/gtk-design` requires
-# depend on whether the maintainer's screen happened to be awake -- a locked
-# or blanked screen stops delivering frames, and #809 is what that cost. The
-# private compositor always presents, so here they always work, and on a
-# machine with no session at all they work for the first time.
+# `shot` and `surface` render a PNG and exit; on the session display they depended on whether the
+# screen was awake (#809), so they use the private compositor.
 case "$(basename "${1:-}")" in
 shot|surface) ;;
 *)
-    # Only test and bench binaries belong on the hidden compositor. Cargo
-    # names them with a 16-hex metadata suffix; everything else -- the
-    # application via `cargo run`, other examples -- is exec'd unchanged so it
-    # reaches the real display.
+    # Only test and bench binaries (16-hex metadata suffix) belong on the hidden compositor;
+    # everything else is exec'd unchanged.
     SUFFIX="${1##*-}"
     case "$SUFFIX" in
     ????????????????)
@@ -90,57 +48,27 @@ shot|surface) ;;
     ;;
 esac
 
-# One compositor per nextest slot, unless someone pinned a display (#2027).
-#
-# A slot runs one case at a time, so its compositor is never shared. One
-# compositor for every slot was: it ran at 85% of a core through a whole
-# focus_suite run while the machine sat 61% busy, cases queued behind it for
-# their frames, and the ones that timed out in that queue were the suite's
-# flakes. Per slot, the same run took 191 s instead of 278 s, used 92% of the
-# machine, and failed one case instead of twelve. Each slot's compositor is
-# started once and reused by every case that slot runs after it.
+# One compositor per nextest slot unless a display is pinned (#2027): a shared one ran at 85% of a
+# core and its queue caused the
+# suite's flakes; per slot the same run took 191 s instead of 278 s.
 DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless${NEXTEST_TEST_GLOBAL_SLOT:+-$NEXTEST_TEST_GLOBAL_SLOT}}"
 SOCKET="$XDG_RUNTIME_DIR/$DISPLAY_NAME"
 UNAVAILABLE="$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable"
 
-# Whether a compositor is actually behind the socket, rather than a socket
-# file being present.
-#
-# These are different questions and the difference is not academic: mutter can
-# bind the socket and then exit -- on a machine with no DRM device, which is
-# every GitHub-hosted runner -- leaving a file that passes `-S` with nothing
-# listening. Committing to that is worse than never starting one, because the
-# lines below unset DISPLAY and force GDK_BACKEND=wayland, so the fallback
-# display is thrown away too and *every* GTK test skips itself for want of a
-# display it actually had. That is what #781 spent a day discovering, and it
-# is the opposite of this script's promise to exec the binary unchanged when
-# anything is wrong.
-# Asked of the socket, not of the process table. `pgrep -f
-# wayland-display=<name>` looks like the obvious check and is wrong twice
-# over: a compositor for a *different* XDG_RUNTIME_DIR can share the display
-# name, and `-f` happily matches any shell whose command line mentions it.
-# Both were observed while writing this.
-#
-# `ss` prints a line only when something is actually listening on that exact
-# path. If ss is missing, this cannot tell, and says so by keeping the old
-# behaviour rather than inventing an answer.
+# Whether a compositor is behind the socket, not just a socket file: mutter can bind and exit (no
+# DRM device, as on every GitHub runner),
+# and committing to that unsets DISPLAY so every GTK test skips (#781). Asked of the socket, not the
+# process table:
+# `pgrep -f` matches other XDG_RUNTIME_DIRs and any shell mentioning the name. Without `ss` the old
+# behaviour is kept.
 compositor_alive() {
     command -v ss >/dev/null 2>&1 || return 0
     [ -n "$(ss -lxH src "$SOCKET" 2>/dev/null)" ]
 }
 
-# One binary learning the compositor will not come up saves the next twenty
-# from waiting ten seconds each to learn it again.
-#
-# It expires, though, and that is not a detail. `XDG_RUNTIME_DIR` lives as
-# long as the login session, so a marker nothing removes is not "this run has
-# no compositor", it is "this machine has no compositor until someone deletes
-# a file they do not know exists". The nested compositor here exited nine
-# hours into a run, and every suite afterwards would have been quietly demoted
-# to the session's display -- throwing test windows at whoever was at the
-# keyboard, and proving the suites pass on a configuration Postio does not
-# ship. A shortcut may save the next twenty binaries; it may not decide
-# tomorrow's run.
+# One binary learning the compositor will not come up saves the next twenty from waiting. The marker
+# expires: XDG_RUNTIME_DIR lives as long as
+# the login session, and a permanent one would demote every later suite to the session's display.
 if [ -e "$UNAVAILABLE" ]; then
     # `find -mmin +N` prints the file only when it is older than N minutes.
     if [ -z "$(find "$UNAVAILABLE" -mmin +"${POSTIO_UNAVAILABLE_MINUTES:-5}" 2>/dev/null)" ]; then
@@ -154,56 +82,28 @@ if [ ! -S "$SOCKET" ]; then
     # between them rather than twenty racing to bind the same socket.
     LOCK="$XDG_RUNTIME_DIR/$DISPLAY_NAME.startlock"
     if mkdir "$LOCK" 2>/dev/null; then
-        # `GTK_A11Y`/`NO_AT_BRIDGE` here and not only further down: the
-        # export below runs 60-odd lines after this line, so mutter was
-        # started without them and spent a run complaining
-        #
-        #   ** (process:2): WARNING **: Can't connect to a11y bus:
-        #      Could not connect: No such file or directory
-        #
-        # once per window it created. That is the *compositor's* warning, not
-        # the test binary's -- which is why setting the variable for the
-        # tests never silenced it, and why the noise looked like it came from
-        # the suite. There is no accessibility bus on a headless runner and
-        # nothing here wants one: the accessibility sweep asserts through
-        # GTK's own `gtk_test_accessible_*` API, which needs no bridge.
-        # --no-x11: nothing here speaks X (GDK_BACKEND is pinned to Wayland
-        # below), and mutter will not start at all once it has tried 50 X
-        # display lock files in use -- as 25 suites' compositors running at
-        # once had them on 2026-11-20.
+        # `GTK_A11Y`/`NO_AT_BRIDGE` here, since the export below runs after mutter starts: the
+        # a11y-bus warning is the compositor's, once per window.
+        # --no-x11: mutter will not start once it has tried 50 X display lock files in use.
         GTK_A11Y=none NO_AT_BRIDGE=1 \
         setsid mutter --headless --no-x11 --wayland-display="$DISPLAY_NAME" \
             --virtual-monitor "${POSTIO_TEST_GEOMETRY:-1280x800}" \
             >"$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" 2>&1 </dev/null &
-        # Ten seconds on an idle machine, scaled by POSTIO_TEST_PATIENCE like
-        # every other deadline. A runner that is slow to start mutter is the
-        # ordinary case, not a broken one: a CI run failed with mutter's log
-        # saying only "Running Mutter … as a Wayland display server" -- it was
-        # coming up, and the wait gave up first. Everything then skipped for
-        # want of a display and `display_required` failed the run, which
-        # is the loud failure #114 asked for but not for this reason.
+        # Ten seconds idle, scaled by POSTIO_TEST_PATIENCE: a slow mutter start is ordinary, and
+        # giving up early skips every test for want of a display.
         TICKS=$(awk -v factor="${POSTIO_TEST_PATIENCE:-1}" \
             'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", 40 * factor }')
         for _ in $(seq 1 "$TICKS"); do [ -S "$SOCKET" ] && break; sleep 0.25; done
         rmdir "$LOCK" 2>/dev/null || true
     else
-        # Someone else is starting it; wait for them rather than racing.
         WAIT=$(awk -v factor="${POSTIO_TEST_PATIENCE:-1}" \
             'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", 60 * factor }')
         for _ in $(seq 1 "$WAIT"); do [ -S "$SOCKET" ] && break; sleep 0.25; done
     fi
 fi
 
-# Still nothing? Then run on whatever the session has. A test that needs a
-# display will skip itself; one that does not is unaffected.
-#
-# Out loud, because the alternative is a silence that means two opposite
-# things. The path below announces its fallback, this one used not to, so a CI
-# log grepped for `postio runner:` came back empty whether mutter had worked
-# perfectly or never started at all -- and "which display did the suites
-# actually run on" is not a question a green tick answers. Leaving a marker
-# too, for the same reason the path below does: the next twenty binaries
-# should not each wait ten seconds to rediscover this.
+# Still nothing: run on the session's display, out loud, with a marker so the next twenty binaries
+# do not each wait. A test needing a display skips itself.
 if [ ! -S "$SOCKET" ]; then
     : > "$UNAVAILABLE" 2>/dev/null || true
     echo "postio runner: mutter never bound $SOCKET; using the session's display" >&2
@@ -214,18 +114,12 @@ if [ ! -S "$SOCKET" ]; then
     exec_target "$@"
 fi
 
-# A socket with nothing behind it is the same situation wearing a disguise.
-# Clear it and say so once, so the rest of the run stops paying for the
-# attempt, then fall back to the session's own display -- which on CI is the
-# Xvfb the workflow started and verified.
+# A socket with nothing behind it: clear it, say so once, and fall back to the session's display.
 if ! compositor_alive; then
     : > "$UNAVAILABLE" 2>/dev/null || true
     rm -f "$SOCKET" 2>/dev/null || true
     echo "postio runner: no compositor behind $SOCKET; using the session's display" >&2
-    # Mutter's own account of why, which is written to a log nobody has ever
-    # read: the failure is silent by construction, and "the compositor did not
-    # come up" is not a diagnosis. Bounded, because a compositor that failed
-    # noisily should not bury the test output that follows it.
+    # Mutter's own log says why; bounded so it cannot bury the test output.
     if [ -s "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" ]; then
         echo "postio runner: mutter said --" >&2
         tail -n 15 "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" | sed 's/^/  /' >&2
@@ -235,65 +129,33 @@ fi
 
 export WAYLAND_DISPLAY="$DISPLAY_NAME"
 export GDK_BACKEND=wayland
-# A shader cache that outlives the case (#2027). The renderer runs on Mesa's
-# software GL here, and the Focus suite re-executes itself with a fresh
-# XDG_CACHE_HOME, which is where Mesa keeps its cache by default -- so every
-# case compiled every shader again, about 0.55 s of a 1.5 s case. Beside the
-# compositors, it lives as long as they do.
+# A shader cache that outlives the case (#2027): the Focus suite re-executes with a fresh
+# XDG_CACHE_HOME, so each case recompiled Mesa's shaders (~0.55 s of 1.5 s).
 export MESA_SHADER_CACHE_DIR="${MESA_SHADER_CACHE_DIR:-$XDG_RUNTIME_DIR/postio-mesa-shader-cache}"
 export GTK_A11Y="${GTK_A11Y:-none}"
 unset DISPLAY            # or GDK falls back through XWayland to the real session
 
-# WebKit's DMA-BUF renderer negotiates GPU buffers with the compositor, and
-# under a nested headless mutter on a loaded machine that handshake has
-# wedged at 0% CPU (#272). Tests do not need GPU-accelerated web rendering;
-# the documented escape hatch pins WebKit to its software path. Harmless for
-# every binary that never loads WebKit.
+# WebKit's DMA-BUF renderer has wedged at 0% CPU against a nested headless mutter (#272); software
+# rendering is harmless for tests.
 export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
 
 case "$(basename "${1:-}")" in
 e2e-*|widgets_suite-*|focus_suite-*)
-    # The binaries that talk to WebKit: the shared widgets' suite drives the
-    # composer's editor, and the desktop app's builds full windows -- the
-    # composer included -- around a live engine, so they inherit the risk.
-    # (#272), holding a gate run hostage until a human killed it. Run
-    # it under a watchdog: its own process group (so the WebProcess and
-    # NetworkProcess children die with it), a hard deadline, and a dump of
-    # kernel-side state before the kill so a hang leaves a diagnosis rather
-    # than a mystery.
-    # Scaled by POSTIO_TEST_PATIENCE, like every other deadline in the suite
-    # (#842). This one guards a *hang*, so it is deliberately generous rather
-    # than tight -- but 300s was chosen on an idle workstation, and the
-    # machines most likely to take longer than it are exactly the loaded ones
-    # where a wrongly-killed suite is hardest to interpret. `awk` because this
-    # is POSIX sh and the multiplier may be fractional.
-    # 900s, not 300. This bounds a *hang* -- #272's DMA-BUF handshake wedging
-    # at 0% CPU -- and a hang never finishes, so the only thing a larger bound
-    # costs is how long a wedged run takes to fail. Sizing it close to the
-    # legitimate runtime buys nothing and kills real work.
-    #
-    # 300 was chosen when the first GTK suite was ~76 cases. #841 consolidated
-    # 45 more into it, and it then took ~220s on an idle workstation -- inside
-    # 300, but not while a gate run is also compiling. It was killed at 142
-    # passing cases with nothing wrong.
+    # The WebKit binaries (shared widgets' suite, desktop app) run under a watchdog: own process
+    # group, hard deadline, kernel-state dump before the kill (#272).
+    # 900s, scaled by POSTIO_TEST_PATIENCE (#842) with `awk` (POSIX sh, fractional). It bounds a
+    # hang, which never finishes, so a generous limit costs
+    # only how long a wedged run takes to fail; 300 killed a healthy suite at 142 cases.
     LIMIT="${POSTIO_TEST_WATCHDOG:-900}"
     LIMIT=$(awk -v base="$LIMIT" -v factor="${POSTIO_TEST_PATIENCE:-1}" \
         'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", base * factor }')
     setsid "$@" &
     GROUP=$!
     trap 'kill -9 -"$GROUP" 2>/dev/null' INT TERM
-    # The deadline is a timer beside the child, not a loop polling it. The
-    # loop slept a whole second between looks, so every watched binary ended
-    # on the next whole second -- a 0.1 s test cost 1 s, and nextest runs
-    # these suites one process per test. Now `wait` returns the moment the
-    # child does, and the timer is what fires on a hang.
-    #
-    # The timer counts whole-second sleeps rather than making one long one,
-    # and each sleep has its descriptors closed: SIGKILL is the only way to
-    # stop the timer that cannot race a trap it has not installed yet, and it
-    # leaves the current sleep orphaned. That orphan lives under a second and
-    # holds none of cargo's pipes. The marker is how this shell learns the
-    # timer, not the test, ended the run: 137 alone cannot tell.
+    # The deadline is a timer beside the child, so `wait` returns the moment the child does (a poll
+    # loop cost every binary up to a second).
+    # The timer counts whole-second sleeps with descriptors closed and is stopped by SIGKILL; the
+    # marker file tells this shell the timer, not the test, ended the run (137 cannot).
     FIRED="${TMPDIR:-/tmp}/postio-watchdog.$$"
     rm -f "$FIRED"
     (
@@ -312,8 +174,6 @@ e2e-*|widgets_suite-*|focus_suite-*)
         kill -9 -"$GROUP" 2>/dev/null
     ) &
     TIMER=$!
-    # `wait` also returns early when a trapped signal arrives; the trap has
-    # killed the group by then, so wait again to reap the child's own status.
     while :; do
         wait "$GROUP"; RC=$?
         kill -0 "$GROUP" 2>/dev/null || break
@@ -325,8 +185,6 @@ e2e-*|widgets_suite-*|focus_suite-*)
         kill -9 -"$GROUP" 2>/dev/null
         exit 124
     fi
-    # Reap anything that outlived the harness -- the save-dialog and orphaned
-    # WebProcess pattern CLAUDE.md records. An empty group is the normal case.
     kill -9 -"$GROUP" 2>/dev/null
     exit "$RC"
     ;;

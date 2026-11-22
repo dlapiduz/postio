@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
-# Run the Swift tests, with the Rust library where the linker can find it.
-#
-# A bare `swift test` fails to link: the staticlib lives in cargo's target
-# directory, which SwiftPM knows nothing about, and the manifest deliberately
-# does not name it (an absolute path there would bar the package from ever
-# being a dependency).
+# Run the Swift tests with the Rust library where the linker can find it: the staticlib is in
+# cargo's target directory, and Package.swift
+# cannot name it without barring the package from being a dependency.
 set -euo pipefail
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
-# The tests that drive the real controller (the thread bar's keyboard path)
-# open a demo store, which only a build with the demo feature has. Never
-# for a bundle anyone ships: this library is the tests' alone.
+# The tests that drive the real controller open a demo store, which needs the demo feature; this
+# library is the tests' alone.
 export POSTIO_FFI_FEATURES="${POSTIO_FFI_FEATURES:-demo}"
 scripts/macos-build.sh --lib-only
 

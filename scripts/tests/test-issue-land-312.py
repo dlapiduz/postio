@@ -39,8 +39,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -51,11 +49,6 @@ REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 WAIT_FOR_CHECKS = HERE / "wait-for-checks.sh"
 CI_EXPECTED_WORKFLOWS = HERE / "checks" / "ci-expected-workflows.py"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -72,9 +65,6 @@ FAILURES: list[str] = []
 
 FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 
-# `pr view` answers OPEN, and `pr merge` really does move `main` in the bare
-# remote. This is the shape of a working day, and the control for the two
-# failure stubs below.
 GH_STUB_HEALTHY = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -95,7 +85,6 @@ fi
 exit 0
 """
 
-# The incident: a merged PR for this head branch, and a merge that no-ops.
 GH_STUB_ALREADY_MERGED = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -165,17 +154,8 @@ def land(root: Path, target: Path, stub_dir: Path, origin: Path):
     environment["ORIGIN"] = str(origin)
     environment["POSTIO_CHECKS_GRACE"] = "1"
     environment["POSTIO_CHECKS_POLL"] = "1"
-    # The state this test is about is permanent, not late: a merge that never
-    # happened will not appear however long the check waits. Shortening the
-    # window keeps that case fast; the lag case has a test of its own
-    # (`test-issue-land-lagging-ref.py`, #406).
     environment["POSTIO_LANDED_TIMEOUT"] = "3"
     environment["POSTIO_LANDED_POLL"] = "1"
-    # A PR that says MERGED buys extra patience before the script calls the
-    # landing failed -- deliberately, so replication lag stops being reported
-    # as a failed merge. This stub *is* the case that patience must not hide,
-    # so it is cut short here: what is under test is that the failure is still
-    # detected, not how long the script is willing to wait for it.
     environment["POSTIO_MERGED_TIMEOUT"] = "2"
     return patience.run(
         ["bash", "scripts/issue-land.sh", "-m", "feat(dummy): add a file"],
@@ -220,7 +200,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
-        # ── the control: a merge that really merges ──────────────────────
         result, remotes, landed, _ = scenario(base, GH_STUB_HEALTHY, "ok")
         if result.returncode != 0:
             FAILURES.append(
@@ -234,7 +213,6 @@ def main() -> int:
         if "issue-312-x" in remotes:
             FAILURES.append("a successful merge should still delete the remote branch")
 
-        # ── the incident ────────────────────────────────────────────────
         result, remotes, landed, calls = scenario(
             base, GH_STUB_ALREADY_MERGED, "stale"
         )

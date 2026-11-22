@@ -37,19 +37,12 @@ import sys
 from pathlib import Path
 
 CALL = re.compile(r"\btracing::error!\s*\(")
-# `%error`, `?error`, `%refusal` — a *bare* field, where the field's name and
-# the local it captures are the same thing.
-#
-# `name = %expression` is deliberately not matched, and the reason is a trap:
-# a message's `{error}` is `format_args!`, so it captures the local `error`,
-# not the field of that name. Where a site logs `error =
-# %redact_addresses(&error.to_string())`, interpolating `{error}` would put
-# the *unredacted* value in `MESSAGE` and undo the redaction on purpose-built
-# code (postio-account/src/imap/pool.rs). Asking for that would be worse than
-# asking for nothing, so this check does not ask.
-# `\\[\\s\\S]` rather than `\\.`, so a literal broken across lines with a
-# trailing backslash — which is how the longer messages here are written — is
-# one literal and not an unterminated one.
+# A bare field (`%error`, `?error`), where the field's name and the captured local are the same.
+# `name = %expression` is not
+# matched: `{error}` captures the local, so interpolating it would put an unredacted value in
+# MESSAGE (postio-account/src/imap/pool.rs).
+# `\\[\\s\\S]` rather than `\\.`, so a literal broken across lines with a trailing backslash is one
+# literal.
 STRING = re.compile(r'"(?:[^"\\]|\\[\s\S])*"')
 
 
@@ -92,7 +85,6 @@ def bare_cause_fields(arguments: str) -> set[str]:
         if before.endswith("="):
             continue
         after = arguments[match.end() :].lstrip()
-        # A bare field ends the argument; `%path::to(x)` does not.
         if after[:1] not in {",", ")", ""}:
             continue
         names.add(match.group(1))
@@ -103,7 +95,6 @@ def names_its_cause(arguments: str) -> bool:
     """Whether some field's name is interpolated into some string literal."""
     named = bare_cause_fields(arguments)
     if not named:
-        # No cause field at all — nothing for this check to ask for.
         return True
     for literal in STRING.findall(arguments):
         for name in named:

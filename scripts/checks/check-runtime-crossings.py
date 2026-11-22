@@ -59,22 +59,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The call that opens a GTK-main-context future.
 CROSSING = "spawn_future_local"
 
-# Calls whose argument list runs on the tokio runtime instead. An await inside
-# one of these is correct by construction, so their blocks are cut out before
-# anything is checked.
+# Calls whose argument list runs on tokio, where an await is correct; their blocks are cut out
+# first.
 RUNTIME_SPAWNS = (".spawn(", "tokio::spawn(", "spawn_blocking(")
 
-# What a `.await` on the main context is allowed to be: taking the answer off
-# a channel, or pulling the next item from a stream.
 RECEIVES = re.compile(r"\.(recv|recv_async|next|recv_timeout)\s*\(\s*\)\s*$")
 
-# The marker that says a human decided this await is pollable here.
 MARKER = "POSTIO-GLIB-SAFE:"
 
-# A line that is part of the comment block immediately above an await.
 COMMENT = re.compile(r"^\s*(//.*)?$")
 
 
@@ -156,14 +150,9 @@ def blanked(text: str) -> str:
                 out[index] = " "
                 index += 1
         elif text[index] == "'":
-            # A quote is a char literal or a lifetime, and only one of them
-            # ends. `'"'` holds one double quote, so reading it as the start
-            # of a string inverts the quote parity of everything after it in
-            # the file: real code gets blanked as "string", string contents
-            # get scanned as code, and a crossing past that point silently
-            # stops being seen. A lifetime (`&'a str`, `'static`, a loop
-            # label) must fall through with only its own quote blanked, or
-            # the scan runs off looking for a partner quote that never comes.
+            # A quote is a char literal or a lifetime. `'"'` holds one double quote, so reading it
+            # as a string inverts quote parity
+            # for the rest of the file; a lifetime falls through with only its own quote blanked.
             if text[index : index + 2] == "'\\":
                 out[index] = " "
                 index += 1

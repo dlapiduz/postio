@@ -34,13 +34,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 
 FAILURES: list[str] = []
 
-# A stub `cargo` that answers just enough like nextest for the script under
-# test: the first `nextest run --workspace ...` call fails with two tests
-# named the way nextest's own `Summary` section names them, one per line
-# after a `Summary [...]` marker (nextest repeats the same line once live
-# and once in the summary; only the summary copy is meant to be read). A
-# later call carrying `-E "binary_id(...) & test(=...)"` is a retry, and its
-# verdict comes from files the test writes into $STUB_DIR before running.
 CARGO_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 
@@ -139,7 +132,6 @@ def case(name: str, condition: bool, detail: str) -> None:
 
 
 def main() -> int:
-    # ── a clean run needs no retry at all ────────────────────────────
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("workspace-passes",))
         result = run(stub_dir)
@@ -155,7 +147,6 @@ def main() -> int:
             f"expected exactly one cargo invocation, got:\n{calls}",
         )
 
-    # ── a package narrows the first run and nothing else ─────────────
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("workspace-passes",))
         result = run(stub_dir, "ci", "postio-widgets")
@@ -176,7 +167,6 @@ def main() -> int:
             f"exit {result.returncode}; output:\n{result.stdout}{result.stderr}",
         )
 
-    # ── no package is still the whole workspace ──────────────────────
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("workspace-passes",))
         run(stub_dir)
@@ -187,7 +177,6 @@ def main() -> int:
             f"the default scope was not the workspace:\n{calls}",
         )
 
-    # ── both failures are flakes: pass ───────────────────────────────
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory))
         result = run(stub_dir)
@@ -214,11 +203,6 @@ def main() -> int:
             f"no flake confirmation in output:\n{out}",
         )
 
-    # ── the retry builds what the first run built ────────────────────
-    # A bare `cargo nextest run` builds the workspace's default members, and
-    # postio-ffi is not one: on PR #2182 a full suite's one ffi failure was
-    # "retried" over 87 binaries without it, ran nothing, and was called a
-    # failure twice (#2154).
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory))
         run(stub_dir, "ci-full")
@@ -238,11 +222,6 @@ def main() -> int:
             f"retries were:\n{retries}",
         )
 
-    # ── under Actions, a forgiven flake is still said out loud ───────
-    # The nightly runs through this script too (#1710), and the nightly is
-    # where flakes get noticed. A retry that turns one green must not make
-    # it invisible: on a runner each confirmed flake is an annotation on the
-    # run, which is what a person looking at a green tick actually sees.
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory))
         result = run(stub_dir, actions=True)
@@ -262,7 +241,6 @@ def main() -> int:
             f"annotation syntax printed outside Actions:\n{out}",
         )
 
-    # ── one failure reproduces alone: block the release ──────────────
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("b-thing-fails-again",))
         result = run(stub_dir)
@@ -283,10 +261,6 @@ def main() -> int:
             f"b_thing should be named as the blocker:\n{out}",
         )
 
-    # ── a coloured summary is still read ────────────────────────────
-    # A runner's log is painted: the nightly re-run on PR #1784 failed one
-    # test and the gate said "no per-test summary to retry", because the
-    # pattern met escape codes where it expected spaces.
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("coloured",))
         result = run(stub_dir, actions=True)
@@ -303,11 +277,6 @@ def main() -> int:
             f"exit {result.returncode}; output:\n{out}",
         )
 
-    # ── a red nightly's failures, re-run on a pull request ───────────
-    # `ci.yml` re-runs only what the last nightly failed: target selection
-    # builds just those binaries, and a filter runs just those tests. The
-    # selection has to reach the isolated retry too, or one failure there
-    # builds the whole workspace the narrowing was meant to avoid.
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("b-thing-fails-again",))
         result = run(
@@ -347,7 +316,6 @@ def main() -> int:
             f"exit {result.returncode}",
         )
 
-    # ── what failed twice is written down for the next pull request ──
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("b-thing-fails-again",))
         failed = Path(directory) / "failed.txt"
@@ -359,7 +327,6 @@ def main() -> int:
             f"the file held:\n{written!r}",
         )
 
-    # ── a failure with nothing to retry: original status stands ──────
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("no-summary",))
         result = run(stub_dir)

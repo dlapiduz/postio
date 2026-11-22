@@ -72,8 +72,6 @@ fn waits() {
 }
 """
 
-# A helper documents its own fixed deadline where the reader meets it -- in
-# the doc comment, not squeezed onto the `let`.
 ANNOTATED_ON_THE_HELPER = """use std::time::{Duration, Instant};
 /// Turn the loop for `time`, so a timeout gets to fire.
 ///
@@ -87,8 +85,6 @@ fn wait(time: Duration) {
 fn waits() { wait(Duration::from_millis(60)); }
 """
 
-# A deadline is a deadline wherever it is spelled; `patience()` is the other
-# way through the dial.
 PATIENCE = """use std::time::Instant;
 #[test]
 fn waits() {
@@ -97,9 +93,6 @@ fn waits() {
 }
 """
 
-# A deadline computed once and reused. Refusing this would push every call
-# site into repeating the `scaled` call, so the check follows the binding --
-# one hop, same file.
 VIA_BINDING = """use std::time::{Duration, Instant};
 use postio_test_support::scaled;
 #[test]
@@ -110,8 +103,6 @@ fn waits() {
 }
 """
 
-# The same shape with nothing scaled behind it is still a finding: following
-# the binding must not become a way through.
 VIA_UNSCALED_BINDING = """use std::time::{Duration, Instant};
 #[test]
 fn waits() {
@@ -121,8 +112,6 @@ fn waits() {
 }
 """
 
-# rustfmt breaks a long `let deadline = ...` across lines. A check the
-# formatter can silence is not a check.
 WRAPPED = """use std::time::{Duration, Instant};
 #[test]
 fn waits() {
@@ -132,7 +121,6 @@ fn waits() {
 }
 """
 
-# `Instant::now() < deadline` is reading the clock, not setting a deadline.
 LOOP_CONDITION = """use std::time::Instant;
 #[test]
 fn waits() {
@@ -141,8 +129,6 @@ fn waits() {
 }
 """
 
-# Source is not a test, so it is not this check's business: the app's own
-# timeouts are product behaviour, not test patience.
 IN_SOURCE = """use std::time::{Duration, Instant};
 pub fn give_up_eventually() {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -188,7 +174,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
 
-        # -- 1. the shape #957 flakes on ------------------------------------
         root = base / "hand-rolled"
         build(root, tests={"suite/case.rs": HAND_ROLLED})
         result = run(root)
@@ -204,7 +189,6 @@ def main() -> int:
             f"the failure does not say where to look:\n{result.stderr}",
         )
 
-        # -- 2. reached through a full path too -----------------------------
         root = base / "qualified"
         build(root, tests={"case.rs": QUALIFIED})
         case(
@@ -213,7 +197,6 @@ def main() -> int:
             "a fully-qualified path is how most of the suite spells it",
         )
 
-        # -- 3. scaled is the fix -------------------------------------------
         root = base / "scaled"
         build(root, tests={"suite/case.rs": SCALED})
         result = run(root)
@@ -231,7 +214,6 @@ def main() -> int:
             "the shared default deadline must not be reported",
         )
 
-        # -- 4. a duration that is the subject may stay fixed, with a reason -
         root = base / "annotated"
         build(root, tests={"case.rs": ANNOTATED})
         result = run(root)
@@ -250,7 +232,6 @@ def main() -> int:
             "a helper documents its fixed deadline where the reader meets it",
         )
 
-        # -- 5. a bare marker is a silencer ---------------------------------
         root = base / "bare"
         build(root, tests={"case.rs": BARE_MARKER})
         result = run(root)
@@ -266,7 +247,6 @@ def main() -> int:
             f"the report does not explain the refusal:\n{result.stderr}",
         )
 
-        # -- 6. a deadline bound above is followed, one hop ------------------
         root = base / "binding"
         build(root, tests={"case.rs": VIA_BINDING})
         result = run(root)
@@ -285,7 +265,6 @@ def main() -> int:
             "following the binding must not become a way through the check",
         )
 
-        # -- 7. the formatter cannot silence it -----------------------------
         root = base / "wrapped"
         build(root, tests={"case.rs": WRAPPED})
         case(
@@ -304,7 +283,6 @@ def main() -> int:
             f" nothing:\n{result.stdout}{result.stderr}",
         )
 
-        # -- 8. product code keeps its own timeouts -------------------------
         root = base / "source"
         build(root, tests={"case.rs": SCALED}, source=IN_SOURCE)
         case(

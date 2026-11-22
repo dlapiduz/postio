@@ -1,49 +1,17 @@
 #!/usr/bin/env bash
-# Install the pinned `cargo-nextest` side by side with its other versions. Idempotent.
-#
-# Versions live in ~/.local/share/postio-tools/ and `cargo nextest` resolves the
-# one the current checkout pins, so a branch that bumps the pin does not
-# unseat everyone else's; scripts/lib/pinned-tool.sh says why. CI installs
-# plain into ~/.cargo/bin.
-#
-# # Why this exists as a script
-#
-# `issue-land.sh` prefers `cargo nextest` for the integration tiers and falls
-# open to `cargo test` when it is absent, and `ci.yml` runs the whole
-# workspace through it. The fallback is the right design and it is invisible:
-# a workstation without nextest lands successfully, just four times slower,
-# and nothing in the output says which runner ran. That is how this box spent
-# every landing on `cargo test` without anyone noticing (#1092).
-#
-# The obvious fix -- put the install command in the README -- makes the
-# version and the checksum true in two places, which is the bug
-# `check-toolchain-pinned.py` exists to prevent for the compiler. So the pin
-# lives here, once, and both `ci.yml` and the README call this.
-#
-# # Why the published binary and not `cargo install`
-#
-# `cargo install cargo-nextest` builds the tool's own dependency tree -- clap,
-# serde, regex and ~200 others -- in its own target directory, so every crate
-# it shares with this workspace is compiled twice and neither copy is usable
-# by the other. The release tarball is one file and ~2 seconds.
-#
-# # Why a checksum and not `--locked`
-#
-# It fixes the exact bytes rather than a dependency graph that resolves at
-# build time. The asset is immutable, so a changed digest means the artifact
-# changed and this should stop rather than install it.
-#
-# # Why two checksums
-#
-# The tooling self-tests run on macOS as well since #1151, and
-# `scripts/lib/prereq.py` makes a missing prerequisite a *failure* under CI
-# rather than a skip -- so a runner that cannot install this is a runner that
-# cannot run `test-issue-land-no-tests.py`, whose whole subject is that the
-# gate must give the same answer under both runners. One host per asset, one
-# digest per asset.
-#
-# To bump: change the version, download both tarballs, and put their
-# `sha256sum` here. Nothing else names them.
+# Install the pinned `cargo-nextest` side by side with its other versions. Idempotent. A branch that
+# bumps the pin does not unseat
+# everyone else's (scripts/lib/pinned-tool.sh says why); CI installs plain into ~/.cargo/bin.
+# A script, not README text: `issue-land.sh` falls open to `cargo test` without nextest and says
+# nothing, which hid a 4x slower landing (#1092);
+# the pin and checksum live here once.
+# The published binary, not `cargo install`, which compiles the tool's ~200 dependencies a second
+# time in its own target dir.
+# A checksum, not `--locked`: the asset is immutable, so a changed digest means stop. Two checksums,
+# one per host, because the
+# tooling self-tests run on macOS too and `scripts/lib/prereq.py` fails a missing prerequisite under
+# CI.
+# To bump: change the version, download both tarballs, and put their `sha256sum` here.
 set -euo pipefail
 
 VERSION="0.9.152"
@@ -61,8 +29,8 @@ if pt_have; then
     exit 0
 fi
 
-# `sha256sum` is GNU and absent on macOS, where the tool is `shasum -a 256`.
-# Both read the same `<digest>  <path>` line on stdin with `-c`.
+# `sha256sum` is GNU and absent on macOS, where the tool is `shasum -a 256`; both read `<digest>
+# <path>` on stdin with `-c`.
 case "$(uname -s)" in
 Darwin)
     ASSET="mac"

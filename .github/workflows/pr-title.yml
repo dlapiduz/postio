@@ -1,19 +1,13 @@
-# The PR title against CLAUDE.md's commit rules.
-#
-# PRs merge squashed, so the title is the subject that lands on main. The
-# commit-msg hook (.githooks/commit-msg) checks each commit as it is made,
-# and issue-land.sh titles the PR from the last one, but a title edited on
-# GitHub, or a branch committed with the hooks off, reaches main unchecked
-# without this. Its own workflow rather than a job in ci.yml: a title edit
-# has to re-run it, and `edited` on ci.yml would re-run the whole suite
-# every time a PR body changes.
+# The PR title against CLAUDE.md's commit rules. PRs merge squashed, so the title is the subject on
+# main, and a title
+# edited on GitHub bypasses the commit-msg hook. Its own workflow so `edited` does not re-run all of
+# ci.yml.
 name: PR title
 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
 
-# Least-privilege default; see the note in ci.yml. #145.
 permissions:
   contents: read
 
@@ -30,8 +24,8 @@ jobs:
       - uses: ./.github/actions/python
 
       - name: Check the title as the squash subject
-        # Through the environment, never interpolated into the script: a
-        # title is text anyone opening a PR controls.
+        # Through the environment, never interpolated into the script: a title is
+        # attacker-controlled text.
         env:
           TITLE: ${{ github.event.pull_request.title }}
         run: python3 scripts/commit-msg.py --title "$TITLE"

@@ -1,29 +1,11 @@
 #!/usr/bin/env bash
-# Assemble Postio.app around the binary `macos-build.sh` produced.
-#
-# SwiftPM cannot emit an application bundle, so this does the four things Xcode
-# would: make the directory layout, put the executable in it, write the
-# Info.plist, and sign.
-#
-# The signature is **ad-hoc** by default (`codesign -s -`), which is what makes
-# building Postio need no Apple Developer account (ADR 0019 Q8). It comes with
-# a consequence worth knowing rather than discovering: an ad-hoc identity
-# changes on every rebuild, so macOS treats each build as a different
-# application and the Keychain asks again the first time a new build reads a
-# secret. **"Always Allow" does not stick**, because the thing it was allowed
-# for no longer exists.
-#
-# `POSTIO_CODESIGN_IDENTITY` signs with a real certificate instead, and that
-# is the whole cure: a Keychain ACL is bound to the signing identity rather
-# than to the binary's hash, so it survives every rebuild. Any code-signing
-# certificate does -- an Apple Development one, or a self-signed one made in
-# Keychain Access (Certificate Assistant -> Create a Certificate, type "Code
-# Signing"). No account, no team, no notarization.
-#
-# Opt-in rather than automatic on purpose: picking up whatever certificate
-# happens to be in the keychain would change what the artifact *is* without
-# anybody asking for it. `security find-identity -v -p codesigning` lists what
-# is available, and this prints the hint when it finds one.
+# Assemble Postio.app around the binary `macos-build.sh` produced: SwiftPM cannot emit a bundle.
+# The signature is ad-hoc by default (`codesign -s -`, no Apple account; ADR 0019 Q8), so each
+# rebuild is a different application to the
+# Keychain and "Always Allow" does not stick. `POSTIO_CODESIGN_IDENTITY` signs with a real
+# certificate (any code-signing one, even self-signed),
+# which binds the Keychain ACL to the identity; opt-in, so the artifact is not changed by whatever
+# certificate is in the keychain.
 #
 # Usage:
 #   scripts/macos-bundle.sh [--release]
@@ -56,11 +38,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/Postio"
 cp macos/Resources/Info.plist "$APP/Contents/Info.plist"
 
-# The attachment-text helper (specs/010-focus-search D28): every attachment
-# is read in a process of its own that the indexer kills at its deadline,
-# so a hostile file costs a process rather than the app. The indexer looks
-# for it beside its own executable, which is here. Fatal when missing: an
-# app without it refuses to read PDFs, and that should not ship quietly.
+# The attachment-text helper is read in its own process, killed at its deadline
+# (specs/010-focus-search D28); the indexer looks beside its own executable.
+# Fatal when missing: the app would refuse PDFs.
 HELPER="${CARGO_TARGET_DIR:-target}/$CONFIG/postio-extract-helper"
 if [ ! -x "$HELPER" ]; then
     echo "no extraction helper at $HELPER." >&2
@@ -69,11 +49,8 @@ if [ ! -x "$HELPER" ]; then
 fi
 cp "$HELPER" "$APP/Contents/MacOS/postio-extract-helper"
 
-# The agent entry point (ADR 0010, #1832; the app answers on its socket,
-# #1845). An MCP client runs this file as a subprocess, so it has to be at a
-# path a person can paste into the client's config:
-# Postio.app/Contents/MacOS/postio-mcp. Fatal when missing, like the helper:
-# an app whose Settings offers agent access and ships no entry point lies.
+# The agent entry point (ADR 0010): a person pastes Postio.app/Contents/MacOS/postio-mcp into a
+# client's config. Fatal when missing.
 MCP="${CARGO_TARGET_DIR:-target}/$CONFIG/postio-mcp"
 if [ ! -x "$MCP" ]; then
     echo "no postio-mcp at $MCP." >&2
@@ -82,62 +59,44 @@ if [ ! -x "$MCP" ]; then
 fi
 cp "$MCP" "$APP/Contents/MacOS/postio-mcp"
 
-# The icon, rendered from the SVG the GTK frontend already ships rather than
-# from a set of PNGs checked in beside it -- the rule the design tokens follow,
-# for the same reason: a copy is correct on the day it is made.
-#
-# AppKit reads that SVG as a vector, so each size is a real render rather than
-# an upscale of the 128px PNG, and `swift` and `iconutil` are on every Mac. A
-# rasterizer from Homebrew would be a build dependency contributors do not have.
+# The icon is rendered from the SVG the GTK frontend ships, as the design tokens are: a checked-in
+# copy is right only on the day it is made.
 ICON_SVG=crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg
 ICONSET=$(mktemp -d)/Postio.iconset
 if swift scripts/macos-icon.swift "$ICON_SVG" "$ICONSET" \
     && iconutil -c icns -o "$APP/Contents/Resources/Postio.icns" "$ICONSET"; then
     :
 else
-    # Not fatal. An application with no icon is worse-looking and entirely
-    # usable, and failing the whole bundle over artwork would be the wrong
-    # trade for someone trying to run the thing.
+    # Not fatal: an app with no icon is usable.
     echo "could not build the icon; the bundle has none." >&2
 fi
 rm -rf "$(dirname "$ICONSET")"
 
-# The executable loads `libpostio_ffi.dylib` from the cargo target directory,
-# by absolute path: ld64 prefers the cdylib over the staticlib beside it. A
-# bundle like that launches only on the machine that built it, which the
-# first release dry run found (#1723). This copies the library in and points
-# the executable at the copy, and fails if anything still reaches outside.
+# The executable loads `libpostio_ffi.dylib` from the cargo target directory by absolute path, so a
+# bundle would launch only on the machine
+# that built it (#1723). Copy the library in, point the executable at it, and fail if anything still
+# reaches outside.
 scripts/macos-self-contained.sh "$APP"
 
-# `-s -` is an ad-hoc signature: no identity, no team, no account. The
-# entitlements are the local ones, which disable library validation -- with no
-# team to compare against, validation refuses code a contributor's own build
-# legitimately contains.
-#
-# The nested libraries first, then the bundle: signing the bundle does not
-# sign code inside it, and the step above rewrote load commands, which
-# invalidates whatever signature the linker gave. A failure is fatal for the
-# same reason -- an Apple Silicon Mac kills a binary whose signature does not
-# match it, so "built but not signed" is no longer a bundle that still runs.
+# `-s -` is an ad-hoc signature with the local entitlements, which disable library validation. Sign
+# nested libraries first, then the bundle:
+# signing the bundle does not sign inside it, and the step above invalidated the linker's signature.
+# Fatal: Apple Silicon kills a mismatched binary.
 IDENTITY="${POSTIO_CODESIGN_IDENTITY:--}"
 if [ -d "$APP/Contents/Frameworks" ]; then
     for library in "$APP"/Contents/Frameworks/*; do
         codesign --force --sign "$IDENTITY" "$library"
     done
 fi
-# The helper is nested code too: signed with the same identity before the
-# bundle, under an identifier of its own. It takes no entitlements. It
-# loads only system libraries, so library validation has nothing to
-# refuse; spawning it needs none under the hardened runtime; and the app is
-# not sandboxed -- if it ever is, the helper needs
-# `com.apple.security.inherit` to run inside the app's sandbox.
+# The helper is nested code: signed with the same identity before the bundle, under its own
+# identifier, with no entitlements
+# (it loads only system libraries; if the app is ever sandboxed it needs
+# `com.apple.security.inherit`).
 codesign --force --sign "$IDENTITY" \
     --identifier dev.postio.Postio.extract-helper \
     "$APP/Contents/MacOS/postio-extract-helper"
-# postio-mcp reads the Keychain when it opens the store itself (no app
-# open), so it is signed with the same identity: a stable one is what lets
-# "Always Allow" cover it. Its own identifier keeps it a separate code
-# identity from the app, as the helper's is.
+# postio-mcp reads the Keychain when it opens the store itself, so it is signed with the same
+# identity, under its own identifier.
 codesign --force --sign "$IDENTITY" \
     --identifier dev.postio.Postio.mcp \
     "$APP/Contents/MacOS/postio-mcp"
@@ -147,9 +106,6 @@ codesign --force --sign "$IDENTITY" \
 codesign --verify --deep --strict "$APP"
 
 if [ "$IDENTITY" = "-" ]; then
-    # Only when there is something to suggest. A contributor with no
-    # certificate is not doing anything wrong and should not be told off for
-    # it -- ad-hoc is the supported path.
     available=$(security find-identity -v -p codesigning 2>/dev/null \
         | sed -n 's/.*"\(.*\)"/\1/p' | head -1)
     if [ -n "$available" ]; then

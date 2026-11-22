@@ -1,45 +1,29 @@
-//! The checks themselves. See the crate docs for the two kinds.
-
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use postio_body::sanitize::{CID_SCHEME, RemoteImages, Sanitized, sanitize_body};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mime::{self, PREVIEW_CHARS, ParsedMessage};
 use postio_model::threading::ThreadCue;
 
-/// A fixed clock, so a find reproduces tomorrow.
-///
-/// `received_at` and the query parser's notion of "today" both feed dates into
-/// the code under test. Reading the real clock would make a crash depend on
-/// when it was found, and a crash artifact that only reproduces on the day it
-/// was discovered is not a bug report.
+/// A fixed clock, so a find reproduces on any day.
 fn fixed_now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
 }
 
-/// The same date, for [`postio_search::parse`].
 fn fixed_today() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 1, 1).expect("1 January 2026 is a date")
 }
 
-/// Run the ingest path on `raw` — every byte of it attacker-controlled.
-///
-/// This is what a fetched message goes through before anything renders it:
-/// header and address parsing, MIME walking, charset and transfer-encoding
-/// decoding, preview flattening, and the threading cue that decides which
-/// conversation it joins. `mime::parse` is documented as total, so *any* panic
-/// here is the find — there is no input this is allowed to reject.
+/// Run the ingest path on `raw`, every byte attacker-controlled. `mime::parse` is total, so any
+/// panic is the find.
 pub fn check_parse_message(raw: &[u8]) {
     let parsed = mime::parse(raw);
     check_parsed_invariants(&parsed, raw);
 
-    // The initial-sync path, which buffers no bodies. Different code, same
-    // hostile bytes: it is the one that runs first and on every message.
+    // The initial-sync path, which buffers no bodies: different code, same hostile bytes.
     let headers_only = mime::parse_headers(raw);
     check_parsed_invariants(&headers_only, raw);
 
-    // Threading reads sender-supplied `Message-ID` and `References`, and the
-    // ids it pulls out of them are used as index keys. A cue is cheap to build
-    // and is the last step before the message reaches storage.
+    // Threading reads sender-supplied `Message-ID` and `References`, whose ids become index keys.
     let message = parsed.into_message(AccountId::new(1), MailboxId::new(1), fixed_now());
     let cue = ThreadCue::of(&message);
     for id in postio_model::threading::claimed_ids(&cue) {
@@ -51,7 +35,6 @@ pub fn check_parse_message(raw: &[u8]) {
     }
 }
 
-/// What must hold of any [`ParsedMessage`], however malformed its source.
 fn check_parsed_invariants(parsed: &ParsedMessage, raw: &[u8]) {
     assert_eq!(
         parsed.size,
@@ -59,9 +42,8 @@ fn check_parsed_invariants(parsed: &ParsedMessage, raw: &[u8]) {
         "size is the length of what was parsed, not of what parsed cleanly"
     );
 
-    // The preview goes in a 40px list row. A message that could make it
-    // unbounded would let a sender decide how much memory every row costs, and
-    // the row is drawn for every message in the mailbox.
+    // The preview goes in a 40px list row; an unbounded one would let a sender decide every row's
+    // memory cost.
     if let Some(preview) = &parsed.preview {
         assert!(
             preview.chars().count() <= PREVIEW_CHARS,
@@ -75,28 +57,16 @@ fn check_parsed_invariants(parsed: &ParsedMessage, raw: &[u8]) {
         );
     }
 
-    // Attachment metadata is deliberately *not* checked for path separators
-    // here, and the first run of this target is why. It found
-    // `filename="=?utf-8Qa/b.txt"` -- a malformed RFC 2047 word that does not
-    // decode, leaving the slash in place -- and that is the parser behaving
-    // correctly. `mime::parse` reports the filename the sender wrote; making
-    // it safe to write to disk is `postio_ui::reader::parts::save_name`'s promise,
-    // and that is the layer whose tests assert it. Asserting it here would
-    // demand that the model launder data it is supposed to report faithfully.
-    //
-    // The find was still worth having: it is what sent someone to look at
-    // `save_name`, which turned out to strip separators and dots but not
-    // control characters, and a NUL reaches a filename by the same route.
+    // Attachment filenames are not checked for path separators here: `mime::parse` reports what the
+    // sender wrote,
+    // and making it safe to write to disk is `postio_ui::reader::parts::save_name`'s promise,
+    // tested there.
     let _ = &parsed.parts;
 }
 
-/// Sanitize `html` both ways round and check what comes out.
-///
-/// This is the boundary between attacker-controlled markup and the reading
-/// pane's `WebView`. The pane has JavaScript and network access off, so this
-/// is defence in depth rather than the only defence — but it is the layer that
-/// decides what the user sees, and the count it returns is what the UI shows
-/// as "remote blocked".
+/// Sanitize `html` both ways round and check the result. The pane has JavaScript and network off,
+/// so this is defence in depth;
+/// the returned count is what the UI shows as "remote blocked".
 pub fn check_sanitize_html(html: &str) {
     let blocked = sanitize_body(html, RemoteImages::Blocked);
     check_sanitized(&blocked, RemoteImages::Blocked);
@@ -104,17 +74,13 @@ pub fn check_sanitize_html(html: &str) {
     let allowed = sanitize_body(html, RemoteImages::Allowed);
     check_sanitized(&allowed, RemoteImages::Allowed);
 
-    // Blocking can only ever remove references, never invent them.
     assert_eq!(
         allowed.remote_blocked, 0,
         "nothing is held back when remote images are allowed"
     );
 
-    // Idempotence. The reading pane re-renders on "show once" and on "always
-    // allow", so output becomes input again in normal use. A sanitizer whose
-    // second pass differs from its first has a construct it does not have a
-    // fixed point for -- which is the shape of a filter bypass, because the
-    // markup the user sees is whichever pass ran last.
+    // Idempotence: the pane re-renders on "show once", so output becomes input, and a second pass
+    // that differs is the shape of a filter bypass.
     let twice = sanitize_body(&blocked.html, RemoteImages::Blocked);
     assert_eq!(
         twice.html, blocked.html,
@@ -127,21 +93,13 @@ pub fn check_sanitize_html(html: &str) {
     );
 }
 
-/// What must hold of sanitized markup.
 fn check_sanitized(sanitized: &Sanitized, remote: RemoteImages) {
     let html = &sanitized.html;
 
-    // The headline promise. `ammonia` is what enforces it; this is the
-    // assertion that says so out loud, and that would notice the day an
-    // `attribute_filter` change let something back through.
-    //
-    // Tag names only. A scheme name is deliberately *not* checked here, and
-    // the first run of this target is why: ammonia decodes character
-    // references in text, so `&#x6a;avascript&colon;` inside a `<p>` comes out
-    // as the literal text `javascript:` -- visible, inert, and not a URL. A
-    // document-wide substring scan called that a sanitizer bypass. A tag name
-    // has no such ambiguity: `<` is escaped to `&lt;` everywhere in text, so a
-    // literal `<script` in the output can only be an element.
+    // Tag names only, not scheme names: ammonia decodes `&#x6a;avascript&colon;` in text to inert
+    // literal `javascript:`, and a
+    // substring scan called that a bypass. A literal `<script` in the output can only be an
+    // element.
     for banned in ["<script", "<iframe", "<object", "<embed"] {
         assert!(
             !html.to_ascii_lowercase().contains(banned),
@@ -149,26 +107,19 @@ fn check_sanitized(sanitized: &Sanitized, remote: RemoteImages) {
         );
     }
 
-    // The rule applies to attributes the renderer *fetches on its own*, and
-    // only to those. An `<a href>` to a remote page is not a leak: nothing
-    // loads until the user clicks it, and the click is handled by the
-    // reader's `decide-policy` handler rather than by the pane. Asserting on
-    // href here failed on the newsletter fixture, which is a real message
-    // behaving correctly -- the corpus test caught exactly that.
+    // Only attributes the renderer fetches on its own: an `<a href>` is not a leak, since the click
+    // goes through `decide-policy`.
     for (attribute, value) in url_attribute_values(html) {
         if !FETCHED_ON_SIGHT.contains(&attribute) {
             continue;
         }
         let lowered = value.trim().to_ascii_lowercase();
-        // Where a scheme name actually means something. In an attribute the
-        // renderer fetches, this would execute; in text it is just text.
         assert!(
             !lowered.starts_with("javascript:"),
             "a javascript: URL survived in {attribute}: {value:?}"
         );
-        // `cid:` is rewritten to CID_SCHEME on the way through -- see
-        // `sanitize::rewrite_attribute` -- so a surviving bare `cid:` in a
-        // fetched attribute means the rewrite was skipped.
+        // `cid:` is rewritten to CID_SCHEME (`sanitize::rewrite_attribute`), so a surviving bare
+        // `cid:` means the rewrite was skipped.
         assert!(
             !lowered.starts_with("cid:"),
             "a bare cid: reference survived in {attribute}; it should be {CID_SCHEME}: by now"
@@ -182,21 +133,13 @@ fn check_sanitized(sanitized: &Sanitized, remote: RemoteImages) {
     }
 }
 
-/// Attribute names whose value the renderer fetches without being asked.
-///
-/// These are the ones remote-image blocking is about: a `src` loads when the
-/// document does, which is what makes a tracking pixel work. `href` is
-/// deliberately absent -- see [`check_sanitized`].
+/// Attribute names the renderer fetches without being asked; `href` is absent on purpose (see
+/// `check_sanitized`).
 const FETCHED_ON_SIGHT: &[&str] = &["src", "srcset", "poster", "background"];
 
-/// Parse `input` as a search query and check what comes back.
-///
-/// The grammar is documented as total — every string is a query, because
-/// results update on every keystroke and half-typed input is the normal case.
-/// So a panic is a find, and so is a span that does not describe the input it
-/// claims to: `ParsedQuery::remove_token` slices the query on those offsets,
-/// and a span landing inside a multi-byte character panics there rather than
-/// here.
+/// Parse `input` as a query and check the result. The grammar is total, so a panic is a find, and
+/// so is a span that does not
+/// describe its input: `ParsedQuery::remove_token` slices on those offsets.
 pub fn check_parse_query(input: &str) {
     let parsed = postio_search::parse(input, fixed_today());
 
@@ -236,20 +179,14 @@ pub fn check_parse_query(input: &str) {
              chip's label and what removing it deletes are different things"
         );
 
-        // The round trip the search bar performs when a chip is dismissed.
-        // Whatever comes back has to be a query too -- it is handed straight
-        // back to the parser on the next keystroke.
+        // The chip-dismiss round trip: the result goes straight back to the parser.
         let without = parsed.remove_token(index);
         let _ = postio_search::parse(&without, fixed_today());
     }
 }
 
-/// Every attribute value in `html` that names a URL.
-///
-/// A deliberately crude scan rather than a parse: the point is to look at the
-/// bytes that will reach WebKit, not to agree with the parser about what they
-/// mean. Something this misses is a gap in the check; something it invents is
-/// at worst a false positive that a person reads.
+/// Every attribute value in `html` that names a URL; a crude scan of the bytes that reach WebKit,
+/// not a parse.
 fn url_attribute_values(html: &str) -> Vec<(&'static str, String)> {
     let mut found = Vec::new();
     for tag in tag_interiors(html) {
@@ -271,21 +208,10 @@ fn url_attribute_values(html: &str) -> Vec<(&'static str, String)> {
     found
 }
 
-/// The source text inside each `<...>`, which is the only place an attribute
-/// can be.
-///
-/// Scanning the whole document instead reports text as markup, and this target
-/// found that twice in its first six minutes: an input whose `<` had been
-/// mutated away left `img src="https://..."` sitting in a paragraph as visible,
-/// inert text, and a document-wide scan called it a surviving remote
-/// reference.
-///
-/// Splitting on `<` is sound *because* of what the sanitizer guarantees:
-/// ammonia escapes `<` to `&lt;` and `>` to `&gt;` everywhere in text and in
-/// attribute values, so in sanitized output an unescaped `<` starts a tag and
-/// the next `>` ends it. This function is therefore only correct on output
-/// that has already been through `sanitize_body` -- which is the only thing
-/// it is ever called on.
+/// The source text inside each `<...>`, the only place an attribute can be: scanning the whole
+/// document reported text as markup.
+/// Splitting on `<` is sound because ammonia escapes `<` and `>` in text and attribute values, so
+/// this is only correct on `sanitize_body` output.
 fn tag_interiors(html: &str) -> Vec<&str> {
     let mut interiors = Vec::new();
     let mut rest = html;
@@ -296,16 +222,14 @@ fn tag_interiors(html: &str) -> Vec<&str> {
                 interiors.push(&rest[..close]);
                 rest = &rest[close + 1..];
             }
-            // An unterminated tag: nothing after it can be an attribute
-            // either, so stop rather than treating the remainder as one.
             None => break,
         }
     }
     interiors
 }
 
-/// Whether a URL value reaches off this machine. Mirrors
-/// `postio_body::sanitize::is_remote`, which is private.
+/// Whether a URL value reaches off this machine; mirrors the private
+/// `postio_body::sanitize::is_remote`.
 fn is_remote(lowered: &str) -> bool {
     lowered.starts_with("http://")
         || lowered.starts_with("https://")
@@ -317,10 +241,8 @@ fn is_remote(lowered: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Every check must survive the whole `.eml` corpus. If one of these
-    /// asserts something Postio does not actually promise, this is where it
-    /// shows up — before a scheduled job reports it as a security find at
-    /// three in the morning.
+    /// Every check must survive the whole `.eml` corpus; one that asserts something Postio does not
+    /// promise shows up here.
     #[test]
     fn the_corpus_satisfies_every_property() {
         for fixture in postio_model::test_corpus::all() {
@@ -336,7 +258,6 @@ mod tests {
         }
     }
 
-    /// Degenerate inputs, which is where a total function stops being total.
     #[test]
     fn the_edges_are_still_total() {
         for raw in [
@@ -357,12 +278,8 @@ mod tests {
         }
     }
 
-    // ── the checks can fail ──────────────────────────────────────────────
-    //
-    // A property checker that cannot fail is worse than none: it reports
-    // "clean" forever and the scheduled job that runs it is theatre. Each of
-    // these hands the checker something that violates exactly one property and
-    // asserts it notices. They are the reason to believe the three above.
+    // A checker that cannot fail reports "clean" forever, so each test hands it a violation of
+    // exactly one property.
 
     #[test]
     #[should_panic(expected = "still contains")]
@@ -400,8 +317,6 @@ mod tests {
         );
     }
 
-    /// The same value under `RemoteImages::Allowed` is not a find — that is
-    /// the user having asked for it — so the check has to tell the two apart.
     #[test]
     fn a_remote_reference_is_fine_once_the_user_allowed_it() {
         check_sanitized(
@@ -418,9 +333,6 @@ mod tests {
         let found = url_attribute_values(
             "<a href=\"https://example.com/a\"><img src=\"cid:x\" srcset=\"//e.example.net/b\">",
         );
-        // Tag by tag, then attribute within the tag -- so the anchor's href
-        // comes before the img's src, which is source order rather than the
-        // order the attribute names are listed in.
         assert_eq!(
             found,
             [
@@ -430,17 +342,12 @@ mod tests {
             ]
         );
 
-        // An unterminated attribute must end the scan rather than loop or
-        // slice past the end.
         assert!(url_attribute_values("<img src=\"unterminated").is_empty());
-        // And an attribute that is only text is not an attribute.
         assert!(url_attribute_values("plain src=\"https://a.example.com\"").is_empty());
     }
 
-    /// The second find this target produced. The mutation removed the `<`
-    /// before `img`, so `img src="https://..."` was escaped *text* in a
-    /// paragraph -- visible, inert, and fetched by nothing. A document-wide
-    /// scan called it a surviving remote reference.
+    /// A mutation removed the `<` before `img`, leaving escaped text in a paragraph; a
+    /// document-wide scan called it a remote reference.
     #[test]
     fn markup_shaped_text_is_not_markup() {
         check_sanitize_html(
@@ -453,21 +360,15 @@ mod tests {
         assert_eq!(tag_interiors("<p>a</p>"), ["p", "/p"]);
         assert_eq!(tag_interiors("no tags here"), Vec::<&str>::new());
         assert_eq!(tag_interiors("<img src=\"x\">"), ["img src=\"x\""]);
-        // Unterminated: stop, rather than read the rest of the document as an
-        // attribute list.
         assert_eq!(tag_interiors("<img src=\"x\""), Vec::<&str>::new());
-        // The shape the fuzzer found: text that looks like a tag but has no
-        // opening angle bracket.
         assert_eq!(
             tag_interiors("hello img src=\"https://a.example.com\""),
             Vec::<&str>::new()
         );
     }
 
-    /// The first find this target produced, kept as a test so the distinction
-    /// cannot be un-learned. `&#x6a;avascript&colon;` decodes to the literal
-    /// text `javascript:` inside a `<p>` -- inert, and not a URL. A
-    /// document-wide substring scan reported it as a sanitizer bypass.
+    /// `&#x6a;avascript&colon;` decodes to inert text `javascript:` inside a `<p>`, which is not a
+    /// URL.
     #[test]
     fn a_scheme_name_in_text_is_not_a_bypass() {
         check_sanitize_html(
@@ -476,7 +377,6 @@ mod tests {
         );
     }
 
-    /// The same string where it *would* execute is still a find.
     #[test]
     #[should_panic(expected = "a javascript: URL survived")]
     fn a_scheme_name_in_a_fetched_attribute_is_a_bypass() {
@@ -489,9 +389,8 @@ mod tests {
         );
     }
 
-    /// The reassuring half of the same find: an entity-encoded scheme in an
-    /// attribute is decoded before the filter sees it, so blocking is not
-    /// dodged by spelling `https` as `&#104;ttps`.
+    /// An entity-encoded scheme in an attribute is decoded before the filter sees it, so
+    /// `&#104;ttps` does not dodge blocking.
     #[test]
     fn an_entity_encoded_remote_scheme_is_still_blocked() {
         let out = postio_body::sanitize::sanitize_body(
@@ -502,8 +401,7 @@ mod tests {
         assert!(!out.html.contains("tracker.example.com"), "{}", out.html);
     }
 
-    /// The distinction the corpus taught us: a remote *link* is not a remote
-    /// *load*, and a check that conflates them fails on real mail.
+    /// A remote link is not a remote load.
     #[test]
     fn a_remote_link_is_not_a_remote_load() {
         check_sanitized(

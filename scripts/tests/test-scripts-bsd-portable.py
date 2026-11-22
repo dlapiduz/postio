@@ -43,8 +43,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -52,8 +50,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 SCRIPTS = Path(__file__).resolve().parent.parent
 ISSUE_CLAIM = SCRIPTS / "issue-claim.sh"
 
-# A title with the punctuation that actually broke it: a dot inside a word, a
-# colon-then-space run, and ordinary spaces. This is #552's real title.
 FIXTURE_TITLE = "issue-claim.sh: claim from a label other than ready"
 
 FIXTURE_ISSUES = [
@@ -78,9 +74,6 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ]; then echo "stub issue"; exit 0; fi
 exit 1
 """
 
-# The GNU-only constructs that have bitten this repository, each with the
-# portable spelling that replaces it. Kept as a table rather than one regex so
-# a failure can name the fix, the way every check in scripts/checks/ does.
 GNU_ONLY = [
     (
         re.compile(r"\\\+"),
@@ -99,11 +92,8 @@ GNU_ONLY = [
     ),
 ]
 
-# The scripts that are Linux-only by their nature, and the reason each one is.
-# Per-file and spelled out, not a pattern: the point of the source case is that
-# a *new* script has to be argued into this list, and a glob would quietly
-# accept the next one. The same reasoning as the allowlist in
-# check-no-silent-tracking.py.
+# Scripts that are Linux-only by nature, per file with the reason: a new script has to be argued
+# into this list, and a glob would accept the next one.
 LINUX_ONLY_SCRIPTS = {
     "headless-runner.sh": "drives `mutter --headless` and reads /proc",
     "test-headless.sh": "the same compositor, started by hand",
@@ -219,9 +209,6 @@ def behaviour() -> None:
             == 0,
             f"git rejects the ref {got!r} -- this is the #559 failure exactly",
         )
-        # The slug is the branch, and the branch is a path component of the
-        # worktree directory. A space here is not only an invalid ref, it is a
-        # directory name every later command has to quote correctly.
         case(
             "the branch carries no shell-hostile characters",
             re.fullmatch(r"[a-z0-9-]+", got) is not None,
@@ -235,8 +222,6 @@ def sources() -> None:
     scripts = [f for f in every if f.name not in LINUX_ONLY_SCRIPTS]
     case("there are shell scripts to check", bool(scripts), "no *.sh found")
 
-    # An exemption for a script that no longer exists is an exemption nobody
-    # will notice has stopped meaning anything.
     names = {f.name for f in every}
     stale = sorted(set(LINUX_ONLY_SCRIPTS) - names)
     case(

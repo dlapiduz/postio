@@ -64,8 +64,7 @@ outputs:
 runs:
   using: composite
   steps:
-    # Named for the compiler that built it: a toolchain bump must not restore
-    # 2 GB of artifacts cargo will throw away.
+    # Named for the compiler: a toolchain bump must not restore artifacts cargo will throw away.
     - name: Identify the compiler
       id: key
       shell: bash

@@ -22,8 +22,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -62,8 +60,6 @@ def main() -> int:
         print(f"missing {SCRIPT}", file=sys.stderr)
         return 1
 
-    # ---- it fails safe, in all four directions that matter ---------------
-
     case(
         "a push to main runs them whatever changed",
         files=["crates/postio-core/src/lib.rs"],
@@ -84,12 +80,7 @@ def main() -> int:
         "and so does one to a directory nobody has classified yet",
         files=["packaging/flatpak.yml"],
         expected="yes",
-        # The property the allow-list shape exists for: a new top-level
-        # directory is unknown, and unknown means run. A deny-list of "risky"
-        # paths would silently skip it.
     )
-
-    # ---- and skips only what it can prove cannot matter -------------------
 
     case(
         "a Rust-only change cannot affect scripts/, so it skips",
@@ -98,12 +89,6 @@ def main() -> int:
     )
     case(
         "and neither can a documentation-only one",
-        # The measured case: three of five landings in one session paid the
-        # eight minutes for a docs edit. Every self-test builds its own
-        # sandbox repository -- `test-mutants-gate.py` says so at length,
-        # because it is the one that would otherwise read the real
-        # `docs/mutants-baseline.txt` -- so nothing under `docs/` can change
-        # what they report.
         files=["docs/PRODUCT.md", "docs/config.md"],
         expected="no",
     )
@@ -119,9 +104,6 @@ def main() -> int:
     )
     case(
         "including a check's own data, which a check reads",
-        # `uncalled-pub-fn-baseline.txt` is data rather than code, and it
-        # would be tempting to treat it as inert. It is not: the check reads
-        # it, and a self-test of that check reads the check.
         files=["scripts/checks/uncalled-pub-fn-baseline.txt"],
         expected="yes",
     )
@@ -137,11 +119,7 @@ def main() -> int:
     )
     case(
         "an empty diff runs them, because it reads the same as no answer",
-        # Deliberately conflated. A pull request with genuinely no files is a
-        # degenerate case worth nothing, and the alternative -- a second
-        # channel telling the script whether the API answered -- is a way for
-        # the two to disagree. Empty means "cannot prove anything", and that
-        # means run.
+        # Deliberately conflated: empty means "cannot prove anything", and that means run.
         files=[],
         expected="yes",
     )

@@ -30,8 +30,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -60,9 +58,6 @@ if [ "$1" = "api" ]; then echo "null"; exit 0; fi
 exit 1
 """
 
-# Fails only the exact call `seed_target` makes; everything else -- `git
-# worktree add`'s own bookkeeping, the test harness setting up fixtures --
-# reaches the real `cp` untouched.
 CP_STUB = """#!/bin/bash
 # Keyed on the *source* being a sibling's target/, not on the GNU flag
 # spelling. The claim script picks `-a --reflink=auto`, `-Rc` or `-R`

@@ -28,16 +28,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
 import prereq  # noqa: E402
 
-# Linux-only, declared rather than skipped (#1151): this stands down
-# with a sentence and exit 77, which `run-self-tests.sh` counts and
-# names, so the macOS run does not quietly claim to have covered it.
 prereq.only_on("linux", reason=(
     "install-local.sh installs a .desktop file and hicolor icons into XDG directories, which is a freedesktop layout with no macOS meaning"
 ))
@@ -94,14 +89,6 @@ def run(*args: str) -> tuple[subprocess.CompletedProcess, Path]:
     env["XDG_DATA_HOME"] = str(data_home)
     env["PREFIX"] = str(prefix)
     env["CARGO_TARGET_DIR"] = str(target)
-    # What is under test here is the icon cache refresh, not the build
-    # dependency probe -- and `cargo` is a stub, so nothing is compiled and no
-    # GTK is needed. Without this the script refuses before reaching any of it
-    # on a machine that cannot build Postio, which is every runner but the one
-    # job that installs GTK: `boundaries` runs on ubuntu-latest precisely
-    # because none of its checks need a compositor. The probe's own behaviour
-    # has a test of its own (test-install-local-build-deps.py), which manages
-    # this variable deliberately in both directions.
     env["POSTIO_SKIP_DEP_CHECK"] = "1"
 
     proc = patience.run(
@@ -154,10 +141,6 @@ def case_installed_files_land_where_the_desktop_entry_names_them() -> None:
     desktop = data_home / "applications" / "dev.postio.Postio.desktop"
     icons = data_home / "icons" / "hicolor"
     svg = icons / "scalable" / "apps" / "dev.postio.Postio.svg"
-    # The mark is drawn heavier as it shrinks and drops its dot below 24px,
-    # so 16 and 32 are their own files rather than downscales; 128 is the one
-    # Flatpak's export validation reads. A size missing here is a size the
-    # shell fills with a bad scale of something else (#1023).
     rasters = [
         icons / f"{size}x{size}" / "apps" / "dev.postio.Postio.png" for size in (16, 32, 128)
     ]

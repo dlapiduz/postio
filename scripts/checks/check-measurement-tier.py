@@ -41,15 +41,11 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / ".config" / "nextest.toml"
 MARKER = "POSTIO-MEASUREMENT:"
 
-# `binary(name)` and `test(/^module::/)` are the two shapes the filter uses.
 BINARY = re.compile(r"binary\(([A-Za-z0-9_]+)\)")
-# `test(/^m::/)`, or `(package(p) & test(/^m::/))` when a module name two
-# suites share is held out of one crate only: the GTK `gmail_keys` is a
-# 10-minute sweep, the TUI's is a second of ordinary cases.
+# `(package(p) & test(/^m::/))` holds a module name two suites share out of one crate only.
 MODULE = re.compile(r"(?:package\(([A-Za-z0-9_-]+)\)\s*&\s*)?test\(/\^([A-Za-z0-9_]+)::/\)")
-# `(package(p) & test(=module::case))`: one case held out of a file whose
-# other cases are fast. The marker then sits on that case, in the doc or
-# attribute lines directly above its `fn`, rather than on the file.
+# `(package(p) & test(=module::case))`: one case of a mostly fast file; the marker sits on that
+# case.
 CASE = re.compile(r"package\(([A-Za-z0-9_-]+)\)\s*&\s*test\(=([A-Za-z0-9_:]+)\)")
 
 
@@ -116,7 +112,6 @@ def main() -> int:
     for package, path in CASE.findall(expression):
         cases[f"package({package}) & test(={path})"] = case_sites(package, path)
 
-    # 1. Every term names a file that exists and claims to be a measurement.
     for term, sites in cases.items():
         if not sites:
             problems.append(f"{term} in the filter names no test fn under crates/")
@@ -139,7 +134,6 @@ def main() -> int:
                     f"(add a `//! {MARKER} ...` line to its module docs)"
                 )
 
-    # 2. Every file that claims to be a measurement is named by the filter.
     claimed = {
         path
         for path in ROOT.glob("crates/*/tests/**/*.rs")
@@ -154,15 +148,10 @@ def main() -> int:
             f"on every pull request"
         )
 
-    # 3. No `#[ignore]` anywhere may mean "slow". That is the conflation #1450
-    #    undid, and it is the one that silences a test completely: `#[ignore]`
-    #    is for what this machine may not have, nothing in CI may pass
-    #    --run-ignored, so an ignored measurement runs nowhere at all.
-    #
-    #    Note this is asked of every test file, not only the marked ones. A
-    #    file may legitimately hold a measurement *and* a test ignored for a
-    #    missing capability -- `smtp_wait_cpu.rs` holds exactly that pair --
-    #    so the question is what a reason *says*, never where it sits.
+    # 3. No `#[ignore]` may mean "slow" (#1450): nothing in CI passes --run-ignored, so an ignored
+    # measurement runs nowhere.
+    # Asked of every test file: a file may hold a measurement and a test ignored for a missing
+    # capability.
     slow_words = re.compile(r"bench|measurement|slow|minutes|seeds \d|writes two", re.I)
     for path in sorted(ROOT.glob("crates/*/tests/**/*.rs")):
         for reason in re.findall(r'^\s*#\[ignore\s*=\s*"([^"]*)"', path.read_text(), re.MULTILINE):
@@ -176,11 +165,8 @@ def main() -> int:
                     f"saying so (#1450)."
                 )
 
-    # 4. What `profile.ci-full` holds out for `profile.ci-storyboards` to run
-    #    is the very thing that profile selects. nextest config has no
-    #    bindings, so the expression is written twice, and a rename that
-    #    reaches one copy would hold a test out of the nightly while the
-    #    other job selected nothing -- green, and running neither.
+    # 4. What `profile.ci-full` holds out must be what `profile.ci-storyboards` selects; the
+    # expression is written twice, so a rename reaching one copy would run neither.
     profiles = tomllib.loads(CONFIG.read_text()).get("profile", {})
     passes = profiles.get("ci-storyboards", {}).get("default-filter")
     if passes is not None:

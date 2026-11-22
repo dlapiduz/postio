@@ -1,74 +1,32 @@
 #!/usr/bin/env bash
-# Runs the full workspace test suite under nextest, and treats a failing
-# test as real only if it *still* fails on its own. See #886.
-#
-# Cutting v0.2.0 by hand hit this twice: two full-suite runs each threw a
-# couple of failures, never the same targets twice, none touching the
-# release commit's own diff. Rerunning each failing target alone -- away
-# from whatever else the suite was running concurrently -- passed clean
-# every time. That triage is what this script automates, instead of a
-# session reasoning it out from scratch under time pressure (or, worse, a
-# release blocked on noise).
-#
-# Cutting v0.3.0 hit a different failure this script did not guard against:
-# it used to run `cargo test --workspace --no-fail-fast`, written before this
-# workspace adopted nextest. That has two costs, and the second one is what
-# hung the release for 30+ minutes with no output. `cargo test` has no
-# concept of `.config/nextest.toml`'s `default-filter`, so `idle_store_cpu`
-# -- a measurement test deliberately excluded from the merge path, documented
-# in its own file as costing 44.1s there specifically because it is too slow
-# for it -- ran anyway. And plain `cargo test` has no timeout backstop the
-# way nextest's `slow-timeout` does, so when that test's `Engine::spawn`
-# never answered in this environment, nothing terminated it. nextest's
-# `[profile.default] slow-timeout = { period = "60s", terminate-after = 4 }`
-# is the fix for exactly this shape, is already configured, and this script
-# was the one place still bypassing both protections.
-#
+# Runs the full workspace test suite under nextest, and treats a failing test as real only if it
+# still fails on its own (#886).
+# Full-suite runs threw failures never the same twice and none touching the diff; rerunning each
+# target alone passed. It uses nextest, not `cargo test`,
+# which ignores `.config/nextest.toml`'s `default-filter` (so a slow measurement ran) and has no
+# `slow-timeout` backstop.
 # A test that fails in isolation too is not a flake, and fails the run.
 #
 # Usage: scripts/test-with-flake-retry.sh [profile] [package]
 #
-# The profile defaults to `ci`, which is what a merge-path run wants. The
-# release gate asks for `ci-full`: the same tests plus the measurement tier,
-# minus the one measurement a shared runner cannot defend
-# (`.config/nextest.toml` says which, and why). An isolated retry uses
-# whatever profile the run used -- otherwise "it passed alone" would be
-# evidence about a different question than the one that failed.
-#
-# A `package` narrows the first run to one crate, and each isolated retry
-# builds the same scope as the first run: its filter names one binary and
-# one test, but a bare `cargo nextest run` builds only the workspace's
-# default members, and a retry of a postio-ffi test then ran nothing and
-# was called a second failure (#2154).
-#
-# A retry exists for the reason named above: **the GTK editor cases flake
-# on a shared runner often enough to matter.** Two failures of the markdown
-# editor case in one day, 657 of 658 passing each time, on commits touching no GTK code
-# -- each one a `timed_out ... waiting for the bold run to cross the bridge`
-# on a runner announcing `ZINK: vkCreateInstance failed`. A WebKit message
-# that never arrives on a machine with no GPU is not evidence about the
-# branch, and it was blocking merges.
-#
-# This weakens nothing. A test that fails twice still fails, and the retry
-# is what tells the two apart -- which is the same judgement a session would
-# otherwise make by hand, badly, under time pressure.
-#
-# Further arguments are cargo target selection (`-p a --test=b ...`) used by
-# the first run *and* each retry, and `POSTIO_NEXTEST_FILTER`, when set, is
-# a filterset that narrows the first run. Together they are how a pull
-# request re-runs only the tests a red nightly failed
-# (`scripts/ci-nightly-rerun.py`) without building the whole workspace.
-#
-# `POSTIO_FAILED_TESTS_FILE`, when set, receives the tests that failed
-# twice, one `<binary_id> <test name>` per line -- the nightly uploads it,
-# and that list is what a pull request then re-runs.
+# The profile defaults to `ci`; the release gate asks for `ci-full`. An isolated retry uses the
+# run's profile, or "it passed alone" answers a different question.
+# A `package` narrows the first run, and each retry builds the same scope: a bare `cargo nextest
+# run` builds only default members, and a retry of a
+# postio-ffi test ran nothing and was called a second failure (#2154).
+# The retry exists because the GTK editor cases flake on a shared runner (a WebKit message that
+# never arrives with no GPU). It weakens nothing: a test that fails twice still fails.
+# Further arguments are cargo target selection used by the first run and each retry;
+# `POSTIO_NEXTEST_FILTER`, when set, is a filterset narrowing the first run.
+# Together they let a PR re-run only what a red nightly failed (`scripts/ci-nightly-rerun.py`).
+# `POSTIO_FAILED_TESTS_FILE`, when set, receives the tests that failed twice, one `<binary_id> <test
+# name>` per line.
 #
 # Exit status: 0 if the suite passed, or every failure was confirmed a
 # flake by an isolated rerun. 1 if any test failed twice.
 set -uo pipefail
 
 PROFILE="${1:-ci}"
-# Empty means the whole workspace, which is what the release gate wants.
 PACKAGE="${2:-}"
 if [ "$#" -ge 2 ]; then shift 2; else shift "$#"; fi
 # `${a[@]+"${a[@]}"}` throughout: bash 3.2 calls an empty array unbound
@@ -83,8 +41,6 @@ else
 fi
 FILTER=()
 if [ -n "${POSTIO_NEXTEST_FILTER:-}" ]; then
-    # A test this names may be gone on this branch; that is a fix, not an
-    # error.
     FILTER=(--no-tests=warn -E "$POSTIO_NEXTEST_FILTER")
 fi
 
@@ -99,19 +55,11 @@ if [ "$STATUS" -eq 0 ]; then
     exit 0
 fi
 
-# nextest's own final summary, one FAIL line per failing test, after the
-# `Summary [...]` marker -- the same shape appears once per test *during*
-# the run too, so reading only what comes after that marker is what keeps
-# a test counted once rather than twice:
+# nextest's own final summary, one FAIL line per failing test after the `Summary [...]` marker (the
+# same shape appears during the run, so only what follows counts each test once):
 #         FAIL [   0.004s] (2/2) postio-storage::storage_suite tests::a_thing
-#
-# Portable BRE, not `\?`/`\+` (GNU extensions BSD sed matches literally) and
-# no `mapfile` (a bash-4 builtin absent from macOS's bash 3.2) -- both cost a
-# real release once. See git history on this file.
-#
-# On a runner the log is in colour -- Actions forces it, and nextest paints
-# each segment of a test's path apart -- so the escapes go first; read raw,
-# the summary matched nothing and a one-test flake failed the nightly.
+# Portable BRE and no `mapfile` (GNU `\?`/`\+` and bash 4 break on macOS). On a runner the log is in
+# colour, so the escapes go first or the summary matched nothing.
 ESC="$(printf '\033')"
 FAILURES=()
 while IFS= read -r line; do
@@ -123,9 +71,8 @@ done < <(
 )
 
 if [ "${#FAILURES[@]}" -eq 0 ]; then
-    # Something failed and it did not take this shape -- a compile error
-    # before any test ran, for instance. Nothing to retry in isolation;
-    # the original failure stands.
+    # Something failed in another shape (a compile error before any test ran): nothing to retry in
+    # isolation.
     echo "release gate: suite failed with no per-test summary to retry" >&2
     exit "$STATUS"
 fi
@@ -140,8 +87,6 @@ for spec in "${FAILURES[@]}"; do
     echo "release gate: retrying isolated: $spec" >&2
     if cargo nextest run ${SCOPE[@]+"${SCOPE[@]}"} ${SELECT[@]+"${SELECT[@]}"} --profile "$PROFILE" -E "binary_id($binary_id) & test(=$test_name)"; then
         echo "release gate: confirmed a flake: $spec" >&2
-        # On a runner, an annotation too: the nightly runs through here, and a
-        # flake this forgives must still be visible on the green run (#1710).
         if [ -n "${GITHUB_ACTIONS:-}" ]; then
             echo "::warning title=Flaky test::failed with the suite, passed alone: $spec"
         fi

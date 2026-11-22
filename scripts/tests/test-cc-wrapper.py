@@ -37,8 +37,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -46,9 +44,7 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 WRAPPER = HERE / "cc-wrapper.sh"
 
-# One stub for both ccache and cc: report every argument and the environment
-# the wrapper is expected to shape, so each case can ask both "what was run"
-# and "what was it handed".
+# One stub for both ccache and cc, reporting every argument and the environment the wrapper shapes.
 REPORT = """#!/usr/bin/env bash
 printf '%s\\n' "$0" "$@"
 printf 'CCACHE_BASEDIR=%s\\n' "${CCACHE_BASEDIR:-<unset>}"
@@ -76,9 +72,6 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     """Run the wrapper with stubs on PATH and hand back what they reported."""
     environment = dict(os.environ)
-    # Stubs first and the real toolchain directories dropped, so a real
-    # ccache on this machine cannot make a case pass that would fail on a
-    # box without one. /usr/bin and /bin stay for bash and `command`.
     environment["PATH"] = f"{stub_dir}:/usr/bin:/bin"
     environment["TMPDIR"] = tmpdir
     for name in ("CCACHE_BASEDIR", "CCACHE_NOHASHDIR", "CCACHE_SLOPPINESS"):
@@ -113,7 +106,6 @@ def main() -> int:
         tmp = base / "target" / "tmp"
         tmp.mkdir(parents=True)
 
-        # ── with ccache: `ccache cc <args>`, nothing dropped ──────────────
         got = run(
             stub_dir,
             with_ccache=True,
@@ -147,7 +139,6 @@ def main() -> int:
             f"got {[l for l in lines if l.startswith('CCACHE_SLOPPINESS')]!r}",
         )
 
-        # ── the session's own ccache configuration wins ───────────────────
         preset = run(
             stub_dir,
             with_ccache=True,
@@ -161,7 +152,6 @@ def main() -> int:
             f"got {preset.stdout.splitlines()!r}",
         )
 
-        # ── without ccache: exactly `cc <args>` ───────────────────────────
         plain = run(
             stub_dir,
             with_ccache=False,
@@ -180,7 +170,6 @@ def main() -> int:
             f"got {lines[1:4]!r}",
         )
 
-        # ── cargo's TMPDIR is created before the compiler wants it (#613) ─
         fresh_tmp = base / "fresh" / "target" / "tmp"
         created = run(
             stub_dir,

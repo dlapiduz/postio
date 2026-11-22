@@ -100,10 +100,8 @@ def spliceable_binary() -> bytes:
 
 
 def main() -> int:
-    # The bug itself. A screenshot must not be able to invent an address.
     case("a binary file is not scanned", {"site/img/shot.png": spliceable_binary()}, False)
 
-    # ... and the guard must still be a guard.
     case(
         "a real address in a text file still fails",
         {"crates/x/src/lib.rs": b'const WHO: &str = "grace@realdomain.net";\n'},
@@ -115,25 +113,18 @@ def main() -> int:
         False,
     )
 
-    # Storyboards type addresses into fields and are public like fixtures
-    # (specs/008-storyboards FR-027): the check must read them.
     case(
         "a real address in a storyboard fails",
         {"storyboards/compose/to-someone.toml": b'[[step]]\ntype = "grace@realdomain.net"\n'},
         True,
     )
 
-    # A corpus fixture that is legitimately not UTF-8 is text, not binary,
-    # and must still be read. Skipping on "does not decode" instead of "has a
-    # NUL" would have turned the check off over the mail fixtures.
     case(
         "a latin-1 mail fixture is still scanned",
         {"corpus/latin1.eml": b"From: Gr\xe4ce <grace@realdomain.net>\r\n\r\nbody\r\n"},
         True,
     )
 
-    # Deleting undecodable bytes must not fuse two halves of a text file into
-    # an address either -- same defect, same file kind the corpus is made of.
     case(
         "undecodable bytes separate rather than splice",
         {"corpus/split.eml": b"grace\xff\xfe@realdomain.net\n"},

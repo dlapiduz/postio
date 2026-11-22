@@ -30,8 +30,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -41,7 +39,6 @@ FUZZ = HERE / "fuzz.sh"
 
 FAILURES: list[str] = []
 
-# Logs every call, so the test can prove cargo was never reached.
 CARGO_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/cargo-calls"
 echo "error: no such command: \\`fuzz\\`" >&2
@@ -59,10 +56,6 @@ def main() -> int:
         cargo.chmod(0o755)
         (stub_dir / "cargo-calls").write_text("", encoding="utf-8")
 
-        # A PATH with the stub and the system tools the script needs, and
-        # deliberately without ~/.cargo/bin -- which is where a real
-        # cargo-fuzz would live, so this test means the same thing on a
-        # machine that has one installed and on one that does not.
         environment = dict(os.environ)
         environment["PATH"] = f"{binaries}:/usr/bin:/bin"
         environment["STUB_DIR"] = str(stub_dir)

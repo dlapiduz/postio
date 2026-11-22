@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
-# Fill fuzz/corpus/<target>/ with starting inputs.
-#
-# libFuzzer works by mutating what it already has, so the corpus decides how
-# long it takes to reach anything interesting. Starting from real mail rather
-# than from random bytes is the difference between finding a charset bug in
-# minutes and never generating a valid MIME boundary at all.
-#
-# Nothing here is generated *into* git: fuzz/corpus/ is ignored, and this
-# script is what recreates it. The `.eml` fixtures stay in one place --
-# crates/postio-model/tests/corpus, where the /add-fixture skill maintains
-# them -- rather than being copied into the tree twice and drifting.
-#
-# Idempotent, and safe to run over a corpus libFuzzer has already grown: it
-# adds seeds and never removes anything it finds.
+# Fill fuzz/corpus/<target>/ with starting inputs: real mail, not random bytes, so libFuzzer reaches
+# valid MIME.
+# fuzz/corpus/ is ignored; this recreates it from crates/postio-model/tests/corpus. Idempotent: it
+# adds seeds and never removes.
 #
 #   scripts/fuzz-seed.sh            # all three targets
 #   scripts/fuzz-seed.sh parse_query
@@ -23,8 +13,8 @@ CORPUS="$REPO/fuzz/corpus"
 EML="$REPO/crates/postio-model/tests/corpus"
 SEEDS="$REPO/fuzz/seeds"
 
-# Copy every file in $1 into the corpus of target $2, named by content hash so
-# re-running never makes duplicates and two sources cannot collide on a name.
+# Copy every file in $1 into target $2's corpus, named by content hash so re-runs make no
+# duplicates.
 seed_from() {
     local from="$1" target="$2" count=0
     mkdir -p "$CORPUS/$target"
@@ -43,9 +33,8 @@ seed_from() {
 
 seed_parse_message() { seed_from "$EML" parse_message; }
 seed_sanitize_html() {
-    # Both the hand-written hostile markup and the real messages: a `.eml` is
-    # not HTML, but the fuzzer only needs bytes that contain the shapes it
-    # should be mutating, and the corpus carries markup no seed file has.
+    # Both the hostile markup and the real messages: the fuzzer only needs bytes containing the
+    # shapes to mutate.
     seed_from "$SEEDS/html" sanitize_html
     seed_from "$EML" sanitize_html
 }

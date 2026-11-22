@@ -69,15 +69,13 @@ def main() -> int:
         print(f"no crates/ under {root}", file=sys.stderr)
         return 1
 
-    # name -> (directory, workspace dependency names)
     graph: dict[str, tuple[str, set[str]]] = {}
     for manifest in sorted(crates_dir.glob("*/Cargo.toml")):
         parsed = tomllib.loads(manifest.read_text())
         package = parsed.get("package", {}).get("name")
         if not package:
-            # A manifest with no `[package]` is not a crate this can place, and
-            # guessing from the directory name is exactly the kind of inference
-            # that makes a stale answer look authoritative.
+            # A manifest with no `[package]` cannot be placed, and guessing from the directory name
+            # makes a stale answer look authoritative.
             print(f"{manifest} has no [package] name", file=sys.stderr)
             return 1
         deps: set[str] = set()
@@ -85,9 +83,6 @@ def main() -> int:
             deps |= {
                 name
                 for name in parsed.get(section, {})
-                # Only workspace-local crates: an external crate cannot be a
-                # path under `crates/`, so it can never be a changed file this
-                # classifier has to place.
                 if name.startswith("postio-")
             }
         graph[package] = (manifest.parent.name, deps)
@@ -104,8 +99,8 @@ def main() -> int:
                 reachable.add(dependency)
                 frontier.append(dependency)
 
-    # Directory names, because a changed path is `crates/<dir>/...` and the
-    # two are only equal by convention.
+    # Directory names: a changed path is `crates/<dir>/...` and the two are only equal by
+    # convention.
     for name in sorted(graph):
         if name not in reachable:
             print(graph[name][0])

@@ -58,7 +58,6 @@ from datetime import datetime, timezone
 
 SHARED = "Other Claude sessions are editing this tree right now."
 
-# (pattern after the command-position anchor, reason). First match wins.
 RULES: list[tuple[str, str]] = [
     (
         r"git\s+reset\s+(?:[^|;&\n]*\s)?--hard",
@@ -67,10 +66,8 @@ RULES: list[tuple[str, str]] = [
         "path, or commit what you have. See 'One machine, many sessions' in CLAUDE.md.",
     ),
     (
-        # --hard is caught above with its own message. This is every other
-        # form: bare `git reset`, `git reset HEAD~1`, `--soft`, `--mixed`.
-        # A pathspec reset (`git reset -- <path>`) is the one safe use and is
-        # allowed by requiring the `--` separator.
+        # Every other reset form; a pathspec reset (`git reset -- <path>`) is the one safe use,
+        # allowed by requiring `--`.
         r"git\s+reset(?![^|;&\n]*\s--\s)(?![^|;&\n]*--hard)",
         f"{SHARED} Refusing 'git reset': it moves the branch and DROPS commits, "
         "including ones another session landed -- and unlike --hard it leaves "
@@ -141,30 +138,11 @@ RULES: list[tuple[str, str]] = [
     ),
 ]
 
-# Rules that apply in EVERY tree, private worktree included.
-#
-# #130. Every rule in `RULES` is about the shared working tree -- one index,
-# one branch, one target directory -- so a private worktree is exempt from all
-# of them, correctly. A push is not like that. It does not touch the tree at
-# all; it touches the *remote*, which every session shares no matter whose
-# checkout the command was typed in. The worktree exemption was hiding that,
-# and the gap was not the `--force-with-lease` spelling the issue suspected:
-# in the shared checkout both spellings were already refused, and inside a
-# worktree bare `--force` was permitted just as freely.
-#
-# `--force-with-lease` is deliberately absent, and is the whole point of
-# splitting these out. It refuses if the remote holds anything the pusher has
-# not seen, which is the protection the blanket rule is reaching for -- and
-# `scripts/issue-land.sh` rebases onto origin/main before pushing, so the
-# second push of an already-pushed branch is necessarily non-fast-forward.
-# Refusing both spellings would not make the landing flow safe, it would make
-# it impossible. Refusing bare `--force` and permitting the leased form is
-# what makes "rebase, then push again" work without also permitting the
-# spelling that discards whatever landed while you were not looking.
-#
-# It stays refused in the shared checkout, through `RULES` below: `main` is
-# the branch every session commits to, and "nothing landed since I last
-# fetched" is a far weaker promise there than on a branch one session owns.
+# Rules that apply in every tree, private worktree included: a push touches the shared remote, not
+# the tree (#130).
+# `--force-with-lease` is absent on purpose: issue-land.sh rebases then pushes again, which needs
+# the leased form.
+# Bare `--force` stays refused in the shared checkout through `RULES`.
 REMOTE_RULES: list[tuple[str, str]] = [
     (
         r"git\s+push\s+(?:[^|;&\n]*\s)?"
@@ -180,16 +158,10 @@ REMOTE_RULES: list[tuple[str, str]] = [
     ),
 ]
 
-# Start of string, or just after a shell command separator.
 ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
 
-# The loop's own shape (#1131). Not shared-tree hazards, so these hold in a
-# private worktree too, and they are checked before the worktree exemption
-# for that reason. Each message carries the fix, because the docs that say
-# the same thing are not read at the moment it matters: the transcripts
-# show 427 workspace test runs and 852 whole-crate runs used as the inner
-# loop against 6 runs of test-fast.sh, and 79 landings killed at a
-# foreground tool call's cap.
+# The loop's own shape (#1131): not shared-tree hazards, so they hold in a private worktree too.
+# Each message carries the fix.
 LOOP_RULES: list[tuple[str, str]] = [
     (
         r"(?:POSTIO_WORKSPACE_TESTS=1\s+)?cargo\s+(?:nextest\s+run|test)\s+(?:[^|;&\n]*\s)?"
@@ -252,23 +224,17 @@ LOOP_RULES: list[tuple[str, str]] = [
     ),
 ]
 
-# A `rustfmt` that will WRITE: at command position, or fed by xargs, and not
-# in one of the read-only forms. `--check` and `-l` only report.
+# A `rustfmt` that writes: not the read-only `--check` and `-l`.
 RUSTFMT_WRITES = re.compile(
     r"(?:" + ANCHOR + r"|xargs\s+(?:-r\s+)?(?:-[a-zA-Z0-9]+\s+)*)"
     r"rustfmt\b(?![^|;&\n]*(?:--check\b|--emit\b|-l\b))"
 )
 
-# Something that lists files across the tree. These are the ways a file list
-# gets derived rather than typed.
 LISTS_FILES = re.compile(
     r"git\s+(?:diff\s+--name-only|ls-files|status\s+--porcelain)|\bfind\b"
 )
 
-# A pathspec naming an actual crate. No trailing slash required, because
-# `-- crates/postio-core` is a perfectly good pathspec; but at least one name
-# character is, because `crates/` alone is *every* crate, which is the bug
-# wearing a pathspec rather than a fix for it.
+# A pathspec naming a crate needs at least one name character: `crates/` alone is every crate.
 NAMES_A_CRATE = re.compile(r"crates/[A-Za-z0-9_.-]+")
 
 
@@ -305,7 +271,6 @@ def unscoped_rustfmt(command: str, haystack: str) -> str | None:
     if not RUSTFMT_WRITES.search(haystack):
         return None
     if not LISTS_FILES.search(haystack):
-        # An explicit list of files. That is the safest form there is.
         return None
     if NAMES_A_CRATE.search(command):
         return None
@@ -321,41 +286,15 @@ def unscoped_rustfmt(command: str, haystack: str) -> str | None:
     )
 
 
-# ── One worktree, one session ───────────────────────────────────────────────
-#
-# #412. `issue-claim.sh` takes an atomic lock and refuses to adopt an existing
-# worktree, and that held right up until a session reached a worktree without
-# running it -- told to work an issue directly, a path pasted from an earlier
-# transcript, a resumed session whose worktree was released and recreated. Two
-# sessions then edited one crate for four minutes with no signal to either, and
-# the second one's tests went red because of the first one's edit.
-#
-# The gap is not in the lock, it is in *where* the lock is checked: only inside
-# the claiming script. So the check moves here, to the one place that sees
-# every command every session runs, however it got where it is. That also means
-# there is no arriving without being stamped: the guard is both what records
-# the owner and what enforces it.
-#
-# It is a **lease**, not a lock. The owner refreshes it as it works; a worktree
-# whose owner has been silent for `CLAIM_LEASE` is free to take. A lock would
-# be correct and unusable -- a session that dies holding one leaves a worktree
-# nobody can have, and the first person that happened to would export
-# POSTIO_GUARD=off and never unset it.
+# One worktree, one session (#412). The guard stamps the owner and enforces it, since it sees every
+# command.
+# A lease, not a lock: a dead session must not strand a worktree.
 
-# How long a worktree stays claimed after its owner's last command.
-#
-# Generous on purpose. A session that backgrounds `issue-land.sh --full` and
-# waits for the notification makes no tool calls for twenty minutes or more,
-# and stealing its worktree while it is merely being patient is the failure
-# this whole rule is supposed to prevent. The cost of being too generous is a
-# refusal that says exactly how to override it; the cost of being too eager is
-# #412 again, silently.
+# Generous: a session waiting on a backgrounded `issue-land.sh --full` makes no calls for 20+
+# minutes (#412).
 CLAIM_LEASE = 45 * 60
 
-# How stale the owner's own stamp has to be before it is rewritten.
-#
-# Without this the guard writes a file on every command a session runs. A
-# minute is far below the lease and far above the rate anything here matters at.
+# How stale the owner's stamp must be before it is rewritten, to avoid a write per command.
 CLAIM_REFRESH = 60
 
 CLAIM_FILE = "postio-claim"
@@ -474,9 +413,8 @@ def take_or_refuse(worktree: str, session: str) -> str | None:
     return None
 
 
-# The worktree paths a command names, whichever way the shell would spell the
-# root. `git -C ../issue-27 checkout .` and `echo x > ~/src/postio-worktrees/
-# issue-27/f` never change directory, so `cd_destination` cannot see them.
+# Worktree paths a command names in any spelling; `git -C ../issue-27 ...` never changes directory,
+# so `cd_destination` misses it.
 def worktrees_named(command: str, worktrees: str) -> list[str]:
     """Every worktree path that appears in `command`.
 
@@ -509,23 +447,10 @@ def worktrees_named(command: str, worktrees: str) -> list[str]:
     return found
 
 
-# A command that will WRITE, for the reach-in case only.
-#
-# Reaching into somebody else's worktree from outside is not symmetric with
-# working inside it. A session that has moved in is going to edit -- that is
-# what #412 is -- so being there at all is enough. A session that names the
-# path from its own tree is usually *reading* it: `/lanes` is built on exactly
-# that, and a guard that refused `git -C <peer> log` would be refusing the tool
-# people are told to use to find out who else is here.
-#
-# So the reach-in half asks for a writing verb as well. Command position for
-# the verbs, plus a redirect, which is the other way a file gets written
-# without naming a program that writes.
-#
-# Known false negative, accepted the same way `unscoped_rustfmt`'s is: a
-# script, a `make`, or anything writing through an indirection this list does
-# not name gets through. This is defence in depth behind the cwd rule, which is
-# the one that catches the failure the issue actually recorded.
+# A writing command, for the reach-in case only: naming a peer worktree is usually a read
+# (`/lanes`), so it needs a writing verb.
+# Known false negative: writes through a script or `make` get through; the cwd rule is the main
+# defence.
 REACHES_IN_WRITING = re.compile(
     ANCHOR
     + r"(?:rm|mv|cp|ln|mkdir|rmdir|touch|tee|truncate|dd|patch|install|rsync"
@@ -593,9 +518,6 @@ def contains(parent: str, child: str) -> bool:
     return parent == child or child.startswith(parent.rstrip(os.sep) + os.sep)
 
 
-# A `cd` at a command position: the start of the line, or after `;`, `&&`,
-# `||`, `&` or a pipe. Its argument may be quoted, and the quotes are not part
-# of the path.
 CD = re.compile(
     r"""(?:^|[\n;&|]|&&|\|\|)\s*cd\s+("[^"]*"|'[^']*'|\S+)""",
 )
@@ -633,7 +555,6 @@ def quoted_spans(command: str) -> list[tuple[int, int]]:
         elif char in "'\"":
             quote, start = char, index
     if quote:
-        # An unterminated quote runs to the end of the command.
         spans.append((start, len(command)))
     return spans
 
@@ -676,15 +597,12 @@ def cd_destination(command: str, cwd: str) -> str:
     targets = [
         match.group(1)
         for match in CD.finditer(text)
-        # `match.start()`, not the argument's: the argument of a real `cd` is
-        # very often quoted and that is fine. It is the keyword that must not
-        # be.
+        # `match.start()`, not the argument's: a real `cd`'s argument is often quoted; the keyword
+        # must not be.
         if not any(start <= match.start() < end for start, end in quoted)
     ]
-    # Each `cd` starts from where the previous one left the shell, not from the
-    # session's cwd: `cd <worktree> && cd crates/x && cargo fmt -p x` runs in
-    # the worktree, and resolving `crates/x` against the shared checkout is
-    # what refused it.
+    # Each `cd` starts where the previous one left the shell, not at the session's cwd:
+    # `cd <worktree> && cd crates/x && cargo fmt` runs in the worktree.
     here = cwd or ""
     moved = False
     for raw in targets:
@@ -709,7 +627,6 @@ def strip_heredocs(command: str) -> str:
         if not m:
             continue
         marker = m.group(2)
-        # Skip the body up to and including the terminator.
         while i < len(lines) and lines[i].strip() != marker:
             i += 1
         if i < len(lines):
@@ -813,15 +730,8 @@ def main() -> int:
     if os.environ.get("POSTIO_GUARD", "").lower() in {"off", "0", "false"}:
         return 0
 
-    # Only guard the SHARED repository. Two kinds of place are exempt.
-    #
-    # A private per-issue worktree (scripts/issue-claim.sh) is the important
-    # one: every rule below exists because sessions share one tree and one
-    # index, and inside a worktree none of that is true. `git add -A` there
-    # stages only that agent's own work. Blocking it would make the worktree
-    # flow strictly worse than the shared tree it replaces.
-    #
-    # And scratch git work outside the project is nobody's hazard.
+    # Guard only the SHARED repository: a private worktree has its own index, and scratch git work
+    # outside the project is nobody's hazard.
     project = os.environ.get("CLAUDE_PROJECT_DIR", "")
     worktrees = os.environ.get(
         "POSTIO_WORKTREES", os.path.expanduser("~/src/postio-worktrees")
@@ -830,12 +740,9 @@ def main() -> int:
     cwd = payload.get("cwd") or ""
     session = payload.get("session_id") or ""
 
-    # A `cd` into a private worktree is the one thing that can lift these
-    # rules, and it can only ever *grant* the exemption -- never remove
-    # protection. So a `cd` somewhere else leaves `where` as the session's own
-    # directory rather than being trusted to have moved out of scrutiny, which
-    # keeps `cd .. && git reset --hard` refused instead of arguing about
-    # whether the parent of the shared checkout is the project.
+    # A `cd` into a private worktree can only grant the exemption. A `cd` elsewhere leaves `where`
+    # as the
+    # session's own directory, so `cd .. && git reset --hard` stays refused.
     destination = cd_destination(command, cwd)
     where = destination if is_worktree(worktrees, destination) else cwd
 
@@ -843,9 +750,8 @@ def main() -> int:
 
     matched: tuple[str, str] | None = None
 
-    # The loop's shape, before anything about where the command runs: a
-    # workspace test run is the wrong inner loop in a private worktree too.
-    # A backgrounded land is the other spelling of --detach and is fine.
+    # The loop's shape comes before where the command runs; a backgrounded land is another spelling
+    # of --detach and is fine.
     background = bool((payload.get("tool_input") or {}).get("run_in_background"))
     for pattern, reason in LOOP_RULES:
         if "issue-land" in pattern and background:
@@ -859,18 +765,13 @@ def main() -> int:
             matched = (pattern, reason)
             break
 
-    # Checked before the worktree exemption, never after it: these are about
-    # the remote, which a private worktree shares with everybody else. See
-    # REMOTE_RULES.
+    # Before the worktree exemption: these are about the remote, which a worktree shares.
     for pattern, reason in REMOTE_RULES:
         if matched is None and re.search(ANCHOR + pattern, haystack):
             matched = (pattern, reason)
             break
 
-    # And before it for the same reason, from the other direction: the
-    # worktree exemption exists because a worktree has one session in it, so
-    # the rule that *makes* that true cannot be a thing the exemption skips.
-    # See "One worktree, one session" above.
+    # Also before the exemption, which relies on one session per worktree; this rule enforces that.
     if matched is None:
         why = foreign_worktree(command, where, worktrees, session)
         if why:
@@ -887,9 +788,7 @@ def main() -> int:
                 matched = (pattern, reason)
                 break
         else:
-            # Not a pattern rule: the one rule that needs two-part logic,
-            # because whether a rustfmt is safe depends on where its file list
-            # came from.
+            # Two-part logic: whether a rustfmt is safe depends on where its file list came from.
             why = unscoped_rustfmt(command, haystack)
             if why:
                 matched = ("unscoped-rustfmt", why)
@@ -913,13 +812,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # Fail OPEN, always. A guard that errors must allow the command through.
-    # The first version of this hook was invoked by path without an executable
-    # bit, so it failed with "permission denied" (exit 126) on EVERY matching
-    # tool call -- not just the ones it would have refused. Settings now runs
-    # it through `python3`, which removes that failure mode entirely, and this
-    # catch-all removes the rest: a bug in here costs a missed denial, never a
-    # blocked session.
+    # Fail OPEN: a bug here must cost a missed denial, never a blocked session.
     try:
         sys.exit(main())
     except Exception as exc:  # noqa: BLE001

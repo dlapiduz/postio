@@ -1,20 +1,10 @@
-# Drop the workspace's own build products from a target directory and keep
-# every dependency's. Sourced; defines drop_workspace_artifacts <target-dir>.
-#
-# Two callers, one reason. CI caches a target/ between runs and our crates
-# are what every run rebuilds anyway (ci-drop-workspace-artifacts.sh). And a
-# worktree that was *moved* (a reused claim) or whose target/ was *copied*
-# from a sibling (a seeded claim) holds our crates compiled with the old
-# tree's absolute path baked in -- `env!("CARGO_MANIFEST_DIR")` is used in
-# fourteen files -- and cargo does not notice a directory move: a two-line
-# crate moved and re-tested ran the stale binary and failed on the old path,
-# and so did postio-session's crate-list test on the first reused landing
-# (#1102). Dropping the fingerprints is what makes cargo rebuild ours; the
-# ~470 dependencies carry no such path and stay.
-#
-# Matched by name prefix, which is the workspace's own convention: every
-# member is `postio-*`: since Cargo 1.100 everything a crate builds is under
-# build/postio-*/, and the deps/ lines catch what an older cargo left.
+# Drop the workspace's own build products from a target directory and keep every dependency's.
+# Sourced; defines drop_workspace_artifacts <target-dir>.
+# A moved worktree or a copied target/ holds our crates with the old absolute path baked in
+# (`env!("CARGO_MANIFEST_DIR")`), and cargo does not
+# notice a move (#1102); the ~470 dependencies carry no such path.
+# Matched by the `postio-*` name prefix: under build/postio-*/ since Cargo 1.100, and the deps/
+# lines catch what an older cargo left.
 drop_workspace_artifacts() { # <target-dir>
     local target="$1"
     [ -d "$target" ] || return 0
@@ -23,27 +13,15 @@ drop_workspace_artifacts() { # <target-dir>
            "$target"/*/deps/postio_*
     rm -rf "$target"/*/.fingerprint/postio-* \
            "$target"/*/build/postio-*
-    # And the copies cargo lifts out of deps/ to the top of each profile:
-    # the Mac app's static library alone is hundreds of megabytes there, and
-    # the macOS release cache was the one that kept being evicted.
+    # And the copies cargo lifts out of deps/ to the top of each profile: the Mac app's static
+    # library is hundreds of megabytes.
     find "$target" -mindepth 2 -maxdepth 2 -type f \
         \( -name 'libpostio_*' -o -name 'postio' -o -name 'postio-*' \) -delete
 }
 
-# Drop SwiftPM's build directory from a worktree that was moved.
-#
-# The same lesson as above, one toolchain over (#1208). SwiftPM bakes the
-# tree's absolute path into every precompiled module it writes, and unlike
-# cargo's `target/` there is no useful part to keep: the first `swift build`
-# after a move fails with
-#
-#     error: precompiled file '<new>/macos/.build/.../SwiftShims-<hash>.pcm'
-#     was compiled with module cache path '<old>/macos/.build/...'
-#     error: missing required module 'SwiftShims'
-#
-# which names SwiftShims and reads as a broken toolchain rather than as a
-# directory that moved. The rebuild is a few seconds; the confusion was
-# minutes.
+# Drop SwiftPM's build directory from a moved worktree (#1208): it bakes the tree's absolute path
+# into every precompiled module, and the next
+# `swift build` fails naming SwiftShims, which reads as a broken toolchain.
 drop_swift_build() { # <worktree>
     rm -rf "$1/macos/.build"
 }

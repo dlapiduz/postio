@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# The `cargo-nextest` / `cargo-hakari` / `cargo-machete` / `cargo-deny` that
-# sits in ~/.cargo/bin: not the tool, a resolver for it. It is copied there
-# under each tool's name by `scripts/lib/pinned-tool.sh` (the install
-# scripts call it), and picks its job from `basename "$0"`.
-#
-# It reads the pin from the `scripts/install-<tool>.sh` of the repository the
-# caller is standing in and runs exactly that version from
-# ~/.local/share/postio-tools/<tool>/<version>/bin/, installing it first
-# when it is not there yet. Outside a Postio checkout it runs the newest
-# version installed. See `scripts/lib/pinned-tool.sh` for why.
+# The `cargo-nextest` / `cargo-hakari` / `cargo-machete` / `cargo-deny` in ~/.cargo/bin: a resolver,
+# copied there by `scripts/lib/pinned-tool.sh`,
+# that picks its job from `basename "$0"`. It runs the version pinned by the
+# `scripts/install-<tool>.sh` of the checkout the caller is in
+# (installing it first if missing), or the newest installed outside one.
 set -euo pipefail
 
 name=$(basename "$0")
@@ -25,7 +20,6 @@ esac
 
 store="${POSTIO_TOOLS_DIR:-$HOME/.local/share/postio-tools}/$name"
 
-# Nearest enclosing checkout that carries the pin.
 pin=""
 dir=$PWD
 while :; do

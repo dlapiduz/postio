@@ -34,9 +34,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# `scripts/lib` is not a package; the CI step that discovers self-tests runs
-# every `scripts/tests/*.py` it finds, so the path goes on `sys.path` here the
-# way the neighbouring tests do it.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -45,11 +42,6 @@ import prereq  # noqa: E402  -- same
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -78,9 +70,6 @@ def world(base: Path, *, with_a_failing_test: bool) -> tuple[Path, Path]:
     stub_dir = base / "stub"
     (stub_dir / "bin").mkdir(parents=True)
     (root / "scripts" / "checks").mkdir(parents=True)
-    # The repository's own pin, copied rather than written out: a literal
-    # here went stale at the 1.99 bump, and on a runner that has only the
-    # pinned toolchain the sandbox then had no rustfmt to run.
     (root / "rust-toolchain.toml").write_text(
         (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -92,7 +81,6 @@ def world(base: Path, *, with_a_failing_test: bool) -> tuple[Path, Path]:
         '[package]\nname = "dummy"\nversion = "0.1.0"\nedition = "2021"\n',
         encoding="utf-8",
     )
-    # No `#[test]` anywhere: exactly postio-bench's shape.
     body = "// nothing to test here\n"
     if with_a_failing_test:
         body += '#[test]\nfn it_fails() { panic!("this must stop the landing"); }\n'
@@ -115,8 +103,6 @@ def world(base: Path, *, with_a_failing_test: bool) -> tuple[Path, Path]:
     origin = base / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     git("init", "-q", "-b", "main", cwd=root)
-    # `issue-land.sh` makes its own commit, without the `-c` overrides the
-    # helper above passes, so the sandbox needs an identity of its own.
     git("config", "user.email", "test@example.com", cwd=root)
     git("config", "user.name", "Test", cwd=root)
     (root / ".gitignore").write_text("target/\n", encoding="utf-8")
@@ -136,10 +122,6 @@ def land(root: Path, base: Path, stub_dir: Path, runner: str):
     environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
     environment["POSTIO_TEST_RUNNER"] = runner
-    # `patience.run`, not `subprocess.run`: a hand-rolled deadline measures
-    # the machine it runs on, and this one starts a cargo build on a box that
-    # may have three other sessions compiling. `POSTIO_TEST_PATIENCE` is the
-    # dial that makes 120s mean 120s of this test's own progress (#842).
     return patience.run(
         ["bash", "scripts/issue-land.sh", "-m", "chore(dummy): touch it", "--no-merge"],
         cwd=root, env=environment, capture_output=True, text=True, timeout=120,
@@ -156,14 +138,6 @@ def case(name: str, condition: bool, detail: str) -> None:
 
 def main() -> int:
     for runner in ("nextest", "cargo"):
-        # `POSTIO_TEST_RUNNER=nextest` makes `issue-land.sh` call
-        # `cargo nextest` outright rather than falling open to `cargo test`,
-        # so without the tool the two cases below do not test the gate: they
-        # watch a landing fail on `no such command: nextest`. That reads as a
-        # pass for the second one, which asserts only that the landing
-        # stopped. Locally this stands down and says so; under CI it fails,
-        # because the runner is meant to have it -- `ci.yml` installs it in
-        # every job that runs the self-tests, for exactly this case.
         if runner == "nextest" and not prereq.available(
             "cargo-nextest", present=prereq.have("cargo-nextest")
         ):
@@ -181,8 +155,6 @@ def main() -> int:
                 f"them:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}",
             )
 
-        # The direction it must still fail in: "no tests" being fine must not
-        # make "tests failed" fine too.
         with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
             base = Path(directory)
             root, stub_dir = world(base, with_a_failing_test=True)

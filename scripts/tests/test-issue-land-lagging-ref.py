@@ -37,8 +37,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -49,11 +47,6 @@ REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 WAIT_FOR_CHECKS = HERE / "wait-for-checks.sh"
 CI_EXPECTED_WORKFLOWS = HERE / "checks" / "ci-expected-workflows.py"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -70,8 +63,6 @@ FAILURES: list[str] = []
 
 FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 
-# The merge succeeds; the ref shows up late. `disown` so the push outlives the
-# `gh` process the way GitHub's own replication outlives the API call.
 GH_STUB_LAGGING = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -174,10 +165,6 @@ def main() -> int:
             cwd=root, env=environment, capture_output=True, text=True, timeout=120,
         )
 
-        # The stub's push is deliberately late, so this waits for it before
-        # asking whether it happened -- otherwise a *correct* script and a
-        # broken one would both be measured against a ref that had not
-        # arrived, and the control below would prove nothing.
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             git("fetch", "-q", "origin", "main", cwd=root)

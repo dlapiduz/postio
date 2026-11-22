@@ -27,10 +27,6 @@ SCRIPT = HERE / "checks" / "ci-expected-workflows.py"
 
 FAILURES: list[str] = []
 
-# Shaped like the real ci.yml: a `paths-ignore` list defined once behind a
-# YAML anchor and reused by the `pull_request` trigger through an alias. The
-# alias is the part a naive line-oriented reader gets wrong, and getting it
-# wrong means every pull request looks unfiltered.
 CI = """\
 name: CI
 on:
@@ -49,7 +45,6 @@ jobs:
     runs-on: ubuntu-latest
 """
 
-# A positive `paths` filter, the opposite polarity to the one above.
 HOOKS = """\
 name: Hooks
 on:
@@ -63,7 +58,6 @@ on:
       - '.github/workflows/hooks.yml'
 """
 
-# Tags only. Nothing a pull request does can schedule it.
 RELEASE = """\
 name: Release
 on:
@@ -72,7 +66,6 @@ on:
   workflow_dispatch:
 """
 
-# No filters at all: every pull request runs it.
 ALWAYS = """\
 name: Always
 on:
@@ -99,9 +92,6 @@ def run(workflows: dict[str, str], paths: list[str], *, base: str = "main"):
             ],
             capture_output=True,
             text=True,
-            # Closed, not inherited: with no paths on the command line the
-            # script falls back to reading a diff from stdin, and a test that
-            # left it open would hang instead of exercising the empty case.
             stdin=subprocess.DEVNULL,
         )
 
@@ -123,8 +113,6 @@ def case(
     if got != expected:
         FAILURES.append(f"{label}: expected {expected}, got {got}")
         return
-    # Exit status is the shell-facing half of the contract: 0 means something
-    # will run and must be waited for, 1 means nothing will.
     want_status = 0 if expected else 1
     if proc.returncode != want_status:
         FAILURES.append(
@@ -200,11 +188,6 @@ def main() -> int:
         expected=[],
     )
 
-    # Glob semantics. GitHub's filter patterns are not shell globs: `*` stops
-    # at a slash and `**` does not. `'*.md'` in the real ci.yml is there to
-    # ignore top-level prose only -- if `*` crossed directories it would
-    # silently ignore every markdown file in the tree, including generated
-    # ones a test exists to catch drifting.
     star = """\
 name: Star
 on:
@@ -280,11 +263,6 @@ on:
         base="release",
     )
 
-    # The regression, against the real workflows rather than a fixture. #135
-    # was a five-crate change that the old heuristic called prose and merged
-    # before CI existed. If this repository's own ci.yml ever stops expecting
-    # a check for a change like that, this is the case that says so.
-    #
     real = REPO / ".github" / "workflows"
     if real.is_dir():
         proc = subprocess.run(
@@ -324,15 +302,6 @@ on:
             text=True,
             stdin=subprocess.DEVNULL,
         )
-        # Since #1127 the real ci.yml runs on every pull request and decides
-        # what to *build* inside, in its `changes` job -- a workflow that does
-        # not run reports no check, and a required check that never reports
-        # is a PR that never merges (#1107). So a prose-only change now
-        # schedules CI, and wait-for-checks.sh waits for it: the cheap jobs
-        # run, the compile jobs report as skipped. "Full suite on request"
-        # runs on every pull request too, for the same reason -- its check
-        # is required, so it reports "not requested" when nobody asked. "PR
-        # title" checks the squash subject, which every pull request has.
         scheduled = sorted(prose.stdout.split("\n")) if prose.returncode == 0 else []
         scheduled = [name for name in scheduled if name]
         if scheduled != ["CI", "Full suite on request", "PR title"]:

@@ -1,21 +1,10 @@
 #!/usr/bin/env bash
-# Is the terminal package small enough beside the desktop one?
-# (docs/archive/specs/005-tui-frontend SC-004: binaries under half, Flatpak under two-thirds)
-#
-# "Smaller" is measured form for form, from one commit (the spec's
-# Assumptions):
-#
-#   binaries  the standalone download's executables with the shared libraries
-#             they load, against the desktop executable with its libraries.
-#             Each library is counted once per side.
-#   flatpak   each installed Flatpak with the runtime it names. The terminal
-#             package's runtime is the plain freedesktop one and the
-#             desktop's is GNOME's, which is most of the difference; the app
-#             alone would compare the wrong things.
-#
-# The release workflow runs both after the packages are built, and a
-# terminal package over its bar fails that job (beside the release, not in
-# front of it).
+# Is the terminal package small enough beside the desktop one? (docs/archive/specs/005-tui-frontend
+# SC-004: binaries under half, Flatpak under two-thirds)
+# Measured form for form from one commit: binaries with the shared libraries they load (each counted
+# once per side), and each installed Flatpak
+# with the runtime it names (the app alone would compare the wrong things). The release workflow
+# runs both after the packages are built.
 # `scripts/tests/test-measure-package-size.py` is what tests this.
 #
 # Usage:
@@ -31,12 +20,8 @@ usage() {
     exit 2
 }
 
-# The bytes of every file under the given paths, symlinks followed, and a
-# file reached more than once -- a hard link, which is how a Flatpak's store
-# shares files between installs -- counted once.
-#
-# Not `du -b`: macOS's `du` has no `-b`, and the self-test runs there. `stat`
-# answers everywhere, in one of two dialects: GNU's `-c`, BSD's `-f`.
+# The bytes of every file under the given paths, symlinks followed, a hard-linked file counted once.
+# Not `du -b`: macOS's `du` has no `-b`; `stat` answers everywhere in GNU `-c` or BSD `-f` dialects.
 bytes_of() {
     local format
     if stat -c '%s' / >/dev/null 2>&1; then
@@ -48,12 +33,10 @@ bytes_of() {
         awk '!seen[$1]++ { total += $2 } END { print total + 0 }'
 }
 
-# The executables and every shared library they load, each counted once.
 closure() {
     local libraries
     libraries=$(
         for executable in "$@"; do
-            # Not ELF, or static: no libraries, and that is an answer.
             ldd "$executable" 2>/dev/null | awk '
                 $2 == "=>" && $3 ~ /^\// { print $3 }
                 $1 ~ /^\// { print $1 }
@@ -64,7 +47,6 @@ closure() {
     bytes_of "$@" $libraries
 }
 
-# An installed Flatpak and the runtime it names.
 installed() {
     local app=$1 location runtime runtime_location
     location=$(flatpak info --show-location "$app" 2>/dev/null) ||
@@ -76,10 +58,8 @@ installed() {
     bytes_of "$location" "$runtime_location"
 }
 
-# Under `numerator/denominator` of the desktop's size passes. The binaries
-# are held to half; a Flatpak to two-thirds, because its runtime is most of
-# it and the plain freedesktop runtime is already the smallest Flathub has --
-# the first release dry run measured 58% (maintainer, 2026-10-01).
+# Under `numerator/denominator` of the desktop's size passes: half for binaries; two-thirds for a
+# Flatpak, whose runtime is most of it and already the smallest Flathub has (first dry run: 58%).
 compare() {
     local form=$1 terminal=$2 desktop=$3 numerator=$4 denominator=$5 bar=$6
     if [ "$desktop" -le 0 ]; then

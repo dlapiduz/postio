@@ -86,7 +86,6 @@ def drop_clippy_floor(tmp: Path) -> None:
     floor -- the silent hole this check was extended to close."""
     p = tmp / "crates" / "postio-account" / "Cargo.toml"
     text = p.read_text()
-    # Remove the whole [lints.clippy] block (to the next section or EOF).
     marker = "[lints.clippy]"
     i = text.index(marker)
     j = text.find("\n[", i + len(marker))

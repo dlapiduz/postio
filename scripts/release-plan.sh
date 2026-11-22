@@ -1,31 +1,14 @@
 #!/usr/bin/env bash
-# Is this push a release, and what does the release workflow need to know?
-#
-# `release.yml` runs on every push to `main` (#1714). A version moves by a
-# release pull request (`scripts/release-prepare.sh`), so the push that
-# merges one is the only push whose `Cargo.toml` names a version that has no
-# tag yet -- and that is the whole test. Every other push answers "nothing to
-# build" in the time it takes to read a file and list tags.
-#
-# A version is released at most once: if its tag exists the answer is no,
-# whatever else is true, because a second run would rebuild and re-upload
-# over a published release. A version *older* than the newest tag is refused
-# too, and said out loud -- that is a mistake in a release PR, not a release.
-#
-# # The suite
-#
-# Nothing ships without the full suite. But the nightly runs the identical
-# one (`--profile ci-full` through `test-with-flake-retry.sh`, plus the
-# doctests), so a green nightly at this *exact* commit is that answer
-# already given, and running it again is forty minutes of saying it twice.
-# Anything short of the exact commit is not the same answer, and no answer
-# from the API is not a green one. `--skip-suite` is honoured only for a
-# dispatch, which publishes nothing.
-#
-# # By hand
-#
-# `workflow_dispatch` builds every package and publishes nothing, versioned
-# `<version>-dev.<sha>` so an artifact from it cannot pass for the release.
+# Is this push a release, and what does the release workflow need to know? `release.yml` runs on
+# every push to `main` (#1714); only the push that
+# merges a release PR names a version with no tag yet, so every other push answers "nothing to
+# build".
+# A version is released at most once, and one older than the newest tag is refused out loud (a
+# mistake in a release PR).
+# Nothing ships without the full suite, but a green nightly at this exact commit is that answer
+# already; anything short of the exact commit, or no API answer, is not green.
+# `--skip-suite` is honoured only for a dispatch, which publishes nothing and builds every package
+# versioned `<version>-dev.<sha>`.
 #
 # Usage: scripts/release-plan.sh [--skip-suite]
 #   Run from the repository root; asks origin for its tags. Reads
@@ -74,9 +57,8 @@ if [ "$EVENT" = "workflow_dispatch" ]; then
     TAG=""
     echo "Dispatched by hand: building ${BUILD_VERSION}, publishing nothing." >&2
 else
-    # What origin has released -- see `release_tags` for why not the local
-    # list. Not knowing is a refusal: the answer that publishes is the one
-    # that has to be proven.
+    # What origin has released (see `release_tags`); not knowing is a refusal, since the answer that
+    # publishes must be proven.
     if ! TAGS=$(release_tags); then
         echo "::error::Could not list origin's tags, so cannot tell whether v${VERSION} is already out. Not releasing." >&2
         exit 1

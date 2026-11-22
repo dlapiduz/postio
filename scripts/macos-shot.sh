@@ -60,8 +60,7 @@ fi
 APP="$TREE/macos/build/Postio.app/Contents/MacOS/Postio"
 [ -x "$APP" ] || { echo "no bundle at $APP" >&2; exit 1; }
 
-# The design lives in the main checkout's untracked Design/, beside which the
-# pictures go; a worktree has no Design/ of its own.
+# The design lives in the main checkout's untracked Design/; a worktree has none.
 MAIN=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
 OUT="$MAIN/Design/review/focus-macos"
 mkdir -p "$OUT"
@@ -81,7 +80,6 @@ for appearance in "${appearances[@]}"; do
         echo "the app's window never appeared" >&2
         exit 1
     fi
-    # The first page lands, the counts arrive, the heading settles.
     sleep "$wait_for"
     file="$OUT/$name-$appearance.png"
     screencapture -o -x -l"$window" "$file"

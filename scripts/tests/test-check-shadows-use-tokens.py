@@ -63,8 +63,6 @@ expect(
 )
 expect("a commented-out literal passes", "/* box-shadow: 0 1px rgba(0,0,0,.2); */ .a {}", True)
 
-# The desktop app carries stylesheets, and the shared crate carries the widget
-# rules it draws with (ADR 0043; specs/007-postio-focus R1).
 LITERAL = ".a { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); }"
 expect_root(
     "a literal shadow planted in postio-widgets' stylesheet fails",

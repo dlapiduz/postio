@@ -32,8 +32,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -130,8 +128,6 @@ def sibling(repo: Path, worktrees: Path, number: int, artifact: str) -> Path:
     (tree / "target" / "debug" / "deps").mkdir(parents=True)
     (tree / "target" / "debug" / ".fingerprint").mkdir()
     (tree / "target" / "debug" / "deps" / artifact).write_text("compiled\n", encoding="utf-8")
-    # The sibling's own crates carry *its* path baked in (env!("CARGO_MANIFEST_DIR"));
-    # a copy must lose them so cargo rebuilds them for this tree.
     (tree / "target" / "debug" / "deps" / "libpostio_core-4567.rlib").write_text("ours\n", encoding="utf-8")
     (tree / "target" / "debug" / ".fingerprint" / "postio-core-4567").mkdir(parents=True)
     (tree / "target" / "debug" / ".fingerprint" / f"{artifact}-fp").mkdir(parents=True)
@@ -150,7 +146,6 @@ def main() -> int:
         time.sleep(1.1)  # mtimes at one-second resolution on some filesystems
         newer = sibling(repo, worktrees, 2, "libnewer.rlib")
 
-        # ── the newest sibling seeds the fresh tree, minus its scratch ───
         result = claim(repo, base, stub_dir, "4242")
         tree = worktrees / "issue-4242"
         if result.returncode != 0:
@@ -175,7 +170,6 @@ def main() -> int:
         elif not (newer / "target" / "debug" / "deps" / "libpostio_core-4567.rlib").is_file():
             fail("seed", "the drop reached into the sibling's target", result)
 
-        # ── --cold gets a genuinely empty target ─────────────────────────
         result = claim(repo, base, stub_dir, "--cold", "4243")
         tree = worktrees / "issue-4243"
         if result.returncode != 0:
@@ -185,7 +179,6 @@ def main() -> int:
         elif not (tree / "target" / "tmp").is_dir():
             fail("cold", "target/tmp was not created", result)
 
-        # ── and so does POSTIO_CLAIM_SEED=0 ──────────────────────────────
         result = claim(repo, base, stub_dir, "4244", env={"POSTIO_CLAIM_SEED": "0"})
         tree = worktrees / "issue-4244"
         if result.returncode != 0:
@@ -193,7 +186,6 @@ def main() -> int:
         elif (tree / "target" / "debug").exists():
             fail("env-off", "POSTIO_CLAIM_SEED=0 still seeded target/debug", result)
 
-        # ── with no sibling, the shared checkout's target is the seed ────
         for tree in (older, newer, worktrees / "issue-4242", worktrees / "issue-4243",
                      worktrees / "issue-4244"):
             if tree.is_dir():

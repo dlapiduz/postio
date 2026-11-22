@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
-# Build and run Postio without touching the shared working tree.
-#
-# Several Claude sessions edit ~/src/postio continuously, so building
-# from it gives you whatever half-finished state happened to be on disk. This
-# builds from a git worktree pinned to a commit instead, with its own target
-# directory and its own XDG dirs, so:
-#
-#   * the running app is a known commit, not a moving tree;
-#   * `cargo build` here cannot poison the shared target/ — a session once
-#     built a copy of the repo elsewhere and left artifacts whose baked-in
-#     CARGO_MANIFEST_DIR pointed at a directory that no longer existed, which
-#     surfaced as nine unrelated test failures;
-#   * the app reads and writes a throwaway store, so nothing here can damage
-#     real mail or a real account.
+# Build and run Postio without touching the shared working tree: a worktree pinned to a commit, with
+# its own target directory and XDG dirs, so the
+# running app is a known commit, `cargo build` cannot poison the shared target/ (stale artifacts
+# with a baked-in CARGO_MANIFEST_DIR once caused nine
+# unrelated test failures), and the app reads and writes a throwaway store.
 #
 # Usage:
 #   scripts/run-isolated.sh                 # build and run HEAD
@@ -22,13 +13,11 @@
 #   scripts/run-isolated.sh HEAD --shot     # render a PNG instead of opening
 #   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
 #   scripts/run-isolated.sh HEAD --install-desktop  # also give Postio its dock icon (see below)
-#
-# It runs Postio, the `postio` binary.
 #   scripts/run-isolated.sh HEAD --reset-store  # set the scratch store aside, start a fresh one
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
-# The store lives under $ROOT/state and persists between runs, so a synced
-# mailbox is still there next time. --clean removes it.
+# The store lives under $ROOT/state and persists between runs, so a synced mailbox is still there
+# next time. --clean removes it.
 set -euo pipefail
 
 REPO=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
@@ -76,46 +65,32 @@ echo "target: $TARGET"
 
 mkdir -p "$STATE/data" "$STATE/config"
 
-# Its own target directory. Sharing the repo's would both contend with the
-# sessions building there and risk the stale-artifact failure described above.
 export CARGO_TARGET_DIR="$TARGET"
 
-# A throwaway store, so nothing the app does can reach a real mailbox, a real
-# config, or the state the real Postio keeps. Config is resolved by
-# postio-config/src/paths.rs; the state files under $XDG_STATE_HOME by
-# postio-widgets/src/state.rs and postio-ui/src/allowlist.rs.
+# A throwaway store, so nothing can reach a real mailbox, config or state (paths:
+# postio-config/src/paths.rs, postio-widgets/src/state.rs, postio-ui/src/allowlist.rs).
 export XDG_DATA_HOME="$STATE/data"
 export XDG_CONFIG_HOME="$STATE/config"
-# XDG_STATE_HOME was missed until #215, and it is not only window geometry:
-# $XDG_STATE_HOME/postio/remote-images.ini is the standing "always allow
-# images from this sender" list. Clicking that once while looking at the demo
-# store wrote a real exception into the real file -- which then decided what
-# the GTK tests saw, because a window builds a reader that loads it. That
-# cost a p1 nobody could bisect, since the cause was never in the tree.
+# XDG_STATE_HOME was missed until #215: `remote-images.ini` there is the standing "always allow
+# images" list, and a click while viewing the demo store
+# wrote a real exception that changed what the GTK tests saw.
 export XDG_STATE_HOME="$STATE/state"
 
-# Observability. POSTIO_LOG takes an EnvFilter directive, so `debug` turns
-# everything up and `postio_sync=debug,postio_runtime=debug` turns up just the
-# half that talks to a server. `[logging]` in the scratch config.toml does the
-# same thing to an already-running instance.
-#
-# G_MESSAGES_DEBUG=all is deliberately *not* set: it produced two hundred lines
-# of Vulkan and portal settings and not one line about mail, which is what made
-# the first live run undiagnosable. Set it yourself when the problem is
-# actually GTK's.
+# POSTIO_LOG takes an EnvFilter directive (`debug`, or `postio_sync=debug,postio_runtime=debug`);
+# `[logging]` in the scratch config.toml does the same to a running instance.
+# G_MESSAGES_DEBUG=all is not set: it produced hundreds of lines of Vulkan and portal settings and
+# none about mail.
 export POSTIO_LOG="${POSTIO_LOG:-info}"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 export GTK_A11Y="${GTK_A11Y:-none}"     # quiets an at-spi warning on headless
 [ "$INSPECT" = 1 ] && export GTK_DEBUG=interactive
 
 cd "$TREE"
-# The linker and CC in .cargo/config.toml are names on PATH, not paths (#1101).
 [ -x scripts/install-shims.sh ] && scripts/install-shims.sh
-# Draw compile jobs from the machine-wide pool rather than `jobs = 2` (#1104).
 [ -x scripts/jobserver.sh ] && eval "$(scripts/jobserver.sh env 2>/dev/null || true)"
 if [ "$PROVISION" = 1 ]; then
-    # Writes into $STATE, not your real store, because XDG_DATA_HOME is set
-    # above. The password comes from the environment and is never echoed.
+    # Writes into $STATE, not your real store, because XDG_DATA_HOME is set above; the password
+    # comes from the environment and is never echoed.
     if [ -z "${POSTIO_ADDRESS:-}" ] || [ -z "${POSTIO_APP_PASSWORD:-}" ]; then
         echo "set POSTIO_ADDRESS, and read the app password without putting it in" >&2
         echo "your shell history:  read -rs POSTIO_APP_PASSWORD && export POSTIO_APP_PASSWORD" >&2
@@ -124,19 +99,14 @@ if [ "$PROVISION" = 1 ]; then
     exec cargo run --release -p postio-session --bin postio-provision
 fi
 
-# A scratch store an earlier build wrote at a schema this one cannot carry
-# forward: set it aside (state/data/postio/set-aside/<when>/, not deleted)
-# and start a fresh one with the accounts carried across. config.toml and the
-# keyring are untouched; the next run syncs the mail again. `postio-store
-# status` says first whether this is needed -- a store a migration reaches
-# is carried forward on open, and needs nothing.
+# A scratch store an earlier build wrote at a schema this one cannot carry forward: set it aside
+# (state/data/postio/set-aside/<when>/) and start fresh
+# with the accounts carried across. `postio-store status` says first whether this is needed.
 if [ "$RESET_STORE" = 1 ]; then
     cargo run --release -p postio-session --bin postio-store -- status
     exec cargo run --release -p postio-session --bin postio-store -- reset
 fi
 
-# Postio (spec 007) on the scratch store and XDG dirs above, so an account
-# provisioned with --provision is there too.
 {
     if [ "$SHOT" = 1 ]; then
         OUT="$ROOT/shot-$SHA.png"
@@ -144,14 +114,10 @@ fi
         echo "wrote $OUT"
         exit 0
     fi
-    # --- --install-desktop (T217) -----------------------------------------
-    # The binary draws the Postio icon in its own window (a bundled icon theme
-    # and a default icon name), but a dock or window switcher on Wayland
-    # (COSMIC, GNOME) shows the icon of the *desktop entry* the compositor
-    # matches to the window's app id, and a plain cargo build installs none.
-    # This puts Postio's entry and the package's icon where the session looks,
-    # under your home only, with Exec= on the isolated binary. Opt-in: it
-    # writes outside $ROOT. Remove with the two rm lines it prints.
+    # --install-desktop (T217): a Wayland dock shows the icon of the desktop entry matched to the
+    # window's app id, and a plain cargo build installs none.
+    # This writes Postio's entry and icon under your home with Exec= on the isolated binary. Opt-in:
+    # it writes outside $ROOT.
     if [ "$INSTALL_DESKTOP" = 1 ]; then
         DATA="${HOME}/.local/share"
         APPS="$DATA/applications"
@@ -169,11 +135,9 @@ fi
         echo "installed $APPS/$ID.desktop and the Postio icon under $ICONS"
         echo "undo: rm $APPS/$ID.desktop $ICONS/scalable/apps/dev.postio.Postio.svg $ICONS/symbolic/apps/dev.postio.Postio-symbolic.svg"
     fi
-    # --- end --install-desktop ---------------------------------------------
     echo "building Postio (first run compiles GTK deps; later runs are incremental)…"
-    # The attachment text helper is found beside the executable, and cargo
-    # builds a package's own binaries only: without it every PDF is recorded
-    # `skipped` and search finds nothing inside one (#1824).
+    # The attachment text helper is found beside the executable and cargo builds only a package's
+    # own binaries; without it every PDF is recorded `skipped` (#1824).
     cargo build --release -p postio-gtk --bin postio \
         -p postio-session --bin postio-extract-helper
     echo "running — Ctrl-C to stop"

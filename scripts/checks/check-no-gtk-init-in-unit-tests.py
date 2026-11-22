@@ -55,18 +55,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-# --- What counts as initializing GTK ---------------------------------------
-#
-# `init`, `init_check`, and libadwaita's `init` all reach `gtk_init`, and all
-# three are process-wide. Spelled as a path so a local `fn init()` is not
-# mistaken for one.
+# `init`, `init_check` and libadwaita's `init` all reach the process-wide `gtk_init`; spelled as a
+# path so a local `fn init()` is not mistaken for one.
 
 INIT = re.compile(r"\b(?:adw|libadwaita|gtk|gtk4)\s*::\s*(init\w*)\s*\(")
 
-# `#[...]`, with `test` as a whole word inside it: `#[test]`, `#[cfg(test)]`,
-# `#[cfg(all(test, unix))]`, `#[gtk::test]`. Attribute bodies are scanned
-# after string literals have been blanked, so `#[cfg(feature = "testing")]`
-# cannot match.
+# `test` as a whole word inside `#[...]`, scanned after string literals are blanked so
+# `#[cfg(feature = "testing")]` cannot match.
 TEST_WORD = re.compile(r"\btest\b")
 
 # The marker that says a human decided this one has to stay.
@@ -120,7 +115,6 @@ def blank_noise(text: str) -> str:
     while index < length:
         char = text[index]
 
-        # Line comment.
         if text.startswith("//", index):
             stop = text.find("\n", index)
             stop = length if stop == -1 else stop
@@ -146,7 +140,6 @@ def blank_noise(text: str) -> str:
             index = cursor
             continue
 
-        # Raw string: `r"..."`, `r#"..."#`, and the `br` byte forms.
         raw = re.match(r'(?:b?r)(#*)"', text[index : index + 260])
         if raw and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")):
             hashes = raw.group(1)
@@ -157,7 +150,6 @@ def blank_noise(text: str) -> str:
             index = stop
             continue
 
-        # Ordinary string, and the `b"..."` byte form.
         if char == '"':
             cursor = index + 1
             while cursor < length:
@@ -210,8 +202,6 @@ def test_regions(clean: str) -> list[tuple[int, int]]:
             index += 1
             continue
 
-        # Bracket-match the attribute, so `#[cfg(all(test, unix))]` is read
-        # whole rather than ending at the first `]`.
         depth = 0
         cursor = index + 1
         while cursor < length:
@@ -230,8 +220,6 @@ def test_regions(clean: str) -> list[tuple[int, int]]:
             index = attribute_end
             continue
 
-        # Walk to the item this attribute decorates, stepping over any
-        # further attributes stacked between them.
         cursor = attribute_end
         while cursor < length:
             if clean[cursor] == "#" and clean.startswith("#[", cursor):
@@ -316,9 +304,8 @@ def main() -> int:
         if not marked:
             problems.extend(f"{path}:{line}: `{call}` in a unit test" for line, call in found)
             continue
-        # A marked file has argued for one. The rest are the same bug the
-        # marker was never meant to cover: the first one past this line is
-        # the exception, every later one is a second thread racing it.
+        # A marked file has argued for one; the first past this line is the exception, every later
+        # one races it.
         seconds.extend(
             f"{path}:{line}: a second `{call}`, in a file cleared for one"
             for line, call in found[1:]

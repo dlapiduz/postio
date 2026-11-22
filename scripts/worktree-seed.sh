@@ -1,24 +1,13 @@
 #!/usr/bin/env bash
-# Seed a worktree's target/debug from the newest sibling's, so its first
-# build compiles what changed rather than the world.
-#
-# `issue-claim.sh` has done this for claimed trees since #1102: on btrfs a
-# reflinked copy of a warm sibling takes seconds and no disk, and the tree
-# then rebuilds Postio's own crates in about a minute against 15 to 19 cold.
-# A tree made any other way -- `git worktree add` for a spec branch, which
-# is CLAUDE.md's own recipe, or for a parallel lane -- never got it: on
-# 2026-09-30 three Focus lanes compiled from nothing at the exact commit of a
-# warm 24 GB sibling (#1717). This is the same seeding, for any tree:
+# Seed a worktree's target/debug from the newest sibling's, so its first build compiles what changed
+# (#1717). `issue-claim.sh` does this for claimed
+# trees (#1102); this is the same seeding (lib/seed-target.sh) for a tree made another way, such as
+# a spec branch or a parallel lane:
 #
 #     git worktree add ~/src/postio-worktrees/<name> -b <branch> origin/main
 #     scripts/worktree-seed.sh ~/src/postio-worktrees/<name>
 #
-# The rules are the claim's, from the same code (lib/seed-target.sh): the
-# newest sibling first, falling through to older ones if a copy fails; never
-# the tree itself; never a sibling's live `target/tmp`; and the sibling's own
-# crates dropped, since they carry its path. A tree that already has a
-# `target/debug` is left alone -- seeding over it would discard its own
-# build. `POSTIO_CLAIM_SEED=0` opts out, as it does for a claim.
+# A tree that already has a `target/debug` is left alone; `POSTIO_CLAIM_SEED=0` opts out.
 #
 # Usage: scripts/worktree-seed.sh <worktree>
 # Exit status: 0 seeded, already built, or nothing to seed from (each said);
@@ -41,11 +30,8 @@ REPO_ROOT="${REPO_ROOT%/.git}"
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 COLD=0
 
-# `.cargo/config.toml` points TMPDIR at target/tmp, and nothing else makes it.
 mkdir -p "$TREE/target/tmp"
 
-# The repository's git hooks, for a tree made without a claim. Shared
-# config: the same line issue-claim.sh runs.
 git -C "$TREE" config core.hooksPath .githooks
 
 if [ -d "$TREE/target/debug" ]; then

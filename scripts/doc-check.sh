@@ -1,18 +1,11 @@
 #!/usr/bin/env bash
-# Build rustdoc for the crates this branch changed, under the nightly's flags.
-#
-# `issue-land.sh` already does this for every landing (#1463). This is the same
-# build for a branch that does not land through it -- a pull request opened by
-# hand from a host that cannot build every crate it touches, which is how the
-# Mac sessions land GTK-touching work. Two of those PRs went red on CI's Docs
-# job for a link rustdoc 1.99 rejects, after nothing local had built rustdoc
-# with these flags.
+# Build rustdoc for the crates this branch changed, under the nightly's flags: the build
+# `issue-land.sh` runs (#1463), for a branch that does not land through it.
 #
 #   scripts/doc-check.sh                 # the crates changed since origin/main
 #   scripts/doc-check.sh postio-focus    # named crates
 #
-# Crates this host cannot build (scripts/unbuildable-crates.sh) are skipped,
-# and named as skipped: CI documents them.
+# Crates this host cannot build (scripts/unbuildable-crates.sh) are skipped, and named.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 

@@ -42,9 +42,6 @@ def main() -> int:
     source = SCRIPT.read_text(encoding="utf-8")
     problems = 0
 
-    # `run_doctests` must still be the thing its name says. If it stops
-    # passing `--doc`, every assertion below is about a call that runs
-    # something else.
     body = re.search(r"run_doctests\(\)\s*\{(.*?)\n\}", source, re.S)
     if not body:
         fail("run_doctests is gone or reshaped; this test cannot find it")
@@ -53,9 +50,6 @@ def main() -> int:
         fail(f"run_doctests no longer passes --doc: {body.group(1).strip()!r}")
         problems += 1
 
-    # The default branch -- the one an ordinary landing takes -- must call it.
-    # Split on the `--full` branch so a call that only exists there does not
-    # satisfy this.
     full_branch = source.index('echo "--- test (full)')
     default_branch = source.index(
         "        # The default tier: the unit tests of the crates this branch changed."

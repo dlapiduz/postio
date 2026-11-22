@@ -34,29 +34,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CRATE = "postio-render"
-# Features without code (ADR 0047): pruned from the graph, never from its
-# feature resolution.
 HACK = "postio-workspace-hack"
 
-# `links` values used only as uniqueness markers, with nothing native behind
-# them.
 LINKS_ALLOWED = {"rayon-core", "servo_style_crate"}
 # Profiles that may abort on panic because they build one package that
 # does not link the renderer -- held to that on every run, not trusted.
 ABORT_PROFILES = {
-    # The terminal's size-tuned build; its panic hook restores the
-    # terminal before the abort (the root Cargo.toml says why).
     "release-tui": "postio-tui",
 }
 BUILD_TOOLS = {"cc", "cmake", "bindgen"}
 IMAGE_REFUSED = {"avif", "avif-native", "tiff", "exr", "bmp", "ico"}
 
 TRACE = "find which feature pulled it in (`cargo tree -p postio-render -e features -i {pkg}`) and turn it off"
-# The graph a product build of the renderer resolves, which is Linux's: the
-# renderer ships only in the GTK app (spec 006 is Linux-scoped; the Mac
-# reads in WKWebView, spec 009 M5). Resolving for the host instead fails on
-# a Mac, where chrono's iana-time-zone pulls core-foundation-sys into a
-# graph no Mac build ever links.
+# The graph a product build resolves, which is Linux's (the renderer ships only in the GTK app);
+# resolving for a Mac pulls core-foundation-sys into a graph no Mac build links.
 TARGET = "x86_64-unknown-linux-gnu"
 
 FONTS = "fonts come from FontSet via fontdb, not the system font stack (research R3)"
