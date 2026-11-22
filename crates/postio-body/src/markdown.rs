@@ -192,7 +192,14 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
                 }
                 // An image's words are its alternative text, not a place
                 // the caret can be.
-                Some(Frame::Image(_, alt)) => alt.push_str(&text),
+                Some(Frame::Image(dest, alt)) => {
+                    // A web image's words are where a caret can be: the
+                    // rich view draws them as its link.
+                    if crate::WebHref::parse(dest).is_some() {
+                        seen.run(markdown, &range, &text);
+                    }
+                    alt.push_str(&text);
+                }
                 // Inside a link the words are its label, never another link.
                 Some(Frame::Inlines(Holder::Link(_), _)) => {
                     seen.run(markdown, &range, &text);
@@ -578,7 +585,21 @@ fn put_caret_inlines(inlines: &mut Vec<crate::Inline>, mut offset: usize) -> Opt
                 }
                 offset -= 1;
             }
-            Inline::Image { .. } | Inline::RemoteImage { .. } => {}
+            // A remote image is drawn as its words, a link, so the caret
+            // can be in them.
+            Inline::RemoteImage { alt, .. } => {
+                let len = alt.chars().count();
+                if offset <= len {
+                    let at = alt
+                        .char_indices()
+                        .nth(offset)
+                        .map_or(alt.len(), |(at, _)| at);
+                    alt.insert(at, CARET);
+                    return None;
+                }
+                offset -= len;
+            }
+            Inline::Image { .. } => {}
         }
         index += 1;
     }
@@ -633,7 +654,8 @@ fn strip_caret_inlines(inlines: &mut Vec<crate::Inline>) {
                 strip_caret_inlines(inner);
             }
             Inline::Link { inlines, .. } => strip_caret_inlines(inlines),
-            Inline::Break | Inline::Image { .. } | Inline::RemoteImage { .. } => {}
+            Inline::RemoteImage { alt, .. } => alt.retain(|c| c != CARET),
+            Inline::Break | Inline::Image { .. } => {}
         }
     }
     inlines.retain(|inline| !matches!(inline, Inline::Text(text) if text.is_empty()));
@@ -726,7 +748,9 @@ fn visible_inlines(inlines: &[crate::Inline]) -> Vec<char> {
             }
             Inline::Link { inlines, .. } => out.extend(visible_inlines(inlines)),
             Inline::Break => out.push('\n'),
-            Inline::Image { .. } | Inline::RemoteImage { .. } => {}
+            // Drawn as its words in the rich view, a link to its address.
+            Inline::RemoteImage { alt, .. } => out.extend(alt.chars()),
+            Inline::Image { .. } => {}
         }
     }
     out
@@ -1946,5 +1970,19 @@ mod tests {
             }
         );
         assert!(super::to_document_mapped("plain").1.lost().is_empty());
+    }
+
+    #[test]
+    fn a_caret_after_a_remote_images_words_stays_after_them() {
+        let source = "The chart: ![weekly chart](https://example.com/c.png)";
+        let (document, map) = super::to_document_mapped(source);
+        let end = super::DocPosition {
+            path: vec![0],
+            offset: "The chart: weekly chart".chars().count(),
+        };
+        assert_eq!(map.to_document(source.len()), end);
+        let (clean, found) = super::take_caret(super::put_caret(&document, &end));
+        assert_eq!(found, Some(end));
+        assert_eq!(clean, document);
     }
 }

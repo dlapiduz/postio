@@ -171,7 +171,7 @@ unit cases, `composer_markdown_source.rs`, and
 - [x] T046 [US8] Add a log case: the fetch logs the draft id, the outcome and the byte count, and never the address
 - [x] T047 [P] [US8] Draw the same row in the terminal composer's attachment list, `crates/postio-tui/src/view/composer.rs`, with TUI cases first
 - [ ] T048 [US8] Mac: claim `attach_remote_image` in `ComposeCommands`, expose the fetch through `crates/postio-ffi/src/session.rs`, and draw the row in `macos/Sources/PostioKit/ComposeColumn.swift`, with tests first
-- [ ] T049 [US8] Make `storyboards/compose/remote-image.toml` green, and run `/ux-review`
+- [x] T049 [US8] Make `storyboards/compose/remote-image.toml` green, and run `/ux-review`
 
 ## Phase A7: Polish, and land the now phase
 
