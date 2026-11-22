@@ -4,19 +4,8 @@ import Testing
 
 @testable import PostioKit
 
-/// The command bar's state, as the controller's intents leave it
-/// (specs/009-focus-macos T084).
-///
-/// The controller (`crates/postio-focus/src/bar.rs`) decides what the bar
-/// offers, what a line runs and what Tab and Back do. The Mac draws what it
-/// is told -- one row per line, each with the keycap of the user's binding --
-/// and hands back what happened: the field's words, the highlighted line's
-/// token, Tab, Escape. The arrows' highlight is the toolkit's, and so it is
-/// this model's.
 @MainActor
 struct CommandBarModelTests {
-    /// Remembers what the bar told the engine, and answers bindings and Tab
-    /// from what the test set.
     final class Engine: CommandBarEngine {
         var typed: [String] = []
         var ran: [UInt64] = []
@@ -54,8 +43,6 @@ struct CommandBarModelTests {
             selectable: selectable)
     }
 
-    /// `>arch`'s commands, a hint, and `@`'s correspondent: every kind the
-    /// bar draws outside the dropdown.
     static let archLines: [BarLineFfi] = [
         line(.heading, 1, "Commands", selectable: false),
         line(.command, 2, "Archive", detail: "the focused message", key: "a", command: "archive"),
@@ -84,13 +71,9 @@ struct CommandBarModelTests {
         return (CommandBarModel(engine: engine), engine)
     }
 
-    // -- What the bar draws --------------------------------------------------
-
     @Test func theLinesBecomeOneLineRowsWithTheUsersKeycaps() {
         let (model, engine) = Self.model()
         model.apply(Self.opened(">arch", mode: .commands))
-        // Rebound: the cap is the binding in force, not the word the line
-        // was composed with.
         engine.bindings["archive"] = "e"
         model.apply(Self.lines())
 
@@ -144,8 +127,6 @@ struct CommandBarModelTests {
         #expect(model.apply(.focusKeyboardHome) == nil)
     }
 
-    // -- Opening, and the field --------------------------------------------
-
     @Test func openingPutsTheWordsInTheFieldWithTheChipSelected() {
         let (model, _) = Self.model()
         #expect(
@@ -153,8 +134,7 @@ struct CommandBarModelTests {
                 == .open(text: ">", selection: NSRange(location: 1, length: 0)))
         #expect(model.isOpen)
         #expect(model.mode == .commands)
-        // Characters, not UTF-16 units: the controller counts `char`s, and
-        // `é` before the chip is one of them.
+        // Characters, not UTF-16 units: the controller counts `char`s.
         let change = model.apply(
             Self.opened("subject:é invoice", select: BarSelectFfi(start: 10, end: 17)))
         #expect(change == .open(text: "subject:é invoice", selection: NSRange(location: 10, length: 7)))
@@ -177,8 +157,6 @@ struct CommandBarModelTests {
         model.typed("tide")
         #expect(engine.typed.isEmpty)
     }
-
-    // -- The highlight, Return, Tab and Escape -------------------------------
 
     @Test func theHighlightStartsOnTheFirstLineThatRuns() {
         let (model, _) = Self.model()
@@ -208,13 +186,10 @@ struct CommandBarModelTests {
         model.apply(Self.opened())
         model.apply(Self.lines())
         model.move(by: 1)
-        // Results landing redraw the same lines: the arrows' place is kept.
         model.apply(Self.lines())
         #expect(model.highlighted == 3)
-        // A run that moves it says where.
         model.apply(Self.lines(highlight: 7))
         #expect(model.highlighted == 7)
-        // New words, new tokens: back to the first line that runs.
         model.apply(Self.lines([Self.line(.command, 20, "Compose", command: "compose")]))
         #expect(model.highlighted == 20)
     }
@@ -285,12 +260,8 @@ struct CommandBarModelTests {
         #expect(engine.invoked == ["saved_search_2"], "nothing pinned there")
     }
 
-    // Where the panel goes: `PostioAppKitTests/CommandBarGeometryTests`
-    // (spec 010 T054 replaced 009's 640-wide panel on the field's right edge).
-
     @Test func theCommandsTheBarRunsByNameAreRealCommands() {
-        // A literal that no longer matches the registry is a key that does
-        // nothing, with no error anywhere to say why.
+        // A literal that no longer matches the registry is a key that does nothing, silently.
         let known = Set(PostioRegistry.commands.map(\.id))
         let named = [BarCommand.search, BarCommand.palette, BarCommand.back, BarCommand.saveSearch,
                      BarCommand.folders] + CommandBarModel.savedCommands

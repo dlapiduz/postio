@@ -1,58 +1,27 @@
-//! Which typed sequences become which formatting command.
-//!
-//! Markdown as *input*, never as the draft's format. The spec's first
-//! clarification settled that on 2026-09-10 and ADR 0003 had settled it
-//! before: a draft is rich text, and `**bold**` is a way of reaching the bold
-//! command with the keyboard rather than a dialect the message is written in.
-//! Nothing here parses a document; nothing here runs on send.
-//!
-//! # Why the table is in `postio-ui` when only GTK can act on it
-//!
-//! The mechanism is genuinely frontend-local — the transformation happens in
-//! the WebView's own script, because a round trip to Rust per keystroke does
-//! not fit a 16 ms budget. The *rule* is not: two frontends each inventing
-//! their own set is how `- ` comes to make a list on one platform and not the
-//! other. So the set lives here, both frontends read it, and a test in each
-//! can assert it implements this table and no more.
-//!
-//! # What bounds the set
-//!
-//! FR-068: every sequence maps to formatting an existing command already
-//! produces. That is what keeps this from growing into a markdown dialect —
-//! there is no sequence for a table or a footnote because there is no command
-//! for one, and adding a sequence without a command would create document
-//! structure no other surface could make or undo.
+//! Which typed sequences become which formatting command. Markdown is input only, never the draft's
+//! format (ADR 0003).
+//! The table lives here so both frontends agree; the transformation runs in the WebView script (16
+//! ms budget).
+//! Every sequence maps to formatting an existing command already produces.
 
-/// Where a sequence is recognised.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Trigger {
-    /// Recognised at the start of a block, when the marker is followed by a
-    /// space — `# `, `- `, `> `. The marker and the space are consumed.
+    /// At the start of a block when the marker is followed by a space; marker and space are
+    /// consumed.
     LinePrefix,
-    /// Recognised when the closing marker is typed around a run of text on
-    /// one line — `**bold**`. Both markers are consumed.
+    /// When the closing marker is typed around a run on one line; both markers are consumed.
     Wrapping,
 }
 
-/// One typed sequence and the command it reaches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sequence {
-    /// What is typed. For [`Trigger::LinePrefix`] the trailing space is
-    /// implied and not written here; for [`Trigger::Wrapping`] this is the
-    /// marker that appears on both sides.
+    /// For `LinePrefix` the trailing space is implied; for `Wrapping` the marker on both sides.
     pub marker: &'static str,
-    /// The `postio-core` command id this produces, as the editing bridge
-    /// already spells it in both directions.
     pub command: &'static str,
-    /// Where it is recognised.
     pub trigger: Trigger,
 }
 
-/// Every supported sequence.
-///
-/// Ordered longest marker first within each trigger, because a recogniser
-/// that checks `*` before `**` never sees `**` — the ordering is part of the
-/// contract rather than an implementation detail of one frontend.
+/// Longest marker first within each trigger, so `**` is not shadowed by `*`.
 pub const SEQUENCES: &[Sequence] = &[
     Sequence {
         marker: "**",
@@ -102,9 +71,6 @@ mod tests {
 
     #[test]
     fn every_sequence_reaches_a_formatting_command_and_nothing_else() {
-        // FR-068. A sequence with no command behind it would make document
-        // structure no other surface can produce or undo -- which is the
-        // point at which "markdown input" has quietly become a dialect.
         const FORMATTING: [&str; 6] = [
             "bold",
             "italic",
@@ -126,11 +92,7 @@ mod tests {
 
     #[test]
     fn a_hash_and_a_space_make_a_heading_and_a_hash_alone_does_not() {
-        // `# ` reaches the heading command (#1485), at the start of a block
-        // only: a `#` anywhere else is a channel, an issue number or a
-        // hashtag. Level one, the one level that has a command; `## ` and
-        // `### ` arrive with theirs, as `heading_2` and `heading_3`, and the
-        // ordering test below keeps them ahead of this row.
+        // Block-start only: a `#` elsewhere is a channel, issue number or hashtag.
         let hash: Vec<_> = SEQUENCES
             .iter()
             .filter(|s| s.marker.starts_with('#'))
@@ -148,9 +110,7 @@ mod tests {
 
     #[test]
     fn longer_markers_are_listed_before_the_shorter_ones_they_contain() {
-        // A recogniser that tries `*` first turns `**bold**` into an italic
-        // run wrapping `*bold*`. The ordering is the contract, not an
-        // implementation detail, because every frontend walks this table.
+        // `*` tried before `**` would turn `**bold**` into an italic run.
         for (index, sequence) in SEQUENCES.iter().enumerate() {
             for earlier in &SEQUENCES[..index] {
                 if earlier.trigger != sequence.trigger {
@@ -169,9 +129,6 @@ mod tests {
 
     #[test]
     fn the_reachable_set_is_the_formatting_set_without_duplicates() {
-        // The bound FR-068 states, pinned as a list. A sequence added for a
-        // command that is not in here is exactly the change this makes
-        // visible.
         let mut commands: Vec<&str> = SEQUENCES.iter().map(|s| s.command).collect();
         commands.sort_unstable();
         commands.dedup();

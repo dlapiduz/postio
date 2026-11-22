@@ -1,25 +1,9 @@
-//! Messages, and the windowed query the message list pages through.
-//!
-//! # The list must never load a mailbox
-//!
-//! docs/PRODUCT.md §18 and the `<16 ms` interaction budget in CLAUDE.md make this
-//! structural rather than aspirational: the only way to read more than one
-//! message out of this repository is [`MessageRepository::page`], which returns
-//! at most [`ListQuery::limit`] rows of exactly the fields a list row renders.
-//! There is deliberately no `all()`.
-//!
-//! # Why a cursor and not an offset
-//!
-//! Paging by `OFFSET` counts rows from the top every time, so it is `O(offset)`
-//! *and* it skips a row whenever a message arrives while the user is scrolling:
-//! everything shifts down by one and the next page starts one row too late.
-//! [`ListCursor`] is the sort key itself — `(sort_at, id)` for a folder,
-//! `(received_at, id)` for a query view — so the next
-//! page continues exactly where the last one ended no matter what arrived in
-//! between, and the index turns it into a seek.
-//!
-//! [`MessageRepository::page_at`] does exist, for a scrolling `GListModel` that
-//! genuinely needs random access by row number, and it carries the caveat.
+//! Messages, and the windowed query the message list pages through. The only way to read more than
+//! one message is [`MessageRepository::page`], at most [`ListQuery::limit`] rows of list-row
+//! fields; there is deliberately no `all()`.
+//! Cursor, not offset: [`ListCursor`] is the sort key itself, so a page continues where the last
+//! ended whatever arrived meanwhile, and the index turns it into a seek.
+//! [`MessageRepository::page_at`] exists for random access by row number and carries the caveat.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,11 +15,6 @@ use postio_model::{
     normalize_subject,
 };
 
-/// Which messages a list shows.
-///
-/// `postio-model`'s, not this crate's own — every reader of the message
-/// list wants the same answer to the same question, and #670 is what
-/// stopped this being one of five spellings of it.
 pub use postio_model::ListScope;
 
 use postio_model::promoted::PromotedHeaders;
@@ -47,75 +26,40 @@ use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// How many rows a page holds when the caller does not say.
-///
-/// About two screens at the 40px row height the design canvas specifies, so a
-/// scroll never waits for a query it could have started earlier.
 pub const DEFAULT_PAGE_SIZE: u32 = 50;
 
-/// What the message list shows for one message.
-///
-/// Deliberately not a [`Message`]: a list row carries no body, no headers, no
-/// recipients beyond the sender and no attachment metadata beyond whether there
-/// is one. Paging 50 of these is a few kilobytes.
+/// Not a [`Message`]: no body, headers, recipients beyond the sender, or attachment metadata beyond
+/// whether there is one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageListRow {
-    /// Local id.
     pub id: MessageId,
-    /// The thread this message belongs to, so the list can group without a
-    /// second query.
     pub thread_id: Option<ThreadId>,
-    /// Who it is from, for the first line of the row.
     pub from: Option<EmailAddress>,
-    /// `Subject`, verbatim.
     pub subject: Option<String>,
-    /// The snippet under the subject.
     pub preview: Option<String>,
-    /// When the server received it: the sort key of every list but a
-    /// folder's, which is [`Self::sort_at`].
     pub received_at: DateTime<Utc>,
-    /// Whether it has been read.
     pub seen: bool,
-    /// Whether it carries `\Flagged`.
     pub flagged: bool,
-    /// Whether it has been replied to.
     pub answered: bool,
-    /// Whether it is a draft, and if so which state its send is in.
-    ///
-    /// `None` for ordinary mail. A `bool` was not enough (#1491): Drafts holds
-    /// what you are writing, what failed and what cannot be confirmed, and the
-    /// Outbox holds what is on its way — and a row that can only say "draft"
-    /// renders all five identically, which is the defect this replaces.
+    /// `None` for ordinary mail. A `bool` was not enough (#1491): Drafts and the Outbox hold five
+    /// distinct states.
     pub send_state: Option<DraftState>,
-    /// When a scheduled send is due, for the rows that are one.
-    ///
-    /// `None` for everything else, including a send waiting only on the
-    /// drainer — "as soon as you can" is not a time anybody chose (FR-007).
+    /// `None` for everything else, including a send waiting only on the drainer.
     pub send_at: Option<DateTime<Utc>>,
-    /// Whether it has an attachment, for the paperclip.
     pub has_attachments: bool,
-    /// Size in bytes.
     pub size: u64,
-    /// How many messages its conversation holds, when it has one.
-    ///
-    /// A column of the list query rather than a lookup per row: reading it
-    /// through `ThreadRepository::get` cost each row five statements --
-    /// the conversation's members, participants, folders and labels -- for
-    /// one number (#1613).
+    /// A column of the list query: a lookup per row through `ThreadRepository::get` cost five
+    /// statements per row (#1613).
     pub thread_count: Option<u32>,
-    /// Its place in a folder's lists: `received_at` when it was filed, and
-    /// the wake time once a snooze has woken it (spec 007, research R7).
+    /// `received_at` when filed, the wake time once a snooze has woken it.
     pub sort_at: DateTime<Utc>,
 }
 
 impl MessageListRow {
-    /// Whether this row is a draft at all, for the callers that only want the
-    /// draft mark rather than which of the five states it is in.
     pub fn is_draft(&self) -> bool {
         self.send_state.is_some()
     }
 
-    /// The cursor that resumes paging immediately after this row.
     pub fn cursor(&self) -> ListCursor {
         ListCursor {
             received_at: self.received_at,
@@ -125,60 +69,43 @@ impl MessageListRow {
     }
 }
 
-/// A position in the list: the sort key of the last row already shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ListCursor {
-    /// The row's `received_at`, which a query view resumes by.
     pub received_at: DateTime<Utc>,
-    /// The row's `sort_at`, which a folder resumes by.
     pub sort_at: DateTime<Utc>,
-    /// The row's id, which breaks ties between messages received in the same
-    /// millisecond and is what makes the order total.
+    /// Breaks ties between messages received in the same millisecond, making the order total.
     pub id: MessageId,
 }
 
-/// One window of the message list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListQuery {
-    /// Which messages.
     pub scope: ListScope,
-    /// How many rows at most.
     pub limit: u32,
-    /// Where to resume; `None` starts at the newest message.
     pub after: Option<ListCursor>,
 }
 
 impl ListQuery {
-    /// Every message in one mailbox.
     pub fn mailbox(id: MailboxId) -> Self {
         Self::new(ListScope::Mailbox(id))
     }
 
-    /// Every message in an account.
     pub fn account(id: AccountId) -> Self {
         Self::new(ListScope::Account(id))
     }
 
-    /// Every flagged message in an account.
     pub fn flagged(id: AccountId) -> Self {
         Self::new(ListScope::Flagged(id))
     }
 
-    /// Every currently snoozed message in an account.
     pub fn snoozed(id: AccountId) -> Self {
         Self::new(ListScope::Snoozed(id))
     }
 
-    /// Every message on its way out of an account: queued, and sending.
-    ///
-    /// Not a mailbox — the rows are filed in Drafts and `send_state` is what
-    /// picks them out. See spec 003 and
-    /// `docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md`.
+    /// Not a mailbox: the rows are filed in Drafts and `send_state` picks them out (ADR 0036).
     pub fn outbox(id: AccountId) -> Self {
         Self::new(ListScope::Outbox(id))
     }
 
-    /// Every message of one thread, in every folder it touches.
     pub fn thread(id: ThreadId) -> Self {
         Self::new(ListScope::Thread(id))
     }
@@ -191,114 +118,60 @@ impl ListQuery {
         }
     }
 
-    /// Sets the window size.
     pub fn limit(mut self, limit: u32) -> Self {
         self.limit = limit;
         self
     }
 
-    /// Resumes after `cursor`.
     pub fn after(mut self, cursor: ListCursor) -> Self {
         self.after = Some(cursor);
         self
     }
 }
 
-/// A set of messages named by a predicate rather than by its members.
-///
-/// # Why this is not a `Vec<MessageId>`
-///
-/// `Ctrl+A` in an 81,717-message mailbox has to reach the statement that acts
-/// on it still shaped like a *query*. `postio-core`'s
-/// `Selection::Everything { except }` keeps it that way up to the handler; this
-/// is where the same idea lands in SQL, so archiving a whole mailbox is one
-/// `UPDATE` over an index rather than a hundred thousand ids that something had
-/// to enumerate first. docs/PRODUCT.md §18 forbids the enumeration outright, and the
-/// 16 ms interaction budget would not survive it either way.
-///
-/// Both variants render to a `WHERE` fragment, so every bulk write in this
-/// crate is the same statement with a different predicate in the middle.
+/// Not a `Vec<MessageId>`: `Ctrl+A` over a huge mailbox must reach the statement still shaped like
+/// a query, so archiving a whole mailbox is one `UPDATE` over an index. Both variants render to a
+/// `WHERE` fragment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageSet {
-    /// Every message a mailbox holds, less the rows taken back out of the
-    /// selection.
-    ///
-    /// Rows hidden pending a remote delete are excluded, because the set means
-    /// "what the list is showing" and the list does not show them.
+    /// Rows hidden pending a remote delete are excluded: the set means what the list shows.
     InMailbox {
-        /// The folder the predicate is about.
         mailbox: MailboxId,
-        /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
-    /// What Postio Focus's inbox lists of one account's inbox, less the
-    /// conversations taken back out of the selection (spec 007, T167).
-    ///
-    /// Focus's membership, not the folder's: mail held for a digest is not
-    /// listed, so a whole-view selection there never reaches it -- the same
-    /// test [`super::focus_excludes`] puts on every read of Focus's inbox.
-    /// A Focus row is a conversation folded across accounts, so what is
-    /// taken back out is conversations: every one a deselected row stands
-    /// for, in whichever account this unit is.
+    /// Focus's membership, not the folder's: mail held for a digest is not listed
+    /// ([`super::focus_excludes`]). What is taken back out is conversations: every one a deselected
+    /// row stands for, in whichever account this unit is.
     InFocusInbox {
-        /// The inbox the predicate is about.
         mailbox: MailboxId,
-        /// Messages the user deselected that belong to no conversation.
         except: Vec<MessageId>,
-        /// The conversations the deselected rows stand for, every folded
-        /// copy included.
         except_threads: Vec<ThreadId>,
     },
-    /// Every flagged message in an account, wherever it is filed, less the
-    /// rows taken back out of the selection.
-    ///
-    /// The smart-folder half of the predicate story (#52). Unlike
-    /// [`MessageSet::InMailbox`], this one is **not stable across the action
-    /// it accompanies** when that action writes the flag it selects on — see
-    /// [`MessageSet::predicate`] for the ordering that depends on it.
+    /// Not stable across the action it accompanies when that action writes the flag it selects on;
+    /// see [`MessageSet::predicate`] for the ordering (#52).
     Flagged {
-        /// The account the predicate is about.
         account: AccountId,
-        /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
-    /// Every message a run of queue rows named.
-    ///
-    /// This is how undo takes back a bulk action without naming its rows: the
-    /// queue already wrote one row per message, in one numbered run, so the run
-    /// *is* the set. See [`OperationRange`].
+    /// How undo takes back a bulk action without naming its rows: the queue wrote one row per
+    /// message in one numbered run, so the run is the set. See [`OperationRange`].
     Queued(OperationRange),
-    /// The rows another set names whose denormalised flag column already reads
-    /// `present`.
-    ///
-    /// This is what makes a bulk flag write *exact*. A toggle over a whole
-    /// mailbox changes only the rows that disagree with it, and the queue has
-    /// to carry precisely those — a queue row for a message that was already
-    /// read tells the server nothing and, worse, puts that message inside the
-    /// run undo takes back, so `u` would clear a flag the action never set.
-    /// Narrowing is a column comparison rather than a read, so the set stays a
-    /// predicate.
+    /// Makes a bulk flag write exact: only rows that disagree are changed, and the queue carries
+    /// precisely those. A queue row for an already-read message would put it inside the run undo
+    /// takes back, so `u` would clear a flag the action never set. Narrowing is a column
+    /// comparison, so the set stays a predicate.
     WithFlag {
-        /// The set being narrowed.
         set: Box<MessageSet>,
-        /// The column to compare.
         flag: ColumnFlag,
-        /// The value that column has to hold.
         present: bool,
     },
-    /// The rows another set names that are in one particular folder.
-    ///
-    /// See [`MessageSet::within`].
     InSourceMailbox {
-        /// The set being narrowed.
         set: Box<MessageSet>,
-        /// The folder to keep.
         mailbox: MailboxId,
     },
 }
 
 impl MessageSet {
-    /// Every message a mailbox holds.
     pub fn in_mailbox(mailbox: MailboxId) -> Self {
         MessageSet::InMailbox {
             mailbox,
@@ -306,24 +179,18 @@ impl MessageSet {
         }
     }
 
-    /// The folder the rows are in, when the set names one.
-    ///
-    /// `None` for [`MessageSet::Queued`], whose rows are wherever the operation
-    /// it names put them.
+    /// `None` for [`MessageSet::Queued`], whose rows are wherever the operation put them.
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
             MessageSet::InMailbox { mailbox, .. } | MessageSet::InFocusInbox { mailbox, .. } => {
                 Some(*mailbox)
             }
-            // A smart folder is not a folder, here as everywhere else --
-            // and an aggregate over accounts is further from one still.
             MessageSet::Flagged { .. } | MessageSet::Queued(_) => None,
             MessageSet::InSourceMailbox { mailbox, .. } => Some(*mailbox),
             MessageSet::WithFlag { set, .. } => set.mailbox(),
         }
     }
 
-    /// Every flagged message in an account.
     pub fn flagged(account: AccountId) -> Self {
         MessageSet::Flagged {
             account,
@@ -331,13 +198,8 @@ impl MessageSet {
         }
     }
 
-    /// This set narrowed to the rows that are in `mailbox` right now.
-    ///
-    /// What a move out of a smart folder is grouped by: the queue's
-    /// `Operation::Move` payload carries one `from` for the whole run it
-    /// writes, so a set spanning folders has to be enqueued a folder at a
-    /// time. Narrowing is a column comparison, so each group is still a
-    /// predicate rather than a list of ids.
+    /// What a move out of a smart folder groups by: `Operation::Move` carries one `from` per run,
+    /// so a set spanning folders is enqueued a folder at a time.
     pub fn within(self, mailbox: MailboxId) -> Self {
         MessageSet::InSourceMailbox {
             set: Box::new(self),
@@ -345,7 +207,6 @@ impl MessageSet {
         }
     }
 
-    /// This set narrowed to the rows whose `flag` column reads `present`.
     pub fn with_flag(self, flag: ColumnFlag, present: bool) -> Self {
         MessageSet::WithFlag {
             set: Box::new(self),
@@ -354,11 +215,7 @@ impl MessageSet {
         }
     }
 
-    /// The `WHERE` fragment this set resolves to, and its arguments, using
-    /// numbered parameters from `?first` upwards.
-    ///
-    /// The fragment always constrains `messages`, so it composes into any
-    /// statement whose `FROM` names that table.
+    /// Numbered parameters from `?first` upwards; the fragment always constrains `messages`.
     pub(crate) fn predicate(&self, first: usize) -> (String, Vec<i64>) {
         match self {
             MessageSet::InMailbox { mailbox, except } => {
@@ -398,8 +255,7 @@ impl MessageSet {
                 arguments.extend(except_threads.iter().map(|id| id.get()));
                 (sql, arguments)
             }
-            // The subquery is bounded by two integers, so SQLite seeks the
-            // queue's primary key rather than scanning it.
+            // Bounded by two integers, so SQLite seeks the queue's primary key.
             MessageSet::Queued(range) => (
                 format!(
                     "messages.id IN (SELECT target_id FROM operation_queue
@@ -409,18 +265,9 @@ impl MessageSet {
                 ),
                 vec![range.first.get(), range.last.get()],
             ),
-            // Deliberately *not* stable across the write it accompanies.
-            // `InMailbox`'s predicate still names the same rows after a move
-            // (they left the folder, so they leave the set, which is what the
-            // move meant). A role predicate does not: archiving everything
-            // flagged leaves the flag alone, so the set still matches
-            // afterwards -- but a bulk *unflag* over Flagged would empty its
-            // own predicate halfway through the statement.
-            //
-            // Which is why `enqueue_set` runs before the write in every bulk
-            // verb, and must go on doing so *on purpose* rather than by
-            // luck: the queue rows are written while the set still names the
-            // rows, and the write then narrows it to nothing.
+            // Deliberately not stable across the write it accompanies: an unflag over Flagged would
+            // empty its own predicate halfway through the statement. So `enqueue_set` must run
+            // before the write in every bulk verb.
             MessageSet::Flagged { account, except } => {
                 let mut sql = format!(
                     "messages.account_id = ?{first} AND messages.flagged = 1 \
@@ -447,8 +294,6 @@ impl MessageSet {
             }
             MessageSet::WithFlag { set, flag, present } => {
                 let (inner, mut arguments) = set.predicate(first);
-                // The inner set numbered its parameters from `first` upwards
-                // and used one per argument, so the next free number is this.
                 let next = first + arguments.len();
                 arguments.push(i64::from(*present));
                 (
@@ -460,27 +305,16 @@ impl MessageSet {
     }
 }
 
-/// A flag the `messages` table denormalises into a column of its own.
-///
-/// `\Seen` and `\Flagged` are stored twice: once inside the `flags` text and
-/// once as a boolean, so the list and the sidebar filter and count without
-/// parsing a string. Those two columns are what make a whole-mailbox flag
-/// write affordable — the column is both the predicate that selects the rows
-/// which disagree and half of the write itself, so nothing has to be read.
-///
-/// Everything else lives only in the text, and a bulk write over it is not
-/// offered: there is no column to compare, so finding the rows that disagree
-/// would mean scanning strings across the mailbox.
+/// `\Seen` and `\Flagged` are stored twice, in `flags` and as a boolean column, so list and sidebar
+/// filter and count without parsing text. The column is both the predicate selecting rows that
+/// disagree and half the write. Other flags have no bulk write: there is no column to compare.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnFlag {
-    /// `\Seen`, in `messages.seen`.
     Seen,
-    /// `\Flagged`, in `messages.flagged`.
     Flagged,
 }
 
 impl ColumnFlag {
-    /// The one this flag denormalises to, if it denormalises to one.
     pub fn of(flag: &Flag) -> Option<Self> {
         match flag {
             Flag::Seen => Some(ColumnFlag::Seen),
@@ -489,7 +323,6 @@ impl ColumnFlag {
         }
     }
 
-    /// The flag this is, in the vocabulary the rest of the application speaks.
     pub fn flag(self) -> Flag {
         match self {
             ColumnFlag::Seen => Flag::Seen,
@@ -497,7 +330,6 @@ impl ColumnFlag {
         }
     }
 
-    /// The column holding it.
     fn column(self) -> &'static str {
         match self {
             ColumnFlag::Seen => "seen",
@@ -506,217 +338,114 @@ impl ColumnFlag {
     }
 }
 
-/// Where a flag change came from, which decides whether the row is now ahead of
-/// the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlagSource {
-    /// The user did it. The change has to be pushed, so the row is dirty.
     Local,
-    /// The server told us. By definition not ahead of the server.
     Server,
 }
 
-/// What [`MessageRepository::server_states`] reads of one stored row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredServerState {
-    /// The row.
     pub id: MessageId,
-    /// Its uid, under the generation it was asked for.
     pub uid: Uid,
-    /// Its backend-neutral identity.
     pub remote_id: Option<RemoteId>,
-    /// The modification sequence it was last written at.
     pub mod_seq: Option<ModSeq>,
-    /// Its flags and keywords, as stored.
     pub flags: FlagSet,
-    /// The thread it was filed into, or `None` if it never was.
     pub thread_id: Option<ThreadId>,
 }
 
-/// What one [`MessageRepository::upsert_batch`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UpsertReport {
-    /// Messages that were not known locally.
     pub inserted: usize,
-    /// Which rows those are: the messages this batch wrote a row for, as
-    /// distinct from ones it matched and updated -- among them a sent copy
-    /// this client filed before the server named it, which a sync adopts by
-    /// its Message-ID. What counts a message once, on the pass that first
-    /// filed it (the `correspondents` a Sent folder's sync records).
+    /// The messages this batch wrote a row for, not ones it matched and updated (including a sent
+    /// copy adopted by Message-ID): counts a message once, on the pass that first filed it.
     pub inserted_ids: Vec<MessageId>,
-    /// Messages that already had a row under the same server identity.
     pub updated: usize,
-    /// Messages whose flags the queue was still holding intent about, so the
-    /// server's copy was merged rather than written wholesale (#317).
-    ///
-    /// Reported rather than silent for the same reason `shadowed_by_pending`
-    /// is: a number that moves is how "the resync undid my read" gets
-    /// diagnosed next time without a debugger.
+    /// Reported so "the resync undid my read" is diagnosable without a debugger (#317).
     pub flags_preserved: usize,
-    /// Messages whose local labels the sync carried forward rather than
-    /// clearing, because nothing on the wire carries a label yet (#780).
-    ///
-    /// Reported for the same reason `flags_preserved` is: it is the number
-    /// that says "the resync did not eat my labels" without a debugger.
+    /// Nothing on the wire carries a label yet (#780).
     pub labels_preserved: usize,
-    /// Messages this store already holds as a draft of its own, and therefore
-    /// did not store a second time. See [`MessageRepository::upsert_batch`].
     pub own_drafts: usize,
-    /// Messages the server still lists in a mailbox the user has already moved
-    /// them out of, whose move has not reached the server yet — so re-creating
-    /// the row would put back something the user watched leave. See
+    /// Re-creating the row would put back something the user watched leave. See
     /// [`MessageRepository::upsert_batch`] and #368.
     pub shadowed_by_pending: usize,
 }
 
-/// A message's decoded content, as text.
+/// `None` is no such part; `Some("")` is a part that exists and is empty: the reading pane
+/// distinguishes them, and collapsing them made a body-less message look like one still downloading
+/// (#70).
 ///
-/// The bytes are columns on the message's row, zstd-compressed (ADR 0020).
-/// Callers never see that: they hand this type strings and get strings back.
-///
-/// `None` is "there is no such part". `Some("")` is a part that exists and is
-/// empty, which is a different fact — the reading pane distinguishes them, and
-/// collapsing the two is how a message that genuinely had no body became
-/// indistinguishable from one still downloading (#70).
-///
-/// Not on [`Message`] because the list never wants it: paging a mailbox reads
-/// rows of a few hundred bytes, and a body on every one of them would be the
-/// whole mailbox in memory.
+/// Not on [`Message`]: a body on every list row would be the whole mailbox in memory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 
 pub struct StoredBody {
-    /// The `text/plain` body.
     pub text: Option<String>,
-    /// The `text/html` body.
     pub html: Option<String>,
-    /// The full header block.
     pub headers: Option<String>,
-    /// Whether [`postio_model::headers::BLOCK_LIMIT`] cut that block short.
-    ///
-    /// Part of the body rather than a column a caller sets separately: the
-    /// block and the fact that it is partial are one piece of information, and
-    /// a writer that could set them apart would eventually set one.
+    /// Part of the body, not a separate column: the block and its partialness are one fact, and a
+    /// writer that could set them apart eventually would.
     pub headers_truncated: bool,
-    /// Whether this body is a guess rather than what was sent.
-    ///
-    /// [`postio_model::mime::ParsedMessage::encoding_problems`], carried
-    /// through so a reader can say so. Here for the same reason
-    /// `headers_truncated` is: a body and the fact that it may not be the
-    /// sender's words are one piece of information, and a `StoredBody` that
-    /// can be built without answering this is one somebody eventually builds
-    /// without answering it (#901).
+    /// [`postio_model::mime::ParsedMessage::encoding_problems`], carried so a reader can say so;
+    /// part of `StoredBody` so nobody builds one without answering it (#901).
     pub encoding_problems: bool,
 }
 
-/// One message whose header block was never stored, and what can be done
-/// about it (#884).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeaderRepair {
-    /// The row.
     pub message_id: MessageId,
-    /// Its raw source, when there is one. `Some` means the block can be
-    /// recovered from disk with no network call at all; `None` means the only
-    /// way to it is a fetch — the `partial` state, which never stores a raw
-    /// blob, or a store whose raw source has been evicted (PRODUCT.md §6).
+    /// `Some` means the block is recoverable from disk with no network; `None` means a fetch is the
+    /// only way (the `partial` state, or an evicted raw source).
     pub raw_blob_id: Option<BlobId>,
 }
 
-/// One message still missing all or part of its body.
-///
-/// Everything the backfill scheduler needs to turn a row into a fetch: which
-/// message, the mailbox path to ask the server for it under, and the sort key
-/// it queues by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackfillCandidate {
-    /// The local row.
     pub message_id: MessageId,
-    /// The mailbox it is in.
     pub mailbox_id: MailboxId,
-    /// That mailbox's path on the server, for the `FETCH` the backend issues.
     pub mailbox_path: String,
-    /// The server's identifier for the message.
     pub uid: Uid,
-    /// The backend's own identity — what the fetch is addressed by (#543).
     pub remote_id: RemoteId,
-    /// `RFC822.SIZE`, as the header fetch reported it.
     pub size: u64,
-    /// What a text-axis fetch of it costs: [`size`](Self::size) less the
-    /// attachment parts `BODYSTRUCTURE` reported, which that fetch leaves on
-    /// the server (ADR 0017).
-    ///
-    /// What the background lane's size cap is measured against. Against the
-    /// whole message, a short note carrying a six-megabyte PDF never had its
-    /// few kilobytes of words fetched at all. An estimate, and a low one by
-    /// whatever small inline images ride with the text; equal to `size` for a
-    /// row whose structure was never recorded, which is fetched whole.
+    /// [`size`](Self::size) less the attachment parts `BODYSTRUCTURE` reported, which a text-axis
+    /// fetch leaves on the server (ADR 0017). The background lane's size cap is measured against
+    /// it, so a short note carrying a big PDF still has its words fetched. An estimate; equals
+    /// `size` when the structure was never recorded.
     pub text_size: u64,
-    /// When the server received it. The backlog's secondary sort key.
     pub received_at: DateTime<Utc>,
-    /// That mailbox's role, so the backlog can rank a body by the folder it
-    /// is in before it ranks it by date.
     pub mailbox_role: MailboxRole,
 }
 
 impl BackfillCandidate {
-    /// With its [`text_size`](Self::text_size), never above the whole.
     fn with_text_size(mut self, text_size: u64) -> Self {
         self.text_size = text_size.min(self.size);
         self
     }
 }
 
-/// What an account's mail costs, and how much of it is here.
-///
-/// # Known before anything is downloaded
-///
-/// `BODYSTRUCTURE` arrives with the header sync, so `messages.size` and
-/// `attachments.size` are populated for mail nobody has fetched a byte of.
-/// That is what lets Postio say *"1.4 GB of mail, 11 GB of attachments"*
-/// before spending either — the one place in this design where the honest
-/// number is also the free one (ADR 0017).
-///
-/// Bytes are as the server reported them: wire sizes, still base64-inflated
-/// for anything encoded. That is the right unit for "what will this download
-/// cost", which is the question being asked. It is *not* the size on disk —
-/// blobs are compressed — and [`BlobStore::len_of`](crate::BlobStore::len_of)
-/// is what answers that one.
+/// Known before anything is downloaded: `BODYSTRUCTURE` arrives with the header sync (ADR 0017).
+/// Bytes are wire sizes, still base64-inflated, not size on disk;
+/// [`BlobStore::len_of`](crate::BlobStore::len_of) answers that.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StorageFootprint {
-    /// Messages the account has locally, headers or more.
     pub messages: u64,
-    /// Every byte of every message, as `RFC822.SIZE` reported it.
     pub total_bytes: u64,
-    /// Of that, what attachment payloads account for.
-    ///
     /// Around 90% on a real account, and the reason the two axes exist.
     pub attachment_bytes: u64,
-    /// What is already downloaded, on the same wire-size scale.
     pub local_bytes: u64,
-    /// Whether every selectable mailbox has finished a header pass.
-    ///
-    /// `false` means these numbers are a **lower bound** and will grow. A
-    /// surface must say so — a total that silently climbs every few seconds
-    /// reads as a bug, and a total that is wrong is worse than one that admits
-    /// it is not finished yet.
+    /// `false` means these numbers are a lower bound and will grow; a surface must say so.
     pub complete: bool,
 }
 
 impl StorageFootprint {
-    /// What the text axis has to pull: everything that is not payload.
     pub fn text_bytes(&self) -> u64 {
         self.total_bytes.saturating_sub(self.attachment_bytes)
     }
 
-    /// Whether there is no mail to describe.
-    ///
-    /// The empty state, which owes an answer of its own rather than "0 B of
-    /// 0 B" — a claim that reads like a bug.
     pub fn is_empty(&self) -> bool {
         self.messages == 0
     }
 }
 
-/// Reads and writes [`Message`] rows.
 #[derive(Debug)]
 pub struct MessageRepository<'a> {
     connection: &'a Connection,
@@ -730,22 +459,12 @@ raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
 html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested,
 unsubscribe_offered, automation, content_namespace, content_key";
 
-/// How many ids one `IN (...)` carries.
-///
-/// Well under `SQLITE_MAX_VARIABLE_NUMBER`, which is 32766 on anything
-/// current and 999 on builds old enough to matter. A page of hits is 50 and a
-/// whole result set is capped at 200, so one chunk is the normal case — this
-/// is here for the day one of those numbers moves, not for today.
+/// Well under `SQLITE_MAX_VARIABLE_NUMBER`; one chunk is the normal case.
 const ID_CHUNK: usize = 500;
 
-/// The columns a list row needs, and not one more.
-///
-/// The sender comes from a correlated lookup rather than a join so the plan
-/// stays "walk the list index, then one index seek per row shown" — bounded by
-/// the window, never by the mailbox. Its name is the one the user gave the
-/// address's live owner when they gave one, and the header's otherwise
-/// (specs/005-contacts FR-032): two more primary-key seeks per row, no more
-/// statements.
+/// The sender comes from a correlated lookup, not a join, so the plan is "walk the list index, then
+/// one seek per row shown", bounded by the window. Its name is the live owner's user-given name if
+/// any, else the header's: two more primary-key seeks per row.
 pub(crate) const LIST_COLUMNS: &str = concat!(
     "\
 messages.id, messages.thread_id, messages.subject, messages.preview, messages.received_at,
@@ -766,26 +485,19 @@ messages.size, messages.send_state, messages.send_at,
 messages.sort_at"
 );
 
-/// [`LIST_COLUMNS`], read off the message `alias` names rather than off
-/// `messages`: for a statement whose list row is one of several things it
-/// reads, as Focus's window reads its representative alongside the
-/// conversation. Rewritten from the one list, never copied, for the reason
-/// `ThreadRepository`'s `latest_messages_for` gives.
+/// Rewritten from the one list, never copied, for the reason `ThreadRepository`'s
+/// `latest_messages_for` gives.
 pub(crate) fn list_columns_of(alias: &str) -> String {
     LIST_COLUMNS.replace("messages.", &format!("{alias}."))
 }
 
 impl<'a> MessageRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Inserts a message with its recipients, attachments and labels.
-    ///
-    /// Decoded body and header bytes are written to the content owner through
-    /// [`MessageRepository::set_body`]. An immutable backend identity can reuse
-    /// an existing owner's bytes and availability.
+    /// Body and header bytes go through [`MessageRepository::set_body`]; an immutable backend
+    /// identity can reuse an existing owner's bytes and availability.
     pub async fn create(&self, message: &mut Message) -> Result<MessageId> {
         sql::in_scope(self.connection, |transaction| async move {
             let id = insert(&transaction, message).await?;
@@ -796,11 +508,8 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Writes a message back, replacing its recipients, attachments and labels.
-    ///
-    /// Takes `&mut` because the attachment rows are rewritten and therefore
-    /// re-issued: the value would otherwise be left holding ids that no longer
-    /// exist.
+    /// Takes `&mut` because attachment rows are rewritten and re-issued, which would leave the
+    /// value holding stale ids.
     pub async fn update(&self, message: &mut Message) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
             write_update(&transaction, message).await?;
@@ -809,100 +518,51 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Inserts or updates every message in `batch`, in one transaction, and
-    /// removes from `batch` the ones this store already holds as drafts.
+    /// One transaction: a resync of a thousand messages is otherwise a thousand `fsync`s, and a
+    /// half-applied page is a mailbox the next sync must reconcile with itself. A message is
+    /// already known by `(mailbox, UIDVALIDITY, UID)`.
     ///
-    /// This is the shape sync writes in: a `FETCH` returns a page of messages,
-    /// some of which are already known. A message is "already known" when it
-    /// has the same `(mailbox, UIDVALIDITY, UID)`, which is the only identity
-    /// the server guarantees — a locally composed message has no UID and is
-    /// therefore always an insert.
-    ///
-    /// One transaction rather than one per message: a resync of a thousand
-    /// messages is a thousand `fsync`s otherwise, and a half-applied page is a
-    /// mailbox the next sync would have to reconcile against itself.
-    ///
-    /// # Why it takes a `Vec` and shortens it
-    ///
-    /// A draft is appended to the account's Drafts mailbox, and the next pass
-    /// over that folder fetches it straight back — so without this the same
-    /// unfinished message exists twice locally: once as the composer's live
-    /// `drafts` row, and once as a `messages` row that is a read-only snapshot
-    /// of a buffer still being typed into. The composer owns a draft this
-    /// client wrote (#51). A draft written by *another* client has no local
-    /// draft row, is not matched here, and stays an ordinary message — which
-    /// is the reason the folder is worth syncing at all.
-    ///
-    /// It is done here, rather than in the two sync passes that call this,
-    /// because the callers go on to thread each message and record its
-    /// correspondents. A skip that left the message in the batch would thread
-    /// a row that was never written; a skip each caller had to remember is one
-    /// a third caller would not. Shortening the `Vec` makes the batch mean
-    /// "what was stored", which is what those loops already assume.
-    ///
-    /// # A pending move shadows what the server says (#368)
-    ///
-    /// The same shortening, for the same reason, on a second set. Archiving is
-    /// local-first: the row moves to Archive in SQLite, a `Move` is queued, the
-    /// list repaints, and the server is told when the queue drains. Until then
-    /// the server still lists the message where it was, so a resync of that
-    /// mailbox fetches it, finds no row under `(mailbox, validity, uid)` —
-    /// because the row is in Archive now — and inserts a fresh one. The message
-    /// the user just archived is back in the inbox, and stays there until the
-    /// queue drains, which on a link that is down is indefinite. It then
-    /// vanishes again on its own, with nothing in the interface explaining any
-    /// of it.
-    ///
-    /// So a message with an undrained `Move` or `Delete` out of the mailbox
-    /// being written is skipped: the local answer is the one the user sees
-    /// until the server agrees, which is what local-first means beyond not
-    /// blocking. The shadow is keyed on the queue row's *snapshot* of the
-    /// server coordinates (#289), because the local half of the move nulled
-    /// them on the message row itself.
-    ///
-    /// It lifts as soon as the operation settles — `Done` or `Failed`. A move
-    /// the server refused must stop hiding the message, or a failed archive
-    /// loses mail silently, which is worse than the bug this fixes.
+    /// Takes a `Vec` and shortens it, so the batch means "what was stored" for the callers that go
+    /// on to thread each message and record correspondents. It drops:
+    /// - the server's copy of a draft this client wrote, which the composer owns (#51); a draft
+    /// from another client has no local draft row and stays ordinary mail;
+    /// - a message with an undrained `Move` or `Delete` out of this mailbox (#368): archiving is
+    /// local-first, so a resync would otherwise re-create the row and the archived message would
+    /// reappear until the queue drains. The shadow is keyed on the queue row's snapshot of server
+    /// coordinates (#289) and lifts when the operation settles, `Done` or `Failed`, so a refused
+    /// move cannot lose mail.
     pub async fn upsert_batch(&self, batch: &mut Vec<Message>) -> Result<UpsertReport> {
         sql::in_scope(self.connection, |transaction| async move {
             let mut report = UpsertReport::default();
 
-            // Read once for the batch rather than per message: a store holds a
-            // handful of drafts, and a page holds hundreds of messages.
+            // Read once for the batch: a store holds a handful of drafts, a page hundreds of
+            // messages.
             let mine = own_draft_copies(&transaction).await?;
             let before = batch.len();
             batch.retain(|message| match &message.server.remote_id {
                 Some(remote_id) => {
                     !mine.contains(&(message.mailbox_id, remote_id.as_str().to_owned()))
                 }
-                // Nowhere to have landed, so nothing to be a second copy of.
                 None => true,
             });
             report.own_drafts = before - batch.len();
 
-            // The same shape again, on the messages the user has already moved
-            // out of this mailbox and the server has not been told about yet.
             let shadowed = shadowed_by_pending_operation(&transaction).await?;
             let before = batch.len();
             batch.retain(|message| match &message.server.remote_id {
                 Some(remote_id) => {
                     !shadowed.contains(&(message.mailbox_id, remote_id.as_str().to_owned()))
                 }
-                // No server identity, so no queue row can be shadowing it: the
-                // snapshot is of server coordinates, and this message has none.
                 None => true,
             });
             report.shadowed_by_pending = before - batch.len();
 
-            // Read once for the batch, like the two snapshots above.
             let unacknowledged = unacknowledged_flag_changes(&transaction).await?;
 
             for message in batch.iter_mut() {
-                // The identity is what names a message (#543); the wire pair is
-                // the fallback for rows synced before it existed. Matching the
-                // pair first would let a backend whose uids are synthetic
-                // enumeration hints (#544) insert a second copy of a message it
-                // already holds.
+                // The identity names a message (#543); the wire pair is the fallback for rows
+                // synced before it. Matching the pair first would let a backend with synthetic uids
+                // (#544) insert a second copy.
                 let by_identity = match &message.server.remote_id {
                     Some(remote_id) => {
                         find_by_remote_id(&transaction, message.mailbox_id, remote_id).await?
@@ -923,10 +583,9 @@ impl<'a> MessageRepository<'a> {
                     }
                     _ => None,
                 };
-                // Last, and only for a row with no server coordinates to match
-                // on: the copy this client wrote before the server had named it
-                // (#942). Tried after both server-identity routes so a message
-                // the server *can* place is never resolved by a `Message-ID`.
+                // Last, for a row with no server coordinates: the copy this client wrote before the
+                // server named it (#942). After both server-identity routes, so a message the
+                // server can place is never resolved by `Message-ID`.
                 let existing = match (existing, &message.rfc_message_id) {
                     (None, Some(rfc)) => {
                         find_awaiting_identity(
@@ -937,8 +596,7 @@ impl<'a> MessageRepository<'a> {
                         )
                         .await?
                     }
-                    // No `Message-ID` to match on, as with a server that
-                    // answered the move without a `COPYUID` (#1994).
+                    // No `Message-ID`: a server that answered the move without a `COPYUID` (#1994).
                     (None, None) => {
                         find_awaiting_headerless(
                             &transaction,
@@ -955,28 +613,16 @@ impl<'a> MessageRepository<'a> {
                 match existing {
                     Some(id) => {
                         message.id = id;
-                        // The server's flags, plus whatever the queue is still
-                        // holding on this message's behalf (#317). Without this a
-                        // `CHANGEDSINCE` pass that runs before the drainer writes
-                        // the server's stale copy over a local read, the row goes
-                        // bold again, and the operation eventually sets a `\Seen`
-                        // whose effect nobody ever sees.
+                        // The server's flags plus what the queue still holds for this message
+                        // (#317): otherwise a `CHANGEDSINCE` pass before the drainer writes the
+                        // server's stale copy over a local read.
                         if let Some(changes) = unacknowledged.get(&id) {
                             message.flags = with_unacknowledged(&message.flags, changes);
                             report.flags_preserved += 1;
                         }
-                        // Labels are local-only today: nothing on the wire
-                        // carries them, so a `Message` built from a fetch has
-                        // none, and `write_update` replaces the whole set. That
-                        // deleted every label a person had put on a message the
-                        // next time its mailbox synced (#780) -- a feature undone
-                        // by a layer that never knew about it, which is the shape
-                        // `postio-bl2` names.
-                        //
-                        // An empty set therefore means "this sync has nothing to
-                        // say about labels", not "the server says none". When a
-                        // sync does learn to carry them it will supply a set, and
-                        // that set wins here without this needing to change.
+                        // Labels are local-only: nothing on the wire carries them, so an empty set
+                        // means this sync has nothing to say, not that the server says none (#780).
+                        // A set a sync supplies wins.
                         if message.labels.is_empty() {
                             message.labels = read_labels(&transaction, id).await?;
                             if !message.labels.is_empty() {
@@ -993,8 +639,8 @@ impl<'a> MessageRepository<'a> {
                         report.inserted_ids.push(message.id);
                     }
                 }
-                // Another machine's filing, carried on the message (#2076).
-                // No statement unless the flags carry a reason's keyword.
+                // Another machine's filing, carried on the message (#2076); no statement unless the
+                // flags carry a reason's keyword.
                 super::FilterDecisionRepository::new(&transaction)
                     .follow(message.id, &message.flags)
                     .await?;
@@ -1005,13 +651,8 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Whether this message is one being sent, and in which state.
-    ///
-    /// `None` for ordinary mail, which is almost every row. On its own rather
-    /// than on [`Message`] because it is asked for in one place -- the reading
-    /// pane, deciding which verbs a message gets (#1525) -- and widening the
-    /// message read for it would pay for the column on every caller that does
-    /// not care.
+    /// `None` for ordinary mail. Separate from [`Message`]: only the reading pane asks (#1525), and
+    /// widening the message read would cost every caller.
     pub async fn send_state(&self, id: MessageId) -> Result<Option<DraftState>> {
         let state: Option<String> = sql::first(
             self.connection,
@@ -1029,10 +670,7 @@ impl<'a> MessageRepository<'a> {
             .transpose()
     }
 
-    /// One message, with its recipients, attachments and labels.
-    ///
-    /// The body and headers are empty: those bytes are in the blob store. See
-    /// [`MessageRepository::body`].
+    /// The body and headers are empty; see [`MessageRepository::body`].
     pub async fn get(&self, id: MessageId) -> Result<Option<Message>> {
         let mut statement = sql::statement(
             self.connection,
@@ -1051,10 +689,8 @@ impl<'a> MessageRepository<'a> {
         Ok(Some(message))
     }
 
-    /// The newest message's id: every message stored after it has a larger
-    /// one, since ids are never reused (`AUTOINCREMENT`). What Focus marks
-    /// the mail it has accounted for with (spec 007 FR-134). One lookup at
-    /// the end of the key.
+    /// Ids are never reused (`AUTOINCREMENT`), so every message stored after it has a larger one:
+    /// what Focus marks the mail it has accounted for with. One lookup at the end of the key.
     pub async fn newest_id(&self) -> Result<Option<MessageId>> {
         sql::first(
             self.connection,
@@ -1065,11 +701,8 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// A window of `mailbox`'s mail as Focus's inbox holds it -- what the
-    /// list shows, less the mail a digest holds -- newest first, after
-    /// `after` (a row's `sort_at` and id): what a sweep of the inbox walks,
-    /// a window at a time, so the inbox is never read whole (spec 007
-    /// FR-118). One statement, a seek on `idx_messages_list`.
+    /// What a sweep of the inbox walks a window at a time, so the inbox is never read whole. One
+    /// statement, a seek on `idx_messages_list`.
     pub async fn focus_inbox_window(
         &self,
         mailbox: MailboxId,
@@ -1086,7 +719,6 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::focus_inbox_window`] runs.
     pub fn explain_focus_inbox_window() -> String {
         format!(
             "SELECT id, sort_at FROM messages
@@ -1097,38 +729,24 @@ impl<'a> MessageRepository<'a> {
         )
     }
 
-    /// One window of the message list, newest first.
     pub async fn page(&self, query: &ListQuery) -> Result<Vec<MessageListRow>> {
         let sql = self.explain(query);
         sql::all(self.connection, &sql, page_arguments(query), read_list_row).await
     }
 
-    /// One window at a row offset, for a list model that scrolls by index.
-    ///
-    /// Prefer [`MessageRepository::page`]: an offset is counted from the top of
-    /// the list every time, so a message arriving while the user scrolls shifts
-    /// every row down and this window silently skips one.
+    /// Prefer [`MessageRepository::page`]: an offset counts from the top every time, so a message
+    /// arriving while the user scrolls shifts every row and this window silently skips one.
     pub async fn page_at(&self, query: &ListQuery, offset: u32) -> Result<Vec<MessageListRow>> {
         let sql = format!("{} OFFSET {offset}", self.explain(query));
         sql::all(self.connection, &sql, page_arguments(query), read_list_row).await
     }
 
-    /// The list rows for `ids`, in the order given.
+    /// For search hits, which no [`ListScope`] fits: ranked, spanning folders, with no offset.
     ///
-    /// For a set of search hits, which none of the [`ListScope`]s fits: they
-    /// are ranked rather than sorted, they can span folders, and there is no
-    /// offset to page by because the ids themselves are the answer.
+    /// The order is restored after the read: SQL answers `IN` in primary-key order, close enough to
+    /// date order that a lost ranking would look right in fixtures.
     ///
-    /// **The order is restored after the read, and that is the point.** SQL
-    /// answers an `IN` in whatever order it walks the rows, which for the
-    /// `messages` primary key is id order — near enough to date order that a
-    /// lost ranking would look right in every fixture and be wrong exactly
-    /// where relevance was what the user wanted.
-    ///
-    /// Ids the store no longer holds are dropped rather than faked. A message
-    /// deleted between the search and this read is a shorter answer, not an
-    /// error — the index and the store are allowed to disagree for a moment,
-    /// and the list can render 199 rows perfectly well.
+    /// Ids the store no longer holds are dropped: the index and store may disagree for a moment.
     pub async fn rows_for(&self, ids: &[MessageId]) -> Result<Vec<MessageListRow>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -1156,7 +774,6 @@ impl<'a> MessageRepository<'a> {
         Ok(ids.iter().filter_map(|id| found.get(id).cloned()).collect())
     }
 
-    /// How many messages the list would show. Ignores the window.
     pub async fn count(&self, query: &ListQuery) -> Result<u32> {
         let sql = format!(
             "SELECT count(*) FROM messages WHERE {}",
@@ -1167,11 +784,7 @@ impl<'a> MessageRepository<'a> {
         Ok(count as u32)
     }
 
-    /// The SQL a page query runs.
-    ///
-    /// Exposed so a test can put `EXPLAIN QUERY PLAN` in front of it: the list
-    /// query is on the hot path, and "does this still use the index and still
-    /// avoid a sort" is a property worth asserting rather than remembering.
+    /// Exposed so a test can put `EXPLAIN QUERY PLAN` in front of the hot-path list query.
     pub fn explain(&self, query: &ListQuery) -> String {
         format!(
             "SELECT {LIST_COLUMNS} FROM messages WHERE {} \
@@ -1182,7 +795,6 @@ impl<'a> MessageRepository<'a> {
         )
     }
 
-    /// Replaces a message's flags.
     pub async fn set_flags(
         &self,
         id: MessageId,
@@ -1217,12 +829,9 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Moves messages into another mailbox, returning how many moved.
-    ///
-    /// The server identity is cleared: a UID belongs to the mailbox that issued
-    /// it, and keeping it would make the next resync match the wrong message.
-    /// The rows are marked as having pending operations, because the move still
-    /// has to reach the server.
+    /// The server identity is cleared: a UID belongs to the mailbox that issued it, and keeping it
+    /// would make the next resync match the wrong message. The rows are marked as having pending
+    /// operations.
     pub async fn move_to(&self, ids: &[MessageId], mailbox_id: MailboxId) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
@@ -1240,18 +849,12 @@ impl<'a> MessageRepository<'a> {
         Ok(sql::execute(self.connection, &sql, arguments).await? as usize)
     }
 
-    /// Gives a moved row the server identity the move's answer named (#1983).
+    /// [`move_to`] clears a row's coordinates, and a later sync can only re-attach the server's
+    /// copy by `Message-ID`, which a message without one lacks, so its copy became a second row
+    /// (#1983). The server's `COPYUID` names the copy exactly.
     ///
-    /// [`move_to`] clears a row's coordinates, and a later sync of the
-    /// destination can only re-attach the server's copy by `Message-ID`
-    /// ([`MessageRepository::upsert_batch`]) -- which a message without one
-    /// does not have, so its copy was inserted as a second row and the one in
-    /// view never got a UID. The server's `COPYUID` names the copy exactly,
-    /// whatever the headers say, so the drainer writes it here.
-    ///
-    /// Only a row still in `mailbox_id` with no identity at all is written: a
-    /// message the person has moved on again, or one a sync has already
-    /// adopted, is left as it is. Returns whether a row was written.
+    /// Only a row still in `mailbox_id` with no identity at all is written. Returns whether a row
+    /// was written.
     ///
     /// [`move_to`]: MessageRepository::move_to
     pub async fn adopt_moved_identity(
@@ -1280,18 +883,9 @@ impl<'a> MessageRepository<'a> {
         Ok(changed > 0)
     }
 
-    /// The distinct folders the rows a [`MessageSet`] names are in right now.
-    ///
-    /// One indexed `SELECT DISTINCT` over the same predicate the write uses,
-    /// so it costs the *folders* the set spans rather than the messages in
-    /// it — an account with 81,717 flagged messages across six folders
-    /// answers six rows.
-    ///
-    /// A move out of a smart folder needs this because the queue's
-    /// `Operation::Move` payload carries a single `from` for the whole run
-    /// `enqueue_set` writes, so the move has to be grouped by source folder
-    /// and each group enqueued with its own origin. Narrowing a group is
-    /// [`MessageSet::within`], which keeps every group a predicate.
+    /// One indexed `SELECT DISTINCT` over the write's predicate, so it costs the folders the set
+    /// spans, not the messages. A move out of a smart folder needs it because `Operation::Move`
+    /// carries one `from` per run; see [`MessageSet::within`].
     pub async fn mailboxes_of_set(&self, set: &MessageSet) -> Result<Vec<MailboxId>> {
         let (predicate, arguments) = set.predicate(1);
         let sql = format!("SELECT DISTINCT messages.mailbox_id FROM messages WHERE {predicate}");
@@ -1303,16 +897,8 @@ impl<'a> MessageRepository<'a> {
         Ok(rows)
     }
 
-    /// Moves every message a [`MessageSet`] names into `mailbox_id`,
-    /// returning how many moved.
-    ///
-    /// The bulk twin of [`MessageRepository::move_to`], and the reason
-    /// `Ctrl+A` then `a` is affordable: one `UPDATE` over the mailbox index,
-    /// whatever the mailbox holds. Nothing is read first — not to count the
-    /// rows, not to name them — so the cost is the write and no more.
-    ///
-    /// The server identity is cleared for the same reason [`move_to`] clears
-    /// it: a UID belongs to the mailbox that issued it.
+    /// One `UPDATE` over the mailbox index with nothing read first, whatever the mailbox holds. The
+    /// server identity is cleared as [`move_to`] does.
     ///
     /// [`move_to`]: MessageRepository::move_to
     pub async fn move_set(&self, set: &MessageSet, mailbox_id: MailboxId) -> Result<usize> {
@@ -1328,11 +914,7 @@ impl<'a> MessageRepository<'a> {
         Ok(sql::execute(self.connection, &sql, parameters).await? as usize)
     }
 
-    /// How many messages a [`MessageSet`] names.
-    ///
-    /// One indexed `count(*)`. The undo toast needs a number — *Archived
-    /// 81,717 messages* — and this is the only thing about a bulk action that
-    /// has to know one.
+    /// One indexed `count(*)`, for the undo toast's number.
     pub async fn count_set(&self, set: &MessageSet) -> Result<u32> {
         let (predicate, arguments) = set.predicate(1);
         let sql = format!("SELECT count(*) FROM messages WHERE {predicate}");
@@ -1340,30 +922,16 @@ impl<'a> MessageRepository<'a> {
         Ok(count as u32)
     }
 
-    /// Sets or clears one flag across every message a [`MessageSet`] names,
-    /// returning how many rows it wrote.
+    /// One `UPDATE` with nothing read.
     ///
-    /// The bulk twin of [`set_flags`], and the second half of what makes
-    /// `Ctrl+A` affordable: one `UPDATE` over the mailbox index, whatever the
-    /// mailbox holds. Nothing is read — not the rows, not their flags.
+    /// The flags text is rebuilt without reading it: the five system flags with columns (`\Seen`,
+    /// `\Answered`, `\Flagged`, `\Deleted`, `\Draft`) are the five lowest-ranked persistable flags,
+    /// so the text is those five in column order followed by keywords. The statement rebuilds the
+    /// head from the booleans and keeps the tail by stripping the five spellings; appending would
+    /// put `\Seen` last and break the schema's ordering.
     ///
-    /// # Why the text can be rebuilt without reading it
-    ///
-    /// `messages.flags` is documented as canonical spellings in [`FlagSet`]
-    /// order, and the five system flags with columns of their own — `\Seen`,
-    /// `\Answered`, `\Flagged`, `\Deleted`, `\Draft` — are exactly the five
-    /// lowest-ranked persistable flags. So the text is always those five, in
-    /// column order, followed by whatever keywords the row also carries. The
-    /// statement below rebuilds the head from the booleans (substituting the
-    /// value it is writing for the one being changed) and keeps the tail by
-    /// stripping the five system spellings out of the text it already has.
-    /// Appending instead would be one `replace` shorter and would put
-    /// `\Seen` last, quietly breaking the ordering the schema promises.
-    ///
-    /// Rows that already agree are still matched unless the caller narrowed
-    /// the set with [`MessageSet::with_flag`] — this writes what it is told
-    /// to. It is the caller that has to care, because the queue rows and the
-    /// undo entry have to cover the same rows this does.
+    /// Rows that already agree are still written unless the caller narrowed with
+    /// [`MessageSet::with_flag`]; the queue rows and undo entry must cover the same rows.
     ///
     /// [`set_flags`]: MessageRepository::set_flags
     pub async fn set_flag_on_set(
@@ -1391,11 +959,7 @@ impl<'a> MessageRepository<'a> {
         Ok(sql::execute(self.connection, &sql, parameters).await? as usize)
     }
 
-    /// Records what a message's promoted headers say (spec 007, research
-    /// R8), and answers whether the message is still here.
-    ///
-    /// For the body's own headers, when a first sync did not ask for them:
-    /// one statement, and a message expunged meanwhile is no error.
+    /// For when a first sync did not ask for them. A message expunged meanwhile is no error.
     pub async fn set_promoted(&self, id: MessageId, promoted: PromotedHeaders) -> Result<bool> {
         let written = sql::execute(
             self.connection,
@@ -1410,10 +974,7 @@ impl<'a> MessageRepository<'a> {
         Ok(written > 0)
     }
 
-    /// Hides messages pending a remote delete or move, or brings them back.
-    ///
-    /// This is what makes delete feel instant and undo possible: the row stays,
-    /// the list stops showing it.
+    /// The row stays and the list stops showing it: what makes delete instant and undo possible.
     pub async fn set_deleted_locally(&self, ids: &[MessageId], deleted: bool) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
@@ -1428,13 +989,8 @@ impl<'a> MessageRepository<'a> {
         Ok(sql::execute(self.connection, &sql, arguments).await? as usize)
     }
 
-    /// Hides messages from every ordinary list until `until`, then they
-    /// restore themselves the moment either [`Self::wake_due`] or a fresh
-    /// page query notices the time has passed.
-    ///
-    /// Never touched by `insert`/`write_update`: a fresh or resynced row is
-    /// never born snoozed, so there is nothing for a header sync to clobber.
-    /// See migration 0021's own comment for the rest of that reasoning.
+    /// Never touched by `insert`/`write_update`: a row is never born snoozed, so a header sync has
+    /// nothing to clobber (migration 0021).
     pub async fn snooze(&self, ids: &[MessageId], until: DateTime<Utc>) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
@@ -1448,13 +1004,8 @@ impl<'a> MessageRepository<'a> {
         Ok(sql::execute(self.connection, &sql, arguments).await? as usize)
     }
 
-    /// [`Self::unsnooze`] for whole conversations, by thread: every asleep
-    /// message of `threads` wakes, in one statement, and says how many did.
-    ///
-    /// What a new reply does to a snoozed conversation (spec 013 D3): the
-    /// same write as the `Unsnooze` verb's, reached by thread instead of by
-    /// the ids a person pointed at. A thread with nothing asleep costs the
-    /// statement and no row (`idx_messages_thread` covers `snoozed_until`).
+    /// What a new reply does to a snoozed conversation (spec 013 D3). A thread with nothing asleep
+    /// costs the statement and no row (`idx_messages_thread` covers `snoozed_until`).
     pub async fn unsnooze_threads(&self, threads: &[ThreadId]) -> Result<usize> {
         if threads.is_empty() {
             return Ok(0);
@@ -1472,7 +1023,6 @@ impl<'a> MessageRepository<'a> {
         .await? as usize)
     }
 
-    /// Cancels a snooze immediately, without waiting for its time to arrive.
     pub async fn unsnooze(&self, ids: &[MessageId]) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
@@ -1489,39 +1039,19 @@ impl<'a> MessageRepository<'a> {
         .await? as usize)
     }
 
-    /// Clears every snooze whose time has passed as of `now` in `account`,
-    /// and says which mailboxes had a row wake up.
+    /// Scoped to one account: each account's engine ticks on its own `POLL_INTERVAL`, and an
+    /// unscoped sweep would have them racing over each other's rows.
     ///
-    /// Scoped to one account rather than the whole store: there is one
-    /// engine thread per account, each ticking on its own `POLL_INTERVAL`
-    /// with no coordination between them, so an unscoped sweep would have
-    /// every account's engine racing to clear every other account's rows on
-    /// every tick.
-    ///
-    /// Visibility itself never depends on this running: `where_clause`,
-    /// `MEMBER` and `VISIBLE` all read `snoozed_until` fresh against
-    /// wall-clock time on every page, so a woken row that this has not yet
-    /// reached is already correct to a query. What only this does is clear
-    /// the column (so the cached `mailboxes.snoozed_count` trigger fires and
-    /// the row stops being "due" forever after) and name what to repaint —
-    /// `postio_runtime`'s `POLL_INTERVAL` sweep is the caller, so a message
-    /// coming due while the app is open turns into a visible row promptly
-    /// rather than only the next time something else writes that row.
+    /// Visibility never depends on this running: queries read `snoozed_until` against wall-clock
+    /// time. This clears the column (so the `mailboxes.snoozed_count` trigger fires) and names what
+    /// to repaint.
     pub async fn wake_due(&self, account: AccountId, now: DateTime<Utc>) -> Result<Vec<MailboxId>> {
         let now_millis = to_millis(now);
-        // Cached: the engine's poll tick runs this every five seconds for the
-        // life of the process, and the SQL never changes. Preparing it afresh
-        // each time put `sqlite3RunParser` into a profile of an idle
-        // application (#1237).
-        // No `ORDER BY` in the SQL, and the sort below instead. With one the
-        // planner declines `idx_messages_snoozed_due` and scans
-        // `idx_messages_list` -- whose leading column is `mailbox_id`, so it
-        // arrives in order -- trading a walk over every message the
-        // account has for a sorter over at most a handful of mailbox ids.
-        // That is exactly the walk #1237 removed, and it comes back every
-        // five seconds for the life of the process. The order still matters
-        // (a caller repainting in a stable order), so it is done in Rust over
-        // a list that cannot be longer than the account's mailbox count.
+        // Cached: this runs every five seconds for the life of the process, and preparing it afresh
+        // put `sqlite3RunParser` into an idle profile (#1237).
+        // No `ORDER BY` in the SQL: with one the planner declines `idx_messages_snoozed_due` and
+        // scans `idx_messages_list`, the walk #1237 removed. The sort is done in Rust over at most
+        // the account's mailbox count.
         let mut statement = sql::statement(
             self.connection,
             "SELECT DISTINCT mailbox_id FROM messages
@@ -1536,11 +1066,9 @@ impl<'a> MessageRepository<'a> {
         woken.sort_unstable();
 
         if !woken.is_empty() {
-            // A woken message comes back at the top (spec 007, research R7):
-            // its place in its folder's lists becomes the time it woke, and
-            // its conversation moves there too for the account-wide list,
-            // which is ordered by the thread. First, while the snoozes still
-            // say which conversations and when.
+            // A woken message comes back at the top (spec 007, research R7): its folder sort and
+            // its conversation's account-wide sort become the wake time. First, while the snoozes
+            // still say which.
             sql::execute(
                 self.connection,
                 "UPDATE threads
@@ -1565,10 +1093,8 @@ impl<'a> MessageRepository<'a> {
         Ok(woken)
     }
 
-    /// Removes messages outright, returning how many there were.
-    ///
-    /// For an expunge the server has confirmed. Recipients, attachments and
-    /// label links cascade; the blobs are swept separately.
+    /// For an expunge the server has confirmed. Recipients, attachments and label links cascade;
+    /// blobs are swept separately.
     pub async fn delete(&self, ids: &[MessageId]) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
@@ -1589,7 +1115,6 @@ impl<'a> MessageRepository<'a> {
         Ok(deleted)
     }
 
-    /// Puts a message in a thread, or takes it out of one.
     pub async fn set_thread(&self, id: MessageId, thread_id: Option<ThreadId>) -> Result<()> {
         let changed = sql::execute(
             self.connection,
@@ -1606,7 +1131,6 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// The message with this server identity, if it is known locally.
     pub async fn by_uid(
         &self,
         mailbox_id: MailboxId,
@@ -1619,12 +1143,8 @@ impl<'a> MessageRepository<'a> {
         }
     }
 
-    /// The ids of the messages `uids` name in `mailbox` under `generation`;
-    /// a uid the store does not hold is left out.
-    ///
-    /// One statement per [`ID_LOOKUP_CHUNK`] uids, and ids only: what a caller
-    /// that is about to delete by uid needs, where [`by_uid`](Self::by_uid)
-    /// pays a query for the id and a second to load a whole message, per uid.
+    /// One statement per [`ID_LOOKUP_CHUNK`] uids, ids only: [`by_uid`](Self::by_uid) pays two
+    /// queries per uid.
     pub async fn ids_by_uid(
         &self,
         mailbox_id: MailboxId,
@@ -1650,15 +1170,8 @@ impl<'a> MessageRepository<'a> {
         Ok(ids)
     }
 
-    /// Every UID known locally for a mailbox under `uid_validity`, ascending.
-    ///
-    /// What a resync diffs the server's UID list against.
-    ///
-    /// `all_unbounded`, and it is one of the few that should be: a resync
-    /// compares the *whole* local set against the server's, so a limit here
-    /// would be a resync that silently stopped diffing partway. A UID is four
-    /// bytes; the set is a `Vec<u32>` the length of the mailbox, not its
-    /// contents.
+    /// `all_unbounded` on purpose: a resync diffs the whole local set against the server's, and a
+    /// limit would silently stop diffing partway.
     pub async fn uids_in(&self, mailbox_id: MailboxId, generation: Generation) -> Result<Vec<Uid>> {
         sql::all_unbounded(
             self.connection,
@@ -1671,15 +1184,9 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// What the store holds of each of `uids` in `mailbox` under
-    /// `generation`: the part of a row a server can change, and the rest of
-    /// its identity. Uids the store does not hold are left out.
-    ///
-    /// What a full resync compares a fetch against before writing it (#1719).
-    /// A backend with no MODSEQ re-reads every header in the folder on every
-    /// pass, and a message's content under one `(UIDVALIDITY, UID)` never
-    /// changes, so a row whose flags and identity match what was fetched has
-    /// nothing to write. One statement per batch, seeking each uid.
+    /// What a full resync compares a fetch against before writing (#1719): a backend with no MODSEQ
+    /// re-reads every header each pass, and a row whose flags and identity match has nothing to
+    /// write. One statement per batch.
     pub async fn server_states(
         &self,
         mailbox_id: MailboxId,
@@ -1723,13 +1230,7 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Every stored message's id, UID and flags in one mailbox generation.
-    ///
-    /// What a flag sweep compares the server's flags listing against. One
-    /// statement however large the mailbox, and `all_unbounded` for the
-    /// reason [`uids_in`](Self::uids_in) gives: a sweep diffs the *whole*
-    /// local set, and a limit here would be a sweep that stopped looking
-    /// partway.
+    /// `all_unbounded` for the reason [`uids_in`](Self::uids_in) gives.
     pub async fn flags_in(
         &self,
         mailbox_id: MailboxId,
@@ -1752,21 +1253,10 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Writes the flags the server reports for these messages, keeping what
-    /// the user has done that the server has not heard yet. Returns the ids
-    /// whose stored flags actually changed.
-    ///
-    /// The flag sweep's write (`postio_sync`), and the same merge
-    /// [`upsert_batch`](Self::upsert_batch) applies to a `CHANGEDSINCE` pull
-    /// (#317): the server's flags plus whatever the operation queue still
-    /// holds for the message. Without it a sweep that ran before the drainer
-    /// would write the server's stale copy over a local read, and the row
-    /// would go bold again.
-    ///
-    /// A message whose merged flags already equal what is stored is not
-    /// written and is not returned, which is what keeps a message with
-    /// undrained local flags from being reported as a correction on every
-    /// pass.
+    /// The same merge [`upsert_batch`](Self::upsert_batch) applies to a `CHANGEDSINCE` pull (#317):
+    /// the server's flags plus what the queue still holds, so a sweep before the drainer cannot
+    /// write a stale copy over a local read. A message whose merged flags already match is not
+    /// written or returned, so undrained local flags are not reported as a correction every pass.
     pub async fn apply_server_flags(
         &self,
         updates: &[(MessageId, FlagSet)],
@@ -1791,8 +1281,6 @@ impl<'a> MessageRepository<'a> {
                     |row| row.col(0),
                 )
                 .await?;
-                // A row that went away since it was read has nothing to
-                // correct.
                 let Some(stored) = stored else { continue };
                 if parse_flags(&stored).persistable() == merged {
                     continue;
@@ -1808,20 +1296,10 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// How many rows in `mailbox` the store will refuse to hold.
-    ///
-    /// The server's copies of drafts this client wrote. `upsert_batch`
-    /// `retain`s them away so a draft is not stored twice --- once as the
-    /// local draft and once as whatever the server named the append --- which
-    /// means the mailbox is permanently one row short of the server's
-    /// `EXISTS` for each one.
-    ///
-    /// That matters to anything comparing the two. `sync::resync`
-    /// re-enumerates a mailbox holding less than `EXISTS` says, and without
-    /// this it re-enumerated Drafts on *every pass*, for ever: 27 held
-    /// against 28 reported, the 28th being the user's own draft, which the
-    /// enumeration would fetch and the upsert would refuse, leaving 27 again.
-    /// A repair that cannot converge is a loop.
+    /// The server's copies of this client's drafts, which `upsert_batch` refuses, leave the mailbox
+    /// permanently one row short of `EXISTS`. `sync::resync` re-enumerates a mailbox holding less
+    /// than `EXISTS`, so without this it re-enumerated Drafts on every pass: a repair that cannot
+    /// converge is a loop.
     pub async fn refused_rows_in(&self, mailbox: MailboxId) -> Result<u32> {
         let count: i64 = sql::one(
             self.connection,
@@ -1837,16 +1315,8 @@ impl<'a> MessageRepository<'a> {
         Ok(count.max(0) as u32)
     }
 
-    /// How many messages the mailbox holds at `generation`.
-    ///
-    /// [`uids_in`](Self::uids_in)'s count without its allocation: the caller
-    /// that compares the local mailbox against the server's `EXISTS` on every
-    /// pass wants a number, and materialising a `Vec` the length of the
-    /// mailbox to call `.len()` on it is a page scan per tick.
-    ///
-    /// Counts rows, including any marked `deleted_locally`, exactly as
-    /// `uids_in` lists them — a local delete leaves the row in its mailbox and
-    /// the server still holds the message, so both sides still count it.
+    /// [`uids_in`](Self::uids_in)'s count without its allocation. Counts rows marked
+    /// `deleted_locally` too, as `uids_in` lists them: the server still holds the message.
     pub async fn count_in(&self, mailbox_id: MailboxId, generation: Generation) -> Result<u32> {
         let count: i64 = sql::one(
             self.connection,
@@ -1859,11 +1329,7 @@ impl<'a> MessageRepository<'a> {
         Ok(count.max(0) as u32)
     }
 
-    /// Every message in an account carrying this `Message-ID`.
-    ///
-    /// A list, not an `Option`: `Message-ID` is not unique in the wild. Threads
-    /// have to cope with two messages claiming the same one, and so does
-    /// deduplication.
+    /// A list: `Message-ID` is not unique in the wild.
     pub async fn ids_by_rfc_message_id(
         &self,
         account_id: AccountId,
@@ -1880,20 +1346,11 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// A message's decoded text, HTML and header block.
+    /// A message that exists but was never downloaded answers `Some(StoredBody::default())`: the
+    /// row is there and holds no parts, which is not the same as no row.
     ///
-    /// `None` when there is no such message. A message that exists but has
-    /// never been downloaded answers `Some(StoredBody::default())` — the row
-    /// is there and holds no parts, which is not the same as no row.
-    ///
-    /// Reads exactly the three columns it needs rather than a whole row: this
-    /// is the reading pane's 16 ms path.
-    ///
-    /// The text and HTML columns hold whichever shape [`crate::body_codec`]
-    /// chose per row -- a zstd frame, or the text itself -- and either reads
-    /// back as the text. They were text and nothing else while the full-text
-    /// index sat on `body_text` (an index cannot tokenise compressed bytes);
-    /// the index reads its own folded table now, so the column is small again.
+    /// Reads exactly three columns: the reading pane's 16 ms path. Each holds whichever shape
+    /// [`crate::body_codec`] chose.
     pub async fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
         sql::first(
             self.connection,
@@ -1918,75 +1375,38 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// A message's header block, parsed.
+    /// Not on [`get`](Self::get): the block is part of the body (written by
+    /// [`set_body`](Self::set_body) in the same statement), and every list row and reading-pane
+    /// open would pay a decompression and a parse for a field only the indexer and `header:` want.
     ///
-    /// The other half of the round trip `Message.headers` never had:
-    /// `ParsedMessage::into_message` has always filled that field and this
-    /// repository has never read or written it, so a `Message` loaded from the
-    /// store came back with an empty block however much mail was in it. That
-    /// asymmetry is what #479's differential test exists to catch — the
-    /// in-memory matcher and the index have to be looking at the same headers,
-    /// and they cannot be if one of them is always looking at nothing.
-    ///
-    /// # Why it is here and not on [`get`](Self::get)
-    ///
-    /// `get` deliberately does not carry the body, and the block is part of
-    /// the body: it is one of the three compressed columns [`body`](Self::body)
-    /// reads, written by [`set_body`](Self::set_body) in the same statement.
-    /// Every list row and every reading-pane open would pay a decompression
-    /// for a field only the indexer and `header:` want. The parse is not free
-    /// either — this is a whole header block, not a column.
-    ///
-    /// So the round trip is `set_body` out and here back, and callers that
-    /// want headers ask for them.
-    ///
-    /// `None` when there is no such message. A message whose block has never
-    /// been stored — every message in every store until the repair pass
-    /// reaches it — answers `Some` with an empty block, because "nothing
-    /// downloaded yet" is not a fault.
+    /// A block never stored answers `Some` with an empty one: not a fault.
     ///
     /// # Errors
     ///
-    /// [`Error::UnreadableBody`] if the stored block will not decode, for the
-    /// reason [`body`](Self::body) gives: an absent block and an unreadable
-    /// one are opposite facts to a caller deciding whether a header is missing.
+    /// [`Error::UnreadableBody`] if the stored block will not decode: an absent block and an
+    /// unreadable one are opposite facts.
     pub async fn headers(&self, id: MessageId) -> Result<Option<postio_model::Headers>> {
         let Some(body) = self.body(id).await? else {
             return Ok(None);
         };
         Ok(Some(match body.headers {
             None => postio_model::Headers::new(),
-            // `headers::parse_block`, not a parse of this repository's own:
-            // it appends the terminator the stored block does not carry, and
-            // a caller that forgot would silently lose the block's last
-            // field. One place decides what a stored block means (ADR 0025).
+            // `headers::parse_block` appends the terminator the stored block lacks, so a caller
+            // that forgot would lose the last field (ADR 0025).
             Some(block) => postio_model::headers::parse_block(&block),
         }))
     }
 
-    /// Messages whose body is local and whose header block is not.
+    /// Every message with a body but no stored block (#884). Scoped to fetched bodies: one still
+    /// waiting gets its block with it.
     ///
-    /// Every message in every store that exists today, because nothing has
-    /// ever written `body_headers` (#884). Scoped to bodies that have already
-    /// been fetched: a message still waiting for its body will get its block
-    /// with it, and offering one here would put work on the queue that this
-    /// pass can do nothing about.
+    /// Repairing a message must remove it from this answer ([`set_headers`](Self::set_headers)
+    /// writes a non-NULL block): a candidate query that does not shrink spins a core for as long as
+    /// the app is open (#500), so the caller compares batches and stops.
     ///
-    /// **Repairing a message must remove it from this answer**, which
-    /// [`set_headers`](Self::set_headers) does by writing a non-NULL block.
-    /// A pass over a candidate query that does not shrink spins at 100% of a
-    /// core for as long as the application is open — not hypothetical, that is
-    /// #500 — so the caller compares batches and stops.
-    ///
-    /// # Only what this pass can actually fix
-    ///
-    /// Scoped to rows that still have their raw source, because those are the
-    /// ones a local pass can repair. A message with no blob — the `partial`
-    /// state, or a store whose raw source has been evicted — needs a fetch,
-    /// and mixing the two here would be worse than untidy: this is ordered
-    /// newest-first and windowed, so one batch of unfetchable rows would make
-    /// no progress, trip the caller's guard, and stop the pass before it
-    /// reached the older messages it *could* have fixed. Those rows are
+    /// Only rows that still have their raw source: others need a fetch, and mixing them in would
+    /// let one batch of unfetchable rows make no progress and stop the pass before older fixable
+    /// ones. Those are
     /// [`messages_needing_a_header_fetch`](Self::messages_needing_a_header_fetch)'s.
     pub async fn messages_missing_headers(&self, limit: u32) -> Result<Vec<HeaderRepair>> {
         sql::all(
@@ -2008,17 +1428,10 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Messages whose block can only be had from the server.
-    ///
-    /// The third row of #884's table: `body_headers` NULL and no raw source to
-    /// take it from. Two ways to arrive here — the `partial` state, which
-    /// fetches sections and never stores a raw blob at all (~15% of ADR 0017's
-    /// reference mailbox), and a store whose raw source has been evicted,
-    /// which PRODUCT.md §6 does *first* when the disk ceiling binds.
-    ///
-    /// Separate from [`messages_missing_headers`](Self::messages_missing_headers)
-    /// because the answer is a network fetch rather than a local read, and the
-    /// two must not share a batch — see that method for why.
+    /// `body_headers` NULL and no raw source: the `partial` state (sections fetched, no raw blob)
+    /// or an evicted raw source. Separate from
+    /// [`messages_missing_headers`](Self::messages_missing_headers): a network fetch must not share
+    /// a batch with a local read.
     pub async fn messages_needing_a_header_fetch(
         &self,
         mailbox_id: MailboxId,
@@ -2033,16 +1446,8 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Writes just the header block, leaving the body beside it alone.
-    ///
-    /// # Why this is not `set_body` with the other fields refilled
-    ///
-    /// Because `set_body` replaces every part, and a header repair has only
-    /// the headers: routing through it would clear the text and html of every
-    /// message it touched. The reason used to be sharper still -- all three
-    /// columns shared one compression dictionary, so rewriting one against a
-    /// newer dictionary made the other two unreadable -- and that half is gone
-    /// with the compression. The remaining half is enough.
+    /// Not `set_body` with the other fields refilled: `set_body` replaces every part, and a header
+    /// repair has only the headers, so it would clear the text and html.
     pub async fn set_headers(
         &self,
         id: MessageId,
@@ -2070,26 +1475,18 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Stores decoded content once, shared only under a backend guarantee.
+    /// Takes the new [`BodyState`] with it: content and "how much is local" are one fact, and
+    /// writing them separately would let the backfill queue disagree with the reader.
     ///
-    /// Takes the new [`BodyState`] with it: the content and "how much of this
-    /// message is local" are one fact, and writing them separately would leave
-    /// a window where the backfill queue disagrees with the reader.
+    /// **Replaces every part.** A `None` clears the column, so a refetch with no HTML part does not
+    /// leave the previous HTML behind.
     ///
-    /// **Replaces every part.** A `None` clears the column rather than leaving
-    /// what was there, so a refetch that finds no HTML part does not leave the
-    /// previous fetch's HTML behind to be read as this message's.
-    ///
-    /// Deliberately does **not** write the body's full-text row. It did, in
-    /// this transaction, so a search hit and the body it named could not
-    /// come apart -- and every body commit then updated the tantivy index on
-    /// the sync lane, where whichever commit came next could inherit a
-    /// segment merge measured in seconds (`fts_merge_stall`). The row is the
-    /// indexer's now: `postio_index::index::messages_missing_body_text` is
-    /// the queue (a body with no row), and `postio_session::
-    /// spawn_body_indexer` drains it in batches of hundreds under one write,
-    /// off the sync lane. A body is searchable a moment after it lands rather
-    /// than in the same instant.
+    /// Does not write the body's full-text row: that put every body commit through the tantivy
+    /// index on the sync lane, where the next commit could inherit a segment merge of seconds
+    /// (`fts_merge_stall`). The row is the indexer's:
+    /// `postio_index::index::messages_missing_body_text` is the queue and
+    /// `postio_session::spawn_body_indexer` drains it off the sync lane, so a body is searchable a
+    /// moment after it lands.
     ///
     /// # Errors
     ///
@@ -2117,8 +1514,6 @@ impl<'a> MessageRepository<'a> {
                   WHERE id = (SELECT content_id FROM messages WHERE id = ?1)",
             bind![
                 id.get(),
-                // Packed per row: zstd when that is smaller, the text
-                // when it is not -- see `body_codec`.
                 body.text.as_deref().map(crate::body_codec::pack),
                 body.html.as_deref().map(crate::body_codec::pack),
                 body.headers,
@@ -2126,8 +1521,8 @@ impl<'a> MessageRepository<'a> {
                 body.headers_truncated,
                 body.encoding_problems,
                 body.text.as_deref().map(line_count),
-                // Stamped with the parser that produced it, so a later
-                // parser can tell which rows it may want back.
+                // Stamped with the parser version, so a later parser can tell which rows it may
+                // want back.
                 postio_model::mime::PARSER_VERSION,
             ],
         )
@@ -2143,13 +1538,9 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Remembers that the server would not give up this message's body.
-    ///
-    /// Keyed to the message's `MODSEQ` as it is now, so a message the server
-    /// has since changed is no longer excluded (see
-    /// [`body_failed`](Self::body_failed)). Only for a refusal about the
-    /// message -- never for a connection that dropped or timed out, which says
-    /// nothing about it (#1918).
+    /// Keyed to the message's current `MODSEQ`, so a message the server has since changed is no
+    /// longer excluded (see [`body_failed`](Self::body_failed)). Only for a refusal about the
+    /// message, never a dropped or timed-out connection (#1918).
     pub async fn mark_body_failed(&self, id: MessageId) -> Result<()> {
         sql::execute(
             self.connection,
@@ -2163,7 +1554,6 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Forgets a refusal: the user opened the message, or its body arrived.
     pub async fn clear_body_failed(&self, id: MessageId) -> Result<()> {
         sql::execute(
             self.connection,
@@ -2174,14 +1564,9 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Whether the server refused this message's body and the message has not
-    /// changed since.
-    ///
-    /// A new `MODSEQ` is the server saying the message is different, which is
-    /// reason enough to ask again; no separate clearing is needed because the
-    /// stored one stops matching. The backfill's seeds skip such a message,
-    /// and the reader says it could not be downloaded rather than that it is
-    /// on its way.
+    /// A new `MODSEQ` is the server saying the message is different, so it is asked again with no
+    /// separate clearing. The backfill seeds skip such a message, and the reader says it could not
+    /// be downloaded.
     pub async fn body_failed(&self, id: MessageId) -> Result<bool> {
         sql::scalar(
             self.connection,
@@ -2194,7 +1579,6 @@ impl<'a> MessageRepository<'a> {
         .map(|present| present != 0)
     }
 
-    /// Whether a backend-identified immutable content body is already local.
     /// Parser repairs still fetch the source that produced a damaged body.
     pub async fn has_reusable_content(&self, id: MessageId) -> Result<bool> {
         sql::scalar(
@@ -2208,13 +1592,8 @@ impl<'a> MessageRepository<'a> {
         .map(|present| present != 0)
     }
 
-    /// Sets `body_state` on its own, without touching the stored body.
-    ///
-    /// The one write [`set_body`](Self::set_body) cannot do: a
-    /// payload landing changes how much of the message is local without
-    /// changing where its text is. Kept separate rather than folded in
-    /// because reading the blob keys back only to write them again is how a
-    /// concurrent text fetch gets clobbered by a payload fetch.
+    /// Separate from [`set_body`](Self::set_body): reading the blob keys back only to write them
+    /// again lets a payload fetch clobber a concurrent text fetch.
     pub async fn set_body_state(&self, id: MessageId, body_state: BodyState) -> Result<()> {
         let changed = sql::execute(
             self.connection,
@@ -2232,12 +1611,7 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Records `message`'s own line: the sender's own words, cut to a line
-    /// (spec 013, research R5). `""` says the message is all quote.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::NotFound`] if no such message.
+    /// `""` says the message is all quote.
     pub async fn set_own_line(&self, id: MessageId, line: &str) -> Result<()> {
         let changed = sql::execute(
             self.connection,
@@ -2254,19 +1628,11 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Records where one payload part's bytes landed in the blob store.
+    /// Keyed by MIME path, not [`AttachmentId`](postio_model::AttachmentId): a refetch replaces a
+    /// message's attachment rows, so the id the reading pane held does not survive, but `2.1` stays
+    /// `2.1`.
     ///
-    /// Keyed by the part's MIME path rather than its
-    /// [`AttachmentId`](postio_model::AttachmentId),
-    /// deliberately. A refetch **replaces** a message's attachment rows —
-    /// the parser re-reads the structure and [`update`](Self::update) writes
-    /// the new set — so the row id the reading pane was holding does not
-    /// survive one. The path does: `2.1` is `2.1` in every reading of the
-    /// same message.
-    ///
-    /// `false` when no such part is on the message any more, which is the
-    /// same answer `Outcome::Gone` gives for a whole message: nothing went
-    /// wrong, there is simply nothing to write against.
+    /// `false` when no such part is on the message any more.
     pub async fn set_attachment_blob(
         &self,
         message_id: MessageId,
@@ -2283,15 +1649,9 @@ impl<'a> MessageRepository<'a> {
         Ok(changed > 0)
     }
 
-    /// What fetching a body learned about the row that is not the body: a
-    /// preview, if the row had none, and where the raw bytes went, if they
-    /// were kept.
-    ///
-    /// The body fetch's write, in place of [`update`](Self::update). `update`
-    /// rewrites the whole row and deletes and re-inserts every recipient,
-    /// attachment and label -- a statement per name on the message, on every
-    /// body of a first sync, to store two columns. A `preview` already on the
-    /// row is kept; a `None` raw blob leaves the column as it was.
+    /// The body fetch's write in place of [`update`](Self::update), which rewrites every recipient,
+    /// attachment and label row (a statement per name, per body of a first sync). A `preview`
+    /// already on the row is kept; a `None` raw blob leaves the column as it was.
     pub async fn set_fetched(
         &self,
         id: MessageId,
@@ -2310,16 +1670,9 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Messages in `mailbox_id` whose text is local and whose payloads are
-    /// not — the backlog `AttachmentPolicy::Eager` drains.
-    ///
-    /// The complement of [`needing_backfill_from`](Self::needing_backfill_from),
-    /// which deliberately stops at `partial`: text local, payloads not, is
-    /// *settled* for the text lane and is exactly the work the payload lane
-    /// has left (#376, #377).
-    ///
-    /// A part with no `part_id` is not a candidate — there is no section to
-    /// name in a `FETCH`, so nothing can be asked for.
+    /// The complement of [`needing_backfill_from`](Self::needing_backfill_from), which stops at
+    /// `partial`: text local, payloads not, is settled for the text lane (#376, #377). A part with
+    /// no `part_id` is not a candidate: nothing to name in a `FETCH`.
     pub async fn needing_payloads_from(
         &self,
         mailbox_id: MailboxId,
@@ -2335,17 +1688,8 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Messages in `mailbox_id` still missing all or part of their body,
-    /// newest first and windowed to `limit` — what a cold start, or a resync
-    /// that just finished, seeds the backfill scheduler with.
-    ///
-    /// Scoped to one mailbox because that is how the caller always has this
-    /// question: `postio-sync`'s initial and incremental syncs are already
-    /// mailbox at a time, so this seeks `idx_messages_list` to the mailbox and
-    /// walks its newest rows, never scanning the table.
-    ///
-    /// A message with no `UID` yet is not a candidate: there is nothing to
-    /// issue a `FETCH` against until the server has assigned one.
+    /// Scoped to one mailbox: seeks `idx_messages_list` and walks its newest rows, never the table.
+    /// A message with no `UID` yet is not a candidate.
     pub async fn needing_backfill(
         &self,
         mailbox_id: MailboxId,
@@ -2354,47 +1698,25 @@ impl<'a> MessageRepository<'a> {
         self.needing_backfill_from(mailbox_id, limit, 0).await
     }
 
-    /// As [`needing_backfill`](Self::needing_backfill), skipping the newest
-    /// `offset` candidates.
+    /// For walking past a run the scheduler cannot use: a message over `max_body_bytes`, or whose
+    /// fetch failed this session, stays `body_state <> 'full'`, so a newest batch of them would
+    /// hide the walk for ever (#318). The offset is stable only for one seed; a body landing
+    /// between calls shifts it by one, which the next call corrects.
     ///
-    /// For walking past a run of messages the scheduler cannot use. A message
-    /// over `max_body_bytes`, or one whose fetch already failed this session,
-    /// stays `body_state <> 'full'` for ever — so a folder whose newest batch
-    /// is entirely such messages would answer the same unusable rows on every
-    /// seed and the walk backwards through it would never start (#318).
-    ///
-    /// The offset is only stable for as long as the result set is, which is
-    /// the duration of one seed: nothing else writes `body_state` while the
-    /// engine's own loop is between awaits. A body landing between two calls
-    /// shifts the window by one, and the next call corrects it — this is a
-    /// backlog being refilled, not a page a user is reading.
-    ///
-    /// # A body an older parser got wrong is a candidate again
-    ///
-    /// A body is fetched once and its raw bytes are not kept, so a parser fix
-    /// reaches it only by fetching it again. Every body is stamped with the
-    /// parser that wrote it (`body_parsed_with`); a row below the current
-    /// [`postio_model::mime::PARSER_VERSION`] that carried the decode caveat
-    /// is selected once more — and only those, because a body the older
-    /// parser read cleanly is not worth a round trip, and a body that came
-    /// out empty *from a failed decode* carries the caveat too. The fetch
-    /// stamps the current version whatever it finds, so a body no parser can
-    /// improve is asked for once, not for ever.
+    /// A body an older parser got wrong is a candidate again: bodies are stamped with
+    /// `body_parsed_with` and their raw bytes are not kept, so a row below
+    /// [`postio_model::mime::PARSER_VERSION`] that carried the decode caveat is fetched once more.
+    /// The fetch stamps the current version whatever it finds, so it is asked for once.
     pub async fn needing_backfill_from(
         &self,
         mailbox_id: MailboxId,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<BackfillCandidate>> {
-        // Three seeks rather than one `OR`: no index serves a disjunction, so
-        // the single statement walked the folder and filtered it, and newest
-        // first the rows it passed over were exactly the bodies already
-        // fetched -- more of them on every top-up. Each arm below is a seek
-        // into an index that holds its rows in the order they are wanted
-        // (`sort_at`, the folder's own list key, so a woken snooze at the top
-        // of the folder is fetched first), so the window is read and nothing
-        // else. Each is asked for the whole `offset + limit`, because the
-        // merged order, not any arm's, decides which are skipped.
+        // Three seeks rather than one `OR`: no index serves a disjunction, so one statement walked
+        // the folder and filtered it, passing over every already-fetched body. Each arm seeks an
+        // index in `sort_at` order (the folder's list key, so a woken snooze is fetched first) and
+        // asks for the whole `offset + limit`, because the merged order decides what is skipped.
         let window = i64::from(limit) + i64::from(offset);
 
         let mut found: Vec<(i64, BackfillCandidate)> = Vec::new();
@@ -2417,9 +1739,8 @@ impl<'a> MessageRepository<'a> {
             found.extend(rows);
         }
 
-        // A message can be in two arms: still owing its body and carrying the
-        // caveat. Newest first by `sort_at`, ties by id as each arm ordered
-        // them.
+        // A message can be in two arms (owing its body and carrying the caveat): newest first by
+        // `sort_at`, ties by id.
         found.sort_by(|(a_at, a), (b_at, b)| {
             (b_at, b.message_id.get()).cmp(&(a_at, a.message_id.get()))
         });
@@ -2432,16 +1753,9 @@ impl<'a> MessageRepository<'a> {
             .collect())
     }
 
-    /// What `account_id`'s mail costs and how much of it is local.
-    ///
-    /// See [`StorageFootprint`] for what the numbers mean and why they are
-    /// available before anything is downloaded.
-    ///
-    /// Two reads of rows the store keeps, never a walk of the mail: the
-    /// weights are `account_footprints`, maintained by the triggers in
-    /// `schema/footprint.sql`, and completeness is a question about the
-    /// account's folders. The settings panel asks this each time it opens,
-    /// and it used to be three aggregates over every message (#1508).
+    /// Two reads of rows the store keeps: weights come from `account_footprints`, maintained by the
+    /// triggers in `schema/footprint.sql`, and completeness is a question about the account's
+    /// folders. It used to be three aggregates over every message (#1508).
     pub async fn footprint(&self, account_id: AccountId) -> Result<StorageFootprint> {
         let (messages, total_bytes, attachment_bytes, local_bytes) = sql::first(
             self.connection,
@@ -2460,8 +1774,8 @@ impl<'a> MessageRepository<'a> {
         .await?
         .unwrap_or_default();
 
-        // Complete when no selectable mailbox is still waiting for its first
-        // full header pass. Anything less and the totals above are a floor.
+        // Complete when no selectable mailbox awaits its first full header pass; otherwise the
+        // totals are a floor.
         let outstanding: i64 = sql::one(
             self.connection,
             "SELECT count(*) FROM mailboxes mb
@@ -2482,13 +1796,9 @@ impl<'a> MessageRepository<'a> {
         })
     }
 
-    /// How many of `account_id`'s messages asked for a read receipt (#970).
-    ///
-    /// A count, not a list: Postio never sends one automatically (CLAUDE.md's
-    /// privacy section), so there is no per-message action for the privacy
-    /// pane to offer — only the fact of how often it was asked. A row the
-    /// store keeps (`schema/footprint.sql`), not a count of its mail
-    /// (#1508).
+    /// A count, not a list: Postio never sends a receipt automatically, so the privacy pane has
+    /// only the fact of how often one was asked (#970). A row the store keeps
+    /// (`schema/footprint.sql`, #1508).
     pub async fn read_receipt_requested_count(&self, account_id: AccountId) -> Result<u64> {
         let counted = sql::first(
             self.connection,
@@ -2500,13 +1810,8 @@ impl<'a> MessageRepository<'a> {
         Ok(counted.unwrap_or(0) as u64)
     }
 
-    /// One message's backfill candidate, if it still needs (part of) its body.
-    ///
-    /// For the interactive lane: the reading pane knows only which message was
-    /// opened, not which mailbox it lives in or what the server calls it, so
-    /// this looks both up rather than asking the caller to already know them.
-    /// `None` covers both "already has a full body" and "not there any more" —
-    /// either way there is nothing to fetch.
+    /// For the interactive lane: the reading pane knows only the opened message, so this looks up
+    /// its mailbox and server name. `None` covers both "already full" and "gone".
     pub async fn backfill_candidate(
         &self,
         message_id: MessageId,
@@ -2515,13 +1820,9 @@ impl<'a> MessageRepository<'a> {
             .await
     }
 
-    /// One message's candidate for a fetch of every byte, when its raw source
-    /// is not on this machine, whatever its `body_state` says (#1984).
-    ///
-    /// The text axis stores no raw source (ADR 0017), so a message with no
-    /// attachments is `full` with nothing to read for view source, export or
-    /// drag-out. `None` once the raw blob is stored, or when the message is
-    /// gone or has no server identity yet.
+    /// The text axis stores no raw source (ADR 0017), so a message with no attachments is `full`
+    /// with nothing for view source, export or drag-out (#1984). `None` once the raw blob is
+    /// stored, or when the message is gone or has no server identity.
     pub async fn whole_candidate(
         &self,
         message_id: MessageId,
@@ -2556,19 +1857,10 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
-    /// Messages in `mailbox_id` that carry no usable thread reference at all —
-    /// no `In-Reply-To` and an empty `References` — and are still threaded.
-    ///
-    /// These are the only messages [`crate::repository::ThreadingRepository::reconsider`]
-    /// can ever have a better answer for later than it did at insertion: one
-    /// that names an ancestor either already found it or is waiting to, so
-    /// only silence at insertion time is worth asking about again.
-    ///
-    /// And only those whose subject reads as a reply. A message with no
-    /// references is most of a folder -- every newsletter, every first
-    /// message of a conversation -- and only a reply can be placed by its
-    /// subject, so everything else is dropped here, from two columns,
-    /// rather than loaded whole to be turned away one at a time.
+    /// The only messages [`crate::repository::ThreadingRepository::reconsider`] can have a better
+    /// answer for later: one naming an ancestor already found it or is waiting to. And only those
+    /// whose subject reads as a reply, filtered from two columns rather than loading every
+    /// newsletter.
     pub async fn subject_only_orphans(&self, mailbox_id: MailboxId) -> Result<Vec<MessageId>> {
         let mut statement = sql::statement(
             self.connection,
@@ -2596,31 +1888,13 @@ impl<'a> MessageRepository<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SQL construction
-// ---------------------------------------------------------------------------
-
-/// The `WHERE` of a list query.
-///
-/// `deleted_locally = 0` is here rather than in the index because it is a
-/// filter on a handful of rows, not a way in: the list index gives the order
-/// and the scope gives the range.
-/// Whether `snoozed_until` gates a scope out or *is* the scope.
-///
-/// Every ordinary scope hides a message until its snooze is due, read fresh
-/// against wall-clock time on every page — the live half of the two-tier
-/// arrangement `mailboxes.snoozed_count` (migration 0021) is the cached
-/// half of. [`ListScope::Snoozed`] inverts it: that view's entire point is
-/// the messages every other scope is hiding.
-/// A folder's messages still owed a header block the raw blob cannot give,
-/// newest first: what [`MessageRepository::messages_needing_a_header_fetch`]
-/// asks.
-///
-/// The three walks here are mailbox-scoped and newest first by the folder's
-/// own list key, `sort_at`, which is the order `idx_messages_list` holds: so
-/// each seeks the folder and stops at its window rather than gathering the
-/// folder's candidates to sort them, and what the person sees at the top of
-/// the folder, a woken snooze included, is fetched first.
+/// `deleted_locally = 0` is here, not in the index: it filters a handful of rows, while the list
+/// index gives the order and the scope the range.
+/// Every ordinary scope hides a message until its snooze is due, read against wall-clock time on
+/// every page (the live half of `mailboxes.snoozed_count`, migration 0021); [`ListScope::Snoozed`]
+/// inverts it.
+/// The three walks are mailbox-scoped and newest first by `sort_at`, the order `idx_messages_list`
+/// holds, so each seeks the folder and stops at its window; a woken snooze is fetched first.
 const NEEDING_A_HEADER_FETCH: &str = "\
 SELECT messages.id, messages.uid, messages.size, messages.received_at,
        mailboxes.path, messages.remote_id, mailboxes.role
@@ -2635,8 +1909,6 @@ SELECT messages.id, messages.uid, messages.size, messages.received_at,
  ORDER BY messages.sort_at DESC
  LIMIT ?2";
 
-/// A folder's messages with an attachment still to download, newest first:
-/// [`MessageRepository::needing_payloads_from`]'s walk.
 const NEEDING_PAYLOADS: &str = "\
 SELECT messages.id, messages.uid, messages.size, messages.received_at,
        mailboxes.path, messages.remote_id, mailboxes.role
@@ -2653,16 +1925,12 @@ SELECT messages.id, messages.uid, messages.size, messages.received_at,
  ORDER BY messages.sort_at DESC
  LIMIT ?2 OFFSET ?3";
 
-/// One arm of [`MessageRepository::needing_backfill_from`]'s walk: the
-/// predicate that selects its rows, and whether it binds `?3` to the parser
-/// version.
 struct BackfillArm {
     predicate: &'static str,
     uses_parser_version: bool,
 }
 
-/// A folder's messages still owed a body come from three seeks, each into an
-/// index that holds its rows newest first by `sort_at`
+/// Three seeks, each into an index holding its rows newest first by `sort_at`
 /// (`idx_messages_body_state`, `idx_messages_body_problems`), merged in code.
 const BACKFILL_ARMS: [BackfillArm; 3] = [
     BackfillArm {
@@ -2679,7 +1947,7 @@ const BACKFILL_ARMS: [BackfillArm; 3] = [
     },
 ];
 
-/// One arm's statement. `sort_at` is the last column, for the merge.
+/// `sort_at` is the last column, for the merge.
 fn backfill_arm(predicate: &str) -> String {
     format!(
         "SELECT messages.id, messages.uid, messages.size, messages.received_at, \
@@ -2706,29 +1974,19 @@ const STILL_SNOOZED: &str =
 fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
     let focus: String;
     let (scope, snooze) = match query.scope {
-        // The Drafts exclusion rides on the generic mailbox scope, because
-        // the mirror row for a draft being sent is *in* the Drafts folder --
-        // the Outbox is not a second mailbox, it is a second predicate over
-        // this one (spec 003 FR-004).
-        //
-        // A column comparison, not a subquery. This clause is paid by every
-        // folder in the application on every open, and `send_state` is NULL
-        // for all but a handful of rows in the store. Filtering above SQL was
-        // the other option and it breaks paging: the cursor is a row value
-        // over `(received_at, id)` so SQLite can seek, and a page of 50 that
-        // then drops rows is not a page of 50.
+        // The Drafts exclusion rides on the mailbox scope because a draft's mirror row is in the
+        // Drafts folder; the Outbox is a second predicate over it (spec 003).
+        // A column comparison, not a subquery, and not a filter above SQL: this clause is paid by
+        // every folder on every open, and dropping rows after the fetch breaks paging.
         ListScope::Mailbox(_) => (
             "messages.mailbox_id = ?1 AND (messages.send_state IS NULL \
              OR messages.send_state NOT IN ('queued', 'sending', 'sent'))",
             NOT_YET_DUE,
         ),
         ListScope::Account(_) => ("messages.account_id = ?1", NOT_YET_DUE),
-        // Every enabled account's inbox (#1692), so there is no one account
-        // to name and no argument to bind. The list itself never pages this
-        // way -- Unified lists conversations, and
-        // `ThreadRepository::unified_page` merges each inbox's own seek -- so
-        // this is the predicate's meaning kept in step with that, for a count
-        // or a flat read of the same view.
+        // Every enabled account's inbox (#1692): nothing to name. The list itself pages
+        // conversations through `ThreadRepository::unified_page`; this is the predicate's meaning
+        // for a count or flat read.
         ListScope::Unified => (
             "messages.mailbox_id IN (
                  SELECT m.id FROM accounts a JOIN mailboxes m
@@ -2741,26 +1999,16 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
             NOT_YET_DUE,
         ),
         ListScope::Snoozed(_) => ("messages.account_id = ?1", STILL_SNOOZED),
-        // The other half of the split. `idx_messages_send_state` is partial
-        // on exactly this predicate, so the Outbox is answered without
-        // touching the account's mail.
-        //
-        // `NOT_YET_DUE` like every ordinary scope: a draft cannot be snoozed,
-        // so the clause costs nothing and asking for the exception would be a
-        // second spelling of the same rule.
+        // Answered through `idx_messages_send_state` without touching the account's mail.
+        // `NOT_YET_DUE` like every ordinary scope: a draft cannot be snoozed, so it costs nothing.
         ListScope::Outbox(_) => (
             "messages.account_id = ?1 AND messages.send_state IN ('queued', 'sending')",
             NOT_YET_DUE,
         ),
         ListScope::Thread(_) => ("messages.thread_id = ?1", NOT_YET_DUE),
-        // Focus's inbox, read flat: the unified view's inboxes, less what
-        // Focus holds back -- the same `focus_excludes` its window asks
-        // (spec 007).
-        // The has-action filter too: nothing reads either flat -- both list
-        // conversations -- and a flat read of it is its inbox's messages.
-        // Focus's two views over every account: the per-account views' own
-        // predicates, with the account a membership test against the enabled
-        // ones, which `idx_messages_account_*` seeks once per account.
+        // Focus's inbox, read flat: the unified inboxes less what Focus holds back
+        // (`focus_excludes`). The account is a membership test against the enabled ones, which
+        // `idx_messages_account_*` seeks once per account.
         ListScope::Focus(postio_model::FocusScope::Flagged) => (
             "messages.account_id IN (SELECT id FROM accounts
                  WHERE enabled = 1 AND pending_deletion = 0) AND messages.flagged = 1",
@@ -2782,24 +2030,13 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
             (focus.as_str(), NOT_YET_DUE)
         }
     };
-    // Numbered from however many arguments the scope itself bound, so a
-    // scope that names nothing does not leave a hole at ?1.
+    // Numbered after the scope's own arguments, so a scope that names nothing leaves no hole at ?1.
     let first = scope_arguments(&query.scope).len() + 1;
     let cursor = if with_cursor {
-        // Spelled with a redundant `<=` in front of the tie-break, rather than
-        // as the row value `(messages.received_at, messages.id) < (?{first}, ?{first + 1})` it used to be.
-        //
-        // A row value is the clearer spelling and SQLite turns it into one
-        // range constraint on the index. This engine does not: it seeks on the
-        // scope alone and then *filters*, so a page 95,000 rows in walks every
-        // row above it -- measured at 1.4 ms for the first page and 107 ms for
-        // the deep one, which is the skip this cursor exists to avoid. The
-        // leading `messages.received_at <= ?{first}` is what gives the planner the range it will
-        // actually seek on; the `OR` behind it resolves the tie on the id, and
-        // the two together mean exactly what the row value meant.
-        //
-        // `plan_seeks_past_the_cursor` is what notices if this regresses, and
-        // it asserts on the plan rather than on a clock.
+        // A redundant `<=` ahead of the tie-break, not the row value `(received_at, id) < (?, ?)`:
+        // this engine seeks on the scope alone and then filters a row value, so a page 95,000 rows
+        // deep walks every row above it (1.4 ms first page, 107 ms deep). The leading `<=` gives
+        // the planner a range to seek on; `plan_seeks_past_the_cursor` asserts on the plan.
         let key = order_key(&query.scope);
         format!(
             " AND messages.{key} <= ?{first}
@@ -2814,7 +2051,6 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
 
 fn scope_arguments(scope: &ListScope) -> Vec<i64> {
     match scope {
-        // Nothing to bind: the scope is every enabled account's inbox.
         ListScope::Unified | ListScope::Focus(_) => Vec::new(),
         ListScope::Mailbox(id) => vec![id.get()],
         ListScope::Account(id)
@@ -2837,12 +2073,8 @@ fn page_arguments(query: &ListQuery) -> Vec<i64> {
     arguments
 }
 
-/// The column a scope's flat list is ordered by (spec 007, research R7).
-///
-/// A folder by `sort_at`, over `idx_messages_list`, which its conversation
-/// list shares, so a woken snooze is at the top of both. Every query view
-/// by `received_at`, over the account and recency indexes that search and
-/// the body sweep walk by that column too.
+/// A folder by `sort_at` over `idx_messages_list`, shared with its conversation list so a woken
+/// snooze tops both (spec 007, research R7). Query views by `received_at`.
 fn order_key(scope: &ListScope) -> &'static str {
     match scope {
         ListScope::Mailbox(_) => "sort_at",
@@ -2850,19 +2082,12 @@ fn order_key(scope: &ListScope) -> &'static str {
     }
 }
 
-/// ` AND ...` excluding every conversation `except` names, or nothing at all.
+/// Excepted by conversation, not row (ADR 0015 Q3, #468): a list shows one row per thread, so
+/// excepting only the id would archive all of a thread but its newest message after `Ctrl+A` and a
+/// deselect.
 ///
-/// Excepted by *conversation*, not by row (ADR 0015 Q3, #468). A list of mail
-/// shows one row per thread, so an id in `except` is a row the user took back
-/// out of a select-all -- and that row is a conversation. Excepting only the
-/// id would leave the rest of it in the set, so `Ctrl+A` then deselecting one
-/// thread would archive all of it but its newest message: the worst of both
-/// readings.
-///
-/// The `IS NULL` arm keeps the comparison total. A message with no thread is
-/// only ever excepted by its own id, and `NOT IN` against a set containing
-/// NULL is NULL -- which would quietly drop every unthreaded message from the
-/// set rather than keep it.
+/// The `IS NULL` arm keeps it total: `NOT IN` against a set containing NULL is NULL and would drop
+/// every unthreaded message.
 ///
 /// The caller binds one argument per exception, from `first` upwards.
 fn without_conversations(except: &[MessageId], first: usize) -> String {
@@ -2879,7 +2104,6 @@ fn without_conversations(except: &[MessageId], first: usize) -> String {
     )
 }
 
-/// `?n, ?n+1, ...` for `count` parameters starting at `first`.
 pub(crate) fn placeholders(count: usize, first: usize) -> String {
     (0..count)
         .map(|index| format!("?{}", index + first))
@@ -2887,20 +2111,12 @@ pub(crate) fn placeholders(count: usize, first: usize) -> String {
         .join(", ")
 }
 
-// ---------------------------------------------------------------------------
-// Row mapping
-// ---------------------------------------------------------------------------
-
-/// The body of an update, without a transaction of its own.
+/// Shared with [`MessageRepository::upsert_batch`], already inside a transaction: SQLite has no
+/// nested transactions.
 ///
-/// Shared with [`MessageRepository::upsert_batch`], which is already inside
-/// one: SQLite has no nested transactions, and a resync must not commit half a
-/// page of messages.
-///
-/// `sort_at` is kept at least `received_at` rather than written: a resync
-/// must not put a woken snooze back where it was, and a draft's row, whose
-/// `received_at` is the draft's last save, must still rise to the top of
-/// Drafts when it is saved again (spec 007, research R7).
+/// `sort_at` is kept at least `received_at` rather than written: a resync must not put a woken
+/// snooze back, and a draft's row must still rise to the top of Drafts when saved again (spec 007,
+/// research R7).
 async fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
     let id = require_persisted(message.id.get(), "message")?;
 
@@ -2961,8 +2177,8 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
 }
 
 async fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
-    // Cached: the widest statement in the write path and the one a first sync
-    // runs most -- once per new message (#728).
+    // Cached: the widest statement in the write path, run once per new message of a first sync
+    // (#728).
     sql::statement(
         connection,
         "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
@@ -2985,14 +2201,9 @@ async fn insert(connection: &Connection, message: &Message) -> Result<MessageId>
     Ok(MessageId::new(connection.last_insert_rowid()))
 }
 
-/// A header refresh of a known row must not forget the body already fetched.
-///
-/// Content is immutable for a given message on a server, so a flag change, a
-/// new `MODSEQ` or a move says nothing about it: the row's body state, raw
-/// blob, preview, part map and attachment rows (blobs included) are carried
-/// onto the refreshed message, whatever the backend. A row whose content was
-/// never fetched is written as the fetch has it. A real content change is a
-/// different row (another UID or `UIDVALIDITY`), never this one.
+/// Content is immutable for a message on a server, so a flag change, new `MODSEQ` or move says
+/// nothing about it: body state, raw blob, preview, part map and attachment rows are carried onto
+/// the refreshed message. A real content change is a different row (another UID or `UIDVALIDITY`).
 async fn keep_fetched_content(connection: &Connection, message: &mut Message) -> Result<()> {
     let Some(stored) = sql::first(
         connection,
@@ -3021,9 +2232,7 @@ async fn keep_fetched_content(connection: &Connection, message: &mut Message) ->
     Ok(())
 }
 
-/// A late header fetch has no body or MIME structure of its own. Refresh its
-/// small read projection from the content it explicitly shares. Ordinary
-/// IMAP writes do not pay for this lookup.
+/// Only for a late header fetch with shared content; ordinary IMAP writes skip the lookup.
 async fn reuse_content_projection(connection: &Connection, message: &mut Message) -> Result<()> {
     if message.server.content_identity.is_none() {
         return Ok(());
@@ -3058,12 +2267,8 @@ async fn reuse_content_projection(connection: &Connection, message: &mut Message
     Ok(())
 }
 
-/// The parameter list shared by insert and update, `?1` being the id.
-///
-/// Owned [`turso::Value`]s rather than borrows: the two statements have thirty
-/// parameters of six different types, and one homogeneous list is far easier to
-/// keep aligned with the column list than two hand-written `params!` calls that
-/// have to stay in step with each other.
+/// Owned [`turso::Value`]s: thirty parameters of six types stay aligned with the column list in one
+/// homogeneous list.
 fn row_values(id: i64, message: &Message) -> Vec<turso::Value> {
     let flags = message.flags.persistable();
     let references = message
@@ -3078,9 +2283,9 @@ fn row_values(id: i64, message: &Message) -> Vec<turso::Value> {
         integer(message.account_id.get()),
         integer(message.mailbox_id.get()),
         maybe_integer(message.thread_id.map(ThreadId::get)),
-        // A row the server has not named yet is stored folded, so that
-        // `find_awaiting_identity` can seek it by binary equality. Every other
-        // row keeps the case it arrived in: a reply quotes it byte-for-byte.
+        // A row the server has not named yet is stored folded so `find_awaiting_identity` can seek
+        // it by binary equality; every other row keeps its arrival case, since a reply quotes it
+        // byte-for-byte.
         maybe_text(message.rfc_message_id.as_ref().map(|id| {
             if message.server.remote_id.is_none() && message.server.uid.is_none() {
                 id.folded()
@@ -3142,8 +2347,7 @@ fn row_values(id: i64, message: &Message) -> Vec<turso::Value> {
         maybe_text(message.html_part_headers.clone()),
         boolean(message.text_is_flowed),
         boolean(message.read_receipt_requested),
-        // NULL while not known, which `write_update` reads as "keep what is
-        // there" rather than as "none of the three".
+        // NULL while unknown, which `write_update` reads as "keep what is there".
         maybe_integer(
             message
                 .promoted
@@ -3258,7 +2462,6 @@ async fn write_children(connection: &Connection, message: &mut Message) -> Resul
     Ok(())
 }
 
-/// A row by the backend's own identity — the match the engine prefers.
 async fn find_by_remote_id(
     connection: &Connection,
     mailbox_id: MailboxId,
@@ -3278,19 +2481,16 @@ async fn find_by_remote_id(
     .await
 }
 
-/// How many uids [`MessageRepository::ids_by_uid`] binds to one statement.
 const ID_LOOKUP_CHUNK: usize = 500;
 
-/// The engine-facing lookup: the caller tracks an opaque [`Generation`],
-/// which for IMAP is numerically the stored `uid_validity` (#543).
+/// For IMAP a [`Generation`] is numerically the stored `uid_validity` (#543).
 async fn find_by_generation_uid(
     connection: &Connection,
     mailbox_id: MailboxId,
     generation: Generation,
     uid: Uid,
 ) -> Result<Option<MessageId>> {
-    // Cached, for the same reason as `find_by_remote_id`: the fallback
-    // lookup runs per message for any row synced before `remote_id` existed.
+    // Cached: the fallback lookup runs per message for rows synced before `remote_id` existed.
     let mut statement = sql::statement(
         connection,
         "SELECT id FROM messages
@@ -3309,18 +2509,13 @@ async fn find_by_generation_uid(
     .await
 }
 
-/// Reads a [`BackfillCandidate`] from a row of `(id, uid, size, received_at,
-/// mailbox_path)`, in that order — the shared column shape of
-/// [`MessageRepository::needing_backfill`] and
-/// [`MessageRepository::backfill_candidate`].
 /// The mailbox role at `index`, for the queries that carry one.
 fn role_at(row: &Row, index: usize) -> Result<MailboxRole> {
     let role: String = row.col(index)?;
     MailboxRole::from_name(&role).ok_or_else(|| unknown_enum("mailboxes.role", role))
 }
 
-/// `mailbox_role` is passed rather than read from a fixed column: four
-/// queries share this reader and they do not agree on a column layout.
+/// `mailbox_role` is passed in: four queries share this reader and disagree on column layout.
 fn read_backfill_candidate(
     row: &Row,
     mailbox_id: MailboxId,
@@ -3336,10 +2531,8 @@ fn read_backfill_candidate(
         received_at: from_millis(row.col(3)?),
         mailbox_path: row.col(4)?,
         remote_id: RemoteId::new(row.col::<String>(5)?),
-        // Carried so the backfill queue can rank a body by the folder it is
-        // in. The queue is one heap across every mailbox, and without this it
-        // can only order by date — which hands back the newest body anywhere,
-        // so a large Archive outranks the inbox it was seeded behind.
+        // So the backfill queue, one heap across every mailbox, can rank a body by folder: by date
+        // alone a large Archive outranks the inbox it was seeded behind.
         mailbox_role,
     })
 }
@@ -3415,7 +2608,6 @@ fn read_message(row: &Row) -> Result<Message> {
         promoted: match (row.col::<Option<bool>>(33)?, row.col::<Option<i64>>(34)?) {
             (Some(unsubscribe_offered), Some(automation)) => Some(PromotedHeaders {
                 unsubscribe_offered,
-                // Only this crate writes the column, from a `u8`.
                 automation: u8::try_from(automation).unwrap_or_default(),
             }),
             _ => None,
@@ -3427,8 +2619,6 @@ pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
     read_list_row_at(row, 0)
 }
 
-/// [`read_list_row`], for a statement whose [`LIST_COLUMNS`] start at
-/// column `first` rather than at the front.
 pub(crate) fn read_list_row_at(row: &Row, first: usize) -> Result<MessageListRow> {
     let from_address: Option<String> = row.col(first + 14)?;
     Ok(MessageListRow {
@@ -3462,15 +2652,11 @@ pub(crate) fn read_list_row_at(row: &Row, first: usize) -> Result<MessageListRow
     })
 }
 
-/// The id of `address`, inserting it if this store has not seen it before.
+/// Keyed on the normalized form, so `Ada@Example.com` and `ada@example.com` are one row (migration
+/// 0011).
 ///
-/// Keyed on the normalized form, so `Ada@Example.com` and `ada@example.com`
-/// resolve to one row — which is what `from:` has always meant by "the same
-/// correspondent" (migration 0011).
-///
-/// `ON CONFLICT DO NOTHING` then `SELECT` rather than `INSERT OR REPLACE`: the
-/// row may already be referenced by hundreds of recipients, and replacing it
-/// would churn an id they all point at to rewrite a column with the same value.
+/// `ON CONFLICT DO NOTHING` then `SELECT`, not `INSERT OR REPLACE`: replacing would churn an id
+/// hundreds of recipients point at.
 pub(crate) async fn address_id(connection: &Connection, address: &EmailAddress) -> Result<i64> {
     let normalized = address.normalized();
     sql::execute(
@@ -3557,16 +2743,9 @@ async fn read_labels(connection: &Connection, id: MessageId) -> Result<Vec<Label
     .await
 }
 
-/// Flags as the schema stores them: canonical spellings, space separated, in
-/// [`FlagSet`] order, with `\Recent` already gone.
-/// SQL rebuilding a row's `flags` text out of its own columns.
-///
-/// `seen` and `flagged` are given as SQL expressions rather than read from the
-/// row, so a bulk write can substitute the value it is setting for the one the
-/// column still holds. See [`MessageRepository::set_flag_on_set`] for why this
-/// is exact.
+/// `seen` and `flagged` are SQL expressions so a bulk write can substitute the value it sets for
+/// the one the column still holds; see [`MessageRepository::set_flag_on_set`].
 fn flags_expression(seen: &str, flagged: &str) -> String {
-    // The five system flags, in the order `FlagSet` keeps them.
     let system = [
         (Flag::Seen.as_str(), seen.to_owned()),
         (Flag::Answered.as_str(), "messages.answered".to_owned()),
@@ -3574,8 +2753,6 @@ fn flags_expression(seen: &str, flagged: &str) -> String {
         (Flag::Deleted.as_str(), "messages.deleted".to_owned()),
         (Flag::Draft.as_str(), "messages.draft".to_owned()),
     ];
-    // Whatever is left once those five are out of the text: the keywords, in
-    // the order they were already in, which is the order they belong in.
     let mut rest = "' ' || messages.flags || ' '".to_owned();
     for (spelling, _) in &system {
         rest = format!("replace({rest}, ' {spelling} ', ' ')");
@@ -3588,15 +2765,9 @@ fn flags_expression(seen: &str, flagged: &str) -> String {
     format!("trim({head} || ltrim({rest}))")
 }
 
-/// Where every draft this client has uploaded is sitting on the server.
-///
-/// `(mailbox, remote_id)` — the backend's own identity (#543). Scoped to
-/// the account's Drafts mailbox: IMAP identities are per-mailbox, so the
-/// message that happens to carry the same spelling in the inbox has nothing
-/// to do with the draft in Drafts. A draft whose append the server would
-/// not locate has no identity and is absent from this — `postio-sync` flags
-/// the folder for a resync instead of guessing which message is the one it
-/// just wrote.
+/// `(mailbox, remote_id)`, scoped to the account's Drafts mailbox because IMAP identities are
+/// per-mailbox. A draft whose append the server would not locate has no identity and is absent:
+/// `postio-sync` flags the folder for a resync instead of guessing.
 async fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
     let mut statement = sql::statement(
         connection,
@@ -3614,44 +2785,25 @@ async fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId
     Ok::<_, Error>(rows.into_iter().collect())
 }
 
-/// Rows this client wrote that the server has not named yet, by `Message-ID`.
+/// Only a row with no server identity at all: Postio files a sent message in Sent before the
+/// `APPEND` that names it (#942), or when that append fails. Without this a resync inserted the
+/// server's copy as a second row and Sent showed the message twice.
 ///
-/// The id of the local copy this client wrote that the server has not named
-/// yet, if `rfc` is its `Message-ID` and it is in `mailbox_id`.
+/// Narrow on purpose: a row that carries an identity is a different message sharing a `Message-ID`
+/// (a mailing list's copy of one's own post), and collapsing them would lose one.
 ///
-/// Only a row with **no server identity at all** — no `remote_id`, no uid.
-/// Postio writes a sent message into Sent the moment it is on its way (#942),
-/// which is well before the `APPEND` that gives it one, and the same thing
-/// happens whenever that append fails and the folder is flagged for resync
-/// instead.
+/// One indexed seek per message that missed both identity routes, not a scan per batch (the scan
+/// cost an hour of CPU on a first sync); no partial index can help, as this planner will not read
+/// through one (ADR 0017).
 ///
-/// Without this, neither of the two things [`MessageRepository::upsert_batch`]
-/// matches on can find such a row, so a resync that fetched the server's own
-/// copy inserted a second one and Sent showed the message twice.
-///
-/// **Narrow on purpose.** A row that already carries an identity is a
-/// different message that happens to share a `Message-ID` — a mailing list's
-/// copy of one's own post is the ordinary case — and collapsing those would
-/// lose one of them.
-///
-/// **One indexed seek per message that missed both identity routes**, not one
-/// scan per batch. The scan this replaced read every local copy in the store
-/// before the first message was placed, which a first sync paid on every
-/// batch while the store grew under it: an hour at 100% CPU, decrypting every
-/// page of `messages`, for a map that was empty. And no partial index can make
-/// it cheap — this planner will not read through one (ADR 0017).
-///
-/// A `Message-ID` is compared case-insensitively, but `COLLATE NOCASE` would
-/// make the index unusable, so the comparison is binary against the *folded*
-/// key: [`row_values`] stores a row with no server identity folded
-/// ([`RfcMessageId::folded`]), which is the only kind this looks for.
+/// Compared against the folded key, binary, because `COLLATE NOCASE` would make the index unusable:
+/// [`row_values`] stores a row with no server identity folded ([`RfcMessageId::folded`]).
 async fn find_awaiting_identity(
     connection: &Connection,
     account_id: AccountId,
     mailbox_id: MailboxId,
     rfc: &RfcMessageId,
 ) -> Result<Option<MessageId>> {
-    // Cached: once per message that no server coordinate placed.
     let mut statement = sql::statement(
         connection,
         "SELECT id FROM messages
@@ -3669,21 +2821,13 @@ async fn find_awaiting_identity(
     .await
 }
 
-/// The header-less twin of [`find_awaiting_identity`] (#1994): a row this
-/// client holds with no server identity and no `Message-ID`, matched on what a
-/// move cannot change -- the internal date and the size, both of which the
-/// server copies verbatim into the destination.
+/// The header-less twin of [`find_awaiting_identity`] (#1994): matched on the internal date and
+/// size, which the server copies verbatim into the destination. Used only when the server's copy
+/// has no `Message-ID` either, and only against rows with no identity at all. Two header-less rows
+/// with the same date and size are interchangeable, so the first is taken. One seek on
+/// `idx_messages_account_list`, then a filter over the few rows at that instant.
 ///
-/// Used only when the server's own copy has no `Message-ID` either, and only
-/// against rows that have no identity at all, so a message the server can
-/// place is never resolved this way. Two header-less rows with the same date
-/// and size are interchangeable for the reader, so the first is taken; the
-/// next such server copy finds the other. One seek on
-/// `idx_messages_account_list` (`account_id`, `received_at`), then the rest is
-/// a filter over the few rows at that instant.
-///
-/// A draft's own row is never a candidate: an append that could not be
-/// located is resolved by a resync of Drafts, never by a guess.
+/// A draft's own row is never a candidate: an unlocated append is resolved by a resync of Drafts.
 async fn find_awaiting_headerless(
     connection: &Connection,
     account_id: AccountId,
@@ -3718,25 +2862,12 @@ async fn find_awaiting_headerless(
     .await
 }
 
-/// `(mailbox, uid_validity, uid)` for every message with an undrained
-/// operation moving it *out* of that mailbox — see
-/// [`MessageRepository::upsert_batch`] and #368.
+/// Only `move` and `delete` (their queue row names the mailbox the message is leaving) and only
+/// `pending` or `in_flight`: `done` means the server stops listing it, and a shadow that outlived a
+/// `failed` one would hide the message for ever. See [`MessageRepository::upsert_batch`] and #368.
 ///
-/// Only `move` and `delete` qualify: they are the operations whose queue row
-/// names the mailbox the message is leaving (`Operation::mailbox()` returns
-/// `from` for both). A flag change does not move anything, and an `append`
-/// puts a message *into* a mailbox, so neither can make a fetched row a
-/// resurrection.
-///
-/// Only `pending` and `in_flight` qualify. `done` means the server has agreed
-/// and will stop listing the message where it was; `failed` means the move is
-/// not going to happen, and a shadow that outlived it would hide the message
-/// for ever — which is a worse bug than the one this prevents.
-///
-/// Keyed on the queue row's snapshot rather than the message row, because the
-/// local half of the move nulls the row's `uid`/`uid_validity` in the same
-/// transaction that enqueues (#289): by the time a resync runs, this row is
-/// the only thing that still remembers where the server has it.
+/// Keyed on the queue row's snapshot, because the local half of the move nulls the row's
+/// `uid`/`uid_validity` in the same transaction (#289).
 async fn shadowed_by_pending_operation(
     connection: &Connection,
 ) -> Result<BTreeSet<(MailboxId, String)>> {
@@ -3757,20 +2888,9 @@ async fn shadowed_by_pending_operation(
     Ok::<_, Error>(rows.into_iter().collect())
 }
 
-/// The flag changes the queue is still holding for each message, in the order
-/// the user made them.
-///
-/// # Why this is a merge rather than a skip (#317)
-///
-/// [`shadowed_by_pending_operation`] answers the move case by dropping the
-/// message from the batch: as far as the user is concerned it is not in that
-/// mailbox any more, so nothing the server says about it there is news. A flag
-/// cannot be handled that way. The row *is* still there, and the subject, the
-/// size and what parts it has are all worth taking — only the flags the queue
-/// is holding intent about have to survive the write.
-///
-/// Keyed by local message id rather than by server coordinates, because a flag
-/// operation names its target directly and the row is still where it was.
+/// A merge, not a skip (#317): unlike a move, the row is still there and its subject, size and
+/// parts are worth taking; only the flags the queue holds intent about must survive. Keyed by local
+/// message id, since a flag operation names its target directly.
 async fn unacknowledged_flag_changes(
     connection: &Connection,
 ) -> Result<BTreeMap<MessageId, Vec<(bool, FlagSet)>>> {
@@ -3803,10 +2923,8 @@ async fn unacknowledged_flag_changes(
         let entry = match (&operation, op_type.as_str()) {
             (postio_model::Operation::SetFlags { flags }, _) => (true, flags.clone()),
             (postio_model::Operation::ClearFlags { flags }, _) => (false, flags.clone()),
-            // The `op_type` filter above should make this unreachable; a row
-            // whose type and payload disagree is corrupt rather than
-            // interesting, and dropping it leaves the server authoritative,
-            // which is the safe direction.
+            // The `op_type` filter should make this unreachable; a row whose type and payload
+            // disagree is corrupt, and dropping it leaves the server authoritative.
             _ => continue,
         };
         changes
@@ -3817,11 +2935,8 @@ async fn unacknowledged_flag_changes(
     Ok(changes)
 }
 
-/// Replays `changes` over the flags the server just reported.
-///
-/// The server's copy is the base — it carries everything the user did *not*
-/// touch, including a flag set from another client — and the queue's
-/// unacknowledged intent goes on top, in the order it was made.
+/// The server's copy is the base (it carries what the user did not touch, including flags from
+/// another client), with the queue's unacknowledged intent on top in the order it was made.
 fn with_unacknowledged(server: &FlagSet, changes: &[(bool, FlagSet)]) -> FlagSet {
     let mut flags = server.clone();
     for (set, changed) in changes {
@@ -3844,22 +2959,9 @@ fn parse_flags(text: &str) -> FlagSet {
     text.split_whitespace().map(Flag::parse).collect()
 }
 
-/// How many lines a plain-text body has (#1329).
-///
-/// The conversation rail shows a length only on messages long enough for it
-/// to matter, and reads it from the thread model before any body has been
-/// prepared for display. So it is counted here, once, when the body is
-/// written -- never measured from laid-out output, which is not available
-/// until the engine has done the work the rail exists to let you skip, and
-/// which answers differently at every window width.
-///
-/// Counted on the plain text rather than the markup: a one-line message
-/// wrapped in a template is one line to a person reading it, whatever the tag
-/// count says.
-///
-/// A trailing newline does not add a line -- "a\nb\n" is two lines, not
-/// three -- because a body that ends the way most bodies end should not read
-/// as one line longer than an identical one that does not.
+/// Counted when the body is written, never from laid-out output (unavailable before the work the
+/// rail exists to skip, and width-dependent) (#1329). Counted on the plain text, not markup. A
+/// trailing newline does not add a line.
 fn line_count(text: &str) -> i64 {
     if text.is_empty() {
         return 0;
@@ -3872,12 +2974,9 @@ mod tests {
     use super::*;
     use crate::test_support;
 
-    /// The backfill's folder walks ask for the folder's newest candidates, a
-    /// window at a time, every time the scheduler seeds. The header-fetch walk
-    /// seeks `idx_messages_list`; the payload walk and the bodies walk's three
-    /// arms each seek the `sort_at`-ordered body-state or body-problems index. In neither case
-    /// does a statement gather the folder's candidates to sort them -- a
-    /// folder of 60,000 messages, for fifty.
+    /// The header-fetch walk seeks `idx_messages_list`; the payload walk and the bodies walk's
+    /// three arms each seek a `sort_at`-ordered index. No statement gathers the folder's candidates
+    /// to sort them (a folder of 60,000, for fifty).
     #[tokio::test]
     async fn the_backfill_s_folder_walks_seek_an_index_and_never_sort() {
         let database = test_support::memory().await;

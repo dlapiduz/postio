@@ -1,11 +1,3 @@
-//! The feed's rules, from the controller's side (specs/009-focus-macos T023).
-//!
-//! What GTK's `list/feed.rs` did, asserted here so both frontends get it: a
-//! place opened is counted before the list changes over, an answer for a
-//! place no longer in view changes nothing, a page is read with its pills and
-//! delivered under the list's own stamp, a failed page is asked again a
-//! bounded number of times, and an engine event re-reads what it moved.
-
 use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::Event;
@@ -22,7 +14,6 @@ fn focus() -> FocusController {
     FocusController::new(Policy::for_platform(Platform::Apple))
 }
 
-/// The one ask among `effects`.
 fn ask(effects: &[Effect]) -> (Ticket, Request) {
     let asks: Vec<_> = effects
         .iter()
@@ -45,7 +36,6 @@ fn opened(scope: ListScope, total: u32) -> Opened {
     }
 }
 
-/// `focus` with `scope` open and counted at `total`.
 fn open_at(focus: &mut FocusController, scope: ListScope, total: u32) {
     let (ticket, _) = ask(&focus.open(scope));
     focus.handle(Input::Reply(ticket, Reply::Opened(opened(scope, total))));

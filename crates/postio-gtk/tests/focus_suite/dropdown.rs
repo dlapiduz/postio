@@ -1,12 +1,3 @@
-//! The search dropdown (spec 010 T170, screens 01-05): GTK draws the
-//! controller's `DropdownView`.
-//!
-//! The words, which rows run, and the default highlight are the
-//! controller's, asserted in `postio-focus`. These cases ask what is GTK's
-//! own: that a view is drawn as it says, that the arrows keep their place
-//! across a redraw, and that a run or a pill says its token back. The last
-//! drives the window.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -71,8 +62,6 @@ fn pill(token: u64, op: Option<&str>, label: &str, count: &str) -> DropdownPill 
     }
 }
 
-/// Screen 03: "budget" typed, two hits with their passages, Narrow to,
-/// and Show all, which the controller highlights by default.
 fn words_view() -> DropdownView {
     let mut first = row(
         11,
@@ -133,8 +122,6 @@ fn words_view() -> DropdownView {
     }
 }
 
-/// A dropdown drawn from `view`, with what it says back recorded.
-/// What a dropdown said back: `run` or `highlighted`, and the token.
 type Said = Rc<RefCell<Vec<(&'static str, u64)>>>;
 
 fn drawn(view: &DropdownView) -> (Rc<Dropdown>, Said) {
@@ -152,9 +139,6 @@ fn drawn(view: &DropdownView) -> (Rc<Dropdown>, Said) {
     (dropdown, said)
 }
 
-/// Screen 03 drawn: the sections in order, each hit's words with the
-/// matched ones in the find highlight, the pills, and the footer's keys
-/// and count.
 pub fn the_words_state_draws_hits_pills_and_show_all() {
     crate::gtk_case(async {
         if !support::display() {
@@ -191,8 +175,6 @@ pub fn the_words_state_draws_hits_pills_and_show_all() {
     });
 }
 
-/// The arrows walk the rows that run something, skipping the titles and
-/// the pills' line, and say where they rest; Return runs that row.
 pub fn the_arrows_skip_what_runs_nothing_and_return_runs() {
     crate::gtk_case(async {
         if !support::display() {
@@ -216,10 +198,6 @@ pub fn the_arrows_skip_what_runs_nothing_and_return_runs() {
     });
 }
 
-/// A redraw -- the passages landing -- leaves the arrows where a person
-/// put them, though the view's default is elsewhere; a run's `select`
-/// moves them; a row no longer drawn gives way to the default. A redraw
-/// says nothing back.
 pub fn a_redraw_keeps_the_highlight_unless_told() {
     crate::gtk_case(async {
         if !support::display() {
@@ -247,7 +225,6 @@ pub fn a_redraw_keeps_the_highlight_unless_told() {
     });
 }
 
-/// A pill runs its token on a click, as a row does on Return.
 pub fn a_pill_runs_its_token() {
     crate::gtk_case(async {
         if !support::display() {
@@ -259,10 +236,6 @@ pub fn a_pill_runs_its_token() {
     });
 }
 
-/// `/` opens the dropdown in the bar's
-/// panel: empty, it offers the cheat sheet; typing a word in a message's
-/// subject lists that message under Top hits with the word found, and
-/// Show all is where Return goes.
 pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
     crate::gtk_case(async {
         if !support::display() {
@@ -297,8 +270,6 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
             dropdown.widget().is_mapped(),
             "the dropdown is not on screen"
         );
-        // Spec 010 US1: the field grows to the panel's width, says what it
-        // searches, and leaves the inbox behind it undimmed.
         let field = bar.input().downcast::<gtk::Entry>().expect("an entry");
         assert_eq!(
             field.placeholder_text().as_deref(),
@@ -346,10 +317,8 @@ pub fn slash_opens_the_dropdown_and_a_word_finds_top_hits() {
     });
 }
 
-/// A prefix's view can land before the bar has ever been laid out -- on a
-/// busy machine the controller answers inside the frame `/` opened it in.
-/// The ghost is drawn once the field has its width, not lost to a field
-/// that had none yet (#2151).
+/// A view can land before the bar has been laid out; the ghost is drawn once the field has its
+/// width (#2151).
 pub fn a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is() {
     crate::gtk_case(async {
         if !support::display() {
@@ -371,7 +340,6 @@ pub fn a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is() {
             highlight: None,
             ..words_view()
         });
-        // What the view asked for runs before anything is allocated.
         crate::settle();
         window.present();
         assert!(
@@ -383,9 +351,6 @@ pub fn a_ghost_drawn_before_the_bar_is_laid_out_shows_once_it_is() {
     });
 }
 
-/// Screen 02 (spec 010 US7): a short prefix draws the rest of its best word
-/// after the caret in the field's lighter ink, "Tab completes" at the
-/// field's end; Tab takes it, and the ghost goes.
 pub fn a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -450,10 +415,6 @@ pub fn a_prefix_draws_its_ghost_after_the_caret_and_tab_takes_it() {
     });
 }
 
-/// Spec 010 US7 (from-people-autocomplete's Backspace, which the format can
-/// press only with real input): the field's own Backspace on `from:`'s
-/// empty value takes its colon, and the operator goes whole: the field is
-/// empty, and so is the dropdown.
 pub fn backspace_on_an_empty_value_takes_the_operator_away() {
     crate::gtk_case(async {
         if !support::display() {
@@ -470,8 +431,6 @@ pub fn backspace_on_an_empty_value_takes_the_operator_away() {
         let bar = window.bar().expect("/ opened the bar");
         bar.set_text("from:");
         crate::settle();
-        // What GTK's Backspace does in the field: the colon before the
-        // caret goes.
         let field = bar
             .input()
             .downcast::<gtk::Editable>()
@@ -491,9 +450,6 @@ pub fn backspace_on_an_empty_value_takes_the_operator_away() {
     });
 }
 
-/// Escape from the dropdown puts the keyboard back on the row it left:
-/// GTK's focus on the cursor's row, so the keyboard's outline and the
-/// cursor's ring are one (storyboards' dropdown-esc-returns-to-row, #1825).
 pub fn escape_gives_the_keyboard_back_to_the_cursor_row() {
     crate::gtk_case(async {
         if !support::display() {
@@ -510,8 +466,6 @@ pub fn escape_gives_the_keyboard_back_to_the_cursor_row() {
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         assert!(!bar.is_open(), "Escape left the bar up");
         let pane = window.pane().expect("the inbox");
-        // GTK's own focus is on the item holding the second row on screen,
-        // the cursor's.
         let on_the_cursor_row = || {
             let focus = gtk::prelude::GtkWindowExt::focus(&window);
             let rows = pane.rows_on_screen();

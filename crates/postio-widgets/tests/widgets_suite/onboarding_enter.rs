@@ -1,24 +1,3 @@
-//! Return does the right thing in every onboarding field.
-//!
-//! `postio-68`: `onboarding.rs` wired `connect_activate` on exactly two
-//! widgets, `address` and `password`. Fill in the five manual fields by hand
-//! — the case that needs Return most, since autoconfig failed to spare you
-//! the typing — and pressing it did nothing. The fix makes `Connect` the
-//! window's default widget and gives the five entries `activates-default`,
-//! so `Ret` reaches it the same way it would in any dialog.
-//!
-//! `#629` is the same bug recurring on a field that did not exist when
-//! `postio-68` was fixed: onboarding's "Your name" field (#603) never got a
-//! `connect_activate` at all, so Return in the very first field of the form
-//! did nothing. This file now drives Return through every field the form
-//! has — name, address, password, and the five manual fields — in one
-//! place, precisely so the *next* field added here cannot silently repeat
-//! this a third time.
-//!
-//! Its own file with one test function: GTK is initialised once per process,
-//! from one thread, and a second `#[test]` here would race `adw::init()` —
-//! see the note in `gtk_onboarding.rs`.
-
 use crate::support_compose::settle;
 use crate::support_compose::{app, fonts, style};
 use adw::prelude::*;
@@ -42,11 +21,6 @@ pub fn return_does_the_right_thing_in_every_field() {
     window.set_content(Some(&screen));
     settle();
 
-    // ── where a fresh form starts ─────────────────────────────────────────
-    // The name is the first field (#603 put it above the address), so it is
-    // where the keyboard belongs on first run. `focus_address` kept the job
-    // it was given when the address *was* first, and onboarding opened with
-    // the cursor in the second field.
     screen.focus_name();
     settle();
     assert!(
@@ -55,7 +29,6 @@ pub fn return_does_the_right_thing_in_every_field() {
          the address leaves the name above it looking already dealt with"
     );
 
-    // ── name: nothing to probe or submit yet, so Return moves on ──────────
     assert!(
         !screen.test_address_has_focus(),
         "sanity: nothing has claimed the address field's focus yet"
@@ -68,7 +41,6 @@ pub fn return_does_the_right_thing_in_every_field() {
          field, the same way Tab already does (#629)"
     );
 
-    // ── address: Return asks for a probe ───────────────────────────────────
     let probed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     screen.connect_probe({
         let probed = std::rc::Rc::clone(&probed);
@@ -89,10 +61,6 @@ pub fn return_does_the_right_thing_in_every_field() {
         move |_| submissions.set(submissions.get() + 1)
     });
 
-    // ── password: Return submits ───────────────────────────────────────────
-    // A guess that opens and fills the manual form — exactly the state a
-    // failed autoconfig leaves the screen in, and the case `postio-68` bit
-    // hardest: everything typed by hand, then Return does nothing.
     screen.test_set_password("hunter2");
     screen.set_status(Status::Manual {
         suggestion: Some(Settings {
@@ -123,7 +91,6 @@ pub fn return_does_the_right_thing_in_every_field() {
         "Return in the password field should still submit"
     );
 
-    // ── the five manual fields: Return submits from each of them too ──────
     screen.test_activate_manual_fields();
     settle();
 

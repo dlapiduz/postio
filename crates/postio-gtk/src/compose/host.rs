@@ -1,10 +1,6 @@
-//! Focus's compose dialog as a composer's host (research R15): the second
-//! implementation of `ComposerHost`.
-//!
-//! Focus lends the composer a dialog over the list: taking the pane presents the dialog, and
-//! giving it back closes it and returns the keyboard to the row it left
-//! from. The keymap is the window's, resolved in the composer's context, so
-//! `[keys]` reaches the composer here exactly as it does there.
+//! Focus's compose dialog as a `ComposerHost`: taking the pane presents the dialog; giving it back
+//! closes it and returns
+//! the keyboard to the row it left from.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -18,35 +14,23 @@ use postio_widgets::composer::{Composer, ComposerHost};
 
 use crate::window::FocusWindow;
 
-/// The window size the dialog is fitted to before it knows its window's:
-/// the window's own default, as the open message's is.
 pub const WINDOW: (i32, i32) = (1440, 900);
 
-/// Who hears a command the window hands the composer.
 type CommandHandler = Box<dyn Fn(CommandId)>;
 
-/// The dialog, the slot in it the composer sits in, and the window under it.
 pub struct DialogHost {
     pub(super) window: glib::WeakRef<FocusWindow>,
     pub(super) dialog: adw::Dialog,
     pub(super) slot: gtk::Box,
-    /// What holds the fields and the body to the column's width.
     column: adw::Clamp,
-    /// Whether the dialog follows its window's resizes yet.
     following: Cell<bool>,
-    /// Who hears the commands the window dispatches to the composer.
     commands: RefCell<Vec<CommandHandler>>,
-    /// Whether the composer is open: between taking the pane and giving it
-    /// back, in the dialog or the reading pane.
     showing: Cell<bool>,
-    /// The composer's surface: the dialog's child, or the reading pane's.
     surface: gtk::Widget,
-    /// The reading pane's slot the surface is in, while it is placed there
-    /// (T232): shared with the resize follower, which fits the column to
-    /// whichever host holds it.
+    /// Shared with the resize follower, which fits the column to whichever host holds it.
     pane: Rc<RefCell<Option<gtk::Box>>>,
-    /// Whether the surface is out in a window of its own, a detached
-    /// composition's: neither the dialog nor the pane holds it then.
+    /// Neither the dialog nor the pane holds the surface while it is detached in a window of its
+    /// own.
     parked: Cell<bool>,
 }
 
@@ -72,19 +56,14 @@ impl DialogHost {
         }
     }
 
-    /// Whether the composer's surface is in the reading pane.
     pub fn in_pane(&self) -> bool {
         self.pane.borrow().is_some()
     }
 
-    /// Place the composer's surface in `slot`, the reading pane beside the
-    /// list, or with `None` back in its dialog (T232). An open composer stays
-    /// open, and is drawn where it now is.
+    /// An open composer stays open and is drawn where it now is.
     pub fn place(&self, slot: Option<&gtk::Box>) {
         let here = self.pane.borrow().clone();
         if self.parked.get() {
-            // The surface is in its own window; only where it goes home to
-            // changes.
             self.pane.replace(slot.cloned());
             return;
         }
@@ -120,22 +99,16 @@ impl DialogHost {
         }
     }
 
-    /// Hand `id` to the composer, as a key or a control asked.
     pub fn run(&self, id: CommandId) {
         for handler in self.commands.borrow().iter() {
             handler(id);
         }
     }
 
-    /// Whether the dialog is over the window.
     pub fn showing(&self) -> bool {
         self.showing.get()
     }
 
-    /// Size the dialog for a window `width` by `height`: the message
-    /// dialog's rule (T205), so the two are one size over one window, and
-    /// the column inside it hers -- or, in the reading pane, the column the
-    /// pane's width gives (T232).
     fn fit(dialog: &adw::Dialog, column: &adw::Clamp, in_pane: bool, width: i32, height: i32) {
         if width <= 0 || height <= 0 {
             return;
@@ -161,9 +134,6 @@ impl DialogHost {
         }
     }
 
-    /// Fit the dialog to `window` now, and again whenever it is resized:
-    /// its surface's `layout` says when, maximised and tiled sizes
-    /// included, as the open message follows it.
     fn follow(&self, window: &FocusWindow) {
         let (width, height) = match (window.width(), window.height()) {
             (width, height) if width > 0 && height > 0 => (width, height),
@@ -199,14 +169,12 @@ impl ComposerHost for DialogHost {
 
     fn install(&self, composer: &Composer) {
         composer.set_vexpand(true);
-        // Hidden until it takes the pane: the composer is open exactly
-        // while it is visible.
+        // Hidden until it takes the pane: the composer is open exactly while it is visible.
         composer.set_visible(false);
         self.slot.append(composer);
     }
 
-    // The detached window takes the whole surface -- header, action row and
-    // composer -- so what the dialog gives a mouse, the window does.
+    // The detached window takes the whole surface (header, action row, composer).
     fn restore(&self, _composer: &Composer) {
         self.parked.set(false);
         let here = self.pane.borrow().clone();
@@ -234,13 +202,11 @@ impl ComposerHost for DialogHost {
             return;
         }
         if let Some(window) = self.window.upgrade() {
-            // The message under the composer is off screen, so not read.
             if let Some(reading) = window.reading() {
                 reading.set_covered(true);
             }
             self.follow(&window);
             if self.in_pane() {
-                // The pane shows the composer in the open message's place.
                 window.show_pane_page();
             } else {
                 self.dialog.present(Some(&window));
@@ -257,22 +223,17 @@ impl ComposerHost for DialogHost {
         if !self.in_pane() {
             self.dialog.force_close();
         }
-        // The keyboard goes back to the list, on the row it left from: a
-        // field of a closed dialog would otherwise hold it, and the
-        // resolver's "typing wins" would swallow the next key.
+        // A field of a closed dialog would hold the keyboard, and the resolver's "typing wins"
+        // would swallow the next key.
         if let Some(window) = self.window.upgrade() {
             if let Some(reading) = window.reading() {
                 reading.set_covered(false);
             }
-            // The pane gives its place back to the message, or to nothing.
             window.show_pane_page();
             gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
-            // Back to the message it was written from, when one is open;
-            // to the list otherwise.
             match window.visible_dialog() {
-                // The message's own column, where it was before the reply:
-                // the dialog's first control is a step button, which Space
-                // would press and walk away from the message just answered.
+                // The dialog's first control is a step button, which Space would press, walking
+                // away from the message just answered.
                 Some(under) => match window.reading().filter(|reading| reading.is_open()) {
                     Some(reading) if under.widget_name() == crate::open::DIALOG_NAME => {
                         reading.focus_message();

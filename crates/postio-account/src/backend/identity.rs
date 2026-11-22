@@ -1,26 +1,13 @@
-//! How this adapter spells a [`RemoteId`] (#543, ADR 0018 Q2).
-//!
-//! The trait's addressing surface is the opaque `RemoteId`; IMAP's wire
-//! wants a [`Uid`], and a `Uid` is meaningless without the
-//! [`UidValidity`] it was observed under. So the adapter packs the pair
-//! as `{uid_validity}:{uid}` — the exact spelling migration 0023
-//! backfilled — and unpacks it at the wire. Nothing outside this crate
-//! reads structure into a `RemoteId`, and [`wire`] answering `None` is
-//! how an id from another generation (or another backend entirely)
-//! surfaces: as "this mailbox needs a resync", never as a guessed uid.
+//! A `RemoteId` is `{uid_validity}:{uid}` (migration 0023); `wire` returning `None` means a stale
+//! or foreign id (#543, ADR 0018 Q2).
 
 use postio_model::{RemoteId, Uid, UidValidity};
 
-/// The identity of a message observed as `uid` under `uid_validity`.
 pub fn remote_id(uid_validity: UidValidity, uid: Uid) -> RemoteId {
     RemoteId::new(format!("{uid_validity}:{uid}"))
 }
 
-/// The wire pair a [`RemoteId`] of this adapter's spelling packs.
-///
-/// `None` for anything else — an id minted by another backend, or a
-/// corrupted value. The caller treats that as a stale identity, not an
-/// error to retry.
+/// `None` for an id minted elsewhere or corrupt: the caller treats it as stale, not a retry.
 pub fn wire(remote_id: &RemoteId) -> Option<(UidValidity, Uid)> {
     let (validity, uid) = remote_id.as_str().split_once(':')?;
     Some((
@@ -29,13 +16,8 @@ pub fn wire(remote_id: &RemoteId) -> Option<(UidValidity, Uid)> {
     ))
 }
 
-/// Unpacks a batch of ids into the wire set, refusing any that are not of
-/// this mailbox's live generation.
-///
-/// The refusal is [`crate::backend::BackendError::UidValidityChanged`] — the same answer a
-/// renumber discovered at `SELECT` gives — because that is what a stale id
-/// *is*: a name from a generation the server has abandoned. The caller's
-/// recovery is identical: resync the mailbox, never retry the uid.
+/// Refuses ids of another generation with `UidValidityChanged`, as a renumber at `SELECT` does:
+/// resync, never retry the uid.
 pub(crate) fn wire_set(
     mailbox: &str,
     live: UidValidity,
@@ -48,7 +30,6 @@ pub(crate) fn wire_set(
     Ok(set)
 }
 
-/// [`wire_set`], for the single id the body fetches address.
 pub(crate) fn wire_uid(
     mailbox: &str,
     live: UidValidity,
@@ -61,8 +42,7 @@ pub(crate) fn wire_uid(
             known: validity,
             observed: live,
         }),
-        // An id this adapter never minted — another backend's, or corrupt.
-        // A caller bug, not a server condition; nothing to resync or retry.
+        // Not this adapter's id: a caller bug, nothing to resync or retry.
         None => Err(crate::backend::BackendError::Protocol {
             reason: format!("remote id {id:?} is not this adapter's spelling"),
         }),

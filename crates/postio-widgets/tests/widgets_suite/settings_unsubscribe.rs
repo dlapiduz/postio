@@ -1,7 +1,3 @@
-//! The Filtering pane's "After you unsubscribe" control (#1952): it shows
-//! what `[focus] after_unsubscribe` holds and writes that one key, through
-//! the same buffer every pane edits. Skips without a display.
-
 use crate::support_compose::{fonts, style};
 use gtk::gdk;
 use gtk::prelude::*;

@@ -1,11 +1,3 @@
-//! Sending states (T239; ADR 0021 Decision 3; screens.md, "Sending
-//! states"): a draft on its way or stopped says which in its row, opens to
-//! be read rather than written, and the open message offers what settles
-//! it -- Cancel send while it waits, Retry send once it stopped, Mark as sent
-//! when nobody could confirm it -- with Edit for the composer. Ports of the
-//! classic app's `unconfirmed_send` and `resume_queued_draft`, driven through
-//! keys and clicks and read off what the rows and the open message drew.
-
 use postio_model::{Draft, DraftState, EmailAddress, OperationTarget};
 use postio_storage::repository::{DraftRepository, OperationQueueRepository};
 
@@ -13,8 +5,6 @@ use crate::support::{self, Fixture};
 
 const SUBJECT: &str = "Tide gate interlock";
 
-/// A fixture with a Drafts folder, one conversation in the inbox, and a
-/// draft to `quinn@example.net` left in `state`; Focus open over it.
 async fn with_a_draft(
     state: DraftState,
 ) -> (
@@ -62,7 +52,6 @@ async fn with_a_draft(
     (fixture, window, draft)
 }
 
-/// The draft's state in the store.
 async fn state_of(fixture: &Fixture, draft: postio_model::DraftId) -> Option<DraftState> {
     let connection = fixture.database.connect().await.expect("a connection");
     DraftRepository::new(&connection)
@@ -72,7 +61,6 @@ async fn state_of(fixture: &Fixture, draft: postio_model::DraftId) -> Option<Dra
         .map(|draft| draft.state)
 }
 
-/// What the row saying `subject` drew, once it is drawn.
 fn row_texts(window: &postio_gtk::window::FocusWindow, subject: &str) -> Option<Vec<String>> {
     window
         .pane()?
@@ -82,7 +70,6 @@ fn row_texts(window: &postio_gtk::window::FocusWindow, subject: &str) -> Option<
         .find(|texts| texts.iter().any(|text| text == subject))
 }
 
-/// `g l`, then a click on the place saying `name`.
 async fn go_to(window: &postio_gtk::window::FocusWindow, name: &str) {
     support::keys(window, &["g", "l"]);
     let places = window.places().expect("g l opened the folders popover");
@@ -100,7 +87,6 @@ async fn go_to(window: &postio_gtk::window::FocusWindow, name: &str) {
     );
 }
 
-/// Return on the draft's row, the cursor walked to it.
 async fn open_the_draft(window: &postio_gtk::window::FocusWindow) {
     assert!(
         crate::settle_until(async || support::subjects(window) == [SUBJECT]).await,
@@ -111,7 +97,6 @@ async fn open_the_draft(window: &postio_gtk::window::FocusWindow) {
     support::deliver(window, "Return");
 }
 
-/// The open message, once it shows the draft.
 async fn reading(
     window: &postio_gtk::window::FocusWindow,
 ) -> std::rc::Rc<postio_gtk::open::OpenMessage> {
@@ -128,7 +113,6 @@ async fn reading(
     window.reading().expect("the open message")
 }
 
-/// Which of the verbs the open message's action row shows.
 fn verbs(reading: &postio_gtk::open::OpenMessage) -> Vec<String> {
     let view = reading.view();
     [
@@ -153,10 +137,6 @@ fn verbs(reading: &postio_gtk::open::OpenMessage) -> Vec<String> {
 
 use gtk::prelude::*;
 
-/// The port of `unconfirmed_send`: an unconfirmed send is in Drafts saying
-/// "Not confirmed", opens to be read, offers Retry send, Mark as sent and
-/// Edit, and a click on Mark as sent settles it in the store and takes it
-/// out of Drafts.
 pub fn an_unconfirmed_send_says_so_and_mark_as_sent_settles_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -207,9 +187,6 @@ pub fn an_unconfirmed_send_says_so_and_mark_as_sent_settles_it() {
     });
 }
 
-/// A send that stopped says "Not sent" and offers Retry send; its key
-/// queues it again, and the Outbox lists it "Waiting to send", where the
-/// open message offers Cancel send, whose click puts it back in Drafts.
 pub fn a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back() {
     crate::gtk_case(async {
         if !support::display() {
@@ -234,7 +211,6 @@ pub fn a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back() {
             verbs(&reading)
         );
 
-        // Retry send's own key, as the registry binds it.
         support::deliver_with(
             &window,
             "y",
@@ -300,9 +276,6 @@ pub fn a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back() {
     });
 }
 
-/// The port of `resume_queued_draft`: in the Outbox, Edit on a queued send
-/// (`Return` in the open message) takes it off the queue and opens it in the
-/// composer, so nothing can go out from under the person editing it.
 pub fn edit_on_a_queued_send_takes_it_off_the_queue_and_opens_the_composer() {
     crate::gtk_case(async {
         if !support::display() {
@@ -353,10 +326,6 @@ pub fn edit_on_a_queued_send_takes_it_off_the_queue_and_opens_the_composer() {
     });
 }
 
-/// The same in the pane beside the list (T232): a waiting send opened from
-/// the Outbox shows there, not in the dialog or the composer, with Cancel
-/// send and Edit in place of received mail's verbs; a click on Cancel send
-/// stops the send, takes the row out of the Outbox and closes the pane.
 pub fn the_pane_offers_a_waiting_send_its_verbs() {
     crate::gtk_case(async {
         if !support::display() {
@@ -419,8 +388,6 @@ pub fn the_pane_offers_a_waiting_send_its_verbs() {
     });
 }
 
-/// Received mail keeps received mail's verbs, and the send verbs' keys over
-/// it say why they do nothing rather than doing nothing silently.
 pub fn received_mail_keeps_its_verbs_and_the_send_keys_say_why_not() {
     crate::gtk_case(async {
         if !support::display() {
@@ -444,7 +411,6 @@ pub fn received_mail_keeps_its_verbs_and_the_send_keys_say_why_not() {
             "received mail offers {:?}",
             verbs(&reading)
         );
-        // Mark as sent's own key, as the registry binds it.
         support::deliver_with(
             &window,
             "m",

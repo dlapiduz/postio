@@ -1,6 +1,3 @@
-//! Focus's list: the model over the paged store, where its pages come from,
-//! and the rows a person reads.
-
 pub mod child;
 pub mod feed;
 pub mod heading;

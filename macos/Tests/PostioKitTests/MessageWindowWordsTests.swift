@@ -3,11 +3,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The message window's words, as its views draw them (specs/009-focus-macos
-/// T067, T068): every word is the engine's (`focus_message_view`), every
-/// keycap is spelled from the bindings in force, and the one decision the
-/// Mac makes -- which verbs stand in the row and which wait in More -- is
-/// the engine's `foldsIntoMore` applied to the engine's `folds`.
 struct MessageWindowWordsTests {
     static let bindings: [String: String] = [
         "reply": "e", "reply_all": "E", "forward": "f", "archive": "a", "snooze": "s",
@@ -79,7 +74,6 @@ struct MessageWindowWordsTests {
     }
 
     @Test func aDraftOnItsWayDrawsOnlyTheVerbsThatSettleIt() {
-        // `send_verbs`: nothing folds and there is no More.
         let view = Self.view(
             actions: [Self.verb("retry_send", "Retry send"), Self.verb("open_message", "Edit")],
             more: nil)

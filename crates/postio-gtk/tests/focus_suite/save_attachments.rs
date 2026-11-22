@@ -1,8 +1,3 @@
-//! Saving attachments (T240, row 37): the `A` chooser offers Save and Save
-//! all through the file-chooser portal, and a click on an attachment chip
-//! opens that chooser at the part. The portal is a seam here -- a case says
-//! where the person chose, and what was asked of it.
-
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -12,8 +7,6 @@ use postio_gtk::chooser::SavePick;
 
 use crate::support::{self, Fixture};
 
-/// A window with one message, `Invoice`, open and drawn; the portal answers
-/// `chosen` to each ask, and every ask is kept.
 async fn opened(
     fixture: &Fixture,
     chosen: Option<PathBuf>,
@@ -49,8 +42,7 @@ fn dialog(window: &postio_gtk::window::FocusWindow) -> adw::Dialog {
 }
 
 async fn written(path: &std::path::Path) -> Option<Vec<u8>> {
-    // The file exists before its bytes do: wait for the attached length,
-    // then read whatever is there so a wrong write still reports itself.
+    // The file exists before its bytes do: wait for the attached length.
     crate::settle_until(async || {
         std::fs::metadata(path).is_ok_and(|m| m.len() >= support::ATTACHED.len() as u64)
     })
@@ -102,8 +94,8 @@ pub fn save_all_in_the_chooser_writes_every_part_into_the_chosen_folder() {
         let (window, asked) = opened(&fixture, Some(into.path().to_path_buf())).await;
         support::keys(&window, &["A"]);
         assert!(crate::settle_until(async || !window.choices_shown().is_empty()).await);
-        // The chooser is still finding its size when it first lists the
-        // parts; a press and a release that land apart are no click.
+        // The chooser is still finding its size when it first lists the parts; a press and a
+        // release that land apart are no click.
         let save_all = support::button_labelled(&dialog(&window), "Save all");
         support::settle_still(&save_all, &window);
         support::click(&window, &save_all, 1);
@@ -137,8 +129,6 @@ pub fn a_cancelled_portal_writes_nothing() {
     });
 }
 
-/// A chip opens the chooser at its part, in the dialog and in the pane,
-/// and asks the portal for nothing until Save is pressed.
 pub fn a_click_on_a_chip_shows_the_chooser_at_that_part() {
     crate::gtk_case(async {
         if !support::display() {

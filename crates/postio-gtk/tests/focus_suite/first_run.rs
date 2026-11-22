@@ -1,13 +1,3 @@
-//! T171: Focus's first run, over a store with no account at all -- the
-//! shared add-account form (`postio_widgets::present::onboarding::add_account`,
-//! T165) opens over the window by itself, and saving through it mounts what
-//! an account being known mounts, brings its connection up, and leaves the
-//! inbox listing (the maintainer's T149 walk found no such path at all).
-//!
-//! T172: `c` and the top bar's compose button, asked while there is still no
-//! account -- the wizard dismissed rather than finished -- say what is
-//! missing and offer the same form, rather than doing nothing.
-
 use adw::prelude::*;
 use postio_account::backend::MockBackend;
 use postio_model::TransportSecurity;
@@ -15,8 +5,6 @@ use postio_widgets::onboarding::{Onboarding, Server, Settings, Status, SyncWindo
 
 use crate::support::{self, NoAccount};
 
-/// The account form anywhere under `widget`: the dialog `add_account`
-/// presents.
 fn form_in(widget: &gtk::Widget) -> Option<Onboarding> {
     if let Ok(form) = widget.clone().downcast::<Onboarding>() {
         return Some(form);
@@ -31,8 +19,6 @@ fn form_in(widget: &gtk::Widget) -> Option<Onboarding> {
     None
 }
 
-/// Manually entered settings, as a person who typed a domain and edited the
-/// server fields by hand would arrive at -- no probe, so no network.
 fn typed_settings(address: &str) -> Settings {
     Settings {
         imap: Server {
@@ -50,8 +36,6 @@ fn typed_settings(address: &str) -> Settings {
     }
 }
 
-/// Fills `form` as a person adding `address` by hand would, and presses
-/// Connect.
 fn add_through(form: &Onboarding, name: &str, address: &str, password: &str) {
     form.set_name(name);
     form.set_address(address);
@@ -60,8 +44,6 @@ fn add_through(form: &Onboarding, name: &str, address: &str, password: &str) {
     form.submit();
 }
 
-/// What a person does at the history step once the account is saved: waits for
-/// it to show, then presses its `Start sync` button, as the form is left with.
 async fn start_sync(window: &postio_gtk::window::FocusWindow, form: &Onboarding) {
     assert!(
         crate::settle_until(async || matches!(form.status(), Status::SyncWindow)).await,
@@ -73,8 +55,6 @@ async fn start_sync(window: &postio_gtk::window::FocusWindow, form: &Onboarding)
     support::click(window, &start, 1);
 }
 
-/// A window over a store with no account, its host proving any account
-/// added against `backend` rather than a real network.
 async fn opened(backend: MockBackend) -> (postio_gtk::window::FocusWindow, MockBackend) {
     let store = NoAccount::new().await;
     let window = postio_gtk::window::FocusWindow::new(None);
@@ -126,8 +106,6 @@ pub fn first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox(
             form.status()
         );
 
-        // What an account being known mounts (`Self::mount_compose`): the
-        // composer, once the accounts refresh the save kicked off has landed.
         assert!(
             crate::settle_until(async || window.composer().is_some()).await,
             "no composer was mounted for the account just saved"
@@ -139,8 +117,6 @@ pub fn first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox(
         );
         window.compose_dialog().expect("a composer").close();
 
-        // Its connection comes up: a second call to the backend, beyond the
-        // one that proved the credential.
         assert!(
             crate::settle_until(async || backend.calls() > calls_before_save + 1).await,
             "the new account's sync never started"
@@ -148,9 +124,6 @@ pub fn first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox(
     });
 }
 
-/// T243: the history step (row 47, #876). Saving the account on a first run
-/// does not close the form: it asks how much to sync, and pressing `Start sync`
-/// writes the choice to `config.toml` and brings the account up.
 pub fn the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved() {
     crate::gtk_case(async {
         if !support::display() {
@@ -182,8 +155,6 @@ pub fn the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved() 
             window.add_account_dialog().is_some(),
             "the form closed before the history was chosen"
         );
-        // Nothing is synced until the choice is made, and the choice is not
-        // written before it is.
         assert_eq!(
             config_contents(&config_path),
             config_before,
@@ -225,9 +196,6 @@ pub fn compose_with_no_account_says_so_and_offers_to_add_one() {
         let backend = MockBackend::new();
         let (window, backend) = opened(backend).await;
 
-        // The maintainer's scenario: the wizard came up on its own (T171)
-        // and was dismissed without finishing it, the way `Esc` or the
-        // dialog's own close button would leave it.
         assert!(
             crate::settle_until(async || window.add_account_dialog().is_some()).await,
             "an empty store opened no add-account form"
@@ -254,8 +222,6 @@ pub fn compose_with_no_account_says_so_and_offers_to_add_one() {
             "the toast offers no way to add one"
         );
 
-        // The action the toast's button names: the same command reopens the
-        // form.
         let add = support::button_labelled(&window, "Add account");
         support::click(&window, &add, 1);
         assert!(
@@ -277,8 +243,6 @@ pub fn compose_with_no_account_says_so_and_offers_to_add_one() {
             form.status()
         );
 
-        // Once an account exists, compose works as now (T172): once the
-        // accounts refresh the save kicked off has landed.
         assert!(
             crate::settle_until(async || window.composer().is_some()).await,
             "no composer was mounted for the account just saved"
@@ -292,8 +256,6 @@ pub fn compose_with_no_account_says_so_and_offers_to_add_one() {
     });
 }
 
-/// The scrolled body of the account form: the pane the server fields would
-/// have to be scrolled in.
 fn body_scroller(form: &Onboarding) -> gtk::ScrolledWindow {
     support::descendants(form)
         .into_iter()
@@ -301,7 +263,6 @@ fn body_scroller(form: &Onboarding) -> gtk::ScrolledWindow {
         .expect("the form's scrolled body")
 }
 
-/// The form's Connect button: the last thing it asks the person to reach.
 fn connect_button(form: &Onboarding) -> gtk::Button {
     support::descendants(form)
         .into_iter()
@@ -316,15 +277,8 @@ fn connect_button(form: &Onboarding) -> gtk::Button {
         .expect("the form's Connect button")
 }
 
-/// T174: the form opens large enough that the mail-server details, once
-/// shown, fit without scrolling at the window's default size -- 1440 by 900,
-/// which the test compositor's 1280 by 800 screen holds to 800 tall, the
-/// shortest window the form has to fit whole in.
-///
-/// It waits for the server fields to be laid out -- the scrolled body as
-/// tall as its content measures, the Connect button under them allocated --
-/// before it measures: asked any earlier, the body still has the height of
-/// the form without them, and the case passed whatever the dialog's size.
+/// Waits for the server fields to be laid out before measuring: earlier, the body has the height of
+/// the form without them and the case passes whatever the dialog's size.
 pub fn the_wizard_opens_large_enough_for_the_server_details() {
     crate::gtk_case(async {
         if !support::display() {
@@ -339,8 +293,6 @@ pub fn the_wizard_opens_large_enough_for_the_server_details() {
         let form = form_in(dialog.upcast_ref()).expect("the account form in the dialog");
         form.set_status(Status::Found(typed_settings("grace@example.test")));
         form.show_manual(true);
-        // As it stands after a first attempt: the settings found and a
-        // refusal to read.
         form.test_set_password("an app password");
         form.set_status(Status::Failed(
             "The server refused the password.".to_owned(),
@@ -365,7 +317,6 @@ pub fn the_wizard_opens_large_enough_for_the_server_details() {
             crate::settle_until(async || laid_out()).await,
             "the server fields were never laid out"
         );
-        // Settled: one more turn, and the size has not moved.
         crate::settle();
         assert!(laid_out(), "the form was still growing");
         assert!(
@@ -386,15 +337,9 @@ pub fn the_wizard_opens_large_enough_for_the_server_details() {
     });
 }
 
-/// T174, T201: the window's close button still closes the app while the form
-/// is open. The form's dialog covers the window and takes a click meant for
-/// it, so the click has to be the window's before the dialog sees it.
-///
-/// The click is a real one: it lands on whatever is picked at the button's
-/// place -- the dialog host's scrim, not the button -- and runs the gestures
-/// on the way up, so it proves the window's capture gesture
-/// (`click_through_dialog`) is reached from the scrim, which is the one place
-/// the dialog's own boundary does not stop it.
+/// The dialog covers the window and takes a click meant for it. A real click lands on the dialog
+/// host's scrim, proving the window's capture gesture (`click_through_dialog`) is reached from
+/// there.
 pub fn the_window_close_button_closes_the_app_with_the_form_open() {
     crate::gtk_case(async {
         if !support::display() {
@@ -431,9 +376,6 @@ pub fn the_window_close_button_closes_the_app_with_the_form_open() {
     });
 }
 
-/// T201: a click inside the form is the form's, not the window's: it neither
-/// quits the app nor is taken by the window's capture gesture. (The gesture
-/// only acts on the close button's place, which the form does not cover.)
 pub fn a_click_inside_the_form_is_the_forms_and_keeps_the_window_open() {
     crate::gtk_case(async {
         if !support::display() {
@@ -460,7 +402,6 @@ pub fn a_click_inside_the_form_is_the_forms_and_keeps_the_window_open() {
     });
 }
 
-/// A message of the first sync's, as the server's mailbox holds it.
 fn arriving(subject: &str, minutes: i64) -> postio_account::backend::MockMessage {
     let date = (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc2822();
     postio_account::backend::MockMessage::new(format!(
@@ -470,10 +411,6 @@ fn arriving(subject: &str, minutes: i64) -> postio_account::backend::MockMessage
     ))
 }
 
-/// T178: the list's keys work in the state the maintainer's first run left
-/// it in -- the account just added through the form, the first sync filling
-/// the inbox -- not only on a store that was full from the start. `x` took
-/// no row and the bulk bar never showed, which is the whole of selecting.
 pub fn the_list_keys_work_while_the_first_sync_fills_the_inbox() {
     crate::gtk_case(async {
         if !support::display() {
@@ -494,7 +431,6 @@ pub fn the_list_keys_work_while_the_first_sync_fills_the_inbox() {
         );
         let dialog = window.add_account_dialog().expect("the wizard");
         let form = form_in(dialog.upcast_ref()).expect("the account form in the dialog");
-        // A person types into the form: the keyboard is in its fields.
         form.focus_password();
         crate::settle();
         add_through(
@@ -536,13 +472,11 @@ pub fn the_list_keys_work_while_the_first_sync_fills_the_inbox() {
     });
 }
 
-/// What the empty page says, when it is the page showing.
 fn page_says(window: &postio_gtk::window::FocusWindow) -> Option<Vec<String>> {
     let page = support::only(window, "focus-empty");
     page.is_mapped().then(|| support::texts(&page))
 }
 
-/// Add Grace's account through the form over `window`, as a first run does.
 async fn sign_in(window: &postio_gtk::window::FocusWindow) {
     assert!(
         crate::settle_until(async || window.add_account_dialog().is_some()).await,
@@ -564,8 +498,6 @@ async fn sign_in(window: &postio_gtk::window::FocusWindow) {
     );
 }
 
-/// T220: while the first pass has not finished, an inbox with no rows is
-/// syncing, never empty; the rows replace the page as they arrive.
 pub fn an_inbox_whose_first_pass_is_running_says_syncing_not_empty() {
     crate::gtk_case(async {
         if !support::display() {
@@ -578,9 +510,8 @@ pub fn an_inbox_whose_first_pass_is_running_says_syncing_not_empty() {
                     .message(arriving("Second", 20)),
             )
             .build();
-        // Every call takes a moment, so the pass is observably in flight.
-        // Not longer: the pass makes many calls, and at 400 ms each a loaded
-        // machine ran it past the deadline before the rows arrived.
+        // Every call takes a moment so the pass is in flight; not longer, since at 400 ms a loaded
+        // machine ran past the deadline.
         backend.set_latency(std::time::Duration::from_millis(150));
         let (window, _backend) = opened(backend).await;
         sign_in(&window).await;
@@ -607,8 +538,6 @@ pub fn an_inbox_whose_first_pass_is_running_says_syncing_not_empty() {
     });
 }
 
-/// T220: once a pass has finished with nothing in the inbox, it is empty,
-/// and it says when it last synced.
 pub fn an_inbox_a_finished_pass_found_empty_says_empty_and_when() {
     crate::gtk_case(async {
         if !support::display() {
@@ -634,8 +563,6 @@ pub fn an_inbox_a_finished_pass_found_empty_says_empty_and_when() {
     });
 }
 
-/// T220: a first sync that fails says so, rather than "empty" or an
-/// endless "syncing".
 pub fn a_first_sync_that_fails_says_so_rather_than_empty() {
     crate::gtk_case(async {
         if !support::display() {
@@ -644,8 +571,7 @@ pub fn a_first_sync_that_fails_says_so_rather_than_empty() {
         let backend = MockBackend::builder()
             .mailbox(postio_account::backend::MockMailbox::new("INBOX"))
             .build();
-        // Slow enough that the fault below lands before the pass's first
-        // call is answered; the form's own check passes before it exists.
+        // Slow enough that the fault lands before the pass's first call is answered.
         backend.set_latency(std::time::Duration::from_millis(600));
         let (window, backend) = opened(backend).await;
         sign_in(&window).await;
@@ -669,8 +595,6 @@ pub fn a_first_sync_that_fails_says_so_rather_than_empty() {
     });
 }
 
-/// T220: a first pass the server turns away part-way is not a finished
-/// one: the inbox it never filled is not "empty".
 pub fn an_interrupted_first_pass_still_says_syncing_not_empty() {
     crate::gtk_case(async {
         if !support::display() {
@@ -686,10 +610,8 @@ pub fn an_interrupted_first_pass_still_says_syncing_not_empty() {
         sign_in(&window).await;
         backend.fail_all(postio_account::backend::Fault::Rejected("no".to_owned()));
 
-        // The pass has been tried and turned away: the form's own check is
-        // the first call, the pass's first is the second, and the fault
-        // answers it. (This waited for "more than six", which a pass turned
-        // away at its first call never makes, so it sat out the deadline.)
+        // The form's own check is the first call, the pass's first is the second, and the fault
+        // answers it.
         assert!(
             crate::settle_until(async || backend.calls() >= 2).await,
             "the first pass never reached the server: {} calls",

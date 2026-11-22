@@ -3,17 +3,8 @@ import Testing
 
 @testable import PostioKit
 
-/// The three steps of adding an account (#1279).
-///
-/// Every case here uses a reserved domain, and none names a provider. That
-/// is not only the fixture rule: what this suite proves is that the model
-/// mirrors whatever the **preset table** answered, and a test written around
-/// one provider would prove that one row exists instead. Which providers are
-/// recognised is the table's own business, asserted in `postio-ffi`.
 @MainActor
 @Suite struct AddAccountModelTests {
-    /// A domain no preset claims — the ordinary case for a self-hosted
-    /// address, and the one where guessing a server would be a real fault.
     private let unknown = "ada@ostwald.invalid"
 
     @Test func theCounterSaysWhereYouAre() {
@@ -37,9 +28,6 @@ import Testing
     }
 
     @Test func theVerdictAndTheRouteAreTheBoundarysAnswer() {
-        // Not this frontend's: the sheet draws what the preset table said,
-        // and a Swift-side opinion about which provider an address belongs to
-        // would be the branch-per-provider the product forbids.
         let model = AddAccountModel()
         #expect(model.verdict.contains("Type an email address"))
 
@@ -51,8 +39,7 @@ import Testing
     }
 
     @Test func anUnknownDomainOffersImapAndFillsInNoServers() {
-        // The guess that dials somebody else's server is the one thing this
-        // must not do.
+        // A guess that dials someone else's server is what this must not do.
         let model = AddAccountModel()
         model.address = unknown
         model.next()
@@ -76,10 +63,8 @@ import Testing
     }
 
     @Test func aRouteSomebodyPickedIsTheRouteTheyGet() {
-        // The address *suggests* a route; a click on another one is the
-        // person deciding. `next` used to put the suggestion back, so
-        // choosing "Existing local store" and pressing Continue asked for an
-        // IMAP password -- the local route was unreachable from the sheet.
+        // The address suggests a route; a click on another is the person deciding, so `next` must
+        // not put the suggestion back.
         let model = AddAccountModel()
         model.address = unknown
         model.route = .localStore
@@ -90,10 +75,6 @@ import Testing
     }
 
     @Test func aLocalStoreHasNoCredentialStepToShow() {
-        // Step 2 on the local route was a page saying "Choose the store on
-        // the next step" and nothing else. A folder on this machine has no
-        // credential, so Continue goes straight to choosing it -- and the
-        // counter counts the steps this route has.
         let model = AddAccountModel()
         model.address = unknown
         model.route = .localStore
@@ -106,8 +87,6 @@ import Testing
     }
 
     @Test func typingAnotherAddressSuggestsAgain() {
-        // The suggestion still follows the address while it is being typed:
-        // only the step forward stopped overriding a choice.
         let model = AddAccountModel()
         model.route = .localStore
         model.address = unknown
@@ -115,8 +94,6 @@ import Testing
     }
 
     @Test func goingBackKeepsWhatWasTyped() {
-        // Losing a typed address on Back is the kind of small cruelty that
-        // makes people abandon a setup flow.
         let model = AddAccountModel()
         model.address = unknown
         model.next()
@@ -133,8 +110,6 @@ import Testing
     }
 
     @Test func theSyncWindowSaysWhatItWillCost() {
-        // A person choosing "everything" for a fifteen-year mailbox should be
-        // told what they are asking for, in the units they will feel it in.
         let model = AddAccountModel()
         model.syncDays = 0
         #expect(model.estimate.contains("everything"))
@@ -144,10 +119,8 @@ import Testing
     }
 
     @Test func anOauthRouteIsFinishedBySigningIn_notByStartSync() async {
-        // `finish` is the password path. An OAuth route has to *wait* on
-        // somebody in another application, so pressing on without signing in
-        // says where the sign-in is rather than closing over an account that
-        // was never added.
+        // An OAuth route waits on someone in another application, so pressing on without signing in
+        // says where the sign-in is rather than closing over an account never added.
         let model = AddAccountModel()
         model.address = unknown
         model.next()
@@ -161,17 +134,11 @@ import Testing
     }
 
     @Test func theOnlyFormatOfferedIsTheOnePostioOpens() {
-        // The canvas drew three and the sheet offered three, refusing two of
-        // them by name on the way out. A picker that offers what the
-        // application cannot do reads as a choice until you make it, which
-        // costs a whole flow to find out (#1296).
+        // A picker that offers what the app cannot do reads as a choice until made (#1296).
         #expect(AddAccountModel.Format.allCases == [.maildir])
     }
 
     @Test func nothingIsSaidAboutAStorePathOnARouteThatHasNoStore() {
-        // `storeProblem` runs as somebody types, on every route, and step 3
-        // asks for a path on all of them — but only the local route is
-        // pointing Postio at mail that is already there.
         let model = AddAccountModel()
         model.address = unknown
         model.next()
@@ -180,12 +147,9 @@ import Testing
         #expect(model.storeProblem(through: nil) == nil)
     }
 
-    // -- signing in through the browser (#1276) ---------------------------
-
     @Test func anOauthRouteWaitsForTheClientIdThatPostioDoesNotShip() {
-        // Postio registers nothing: a client id inside an open-source
-        // application is one every user of it shares, and a provider that
-        // notices revokes it for all of them at once (ADR 0006 Q1).
+        // A client id inside an open-source app is shared by every user, and a provider that
+        // notices revokes it for all (ADR 0006 Q1).
         let model = AddAccountModel()
         model.address = unknown
         model.next()
@@ -214,8 +178,6 @@ import Testing
     }
 
     @Test func cancellingASignInStopsWaitingEvenWithNoSession() {
-        // Closing the sheet always means this, and it must not depend on
-        // there being a live flow to cancel.
         let model = AddAccountModel()
         model.cancelSignIn(through: nil)
 

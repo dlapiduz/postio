@@ -1,11 +1,3 @@
-//! The generated stylesheets are build artefacts of the design system. These
-//! tests are what stops them drifting: they re-run the generator and compare
-//! it with the copies checked in under `postio-widgets/data/` and
-//! `postio-ui/data/`, which is where the running app's GResource bundle reads
-//! them from (#569).
-//!
-//! No display to guard: this crate has no toolkit dependency at all.
-
 use std::path::PathBuf;
 
 use postio_ui::tokens::{self, Tokens};
@@ -14,8 +6,6 @@ fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `postio-widgets`' own directory, where the metrics both desktop apps
-/// share are generated (specs/007-postio-focus research R11).
 fn widgets_dir() -> PathBuf {
     manifest_dir()
         .parent()
@@ -23,7 +13,6 @@ fn widgets_dir() -> PathBuf {
         .join("postio-widgets")
 }
 
-/// The same discovery `build.rs` does, so the two cannot disagree.
 fn design_system() -> Option<PathBuf> {
     let ds = manifest_dir()
         .parent()?
@@ -69,8 +58,6 @@ fn generated_metrics() -> String {
         .expect("postio-widgets/data/metrics.css is missing; run `cargo build -p postio-widgets`")
 }
 
-/// The shared metrics, the same way: the checked-in sheet is exactly what the
-/// generator makes of the design system as it stands.
 #[test]
 fn generated_metrics_are_reproducible() {
     let (path, parsed) = source_tokens();
@@ -82,7 +69,6 @@ fn generated_metrics_are_reproducible() {
     );
 }
 
-/// The whole point of the build step: retune the source and the app follows.
 #[test]
 fn retuning_the_design_system_changes_the_generated_css() {
     let (path, mut parsed) = source_tokens();
@@ -91,7 +77,6 @@ fn retuning_the_design_system_changes_the_generated_css() {
     assert!(metrics.contains("--postio-space-3: 99px;"));
 }
 
-/// Web-only syntax GTK would mis-parse must be folded away by the generator.
 #[test]
 fn generated_css_stays_inside_gtks_css_subset() {
     let css = generated_metrics();
@@ -117,9 +102,6 @@ fn generated_css_stays_inside_gtks_css_subset() {
     );
 }
 
-/// Every `var()` the sheet uses must be defined by the sheet itself or by
-/// libadwaita. A typo in a role name would otherwise silently drop a
-/// declaration at runtime.
 #[test]
 fn every_referenced_variable_is_defined() {
     let css = generated_metrics();
@@ -145,10 +127,6 @@ fn every_referenced_variable_is_defined() {
 
 #[test]
 fn the_swift_emitter_carries_the_same_values() {
-    // The point of generating rather than typing: a Swift file with `#5980a6`
-    // in it is a copy that is right on the day it is written. Ghostty
-    // hand-writes 921 lines of the equivalent and calls it their worst
-    // duplication.
     let path = design_system().expect("the design system is present");
     let css = std::fs::read_to_string(&path).expect("the design system");
     let parsed = tokens::Tokens::parse(&css).expect("parse failed");
@@ -161,14 +139,12 @@ fn the_swift_emitter_carries_the_same_values() {
         "a generated file must say so, or somebody edits it"
     );
 
-    // Names arrive in Swift's shape, not CSS's.
     assert!(swift.contains("public static let colorBg"));
     assert!(
         !swift.contains("color-bg ="),
         "a CSS name leaked into Swift and would not compile"
     );
 
-    // The accent is the design system's, not a colour invented here.
     let accent = parsed.get("color-accent").expect("an accent");
     assert!(
         swift.contains(&format!("`{accent}`")),
@@ -183,12 +159,8 @@ fn the_swift_emitter_converts_rather_than_copying_css() {
     let parsed = tokens::Tokens::parse(&css).expect("parse failed");
     let swift = tokens::generate_swift(&parsed, &label(&path)).expect("generation failed");
 
-    // Colours become NSColor, not strings a runtime would have to parse — a
-    // hex string in Swift is a parse that can fail at the worst moment.
     assert!(swift.contains("NSColor(srgbRed:"));
-    // Lengths become CGFloat, so layout arithmetic is arithmetic.
     assert!(swift.contains(": CGFloat ="));
-    // No `px` survives: a CSS unit in Swift means something was copied.
     assert!(
         !swift.contains("px\n"),
         "a CSS length reached Swift without being converted"
@@ -197,11 +169,6 @@ fn the_swift_emitter_converts_rather_than_copying_css() {
 
 #[test]
 fn every_required_token_reaches_swift() {
-    // The guard the first version of the emitter needed and did not have: it
-    // parsed lengths as whole pixels, the spacing ramp is `3.4px`, and it
-    // emitted *nothing* for every space token. The file compiled and was
-    // missing half the design system, which is the worst shape a generator
-    // failure can take.
     let path = design_system().expect("the design system is present");
     let css = std::fs::read_to_string(&path).expect("the design system");
     let parsed = tokens::Tokens::parse(&css).expect("parse failed");
@@ -229,9 +196,6 @@ fn every_required_token_reaches_swift() {
     }
 }
 
-/// GTK lays widgets out in whole pixels, and Rust spacing is an `i32`, so
-/// the design system's 3.4px step reaches both as the nearest whole pixel --
-/// once, here, rather than as 14 hand-rounded spacings across the frontend.
 #[test]
 fn the_spacing_scale_is_whole_pixels() {
     let (path, parsed) = source_tokens();
@@ -251,8 +215,6 @@ fn the_spacing_scale_is_whole_pixels() {
     }
 }
 
-/// The same scale as Rust constants, so a margin in code and a padding in
-/// the stylesheet are the same number by construction.
 #[test]
 fn the_rust_spacing_scale_is_the_css_one_and_checked_in() {
     let (path, parsed) = source_tokens();
@@ -266,9 +228,6 @@ fn the_rust_spacing_scale_is_the_css_one_and_checked_in() {
     );
 }
 
-/// The sizes Postio sets type at are named roles, so a stylesheet says
-/// `var(--postio-text-body)` rather than retyping 0.8864rem -- which it had
-/// done as 0.8863rem five times.
 #[test]
 fn the_type_roles_are_named_sizes() {
     let (path, parsed) = source_tokens();

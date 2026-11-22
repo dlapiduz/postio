@@ -1,33 +1,3 @@
-//! A flag somebody changed on the server has to reach the *list*, not just
-//! the store (#1176).
-//!
-//! The reported symptom is a message marked read in another client staying
-//! bold in Postio until a manual refresh. `postio-sync`'s
-//! `a_server_side_flag_change_and_deletion_both_reflect_locally` already
-//! proves the pass reads the new flag and writes it down, so the store is not
-//! where this goes wrong. What nothing covered is the step after: whether the
-//! engine *says* anything about it.
-//!
-//! That is the difference between a row that repaints and a row that does
-//! not, and it is invisible to every test that stops at the store. This
-//! project's characteristic bug is layers that each pass and are not joined
-//! up, and this is the join.
-//!
-//! # It was checked for vacuity
-//!
-//! A test that asserts "an event was emitted" passes very easily by accident:
-//! the first pass emits one too, and a drain that misses it by a moment would
-//! make this green for the wrong reason. So the same case was run once with
-//! the flag change removed and nothing else altered, and the second pass then
-//! emitted only `ConnectionChanged`:
-//!
-//! ```text
-//!   with the flag change:  [ConnectionChanged, MessageListChanged, ConnectionChanged, ...]
-//!   without it:            [ConnectionChanged, ConnectionChanged]
-//! ```
-//!
-//! So the announcement below is caused by the flag and by nothing else.
-
 use std::sync::Arc;
 
 use postio_account::backend::{FlagChange, MailBackend, MockBackend, MockMailbox, MockMessage};
@@ -111,12 +81,9 @@ async fn a_flag_changed_on_the_server_is_announced_and_not_only_stored() {
     })
     .expect("the engine starts");
 
-    // The mailbox as it stands, and everything it had to say about getting
-    // there is not what this is about.
     engine.sync(inbox.id).await.expect("the first pass");
     let _ = drain(&events);
 
-    // Another client marks message 2 read.
     backend
         .store_flags(
             INBOX,
@@ -128,8 +95,6 @@ async fn a_flag_changed_on_the_server_is_announced_and_not_only_stored() {
 
     engine.sync(inbox.id).await.expect("the pass that sees it");
 
-    // The store heard, which is the part already covered elsewhere. Asserted
-    // here so a failure below cannot be read as "the pass did nothing".
     let stored = {
         let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
@@ -144,8 +109,6 @@ async fn a_flag_changed_on_the_server_is_announced_and_not_only_stored() {
          about what it announced: {seen:?}"
     );
 
-    // And the list was told. Without this the row stays bold until something
-    // else happens to reload it, which is the whole of #1176.
     let told = drain(&events);
     assert!(
         told.iter().any(|event| matches!(

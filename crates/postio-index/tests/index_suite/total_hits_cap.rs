@@ -1,26 +1,6 @@
-//! What `total_hits` reports once a query matches more than the cap.
-//!
-//! `TOTAL_HITS_CAP` exists so a query matching an entire archive does not pay
-//! to count it: past the cap the executor stops counting and says so, and the
-//! reading list shows "1,000+" rather than a number nobody waited for. This
-//! is the test that the cap is real — that the count stops *and* reports
-//! itself stopped.
-//!
-//! POSTIO-MEASUREMENT: it costs 208 s, which is more than the rest of this
-//! crate's suite put together, so it runs on the nightly timer rather than the
-//! merge path (#1450). Not because it measures anything — it is an ordinary
-//! assertion — but because of what it has to build first: the cap is only
-//! reachable by inserting `TOTAL_HITS_CAP + 50` messages one at a time, and
-//! that bulk load is the whole cost. `.config/nextest.toml`'s
-//! `profile.default` filter is what holds it back; run it with
-//!
-//! ```text
-//! cargo nextest run --profile nightly -p postio-index -E 'test(/^total_hits_cap::/)'
-//! ```
-//!
-//! The cheap half of the same contract stays on the merge path:
-//! `executor::total_hits_counts_past_the_page` proves an uncapped total is
-//! exact, and needs five messages to do it.
+//! POSTIO-MEASUREMENT: costs 208 s, since the cap is only reachable by inserting `TOTAL_HITS_CAP +
+//! 50` messages one at a time, so it runs on the nightly timer (#1450).
+//! `.config/nextest.toml`'s `profile.default` filter holds it back.
 
 use postio_index::executor::{SearchRequest, search};
 use postio_model::AccountScope;

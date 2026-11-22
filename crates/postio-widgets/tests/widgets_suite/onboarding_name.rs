@@ -1,16 +1,3 @@
-//! The onboarding form asks for a name, and typing one reaches the submission.
-//!
-//! #603: `EmailAddress.name` was never set from onboarding, so a fresh
-//! account's `From` header and sidebar label were stuck on the bare address.
-//! The app's side of the fix (building the account from
-//! `Submission::name`) is unit-tested directly; this is the one piece that
-//! needs a real widget — that the form actually has the field, and that what
-//! is typed into it is what [`Onboarding::submit`] reports.
-//!
-//! Its own file with one test function: GTK is initialised once per process,
-//! from one thread, and a second `#[test]` here would race `adw::init()` —
-//! see the note in `gtk_onboarding.rs`.
-
 use postio_widgets::onboarding::{Onboarding, Server, Settings, Status};
 
 pub fn a_typed_name_reaches_the_submission_and_a_blank_one_stays_empty() {

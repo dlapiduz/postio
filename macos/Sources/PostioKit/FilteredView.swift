@@ -1,22 +1,8 @@
 import PostioFFI
 import SwiftUI
 
-/// Filtered, drawn in the list's place in the main window
-/// (specs/009-focus-macos T113, screen 21): "‹ Inbox" and the title, the
-/// reason tabs `1`-`7` with their counts and the note that nothing here is
-/// deleted (C4), the rows -- sender, subject and first line, the reason
-/// pill, the time -- under their day headings, and the footer's keys.
-///
-/// Every word is the controller's (`FocusFiltered`); the keys reach it
-/// through the key monitor, and the pointer through `FilteredModel`. The
-/// focused row is ringed in the accent, as the list's cursor is, and
-/// carries the Restore button with its key. A selected row has the list's
-/// checked box and neutral ground, and the bar over the footer says how
-/// many and what a key does to them.
 public struct FilteredView: View {
     let model: FilteredModel
-    /// The scope footer the controller worded for the focused row (spec 013
-    /// FR-014); the static hints stand until it says one.
     let scope: FooterViewFfi?
 
     public init(model: FilteredModel, scope: FooterViewFfi? = nil) {
@@ -24,11 +10,8 @@ public struct FilteredView: View {
         self.scope = scope
     }
 
-    /// One row's height, as the list's one-line row: nothing is measured.
     public static let rowHeight: CGFloat = 40
-    /// A day heading's height.
     public static let headingHeight: CGFloat = 32
-    /// The sender column's width.
     public static let senderWidth: CGFloat = 196
 
     public var body: some View {
@@ -56,8 +39,6 @@ public struct FilteredView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(model.title)
     }
-
-    // MARK: header
 
     private var header: some View {
         ZStack {
@@ -87,8 +68,6 @@ public struct FilteredView: View {
         }
         .frame(height: 44)
     }
-
-    // MARK: tabs
 
     private var tabs: some View {
         HStack(spacing: 4) {
@@ -125,8 +104,6 @@ public struct FilteredView: View {
         .padding(.horizontal, 20)
         .frame(height: 44)
     }
-
-    // MARK: rows
 
     private var rows: some View {
         ScrollViewReader { scroller in
@@ -184,13 +161,9 @@ public struct FilteredView: View {
     }
 }
 
-/// One filtered message: the sender, the subject and its first line, the
-/// reason pill, the time. The focused row is ringed in the accent and
-/// offers Restore with its key.
 struct FilteredRowView: View {
     let row: FilteredModel.Row
     let focused: Bool
-    /// Whether its thread is open under it.
     let expanded: Bool
     let restore: String
     let restoreCap: String?
@@ -209,7 +182,6 @@ struct FilteredRowView: View {
             HStack(spacing: 8) {
                 Text(row.subject).font(.system(size: 13.5)).lineLimit(1).layoutPriority(1)
                 if row.isThread {
-                    // The thread's size, as the list's count badge says it.
                     Text("\(row.messages)")
                         .font(.system(size: 11.5).monospacedDigit())
                         .foregroundStyle(.secondary)
@@ -237,8 +209,7 @@ struct FilteredRowView: View {
         .padding(.leading, 56)
         .padding(.trailing, 24)
         .frame(height: FilteredView.rowHeight)
-        // A neutral ground for the selection, never the accent, which is
-        // the cursor's (the list's rule); the cursor's tint goes over it.
+        // A neutral ground for the selection, never the accent, which is the cursor's.
         .background(row.selected ? Color.primary.opacity(0.06) : Color.clear)
         .background(focused ? Color.accentColor.opacity(0.08) : Color.clear)
         .overlay(alignment: .leading) {
@@ -249,7 +220,6 @@ struct FilteredRowView: View {
                     .position(x: FocusRowMetrics.gutterCentre, y: FilteredView.rowHeight / 2)
                     .accessibilityHidden(true)
             } else if row.isThread {
-                // The thread's chevron, in the gutter as the list's is.
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -265,9 +235,7 @@ struct FilteredRowView: View {
         }
         .overlay(alignment: .bottom) { Rectangle().fill(.separator).frame(height: 1) }
         .contentShape(Rectangle())
-        // The list's gestures: a plain click points, a double-click opens,
-        // ⌘ toggles the row and ⇧ takes the range. The modifier decides in
-        // SwiftUI, so a ⌘-click is never also a point or an open.
+        // The modifier decides in SwiftUI, so a ⌘-click is never also a point or an open.
         .gesture(TapGesture(count: 2).modifiers([]).onEnded(open))
         .gesture(TapGesture().modifiers([]).onEnded(point))
         .gesture(TapGesture().modifiers(.command).onEnded(toggle))
@@ -282,13 +250,9 @@ struct FilteredRowView: View {
     }
 }
 
-/// One message of the thread open under a Filtered row: the list's child
-/// row (avatar and sender, tag, its own words, paperclip, time; the keys
-/// that act on this message alone while it has the keyboard), in SwiftUI.
 struct FilteredChildView: View {
     let child: FilteredModel.Child
     let focused: Bool
-    /// The thread's line stops at the dot on the last child.
     let last: Bool
     let point: () -> Void
     let open: () -> Void
@@ -338,7 +302,6 @@ struct FilteredChildView: View {
         .frame(height: CGFloat(FocusRowMetrics.child))
         .background(focused ? Color.accentColor.opacity(0.08) : Color.clear)
         .overlay(alignment: .leading) {
-            // The thread's vertical line, ending at the last child's dot.
             Rectangle()
                 .fill(child.unread ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
                 .frame(width: CGFloat(FocusRowMetrics.childLineWidth), height: last ? CGFloat(FocusRowMetrics.child) / 2 : CGFloat(FocusRowMetrics.child))
@@ -364,7 +327,6 @@ struct FilteredChildView: View {
         .accessibilityAddTraits(focused ? .isSelected : [])
     }
 
-    /// A draft is quoted, as the list's child row quotes it.
     private var words: String {
         child.draft
             ? "\u{201c}\(child.line)\u{201d}" + (child.tag.map { " \u{b7} \($0)" } ?? "")

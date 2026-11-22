@@ -1,14 +1,7 @@
-//! A batch of server messages costs the same whatever the store holds.
-//!
-//! `upsert_batch` once read every local copy awaiting a server identity
-//! (#942) into a map, once per batch, through a predicate no index covers: a
-//! full scan of `messages`, decrypted page by page on an encrypted store. A
-//! first sync pays that per batch, so each batch cost more than the last and
-//! a live sync sat at 100% CPU for over an hour.
-//!
-//! The rows a batch reads are the instrument: with `N` local copies waiting
-//! for a server identity the old read returned all `N`, and the fix reads
-//! none of them for a message the server can place by uid.
+//! `upsert_batch` once read every local copy awaiting a server identity into a map per batch, a
+//! full scan
+//! (#942); the rows a batch reads are the instrument: the fix reads none for a message the server
+//! can place by uid.
 
 use chrono::{TimeZone, Utc};
 use postio_model::{MailboxId, Message, RemoteId, RfcMessageId, Uid, UidValidity};
@@ -21,7 +14,6 @@ fn at(seconds: i64) -> chrono::DateTime<Utc> {
         .unwrap()
 }
 
-/// A message the server has named: a uid, and an identity.
 fn from_server(mailbox: MailboxId, account: postio_model::AccountId, n: u32) -> Message {
     let mut message = Message::new(account, mailbox, at(i64::from(n)));
     message.rfc_message_id = Some(RfcMessageId::new(format!("<server-{n}@example.com>")));
@@ -31,15 +23,12 @@ fn from_server(mailbox: MailboxId, account: postio_model::AccountId, n: u32) -> 
     message
 }
 
-/// A local copy written before the server had named it.
 fn local_copy(mailbox: MailboxId, account: postio_model::AccountId, n: u32) -> Message {
     let mut message = Message::new(account, mailbox, at(i64::from(n)));
     message.rfc_message_id = Some(RfcMessageId::new(format!("<local-{n}@example.com>")));
     message
 }
 
-/// The rows one batch of fresh server messages reads, in a store already
-/// holding `waiting` local copies.
 async fn rows_read_by_a_batch(waiting: u32) -> usize {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
@@ -75,8 +64,6 @@ async fn a_batch_of_uid_messages_does_not_read_the_stores_waiting_copies() {
     );
 }
 
-/// The statement `upsert_batch` runs for the identity fallback, written out so
-/// the planner is asked about the SQL it sees.
 const BY_IDENTITY: &str = "SELECT id FROM messages
       WHERE account_id = ?1 AND rfc_message_id = ?2 AND mailbox_id = ?3
         AND remote_id IS NULL AND uid IS NULL AND deleted_locally = 0";
@@ -89,10 +76,8 @@ async fn the_identity_fallback_seeks_through_an_index() {
         counting::scans(&connection, BY_IDENTITY).await.is_empty(),
         "a full scan of messages"
     );
-    // Which index the planner prefers is its call, and with no statistics it
-    // is not stable: either the message-id index or the mailbox's
-    // (mailbox_id, remote_id) one seeks straight to the rows, which is the
-    // property. What it must never do is read the table.
+    // Which index the planner prefers is unstable without statistics; either seeks, and it must
+    // never read the table.
     let plan = test_support::plan(&connection, BY_IDENTITY).await;
     assert!(
         plan.starts_with("SEARCH messages USING INDEX"),

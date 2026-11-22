@@ -1,31 +1,21 @@
-//! The open message beside the list (T232; screens.md, "Reading beside the
-//! list"): `F8` and `[focus] reading` switch where `Return` opens a
-//! message, the pane is the dialog's one message view placed beside the
-//! list, `j`/`k` step it, `Escape` gives the keyboard back to the list, a
-//! window under 980 px falls back to the dialog, and the composer takes the
-//! pane over. Each measured on what GTK put on screen.
-
 use adw::prelude::*;
 use gtk::gdk;
 use postio_ui::focus_dialog;
 
 use crate::support::{self, Fixture};
 
-/// The one widget wearing `class` under `root`, if there is one on screen.
 fn on_screen(root: &impl IsA<gtk::Widget>, class: &str) -> Option<gtk::Widget> {
     support::with_class(root, class)
         .into_iter()
         .find(|widget| widget.is_mapped())
 }
 
-/// Whether the message dialog is over the window.
 fn dialog_up(window: &postio_gtk::window::FocusWindow) -> bool {
     window
         .visible_dialog()
         .is_some_and(|dialog| dialog.widget_name() == postio_gtk::open::DIALOG_NAME)
 }
 
-/// The pane, on screen.
 fn pane(window: &postio_gtk::window::FocusWindow) -> gtk::Widget {
     window
         .reading_pane()
@@ -33,15 +23,12 @@ fn pane(window: &postio_gtk::window::FocusWindow) -> gtk::Widget {
         .expect("the reading pane is on screen")
 }
 
-/// The open message's header title, as drawn in the pane.
 fn pane_title(window: &postio_gtk::window::FocusWindow) -> Option<String> {
     let pane = window.reading_pane()?;
     let title = on_screen(&pane, "focus-open-title")?;
     Some(title.downcast::<gtk::Label>().ok()?.text().to_string())
 }
 
-/// Put `window` in pane mode as the setting does: what the config watcher
-/// hands the window when `[focus] reading = "pane"` is saved.
 fn read_in_pane(window: &postio_gtk::window::FocusWindow) {
     window.set_focus_config(postio_config::FocusConfig {
         reading: postio_config::Reading::Pane,
@@ -50,9 +37,6 @@ fn read_in_pane(window: &postio_gtk::window::FocusWindow) {
     crate::settle();
 }
 
-/// Wait until the pane is on screen at the width its window gives it: a
-/// pane just shown is laid out on the next frame, and a busy compositor
-/// takes its time.
 async fn pane_laid_out(window: &postio_gtk::window::FocusWindow) {
     assert!(
         crate::settle_until(async || {
@@ -69,14 +53,10 @@ async fn pane_laid_out(window: &postio_gtk::window::FocusWindow) {
     );
 }
 
-/// The list's cursor, as a row index.
 fn cursor(window: &postio_gtk::window::FocusWindow) -> u32 {
     window.pane().expect("the list").cursor().selected()
 }
 
-/// `F8` and the setting each switch where `Return` opens a message: the
-/// dialog by default, the pane once switched, the dialog again after; and
-/// `F8` writes its choice to `config.toml`.
 pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
     crate::gtk_case(async {
         if !support::display() {
@@ -89,7 +69,6 @@ pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
         std::fs::write(&config, "# Mine.\n").expect("a config file");
         window.set_config_path(Some(config.clone()));
 
-        // The default: the dialog.
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || dialog_up(&window)).await,
@@ -98,7 +77,6 @@ pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
         support::deliver(&window, "Escape");
         assert!(crate::settle_until(async || !dialog_up(&window)).await);
 
-        // F8: beside the list, and said in the file.
         assert!(support::deliver(&window, "F8"), "F8 reached nothing");
         support::deliver(&window, "Return");
         assert!(
@@ -113,7 +91,6 @@ pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
             "F8 wrote its choice: {written:?}"
         );
 
-        // F8 again, with the message open: it moves to the dialog, still open.
         support::deliver(&window, "F8");
         assert!(
             crate::settle_until(async || dialog_up(&window)).await,
@@ -130,7 +107,6 @@ pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
         support::deliver(&window, "Escape");
         assert!(crate::settle_until(async || !dialog_up(&window)).await);
 
-        // The setting, as the config watcher hands it over.
         read_in_pane(&window);
         support::deliver(&window, "Return");
         assert!(
@@ -141,9 +117,6 @@ pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
     });
 }
 
-/// `Return` in pane mode shows the message beside the list: the list is
-/// still on screen at its width, its cursor where it was, and the pane is
-/// `pane_width` wide at its right.
 pub fn return_shows_the_message_beside_the_list_and_keeps_its_cursor() {
     crate::gtk_case(async {
         if !support::display() {
@@ -190,7 +163,6 @@ pub fn return_shows_the_message_beside_the_list_and_keeps_its_cursor() {
     });
 }
 
-/// `j` and `k` step the pane: the cursor moves, and the pane shows its row.
 pub fn j_and_k_step_the_pane_with_the_cursor() {
     crate::gtk_case(async {
         if !support::display() {
@@ -223,9 +195,6 @@ pub fn j_and_k_step_the_pane_with_the_cursor() {
     });
 }
 
-/// `Escape` and the pane's X each close the message and give the keyboard
-/// back to the list, on the row it was on; the pane says nothing is open and
-/// how to open something.
 pub fn escape_and_the_x_return_the_keyboard_to_the_list() {
     crate::gtk_case(async {
         if !support::display() {
@@ -262,7 +231,6 @@ pub fn escape_and_the_x_return_the_keyboard_to_the_list() {
             support::focus_path(&window)
         );
         assert_eq!(cursor(&window), 1, "the cursor stayed");
-        // And the keyboard works there: j moves the cursor, opening nothing.
         support::deliver(&window, "j");
         assert_eq!(cursor(&window), 2);
         assert!(
@@ -290,8 +258,6 @@ pub fn escape_and_the_x_return_the_keyboard_to_the_list() {
     });
 }
 
-/// A window under 980 px has no room for the pane: `Return` opens the
-/// dialog, whatever the setting says, and the pane is not drawn.
 pub fn a_window_under_980_opens_the_dialog_instead() {
     crate::gtk_case(async {
         if !support::display() {
@@ -320,8 +286,6 @@ pub fn a_window_under_980_opens_the_dialog_instead() {
     });
 }
 
-/// The column inside the pane is `column_width` for the pane's width and
-/// the body's treatment: the pane less its gutters.
 pub fn the_panes_column_follows_column_width_for_its_width() {
     crate::gtk_case(async {
         if !support::display() {
@@ -358,7 +322,6 @@ pub fn the_panes_column_follows_column_width_for_its_width() {
                 window.width(),
                 column.width()
             );
-            // Centred in the pane.
             let pane_bounds = pane(&window).compute_bounds(&window).expect("laid out");
             let bounds = column.compute_bounds(&window).expect("laid out");
             let left = bounds.x() - pane_bounds.x();
@@ -373,8 +336,6 @@ pub fn the_panes_column_follows_column_width_for_its_width() {
     });
 }
 
-/// Reply in pane mode puts the composer where the message was, beside the
-/// list and in no dialog; `Escape` gives the pane back to the message.
 pub fn the_composer_takes_over_the_pane() {
     crate::gtk_case(async {
         if !support::display() {
@@ -413,7 +374,6 @@ pub fn the_composer_takes_over_the_pane() {
             window.pane().expect("the list").view().is_mapped(),
             "the list left the screen"
         );
-        // Its column is the pane's, in the app's colours.
         let pane_width = focus_dialog::pane_width(window.width()).expect("a pane");
         let column = on_screen(&pane(&window), "focus-compose-column")
             .and_then(|clamp| clamp.first_child())
@@ -443,9 +403,6 @@ pub fn the_composer_takes_over_the_pane() {
     });
 }
 
-/// The main menu's "Read beside the list" is the pointer's `F8`: a check
-/// item that runs the same command, and is checked while messages open
-/// beside the list.
 pub fn the_main_menus_check_item_is_the_pointers_f8() {
     crate::gtk_case(async {
         if !support::display() {
@@ -495,16 +452,12 @@ pub fn the_main_menus_check_item_is_the_pointers_f8() {
             "the menu item did not switch to the pane"
         );
 
-        // The setting moves it too, as the config watcher hands it over.
         window.set_focus_config(postio_config::FocusConfig::default());
         crate::settle();
         assert_eq!(checked(), Some(false), "the check follows the setting");
     });
 }
 
-/// A click on a row is the pointer's `j`/`k`: with nothing open it moves
-/// the cursor only (FR-016), and while a message is open beside the list the
-/// pane follows it to the row clicked.
 pub fn a_click_moves_the_cursor_and_the_open_pane_follows_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -534,9 +487,6 @@ pub fn a_click_moves_the_cursor_and_the_open_pane_follows_it() {
     });
 }
 
-/// Archiving the message open beside the list steps the pane past it to
-/// the row that took its place, as the dialog does (T190); the last one
-/// archived leaves the pane on the previous row.
 pub fn archiving_steps_the_pane_past_the_message() {
     crate::gtk_case(async {
         if !support::display() {
@@ -578,10 +528,8 @@ pub fn archiving_steps_the_pane_past_the_message() {
     });
 }
 
-/// A key pressed while the archive is still settling is not undone by the
-/// archive: the step to the next message follows the cursor where the person
-/// has taken it, and does not drag it back to the row that took the archived
-/// one's place.
+/// A key pressed while the archive settles keeps its cursor: the step to the next message must not
+/// drag it back to the row that took the archived one's place.
 pub fn a_key_pressed_while_archiving_settles_keeps_its_cursor() {
     crate::gtk_case(async {
         if !support::display() {
@@ -590,7 +538,6 @@ pub fn a_key_pressed_while_archiving_settles_keeps_its_cursor() {
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
-        // The list opens on its first row, so one j is the second.
         support::keys(&window, &["j"]);
         support::deliver(&window, "Return");
         assert!(
@@ -602,7 +549,6 @@ pub fn a_key_pressed_while_archiving_settles_keeps_its_cursor() {
             crate::settle_until(async || support::subjects(&window).len() == 4).await,
             "the archive never left the list"
         );
-        // Let the step past the archived message run its course.
         for _ in 0..30 {
             crate::settle();
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -616,9 +562,6 @@ pub fn a_key_pressed_while_archiving_settles_keeps_its_cursor() {
     });
 }
 
-/// The pane is the inbox's: a message opened from Filtered, which has no
-/// list beside a pane, opens in the dialog over it, and back in the inbox
-/// the next one opens beside the list again.
 pub fn a_message_opened_away_from_the_inbox_opens_in_the_dialog() {
     crate::gtk_case(async {
         if !support::display() {
@@ -670,10 +613,8 @@ pub fn a_message_opened_away_from_the_inbox_opens_in_the_dialog() {
     });
 }
 
-/// `!` narrows the list under a message open beside it. When the message
-/// the cursor was on is not marked, the cursor lands on the narrowed list's
-/// first row, and the pane follows the cursor there as it does for `j`
-/// (T232). Same on main before the controller drove the cursor.
+/// `!` narrows the list under an open pane; the cursor lands on the narrowed list's first row and
+/// the pane follows it, as for `j`.
 pub fn a_filter_landing_under_an_open_pane_shows_the_cursors_row_there() {
     crate::gtk_case(async {
         if !support::display() {
@@ -681,7 +622,6 @@ pub fn a_filter_landing_under_an_open_pane_shows_the_cursors_row_there() {
         }
         let fixture = Fixture::empty().await;
         let filed = fixture.file_five().await;
-        // Second and Fourth ask something; First does not.
         fixture.ask(filed[1], "Can you look at this?").await;
         fixture.ask(filed[3], "Could you sign it by Friday?").await;
         let (window, _client) = fixture.open_five().await;
@@ -714,10 +654,8 @@ pub fn a_filter_landing_under_an_open_pane_shows_the_cursors_row_there() {
     });
 }
 
-/// Holding `j` over the open pane reads the row the cursor lands on, not
-/// every row it passes (#1609): eleven steps in one turn of the loop are one
-/// body read, and a `j` that leaves the cursor where it was reads nothing.
-/// Counted at the storage seam, which sees the store owner's thread too.
+/// Eleven steps in one turn of the loop are one body read (#1609). Counted at the storage seam,
+/// which sees the store owner's thread too.
 pub fn a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes() {
     crate::gtk_case(async {
         if !support::display() {
@@ -754,8 +692,6 @@ pub fn a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes() {
         crate::settle();
 
         let loads = postio_storage::test_support::counting::body_loads();
-        // Faster than the store answers, as a held key outruns it: the
-        // window's own `j`, eleven times before the loop turns.
         for _ in 0..11 {
             window.act(postio_core::CommandId::NextMessage);
         }
@@ -774,7 +710,6 @@ pub fn a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes() {
              not the one it landed on"
         );
 
-        // The last row: `j` moves nothing, and nothing is read again.
         let loads = postio_storage::test_support::counting::body_loads();
         support::deliver(&window, "j");
         crate::settle();
@@ -787,10 +722,6 @@ pub fn a_sweep_reads_the_row_it_lands_on_not_every_row_it_passes() {
     });
 }
 
-/// Opening a conversation costs what opening one message does, however
-/// many it holds (#1609): its body read once, and its members read on
-/// connections that do not grow with it. A twelve-message conversation and
-/// a two-message one open on the same counts.
 pub fn opening_a_conversation_costs_the_same_however_long_it_is() {
     crate::gtk_case(async {
         if !support::display() {

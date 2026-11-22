@@ -1,7 +1,3 @@
-//! `V` shows the raw source (US2 scenario 5, T068): the message as it came,
-//! header lines first, from the list or from the open message -- read
-//! through `Client::raw_source`, which fetches only when asked.
-
 use gtk::gdk;
 
 use crate::support::{self, Fixture};

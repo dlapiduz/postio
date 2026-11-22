@@ -1,28 +1,14 @@
-//! Focus's command bar and folders popover at the boundary
-//! (specs/009-focus-macos T082, for the Mac's T084-T086).
-//!
-//! The bar is the controller's (`postio_focus`, ADR 0045): what typing
-//! means, which lines it offers, what each says and what running one does.
-//! The Mac draws what it is told and reports what happened -- the field's
-//! words ([`Session::focus_bar_typed`]), a line run by its token
-//! ([`Session::focus_bar_run`]), `Tab` ([`Session::focus_bar_tab`]) -- and
-//! the bar opens and closes through the surface stack like every other
-//! surface (`FocusOpenBar`, `FocusCloseSurface { kind: Bar }`,
-//! `focus_surface_opened`/`focus_surface_closed`).
-//!
-//! The folders popover lists [`Session::focus_places`], read in one request
-//! when it opens (`FocusOpenPlaces`, then `FocusPlacesChanged` once the read
-//! lands), and goes to the one chosen with [`Session::focus_open_place`].
+//! Focus's command bar and folders popover. The controller (`postio_focus`, ADR 0045) decides what
+//! typing means
+//! and what each line does; the Mac draws what it is told and reports the field's words, a line run
+//! by token, and `Tab`.
 
 use crate::mailbox::MailboxRoleFfi;
 use crate::session::Session;
 
-/// How the bar was opened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum BarModeFfi {
-    /// `/`: search, places and commands, blended.
     Search,
-    /// `mod+k`: commands, with `>` typed (C24).
     Commands,
 }
 
@@ -40,20 +26,14 @@ impl From<postio_focus::BarMode> for BarModeFfi {
 pub struct BarSelectFfi {
     /// The first character selected, counting characters, not bytes.
     pub start: u32,
-    /// One past the last.
     pub end: u32,
 }
 
-/// What kind of line the bar draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum BarLineKindFfi {
-    /// A section heading ("Commands").
     Heading,
-    /// A line of the empty bar saying what typing does.
     Hint,
-    /// A command, with its key.
     Command,
-    /// A correspondent `@` offered.
     Correspondent,
 }
 
@@ -69,17 +49,13 @@ impl From<postio_focus::BarLineKind> for BarLineKindFfi {
     }
 }
 
-/// One line of the bar, with everything it draws.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BarLineFfi {
-    /// What kind of line.
     pub kind: BarLineKindFfi,
     /// What [`Session::focus_bar_run`] takes to run it. Never reused: a
     /// token from lines since redrawn runs nothing.
     pub token: u64,
-    /// The title: a command's name, a correspondent's.
     pub title: String,
-    /// The dimmer detail beside it.
     pub detail: Option<String>,
     /// The key that does the same, as the keymap spells it (`g i`,
     /// `cmd+k`), or a hint's prefix (`>`, `@`).
@@ -87,7 +63,6 @@ pub struct BarLineFfi {
     /// The registry command the keycap is for, when it is one's: what the
     /// Mac spells the keycap from.
     pub command: Option<String>,
-    /// Whether the arrows may rest on it and Return run it.
     pub selectable: bool,
 }
 
@@ -105,12 +80,10 @@ impl From<postio_focus::BarLine> for BarLineFfi {
     }
 }
 
-/// The bar, whole: everything `FocusBarLines` redraws.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BarViewFfi {
     /// The line under the field: "You typed “…”".
     pub echo: Option<String>,
-    /// The lines, top to bottom.
     pub lines: Vec<BarLineFfi>,
     /// The line the highlight goes to, by token. `None` keeps it where it
     /// is, or puts it on the first selectable line when it is nowhere.
@@ -131,26 +104,20 @@ impl From<postio_focus::BarView> for BarViewFfi {
     }
 }
 
-/// What sits before a place's name.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum PlaceMarkFfi {
-    /// A mailbox's icon, by its role.
     Role {
-        /// The role.
         role: MailboxRoleFfi,
     },
-    /// A label's dot.
     Dot {
         /// Its stored colour, `#rrggbb`; `None` for one the frontend picks
         /// from the name.
         color: Option<String>,
     },
-    /// Filtered's own mark. It is not a mailbox, and drawn with Archive's
-    /// role it was a second Archive in the list, one row under the first.
+    /// Filtered's own mark: drawn with Archive's role it read as a second Archive.
     Filtered,
 }
 
-/// One place the folders popover lists.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PlaceEntryFfi {
     /// What [`Session::focus_open_place`] takes to go there. Good until the
@@ -160,15 +127,11 @@ pub struct PlaceEntryFfi {
     /// Entries come in section order, so a heading goes wherever this
     /// changes.
     pub section: String,
-    /// Its name.
     pub name: String,
     /// What it says on the right: its conversations, or "186 today".
     pub count: Option<String>,
-    /// What sits before the name.
     pub mark: PlaceMarkFfi,
-    /// The command that goes there directly, whose key its row shows.
     pub command: Option<String>,
-    /// The popover's footer while this row is highlighted: what Return does.
     pub footer: String,
 }
 
@@ -195,9 +158,7 @@ impl PlaceEntryFfi {
 
 #[uniffi::export]
 impl Session {
-    /// The bar's field holds `text` now. Said on every change; the same
-    /// words again change nothing, so setting the field from `FocusOpenBar`
-    /// and hearing it back is harmless.
+    /// The bar's field holds `text` now. The same words again change nothing.
     pub fn focus_bar_typed(&self, text: String) {
         self.focus_driver()
             .input(postio_focus::Input::Typed { text });
@@ -236,7 +197,6 @@ impl Session {
             .input(postio_focus::Input::OpenPlace(token));
     }
 
-    /// What the popover's filter says before anything is typed.
     pub fn focus_places_placeholder(&self) -> String {
         postio_ui::places::FILTER_PLACEHOLDER.to_owned()
     }

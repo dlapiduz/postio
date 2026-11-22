@@ -1,15 +1,5 @@
-//! The store's idle passes wait for the first frame (#1604).
-//!
-//! The body indexer's catch-up, the header repair, the header index catch-up
-//! and the disk reclaim are catch-up work nobody is waiting on; the first
-//! frame is. They used to start at the same instant as the first page read,
-//! on a runtime of two workers. In Focus they start with
-//! `Session::start_syncing`, which `app.rs` calls from the frame the stored
-//! mail is drawn in -- so adopting a store starts none of them, and starting
-//! sync does start them, a moment later.
-//!
-//! Nothing here dials anything: the host reads and files mail through a mock
-//! backend, so `start_syncing` opens no socket.
+//! The store's idle passes wait for the first frame (#1604): `Session::start_syncing`, called from
+//! the frame the stored mail is drawn in, starts them.
 
 use std::sync::Arc;
 
@@ -24,7 +14,6 @@ use postio_storage::repository::{MessageRepository, StoredBody};
 
 use crate::support::{self, Fixture};
 
-/// The messages matching `query`, as search answers.
 async fn hits(fixture: &Fixture, account: AccountId, query: &str) -> Vec<MessageId> {
     let connection = fixture.database.connect().await.expect("a connection");
     let parsed = parse(query, Utc::now().date_naive());
@@ -56,7 +45,6 @@ pub fn the_idle_passes_wait_for_the_first_frame() {
         let (target, _) = fixture
             .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 5)
             .await;
-        // A body already on this machine that the index has not seen.
         {
             let connection = fixture.database.connect().await.expect("a connection");
             MessageRepository::new(&connection)
@@ -104,8 +92,6 @@ pub fn the_idle_passes_wait_for_the_first_frame() {
             crate::settle_until(async || !window.rows_on_screen().is_empty()).await,
             "the inbox never reached the screen"
         );
-        // The first frame is up, and the idle passes have not been started:
-        // a second of the loop turning gives them every chance.
         crate::settle_for(std::time::Duration::from_secs(1)).await;
         assert!(
             hits(&fixture, fixture.account.id, "photogrammetry")

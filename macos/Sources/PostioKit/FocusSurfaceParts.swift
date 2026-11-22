@@ -1,13 +1,5 @@
 import SwiftUI
 
-// Pieces the surfaces of slice 12 share (specs/009-focus-macos T113-T116):
-// the default button the pack draws for Archive all, Create and Add task,
-// a verb with its keycap, and a row of footer hints. Semantic colours only
-// (FR-017): the default button is the label colour, filled, with the text
-// turned over, so the accent stays reserved for markers and focus.
-
-/// A default button (Archive all, Create, Add task): bold words and their
-/// keycap on a `labelColor` fill, the text in the background's colour.
 public struct FocusDefaultButton: View {
     let title: String
     let cap: String?
@@ -36,8 +28,6 @@ public struct FocusDefaultButton: View {
     }
 }
 
-/// A plain verb: its words, then its keycap (the action rows, Cancel,
-/// "Edit rule and cadence").
 public struct FocusVerbButton: View {
     let title: String
     let cap: String?
@@ -67,8 +57,6 @@ public struct FocusVerbButton: View {
     }
 }
 
-/// A keycap on a default button's fill: `KeyCap`'s geometry, its colours
-/// turned over with the button's.
 public struct FilledKeyCap: View {
     let text: String
 
@@ -95,7 +83,6 @@ public struct FilledKeyCap: View {
     }
 }
 
-/// A footer of hints: each key as a cap, then its words, in a row.
 public struct FocusHintRow: View {
     public struct Hint: Equatable, Identifiable {
         public let cap: String
@@ -130,8 +117,6 @@ public struct FocusHintRow: View {
     }
 }
 
-/// The chip a reason or a reference sits in: the quaternary fill, the
-/// secondary label colour, monospaced when it is a number.
 public struct FocusChip: View {
     let text: String
     let mono: Bool

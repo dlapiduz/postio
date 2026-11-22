@@ -1,11 +1,6 @@
-//! Messages written out as `.eml` files, for dragging out of a frontend.
-//!
-//! Moved from the classic app's export (`docs/archive/specs/005-tui-frontend` T018): an
-//! `.eml` file *is* the raw RFC 5322 source, which the sync engine has
-//! already put in the blob store as `messages.raw_blob_id`, so an export is
-//! a copy, not a serialisation. What each file is called is the frontend's
-//! choice, as a saved part's path is; which bytes go in it is the store's
-//! owner's.
+//! Messages written out as `.eml` files: a copy of the raw source in the blob store, not a
+//! serialisation.
+//! The frontend chooses each file's name.
 
 use std::path::PathBuf;
 
@@ -13,17 +8,11 @@ use postio_model::MessageId;
 use postio_runtime::Engine;
 use postio_storage::{BlobStore, Store};
 
-/// Write each message's raw source to its path, in the order asked, and
-/// answer the paths written.
-///
-/// # It may reach the network, and only because the user asked
-///
-/// A message whose raw source has not been backfilled yet has nothing to
-/// export, so this asks the engine for it and waits -- the same path, and the
-/// same justification, as saving an attachment that was never downloaded.
-/// The user dragged these messages by name; fetching them is the thing they
-/// asked for. With no engine, that message is an error rather than an empty
-/// file, and the export stops there.
+/// Writes each message's raw source to its path, in order; answers the paths written.
+/// May reach the network because the user asked: a message whose raw source is not backfilled is
+/// requested from the
+/// engine and awaited. With no engine that message is an error, not an empty file, and the export
+/// stops.
 pub async fn write_messages(
     database: &Store,
     blobs: &BlobStore,

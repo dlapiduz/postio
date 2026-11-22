@@ -2,63 +2,37 @@ import AppKit
 import PostioAppKit
 import PostioKit
 
-/// What Postio does when the system hands it a `mailto:` link.
-///
-/// It opens a composer on it. Until #1272 there was nothing to open, and
-/// this said so out loud rather than doing nothing — the right answer then,
-/// and a stale one the moment writing mail started working.
-///
-/// The parsing is `Mailto` in PostioKit, where it is tested; assembling the
-/// draft is the boundary's, so GTK gets the same behaviour from the same
-/// code. This is only the part that needs an application to exist.
 @MainActor
 final class URLHandler: NSObject, NSApplicationDelegate {
-    /// Put Postio's menu bar back, after SwiftUI has finished building its
-    /// own.
-    ///
-    /// The bar is installed from `Engine.init`, which runs inside
-    /// `App.init()` — before SwiftUI builds anything, so SwiftUI's own menu
-    /// lands on top of it. This is the first moment the application is
-    /// running and SwiftUI has had its turn; the `async` hop is what puts it
-    /// *after* the scene's first update rather than in the middle of it
-    /// (#1262).
+    /// Installed from `Engine.init`, inside `App.init()` before SwiftUI builds anything, so
+    /// SwiftUI's
+    /// menu lands on top. The `async` hop puts this after the scene's first update (#1262).
     func applicationDidFinishLaunching(_: Notification) {
-        // A demo is photographed in the appearance it was told (`DemoMode`).
         switch DemoMode.appearance {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         default: break
         }
-        // And in front, as a person would have it: launched from a script
-        // it opens behind the terminal, and WebKit stops painting a web
-        // view whose window it thinks is covered -- the message window's
-        // body came out blank or not, by where the terminal stood.
+        // In front: launched from a script it opens behind the terminal, and WebKit stops painting
+        // a window it thinks is covered.
         if DemoMode.seed != nil { NSApp.activate(ignoringOtherApps: true) }
         AccentHue.follow()
         MenuBar.reassert()
         DispatchQueue.main.async { MenuBar.reassert() }
     }
 
-    /// Close the session down, orderly, on the way out.
-    ///
-    /// Set by the application, which owns it. Here rather than on a scene
-    /// phase because quitting is the only moment it is right: `⌘W` and `⌘H`
-    /// put the window away and a mail client with no window on screen is a
-    /// mail client collecting mail. `SessionLifetime` carries the reasoning.
+    /// Quitting is the only right moment: `⌘W` and `⌘H` put the window away, and a mail client with
+    /// no window is one collecting mail (`SessionLifetime`).
     var stop: (() -> Void)?
 
     func applicationWillTerminate(_: Notification) {
         stop?()
     }
 
-    /// Where a `mailto:` goes. Set by the application, which owns the
-    /// session and the compose windows.
     var write: ((Mailto) -> Bool)?
 
-    /// Where a `postio://` link goes (specs/009-focus-macos T117). Set by
-    /// the application, which owns the session and the message window. A
-    /// link that launched Postio can arrive before it is set; those wait
-    /// here and go as soon as it is.
+    /// A link that launched Postio can arrive before this is set; those wait and go as soon as it
+    /// is.
     var follow: ((PostioLink.Route) -> Void)? {
         didSet {
             guard let follow else { return }
@@ -66,41 +40,28 @@ final class URLHandler: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Links that came before `follow` did.
     private var early = PostioLink.Waiting()
 
     func application(_: NSApplication, open urls: [URL]) {
         for url in urls {
-            // Postio's own: a captured task's link back to its message. The
-            // app comes forward, as a click from another app expects.
             if let route = PostioLink.route(url) {
                 NSApp.activate(ignoringOtherApps: true)
                 if let follow { follow(route) } else { early.hold(route) }
                 continue
             }
             guard let mailto = Mailto(url) else { continue }
-            // A composer, when there is one to open. `false` means there was
-            // not — no account to write from, or no session yet — and that
-            // still has to be said rather than swallowed.
             if write?(mailto) != true {
                 announce(mailto)
             }
         }
     }
 
-    /// Say what was asked for, when no composer could be opened for it.
-    ///
-    /// A sheet rather than a notification: this is the direct result of
-    /// something the user just clicked, and an answer to a click belongs in
-    /// front of them rather than in Notification Centre.
+    /// A sheet rather than a notification: it answers a click, so it belongs in front of the user.
     private func announce(_ mailto: Mailto) {
         let alert = NSAlert()
         alert.messageText = "Postio could not open a composer"
-        // The recipient, because it tells the user the link was read correctly
-        // and it is their own address book, not content Postio went and
-        // fetched. Subject and body are deliberately not shown: they can carry
-        // anything the linking page chose, and this dialog can appear over a
-        // locked screen's login window.
+        // Only the recipient is shown: subject and body can carry anything the linking page chose,
+        // and this dialog can appear over a locked screen's login window.
         alert.informativeText = switch mailto.to.first {
         case let address?:
             "This link asks to write to \(address). Postio has no account to "

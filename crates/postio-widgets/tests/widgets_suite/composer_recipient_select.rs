@@ -1,25 +1,3 @@
-//! #424: a suggestion can actually be *taken*, and is not offered too eagerly.
-//!
-//! `gtk_composer_recipients.rs` already covers that typing offers suggestions
-//! and that accepting one edits only the token being typed. What was missing
-//! is everything about choosing one:
-//!
-//!   * clicking a row did nothing at all — `populate` built plain `Label`s and
-//!     nothing was ever connected to `row-activated`, so the mouse could move
-//!     the selection and never commit it;
-//!   * the popover opened on the first character typed, which means a database
-//!     query per keystroke and a popover covering the field while there is not
-//!     yet enough typed for the answer to mean anything.
-//!
-//! On Return: what is asserted here is that the *handler* commits the selected
-//! suggestion. Whether a real Return reaches that handler is a question about
-//! the key controller's propagation phase, and GTK4 offers a test no way to
-//! synthesize a keystroke for a particular widget — see
-//! `Composer::test_press_recipient_key`, and the note in `composer.rs` where
-//! the phase is set.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use crate::support_compose::settle;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -87,8 +65,6 @@ fn graham() -> EmailAddress {
     EmailAddress::new(Some("Graham Bell"), "graham@example.net")
 }
 
-/// A composer with two suggestions on offer, and a count of how many times the
-/// suggestions provider was actually consulted.
 fn a_composer_offering_two() -> Option<(Window, Composer, Rc<Cell<usize>>)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -113,8 +89,7 @@ fn a_composer_offering_two() -> Option<(Window, Composer, Rc<Cell<usize>>)> {
         let asked = Rc::clone(&asked);
         move |prefix| {
             asked.set(asked.get() + 1);
-            // Answers for every prefix of "graham", so that anything not
-            // offered is the gate's doing and never the provider's.
+            // Answers every prefix of "graham", so anything not offered is the gate's doing.
             if "graham".starts_with(prefix) {
                 vec![
                     RecipientCandidate::Contact(grace()),
@@ -129,11 +104,8 @@ fn a_composer_offering_two() -> Option<(Window, Composer, Rc<Cell<usize>>)> {
     Some((window, composer, asked))
 }
 
-/// Clicking a suggestion puts *that* suggestion in the field.
-///
-/// Row 1 rather than row 0 on purpose: row 0 is what `populate` selects by
-/// default, so committing row 0 would also be what a handler that ignored the
-/// click entirely would produce.
+/// Row 1, not row 0: row 0 is the default selection, so a handler ignoring the click would produce
+/// it too.
 pub fn clicking_a_suggestion_puts_that_one_in_the_field() {
     let Some((_window, composer, _asked)) = a_composer_offering_two() else {
         return;
@@ -164,7 +136,6 @@ pub fn clicking_a_suggestion_puts_that_one_in_the_field() {
     );
 }
 
-/// Return commits whatever the popover has selected, not merely the default.
 pub fn return_commits_the_suggestion_the_popover_has_selected() {
     let Some((_window, composer, _asked)) = a_composer_offering_two() else {
         return;
@@ -193,7 +164,6 @@ pub fn return_commits_the_suggestion_the_popover_has_selected() {
     assert!(!composer.test_recipient_popover_visible());
 }
 
-/// A composer offering one group, "Family", with two members.
 fn a_composer_offering_a_group() -> Option<(Window, Composer)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -227,8 +197,6 @@ fn a_composer_offering_a_group() -> Option<(Window, Composer)> {
     Some((window, composer))
 }
 
-/// Picking a group inserts every member as its own address, not a group
-/// reference (ADR 0007 Q3) — the whole point of expanding at pick time.
 pub fn accepting_a_group_inserts_every_member() {
     let Some((_window, composer)) = a_composer_offering_a_group() else {
         return;
@@ -252,8 +220,6 @@ pub fn accepting_a_group_inserts_every_member() {
     assert!(!composer.test_recipient_popover_visible());
 }
 
-/// Nothing is offered — and nothing is even looked up — before four
-/// characters of the current token are typed.
 pub fn nothing_is_offered_until_four_characters_are_typed() {
     let Some((_window, composer, asked)) = a_composer_offering_two() else {
         return;
@@ -282,8 +248,6 @@ pub fn nothing_is_offered_until_four_characters_are_typed() {
     );
     assert!(asked.get() > 0, "and the provider is consulted then");
 
-    // The gate is on the token being typed, not on the whole field: a second
-    // recipient starts counting from scratch after the comma.
     let existing = postio_model::address::format_list(&composer.draft().to);
     composer.test_set_to(&format!("{existing}, gr"));
     settle();
@@ -294,15 +258,8 @@ pub fn nothing_is_offered_until_four_characters_are_typed() {
     );
 }
 
-/// Replacing what `To` says keeps the open popover open.
-///
-/// `set_text` empties an entry and then fills it, so `changed` fires twice,
-/// and the completion used to answer each one: the empty text hid the
-/// popover and the new text showed it again. On Wayland that destroys the
-/// popup and makes a new one, and a new popup repositioned before it has
-/// drawn waits on a compositor reply that can never come -- GTK blocked the
-/// main loop there and focus_suite's `typing_a_recipient_*` hung one run in
-/// two. A paste, or typing over a selection, is the same two changes.
+/// `set_text` empties then fills, so `changed` fires twice; answering each hid and re-showed the
+/// popover, and on Wayland a popup repositioned before it has drawn blocks the main loop.
 pub fn replacing_the_text_keeps_the_popover_up() {
     fn completions(widget: &gtk::Widget, out: &mut Vec<gtk::Popover>) {
         if widget.has_css_class("postio-recipient-completion")

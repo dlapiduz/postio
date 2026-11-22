@@ -1,24 +1,8 @@
-//! The reading pane: `postio-lu6`, drawn by the reading renderer (spec 006).
-//!
-//! A message body is hostile input that has to render correctly anyway. The
-//! rules, each held by construction rather than by a setting:
-//!
-//! * **No script runs.** The body is drawn by `postio-render`, which has no
-//!   script engine at all; nothing in a message can execute, and nothing of
-//!   Postio's needs to, because the rail and the scroll are read from the
-//!   snapshot's geometry.
-//! * **Nothing is fetched.** [`postio_body::sanitize_body`] never leaves a
-//!   remote reference in the markup unless the user allowed it
-//!   (`postio-xxz`), and the renderer resolves only what it is handed: a
-//!   message's own parts, Postio's faces, and remote images the reader's
-//!   owner fetched on consent ([`Reader::set_remote_fetch`]).
-//! * **Inline images stay local.** `cid:` references resolve through
-//!   whatever [`BlobSource`] the caller hands in -- a blob-store read, never
-//!   a network round trip.
-//! * **A click never navigates the pane.** The view resolves a link from
-//!   the snapshot: a sender's link goes to [`gtk::UriLauncher`] on a
-//!   deliberate click, a message's own verb comes back here, and a fragment
-//!   scrolls.
+//! The reading pane, drawn by the reading renderer. A body is hostile input: no script engine
+//! exists to run it, nothing is
+//! fetched unless the user allowed it, `cid:` images resolve through a [`BlobSource`] and never the
+//! network, and a click
+//! never navigates the pane.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -32,12 +16,8 @@ use super::banner::{DecodeNotice, RemoteImageBanner, UnsubscribeBanner};
 use super::message_header::MessageHeader;
 use super::notices::{Notice, NoticeSlot};
 use postio_body::sanitize::RemoteImages;
-use postio_ui::allowlist::RemoteImageAllowList;
-// The document itself — CSP, wrapper, fonts, markers, absent states,
-// sanitizing and containing the body — is postio-ui's (#567, #590, ADR 0019
-// Q6): one implementation for every frontend, re-exported here so existing
-// paths keep resolving.
 pub use postio_body::treatment::Treatment;
+use postio_ui::allowlist::RemoteImageAllowList;
 pub use postio_ui::reader::document::{
     Absent, HeldBack, Rendering, Sheet, Treated, absent_html, body_html, content_security_policy,
     document_for, reader_ground, sheet_for, wrap_document,
@@ -45,180 +25,91 @@ pub use postio_ui::reader::document::{
 
 use super::render_mode::RenderModeLine;
 
-/// The message currently on screen, kept so the banner's two actions can ask
-/// for a re-render without the caller doing it for them.
 struct Open {
     body: MessageBody,
     sender: Option<String>,
-    /// Which of the two ways this message is being drawn.
-    ///
-    /// Per message, and reset by every `render`: `View original` is an answer
-    /// about *this* newsletter, and carrying it to the next one would be the
-    /// reader quietly deciding that a person who wanted one sender's layout
-    /// wants everyone's.
+    /// Per message and reset by every `render`: `View original` answers about this newsletter and
+    /// must not carry to the next.
     rendering: Rendering,
-    /// Whether reader view had something to offer on this message.
-    ///
-    /// Recorded at `render` rather than asked again per draw:
-    /// [`postio_ui::reader::document::suits_reader_view`] parses the markup,
-    /// and the answer cannot change
-    /// while one message is on screen. It is what tells `View original` apart
-    /// from ordinary correspondence, which is also `Rendering::Original` and
-    /// must keep following the theme.
+    /// Recorded at `render` because the answer cannot change while one message is on screen. It
+    /// tells `View original` apart
+    /// from ordinary correspondence, which is also `Rendering::Original` and must keep following
+    /// the theme.
     bulk: bool,
-    /// The body already judged and sanitised off the main thread, when the
-    /// caller had it done there (`Reader::render_prepared`). Used only while
-    /// it serves exactly this body, policy and rendering; a banner or notice
-    /// that changes either is drawn as before.
+    /// Used only while it serves exactly this body, policy and rendering.
     prepared: Option<postio_ui::reader::document::Prepared>,
-    /// The treatment the person chose for this message -- `O`, or what they
-    /// remembered for its sender -- or `None` for the rule's
-    /// (specs/007-postio-focus T213). Read only by a reader that draws
-    /// treatments ([`Reader::use_treatments`]).
     chosen: Option<Treatment>,
-    /// What is remembered for this message's sender, for the line to say.
     remembered: Option<Treatment>,
 }
 
-/// Called with how many remote references the pane is currently holding
-/// back, every time a render decides that count anew.
 type RenderedHandler = Box<dyn Fn(HeldBack)>;
 
-/// Called with the list identifier [`Reader::set_unsubscribe`] last set, when
-/// the unsubscribe banner's button is activated.
 type UnsubscribeHandler = Box<dyn Fn(&str)>;
 
-/// The reading pane: the body view, and the header, notices and banners
-/// (`postio-xxz`) that sit above it.
-///
-/// `Clone` is cheap — every field is a GObject reference or an `Rc` — so a
-/// caller can hand a `Reader` to more than one closure without fighting the
-/// borrow checker over who owns it.
+/// `Clone` is cheap: every field is a GObject reference or an `Rc`.
 #[derive(Clone)]
 pub struct Reader {
     container: gtk::Box,
-    /// What a surface puts under the header: Focus's marker card. Hidden
-    /// while empty, so the notices and the body start where they did.
     under_header: gtk::Box,
     view: crate::body_view::BodyView,
-    /// The view's own scroller, and the overlay it sits in: what
-    /// [`Reader::flow_in`] takes the view out of.
     scroller: gtk::ScrolledWindow,
     body: gtk::Overlay,
-    /// Find in the message (spec 006 FR-018), above the body.
     find: Rc<crate::body_view::find::FindBar>,
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
-    /// "Reader view — the sender's HTML layout is hidden", with the way
-    /// back. Shown only while a message is actually drawn reduced.
     reader_notice: Rc<crate::widgets::NoticeBar>,
     unsubscribe_banner: Rc<UnsubscribeBanner>,
-    /// The one slot the four notices above share, so the body under them
-    /// starts at the same place whichever of them apply. See
-    /// [`super::notices`].
     notices: Rc<NoticeSlot>,
-    /// The list identifier [`Reader::set_unsubscribe`] last set — what a
-    /// click on the banner's button reports to
-    /// [`connect_unsubscribe_activated`](Reader::connect_unsubscribe_activated),
-    /// since the click itself carries no data.
+    /// A click on the banner's button carries no data, so this is what it reports.
     unsubscribe_list: Rc<RefCell<Option<String>>>,
     on_unsubscribe: Rc<RefCell<Vec<UnsubscribeHandler>>>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
-    /// Where a sender's remembered treatment is looked up and kept: the
-    /// person's, in the store, when the app gave the readers that.
     treatments: Rc<dyn super::SenderTreatments>,
     open: Rc<RefCell<Option<Open>>>,
-    /// Which [`Absent`] the pane is explaining, when it has no body to draw.
-    /// `None` whenever a body is on screen — the two are exclusive, and
-    /// `render` and `clear` both say so.
     absent: Rc<std::cell::Cell<Option<Absent>>>,
-    /// Terms to paint where they appear in the body. Empty for ordinary
-    /// reading; set while a search is what put the message on screen.
     highlight: Rc<RefCell<Vec<String>>>,
-    /// What came with the message, per canvas 1b — and the way into the
-    /// parts panel. See [`super::chips::Chips`].
     chips: super::chips::Chips,
-    /// Called every time a render settles how many remote references are
-    /// being held back — initial render, and again if the banner's "show
-    /// once" or "always allow" changes it. See [`connect_rendered`].
-    ///
-    /// [`connect_rendered`]: Reader::connect_rendered
     rendered: Rc<RefCell<Vec<RenderedHandler>>>,
-    /// How many times the pane has been drawn — see [`Reader::paints`].
     paints: Rc<std::cell::Cell<u32>>,
-    /// How many documents have actually been handed to the view — see
-    /// [`Reader::loads`].
     loads: Rc<std::cell::Cell<u32>>,
-    /// The last document handed to the view — see [`Reader::test_document`].
     document: Rc<RefCell<String>>,
-    /// Where the reader is in the document, so a redraw of the same
-    /// content can put them back there. See [`Place`].
     place: Rc<Place>,
 }
 
 impl Drop for Reader {
-    /// Balances [`postio_ui::reader::cost::note_surface_created`] so that
-    /// `surfaces_held` means what it says.
-    ///
-    /// Dropping the `Reader` is what lets its body view go, and the render
-    /// thread and snapshot with it. A conversation that keeps every surface
-    /// it ever opened is the defect ADR 0032 describes, and it is invisible
-    /// to any count that only watches creations.
+    /// Balances [`postio_ui::reader::cost::note_surface_created`] so `surfaces_held` means what it
+    /// says: a conversation that
+    /// keeps every surface it opened is the ADR 0032 defect.
     fn drop(&mut self) {
         postio_ui::reader::cost::note_surface_released();
     }
 }
 
-/// Keeping the reader's place, and what a load needs besides the markup.
-///
-/// A redraw of the same content in front of the same person -- a late body
-/// arriving, a message redrawn to show its images -- keeps where they were:
-/// the view keeps its scroll across a snapshot. A different message starts
-/// at the top. `keep` says which the next load is.
-///
-/// It also carries what `load_document` needs that `Canvas` never did:
-/// where parts come from, and the plain text a render falls back to. Never
-/// the view itself: the view's own signal handlers hold a `Place`, and a
-/// `Place` holding the view back would be a cycle that keeps every reader's
-/// renderer alive for the life of the process.
+/// A different message starts at the top; a redraw of the same content (late body, shown images)
+/// keeps the place. Never holds
+/// the view: its signal handlers hold a `Place`, and the reverse would be a cycle that keeps every
+/// renderer alive.
 struct Place {
     source: Rc<dyn BlobSource>,
-    /// The message's plain-text alternative, shown if a render falls back.
     plain: RefCell<String>,
     keep: std::cell::Cell<bool>,
-    /// The document on screen, so a late arrival redraws only that one.
     shown: RefCell<String>,
-    /// What fetches a document's remote images: the reader's owner's, and
-    /// nothing until it sets one. This crate speaks no protocol.
     fetch: RefCell<Option<Rc<RemoteFetch>>>,
-    /// Remote images that arrived, by URL, for this reader's life.
     remote: RefCell<std::collections::HashMap<String, Vec<u8>>>,
-    /// URLs already asked for, arrived or not: each is asked once.
     asked: RefCell<std::collections::HashSet<String>>,
-    /// The next load follows the user's explicit consent -- "Show once",
-    /// "Always allow", a message's own Show -- so its images are asked for
-    /// at once rather than after the dwell.
+    /// Consent loads images at once rather than after the dwell.
     consented: std::cell::Cell<bool>,
-    /// The reader flows in its owner's column ([`Reader::flow_in`]).
     flow: std::cell::Cell<bool>,
-    /// Bodies are drawn under a treatment ([`Reader::use_treatments`]).
     treatments: std::cell::Cell<bool>,
-    /// How the body on screen was treated, when it was.
     treated: std::cell::Cell<Option<Treated>>,
-    /// The line naming it, once [`Reader::use_treatments`] made one.
     line: RefCell<Option<Rc<RenderModeLine>>>,
-    /// Told the treatment on screen each time a body is drawn under one.
     on_treatment: RefCell<Vec<TreatmentHandler>>,
 }
 
-/// Called with the treatment the body on screen is drawn in.
 type TreatmentHandler = Rc<dyn Fn(Treatment)>;
 
-/// What a reader's owner fetches remote images with: the URLs one document
-/// names as images, and where to hand what arrived, on the main thread.
 pub type RemoteFetch = dyn Fn(Vec<String>, RemoteArrived);
 
-/// The images that arrived for one request, by URL.
 pub type RemoteArrived = Box<dyn FnOnce(Vec<(String, Vec<u8>)>)>;
 
 impl Place {
@@ -242,19 +133,13 @@ impl Place {
 }
 
 impl Reader {
-    /// Build a reader that resolves inline (`cid:`) images through `source`.
-    ///
-    /// The remote-image allow list is the one every reader of the app
-    /// shares ([`super::shared_allowlist`]), persisted in `$XDG_STATE_HOME`:
-    /// loaded once, so no reader can disagree with another about who is
-    /// allowed.
+    /// The allow list is the one every reader of the app shares ([`super::shared_allowlist`]):
+    /// loaded once, so no reader can
+    /// disagree about who is allowed.
     pub fn new(source: Rc<dyn BlobSource>) -> Self {
         Self::sharing(source, &RemoteImageAllowList::path())
     }
 
-    /// A reader on the allow list this app's other readers persisting to
-    /// `allowlist_path` share ([`super::shared_allowlist`]): one "Always
-    /// allow" or revoke reaches all of them (T020).
     pub fn sharing(source: Rc<dyn BlobSource>, allowlist_path: &std::path::Path) -> Self {
         Self::build(
             source,
@@ -263,9 +148,6 @@ impl Reader {
         )
     }
 
-    /// As [`new`](Self::new), with the allow list a caller already has and
-    /// an explicit path to persist a change to — what the tests use to point
-    /// it at a scratch file instead of the developer's own state directory.
     pub fn with_allowlist(
         source: Rc<dyn BlobSource>,
         allowlist: RemoteImageAllowList,
@@ -279,15 +161,10 @@ impl Reader {
         allowlist: Rc<RefCell<RemoteImageAllowList>>,
         allowlist_path: std::path::PathBuf,
     ) -> Self {
-        // One `Reader` is one rendering surface: a render thread and its
-        // snapshot. Under WebKit it was a web process, the cost ADR 0032 put
-        // at thirty for a thirty-message thread, so it is counted from the
-        // moment one is built; `Drop` balances it.
+        // One `Reader` is one rendering surface, counted from construction; `Drop` balances it (ADR
+        // 0032).
         postio_ui::reader::cost::note_surface_created();
 
-        // The body is drawn by the reading renderer (spec 006): one render
-        // thread per reader, no web process, no script. It scrolls in a
-        // window of its own; the header and notices above it stay put.
         let view = crate::body_view::BodyView::new(crate::body_view::DEFAULT_RENDER_DEADLINE);
         view.add_css_class("postio-reader-view");
         let scroller = gtk::ScrolledWindow::builder()
@@ -297,7 +174,6 @@ impl Reader {
             .build();
         let place = Rc::new(Place::new(Rc::clone(&source)));
         let find = Rc::new(crate::body_view::find::FindBar::new(&view));
-        // The zoom, when it is not actual size, over the body's corner.
         let zoom_indicator = crate::body_view::zoom::ZoomIndicator::new(&view);
         zoom_indicator.widget().set_halign(gtk::Align::End);
         zoom_indicator.widget().set_valign(gtk::Align::Start);
@@ -318,9 +194,6 @@ impl Reader {
         reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
         reader_notice.set_action(Some("View original"));
         let unsubscribe_banner = Rc::new(UnsubscribeBanner::new());
-        // Every notice's button carries its key inside it, as every action
-        // button does (T219): from the registry's defaults until an owner
-        // hands over its keymap, never a blank cap.
         notice_keys(
             &postio_core::Keymap::resolve(&Default::default()),
             &banner,
@@ -329,9 +202,8 @@ impl Reader {
         );
         let chips = super::chips::Chips::new();
 
-        // The header sits above the banner and does not scroll away with
-        // the body (#319): it is a sibling in this native box, never markup
-        // inside the body's document.
+        // The header does not scroll away with the body (#319): a sibling in this native box, never
+        // markup inside the document.
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.append(&header.widget());
         let under_header = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -375,25 +247,13 @@ impl Reader {
             place,
         };
 
-        // The banner's buttons are children of `reader.banner`'s own widget
-        // tree, so a closure their "clicked" signal owns must not hold a
-        // *strong* `Rc<RemoteImageBanner>` back to it — that would be a
-        // button owning (via the signal) a closure owning (via the Rc) the
-        // struct that owns the button, a cycle nothing would ever free.
-        // `view`, `open` and `allowlist` hold no reference back to the
-        // banner, so they can be captured strongly with no such risk.
-        // `View original` on the notice runs the same thing `ctrl+o` does.
-        // Weakly, for the reason the banner's own buttons are weak: the
-        // button lives inside `reader.reader_notice`, so a closure its
-        // `clicked` signal owns must not hold a strong reference back to the
-        // struct that owns the button.
+        // Weakly: the banner's buttons live in its own widget tree, so a closure their `clicked`
+        // signal owns must not hold a
+        // strong `Rc` back to the struct that owns them, a cycle nothing would free.
         {
             let weak = Rc::downgrade(&reader.reader_notice);
             let view = reader.view.clone();
             {
-                // The fallback notice's "View source" (spec 006 FR-023,
-                // T105): what was sent, as text, in this pane. Local, and
-                // one navigation from the message again.
                 let open = Rc::clone(&reader.open);
                 let document = Rc::clone(&reader.document);
                 let loads = Rc::clone(&reader.loads);
@@ -416,12 +276,9 @@ impl Reader {
 
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
-            // Weakly, and this is the half that is easy to get wrong: the
-            // banner's own closures hold the notice (below), so a strong
-            // reference back would be a cycle between two Rcs that nothing
-            // ever frees -- and both of them hold the body view, so what
-            // leaks is a render thread and a snapshot per message.
-            // `gtk_reader_teardown` is what says so.
+            // Weakly: the banner's own closures hold the notice, so a strong reference back would
+            // be a cycle that leaks a render
+            // thread and a snapshot per message (`gtk_reader_teardown`).
             let banner_from_notice = Rc::downgrade(&reader.banner);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
@@ -558,10 +415,6 @@ impl Reader {
             });
         }
 
-        // No cycle risk here the way the two banner wirings above have to
-        // guard against: this closure never calls back into
-        // `unsubscribe_banner` itself, only reads `unsubscribe_list` and
-        // fires the handlers `connect_unsubscribe_activated` collects.
         {
             let unsubscribe_list = Rc::clone(&reader.unsubscribe_list);
             let on_unsubscribe = Rc::clone(&reader.on_unsubscribe);
@@ -578,42 +431,26 @@ impl Reader {
         reader
     }
 
-    /// Get ready for the first message before anything needs it.
-    ///
-    /// What a first render would wait on is font discovery -- reading every
-    /// installed face's tables -- which happens once per process. This
-    /// starts it off the main thread, so the first message a person opens
-    /// is rendered in full rather than falling back at the deadline. (Under
-    /// WebKit this started the reader's web process, #1216.)
+    /// Starts font discovery (once per process) off the main thread, so the first message is
+    /// rendered in full rather than
+    /// falling back at the deadline.
     pub fn warm(&self) {
         crate::body_view::prewarm_fonts();
     }
 
-    /// The widget to place in a surface: the header, notices and body,
-    /// stacked.
     pub fn widget(&self) -> gtk::Widget {
         self.container.clone().upcast()
     }
 
-    /// The body view -- test-facing, e.g. to watch `rendered` for whether a
-    /// snapshot has reached the screen yet.
     pub fn view(&self) -> &crate::body_view::BodyView {
         &self.view
     }
 
-    /// The one slot the reader's notices share, for an owner that spaces it
-    /// in its own column (Focus's open message, after
-    /// [`flow_in`](Self::flow_in)). While no notice applies a flowing slot
-    /// is hidden, so a margin set here goes with it.
     pub fn notice_slot(&self) -> gtk::Widget {
         self.notices.widget()
     }
 
-    /// Which remote-image policy this reader draws `sender`'s mail under.
-    ///
-    /// What a caller preparing a body off the main thread has to prepare it
-    /// for: the allow list lives here, and a body prepared under the wrong
-    /// policy is simply drawn again when shown.
+    /// A body prepared under the wrong policy is simply drawn again when shown.
     pub fn remote_images_for(&self, sender: Option<&str>) -> RemoteImages {
         if sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender)) {
             RemoteImages::Allowed
@@ -622,38 +459,26 @@ impl Reader {
         }
     }
 
-    /// The allow list as it stands, for a worker that has to decide a
-    /// policy before it knows whose message it is reading.
     pub fn allowlist_snapshot(&self) -> RemoteImageAllowList {
         self.allowlist.borrow().clone()
     }
 
-    /// Whether the remote-image banner is currently shown.
     pub fn banner_visible(&self) -> bool {
         self.notices.shows(Notice::RemoteImages)
     }
 
-    /// The message header (#319), for tests that want to assert on its
-    /// fields directly rather than parsing the rendered document.
     pub fn header(&self) -> Rc<MessageHeader> {
         Rc::clone(&self.header)
     }
 
-    /// The banner's "always allow" button label, naming whichever sender it
-    /// would exempt.
     pub fn banner_always_allow_label(&self) -> String {
         self.banner.always_allow_label()
     }
 
-    /// Run one of the banners' commands, as its button would: `show_images`,
-    /// `always_show_images` or `unsubscribe`. Only when the message has what
-    /// the banner offers -- images held back, a list to leave -- whichever
-    /// notice the slot happens to be showing; a key on a message with nothing
-    /// to show or no list to leave does nothing. Returns whether it ran.
-    ///
-    /// The registry entries these answer were buttons and nothing else, so a
-    /// person without a pointer could not reach them (Principle II;
-    /// `docs/archive/specs/005-tui-frontend` T044, T048).
+    /// Only when the message has what the banner offers (images held back, a list to leave),
+    /// whichever notice the slot shows.
+    /// The registry entries these answer were buttons only, so a person without a pointer could not
+    /// reach them.
     pub fn run_banner_command(&self, command: postio_core::CommandId) -> bool {
         use postio_core::CommandId;
         match command {
@@ -671,42 +496,29 @@ impl Reader {
         true
     }
 
-    /// Simulate clicking the banner's "always allow" — what a test uses in
-    /// place of a synthesized pointer click.
     pub fn click_always_allow(&self) {
         self.banner.emit_always_allow();
     }
 
-    /// As [`click_always_allow`](Self::click_always_allow), for "show once".
     pub fn click_show_once(&self) {
         self.banner.emit_show_once();
     }
 
-    /// Whether the unsubscribe banner is currently on screen.
     pub fn unsubscribe_banner_visible(&self) -> bool {
         self.notices.shows(Notice::Unsubscribe)
     }
 
-    /// The unsubscribe banner's label text — names the list a click would
-    /// leave. Test-facing.
     pub fn unsubscribe_banner_label(&self) -> String {
         self.unsubscribe_banner.label()
     }
 
-    /// Simulate clicking "unsubscribe" — what a test uses in place of a
-    /// synthesized pointer click.
     pub fn click_unsubscribe(&self) {
         self.unsubscribe_banner.emit_unsubscribe();
     }
 
-    /// Fills in the header (#319): sender, recipients, subject, date — the
-    /// three questions a reader asks first, put on screen before the body
-    /// even arrives.
-    ///
-    /// Independent of [`render`](Self::render)/[`show_absent`](Self::show_absent):
-    /// the envelope is known as soon as headers have synced, well before a
-    /// body might be, so a header-only message gets exactly the same header
-    /// a message with a body does.
+    /// Independent of [`render`](Self::render): the envelope is known as soon as headers have
+    /// synced, well before a body, so
+    /// a header-only message gets the same header.
     pub fn set_message_header(
         &self,
         from: &[postio_model::address::EmailAddress],
@@ -718,54 +530,37 @@ impl Reader {
         self.header.set_message(from, to, cc, subject, date);
     }
 
-    /// Says that the sender may not be who they claim, or hides the line.
-    ///
-    /// See [`MessageHeader::set_warning`].
     pub fn set_sender_warning(&self, line: Option<&str>) {
         self.header.set_warning(line);
     }
 
-    /// The sender warning's text, or `None` when hidden. For tests.
     #[doc(hidden)]
     pub fn sender_warning_label(&self) -> Option<String> {
         self.header.warning_label()
     }
 
-    /// Names the account the message on screen arrived in, or hides the line.
-    ///
-    /// See [`MessageHeader::set_account`] for why the reading pane is where
-    /// this is answered and the list row is not (#185).
     pub fn set_account(&self, name: Option<&str>, hue: usize) {
         self.header.set_account(name, hue);
     }
 
-    /// The account line's text, or `None` when hidden. For tests.
     #[doc(hidden)]
     pub fn account_label(&self) -> Option<String> {
         self.header.account_label()
     }
 
-    /// Render `body` into the pane.
-    ///
-    /// `sender` is the allow-list key: with a sender already on the standing
-    /// allow list, remote images load without the banner appearing at all.
-    /// Otherwise they stay blocked until the banner's "show once" or "always
-    /// allow" is used — both re-render through this same [`Open`] state, so
-    /// a caller never has to.
+    /// `sender` is the allow-list key: a sender already on the standing list loads remote images
+    /// with no banner. Otherwise
+    /// they stay blocked until "show once" or "always allow", which re-render through the same
+    /// [`Open`] state.
     pub fn render(&self, body: &MessageBody, sender: Option<&str>) {
         self.render_prepared(body, sender, None);
     }
 
-    /// [`render`](Self::render), with the two parses a message costs
-    /// already done elsewhere.
-    ///
-    /// `prepared` is `postio_ui::reader::document::prepare_treated` run on a
-    /// worker, under the policy [`remote_images_for`](Self::remote_images_for)
-    /// gives this sender. Whether `body` is bulk mail and what the sanitiser
-    /// makes of it are both html5ever over the whole body, and both were paid
-    /// on the main thread for every message the cursor settled on. With it,
-    /// this only hands the view a document; without it, or when it was
-    /// prepared for something else, it draws exactly as `render` always has.
+    /// `prepared` is `postio_ui::reader::document::prepare_treated` run on a worker under the
+    /// policy
+    /// [`remote_images_for`](Self::remote_images_for) gives this sender, so the two html5ever
+    /// parses are not paid on the main
+    /// thread. Without it, or prepared for something else, it draws as `render` does.
     pub fn render_prepared(
         &self,
         body: &MessageBody,
@@ -774,32 +569,25 @@ impl Reader {
     ) {
         self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
-        // Cleared here rather than left to the caller. A caveat that outlived
-        // the message it was about would be worse than never showing one --
-        // it would put "these may not be the sender's words" over mail that
-        // decoded perfectly, and a warning that is sometimes wrong is one
-        // people learn to ignore. Callers turn it back on for the message
-        // they are showing, through `set_encoding_problems`.
+        // Cleared here: a caveat outliving its message would put "these may not be the sender's
+        // words" over mail that decoded
+        // perfectly, and a sometimes-wrong warning is learned to be ignored. Callers set it again
+        // through `set_encoding_problems`.
         self.notices.want(Notice::Decode, false);
         self.set_unsubscribe(None);
-        // Every message opens as its sender built it (spec 006 FR-031).
-        // Whether it reads as bulk is still asked: it picks the sheet the
-        // original is drawn on.
-        // The message on screen drawn again keeps its place; another
-        // message starts at the top. This pane has no message identity, so
-        // "the same" is the same body from the same sender: two senders'
-        // identical notifications are two messages.
+        // Whether it reads as bulk is still asked: it picks the sheet the original is drawn on. The
+        // same body from the same
+        // sender keeps its place; another starts at the top, since this pane has no message
+        // identity.
         let same = self
             .open
             .borrow()
             .as_ref()
             .is_some_and(|open| open.body == *body && open.sender.as_deref() == sender);
         self.place.keep.set(same);
-        // What a render past its deadline shows instead (spec 006 FR-023):
-        // the message's own text part. A message with none keeps the notice
-        // and its "View source" alone -- deriving text from the HTML would
-        // put an html5ever parse back on this thread, which
-        // `render_prepared` exists to keep off it.
+        // What a render past its deadline shows: the message's own text part. Deriving text from
+        // the HTML would put an html5ever
+        // parse back on this thread, which `render_prepared` exists to keep off.
         self.place
             .plain
             .replace(body.text.clone().unwrap_or_default());
@@ -808,8 +596,6 @@ impl Reader {
             .and_then(|prepared| prepared.verdict_for(body))
             .unwrap_or_else(|| postio_ui::reader::document::suits_reader_view(body));
         let rendering = postio_ui::reader::document::opening_rendering();
-        // What the person always wants for this sender is the choice the
-        // message opens with; `O` overrules it for this message alone.
         let remembered = sender.and_then(|sender| self.treatments.treatment_for(sender));
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
@@ -837,11 +623,7 @@ impl Reader {
         );
     }
 
-    /// Draw the open message in reader view, or as its sender built it again
-    /// — the single-message reader's `toggle_reader_view` (spec 006 FR-031).
-    ///
-    /// A no-op for a message with no markup of its own: plain text is already
-    /// what reader view is trying to get back to.
+    /// A no-op for a message with no markup of its own.
     pub fn toggle_reader_view(&self) {
         {
             let mut guard = self.open.borrow_mut();
@@ -863,25 +645,13 @@ impl Reader {
         self.rerender();
     }
 
-    /// Draw the message in its owner's column instead of a pane of its own
-    /// (Focus's open message, screen 04): the header, the notices, the body
-    /// and the parts scroll together in `scroller`, and the body is drawn
-    /// flat on the column's ground -- no frame around correspondence, at the
-    /// column's measure -- keeping a quiet one only for mail that paints its
-    /// own page. What the view rasterises is still only what `scroller`
-    /// shows ([`BodyView::flow_in`](crate::body_view::BodyView::flow_in)).
-    ///
-    /// The attachments are drawn as cards, not pills, and the notice slot
-    /// takes no room while it has nothing to say. Called once, before
-    /// anything is shown.
-    ///
-    /// The find bar leaves the column: a bar at the column's top is only on
-    /// screen at the top, so opening it would scroll the message there. The
-    /// owner places [`find_bar`](Self::find_bar) above `scroller` instead.
-    ///
-    /// The body's ground is the column's, read from a probe that wears
-    /// `.postio-flow-ground` -- whose `color` the owner's stylesheet sets to
-    /// the column's ground token -- each time the body is drawn.
+    /// Draws the message in its owner's column: header, notices, body and parts scroll together in
+    /// `scroller`, the body flat on
+    /// the column's ground. What the view rasterises is still only what `scroller` shows.
+    /// The find bar leaves the column: a bar at the column's top is only on screen at the top, so
+    /// opening it would scroll the
+    /// message there. The owner places [`find_bar`](Self::find_bar) above `scroller`. Called once,
+    /// before anything is shown.
     pub fn flow_in(&self, scroller: &gtk::ScrolledWindow) {
         self.scroller.set_child(None::<&gtk::Widget>);
         self.body.set_child(Some(&self.view));
@@ -896,8 +666,6 @@ impl Reader {
             ground.set_accessible_role(gtk::AccessibleRole::Presentation);
             container.append(&ground);
             self.view.set_ground(&ground);
-            // The rest of the column's palette, the same way: a body in the
-            // app's colours is drawn in the column's own tokens (T211).
             for (variable, class) in FLOW_PALETTE {
                 let probe = gtk::Box::new(gtk::Orientation::Horizontal, 0);
                 probe.add_css_class(class);
@@ -908,13 +676,8 @@ impl Reader {
         }
     }
 
-    /// Draw every single message under a treatment (specs/007-postio-focus
-    /// T210-T213): app colours or the original on paper, as the rule in
-    /// `postio_body::treatment` decides or the person chose, with a quiet
-    /// line above an HTML body naming which and offering the other.
-    ///
-    /// Focus's open message calls this once, before anything is shown; a
-    /// reader that does not draws as it always has.
+    /// Focus's open message calls this once, before anything is shown; a reader that does not draws
+    /// as it always has.
     pub fn use_treatments(&self) {
         if self.place.treatments.replace(true) {
             return;
@@ -934,14 +697,10 @@ impl Reader {
         line.connect_always(move || {
             switcher.remember();
         });
-        // Directly over the body, under any notice: the line is about the
-        // body, and a notice above it is about the message (T208's
-        // "render-mode line -> body 12").
         self.container
             .insert_child_after(&line.widget(), Some(&self.notices.widget()));
-        // A body that fell back to plain text is in neither treatment: the
-        // line says so, and why, in place of naming one (T218). The next
-        // snapshot that is the sender's markup puts the treatment back.
+        // A body that fell back to plain text is in neither treatment; the next snapshot of the
+        // sender's markup puts it back.
         let place = Rc::downgrade(&self.place);
         let open = Rc::downgrade(&self.open);
         self.view.connect_rendered(move |view| {
@@ -965,10 +724,7 @@ impl Reader {
         self.place.line.replace(Some(line));
     }
 
-    /// The treatment the body on screen is drawn in: what the layout around
-    /// it reads to size its column (T207). App colours when nothing is
-    /// drawn under one -- plain text, an empty pane, or a
-    /// reader that does not draw treatments.
+    /// App colours when nothing is drawn under a treatment.
     pub fn treatment(&self) -> Treatment {
         self.place
             .treated
@@ -977,42 +733,31 @@ impl Reader {
             .unwrap_or_default()
     }
 
-    /// How the body on screen was treated, and what the rule had chosen;
-    /// `None` when nothing is drawn under a treatment.
     pub fn treated(&self) -> Option<Treated> {
         self.place.treated.get()
     }
 
-    /// Called with the treatment each time a body is drawn under one: a
-    /// message opening, `O`, a remembered choice. The same treatment can
-    /// arrive twice in a row; a caller sizing a column to it is idempotent.
+    /// The same treatment can arrive twice in a row; a caller sizing a column to it is idempotent.
     pub fn connect_treatment_changed(&self, handler: impl Fn(Treatment) + 'static) {
         self.place.on_treatment.borrow_mut().push(Rc::new(handler));
     }
 
-    /// Draw the open message in the other treatment -- `O`
-    /// (`switch_treatment`). For this message only: the next one opens as
-    /// the rule or its sender's remembered choice says. False, and nothing
-    /// drawn, when there is no HTML body under a treatment to switch.
+    /// For this message only: the next opens as the rule or its sender's remembered choice says.
+    /// False when there is no HTML
+    /// body under a treatment to switch.
     pub fn switch_treatment(&self) -> bool {
         self.switcher().switch().is_some()
     }
 
-    /// The render-mode line, once [`use_treatments`](Self::use_treatments)
-    /// made one. Test-facing.
     #[doc(hidden)]
     pub fn render_mode_line(&self) -> Option<Rc<RenderModeLine>> {
         self.place.line.borrow().clone()
     }
 
-    /// The scale a paper body was zoomed by to fit the column, on top of
-    /// the person's own zoom ([`zoom`](Self::zoom)): 1.0 when it fitted or
-    /// is not on paper, and never under `postio_render::render::PAPER_FIT_FLOOR`,
-    /// below which the sheet scrolls sideways instead (T207, T212).
-    ///
-    /// Read off the snapshot on screen, so it answers for what is drawn: the
-    /// renderer fits a paper body to whatever width the view is given, and
-    /// a column that changes width is drawn again and fitted again.
+    /// 1.0 when it fitted or is not on paper, never under `postio_render::render::PAPER_FIT_FLOOR`,
+    /// below which the sheet
+    /// scrolls sideways. Read off the snapshot on screen, so a column that changes width is fitted
+    /// again.
     pub fn paper_fit(&self) -> f64 {
         self.view.document().map_or(1.0, |document| document.fit)
     }
@@ -1034,25 +779,16 @@ impl Reader {
         }
     }
 
-    /// How far down the pane is scrolled, in view pixels. Test-facing.
-    ///
-    /// Without an observable #1431 was invisible: the three scrolling
-    /// methods returned having done nothing and every caller reported
-    /// success.
+    /// Test-facing: without an observable the scrolling methods returned having done nothing and
+    /// every caller reported success (#1431).
     #[doc(hidden)]
     pub fn scrolled_for_test(&self) -> f64 {
         self.view.scrolled()
     }
 
-    /// Draw the sender's own markup for whatever is on screen — `C-o`.
-    ///
-    /// Per message and not sticky: the next message decides for itself. A
-    /// person who wanted to see one newsletter's layout has not said anything
-    /// about the next one, and a reader that remembered would be answering a
-    /// question nobody asked.
-    ///
-    /// A no-op when the pane is empty or already showing the original, so the
-    /// key is safe to press anywhere.
+    /// Per message, not sticky: wanting one newsletter's layout says nothing about the next. A
+    /// no-op when the pane is empty or
+    /// already original.
     pub fn view_original(&self) {
         {
             let mut guard = self.open.borrow_mut();
@@ -1065,10 +801,7 @@ impl Reader {
         self.rerender();
     }
 
-    /// Whether the pane is currently drawing a message reduced.
-    ///
-    /// The drawn state, not an intention: a test asking "is reader view on"
-    /// wants to know what a person can see.
+    /// The drawn state, not an intention.
     pub fn is_reader_view(&self) -> bool {
         self.open
             .borrow()
@@ -1076,22 +809,16 @@ impl Reader {
             .is_some_and(|open| open.rendering == Rendering::Reader)
     }
 
-    /// Whether the notice offering `View original` is on screen.
     pub fn reader_notice_visible(&self) -> bool {
         self.notices.shows(Notice::ReaderView)
     }
 
-    /// Press `View original` without a pointer, for a test.
     pub fn click_view_original(&self) {
         self.reader_notice.press_action();
     }
 
-    /// Draw whatever is open again, with its current rendering.
-    ///
-    /// What `View original` needs and `render` cannot give it: the message
-    /// has not changed, only the way it is being drawn, so re-deriving the
-    /// remote-image decision and re-entering `render` would reset the very
-    /// choice that was just made.
+    /// The message has not changed, only the way it is drawn, so re-entering `render` would reset
+    /// the choice just made.
     fn rerender(&self) {
         let allowed = self
             .open
@@ -1115,7 +842,6 @@ impl Reader {
         );
     }
 
-    /// The view and its load bookkeeping, together — see [`Canvas`].
     fn canvas(&self) -> Canvas<'_> {
         Canvas {
             view: &self.view,
@@ -1126,18 +852,10 @@ impl Reader {
         }
     }
 
-    /// Called every time a render settles how many remote references are
-    /// being held back — see [`RenderedHandler`].
-    ///
-    /// Fires on the initial render and again whenever the banner's "show
-    /// once" or "always allow" changes the count, so a caller showing what
-    /// is held back never goes stale.
     pub fn connect_rendered(&self, handler: impl Fn(HeldBack) + 'static) {
         self.rendered.borrow_mut().push(Box::new(handler));
     }
 
-    /// Put `widget` under the message header and over the notices and the
-    /// body -- Focus's marker card -- or take away what is there.
     pub fn set_under_header(&self, widget: Option<&gtk::Widget>) {
         while let Some(child) = self.under_header.first_child() {
             self.under_header.remove(&child);
@@ -1148,30 +866,19 @@ impl Reader {
         self.under_header.set_visible(widget.is_some());
     }
 
-    /// Draw the message's attachments as chips under the body.
-    ///
-    /// Metadata only, and deliberately: a chip is drawn from what
-    /// `BODYSTRUCTURE` already said, so a message nothing has been fetched
-    /// for still shows what came with it. See [`super::chips`].
+    /// Metadata only: a chip is drawn from what `BODYSTRUCTURE` said, so a message nothing was
+    /// fetched for still shows what came with it.
     pub fn set_attachments(&self, root: &str, parts: &[postio_model::Attachment]) {
         self.chips.set_parts(root, parts);
     }
 
-    /// Called when one of those chips is activated.
-    ///
-    /// The chip does not act — it asks. Whoever wires this offers what can
-    /// be done with the part.
     pub fn connect_attachment(&self, handler: impl Fn(&postio_ui::reader::parts::Node) + 'static) {
         self.chips.connect_activated(handler);
     }
 
-    /// Gives the notices' buttons and the render-mode line the key each
-    /// currently carries, so a `[keys]` rebind reaches the pointer's way in
-    /// the same moment it reaches the keyboard's.
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
-        // The notices' own caps, from the same keymap. Written down here
-        // they would go on saying `C-o` after a rebind moved the key, which
-        // is the drift `KeycapButton` exists to end (#1002).
+        // From the same keymap: written down here they would go on saying `C-o` after a rebind
+        // (#1002).
         notice_keys(
             keymap,
             &self.banner,
@@ -1183,71 +890,55 @@ impl Reader {
         }
     }
 
-    /// Fetch remote images with `fetch`: the owner's, because this crate
-    /// speaks no protocol. Asked only for a document that names remote
-    /// images, which it does only for a sender the user allowed or a
-    /// message they chose to show once (spec 006 FR-025, T137).
+    /// The owner's, because this crate speaks no protocol. Asked only for a document that names
+    /// remote images, which only an
+    /// allowed sender or "show once" produces.
     pub fn set_remote_fetch(&self, fetch: impl Fn(Vec<String>, RemoteArrived) + 'static) {
         self.place.fetch.replace(Some(Rc::new(fetch)));
     }
 
-    /// Open find in the message (`find_in_message`, FR-018).
-    ///
-    /// The reading position stays: in a column the bar is above it, not at
-    /// its top ([`flow_in`](Self::flow_in)), and the first match is the
-    /// first one from where the person is reading.
+    /// The reading position stays: in a column the bar is above it, and the first match is the
+    /// first from where the person is reading.
     pub fn find_in_message(&self) {
         self.find.open();
     }
 
-    /// Close find, clearing its highlights.
     pub fn close_find(&self) {
         self.find.close();
     }
 
-    /// The next match (`find_next`), or the previous (`find_previous`).
     pub fn find_step(&self, forward: bool) {
         self.view.find_step(forward);
     }
 
-    /// The find bar: its entry, and where it is placed.
     pub fn find_bar(&self) -> &crate::body_view::find::FindBar {
         &self.find
     }
 
-    /// Whether find is open.
     pub fn finding(&self) -> bool {
         self.find.widget().is_search_mode()
     }
 
-    /// Zoom the message one step in (`zoom_in`, FR-021).
     pub fn zoom_in(&self) {
         self.view.zoom_in();
     }
 
-    /// Zoom the message one step out (`zoom_out`).
     pub fn zoom_out(&self) {
         self.view.zoom_out();
     }
 
-    /// Back to actual size (`zoom_reset`).
     pub fn zoom_reset(&self) {
         self.view.zoom_reset();
     }
 
-    /// The zoom, in percent.
     pub fn zoom(&self) -> u16 {
         self.view.zoom()
     }
 
-    /// Draw at `percent`, snapped to a step: `[reader] zoom` from
-    /// `config.toml`.
     pub fn set_zoom(&self, percent: u16) {
         self.view.set_zoom_percent(percent);
     }
 
-    /// Call `f` with the new zoom each time it changes, however it was
-    /// changed: a key, Ctrl+scroll, a pinch or the indicator's reset.
     pub fn connect_zoom_changed(&self, f: impl Fn(u16) + 'static) {
         self.view
             .connect_local("zoom-changed", false, move |values| {
@@ -1259,128 +950,77 @@ impl Reader {
             });
     }
 
-    /// Paint `terms` wherever they appear in the body.
-    ///
-    /// What canvas 2b means by "preview · match highlighted": the same
-    /// hardened pane, with the reason this message is a hit picked out in it.
-    /// Marking happens after sanitizing (see [`postio_ui::search::mark_html`]),
-    /// so nothing here loosens what the reader will render. An empty list
-    /// turns it off, which is the state ordinary reading is in.
-    ///
-    /// Takes effect on the next [`Reader::render`]; the caller sets the terms
-    /// and then shows the message, which is the order a search does it in
-    /// anyway.
+    /// Marking happens after sanitizing (see [`postio_ui::search::mark_html`]), so nothing loosens
+    /// what the reader renders.
+    /// Takes effect on the next [`Reader::render`].
     pub fn set_highlight(&self, terms: Vec<String>) {
         *self.highlight.borrow_mut() = terms;
     }
 
-    /// Say why there is no body, instead of drawing nothing.
-    ///
-    /// The pane follows the cursor now (#70, Cause B), so this is reached on
-    /// most cursor movements in a mailbox that has not finished backfilling.
-    /// It stays inside the same body view rather than becoming an overlay: one widget owns the pane, and the document is built by the
-    /// same [`wrap_document`] with remote images blocked, so a state plate
-    /// can no more reach the network than a message can.
+    /// Stays inside the same body view, built by [`wrap_document`] with remote images blocked, so a
+    /// state plate can no more
+    /// reach the network than a message can.
     pub fn show_absent(&self, state: Absent) {
         self.paints.set(self.paints.get() + 1);
         *self.open.borrow_mut() = None;
         self.absent.set(Some(state));
-        // A plate has no text of its own, and must not fall back to the
-        // text of the message before it.
+        // A plate has no text of its own and must not fall back to the previous message's.
         self.place.plain.replace(String::new());
-        // Nor a treatment: there is no body to name one for.
         self.place.treated.set(None);
         show_treatment(&self.place, None);
-        // Every notice, not only the images banner: reader view, a decode
-        // caveat and the list were all about the message before, and a plate
-        // under them put them over a message they said nothing about.
+        // Every notice, not only the images banner: reader view, a decode caveat and the list were
+        // about the message before.
         self.set_unsubscribe(None);
         self.notices.clear();
         load_document(
             &self.canvas(),
             &wrap_document(&absent_html(state), RemoteImages::Blocked, Sheet::Theme),
         );
-        // No body drawn, so nothing is being held back either — a caller
-        // watching `connect_rendered` must not keep showing the previous
-        // message's count.
+        // No body drawn, so nothing is held back: `connect_rendered` watchers must not keep the
+        // previous count.
         for handler in self.rendered.borrow().iter() {
             handler(HeldBack::default());
         }
     }
 
-    /// How many times this pane has been asked to draw a message — a body
-    /// through [`render`](Self::render), or a plate through
-    /// [`show_absent`](Self::show_absent).
-    ///
-    /// Test-facing, and the only way to tell a repaint that was coalesced
-    /// from one that was merely idempotent: twenty arrivals for the message
-    /// on screen and twenty repaints look identical in every other
-    /// observable, and the difference is a sync spent redrawing (#396).
+    /// Test-facing: tells a coalesced repaint from an idempotent one (#396).
     #[doc(hidden)]
     pub fn paints(&self) -> u32 {
         self.paints.get()
     }
 
-    /// How many documents this pane has actually handed to the view.
-    ///
-    /// [`paints`](Self::paints) counts times the pane was *asked* to draw;
-    /// this counts the times that cost a render. The two differ exactly
-    /// where #749 lived: an arrival that recomposes the document
-    /// byte-for-byte identically is a paint that must not be a load,
-    /// because every load is a whole render on the render thread.
+    /// Counts the times that cost a render: an arrival that recomposes the document byte-for-byte
+    /// identically is a paint that
+    /// must not be a load (#749).
     #[doc(hidden)]
     pub fn loads(&self) -> u32 {
         self.loads.get()
     }
 
-    /// The document the pane last handed to the view.
-    ///
-    /// What was painted is the view's snapshot ([`Reader::view`]); this is
-    /// the finished document before it, the place a composition mistake
-    /// shows. Not meant for anything but tests.
     #[doc(hidden)]
     pub fn test_document(&self) -> String {
         self.document.borrow().clone()
     }
 
-    /// Which [`Absent`] the pane is explaining, or `None` if it has a body.
-    ///
-    /// The seam the wiring tests assert on: proving the *application* stopped
-    /// drawing blank panes means asking what the reader was told, which does
-    /// not require driving the renderer to a paint.
     pub fn absent(&self) -> Option<Absent> {
         self.absent.get()
     }
 
-    /// Empty the pane — nothing selected, or the selection closed.
-    /// Say whether the body on screen is a guess rather than what was sent.
-    ///
-    /// The end of the road for `ParsedMessage::encoding_problems`, which was
-    /// computed and read by nothing (#901): base64 outside its alphabet
-    /// arriving as raw base64 text, an unknown `Content-Transfer-Encoding`
-    /// shown verbatim per RFC 2045 §6.4, a charset that lost octets to
-    /// U+FFFD. Each is a defensible degradation and each is indistinguishable
-    /// from a message that simply said that, which is the same failure as
-    /// #70's blank column: "nothing rendered" and "nothing was there" are
-    /// opposite facts that looked identical.
-    ///
-    /// Call it after [`render`](Self::render), which clears it.
+    /// Says whether the body on screen is a guess rather than what was sent: base64 outside its
+    /// alphabet, an unknown
+    /// `Content-Transfer-Encoding`, or a charset that lost octets to U+FFFD (#901). Call it after
+    /// [`render`](Self::render), which clears it.
     pub fn set_encoding_problems(&self, problems: bool) {
         self.notices.want(Notice::Decode, problems);
     }
 
-    /// Whether the decode caveat is on screen.
     pub fn shows_encoding_problems(&self) -> bool {
         self.notices.shows(Notice::Decode)
     }
 
-    /// Name the list this message belongs to, or say it belongs to none.
-    ///
-    /// `#971`: `list_identifier` is a `List-Id` header when the message had
-    /// one, or the sender's domain otherwise — whichever the caller found;
-    /// this only shows what it is handed. Call it after
-    /// [`render`](Self::render), which clears it, same convention as
-    /// [`set_encoding_problems`](Self::set_encoding_problems).
+    /// Call it after [`render`](Self::render), which clears it. `list_identifier` is the `List-Id`
+    /// or the sender's domain,
+    /// whichever the caller found.
     pub fn set_unsubscribe(&self, list_identifier: Option<&str>) {
         *self.unsubscribe_list.borrow_mut() = list_identifier.map(str::to_owned);
         self.unsubscribe_banner.set_list(list_identifier);
@@ -1388,14 +1028,12 @@ impl Reader {
             .want(Notice::Unsubscribe, list_identifier.is_some());
     }
 
-    /// Called with the list identifier when the unsubscribe banner's button
-    /// is activated — the reader only asks; a caller decides what leaving a
-    /// list means (this crate has no SQL to log the activation itself).
+    /// The reader only asks; a caller decides what leaving a list means (this crate has no SQL to
+    /// log it).
     pub fn connect_unsubscribe_activated(&self, handler: impl Fn(&str) + 'static) {
         self.on_unsubscribe.borrow_mut().push(Box::new(handler));
     }
 
-    /// Empty the pane: no message, no notice.
     pub fn clear(&self) {
         self.reset();
         load_document(
@@ -1407,10 +1045,8 @@ impl Reader {
         }
     }
 
-    /// Everything [`clear`](Self::clear) resets, without the empty document.
-    ///
-    /// What a new reader starts from (#1603): the window's reader is built
-    /// before the first frame, so the constructor must not render anything.
+    /// A new reader starts from this (#1603): the window's reader is built before the first frame,
+    /// so the constructor must not render.
     fn reset(&self) {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
@@ -1422,16 +1058,11 @@ impl Reader {
         self.notices.clear();
     }
 
-    /// Whether there is a message on screen to scroll.
     fn showing(&self) -> bool {
         self.open.borrow().is_some()
     }
 
-    /// Scroll the pane down by about a screenful, without moving the
-    /// keyboard off wherever it already is (#438).
-    ///
-    /// A no-op with nothing open, and at the end of the document -- walking
-    /// past the end of a message is a stop, not a wrap-around or an error.
+    /// Does not move the keyboard (#438). A no-op with nothing open and at the end of the document.
     pub fn page_down(&self) {
         if !self.showing() {
             return;
@@ -1439,22 +1070,18 @@ impl Reader {
         self.view.page(true);
     }
 
-    /// Scroll the pane `lines` steps (negative is up). See
-    /// [`Reader::page_down`].
     pub fn scroll_lines(&self, lines: i32) {
         if self.showing() {
             self.view.scroll_lines(lines);
         }
     }
 
-    /// Scroll the pane to its top, or to the end of its document.
     pub fn scroll_to_edge(&self, bottom: bool) {
         if self.showing() {
             self.view.scroll_to_edge(bottom);
         }
     }
 
-    /// Scroll the pane up by about a screenful. See [`Reader::page_down`].
     pub fn page_up(&self) {
         if !self.showing() {
             return;
@@ -1463,30 +1090,18 @@ impl Reader {
     }
 }
 
-/// The view and the bookkeeping that goes with handing it a document.
-///
-/// Bundled rather than passed as four more arguments because every caller
-/// needs all of them together: loading a document is exactly the moment the
-/// tally moves, the place is kept or reset, and what is on screen changes.
 struct Canvas<'a> {
     view: &'a crate::body_view::BodyView,
-    /// The last document handed to the view, kept for
-    /// [`Reader::test_document`].
     document: &'a RefCell<String>,
-    /// Documents actually handed to the view — [`Reader::loads`].
     loads: &'a Rc<std::cell::Cell<u32>>,
-    /// Where the reader is, and whether this load keeps it.
     place: &'a Rc<Place>,
-    /// Which notices the drawn message raises.
     notices: &'a NoticeSlot,
 }
 
-/// What `O` and the render-mode line's two controls need: the open message
-/// and everything [`render_open`] draws it with, and where the allow list is
-/// saved. The view and the place are held weakly, because the line's own
-/// buttons keep a `Switcher`, the line lives in the reader's widgets, and the
-/// view's signal handlers hold the place: a strong hold either way would be
-/// a cycle keeping every reader's renderer alive.
+/// The view and the place are held weakly: the line's own buttons keep a `Switcher`, the line lives
+/// in the reader's widgets
+/// and the view's handlers hold the place, so a strong hold would be a cycle keeping every renderer
+/// alive.
 #[derive(Clone)]
 struct Switcher {
     view: glib::WeakRef<crate::body_view::BodyView>,
@@ -1504,7 +1119,6 @@ struct Switcher {
 }
 
 impl Switcher {
-    /// Draw the open message in the other treatment, and say which.
     fn switch(&self) -> Option<Treatment> {
         let place = self.place.upgrade()?;
         let view = self.view.upgrade()?;
@@ -1527,7 +1141,6 @@ impl Switcher {
         } else {
             RemoteImages::Blocked
         };
-        // The same message, drawn again: the reader keeps their place.
         place.keep.set(true);
         render_open(
             &Canvas {
@@ -1552,7 +1165,6 @@ impl Switcher {
         Some(next)
     }
 
-    /// Remember the treatment on screen for the open message's sender.
     fn remember(&self) -> Option<Treatment> {
         let place = self.place.upgrade()?;
         let shown = place.treated.get().filter(|treated| treated.html)?.shown;
@@ -1573,28 +1185,19 @@ impl Switcher {
     }
 }
 
-/// Hand `document` to the view, and count it.
-///
-/// Every call here is a whole render on the render thread, so a load is a
-/// cost, and the tally is the observable a test can hold it to.
-/// Deciding whether a load is *needed* is deliberately not done here: this
-/// pane is handed a body and a sender, not a message, so it cannot tell a
-/// second message that happens to compose an identical document from the same
-/// message arriving twice — and those two want opposite answers. That
-/// judgement belongs where message identity exists, in the app that owns the store.
+/// Every call is a whole render on the render thread; the tally is what a test holds it to. Whether
+/// a load is needed is not
+/// decided here: this pane has a body and a sender, not a message identity, so it cannot tell a
+/// second identical message
+/// from one arriving twice. That belongs in the app that owns the store.
 fn load_document(canvas: &Canvas<'_>, document: &str) {
     canvas.loads.set(canvas.loads.get() + 1);
-    // The single choke point every render passes through, which is what makes
-    // it the honest place to count from: a second path to the engine would
-    // have to avoid this function to avoid the counter. `canvas.loads` beside
-    // it is per-canvas and cannot be read from another crate's suite.
+    // The single choke point every render passes through, so the place to count from.
     postio_ui::reader::cost::note_render();
     canvas.document.replace(document.to_owned());
     let place = canvas.place;
     place.shown.replace(document.to_owned());
     let content = content_for(document, place);
-    // A redraw of what is on screen keeps the reader's place; anything else
-    // starts at the top.
     if place.keep.replace(false) {
         canvas.view.set_content(content);
     } else {
@@ -1603,8 +1206,6 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
     fetch_remote(canvas.view, place, document);
 }
 
-/// What the view is handed for `document`: its parts, faces and whatever
-/// remote images have arrived for it.
 fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
     let resources = resources_for(document, &*place.source);
     let remote = place.remote.borrow();
@@ -1629,13 +1230,9 @@ fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
     }
 }
 
-/// The plain text a render past its deadline shows, composed as this reader
-/// composes a plain-text body: the same column, face and rhythm as every
-/// other body, rather than the renderer's own page (T218).
-///
-/// A body drawn under a treatment has the render-mode line above it, and
-/// the line is what says the body fell back; anywhere else the document
-/// says so itself, in a quiet line above the body.
+/// The same column, face and rhythm as every other body, not the renderer's own page. Under a
+/// treatment the render-mode line
+/// says the body fell back; elsewhere the document does.
 fn fallback_for(place: &Place, flowed: impl Fn(String) -> String) -> postio_render::Fallback {
     use postio_ui::reader::document;
     let plain = document::plain_text_body_html(&place.plain.borrow());
@@ -1651,39 +1248,23 @@ fn fallback_for(place: &Place, flowed: impl Fn(String) -> String) -> postio_rend
     }
 }
 
-/// The rules a column that scrolls as one adds to every document
-/// ([`Reader::flow_in`]): the ground is the column's own, so the body needs
-/// no page of its own; and the body's frame goes, as does the padding
-/// inside it, with the text at the reading size and the column's measure: the
-/// column decides how wide a line runs (Focus's, T197), so the body's
-/// lines and the cards above them share their edges. Mail that paints
-/// its own page -- the sender's sheet, or a page background the sender set --
-/// keeps the frame, hairline and quiet, because its edge is the only thing
-/// telling it apart from the column.
-///
-/// The ground is `--flow-ground`, which the view defines at each render
-/// from the column's own ground token (`BodyView::set_ground`): no colour is
-/// written here, so the body and the dialog around it cannot disagree, in
-/// light or dark (T203; it was two hex values, and dark's was off by a
-/// shade of libadwaita's).
+/// The ground is the column's own, so the body needs no page; its frame and padding go and the
+/// column decides the measure.
+/// Mail that paints its own page keeps a quiet hairline frame, its only edge against the column.
+/// The ground is
+/// `--flow-ground`, which the view defines at each render from the column's ground token
+/// (`BodyView::set_ground`): no
+/// colour is written here, so body and dialog cannot disagree in light or dark.
 const FLOW_CSS: &str = "\nbody { background: var(--flow-ground); padding: 0; }\n";
 
-/// What is added for correspondence, which has no page of its own: the
-/// body loses its frame and the padding inside it, so its lines start at
-/// the column's edge and share both edges with the blocks above them
-/// (T207). That is all the column adds. The rhythm inside the body -- the
-/// 24px line, 12 between paragraphs, list items 4 apart under a 20 indent,
-/// the attribution's 20 and 4, no gap under the last block -- is the app
-/// colours treatment's, and lives in one place, `postio-ui`'s
-/// `treatment.css` (T208, T211).
+/// Correspondence has no page of its own: the body loses its frame and padding so its lines share
+/// the column's edges. The
+/// rhythm inside the body is the app colours treatment's, in `postio-ui`'s `treatment.css`.
 const FLOW_FLAT_CSS: &str =
     ".postio-body { padding: 0; border: 0; border-radius: 0; min-height: 0; }\n";
 
-/// The reader palette variables a flowing column supplies from its own
-/// tokens, and the class of the probe each is read from: the owner's
-/// stylesheet sets each probe's `color` to the token (Focus's `focus.css`).
-/// A probe nobody styles reads as the toolkit's foreground, which is the
-/// ink -- a safe answer for every one of them but the ground.
+/// A probe nobody styles reads as the toolkit's foreground, the ink: a safe answer for all but the
+/// ground.
 pub const FLOW_PALETTE: [(&str, &str); 6] = [
     ("--r-ink", "postio-flow-ink"),
     ("--r-ink-secondary", "postio-flow-ink-secondary"),
@@ -1693,7 +1274,6 @@ pub const FLOW_PALETTE: [(&str, &str); 6] = [
     ("--r-hairline-strong", "postio-flow-hairline-strong"),
 ];
 
-/// `document` as the column draws it.
 fn flow_document(document: &str) -> String {
     let own_page = document.contains("class=\"postio-canvas\"")
         || document.contains(&format!(
@@ -1711,15 +1291,10 @@ fn flow_document(document: &str) -> String {
     document.replacen("</style>", &format!("{css}</style>"), 1)
 }
 
-/// Ask the owner's fetcher for the remote images `document` names that
-/// have not been asked for yet, and redraw once when they arrive.
-///
-/// A document names a remote image only when its sender is allowed or the
-/// user chose "Show once": the sanitizer strips every one otherwise
-/// (spec 006 FR-025). And only for a message the user opened: the pane
-/// follows the list's cursor, so a message counts as opened once it has
-/// stayed on screen for the dwell that marks it read ([`DWELL_TO_READ`]) --
-/// a cursor sweeping past it fetches nothing -- or at once when the load
+/// A document names a remote image only when its sender is allowed or the user chose "Show once". A
+/// message counts as opened
+/// once it has stayed on screen for [`DWELL_TO_READ`], so a cursor sweeping past fetches nothing,
+/// or at once when the load
 /// is the user's own consent.
 ///
 /// [`DWELL_TO_READ`]: postio_ui::dwell::DWELL_TO_READ
@@ -1744,7 +1319,6 @@ fn fetch_remote(view: &crate::body_view::BodyView, place: &Rc<Place>, document: 
     });
 }
 
-/// The asking half of [`fetch_remote`], once the message counts as opened.
 fn ask_remote(view: &crate::body_view::BodyView, place: &Rc<Place>, document: &str) {
     let Some(fetch) = place.fetch.borrow().clone() else {
         return;
@@ -1772,9 +1346,7 @@ fn ask_remote(view: &crate::body_view::BodyView, place: &Rc<Place>, document: &s
                 return;
             }
             place.remote.borrow_mut().extend(arrived);
-            // One redraw for the whole batch, and only of the document it
-            // was asked for: a message the user has moved on from is not
-            // drawn again behind their back.
+            // One redraw for the whole batch, and only of the document it was asked for.
             if *place.shown.borrow() == document {
                 view.set_content(content_for(&document, &place));
             }
@@ -1782,9 +1354,6 @@ fn ask_remote(view: &crate::body_view::BodyView, place: &Rc<Place>, document: &s
     );
 }
 
-/// What "View source" draws: the message's body as it was sent -- its
-/// HTML, or its text -- escaped into a document of preformatted text, with
-/// nothing in it that could load or run.
 fn source_document(open: Option<&Open>) -> String {
     let mut out = String::new();
     if let Some(body) = open.map(|open| &open.body) {
@@ -1804,10 +1373,8 @@ fn source_document(open: Option<&Open>) -> String {
     wrap_document(&out, RemoteImages::Blocked, Sheet::Theme)
 }
 
-/// The `http` and `https` URLs `document` names as images: an `<img>`'s
-/// `src`, a `background=` attribute, and a background in a style. Never a
-/// link's `href`, a cursor or anything else CSS can name: the contract
-/// allows images and backgrounds and nothing more.
+/// Never a link's `href`, a cursor or anything else CSS can name: the contract allows images and
+/// backgrounds only.
 fn remote_image_urls(document: &str) -> Vec<String> {
     let decode = |url: &str| {
         url.replace("&quot;", "\"")
@@ -1830,8 +1397,6 @@ fn remote_image_urls(document: &str) -> Vec<String> {
     let mut pieces = document.split("url(");
     let mut before = pieces.next().unwrap_or("");
     for piece in pieces {
-        // The declaration this `url(` is in: from the last boundary before
-        // it. Only a background names an image.
         let declaration = before
             .rfind([';', '{', '"', '\''])
             .map_or(before, |at| &before[at + 1..]);
@@ -1857,9 +1422,8 @@ fn remote_image_urls(document: &str) -> Vec<String> {
     urls
 }
 
-/// Every part and face `document` may load, resolved now, on this thread:
-/// the render thread cannot call `source`, and asks for nothing it was not
-/// given (spec 006 FR-003).
+/// Resolved now, on this thread: the render thread cannot call `source` and asks for nothing it was
+/// not given.
 fn resources_for(document: &str, source: &dyn BlobSource) -> postio_render::Resources {
     let resources = postio_render::Resources::new();
     for face in postio_ui::reader::document::FACES {
@@ -1886,10 +1450,6 @@ fn resources_for(document: &str, source: &dyn BlobSource) -> postio_render::Reso
     resources
 }
 
-/// Give each notice's action the key `keymap` binds to it: Show images,
-/// View original and Unsubscribe. One place, so a notice cannot be built --
-/// or rebound -- without its cap, which is how Unsubscribe came to be the
-/// one keycap-button in the open message drawn with no key (T261).
 fn notice_keys(
     keymap: &postio_core::Keymap,
     banner: &RemoteImageBanner,
@@ -1902,13 +1462,9 @@ fn notice_keys(
     unsubscribe_banner.set_action_key(keymap.binding(CommandId::Unsubscribe));
 }
 
-/// Re-render whatever is in `open` at `remote`'s policy, and put the banner
-/// in step with the result.
-///
-/// A free function, not a method, so the two banner-signal closures can call
-/// it through weak/`Rc` captures without holding a whole `Reader` (which
-/// would capture `container` — and so the banner and the button doing the
-/// capturing — in a reference cycle nothing would ever free).
+/// A free function so the two banner-signal closures can call it through weak captures without
+/// holding a whole `Reader`,
+/// which would be a reference cycle.
 fn render_open(
     canvas: &Canvas<'_>,
     banner: &RemoteImageBanner,
@@ -1923,12 +1479,8 @@ fn render_open(
         let Some(current) = guard.as_ref() else {
             return;
         };
-        // What was sanitised off the main thread, when it was for exactly
-        // this; the sanitiser here otherwise, as it always was.
         let drawn =
             if canvas.place.treatments.get() {
-                // Prepared off the main thread, both treatments at once, when
-                // the caller had it done there (T223); here otherwise.
                 match current.prepared.as_ref().and_then(|prepared| {
                     prepared.treated_for(&current.body, remote, current.chosen)
                 }) {
@@ -1956,23 +1508,20 @@ fn render_open(
         .and_then(|current| current.remembered);
     let held_back = drawn.held_back;
     let content = drawn.html.clone();
-    // After sanitizing and quote-folding, never before: ammonia would strip
-    // the `<mark>` as an unknown tag, and there is no point running a matcher
-    // over markup that has not been cleaned yet.
+    // After sanitizing and quote-folding: ammonia would strip the `<mark>` as an unknown tag.
     let content = postio_ui::search::mark_html(&content, &highlight.borrow());
 
     banner.set_sender(sender.as_deref());
-    // The count, before the visibility: a notice that appeared and then
-    // changed what it said would flicker a number at the reader (#1008).
+    // The count before the visibility: a notice that appeared and then changed what it said would
+    // flicker (#1008).
     banner.set_held_back(held_back);
     canvas.notices.want(
         Notice::RemoteImages,
         remote == RemoteImages::Blocked && held_back.total() > 0,
     );
 
-    // Only while a message is actually drawn reduced. A notice offering to
-    // show an original that is already on screen is a control that does
-    // nothing, which is worse than no control.
+    // Only while drawn reduced: a notice offering an original already on screen is a control that
+    // does nothing.
     canvas
         .notices
         .want(Notice::ReaderView, drawn.rendering == Rendering::Reader);
@@ -1987,11 +1536,9 @@ fn render_open(
         reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
     }
 
-    // Which paper this goes on. `Rendering::Original` alone is not enough --
-    // correspondence is Original too, and must keep following the theme; the
-    // sender's sheet is for the person who left reader view to see what was
-    // actually sent. `sheet_for` is where that rule lives, so this frontend
-    // and the FFI one cannot express it differently.
+    // `Rendering::Original` alone is not enough: correspondence is Original too and must keep
+    // following the theme.
+    // `sheet_for` holds the rule so the frontends cannot differ.
     let sheet = sheet_for(drawn.rendering, bulk);
     let document = match drawn.treated {
         Some(treated) => postio_ui::reader::document::document_for_treated(
@@ -2017,8 +1564,6 @@ fn render_open(
     }
 }
 
-/// Put the render-mode line in step with what is drawn: the words for
-/// `place`'s treatment, or no line.
 fn show_treatment(place: &Place, remembered: Option<Treatment>) {
     if let Some(line) = place.line.borrow().as_ref() {
         line.show(place.treated.get().and_then(|treated| {
@@ -2029,9 +1574,6 @@ fn show_treatment(place: &Place, remembered: Option<Treatment>) {
 
 #[cfg(test)]
 mod tests {
-    /// A body in app colours is flat in the column; one on paper keeps its
-    /// sheet. The stylesheet names both treatments, so the test is the
-    /// container's own stamp, not the attribute anywhere in the document.
     #[test]
     fn the_column_flattens_app_colours_and_keeps_papers_sheet() {
         use postio_ui::reader::document::document_for_treated;
@@ -2051,8 +1593,6 @@ mod tests {
         assert!(!flat(super::Treatment::Paper), "paper lost its sheet");
     }
 
-    /// The column's ground is a token resolved at render time, never a
-    /// colour written into the sheet the column adds (T203).
     #[test]
     fn the_flow_sheet_names_its_ground_and_writes_no_colour() {
         let sheet = format!("{}{}", super::FLOW_CSS, super::FLOW_FLAT_CSS);
@@ -2063,8 +1603,6 @@ mod tests {
         );
     }
 
-    /// Only what a document names as an image is fetched: a link's
-    /// target is the user's to follow (spec 006 FR-025).
     #[test]
     fn remote_image_urls_are_images_and_styles_never_links() {
         let document = r#"<a href="https://example.net/page">x</a>
@@ -2089,8 +1627,8 @@ mod tests {
 
     #[test]
     fn the_two_schemes_do_not_share_a_ground() {
-        // A palette that collapsed to one value would paint a white flash
-        // into dark mode and pass a test that only checked parseability.
+        // A palette that collapsed to one value would paint a white flash into dark mode and pass a
+        // parseability-only test.
         assert_ne!(
             postio_ui::reader::document::reader_ground(false),
             postio_ui::reader::document::reader_ground(true),
@@ -2140,30 +1678,20 @@ mod tests {
         }
     }
 
-    /// "Nothing is a dead end": a state the user can act on names the key.
     #[test]
     fn the_states_worth_retrying_name_the_retry_key() {
-        // Refresh's own key, from the registry: also the canvas' retry key
-        // for the list's empty and error plates. The reading pane must not
-        // invent a second one.
         let key = postio_core::registry::get(postio_core::CommandId::Refresh).default_binding;
         let named = format!("<kbd>{key}</kbd>");
         assert!(absent_html(Absent::Offline).contains(&named));
         assert!(absent_html(Absent::Missing).contains(&named));
     }
 
-    /// A message that genuinely has no body is finished, not pending. Telling
-    /// someone to retry would be telling them to wait for nothing.
     #[test]
     fn a_message_with_no_body_is_not_offered_a_retry() {
         let html = absent_html(Absent::Empty);
         assert!(!html.contains("check for new mail"), "{html}");
     }
 
-    /// #175: a draft written by another client is a dead end for a different
-    /// reason than the other three -- there is nothing to download, because
-    /// there is no local buffer to resume. Retrying would promise a fetch
-    /// that cannot change the outcome.
     #[test]
     fn a_foreign_draft_says_it_cannot_be_edited_here_and_offers_no_retry() {
         let html = absent_html(Absent::ForeignDraft);

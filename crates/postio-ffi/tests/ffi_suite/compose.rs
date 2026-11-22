@@ -1,13 +1,3 @@
-//! Writing mail across the boundary (#1272).
-//!
-//! The macOS frontend could read mail and not answer it: `postio-ffi` had no
-//! composer at all, so `e` resolved to a command with nothing on the other
-//! side. What crosses is a **draft**, not an editor — the rules about who a
-//! reply is addressed to, what its subject becomes and what a quote looks
-//! like are `postio_model::reply`'s, shared with the frontend that already
-//! had them, and a second implementation of "reply-all excludes me" is
-//! exactly the drift ADR 0019 Q6 is about.
-
 use chrono::Utc;
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::Dispatcher;
@@ -17,8 +7,6 @@ use postio_model::{DraftState, EmailAddress, Message};
 use postio_storage::repository::{DraftRepository, MessageRepository};
 use postio_storage::test_support;
 
-/// A session over a store holding one message from Ada, addressed to the
-/// account and to Bo.
 async fn a_message_to_answer() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
     let database = test_support::memory().await;
     let message = {
@@ -33,8 +21,7 @@ async fn a_message_to_answer() -> (std::sync::Arc<Session>, postio_storage::Stor
         ];
         let repository = MessageRepository::new(&connection);
         let id = repository.create(&mut message).await.expect("a message");
-        // The body is a column of its own (ADR 0020), written separately —
-        // which is exactly why a reply that reads the row alone quotes
+        // The body is a column of its own (ADR 0020), so a reply that reads the row alone quotes
         // nothing.
         repository
             .set_body(
@@ -141,8 +128,7 @@ async fn saving_a_draft_puts_it_in_the_store_and_gives_it_an_id() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn saving_the_same_draft_twice_updates_it_rather_than_writing_a_second_row() {
-    // The autosave shape: a composer saves as you type, and a draft that
-    // inserted on every keystroke would fill the Drafts folder with the same
+    // Autosave shape: inserting on every keystroke would fill Drafts with copies of one
     // half-written message.
     let (session, database, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
@@ -171,9 +157,8 @@ async fn saving_the_same_draft_twice_updates_it_rather_than_writing_a_second_row
 
 #[tokio::test(flavor = "multi_thread")]
 async fn sending_queues_the_draft_rather_than_waiting_for_a_server() {
-    // Local-first: the write is one transaction and `postio-sync::send`
-    // drains it whenever there is a network. Nothing here opens a connection,
-    // which is what lets a compose window close on the keystroke.
+    // Local-first: one transaction that `postio-sync::send` drains later; nothing here opens a
+    // connection.
     let (session, database, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.to = "bo@example.com".to_owned();
@@ -198,8 +183,7 @@ async fn sending_queues_the_draft_rather_than_waiting_for_a_server() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_draft_with_nobody_to_send_it_to_is_refused_out_loud() {
-    // The composer would otherwise clear and close, and the queued operation
-    // would drain as impossible: the words gone and no message sent.
+    // Else the composer would clear and close and the queued operation would drain as impossible.
     let (session, _, _) = a_message_to_answer().await;
     let draft = session.new_draft().await.expect("a draft");
 
@@ -212,23 +196,17 @@ async fn a_draft_with_nobody_to_send_it_to_is_refused_out_loud() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_footer_says_where_the_draft_lives_and_what_will_be_sent() {
-    // Canvas 26's footer. Both halves are claims Postio should be willing to
-    // make on screen: a draft is a file in the maildir, and what leaves is a
-    // shape the user chose.
     let (session, _, _) = a_message_to_answer().await;
     let draft = session.new_draft().await.expect("a draft");
 
     assert!(!draft.path.is_empty(), "a draft is somewhere on this disk");
-    // Through the exported function, which is what Swift can actually call:
-    // a method on a record compiles in Rust and crosses as nothing.
+    // Through the exported function: a method on a record compiles in Rust and crosses as nothing.
     assert_eq!(postio_ffi::outgoing_shape(true), "html + text/plain");
     assert_eq!(
         postio_ffi::outgoing_shape(false),
         "text/plain, format=flowed"
     );
 }
-
-// -- attachments (#1269) -----------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
 async fn attaching_a_file_puts_its_bytes_in_the_store_and_names_it_on_the_draft() {
@@ -246,7 +224,6 @@ async fn attaching_a_file_puts_its_bytes_in_the_store_and_names_it_on_the_draft(
     assert_eq!(with_file.attachments.len(), 1);
     assert_eq!(with_file.attachments[0].filename, "gate-plan.txt");
     assert_eq!(with_file.attachments[0].mime_type, "text/plain");
-    // Said the way a person thinks about it rather than in bytes.
     assert!(
         with_file.attachments[0].size.contains('B'),
         "{}",
@@ -311,12 +288,8 @@ async fn taking_an_attachment_off_leaves_the_rest_alone() {
     assert_eq!(left.attachments[0].filename, "two.txt");
 }
 
-// -- an image in the body (#1571) --------------------------------------------
-
-/// A few bytes that say they are a PNG; nothing here decodes them.
 const PIXELS: &[u8] = b"\x89PNG\r\n\x1a\nnot really a picture";
 
-/// The `Content-ID` an image script inserts, read back out of the script.
 fn inserted_id(script: &str) -> String {
     let start = script.find("postio-cid:").expect("the script names a part") + "postio-cid:".len();
     let end = start + script[start..].find('"').expect("a closing quote");
@@ -342,8 +315,6 @@ async fn inserting_an_image_puts_a_part_on_the_draft_and_a_picture_at_the_caret(
         inserted.draft.id > 0,
         "and the draft was saved, so the picture survives the window closing"
     );
-    // What the editor runs: the editing shell's scheme, naming a part this
-    // draft now holds -- so the picture the window draws is the one it sends.
     assert!(
         inserted.script.contains("insertHTML"),
         "{}",
@@ -360,9 +331,8 @@ async fn inserting_an_image_puts_a_part_on_the_draft_and_a_picture_at_the_caret(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_draft_resolves_only_its_own_pictures() {
-    // A `Content-ID` means something only inside the message that declared
-    // it. A composer resolving one against the whole store would draw a
-    // picture from somebody else's draft.
+    // A `Content-ID` means something only inside its own message; resolving it store-wide would
+    // draw another draft's picture.
     let (session, _, _) = a_message_to_answer().await;
     let mine = session
         .insert_inline_image(
@@ -416,9 +386,7 @@ async fn a_file_that_is_not_an_image_is_refused_and_the_draft_is_untouched() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_inserted_picture_survives_the_draft_being_saved() {
-    // The editor reports the body with the `<img>` in it, and the store keeps
-    // what `postio_body::parse` makes of that. A picture the dialect dropped
-    // would vanish at the first autosave, leaving a part nothing shows.
+    // A picture the dialect dropped would vanish at the first autosave.
     let (session, _, _) = a_message_to_answer().await;
     let mut inserted = session
         .insert_inline_image(
@@ -444,12 +412,9 @@ async fn the_inserted_picture_survives_the_draft_being_saved() {
     );
 }
 
-// -- handing a draft to another editor (#1270) -------------------------------
-
 #[tokio::test(flavor = "multi_thread")]
 async fn handing_a_draft_out_saves_it_first_and_writes_what_was_typed() {
-    // An editor opened on a body Postio has not written down is one crash
-    // away from having been the only copy.
+    // An editor opened on a body Postio has not written down is one crash from being the only copy.
     let (session, _, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.body = "The gate closes at six.".to_owned();
@@ -478,7 +443,6 @@ async fn what_the_other_editor_wrote_comes_back_onto_the_draft() {
         .expect("it hands out");
 
     std::fs::write(&path, "after, edited elsewhere").expect("the editor saves");
-    // The draft has an id now; the frontend holds the saved one.
     let saved = session.save_draft(draft).await.expect("saved");
     let back = session
         .end_handoff(saved, path.clone())
@@ -494,8 +458,7 @@ async fn what_the_other_editor_wrote_comes_back_onto_the_draft() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_empty_edit_is_refused_and_the_draft_keeps_its_words() {
-    // The truncate-and-write window: believing it would throw away
-    // everything the user had written.
+    // Believing the truncate-and-write window would discard everything the user had written.
     let (session, _, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.body = "everything they wrote".to_owned();
@@ -515,18 +478,9 @@ async fn an_empty_edit_is_refused_and_the_draft_keeps_its_words() {
     std::fs::remove_file(&path).ok();
 }
 
-// -- Rich composition (#1271) ------------------------------------------------
-//
-// The switch existed and decided what would be *built*; the body was a text
-// field, so there was never an HTML part to build one out of. `rich` was
-// therefore a claim the composer could not keep, which is why its footer said
-// "plain" whatever the switch was set to.
-
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rich_draft_keeps_its_marks_across_a_save() {
-    // The acceptance line: marks apply to the body and survive save. They
-    // survive by being *stored*, so this reads the draft back out of the
-    // store rather than trusting what save handed back.
+    // Read the draft back from the store rather than trusting what save returned.
     let (session, _, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("an account");
     draft.to = "bo@example.com".to_owned();
@@ -550,9 +504,8 @@ async fn a_rich_draft_keeps_its_marks_across_a_save() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn turning_rich_off_stops_building_html_without_throwing_the_words_away() {
-    // The switch is on the document, not on the window: turning it off
-    // changes what will be built, and must not silently discard what was
-    // written in case it is turned back on.
+    // The switch is on the document: turning it off must not discard marks in case it is turned
+    // back on.
     let (session, _, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("an account");
     draft.to = "bo@example.com".to_owned();
@@ -567,10 +520,6 @@ async fn turning_rich_off_stops_building_html_without_throwing_the_words_away() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rich_draft_reports_the_shape_it_will_actually_leave_as() {
-    // The footer's claim, and the acceptance line "rich sends text/html plus
-    // a text/plain fallback, always". `postio_ui::compose::outgoing_shape` is
-    // the wording; what matters here is that the boundary now agrees the
-    // draft *is* rich, which it could not before.
     let (session, _, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("an account");
     draft.to = "bo@example.com".to_owned();
@@ -587,10 +536,8 @@ async fn a_rich_draft_reports_the_shape_it_will_actually_leave_as() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rich_draft_always_carries_a_plain_alternative_of_its_own_words() {
-    // Not an empty `text/plain`: the fallback is the message for anyone
-    // reading in a terminal or with a screen reader, so it has to say what
-    // the HTML says. Derived rather than asked for, because a composer that
-    // relied on the frontend to send both would eventually send one.
+    // The text/plain fallback must say what the HTML says; derived rather than asked of the
+    // frontend, which would eventually send only one.
     let (session, _, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("an account");
     draft.to = "bo@example.com".to_owned();
@@ -608,8 +555,6 @@ async fn a_rich_draft_always_carries_a_plain_alternative_of_its_own_words() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_paste_comes_back_as_the_dialect_and_as_plain_text() {
-    // Both, because the composer needs the first to put in the document and
-    // the second to keep the plain alternative honest.
     let (session, _, _) = a_message_to_answer().await;
     let pasted = session.narrow_paste("<div>Hello <b>there</b>.</div>".to_owned());
 
@@ -627,10 +572,8 @@ async fn a_paste_comes_back_as_the_dialect_and_as_plain_text() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_editing_bridge_crosses_so_the_two_composers_run_one_dialect() {
-    // #1271's last acceptance line. The script is the thing that decides
-    // whether the surface emits `<p>` or `<div>`, and a second copy on the
-    // macOS side would be a second dialect that still round-trips through a
-    // Document -- drift nothing would catch.
+    // The script decides `<p>` vs `<div>`; a macOS copy would be a second dialect that still
+    // round-trips.
     let (session, _, _) = a_message_to_answer().await;
     assert_eq!(session.editor_script(), postio_ui::compose::editor_script());
     assert!(
@@ -639,11 +582,8 @@ async fn the_editing_bridge_crosses_so_the_two_composers_run_one_dialect() {
             .contains("defaultParagraphSeparator"),
         "the setting that pins the dialect is not in what crossed"
     );
-    // What crossed has to be *runnable*. The body reads `POSTIO_MARKDOWN`
-    // and does not define it, so a frontend handed the body alone gets a
-    // ReferenceError on the first keystroke -- inside a WebView, where
-    // nothing on this side of the boundary would ever hear about it. GTK
-    // prepends the table itself; macOS takes whatever crosses.
+    // The body reads `POSTIO_MARKDOWN` without defining it, so a frontend given the body alone
+    // throws in a WebView where nothing hears it.
     assert!(
         session.editor_script().contains("const POSTIO_MARKDOWN"),
         "the markdown table did not cross, so the script cannot run"
@@ -658,14 +598,9 @@ async fn the_editing_bridge_crosses_so_the_two_composers_run_one_dialect() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_draft_sent_as_plain_puts_no_html_on_the_wire_even_while_it_keeps_its_marks() {
-    // The two halves of "the switch is on the document" pulling against each
-    // other, and the place they have to be reconciled.
-    //
-    // Storage keeps the marks, so turning Rich back on does not cost them.
-    // But `postio_model::outgoing` builds a `multipart/alternative` from
-    // `body.html.is_some()` -- so a queued draft that kept its marks would
-    // send HTML while its own footer said "text/plain, format=flowed". The
-    // footer is a claim about what leaves; this is what keeps it true.
+    // Storage keeps the marks, but `postio_model::outgoing` builds multipart/alternative from
+    // `body.html.is_some()`,
+    // so a Plain draft that kept them would send HTML under a text/plain footer.
     let (session, database, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.to = "bo@example.com".to_owned();
@@ -692,8 +627,6 @@ async fn a_draft_sent_as_plain_puts_no_html_on_the_wire_even_while_it_keeps_its_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_draft_sent_as_rich_carries_both_parts_onto_the_queue() {
-    // The other direction, and the acceptance line: rich sends `text/html`
-    // plus a `text/plain` fallback, always.
     let (session, database, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.to = "bo@example.com".to_owned();
@@ -728,25 +661,16 @@ async fn a_draft_sent_as_rich_carries_both_parts_onto_the_queue() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn writing_rich_and_switching_to_plain_sends_the_words_rather_than_nothing() {
-    // #1293, and the sequence a person actually performs: everything is
-    // typed into the rich surface, so `body` -- the plain field -- was never
-    // touched. Every other test in this file sets both fields by hand, which
-    // is exactly what hid this.
-    //
-    // `send_draft` clears the HTML part when the switch says plain, which is
-    // right: the footer promises `text/plain, format=flowed`. So if the text
-    // was never derived, what is queued has no body at all.
+    // Everything is typed into the rich surface, so `body` is never touched; if the text were not
+    // derived, a Plain send would queue no body (#1293).
     let (session, database, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.to = "bo@example.com".to_owned();
     draft.subject = "The gate".to_owned();
     draft.rich = true;
     draft.body_html = Some("<p>The gate closes at six.</p>".to_owned());
-    // Deliberately not set: nothing typed into a `TextEditor` that was not on
-    // screen.
     draft.body = String::new();
 
-    // The switch goes to Plain, and nothing else changes.
     draft.rich = false;
 
     assert_eq!(session.send_draft(draft).await, None, "no complaint");
@@ -769,9 +693,6 @@ async fn writing_rich_and_switching_to_plain_sends_the_words_rather_than_nothing
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_plain_text_of_a_document_is_available_on_its_own() {
-    // What the switch needs at the moment it flips, and it needs a name that
-    // is true at that call site: `narrowPaste` returns the same string but
-    // reading `narrowPaste` there would say this was a paste.
     let (session, _, _) = a_message_to_answer().await;
     let text = session.plain_text_of("<p>The gate closes at <strong>six</strong>.</p>");
     assert_eq!(text.trim(), "The gate closes at six.");
@@ -779,9 +700,6 @@ async fn the_plain_text_of_a_document_is_available_on_its_own() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn plain_text_turned_rich_is_a_document_of_the_same_words() {
-    // What the switch seeds the rich surface with when it flips to Rich: the
-    // same document the save would build from the plain field, so what the
-    // window shows is what would be sent.
     let (session, _, _) = a_message_to_answer().await;
     let html = session.rich_html_of("The gate closes at six.\n\nBring <the> key.");
     assert_eq!(
@@ -792,8 +710,6 @@ async fn plain_text_turned_rich_is_a_document_of_the_same_words() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn switching_the_other_way_keeps_the_words_too() {
-    // Plain -> Rich -> send. The document is built from the plain text, so
-    // nothing typed is lost in that direction either.
     let (session, database, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.to = "bo@example.com".to_owned();
@@ -825,12 +741,6 @@ async fn switching_the_other_way_keeps_the_words_too() {
     );
 }
 
-// --- a draft from a `mailto:` link (#1156 follow-on) ------------------------
-
-/// A session with an account to write from.
-///
-/// `a_message_to_answer` already builds one; this drops the message, because
-/// a `mailto:` answers nothing.
 async fn a_session_with_an_account() -> (std::sync::Arc<Session>, postio_storage::Store) {
     let (session, database, _) = a_message_to_answer().await;
     (session, database)
@@ -838,8 +748,6 @@ async fn a_session_with_an_account() -> (std::sync::Arc<Session>, postio_storage
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_mailto_link_becomes_a_draft_addressed_the_way_it_asked() {
-    // RFC 6068's fields, assembled here rather than in either frontend, so
-    // clicking the same link on both platforms opens the same draft.
     let (session, _) = a_session_with_an_account().await;
 
     let draft = session
@@ -867,8 +775,7 @@ async fn a_mailto_link_becomes_a_draft_addressed_the_way_it_asked() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_bare_mailto_opens_an_empty_draft_rather_than_refusing() {
-    // `mailto:` with nothing after it is a valid link and means "write a new
-    // message". It must not read as a failure.
+    // `mailto:` with nothing after it means "write a new message", not a failure.
     let (session, _) = a_session_with_an_account().await;
 
     let draft = session
@@ -882,8 +789,6 @@ async fn a_bare_mailto_opens_an_empty_draft_rather_than_refusing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_mailto_with_no_account_to_write_from_answers_none() {
-    // A fresh install. The frontend says so out loud rather than opening a
-    // composer that cannot send.
     let session = Session::open(SessionOptions::in_memory()).expect("a session");
 
     assert!(
@@ -900,10 +805,6 @@ async fn a_mailto_with_no_account_to_write_from_answers_none() {
     );
 }
 
-// --- replying to HTML-only mail (user report) -------------------------------
-
-/// A message whose body is HTML and nothing else — the ordinary shape of most
-/// real mail, and the one a reply used to lose entirely.
 async fn an_html_only_message() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
     let database = test_support::memory().await;
     let message = {
@@ -919,8 +820,6 @@ async fn an_html_only_message() -> (std::sync::Arc<Session>, postio_storage::Sto
             .set_body(
                 id,
                 &postio_storage::repository::StoredBody {
-                    // No `text` at all. `postio_model::mime` fills that field
-                    // from a `text/plain` part and never invents one.
                     text: None,
                     html: Some("<p>The gate closes at six.</p><p>Bring the key.</p>".to_owned()),
                     headers: None,
@@ -947,9 +846,7 @@ async fn an_html_only_message() -> (std::sync::Arc<Session>, postio_storage::Sto
 
 #[tokio::test(flavor = "multi_thread")]
 async fn replying_to_html_only_mail_quotes_what_it_is_answering() {
-    // The report: "reply doesn't quote a message correctly". It quoted the
-    // attribution line and nothing else, because `plain_quote` reads
-    // `body.text` and an HTML-only message has none — which is most mail.
+    // `plain_quote` reads `body.text`, which an HTML-only message (most mail) does not have.
     let (session, _database, message) = an_html_only_message().await;
 
     let draft = session.reply_draft(message, false).await.expect("a reply");
@@ -978,19 +875,11 @@ async fn replying_to_html_only_mail_quotes_what_it_is_answering() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_draft_saved_on_this_machine_is_queued_for_the_server_too() {
-    // A local write without its queue row never reaches the server. Every
-    // macOS save path -- autosave, attach, detach, the editor hand-off both
-    // ways -- goes through one `write_draft`, and it called
-    // `DraftRepository::save`, which writes the row and stops. So a reply
-    // begun on the Mac was in Drafts on the Mac and nowhere else: not on the
-    // phone, not on the Linux client, not on the server it was written
-    // against. The classic app had used `save_and_sync` since drafts existed,
-    // for exactly the reason that repository method records.
+    // A local write without its queue row never reaches the server: every Mac save path must go
+    // through `save_and_sync`, not `DraftRepository::save`.
     let (session, database, message) = a_message_to_answer().await;
 
-    // The account needs a Drafts folder to enqueue against -- `save_and_sync`
-    // finds it by role, and an account with none is a real state it answers
-    // with `None` rather than by failing.
+    // `save_and_sync` finds the Drafts folder by role; an account with none answers `None`.
     let account = {
         let connection = database.connect().await.expect("a connection");
         let accounts = postio_storage::repository::AccountRepository::new(&connection)
@@ -1007,8 +896,6 @@ async fn a_draft_saved_on_this_machine_is_queued_for_the_server_too() {
         account.id
     };
 
-    // Built, then saved: `reply_draft` assembles it in memory and the write
-    // is `save_draft`, which is what a composer calls when it autosaves.
     let draft = session
         .reply_draft(message, false)
         .await
@@ -1035,11 +922,8 @@ async fn a_draft_saved_on_this_machine_is_queued_for_the_server_too() {
 
 #[test]
 fn a_reply_all_to_a_list_does_not_look_like_a_reply() {
-    // FR-023, and the whole reason the Cc and Bcc fields had to arrive on
-    // macOS at all: `reply_all` puts every other original recipient in `cc`,
-    // so a window showing one To address is a window about to write to
-    // everybody. The counts say *which field*, because "42 recipients" reads
-    // very differently from "1 To, 41 Cc".
+    // `reply_all` puts the other recipients in `cc`, so the counts must say which field: "1 To, 41
+    // Cc".
     let draft = postio_ffi::DraftFfi {
         id: 0,
         account: 1,
@@ -1064,7 +948,6 @@ fn a_reply_all_to_a_list_does_not_look_like_a_reply() {
         Some("1 To, 2 Cc")
     );
 
-    // One person is the ordinary case and says nothing.
     let alone = postio_ffi::DraftFfi {
         cc: String::new(),
         ..draft
@@ -1074,16 +957,8 @@ fn a_reply_all_to_a_list_does_not_look_like_a_reply() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn two_sessions_do_not_hand_drafts_out_into_the_same_directory() {
-    // An in-memory session has no store on disk, so `handoff_dir` falls back
-    // to a temp directory -- and it fell back to *one*, shared by every
-    // process on the machine. Draft ids start at 1 in every fresh store, so
-    // two sessions handing out their first draft wrote to the same file. In
-    // the test suite that is two binaries racing: it passes alone and in its
-    // own crate, and fails when `postio-session` happens to run beside it.
-    //
-    // Which is the worst kind of red, because it is read as noise. It is not
-    // noise here either: the fallback is what a Postio with no store yet
-    // uses, and two Postios on one machine would trade drafts through it.
+    // The in-memory fallback handoff dir was shared by every process and draft ids start at 1, so
+    // two sessions wrote the same file and raced.
     let (first, _, _) = a_message_to_answer().await;
     let (second, _, _) = a_message_to_answer().await;
 
@@ -1108,13 +983,8 @@ async fn two_sessions_do_not_hand_drafts_out_into_the_same_directory() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_draft_can_be_thrown_away() {
-    // Until #1571 there was no way to: the only exit from a macOS compose
-    // window was `onDisappear`, which *saves*. A draft written on the Mac was
-    // write-once — it landed in Drafts as an unremarkable row and nothing
-    // could open it or remove it again.
-    //
-    // `DraftRepository::discard` has existed all along and also queues the
-    // server copy's removal; what was missing was a way to reach it.
+    // `DraftRepository::discard` also queues removal of the server copy; the Mac had no way to
+    // reach it (#1571).
     let (session, database, message) = a_message_to_answer().await;
     let draft = session
         .reply_draft(message, false)
@@ -1133,8 +1003,7 @@ async fn a_draft_can_be_thrown_away() {
         "the draft is still there"
     );
 
-    // Twice is not an error: a retried discard, or one racing a send that
-    // already cleared the row, is the expected case rather than a failure.
+    // A retried discard, or one racing a send, is expected rather than a failure.
     assert_eq!(session.discard_draft(saved.id).await, None);
     let _ = database;
     session.shutdown();
@@ -1142,9 +1011,6 @@ async fn a_draft_can_be_thrown_away() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_scheduled_send_is_queued_with_the_hour_it_is_for() {
-    // *Schedule send…* — the same queue as an immediate send, with a time on
-    // the row. `postio-sync::send` is what holds it back until then, so the
-    // composer closes on the keystroke exactly as it does for `⌘↵`.
     let (session, database, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.to = "bo@example.com".to_owned();
@@ -1171,10 +1037,8 @@ async fn a_scheduled_send_is_queued_with_the_hour_it_is_for() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_scheduled_send_is_refused_now_rather_than_at_the_hour() {
-    // The whole reason this repeats `send_draft`'s checks instead of trusting
-    // them to the drain: refusing an unaddressed message at 8am tomorrow,
-    // when nobody is watching the composer, is strictly worse than refusing
-    // it while somebody is looking at it.
+    // Checked at schedule time: refusing an unaddressed message at 8am with nobody watching is
+    // worse than refusing it now.
     let (session, _, _) = a_message_to_answer().await;
     let draft = session.new_draft().await.expect("a draft");
 
@@ -1191,9 +1055,8 @@ async fn a_scheduled_send_is_refused_now_rather_than_at_the_hour() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_hour_already_gone_is_not_a_schedule() {
-    // A picker left open overnight, or a clock that moved. Sending it at
-    // once would be a different command than the one that was chosen, and
-    // silently is worse still.
+    // A stale picker or moved clock: sending at once would be a different command than the one
+    // chosen.
     let (session, _, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.to = "bo@example.com".to_owned();
@@ -1209,13 +1072,8 @@ async fn an_hour_already_gone_is_not_a_schedule() {
     );
 }
 
-// -- a draft in a conversation (#1212, #1595) --------------------------------
-
 #[tokio::test(flavor = "multi_thread")]
 async fn a_drafts_message_row_leads_back_to_the_draft() {
-    // `Continue editing` in a conversation names a message row; what resumes
-    // the composer is the draft behind it. The row is the draft's server
-    // copy, linked the way sync links it.
     let (session, database, message) = a_message_to_answer().await;
     let saved = session
         .save_draft(session.reply_draft(message, false).await.expect("a reply"))
@@ -1249,10 +1107,6 @@ async fn a_drafts_message_row_leads_back_to_the_draft() {
     );
 }
 
-// -- the composer's frame on the Mac (specs/009-focus-macos T079) ---------
-
-/// "Remind if no reply" rides on the draft: set in the composer, it is in
-/// the store when the draft is saved, and comes back when it is reopened.
 #[tokio::test(flavor = "multi_thread")]
 async fn remind_if_no_reply_is_kept_with_the_draft() {
     let (session, database, message) = a_message_to_answer().await;
@@ -1276,8 +1130,6 @@ async fn remind_if_no_reply_is_kept_with_the_draft() {
     assert_eq!(again.remind_at, Some(tuesday));
 }
 
-/// A reply's quote folds under what is written, and the fold says whose
-/// words it holds and how many lines; nothing is lost putting it back.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_replys_quote_folds_and_says_what_it_holds() {
     let (session, _, message) = a_message_to_answer().await;
@@ -1292,8 +1144,6 @@ async fn a_replys_quote_folds_and_says_what_it_holds() {
     assert_eq!(postio_ffi::fold_quote("Six is fine.".to_owned()), None);
 }
 
-/// The frame's words are the shared ones: the title, the word count, the
-/// saved note, and the reminder's verb with its day.
 #[test]
 fn the_composers_words_are_postio_uis() {
     use postio_ffi::DraftKindFfi;
@@ -1325,9 +1175,8 @@ fn the_composers_words_are_postio_uis() {
         postio_ffi::draft_summary(draft.clone()),
         "Plain text \u{b7} 6 words"
     );
-    // Turned Plain, the draft keeps its marks for the way back (#1271), and
-    // sending drops them; the footer read the kept marks and said "Rich text"
-    // under a switch set to Plain.
+    // Turned Plain, the draft keeps its marks for the way back but sending drops them; the footer
+    // must not say "Rich text".
     let mut switched = draft;
     switched.body_html = Some("<p>Hi <strong>Ada</strong>,</p>".to_owned());
     switched.rich = false;
@@ -1344,8 +1193,6 @@ fn the_composers_words_are_postio_uis() {
     assert_eq!(postio_ffi::remind_presets().len(), 4);
 }
 
-/// The From picker: choosing another account moves the draft to it, saved
-/// or not, and it is sent from there.
 #[tokio::test(flavor = "multi_thread")]
 async fn choosing_another_account_moves_the_draft_to_it() {
     let (session, database, _) = a_message_to_answer().await;
@@ -1383,9 +1230,6 @@ async fn choosing_another_account_moves_the_draft_to_it() {
     );
 }
 
-/// Screen 06: a reply starts with its conversation's labels, by name, so
-/// the composer can draw them "from the thread"; one taken off stays off
-/// once saved, and sending applies what is left (`postio-sync`'s send).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reply_starts_with_its_threads_labels_and_keeps_what_is_left() {
     let (session, database, message) = a_message_to_answer().await;

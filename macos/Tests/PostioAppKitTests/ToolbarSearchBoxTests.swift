@@ -4,16 +4,6 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// The inbox toolbar's search field (specs/010-focus-search T054; design
-/// §2 "Opening and layout"), in a real unified toolbar: `NSSearchToolbarItem`
-/// ignored every width it was given and stayed about 327 wide (step 8's
-/// note), so the field is Postio's own view, and these read where the
-/// toolbar actually put it.
-///
-/// At rest it is 320 by 28 (McList.dc.html). Opened -- ⌘K or `/` -- it
-/// grows leftward to 860, its right edge 12 from the window's, 34 tall,
-/// ringed in the accent; the panel hangs from it with the same left edge
-/// and width, 6 below.
 @MainActor
 @Suite struct ToolbarSearchBoxTests {
     @MainActor final class Delegate: NSObject, NSToolbarDelegate {
@@ -47,17 +37,10 @@ import Testing
         }
     }
 
-    /// Whether this screen holds a window `width` wide. A CI runner's is
-    /// 1024: AppKit squeezes a wider titled window onto it, and one kept
-    /// wider anyway hangs off the screen, where the toolbar lays out for a
-    /// width nobody sees. So the cases at the design's 1440 run only where
-    /// a 1440 window fits, and 1024 runs everywhere.
     static func screenHolds(_ width: CGFloat) -> Bool {
         (NSScreen.main?.visibleFrame.width ?? 0) >= width
     }
 
-    /// A window `width` wide with the inbox's toolbar shape: Compose, a
-    /// flexible space, the field.
     static func window(width: CGFloat) -> (NSWindow, Delegate) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 40, width: width, height: 700),
@@ -77,14 +60,11 @@ import Testing
         return (window, delegate)
     }
 
-    /// The box's frame on screen, after the toolbar has laid it out.
     static func frame(of box: NSView, in window: NSWindow) -> CGRect {
         window.contentView?.superview?.layoutSubtreeIfNeeded()
         return window.convertToScreen(box.convert(box.bounds, to: nil))
     }
 
-    /// At rest the field says the short placeholder (McList.dc.html);
-    /// opened, the long one (screen 01).
     @Test func atRestTheFieldSaysLessThanOpened() {
         let box = ToolbarSearchBox()
         box.restingPlaceholder = "Search mail or run a command"

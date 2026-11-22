@@ -1,42 +1,7 @@
-//! Identifiers wide enough for commands this build has never heard of.
+//! `ActionId`: a built-in `CommandId` or an interned extension id.
 //!
-//! [`CommandId`] is a closed enum, and deliberately stays one — see
-//! `docs/decisions/0002-extensible-command-vocabulary.md`. It is fieldless, so
-//! `registry::get` can be `SPECS[id as usize]`; it is `Copy`, so it is passed
-//! by value in a few hundred places; and it is exhaustively matched, so a
-//! built-in command cannot be silently unhandled.
-//!
-//! Extensions need none of that and cannot have it anyway: an MCP tool or an
-//! AI action is not known at compile time, so there is nothing to match
-//! exhaustively and no index to address. What they *do* need is to be named,
-//! bound to a key, listed in the palette and shown in the cheat sheet — all of
-//! which happen one layer above `CommandId`.
-//!
-//! That layer is [`ActionId`]. The registry, the keymap, the palette and the
-//! cheat sheet deal in it; dispatch and `Command::default_for` keep dealing in
-//! `CommandId`, because a built-in is statically known to have a handler and
-//! an extension is not. They are equal where it matters to the *user* and
-//! distinguishable where it matters to the *compiler*.
-//!
-//! # Why ids are interned
-//!
-//! [`ExtId`] is a `u32` handle into an append-only table of leaked strings, so
-//! it is `Copy` and cheap to compare, and an `ActionId` stays as small and as
-//! copyable as the `CommandId` it sits beside. Leaking is the right shape
-//! here rather than a concession: registrations happen at startup, are bounded
-//! by the number of extensions loaded, and last as long as the process. An id
-//! that could be freed would be an id that could dangle in a keymap.
-//!
-//! # Parsing does not depend on registration
-//!
-//! This is what makes `[keys]` work at all. `config.toml` is read and resolved
-//! at startup; extensions register later. If `"mcp:summarise"` only parsed
-//! once its command existed, every binding naming an extension would resolve
-//! to nothing and silently do nothing.
-//!
-//! So interning is independent of registration: a well-formed namespaced id
-//! always parses, whether or not anything has claimed it. The keymap binds the
-//! id at startup and it starts reaching a command the moment one registers.
+//! A well-formed namespaced id parses before anything registers it, so `[keys]` bindings resolve at
+//! startup.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -47,26 +12,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::command::{CommandId, UnknownCommand};
 
-/// What separates an extension's namespace from its command name.
-///
-/// Built-in ids are `snake_case` with no punctuation beyond `_` — a test in
-/// `command.rs` enforces exactly that — so this character is what tells the
-/// two vocabularies apart, and it can never appear in a built-in id.
+/// Separates an extension's namespace from its name; never appears in a built-in id.
 pub const NAMESPACE_SEPARATOR: char = ':';
 
-/// The interned id of a command that is not built in.
-///
-/// Namespaced: `"mcp:summarise-thread"`, `"user:file-to-receipts"`. The
-/// namespace keeps built-in ids collision-free forever and makes provenance
-/// visible in the palette and in a log line — which matters more for a
-/// command the user did not type than for one they did.
+/// The interned id of an extension command, namespaced like `mcp:summarise-thread`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExtId(u32);
 
-/// The interner: every id ever seen, and the index of each.
-///
-/// Append-only, so an `ExtId` is valid for the life of the process and
-/// `as_str` needs no lock beyond the read.
 struct Interner {
     ids: Vec<&'static str>,
     index: HashMap<&'static str, u32>,
@@ -83,12 +35,7 @@ fn interner() -> &'static Mutex<Interner> {
 }
 
 impl ExtId {
-    /// Intern `id`, or return the handle it already has.
-    ///
-    /// `None` when `id` is not namespaced, which is the one thing that makes
-    /// an extension id well-formed. Note what this does *not* check: whether
-    /// anything has registered a command under it. Interning is naming, not
-    /// registration — see the module note on why `[keys]` depends on that.
+    /// `None` unless `id` is namespaced. Interning is naming, not registration.
     pub fn intern(id: &str) -> Option<ExtId> {
         if !is_namespaced(id) {
             return None;
@@ -97,8 +44,8 @@ impl ExtId {
         if let Some(&existing) = interner.index.get(id) {
             return Some(ExtId(existing));
         }
-        // Leaked deliberately: see the module note. Bounded by the number of
-        // distinct ids the process ever names.
+        // Leaked on purpose: bounded by the ids the process names, and a freeable id could dangle
+        // in a keymap.
         let leaked: &'static str = Box::leak(id.to_owned().into_boxed_str());
         let handle = interner.ids.len() as u32;
         interner.ids.push(leaked);
@@ -106,13 +53,11 @@ impl ExtId {
         Some(ExtId(handle))
     }
 
-    /// The namespaced string this id was interned from.
     pub fn as_str(self) -> &'static str {
         let interner = interner().lock().unwrap_or_else(|error| error.into_inner());
         interner.ids[self.0 as usize]
     }
 
-    /// The part before the separator: who the command came from.
     pub fn namespace(self) -> &'static str {
         let id = self.as_str();
         id.split_once(NAMESPACE_SEPARATOR)
@@ -121,10 +66,7 @@ impl ExtId {
     }
 }
 
-/// Whether `id` is a well-formed namespaced extension id.
-///
-/// Both halves must be non-empty, and there must be exactly one separator: a
-/// bare `"mcp:"` names nobody and `"a:b:c"` has no single obvious namespace.
+/// Both halves non-empty and exactly one separator.
 fn is_namespaced(id: &str) -> bool {
     match id.split_once(NAMESPACE_SEPARATOR) {
         Some((namespace, name)) => {
@@ -140,20 +82,13 @@ impl fmt::Display for ExtId {
     }
 }
 
-/// Anything the user can invoke: a built-in command or a registered extension.
-///
-/// This is the vocabulary the *surfaces* speak — the keymap, the palette, the
-/// cheat sheet, the key hints. Dispatch does not: see the module note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ActionId {
-    /// A command compiled into this build.
     Builtin(CommandId),
-    /// A command registered at runtime.
     Ext(ExtId),
 }
 
 impl ActionId {
-    /// The stable string id, as `[keys]` in `config.toml` spells it.
     pub fn as_str(self) -> &'static str {
         match self {
             ActionId::Builtin(id) => id.as_str(),
@@ -161,10 +96,7 @@ impl ActionId {
         }
     }
 
-    /// The built-in this names, if it is one.
-    ///
-    /// The usual way back to the closed vocabulary: a surface that can only
-    /// act on built-ins asks for this and ignores `None`.
+    /// `None` for an extension.
     pub fn builtin(self) -> Option<CommandId> {
         match self {
             ActionId::Builtin(id) => Some(id),
@@ -172,7 +104,6 @@ impl ActionId {
         }
     }
 
-    /// Whether this is an extension command rather than a built-in.
     pub fn is_ext(self) -> bool {
         matches!(self, ActionId::Ext(_))
     }
@@ -199,12 +130,8 @@ impl fmt::Display for ActionId {
 impl FromStr for ActionId {
     type Err = UnknownCommand;
 
-    /// A namespaced id is an extension; anything else must be a built-in.
-    ///
-    /// The separator decides, not a lookup, so this answers the same way
-    /// before and after an extension registers. An id that is namespaced but
-    /// malformed — `"mcp:"` — is not an extension id and is reported as
-    /// unknown rather than interned.
+    /// The separator decides, not a lookup, so the answer is the same before and after
+    /// registration.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         if text.contains(NAMESPACE_SEPARATOR) {
             return ExtId::intern(text)
@@ -263,9 +190,6 @@ mod tests {
 
     #[test]
     fn parsing_does_not_depend_on_registration() {
-        // The property `[keys]` rests on: an id written in a config file
-        // resolves at startup, long before anything registers a command for
-        // it. See the module note.
         let parsed = "mcp:never-registered"
             .parse::<ActionId>()
             .expect("a namespaced id always parses");

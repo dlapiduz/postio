@@ -1,40 +1,4 @@
-//! What a page of the message list costs, on a mailbox worth worrying about.
-//!
-//! docs/PRODUCT.md §18 makes two claims about the message list, and this measures
-//! both:
-//!
-//! * **An ordinary interaction is under 16ms.** Scrolling asks for a page,
-//!   and a page is a database read — so the read has to fit inside the budget
-//!   with room left for the frontend to draw what comes back.
-//! * **A mailbox is never loaded into memory.** The stronger claim, and the
-//!   one a benchmark can actually settle: reading a page from a mailbox of
-//!   100,000 should cost what reading one from a mailbox of 1,000 costs. If
-//!   paging were linear in the size of the folder, this is where it shows.
-//!
-//! # Why the deep page matters
-//!
-//! `page_at` is an OFFSET query, and OFFSET is not free: SQLite walks the
-//! rows it skips. A page at the top of a huge folder proves nothing about a
-//! page in the middle of one, so both are measured. If the deep read ever
-//! grows away from the shallow one, the answer is a cursor rather than an
-//! offset — `MessageRepository::page` already takes one.
-//!
-//! # Running
-//!
-//! ```sh
-//! cargo bench -p postio-bench --bench store_reads
-//! ```
-//!
-//! CI compiles this and does not time it: a shared runner is too noisy to
-//! trust for a millisecond budget. Each measurement asserts its own budget
-//! with a real `Instant` as well, so running it locally fails loudly rather
-//! than only reporting.
-
 #![allow(missing_docs)]
-// `criterion_group!` expands to a `pub fn`, and the workspace lint floor now
-// reaches bench targets -- the old per-crate `#![warn(missing_docs)]` in
-// `lib.rs` never did. A bench is not public API, so documenting a
-// macro-generated item would be ceremony rather than information.
 
 use std::hint::black_box;
 use std::time::Instant;
@@ -48,12 +12,7 @@ use postio_storage::repository::{ThreadListQuery, ThreadRepository, UnifiedThrea
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
-/// The runtime every async call in this bench is driven on.
-///
-/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
-/// where there is no ambient runtime -- so `block_on` here is the plain thing
-/// rather than the trap it is everywhere else in this workspace. Multi-threaded
-/// because a store read may reach `block_in_place`.
+/// Multi-threaded because a store read may reach `block_in_place`.
 fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
     use std::sync::OnceLock;
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -68,20 +27,14 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-/// A folder big enough that loading it would be the bug.
 const HUGE: usize = 100_000;
 
-/// And one small enough to be the control.
 const SMALL: usize = 1_000;
 
-/// What the message list asks for at a time.
 const PAGE: u32 = 50;
 
-/// A store over a seeded mailbox, and the mailbox to read.
 async fn seeded(messages: usize) -> (LocalStore, MailboxId, test_support::TempStore) {
-    // A file rather than memory: WAL and `mmap_size` are part of what makes
-    // the read fast and neither applies to an in-memory database. Measuring
-    // the wrong storage engine would be worse than not measuring.
+    // A file rather than memory: WAL and `mmap_size` are part of why the read is fast.
     let database = on_runtime(test_support::temp());
     let report = on_runtime(seed_large(&database, 7, messages));
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -89,7 +42,6 @@ async fn seeded(messages: usize) -> (LocalStore, MailboxId, test_support::TempSt
     (store, inbox, database)
 }
 
-/// Read one page, the way the list does.
 fn read(runtime: &tokio::runtime::Runtime, store: &LocalStore, mailbox: MailboxId, offset: u32) {
     let page = runtime
         .block_on(store.message_page(PageRequest {
@@ -116,27 +68,18 @@ fn bench_message_page(c: &mut Criterion) {
     c.bench_function("message page, 100k mailbox", |b| {
         b.iter(|| read(&runtime, &huge, huge_inbox, 0))
     });
-    // Cold: nobody has read anything between the top and here, so the store
-    // has no boundary to seek from and falls back to walking.
+    // Cold: no boundary to seek from, so the store walks.
     c.bench_function("message page, 100k mailbox, halfway down (cold)", |b| {
         b.iter(|| read(&runtime, &huge, huge_inbox, (HUGE / 2) as u32))
     });
 
-    // Warm: the page before it has already been read, which is what
-    // scrolling does. This is the number that matters, because this is the
-    // case that happens — a jump to an unvisited offset happens once, and
-    // every page after it is this.
+    // Warm: the page before was read, as scrolling does; this is the case that happens.
     read(&runtime, &huge, huge_inbox, (HUGE / 2) as u32);
     c.bench_function("message page, 100k mailbox, scrolled to (warm)", |b| {
         b.iter(|| read(&runtime, &huge, huge_inbox, (HUGE / 2) as u32 + PAGE))
     });
 
-    // Criterion reports; these fail. A budget nobody notices breaking is not
-    // a budget, which is why `postio-core`'s own benches assert as well as
-    // measure.
-    //
-    // The two pages a user meets by scrolling: the top of the folder, and one
-    // reached from it.
+    // Criterion reports; these fail, so a regression does not go unnoticed.
     let deep = (HUGE / 2) as u32;
     read(&runtime, &huge, huge_inbox, deep); // leaves a boundary at deep + PAGE
     for (what, offset) in [("the first page", 0), ("a page scrolled to", deep + PAGE)] {
@@ -149,17 +92,8 @@ fn bench_message_page(c: &mut Criterion) {
         }
     }
 
-    // And the jump, which now belongs here too. It was left unasserted
-    // because it measured 233ms and could not have met any budget worth
-    // setting; #638 found why — the list indexes did not carry the two
-    // columns every list query filters on, so the OFFSET skip fetched every
-    // row it discarded, and under SQLCipher paid a decrypt for each. With
-    // migration 0005 it measures single-digit milliseconds, so a jump is
-    // held to the same 16ms as every other thing a person does.
-    //
-    // A store of its own, because "cold" here means the boundary cache is
-    // empty rather than the page cache: `LocalStore` remembers where each
-    // page it has read began, and the reads above have populated it.
+    // The jump was unasserted at 233ms until migration 0005 gave the list indexes both filtered
+    // columns (#638). A store of its own, so the boundary cache `LocalStore` keeps is empty.
     let cold = LocalStore::new(&huge_dir);
     let start = Instant::now();
     read(&runtime, &cold, huge_inbox, deep);
@@ -174,19 +108,9 @@ fn bench_message_page(c: &mut Criterion) {
     }
 }
 
-/// Where the time goes on a big mailbox.
-///
-/// Kept because it is the explanation, not just a number. Two things were
-/// linear in the size of the folder when this was written:
-///
-/// * `count(*)` — 12ms, and the message list asked for the total with every
-///   page. Fixed: a single mailbox answers from `mailboxes.total`, which is
-///   maintained against the same predicate the list query uses.
-/// * `page_at(offset)` — 25ms halfway down 100,000 messages, because OFFSET
-///   walks the rows it skips. Fixed for the case that happens: the store
-///   remembers where each page it has read began and seeks from the nearest
-///   one, so scrolling costs 176µs at any depth. A jump to a page nobody has
-///   visited still walks, once.
+/// Two things were linear in folder size: `count(*)` (now answered from `mailboxes.total`) and
+/// `page_at(offset)` (now seeks from the nearest remembered page boundary; a jump to an unvisited
+/// page still walks, once).
 fn bench_where_the_time_goes(c: &mut Criterion) {
     let (_store, inbox, database) = on_runtime(seeded(HUGE));
     let connection = on_runtime(database.connect()).expect("a connection");
@@ -207,24 +131,10 @@ fn bench_where_the_time_goes(c: &mut Criterion) {
     });
 }
 
-/// How many messages a seeded conversation holds.
-///
-/// Four is a real conversation rather than a degenerate one: a thread of one
-/// would make the thread list a message list wearing a hat, and the scoped
-/// subqueries this measures would each touch a single row.
 const PER_THREAD: usize = 4;
 
-/// What a page of the *threaded* list costs (ADR 0015, #306).
-///
-/// The same two claims as the message page, against the same budget, because
-/// a folder that threads is the ordinary folder now — a page of threads is
-/// what scrolling the Inbox asks for.
-///
-/// The shape being measured is the one the ADR chose over view-side
-/// collapse: a window over `threads` on `idx_threads_account_last_at`, with
-/// the folder's contribution as correlated subqueries **per row of the
-/// page**. If those had turned into work proportional to the folder, 100k
-/// would separate from 1k here.
+/// A window over `threads` on `idx_threads_account_last_at` with correlated subqueries per page
+/// row (ADR 0015); 100k must not separate from 1k.
 fn bench_thread_page(c: &mut Criterion) {
     let seeded_threads = |messages: usize| {
         let database = on_runtime(test_support::temp());
@@ -258,8 +168,6 @@ fn bench_thread_page(c: &mut Criterion) {
         b.iter(|| read(&huge, &huge_query))
     });
 
-    // Ten pages in, by cursor — which is how the list actually scrolls, and
-    // the case that has to stay flat.
     let deep = {
         let connection = on_runtime(huge.connect()).expect("a connection");
         let threads = ThreadRepository::new(&connection);
@@ -275,7 +183,6 @@ fn bench_thread_page(c: &mut Criterion) {
         b.iter(|| read(&huge, &deep))
     });
 
-    // Criterion reports; this fails. Same reasoning as the message page.
     for (what, query) in [
         ("the first page", &huge_query),
         ("a page scrolled to", &deep),
@@ -290,13 +197,6 @@ fn bench_thread_page(c: &mut Criterion) {
     }
 }
 
-/// What a page of the *unified* list costs (#184, ADR 0005 Q2).
-///
-/// Two accounts, each with a full mailbox, read as one grouped list. The
-/// page walks `idx_threads_last_at` across both and does bounded per-row
-/// work — a root lookup and two partner probes per emitted group — so the
-/// claim under test is the same as every other page here: the cost is the
-/// page's, not the mailbox's, and it fits the interaction budget.
 fn bench_unified_page(c: &mut Criterion) {
     let database = on_runtime(test_support::temp());
     let first = on_runtime(seed_large(&database, 7, HUGE / 2));
@@ -305,7 +205,6 @@ fn bench_unified_page(c: &mut Criterion) {
         first.account.id,
         PER_THREAD,
     ));
-    // A second account of the same size: the unified list's whole point.
     let second = {
         let connection = on_runtime(database.connect()).expect("a connection");
         let mut account = postio_model::Account::new(
@@ -317,9 +216,8 @@ fn bench_unified_page(c: &mut Criterion) {
         )
         .expect("second account");
         let inbox = on_runtime(test_support::mailbox(&connection, &account, "INBOX"));
-        // A modest second corpus, written directly: seed_large seeds one
-        // account per store, and what this bench needs from the second is
-        // rows to group against, not another 50k of them.
+        // Written directly: seed_large seeds one account per store and the second only needs rows
+        // to group against.
         let messages = postio_storage::repository::MessageRepository::new(&connection);
         on_runtime(connection.execute_batch("BEGIN")).expect("begin");
         for i in 0..2_000u32 {
@@ -351,7 +249,6 @@ fn bench_unified_page(c: &mut Criterion) {
 
     c.bench_function("unified page, two accounts", |b| b.iter(|| read(&query)));
 
-    // Criterion reports; this fails. Same reasoning as the message page.
     read(&query);
     let start = Instant::now();
     read(&query);

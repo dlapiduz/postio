@@ -1,52 +1,7 @@
-//! Turning a command id into the invocation it means, here, now.
+//! Turns a `CommandId` into the `Command` it means for the current selection and cursor.
 //!
-//! # Why this is in `postio-core` and not in a frontend
-//!
-//! A [`CommandId`] says *which verb*. It does not say what the verb acts on,
-//! and the answer depends on what the user is looking at: a verb on a thread
-//! row acts on the conversation ([ADR 0015] Q3), a verb with nothing marked
-//! acts on the cursor row, a verb with rows marked acts on all of them. That
-//! rule is **semantics**, not presentation, and every frontend has to reach
-//! the same answer or `a` means different things on different platforms.
-//!
-//! It used to live in the classic app, coupled to GTK — reaching for widget
-//! focus and walking a `GtkListModel` — which meant the macOS boundary had no
-//! way to turn `"archive"` into a [`Command`] without writing a **second**
-//! mapping. Two mappings would give the two frontends different ideas of what
-//! `archive` does the first time either was edited, and the divergence would
-//! arrive as a bug report about macOS rather than as a failing test (#589,
-//! [ADR 0019]).
-//!
-//! The third frontend is what settles the crate. [ADR 0010]'s headless MCP
-//! server links `postio-session` and no view layer at all, but it does have a
-//! selection — and "a verb on a thread row acts on the conversation" has to
-//! mean the same thing when MCP archives a thread row as when a person
-//! presses `a`. Put the rule in a presentation crate and that frontend either
-//! depends on widgets it has no use for or re-implements the rule, which is
-//! the drift this module exists to prevent arriving through the door nobody
-//! was watching.
-//!
-//! # Rules are shared; facts cross
-//!
-//! The seam is [`Aim`]: a borrowed snapshot of what the user is looking at,
-//! carrying the selection, the cursor, the view's scope, and one
-//! **fact-reporting trait**, [`RowFacts`], which can answer exactly one
-//! question — what kind of row is this id. A frontend supplies facts; it
-//! never supplies behaviour. A trait with a method like
-//! `should_act_on_conversation()` would be this design's failure mode, since
-//! it would hand each frontend a decision to make differently.
-//!
-//! [`RowFacts`] is a trait rather than a snapshot of rows for a reason the
-//! whole product rests on: **a mailbox is never materialised**
-//! (`docs/PRODUCT.md` §18). A seam that could only be implemented by
-//! collecting rows would put that invariant back into each frontend's hands.
-//! The old GTK code walked its entire list model building a `BTreeMap` to
-//! answer questions about a handful of marked ids; a lookup on the
-//! frontend's own index copies nothing.
-//!
-//! [ADR 0010]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0010-mcp-surface.md
-//! [ADR 0015]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0015-threaded-list.md
-//! [ADR 0019]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0019-macos-frontend.md
+//! The rule lives here so GTK, macOS and MCP agree (#589, ADR 0019); frontends supply only row
+//! facts.
 
 use postio_model::{AccountId, ListScope, MessageId, ThreadId};
 
@@ -54,116 +9,50 @@ use crate::bridge::EventSink;
 use crate::command::{Command, CommandId, MessageTarget};
 use crate::state::{Selection, SharedState, ViewScope};
 
-/// What kind of row an id names, as the frontend's list has it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    /// No resident row with that id — paged out, or gone.
-    ///
-    /// Load-bearing rather than an error case. A marked row that is no longer
-    /// resident cannot be checked, and guessing it is a conversation would
-    /// act on mail the user may never have marked (#468).
+    /// Not an error: a marked row no longer resident cannot be checked, and guessing it is a
+    /// conversation would act on unmarked mail (#468).
     Missing,
-    /// A message row: a query view, or a list that is not threaded.
     Message,
-    /// A conversation row, standing for this thread.
     Thread(ThreadId),
 }
 
-/// The only question the shared rules ask a frontend's list.
-///
-/// One method, answering one fact, so there is nothing in it for a frontend
-/// to interpret differently. See the [module docs](self).
 pub trait RowFacts {
-    /// What kind of row `message` names, if the list still holds one.
     fn row_kind(&self, message: MessageId) -> RowKind;
 }
 
-/// What the user is looking at, at the instant a command is issued.
+/// Borrowed: built per keystroke from state the frontend already has.
 ///
-/// Borrowed rather than owned: it is built per keystroke from state the
-/// frontend already has, and copying a selection that may be a predicate over
-/// a whole mailbox to answer one question would be the wrong shape twice.
-///
-/// # Why there is no `context` here
-///
-/// [`Context`](crate::context::Context) decides *which id* a chord resolves
-/// to, which has already happened by the time anything here runs. It plays no
-/// part in deciding what an id acts on: [`refine`]'s rule is narrowed by the
-/// row kinds themselves, so a thread drill-in — whose rows are messages, not
-/// conversations — is excluded by the facts rather than by the context. A
-/// field nothing reads is a field a frontend can set wrongly with nothing to
-/// notice, so it is not here until a rule needs it.
+/// There is no context field: row kinds already exclude thread drill-ins.
 pub struct Aim<'a> {
-    /// The view a whole-view selection would be relative to.
-    ///
-    /// `None` when a whole-view gesture is meaningless here — a thread
-    /// drill-in, where `Ctrl+A` is not a gesture, or Snoozed, which has no
-    /// predicate of its own yet (#493). Built by calling [`view_scope`] on
-    /// whatever `ListScope` the frontend's list is actually showing.
+    /// `None` when a whole-view gesture is meaningless: a thread drill-in, or Snoozed (#493).
     pub scope: Option<ViewScope>,
-    /// What the user has marked.
     pub selection: &'a Selection,
-    /// Where the keyboard is.
-    ///
-    /// Load-bearing: `AppState::resolve` falls back to it when the selection
-    /// is empty, which is the difference between "click a message, press `a`"
-    /// archiving that message and archiving nothing at all.
+    /// `AppState::resolve` falls back to it when the selection is empty.
     pub cursor: Option<MessageId>,
-    /// The frontend's list, as a source of facts about rows.
     pub rows: &'a dyn RowFacts,
 }
 
-/// The app-state scope a list's `ListScope` stands for, when a whole-view
-/// gesture means anything there.
-///
-/// `None` for a thread drill-in: a conversation is a *destination for a
-/// verb*, not a view a whole-view selection is relative to — `Ctrl+A` inside
-/// a thread is not a gesture, and `MessageTarget::Thread` is how a thread
-/// gets acted on instead.
-///
-/// Also `None` for Snoozed (#493), for the unified per-account view and for
-/// the cross-account one:
-/// unlike Flagged, nothing here needs `Ctrl+A` to select every snoozed or
-/// every account-wide message at once yet, so it is not worth a
-/// `MessageSet` predicate of its own until something does. A person can
-/// still act on individual rows in either view — this only means a
-/// whole-view bulk gesture there is a rejection rather than a no-op that
-/// silently claims to have done something.
-///
-/// The one rule every frontend has to reach the same answer to (#670): moved
-/// here from the classic app once `postio-model::ListScope` gave `postio-core`
-/// something to apply the rule to. `ViewScope`'s smaller variant set stays —
-/// see `docs/archive/engineering-notes.md`'s "Six types are called *Scope*" — this
-/// is the function that produces it.
+/// `None` where a whole-view gesture is meaningless: a thread drill-in, Snoozed (#493), or an
+/// aggregate view with nothing reachable. A rejection beats a no-op that claims to have acted.
 pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope> {
     match scope {
         ListScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
         ListScope::Flagged(account) => Some(ViewScope::Flagged(account)),
-        // The aggregate is the one scope that needs something from the
-        // caller, and `reachable` is deliberately not optional: a frontend
-        // that has not decided which accounts its list could show has not
-        // decided what `Ctrl+A` there means either. Empty is an answer --
-        // nothing is reachable, so there is no view for a selection to be
-        // relative to, and the verb rejects as it did before (#811).
+        // `reachable` is required: a frontend that has not decided which accounts its list shows
+        // has
+        // no whole-view meaning. Empty means no view to be relative to (#811).
         ListScope::Unified if reachable.is_empty() => None,
         ListScope::Unified => Some(ViewScope::Unified {
             accounts: reachable.to_vec(),
         }),
-        // The Outbox joins Snoozed for the same reason: nothing needs
-        // `Ctrl+A` over "everything on its way" yet. It is also the scope
-        // where a whole-view bulk gesture is least obviously wanted -- the
-        // verbs it would reach are cancel and discard, and doing either to
-        // every message in flight at once is not a thing to make easy by
-        // accident. A rejection, not a no-op that claims to have acted.
-        //
-        // Focus's inbox is a predicate over what Focus lists, over the
-        // accounts it could show, for the aggregate's reason (T167).
+        // Outbox: cancel or discard over everything in flight must not be one key away.
+        // Focus's inbox is a predicate over the accounts it could show, like the aggregate.
         ListScope::Focus(postio_model::FocusScope::Inbox) if reachable.is_empty() => None,
         ListScope::Focus(postio_model::FocusScope::Inbox) => Some(ViewScope::Focus {
             accounts: reachable.to_vec(),
         }),
-        // The has-action filter is the markers' few rows, and nothing needs
-        // `X` over them yet: a rejection rather than a guess.
         ListScope::Account(_)
         | ListScope::Snoozed(_)
         | ListScope::Outbox(_)
@@ -176,48 +65,18 @@ pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope
     }
 }
 
-/// The invocation `id` means, given what the user is looking at.
-///
-/// [`Command::default_for`] says what the verb is; [`refine`] says what it
-/// acts on. Both frontends call this and neither adds to it.
 pub fn command_for(id: CommandId, aim: &Aim<'_>) -> Command {
     refine(Command::default_for(id), aim)
 }
 
-/// A verb on a thread row acts on the conversation ([ADR 0015] Q3).
-///
-/// A folder shows one row per thread, and "the row" is what a key means: `a`
-/// archives the conversation, not the one message the row happens to be drawn
-/// from. Acting on "the row" and acting on "one message of six" cannot both
-/// be what `a` means, and the row is what the user is looking at.
-///
-/// The conditions are all narrowing:
-///
-/// * The verb must still be **aimed at the selection**. A hover action or a
-///   drop names its own rows and app state is told to take those at their
-///   word; re-aiming one would be second-guessing the user's point.
-/// * The rows it aims at must **be** thread rows. In a query view they are
-///   not, and the verb goes on meaning what it always meant.
-///
-/// With rows marked it is the same rule over the marked set: a selection of
-/// thread rows is a selection of *conversations*. That is the half #307 left
-/// and #468 was — a thread row's id is its newest message, so the verbs took
-/// a marked set at its word and archived six representatives out of six
-/// conversations, leaving the rest of every one of them in the folder after a
-/// gesture that looked like it worked.
-///
-/// [`MessageTarget::Threads`] carries it from here; `Actions::aim` expands
-/// the members store-side, which is where [ADR 0015] Q3 says the expansion
-/// belongs. A frontend never enumerates a conversation to act on it — it
-/// names the conversations and stops.
-///
-/// [ADR 0015]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0015-threaded-list.md
+/// A verb on a thread row acts on the conversation, not the one message the row is drawn from
+/// (ADR 0015 Q3). Only a verb still aimed at the selection is re-aimed, and only over thread rows;
+/// a marked set of thread rows becomes `MessageTarget::Threads` (#468).
 pub fn refine(command: Command, aim: &Aim<'_>) -> Command {
     if !matches!(command.target(), Some(MessageTarget::Selection)) {
         return command;
     }
     match aim.selection {
-        // Nothing marked: the gesture is about the cursor row.
         Selection::These(marked) if marked.is_empty() => {
             let Some(cursor) = aim.cursor else {
                 return command;
@@ -227,32 +86,18 @@ pub fn refine(command: Command, aim: &Aim<'_>) -> Command {
                 RowKind::Message | RowKind::Missing => command,
             }
         }
-        // Rows marked: every one of them is a conversation (#468).
         Selection::These(marked) => match threads_of(aim.rows, marked) {
             Some(threads) => command.with_target(MessageTarget::Threads(threads)),
-            // A set that is not all thread rows — a query view, or a folder
-            // mid-switch whose rows have not been replaced yet. Leaving it as
-            // `Selection` is today's meaning, and acting on the messages
-            // named is never *wrong*, only narrower than a conversation.
+            // Not all thread rows (query view, or a folder mid-switch): keep `Selection`, narrower
+            // than a conversation but never wrong.
             None => command,
         },
-        // `Ctrl+A` is a predicate over the view, not a list of rows, and its
-        // exceptions are still message ids. Excepting a conversation rather
-        // than its representative is the rest of ADR 0015 Q3 and wants
-        // `MessageSet` to grow a members-of-these-threads variant, which is
-        // its own change — see #468.
+        // Exceptions are message ids; excepting a conversation needs a `MessageSet` variant (#468).
         Selection::Everything { .. } => command,
     }
 }
 
-/// The conversations `marked` names, or `None` if any of them is not a thread
-/// row.
-///
-/// All-or-nothing on purpose. A half-converted target would archive some rows
-/// as conversations and some as single messages from one keystroke, which is
-/// a rule nobody could hold in their head — and in a threaded folder every
-/// row is a thread row, so the mixed case is a view that is not threaded at
-/// all rather than a set worth splitting.
+/// All-or-nothing: a mixed target would archive some rows as conversations and some as messages.
 fn threads_of(rows: &dyn RowFacts, marked: &[MessageId]) -> Option<Vec<ThreadId>> {
     let mut threads = Vec::with_capacity(marked.len());
     for id in marked {
@@ -266,43 +111,20 @@ fn threads_of(rows: &dyn RowFacts, marked: &[MessageId]) -> Option<Vec<ThreadId>
     Some(threads)
 }
 
-/// Point app state at what the user is looking at.
-///
-/// Every message verb defaults to [`MessageTarget::Selection`], and
-/// `AppState::resolve` is what turns that into rows — but the *selection*
-/// lives in the frontend's list: it is what the user built with `x`,
-/// Ctrl-click and `Ctrl+A`, and the list is the only thing that knows it.
-///
-/// So app state is brought into step with the view in the instant before a
-/// command is sent, rather than being kept in step by a signal. Two reasons.
-/// A pull cannot drift: there is no ordering in which the bus resolves
-/// against a selection one gesture out of date. And a push would have to fire
-/// on every `j`, which is the interaction that happens most and the one with
-/// the tightest budget.
-///
-/// The events this produces have nowhere to go — the view is where they came
-/// from, and telling it back would be a round trip to nowhere — so `quiet` is
-/// a sink whose reader was dropped on purpose.
+/// Pulls the frontend's selection into app state just before a command is sent, not pushed on
+/// every `j`. The events go to `quiet`, a sink whose reader was dropped.
 pub fn mirror(state: &SharedState, quiet: &EventSink, aim: &Aim<'_>) {
     state.update(quiet, |app| {
         let mut events = Vec::new();
         if let Some(scope) = aim.scope.clone() {
-            // Opening a different view drops the selection with it, on both
-            // sides — the list does the same. So this goes first, or it
-            // would throw away the selection just mirrored.
-            //
-            // The *scope*, not the mailbox it may or may not name: a smart
-            // folder has no mailbox, and telling app state only about
-            // mailboxes is what left `Ctrl+A` in Flagged with nothing to be
-            // relative to (#52).
+            // Opening a view drops the selection, so this goes first. Scope, not mailbox: a smart
+            // folder has no mailbox (#52).
             events.extend(app.open_view(scope));
         }
         match aim.selection {
             Selection::These(messages) => events.extend(app.select(messages.clone(), aim.cursor)),
-            // "Everything" stays a predicate the whole way: the exceptions
-            // are re-applied one by one rather than the predicate being
-            // resolved into the ids it stands for, because resolving it is
-            // exactly the mailbox-sized read it exists to avoid.
+            // Re-apply exceptions one by one: resolving the predicate to ids is the mailbox-sized
+            // read.
             Selection::Everything { except } => {
                 events.extend(app.select_all());
                 for message in except {
@@ -315,64 +137,25 @@ pub fn mirror(state: &SharedState, quiet: &EventSink, aim: &Aim<'_>) {
     });
 }
 
-/// Whether this invocation is the command bus's business.
-///
-/// The bus is one consumer among several — the composer answers reply and
-/// compose, the config module answers `edit_config`, and the window answers
-/// `Esc` itself when there is something to close — and it sees every gesture,
-/// because the frontend's action seam carries whole invocations. Sending it
-/// commands it does not handle would answer a stray `Esc` with "`back` is not
-/// wired up in this build".
-///
-/// `wired` comes from [`Dispatcher::wired`], so this cannot drift from what
-/// the bus actually answers.
-///
-/// [`Dispatcher::wired`]: crate::dispatch::Dispatcher::wired
+/// Gestures other consumers answer (composer, window `Esc`) must not reach the bus and draw a
+/// "not wired up" rejection.
 pub fn is_wired(wired: &[CommandId], command: &Command) -> bool {
     wired.contains(&command.id())
 }
 
-/// One gesture, and what it has to mean — a row of the conformance table.
-///
-/// See [`conformance_cases`].
 #[derive(Clone, Debug)]
 pub struct Conformance {
-    /// What was invoked.
     pub id: CommandId,
-    /// What the user had marked at the time.
     pub selection: Selection,
-    /// Where the keyboard was.
     pub cursor: Option<MessageId>,
-    /// The rows the frontend's list is holding, and what kind each one is.
-    /// A frontend builds its *own* row source from these, which is the
-    /// point — the table is not a mock, it is the fixture both sources are
-    /// filled from.
+    /// Each frontend fills its own row source from these.
     pub rows: Vec<(MessageId, RowKind)>,
-    /// The command that must come out.
     pub expected: Command,
-    /// Why this row is in the table, for a failure message that explains
-    /// itself rather than printing two enums.
     pub because: &'static str,
 }
 
-/// The aiming rules, as a table both frontends run.
-///
-/// [`command_for`] is one implementation, so a test of it proves the rule
-/// once — but the rule is only half of what a frontend does. The other half
-/// is the adapter: reading a selection off a widget, a cursor off a list,
-/// and a row kind out of whatever model that frontend keeps. Two adapters
-/// can both call the same correct function and still disagree, because they
-/// disagree about what they *hand* it. That is what this table is for.
-///
-/// Each frontend fills its own row source from [`Conformance::rows`], builds
-/// its own [`Aim`], and asserts the command that comes out. Same rows, same
-/// gesture, same command, on both sides of the FFI (#589, #721).
-///
-/// The cases are the ones where a frontend could plausibly differ: what a
-/// verb on a thread row means, what it means when the row is a message,
-/// what happens when the cursor points at a row nobody is holding any more,
-/// and what a whole-view selection does to a verb that would otherwise be
-/// narrowed.
+/// Each frontend builds its own `Aim` from `rows` and asserts `expected`, so adapters cannot
+/// disagree on what they hand `command_for` (#589, #721).
 pub fn conformance_cases() -> Vec<Conformance> {
     let thread_row = MessageId::new(1);
     let thread = ThreadId::new(11);
@@ -467,9 +250,6 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// A list that answers from a map, standing in for a frontend's own
-    /// index. No display, no toolkit, and it runs on every host — which is
-    /// the point of the rule living here.
     #[derive(Default)]
     struct FakeRows(BTreeMap<i64, RowKind>);
 
@@ -500,8 +280,6 @@ mod tests {
         MessageId::new(id)
     }
 
-    /// The five shapes a list can be showing, and whether a whole-view
-    /// gesture means anything in each.
     #[test]
     fn only_a_folder_and_flagged_are_something_ctrl_a_can_be_relative_to() {
         use postio_model::{AccountId, MailboxId};
@@ -531,8 +309,6 @@ mod tests {
         );
     }
 
-    /// #811: the aggregate is the sixth shape, and the only one whose scope
-    /// carries something the list has to tell it.
     #[test]
     fn the_unified_view_is_relative_to_the_accounts_it_could_actually_show() {
         use postio_model::AccountId;
@@ -550,9 +326,6 @@ mod tests {
         );
     }
 
-    /// T167: Focus's inbox is its own scope, not the unified inbox's, so
-    /// a whole-view selection there is about what Focus lists; the
-    /// has-action filter's few rows are not something `X` is aimed at yet.
     #[test]
     fn focus_s_inbox_is_a_scope_of_its_own_over_the_accounts_it_could_show() {
         use postio_model::{AccountId, FocusScope};
@@ -622,7 +395,6 @@ mod tests {
         );
     }
 
-    /// #468's rule, and the reason `RowKind::Missing` exists at all.
     #[test]
     fn a_marked_row_that_is_no_longer_resident_stops_the_whole_conversion() {
         let rows = FakeRows::threads(&[(7, 3)]);
@@ -666,8 +438,6 @@ mod tests {
         );
     }
 
-    /// A hover action or a drop names its own rows; re-aiming one would be
-    /// second-guessing where the user pointed.
     #[test]
     fn a_command_that_already_names_its_rows_is_left_alone() {
         let rows = FakeRows::threads(&[(7, 3)]);
@@ -705,8 +475,6 @@ mod tests {
         assert!(!is_wired(&wired, &Command::Reply { message: None }));
     }
 
-    /// What an unopenable store leaves behind. Every key would otherwise
-    /// answer with a rejection it can do nothing about.
     #[test]
     fn a_bus_with_nothing_wired_is_told_nothing() {
         assert!(!is_wired(
@@ -716,13 +484,6 @@ mod tests {
             }
         ));
     }
-
-    // -- what the mirror puts into app state ----------------------------
-    //
-    // Moved here from the classic app with the rule itself: these assert
-    // against `SharedState::resolve`, which is core, and they were only
-    // ever in a GTK crate because GTK was what called them. They now run
-    // with no display, on any host.
 
     use crate::state::Resolved;
     use postio_model::MailboxId;
@@ -752,8 +513,7 @@ mod tests {
         state
     }
 
-    /// The daily case, and the one that fails silently: click a message —
-    /// which *clears* the selection in this list — and press `a`.
+    /// Clicking a message clears the selection; `a` must still act on the cursor.
     #[test]
     fn an_empty_selection_aims_a_verb_at_the_cursor() {
         let state = mirrored(
@@ -803,8 +563,6 @@ mod tests {
         );
     }
 
-    /// An action landing on mail the user cannot see is the failure this
-    /// prevents; the list drops its selection on the same boundary.
     #[test]
     fn changing_mailbox_does_not_carry_the_old_selection_over() {
         let state = SharedState::default();
@@ -840,10 +598,6 @@ mod tests {
             None,
         );
     }
-    /// The table frontends run against their own adapters is only worth
-    /// anything if the rule itself satisfies it first: every row, aimed
-    /// through [`command_for`] with a list filled from the row's own rows,
-    /// yields the command the row says it must.
     #[test]
     fn the_conformance_table_is_what_command_for_does() {
         let cases = conformance_cases();

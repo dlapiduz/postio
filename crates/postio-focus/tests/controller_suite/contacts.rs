@@ -1,9 +1,3 @@
-//! The Contacts view, from the controller's side (specs/011-focus-contacts
-//! S7, handoff screens 01 to 03): `g c` opens it in the list's place, the
-//! counts, the pages and the card are read and stamped, the cursor and the
-//! tabs and the filter are the controller's, and Escape unwinds them in
-//! order.
-
 use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -111,7 +105,6 @@ fn card(id: i64, name: &str) -> ContactCardRead {
     }
 }
 
-/// `g c`, the overview answered, page 0 read: the view as a person sees it.
 fn open(focus: &mut FocusController) -> Vec<Effect> {
     let effects = run(focus, CommandId::OpenContacts);
     let [(ticket, Request::ContactsOverview)] = asks(&effects)[..] else {
@@ -355,12 +348,10 @@ fn the_filter_lists_what_it_finds_and_escape_unwinds_filter_then_view() {
     assert_eq!(focus.contacts_row(0).unwrap().name, "Ben Adeyemi");
     assert_eq!(focus.contacts_cursor(), Some(0));
 
-    // Escape clears the filter first, and the full list is back.
     let effects = run(&mut focus, CommandId::Back);
     let view = frame(&effects).expect("redrawn");
     assert_eq!((view.filter.as_str(), view.total), ("", 3));
     assert_eq!(focus.key_context(), KeyContext::Contacts);
-    // Then it leaves.
     let effects = run(&mut focus, CommandId::Back);
     assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Contacts)));
     assert!(shown(&effects).contains(&Intent::KeyboardHome));
@@ -450,8 +441,6 @@ fn a_change_to_the_people_reads_the_counts_again_and_linux_opens_the_same_view()
             .any(|(_, request)| matches!(request, Request::ContactsOverview))
     );
 
-    // The same rules on Linux (specs/011-focus-contacts S13): its policy
-    // differs in geometry, not in what `g c` does.
     let mut linux = FocusController::new(Policy::for_platform(Platform::Freedesktop));
     let _ = linux.handle(Input::Keymap(postio_core::Keymap::resolve_on(
         &postio_config::KeyBindings::default(),
@@ -478,8 +467,6 @@ fn other_keys_do_nothing_under_the_view() {
     let _ = Command::Undo;
 }
 
-/// Unsubscribe on a list's card unsubscribes through the list's newest
-/// message.
 #[test]
 fn unsubscribe_on_a_lists_card_acts_on_its_newest_message() {
     let mut focus = mac();

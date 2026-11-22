@@ -1,16 +1,7 @@
-//! The reader costs no web process, and what it holds does not grow with
-//! the messages viewed (spec 006 FR-027, SC-006).
-//!
-//! The reader draws with `postio-render` in this process, so moving through
-//! ten conversations must start none -- counted as this process's
-//! descendants named `WebKitWebProces` (Linux cuts `comm` to fifteen
-//! characters). The composer is still WebKit, and Focus warms it on an idle
-//! turn after the first frame (`window.warm_composer()`), so the count is
-//! taken against a baseline after that, with a control proving the counter
-//! can see a process.
-//!
-//! Each move is also held to its render counts, and after the tenth the
-//! tile cache and the live snapshots are what they were after the first.
+//! The reader draws in this process, so moving through ten conversations must start no web process
+//! (counted as descendants named `WebKitWebProces`: Linux cuts `comm` to fifteen characters). The
+//! composer is still WebKit and warms on an idle turn, so the count is taken against a baseline
+//! after that.
 
 use std::time::Duration;
 
@@ -18,7 +9,6 @@ use gtk::glib;
 
 use crate::support::{self, Fixture};
 
-/// This process's WebKit web processes, by pid.
 fn web_processes() -> Vec<i32> {
     let me = std::process::id() as i32;
     let Ok(entries) = std::fs::read_dir("/proc") else {
@@ -34,14 +24,12 @@ fn web_processes() -> Vec<i32> {
         .collect()
 }
 
-/// Whether `pid`'s parent chain reaches `ancestor`: WebKit puts its
-/// processes under a `bwrap` sandbox, so they are grandchildren.
+/// WebKit puts its processes under a `bwrap` sandbox, so they are grandchildren.
 fn descends_from(mut pid: i32, ancestor: i32) -> bool {
     for _ in 0..16 {
         let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
             return false;
         };
-        // The parent is the field after the parenthesised name.
         let Some(parent) = stat
             .rsplit_once(')')
             .and_then(|(_, rest)| rest.split_whitespace().nth(1))
@@ -60,10 +48,6 @@ fn descends_from(mut pid: i32, ancestor: i32) -> bool {
     false
 }
 
-/// Turn the loop for `duration`, spending all of it.
-///
-/// POSTIO-FIXED-DEADLINE: gives a process that should not start, and a
-/// render that should not happen, every chance to.
 async fn spend(duration: Duration) {
     let deadline = std::time::Instant::now() + duration;
     while std::time::Instant::now() < deadline {
@@ -99,7 +83,6 @@ pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
             "the fixture needs eleven conversations to move through"
         );
 
-        // The reader on screen and the snapshot it shows.
         let generation = |window: &postio_gtk::window::FocusWindow| {
             window
                 .reading()
@@ -107,7 +90,6 @@ pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
                 .map(|document| document.generation)
         };
 
-        // The first conversation, and the baseline.
         support::keys(&window, &["j"]);
         support::deliver(&window, "Return");
         assert!(
@@ -115,8 +97,6 @@ pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
             "the first conversation never drew"
         );
         spend(Duration::from_millis(300)).await;
-        // The composer's warm-up is the one WebKit process Focus starts
-        // unasked; it runs on an idle turn after the first frame.
         window.warm_composer();
         spend(Duration::from_secs(2)).await;
         let baseline = web_processes();
@@ -126,9 +106,8 @@ pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
              see, so a zero below would prove nothing"
         );
         let reading = window.reading().expect("the message is open");
-        // The tiles are rasterised when the view draws, which a loaded
-        // machine reaches after the snapshot: a baseline read before then is
-        // 0, and every conversation after it looks like growth.
+        // The tiles are rasterised when the view draws, which a loaded machine reaches after the
+        // snapshot: a baseline read earlier is 0 and every conversation looks like growth.
         assert!(
             crate::settle_until(async || reading.reader().view().tile_bytes() > 0).await,
             "the first conversation never rasterised a tile"
@@ -136,7 +115,6 @@ pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
         let tiles_after_one = reading.reader().view().tile_bytes();
         let live_after_one = postio_render::live_documents();
 
-        // Nine more, each one render.
         for step in 2..=10 {
             let before = generation(&window);
             let (renders, counts) = postio_ui::test_support::snapshot_counts();
@@ -148,13 +126,11 @@ pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
                 .await,
                 "conversation {step} never drew"
             );
-            // Anything a move does late -- a body, a refill -- has its turn.
             spend(Duration::from_millis(300)).await;
             let (renders_after, counts_after) = postio_ui::test_support::snapshot_counts();
-            // Focus clears the dialog to a placeholder the moment a move is
-            // made (`Absent::Partial`) and draws the message when its body
-            // lands: one snapshot of the message, plus the placeholder's when
-            // a frame was drawn in between. Never more, however many moves.
+            // Focus clears the dialog to a placeholder on a move (`Absent::Partial`) and draws the
+            // message when its body lands:
+            // one snapshot, plus the placeholder's if a frame was drawn between. Never more.
             let renders_taken = renders_after - renders;
             assert!(
                 (1..=2).contains(&renders_taken),

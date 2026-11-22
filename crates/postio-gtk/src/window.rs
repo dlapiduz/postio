@@ -1,9 +1,7 @@
-//! Focus's one window: what it says while the store opens, the sentence when
-//! it cannot, and the inbox once it has.
-//!
-//! The window comes first and the store behind it (#1114's rule): a person sees a window at once, and it says what it is
-//! waiting for only once the wait is worth mentioning
-//! ([`postio_ui::list_state::OPENING_THRESHOLD`]).
+//! Focus's one window: what it says while the store opens, the sentence when it cannot, and the
+//! inbox once it has.
+//! The window comes first and the store behind it: it says what it waits for only once the wait is
+//! worth mentioning.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -28,32 +26,20 @@ use postio_focus::{Route, SurfaceKind};
 use postio_widgets::list_model::WindowedModel;
 use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 
-/// Where a chosen link or part is opened.
 type Launcher = Rc<dyn Fn(&str)>;
-/// Asks where to save, and answers with the place chosen -- `None` when the
-/// person dismissed it (T240).
 type FilePicker = Rc<dyn Fn(crate::chooser::SavePick, Box<dyn FnOnce(Option<std::path::PathBuf>)>)>;
 
-/// Where `EditConfig` opens `config.toml`, when a test says.
 type Editor = Rc<dyn Fn(&std::path::Path)>;
 
-/// What the page offering a fresh store says (T215): what happened, why
-/// trying again would not help, what a fresh store keeps and what it does
-/// not, and that the old one is set aside rather than deleted.
-/// The window's pages, by name.
-/// What a window with nothing saved opens at.
 const DEFAULT_GEOMETRY: postio_widgets::state::Geometry =
     postio_widgets::state::Geometry::new(1440, 900);
-/// Put on the window while the list does not hold the keyboard (the composer
-/// or a dialog does): the cursor row then wears a neutral mark, so the accent
-/// ring is on screen once, where the keyboard is.
+/// Put on the window while the list does not hold the keyboard: the cursor row then wears a neutral
+/// mark, so the accent ring is on screen once, where the keyboard is.
 const KEYBOARD_AWAY: &str = "focus-keyboard-away";
 const BLANK: &str = "blank";
 const OPENING: &str = "opening";
 const UNAVAILABLE: &str = "unavailable";
 const INBOX: &str = "inbox";
-/// What decides a notification for new mail: the mailbox, the messages
-/// an arrival names, and where the person is looking.
 pub type Notifier = Rc<
     dyn Fn(
         postio_model::MailboxId,
@@ -64,35 +50,23 @@ pub type Notifier = Rc<
     >,
 >;
 
-/// Where a test takes notifications instead of the desktop.
 type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
 
-/// The stop-digesting confirmation (US10 scenario 5).
 const STOP_DIALOG: &str = "focus-stop-digesting";
 
-/// The sweep's confirmation (FR-118).
 const SWEEP_DIALOG: &str = "focus-sweep";
 
-/// The digest rules list's page (`g r`, T139).
 const RULES: &str = "rules";
 
-/// Removing a digest rule's confirmation (FR-126).
 const REMOVE_RULE_DIALOG: &str = "focus-remove-rule";
 
-/// The Filtered view's page (screen 21).
 const FILTERED: &str = "filtered";
-/// The sheet after importing or exporting contacts.
 const CONTACTS_IO_DIALOG: &str = "focus-contacts-io";
 
-/// The Contacts view, in the inbox's body (specs/011-focus-contacts,
-/// screens 01 to 03), and the mail it stands in for.
 const CONTACTS: &str = "contacts";
-/// The body's page for spec 010's search results.
 const RESULTS: &str = "results";
 const MAIL: &str = "mail";
-/// The inbox's list, and the empty inbox in its place.
 const LIST: &str = "list";
-/// The key map dialog's name, so it can be told from another dialog.
 const KEY_MAP: &str = "focus-key-map";
 const EMPTY: &str = "empty";
 
@@ -101,208 +75,101 @@ mod imp {
 
     pub struct FocusWindow {
         pub pages: gtk::Stack,
-        /// The pages, with what lies over the whole window: the command bar.
         pub stage: gtk::Overlay,
         pub opening: adw::StatusPage,
         pub unavailable: adw::StatusPage,
         pub retry: gtk::Button,
-        /// The bar over every page before the inbox's own: the window's
-        /// close button, with nothing to act on yet (T216). The inbox's top
-        /// bar takes over once there is mail.
         pub bar_before_mail: gtk::WindowHandle,
         pub inbox: gtk::Box,
-        /// Under the top bar: the mail (the strip, the list and the reading
-        /// pane) or the Contacts view in its place.
         pub body: gtk::Stack,
-        /// The mail's half of [`Self::body`].
         pub mail: gtk::Box,
-        /// The undo toast, and the overlay it appears over: the shared one
-        /// both desktop apps say "Archived 3 messages" with.
         pub toast: postio_widgets::widgets::toast::Toast,
-        /// The toast on screen, until it is dismissed -- by its timeout, its
-        /// button, or a newer one.
         pub on_screen: RefCell<Option<adw::Toast>>,
         pub pane: RefCell<Option<ListPane>>,
         pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
-        /// What the store is being waited on for, while it is.
         pub waiting: Cell<Option<Waiting>>,
-        /// When the wait began, for the threshold below which nothing is
-        /// said.
         pub waiting_since: Cell<Option<std::time::Instant>>,
-        /// What the one button on the page that says why there is no mail
-        /// does: try again, or start a fresh store (T215).
         pub on_retry: RefCell<Option<Rc<dyn Fn()>>>,
-        /// The sentence that page says, as given: the page shows it as
-        /// escaped markup.
         pub refusal: RefCell<String>,
-        /// The keymap in force, as every surface's key hints read it.
         pub keymap: RefCell<Keymap>,
-        /// Keys to commands, for Focus's commands alone (`crate::keys`).
         pub resolver: RefCell<Option<Resolver>>,
-        /// What `e` would archive: not the cursor, which is GTK's
-        /// selection model on the list (constitution II). A mirror of the
-        /// controller's selection, written only when its `Selection` intent
-        /// is applied (ADR 0045).
+        /// Not the cursor, which is GTK's selection model on the list: a mirror of the controller's
+        /// selection, written only when its `Selection` intent is applied (ADR 0045).
         pub picked: SelectionState,
         pub bulk: RefCell<Option<Rc<Bulk>>>,
-        /// The bar under the list that says what the keys act on.
         pub scope_footer: RefCell<Option<Rc<crate::scope_footer::ScopeFooter>>>,
-        /// The thread menu and the outline hung from the message window's
-        /// Thread button (spec 013 US5).
-        /// The words of the search the results show: what a window opened
-        /// from it looks for in each message.
         pub search_words: RefCell<String>,
-        /// The message the composer answers, as the controller named it: a
-        /// reply to the latest is not the message the cursor is on.
         pub compose_message: Cell<Option<MessageId>>,
-        /// Which message of its thread the reply answers, from 1.
         pub replying_to: Cell<Option<u32>>,
-        /// Which way a find ran out of matches last, until the next message
-        /// is showing.
         pub match_from_end: Cell<bool>,
         pub thread_menu: RefCell<Option<Rc<crate::thread_popovers::ThreadMenu>>>,
         pub outline: RefCell<Option<Rc<crate::thread_popovers::OutlinePopover>>>,
-        /// The host's view of this window's aim: a whole-view selection is
-        /// a predicate the host resolves, and it reads it from here.
         pub state: RefCell<Option<SharedState>>,
-        /// The enabled accounts, the aggregate a whole-view selection spans.
         pub accounts: RefCell<Vec<AccountId>>,
-        /// Set while the window itself puts the cursor on a list's first
-        /// row: that opens nothing, even with the reading pane beside.
+        /// Set while the window itself puts the cursor on a list's first row: that opens nothing,
+        /// even with the reading pane beside.
         pub placing_cursor: Cell<bool>,
-        /// Where each account stands with its server, as sync has said.
         pub trackers: RefCell<postio_ui::status::Trackers>,
-        /// The accounts sync has spoken about. Only those: a tracker says
-        /// `Offline` for an account it has heard nothing of, which is not
-        /// the same as the machine having no network.
+        /// A tracker says `Offline` for an account it has heard nothing of, which is not the same
+        /// as the machine having no network.
         pub tracked: RefCell<Vec<AccountId>>,
-        /// What the sign-in banner names for each account.
         pub facts: RefCell<Vec<postio_ui::focus_state::AccountFacts>>,
-        /// When mail last finished arriving, in any account.
         pub last_synced: Cell<Option<chrono::DateTime<chrono::Utc>>>,
-        /// The banner slot under the header strip.
         pub state_banner: RefCell<Option<Rc<crate::banner::StateBanner>>>,
-        /// `[focus]`: whether filtering is on, and the digest rules.
         pub focus_config: RefCell<postio_config::FocusConfig>,
-        /// The list, or the empty inbox in its place.
         pub list_or_empty: RefCell<Option<gtk::Stack>>,
-        /// The empty inbox's page.
         pub empty: RefCell<Option<Rc<crate::empty::EmptyInbox>>>,
-        /// The open-email dialog, built on the first open and reused.
         pub reading: RefCell<Option<Rc<crate::open::OpenMessage>>>,
-        /// The pane beside the list that an open message is drawn in when
-        /// the person reads beside the list (T232).
         pub reading_pane: RefCell<Option<Rc<crate::reading_pane::ReadingPane>>>,
-        /// The list and the reading pane, side by side.
         pub split: RefCell<Option<gtk::Box>>,
-        /// Where an open message is drawn now: the setting, as far as the
-        /// window's width and the page on screen allow.
         pub placement: Cell<postio_ui::focus_dialog::Placement>,
-        /// Where a chosen link or part is opened: the desktop, unless a
-        /// test has said otherwise.
         pub launcher: RefCell<Option<super::Launcher>>,
         pub file_picker: RefCell<Option<super::FilePicker>>,
-        /// What the open-with chooser on screen offers.
         pub choices: RefCell<Vec<crate::chooser::Choice>>,
-        /// Where remote images are fetched: the host's runtime.
         pub runtime: RefCell<Option<tokio::runtime::Handle>>,
-        /// The command bar, over the list.
         pub bar: RefCell<Option<Rc<crate::bar::Bar>>>,
-        /// The pinned saved searches, in order: each name and its query.
         pub saved: RefCell<Vec<postio_ui::saved_search::SavedSearch>>,
-        /// The folders popover, built the first time it opens.
         pub places: RefCell<Option<Rc<crate::places::Places>>>,
-        /// The last key press `handle_key` was given, by its event time and
-        /// key: so a press the window's controller and a dialog's both see
-        /// is handled once (`keys_under_dialogs`).
+        /// So a press the window's controller and a dialog's both see is handled once
+        /// (`keys_under_dialogs`).
         pub last_key: Cell<Option<(u32, u32)>>,
-        /// The dialogs over the window, held so its changes keep being
-        /// heard: libadwaita hands out a model of its own each time.
+        /// Held so its changes keep being heard: libadwaita hands out a model of its own each time.
         pub dialogs: RefCell<Option<gtk::gio::ListModel>>,
-        /// The snooze picker, built the first time `b` opens it.
         pub snooze: RefCell<Option<Rc<WhenPicker>>>,
-        /// The row's right-click menu (T199), built on its first use.
         pub row_menu: RefCell<Option<Rc<crate::row_menu::RowMenu>>>,
-        /// Whether the open row menu is for its row alone, outside the
-        /// selection: a verb then lets the selection go first (T199).
         pub row_menu_alone: Cell<bool>,
-        /// Commands `act` had no arm for, since a test last took them: the
-        /// seam `registry_parity` reads to prove every offered command is
-        /// answered.
         pub unanswered: RefCell<Vec<CommandId>>,
-        /// The remind picker, built the first time `h` opens it.
         pub remind: RefCell<Option<Rc<WhenPicker>>>,
-        /// The label picker, built the first time `l` opens it.
         pub labels: RefCell<Option<Rc<crate::label_picker::LabelPicker>>>,
-        /// Decides a notification for new mail: the host's (FR-153).
         pub notifier: RefCell<Option<super::Notifier>>,
-        /// Where a test takes notifications instead of the desktop.
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
-        /// Where `config.toml` is: what `Ctrl+S` writes a saved search to.
         pub config_path: RefCell<Option<std::path::PathBuf>>,
-        /// The start being measured, from `startup::time` until the frame
-        /// with mail in it closes it.
         pub timeline: RefCell<Option<postio_widgets::startup::Timeline>>,
-        /// The digest rules list, built the first time `g r` opens it.
         pub rules_view: RefCell<Option<Rc<crate::rules::RulesView>>>,
-        /// The digest rule dialog, built the first time `d` opens it.
         pub rule_dialog: RefCell<Option<Rc<crate::rule_dialog::RuleDialog>>>,
-        /// The digest window, built the first time a digest opens.
         pub digest_window: RefCell<Option<Rc<crate::digest::DigestWindow>>>,
-        /// The Filtered view, built the first time `g f` opens it.
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
-        /// The Contacts view, built the first time `g c` opens it.
         pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
-        /// Spec 010's results view, made the first time a search shows it.
         pub results: RefCell<Option<Rc<crate::results::ResultsPane>>>,
-        /// What the import or export sheet says, while it is up.
         pub contacts_io: RefCell<Option<postio_ui::contacts_io::IoSheetView>>,
-        /// The contact popover, while one is up, and what it says.
         pub contact_popover:
             RefCell<Option<(gtk::Widget, postio_ui::contact_popover::PopoverView)>>,
-        /// A `postio://` link that arrived before the store was open.
         pub pending_link: RefCell<Option<String>>,
-        /// A `mailto:` link that arrived before the composer was mounted.
         pub pending_mailto: RefCell<Option<postio_model::mailto::Mailto>>,
-        /// The move picker, built the first time `v` opens it.
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
-        /// The move picker the controller drives, for one message alone.
         pub driven_picker: RefCell<Option<Rc<crate::controller_picker::ControllerPicker>>>,
-        /// The composer, in its dialog (US3), once an account is known.
         pub compose: RefCell<Option<Rc<crate::compose::Compose>>>,
-        /// Whether the composer's editing surface should start as soon as
-        /// the composer is mounted: asked for before an account was known.
         pub warm: Cell<bool>,
-        /// The capture sheet (US15), built the first time `T` or `N` opens
-        /// it.
         pub capture: RefCell<Option<Rc<crate::capture::CaptureSheet>>>,
-        /// The surfaces the controller was last told are over the list.
         pub surfaces: RefCell<Vec<postio_focus::SurfaceKind>>,
-        /// The message the controller was last told the dialog shows.
         pub told_shown: Cell<Option<MessageId>>,
-        /// The add-account form's dialog, while it is open (T171, T172):
-        /// Focus's first run, and what `c` and `CommandId::AddAccount` offer
-        /// while there is no account to write from.
         pub adding_account: RefCell<Option<adw::Dialog>>,
-        /// Brings every enabled account's connection up, once there is one
-        /// to bring up: the host's `start_syncing`, set from
-        /// `startup::adopt_at` (ADR 0041). Called again once an account is
-        /// added after a first run that started with none (T171).
         pub start_syncing: RefCell<Option<Rc<dyn Fn()>>>,
-        /// Settings (T234), built on its first open and kept
-        /// (`crate::settings`).
         pub settings: RefCell<Option<Rc<crate::settings::Settings>>>,
-        /// What Settings asks of the process that opened the store, set by
-        /// `startup::adopt_at`.
         pub settings_seams: RefCell<Option<crate::settings::Seams>>,
-        /// Where `EditConfig` opens `config.toml`: the person's editor,
-        /// unless a test has said otherwise (T235).
         pub editor: RefCell<Option<super::Editor>>,
-        /// `[compose]` as the file last said: where a signature goes (T235).
         pub compose_config: RefCell<postio_config::ComposeConfig>,
-        /// `[reader]`'s zoom as the file last said, once it has said one
-        /// (T235).
         pub zoom: Cell<Option<u16>>,
     }
 
@@ -421,7 +288,6 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// Focus's one window.
     pub struct FocusWindow(ObjectSubclass<imp::FocusWindow>)
         @extends adw::ApplicationWindow, gtk::ApplicationWindow, gtk::Window, gtk::Widget,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Native,
@@ -429,11 +295,7 @@ glib::wrapper! {
 }
 
 impl FocusWindow {
-    /// A window, for `application` when there is one.
-    ///
-    /// It opens at the size and maximised state it was closed at, from
-    /// `$XDG_STATE_HOME/postio/window.ini`; a file that is missing or cannot
-    /// be read means 1440 by 900 (row 10, T246).
+    /// A missing or unreadable state file means 1440 by 900.
     pub fn new(application: Option<&adw::Application>) -> Self {
         let saved = postio_widgets::state::Geometry::load(DEFAULT_GEOMETRY);
         glib::Object::builder()
@@ -445,9 +307,6 @@ impl FocusWindow {
             .build()
     }
 
-    /// Remember this window's size and maximised state for the next start.
-    /// Best-effort: a state file that cannot be written is one line in the
-    /// log and nothing more.
     fn save_geometry(&self) {
         let (width, height) = self.default_size();
         let saved = postio_widgets::state::Geometry {
@@ -460,8 +319,6 @@ impl FocusWindow {
         }
     }
 
-    /// Keep the visible control's icon, tooltip and accessible name in
-    /// step with maximize requests from the button or the window manager.
     fn follow_maximized(&self, button: &gtk::Button) {
         fn update(window: &FocusWindow, button: &gtk::Button) {
             let (icon, label) = if window.is_maximized() {
@@ -499,9 +356,8 @@ impl FocusWindow {
         imp.unavailable.set_child(Some(&imp.retry));
         imp.inbox.add_css_class("focus-inbox");
 
-        // Nothing at all until the wait is worth saying: a window that flashes
-        // "Opening your mailbox" for the 150 ms a healthy start takes is the
-        // flicker the budget forbids (`postio_ui::list_state`).
+        // Nothing until the wait is worth saying: a window that flashes "Opening your mailbox" for
+        // the 150 ms a healthy start takes is the flicker the budget forbids.
         imp.pages
             .add_named(&gtk::Box::new(gtk::Orientation::Vertical, 0), Some(BLANK));
         imp.pages.add_named(&imp.opening, Some(OPENING));
@@ -509,11 +365,8 @@ impl FocusWindow {
         imp.pages.add_named(&imp.inbox, Some(INBOX));
         imp.pages.set_visible_child_name(BLANK);
 
-        // Before there is mail there is still a window to close: the same
-        // close button the inbox's top bar ends with, in the same bar, and
-        // the same Quit it runs (T216). Until this, nothing before the inbox
-        // drew one, and the page saying the store would not open was a
-        // window nobody could close.
+        // Before there is mail there is still a window to close: the same close button the inbox's
+        // top bar ends with, running the same Quit.
         let close = postio_widgets::widgets::close_button();
         close.add_css_class("focus-close");
         close.add_css_class("circular");
@@ -549,17 +402,14 @@ impl FocusWindow {
             window.save_geometry();
             glib::Propagation::Proceed
         });
-        // Leaving the inbox's page for Filtered or the digest rules takes the
-        // reading pane with it; coming back brings it (T232).
         imp.pages.connect_visible_child_notify(glib::clone!(
             #[weak(rename_to = window)]
             self,
             move |_| window.place_reading()
         ));
 
-        // Capture, not bubble: a single-key binding has to be seen before the
-        // focused widget consumes it, and whether it should is the
-        // resolver's decision.
+        // Capture, not bubble: a single-key binding has to be seen before the focused widget
+        // consumes it, and whether it should is the resolver's decision.
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed(glib::clone!(
@@ -593,8 +443,6 @@ impl FocusWindow {
         ));
         self.add_controller(clicks);
 
-        // What the main menu's items run: a command by its id, through the
-        // same `act` a key press reaches, and About.
         let run = gio::SimpleAction::new("run", Some(glib::VariantTy::STRING));
         run.connect_activate(glib::clone!(
             #[weak(rename_to = window)]
@@ -609,7 +457,6 @@ impl FocusWindow {
             }
         ));
         self.add_action(&run);
-        // What the toast's Undo names: the same undo Ctrl+Z reaches.
         let undo = gio::SimpleAction::new("undo", None);
         undo.connect_activate(glib::clone!(
             #[weak(rename_to = window)]
@@ -617,8 +464,6 @@ impl FocusWindow {
             move |_, _| window.act(CommandId::Undo)
         ));
         self.add_action(&undo);
-        // The main menu's "Read beside the list": `F8` for the pointer, a
-        // check item whose state follows `[focus] reading` (T232).
         let reading = gio::SimpleAction::new_stateful(
             crate::chrome::READING_PANE_ACTION.trim_start_matches("win."),
             None,
@@ -639,18 +484,11 @@ impl FocusWindow {
         self.add_action(&about);
     }
 
-    /// Take the keyboard off a widget that leaves the window (T200).
-    ///
-    /// GTK delivers a key from the window's focus up through its parents, and
-    /// leaves the focus where it was when its widget is removed: a row that
-    /// went with its message, or a list that redrew. The key then starts at a
-    /// widget with no parents and never reaches the window, so `j`, `z` and
-    /// `Esc` all do nothing until a click. When the widget holding the
-    /// keyboard leaves, the window has it instead, which is where every key
-    /// goes when nothing does.
+    /// GTK leaves the focus where it was when its widget is removed: the key then starts at a
+    /// widget with no parents and never reaches
+    /// the window, so `j`, `z` and `Esc` do nothing until a click. When the widget holding the
+    /// keyboard leaves, the window takes it.
     fn drop_focus_that_leaves(&self) {
-        // The widget being watched, and the watch: one at a time, moved with
-        // the focus.
         let watch: std::rc::Rc<std::cell::RefCell<Option<(gtk::Widget, glib::SignalHandlerId)>>> =
             std::rc::Rc::default();
         self.connect_focus_widget_notify(move |window| {
@@ -681,18 +519,10 @@ impl FocusWindow {
         });
     }
 
-    /// Give every dialog over the window the window's keyboard (T195).
-    ///
-    /// GTK runs a key press through the widgets from the focus up to the
-    /// innermost dialog presented over the window and stops there, so the
-    /// window's own controller never sees a key while a dialog is up: `j`
-    /// and `k` did nothing in the open message, and the arrows fell through
-    /// to GTK's focus moves, which scrolled the column to whichever control
-    /// took the focus (T196). Each dialog gets a controller of its own that
-    /// asks the window, as the window's would have. The composer's too: its
-    /// host's `handle_key` takes nothing, so before T200 Esc, Ctrl+Return and
-    /// the composer's other keys reached nothing while it was open; the
-    /// window's `handle_key` has a composer branch for exactly them.
+    /// GTK runs a key press from the focus up to the innermost dialog and stops there, so the
+    /// window's controller never sees a key while a dialog is up.
+    /// Each dialog gets a controller that asks the window, the composer's too: its host's
+    /// `handle_key` takes nothing.
     fn keys_under_dialogs(&self) {
         let dialogs = self.dialogs();
         dialogs.connect_items_changed(glib::clone!(
@@ -710,8 +540,6 @@ impl FocusWindow {
         self.imp().dialogs.replace(Some(dialogs));
     }
 
-    /// `dialog`'s key controller, once: what [`Self::keys_under_dialogs`]
-    /// adds.
     fn give_keys(&self, dialog: &adw::Dialog) {
         const KEYS: &str = "focus-window-keys";
         let controllers = dialog.observe_controllers();
@@ -756,8 +584,6 @@ impl FocusWindow {
         about.present(Some(self));
     }
 
-    /// Take `keymap` as the keys in force: the resolver is rebuilt for
-    /// Focus's commands, and what could not be bound is reported.
     pub fn set_keymap(&self, keymap: Keymap) {
         let (resolver, problems) = crate::keys::resolver(&keymap);
         for problem in &problems {
@@ -770,7 +596,6 @@ impl FocusWindow {
         }
         if let Some(pane) = imp.pane.borrow().as_ref() {
             pane.set_keymap(keymap.clone());
-            // The empty page's keycaps read the same keymap.
             pane.feed()
                 .input(postio_focus::Input::Keymap(keymap.clone()));
         }
@@ -813,24 +638,19 @@ impl FocusWindow {
             settings.set_keymap(&keymap, &problems);
         }
         imp.keymap.replace(keymap);
-        // Every cap was drawn again: its control's shortcut follows it.
         crate::a11y::teach_shortcuts(self);
-        // An open key map is drawn from the keymap: draw it again.
         if let Some(open) = self.key_map() {
             open.force_close();
             self.show_key_map();
         }
     }
 
-    /// The keymap in force.
     pub fn keymap(&self) -> Keymap {
         self.imp().keymap.borrow().clone()
     }
 
-    /// A key while there is no inbox yet -- the store is opening, or would
-    /// not open: Quit, which is all there is to do, from the keymap the
-    /// inbox will use (T216). The rest are the page's own, its button's
-    /// Return among them.
+    /// Quit is all there is to do before there is an inbox; the rest are the page's own, its
+    /// button's Return among them.
     fn key_before_mail(&self, chord: &postio_ui::keymap::Chord) -> glib::Propagation {
         let (mut resolver, _) = crate::keys::resolver(&self.keymap());
         match resolver.press(chord, KeyContext::List, false, std::time::Instant::now()) {
@@ -842,18 +662,13 @@ impl FocusWindow {
         }
     }
 
-    /// Deliver one key press to the resolver, and act on what it means.
-    ///
-    /// Public because it is the whole keyboard path in one call: the
-    /// controller on this window forwards to it, and a test presses a key
-    /// through it without synthesizing a GDK event, which GTK4 gives no
-    /// supported way to do.
+    /// The whole keyboard path in one call: a test presses a key through it without synthesizing a
+    /// GDK event, which GTK4 gives no supported way to do.
     pub fn handle_key(&self, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
-        // A picker at the row has the keyboard: its keys are the picker
-        // context's, and what it does not use goes on to its field.
-        // The row menu has the keyboard while it is up (T199): Escape
-        // closes it, a verb's key runs that verb from it, and the arrows and
-        // Enter walk and press its items as GTK does.
+        // A picker at the row has the keyboard: its keys are the picker context's. The row menu has
+        // it while up: Escape closes it,
+        // a verb's key runs that verb, and the arrows and Enter walk and press its items as GTK
+        // does.
         if let Some(menu) = self.row_menu().filter(|menu| menu.is_open()) {
             let command = postio_widgets::keys::chord(key, state).and_then(|chord| {
                 let mut resolver = self.imp().resolver.borrow_mut();
@@ -880,17 +695,16 @@ impl FocusWindow {
                 glib::Propagation::Proceed
             };
         }
-        // A Keyboard row in Settings waiting for its key takes every key,
-        // Escape included, until it has one (T234).
+        // A Keyboard row in Settings waiting for its key takes every key, Escape included, until it
+        // has one.
         if self.settings_takes_every_key() {
             return glib::Propagation::Proceed;
         }
         let Some(chord) = postio_widgets::keys::chord(key, state) else {
             return glib::Propagation::Proceed;
         };
-        // The Files tab's arrows walk its grid two ways (spec 010 FR-031),
-        // where elsewhere in the results they are the list's `Down`, `Up`
-        // and `Right` to open.
+        // The Files tab's arrows walk its grid two ways, where elsewhere in the results they are
+        // the list's `Down`, `Up` and `Right` to open.
         if state.is_empty()
             && self.top_surface().is_none()
             && self
@@ -915,18 +729,14 @@ impl FocusWindow {
             Outcome::Command(id) => id.parse::<CommandId>().ok(),
             _ => None,
         };
-        // The surfaces over the list are the controller's table
-        // (`postio_focus::Route`): what it says is its own, it runs; what
-        // it gives the toolkit, the widget under the keyboard takes.
+        // The surfaces over the list are the controller's table (`postio_focus::Route`): what it
+        // says is its own, it runs; what it gives the toolkit, the widget under the keyboard takes.
         let top = self.top_surface();
-        // The composer's dialog has the keyboard for the composer's own
-        // commands: Send, Esc keeping the draft, and the rest (US3).
         if top == Some(SurfaceKind::Composer)
             && let Some(compose) = self.compose()
         {
             return match outcome {
                 Outcome::Command(id) => match id.parse::<CommandId>() {
-                    // What a thread adds to the composer is the controller's.
                     Ok(
                         id @ (CommandId::ReplyToLatest
                         | CommandId::ShowNewer
@@ -948,21 +758,19 @@ impl FocusWindow {
                 Outcome::Unhandled => glib::Propagation::Proceed,
             };
         }
-        // The arrows and the paging keys read the message: they are the
-        // message's own, though the list's `Down` and `Up` are the same
-        // chords, and the list is not what is being read.
+        // The arrows and paging keys read the message, though the list's `Down` and `Up` are the
+        // same chords.
         if top == Some(SurfaceKind::Message) && self.scroll_reading(key, state) {
             return glib::Propagation::Stop;
         }
-        // Reading and writing a file are the window's, whatever surface is on
-        // top: the controller has no file to give (specs/011 S11).
+        // Reading and writing a file are the window's whatever surface is on top: the controller
+        // has no file to give.
         if let Some(command @ (CommandId::ContactsImport | CommandId::ContactsExport)) = command {
             self.act(command);
             return glib::Propagation::Stop;
         }
-        // Filtered's rows are walked, selected and opened by the
-        // controller's Filtered surface, which holds its own cursor: the
-        // inbox's list behind it is not what `x` or `j` mean here.
+        // Filtered's rows are walked, selected and opened by the controller's Filtered surface,
+        // which holds its own cursor: the inbox's list behind it is not what `x` or `j` mean here.
         if let Some(command) = command
             && self.filtered().is_some()
             && filtered_owns(command)
@@ -982,11 +790,9 @@ impl FocusWindow {
             }
         }
         match top {
-            // A message open over the list, in its dialog or beside it.
             Some(SurfaceKind::Message) if self.visible_dialog().is_some() => {
-                // What `reading_key` has no arm for goes to the window as it
-                // does beside the list, so a command bound in the open
-                // message is never dropped for want of a case here.
+                // What `reading_key` has no arm for goes to the window, so a command bound in the
+                // open message is never dropped.
                 let reached = self.reading_key(outcome.clone());
                 if reached == glib::Propagation::Proceed
                     && let Some(command) = command
@@ -999,9 +805,8 @@ impl FocusWindow {
                 }
                 return reached;
             }
-            // A message open beside the list has the open message's keys, as
-            // the dialog does; the list keeps the rest, `/` and `x` among them
-            // (T232).
+            // A message open beside the list has the open message's keys; the list keeps the rest,
+            // `/` and `x` among them.
             Some(SurfaceKind::Message) => {
                 if let Some(command) = command
                     && self.reading_key(outcome.clone()) == glib::Propagation::Proceed
@@ -1013,9 +818,8 @@ impl FocusWindow {
             Some(SurfaceKind::Digest) => return self.digest_key(outcome),
             Some(SurfaceKind::Capture) => return self.capture_key(outcome),
             Some(SurfaceKind::Settings) => return self.settings_key(outcome),
-            // A dialog over the window has the keyboard: only the keys that
-            // close it are the window's, and the rest go on to the dialog
-            // rather than moving the list underneath.
+            // A dialog over the window has the keyboard: only the keys that close it are the
+            // window's, the rest go on to the dialog rather than moving the list underneath.
             Some(SurfaceKind::KeyMap | SurfaceKind::Dialog) => {
                 return glib::Propagation::Proceed;
             }
@@ -1041,10 +845,7 @@ impl FocusWindow {
         }
     }
 
-    /// The surfaces over the list as the window holds them now, bottom
-    /// first: Filtered and the bar, a message beside the list, then the
-    /// composer or the dialog on top. Only the top dialog is known, so a
-    /// dialog under it is told again when it is the top.
+    /// Only the top dialog is known, so a dialog under it is told again when it is the top.
     fn surfaces_now(&self) -> Vec<SurfaceKind> {
         let mut now = Vec::new();
         if self.filtered().is_some() {
@@ -1056,7 +857,6 @@ impl FocusWindow {
         if self.reading_beside() {
             now.push(SurfaceKind::Message);
         }
-        // The popovers from the message window's Thread button are over it.
         let over_message = self.reading().is_some_and(|reading| reading.is_open());
         if over_message {
             if !now.contains(&SurfaceKind::Message) {
@@ -1082,10 +882,8 @@ impl FocusWindow {
             }
         }
         if self.compose().is_some_and(|compose| compose.is_showing()) {
-            // On Linux the composer stacks over the open message, which is
-            // still open under it and comes back when it goes: told closed,
-            // a hit's message would send the controller back to the search
-            // it came from (slice 8).
+            // On Linux the composer stacks over the open message, still open under it: told closed,
+            // a hit's message would send the controller back to the search it came from.
             if !self.reading_beside() && self.reading().is_some_and(|reading| reading.is_open()) {
                 now.push(SurfaceKind::Message);
             }
@@ -1109,7 +907,6 @@ impl FocusWindow {
         now
     }
 
-    /// Tell the controller what opened and closed since it was last told.
     fn sync_surfaces(&self) {
         let Some(pane) = self.pane() else {
             return;
@@ -1122,8 +919,6 @@ impl FocusWindow {
         for kind in now.iter().filter(|kind| !before.contains(kind)) {
             pane.feed().input(postio_focus::Input::SurfaceOpened(*kind));
         }
-        // A hit or a digest's email is on no cursor row: the controller is
-        // told which message the dialog shows, so a verb aims at it.
         let shown = self
             .reading()
             .filter(|reading| reading.is_open())
@@ -1133,21 +928,18 @@ impl FocusWindow {
         }
     }
 
-    /// The surface on top of the list, by the controller's stack.
     fn top_surface(&self) -> Option<SurfaceKind> {
         self.sync_surfaces();
         self.pane().and_then(|pane| pane.feed().top_surface())
     }
 
-    /// Who runs `command` with what is over the list now.
     fn route(&self, command: CommandId) -> Route {
         self.pane()
             .map_or(Route::List, |pane| pane.feed().route(command))
     }
 
-    /// Run a command the controller owns, and draw what it says. The open
-    /// message's More menu and find are said first: Back closes them before
-    /// it closes the message.
+    /// The open message's More menu and find are said first: Back closes them before it closes the
+    /// message.
     fn run_in_controller(&self, command: CommandId) {
         let Some(pane) = self.pane() else {
             return;
@@ -1163,9 +955,6 @@ impl FocusWindow {
         pane.feed().command(command);
     }
 
-    /// Close `kind`, as the controller says. It has taken the key map, a
-    /// dialog and the open message off its stack itself; the rest are told
-    /// it by `sync_surfaces` once they are gone.
     fn close_surface(&self, kind: SurfaceKind) {
         match kind {
             SurfaceKind::Message => {
@@ -1215,18 +1004,15 @@ impl FocusWindow {
         }
     }
 
-    /// The composer opens to answer `message`, as the controller says: a
-    /// reply, a reply to all or a forward, of that message and not the one
-    /// the cursor is on.
+    /// Of that message and not the one the cursor is on.
     fn begin_answer(&self, kind: postio_focus::ComposerKind, message: Option<MessageId>) {
         use postio_focus::ComposerKind;
         let Some(compose) = self.compose() else {
             return;
         };
         self.imp().compose_message.set(message);
-        // The controller put the composer on its stack itself: saying it
-        // opened again would begin a second composition and forget the
-        // chooser and the bar it is about to draw.
+        // The controller put the composer on its stack itself: saying it opened again would begin a
+        // second composition and forget the chooser and the bar it is about to draw.
         {
             let mut surfaces = self.imp().surfaces.borrow_mut();
             if !surfaces.contains(&SurfaceKind::Composer) {
@@ -1247,8 +1033,6 @@ impl FocusWindow {
         );
     }
 
-    /// Read where `message` is in its thread, from 1, for the observation of
-    /// which message the reply answers.
     fn note_replying_to(&self, message: Option<MessageId>) {
         let Some(message) = message else {
             return;
@@ -1279,7 +1063,6 @@ impl FocusWindow {
         });
     }
 
-    /// The messages newer than the one answered, read-only in the composer.
     fn show_newer(&self, ids: Option<&[MessageId]>) {
         let Some(compose) = self.compose() else {
             return;
@@ -1314,7 +1097,6 @@ impl FocusWindow {
         });
     }
 
-    /// Open the thread menu from the Thread button, drawn from `view`.
     fn show_thread_menu(&self, view: &postio_ui::thread_outline::ThreadMenuView) {
         let Some(reading) = self.reading() else {
             return;
@@ -1348,10 +1130,7 @@ impl FocusWindow {
             .push(SurfaceKind::ThreadMenu);
     }
 
-    /// Draw the outline, whole, hung from the Thread button.
     fn show_outline(&self, view: &postio_ui::thread_outline::OutlineView) {
-        // Over a message it hangs from that window's Thread button; from the
-        // list, with no message open, under the row the thread is on.
         let (parent, rect): (gtk::Widget, Option<gdk::Rectangle>) =
             match self.reading().filter(|reading| reading.is_open()) {
                 Some(reading) => (reading.thread_button().upcast(), None),
@@ -1394,8 +1173,6 @@ impl FocusWindow {
         }
     }
 
-    /// A popover from the Thread button has closed, by whatever way: the
-    /// controller is told, once.
     fn thread_surface_closed(&self, kind: SurfaceKind) {
         let known = {
             let mut surfaces = self.imp().surfaces.borrow_mut();
@@ -1406,12 +1183,9 @@ impl FocusWindow {
         if known && let Some(pane) = self.pane() {
             pane.feed().input(postio_focus::Input::SurfaceClosed(kind));
         }
-        // The keyboard was in the popover; the message under it is where it
-        // goes, so the next key reads the message instead of nothing.
-        // GTK hands the focus back to the button the popover hung from as
-        // it closes, and does so after this signal: the message takes it
-        // once the loop is idle, and again a beat later if the toolkit was
-        // slower than that.
+        // GTK hands the focus back to the button the popover hung from after this signal closes it:
+        // the message takes it once the loop is idle, and again a beat later if the toolkit was
+        // slower.
         if known && kind == SurfaceKind::Outline {
             for delay in [0u64, 60] {
                 glib::timeout_add_local_once(
@@ -1432,7 +1206,6 @@ impl FocusWindow {
         }
     }
 
-    /// The open message does what the controller says.
     fn show_reader_verb(&self, verb: postio_focus::ReaderVerb) {
         use postio_focus::ReaderVerb;
         let Some(reading) = self.reading() else {
@@ -1444,8 +1217,6 @@ impl FocusWindow {
             ReaderVerb::FindInMessage => reading.reader().find_in_message(),
             ReaderVerb::FindNext => reading.reader().find_step(true),
             ReaderVerb::FindPrevious => reading.reader().find_step(false),
-            // The next or previous match of the search in this message; when
-            // there is none, the controller goes on to the next matched one.
             ReaderVerb::NextMatch | ReaderVerb::PrevMatch => {
                 let forward = matches!(verb, ReaderVerb::NextMatch);
                 if !reading.reader().view().find_walk(forward) {
@@ -1456,7 +1227,6 @@ impl FocusWindow {
                     }
                 }
             }
-            // App colours or the original, for this message (T213).
             ReaderVerb::SwitchTreatment => {
                 reading.reader().switch_treatment();
             }
@@ -1466,10 +1236,8 @@ impl FocusWindow {
         }
     }
 
-    /// Whether the list is where the keyboard is: false while the composer,
-    /// in the reading pane or a window of its own, or a dialog holds it, and
-    /// while a field is being typed in -- the bar's, the dropdown's, a
-    /// popover's -- where one accent ring is the field's (#2081).
+    /// False too while a field is being typed in (the bar's, the dropdown's, a popover's), where
+    /// one accent ring is the field's (#2081).
     fn list_holds_keyboard(&self) -> bool {
         self.visible_dialog().is_none()
             && !self
@@ -1478,8 +1246,6 @@ impl FocusWindow {
             && !self.is_typing()
     }
 
-    /// Draw the cursor row quietly while the list does not hold the keyboard
-    /// (the `focus-keyboard-away` class the style sheet reads).
     fn refresh_cursor_ring(&self) {
         if self.list_holds_keyboard() {
             self.remove_css_class(KEYBOARD_AWAY);
@@ -1488,9 +1254,7 @@ impl FocusWindow {
         }
     }
 
-    /// Keep that class true as the keyboard moves. The keyboard going into
-    /// the composer or a dialog moves GTK's focus, and a composer's showing
-    /// settles a moment after the focus does, so the class is read again
+    /// The composer's showing settles a moment after the focus does, so the class is read again
     /// once the main loop is idle.
     fn keep_cursor_ring_where_the_keyboard_is(&self) {
         let settle = |window: &Self| {
@@ -1505,18 +1269,13 @@ impl FocusWindow {
         self.connect_visible_dialog_notify(move |window| settle(window));
     }
 
-    /// Whether the keyboard is on text entry: what the resolver is told, so
-    /// a letter types rather than runs. A storyboard's observation reads the
-    /// same answer.
     fn is_typing(&self) -> bool {
         gtk::prelude::GtkWindowExt::focus(self)
             .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
             || self.composer_body_has_keyboard()
     }
 
-    /// Which surface owns the keyboard: the controller's answer from the
-    /// surface on top of the list. Settings' account list is the one
-    /// context only this window can see (T258).
+    /// Settings' account list is the one context only this window can see.
     pub fn key_context(&self) -> KeyContext {
         self.sync_surfaces();
         let context = self
@@ -1525,8 +1284,6 @@ impl FocusWindow {
         if context != KeyContext::Composer && self.settings_on_an_account() {
             return KeyContext::Accounts;
         }
-        // The forward chooser's number keys are its own while it holds the
-        // keyboard, and the composer's other keys still work from it.
         if context == KeyContext::Composer
             && self
                 .compose()
@@ -1537,7 +1294,6 @@ impl FocusWindow {
         context
     }
 
-    /// A key while the capture sheet is up: its own commands, and `Esc`.
     fn capture_key(&self, outcome: Outcome) -> glib::Propagation {
         match outcome {
             Outcome::Command(id) => match (id.parse::<CommandId>(), self.capture()) {
@@ -1552,13 +1308,10 @@ impl FocusWindow {
         }
     }
 
-    /// The capture sheet, once `T` or `N` has opened it.
     pub fn capture(&self) -> Option<Rc<crate::capture::CaptureSheet>> {
         self.imp().capture.borrow().clone()
     }
 
-    /// `T` or `N`: the capture sheet for the message aimed at, as a task or
-    /// a note (US15). With no vault configured, it says so instead.
     fn open_capture(&self, mode: crate::capture::Mode) {
         let imp = self.imp();
         if imp.focus_config.borrow().vault.is_none() {
@@ -1589,8 +1342,6 @@ impl FocusWindow {
         crate::motion::keep_to_budget(sheet.dialog());
     }
 
-    /// What a capture is made from: the message open over the list when one
-    /// is, the cursor's row otherwise, with its marker's sentence and day.
     fn capture_source(&self) -> Option<postio_ui::capture::Source> {
         let message = self.aimed_message()?;
         let title = self
@@ -1605,9 +1356,6 @@ impl FocusWindow {
         )
     }
 
-    /// Scroll the open message for `key`, when it is one that scrolls:
-    /// the arrows a line, `Page_Up`/`Page_Down` and `space` a screen, `Home`
-    /// and `End` to the ends. Whether it did.
     fn scroll_reading(&self, key: gdk::Key, state: gdk::ModifierType) -> bool {
         let Some(reading) = self.reading() else {
             return false;
@@ -1633,9 +1381,6 @@ impl FocusWindow {
         true
     }
 
-    /// A key while a message is open over the list (US2 scenarios 1-3):
-    /// `Esc` closes it and leaves the list as it was, `j`/`k` step the list
-    /// and move its cursor behind the dialog, and `p`/`n` step the thread.
     fn reading_key(&self, outcome: Outcome) -> glib::Propagation {
         let Outcome::Command(id) = outcome else {
             return match outcome {
@@ -1647,14 +1392,9 @@ impl FocusWindow {
             return glib::Propagation::Proceed;
         };
         match id.parse::<CommandId>() {
-            // Back, find, More, the treatment, the source and the thread's
-            // steps are the controller's (`Route::Controller`). A message
-            // found by search walks the results it came from, the
-            // controller's too (slice 8); one opened from the list walks
-            // the list.
-            // The controller steps the list and shows the row it lands on.
-            // A message the window showed itself is no list row of the
-            // controller's, so the cursor's row is asked for after.
+            // Back, find, More, the treatment, the source and the thread's steps are the
+            // controller's. A message the window showed itself
+            // is no list row of the controller's, so the cursor's row is asked for after.
             Ok(
                 id @ (CommandId::NextMessage
                 | CommandId::PrevMessage
@@ -1670,7 +1410,6 @@ impl FocusWindow {
                 }
             }
 
-            // the list (T242), and the banner's buttons (T247).
             Ok(
                 id @ (CommandId::ZoomIn
                 | CommandId::ZoomOut
@@ -1680,28 +1419,20 @@ impl FocusWindow {
                 | CommandId::Unsubscribe),
             ) => self.act(id),
             Ok(CommandId::DismissMarker) => self.dismiss_marker(),
-            // The open message moves between the dialog and the pane (T232).
             Ok(CommandId::ToggleReadingPane) => self.toggle_reading_pane(),
-            // Edit: `Return` on a draft on its way or stopped, already open,
-            // writes it (T239).
             Ok(CommandId::OpenMessage) if self.offered_on_open_draft(CommandId::OpenMessage) => {
                 self.act(CommandId::OpenMessage);
             }
-            // `Return` on the row already open beside the list: it is open.
             Ok(CommandId::OpenMessage) if reading.in_pane() => self.open_message(),
             Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(None),
-            // What settles a send (T239).
             Ok(id @ (CommandId::CancelSend | CommandId::RetrySend | CommandId::MarkSent)) => {
                 self.act(id);
             }
-            // Read or unread, set by the person: the read clock stops, so
-            // a message kept unread stays unread while it is open (T237).
+            // The read clock stops: a message kept unread stays unread while it is open.
             Ok(CommandId::ToggleRead) => {
                 reading.cancel_dwell();
                 self.act(CommandId::ToggleRead);
             }
-            // Screen 04's toolbar verbs and the Invite card's answers, for
-            // the message on screen (US3, US8).
             Ok(
                 id @ (CommandId::Reply
                 | CommandId::ReplyAll
@@ -1710,12 +1441,8 @@ impl FocusWindow {
                 | CommandId::AcceptInvite
                 | CommandId::DeclineInvite),
             ) => self.act(id),
-            // The message on screen going away (archive, delete, waking one
-            // from Snoozed) is the controller's: it aims at the message
-            // alone and steps on to the row that takes its place once the
-            // list lets it go (T190, T238).
-            // The action row's other verbs act on the message on screen:
-            // their pickers open over it, and Undo takes back the last act.
+            // The message on screen going away is the controller's: it aims at the message alone
+            // and steps on to the row that takes its place once the list lets it go.
             Ok(
                 id @ (CommandId::AddLabel
                 | CommandId::Move
@@ -1730,16 +1457,13 @@ impl FocusWindow {
         glib::Propagation::Stop
     }
 
-    /// Whether the composer's body has the keyboard: a `WebView`, which no
-    /// type test says is being typed in (#602).
+    /// A `WebView`, which no type test says is being typed in (#602).
     pub(crate) fn composer_body_has_keyboard(&self) -> bool {
         self.compose().is_some_and(|compose| {
             compose.composer().focused_field() == Some(postio_widgets::composer::Field::Body)
         })
     }
 
-    /// The command `key` runs in `context`, resolved against the keys in
-    /// force, without running it: what a detached composer's window asks.
     pub fn command_in(
         &self,
         key: gdk::Key,
@@ -1758,12 +1482,10 @@ impl FocusWindow {
         }
     }
 
-    /// The composer and its dialog, once an account is known.
     fn compose(&self) -> Option<Rc<crate::compose::Compose>> {
         self.imp().compose.borrow().clone()
     }
 
-    /// Mount the composer for `account`, writing through `client`.
     fn mount_compose(&self, client: &Client, account: AccountId) {
         if self.imp().compose.borrow().is_some() {
             return;
@@ -1805,7 +1527,6 @@ impl FocusWindow {
         if self.imp().warm.get() {
             compose.warm();
         }
-        // Where its signature goes, as `[compose]` says (T235).
         crate::settings::place_signatures(compose.composer(), &self.imp().compose_config.borrow());
         if let Some(pane) = self.imp().reading_pane.borrow().as_ref()
             && self.imp().placement.get() == postio_ui::focus_dialog::Placement::Pane
@@ -1818,10 +1539,6 @@ impl FocusWindow {
         }
     }
 
-    /// Refresh which accounts are enabled, mount the composer for the
-    /// first one once there is one, and offer the first-run form
-    /// (T171) while there still is none -- once when the inbox is shown,
-    /// and again once an account has just been saved.
     fn refresh_accounts(&self, client: Client) {
         let window = self.downgrade();
         glib::spawn_future_local(async move {
@@ -1839,7 +1556,6 @@ impl FocusWindow {
                 .imp()
                 .accounts
                 .replace(enabled.iter().map(|account| account.id).collect());
-            // Who "you" is, for the participants a thread row names.
             if let Some(pane) = window.pane() {
                 pane.set_identities(
                     accounts
@@ -1851,13 +1567,11 @@ impl FocusWindow {
                         .collect(),
                 );
             }
-            // What a select-all reaches.
             if let Some(pane) = window.pane() {
                 pane.feed().input(postio_focus::Input::Accounts(
                     enabled.iter().map(|account| account.id).collect(),
                 ));
             }
-            // A new message is written from the first account.
             if let Some(account) = enabled.first() {
                 window.mount_compose(&client, account.id);
             }
@@ -1884,14 +1598,10 @@ impl FocusWindow {
                     })
                     .collect(),
             );
-            // No account at all: Focus's first run (T171), or a `c` or
-            // `CommandId::AddAccount` while none has been added yet.
             if enabled.is_empty() {
                 window.open_add_account();
                 return;
             }
-            // When mail last arrived, from before this run: the newest
-            // folder's last completed sync.
             let mut last = None;
             for account in &enabled {
                 use postio_model::listing::MailStore as _;
@@ -1914,19 +1624,9 @@ impl FocusWindow {
         });
     }
 
-    /// The add-account form over this window (T171, T172,
-    /// `CommandId::AddAccount`): the shared form both desktop apps drive
-    /// (`postio_widgets::present::onboarding::add_account`, T165). Saving
-    /// refreshes the accounts Focus knows -- mounting the composer among
-    /// them -- and brings every account's connection up, in that order.
-    ///
-    /// With no account at all this is the first run: once the account is
-    /// saved the form asks how much history to sync (#876, T243) before the
-    /// connection comes up. An account added
-    /// to a window that has one joins a window already syncing.
-    ///
-    /// A second call while the form is already open reuses it rather than
-    /// stacking a second wizard over the first.
+    /// With no account at all this is the first run: once saved, the form asks how much history to
+    /// sync (#876) before the connection comes up.
+    /// A second call while the form is open reuses it rather than stacking a second wizard.
     fn open_add_account(&self) {
         let imp = self.imp();
         let first_run = imp.accounts.borrow().is_empty();
@@ -1967,14 +1667,9 @@ impl FocusWindow {
         imp.adding_account.replace(Some(dialog));
     }
 
-    /// A pointer press at (`x`, `y`) in the window, before any dialog over it
-    /// sees it. Whether the window took it.
-    ///
-    /// Only the add-account form's dialog is a way in that must not shut the
-    /// window's own close button out: it covers the window on a first run,
-    /// where closing the app is the one other thing a person can want, and a
-    /// modal dialog gives its scrim the click. A click on the button while
-    /// that form is up closes the app.
+    /// Only the add-account form must not shut the window's close button out: it covers the window
+    /// on a first run, where closing the app is the
+    /// one other thing a person can want, and a modal dialog gives its scrim the click.
     pub fn click_through_dialog(&self, x: f64, y: f64) -> bool {
         let imp = self.imp();
         if imp.adding_account.borrow().is_none() {
@@ -1994,8 +1689,7 @@ impl FocusWindow {
         {
             return false;
         }
-        // A window asked to close with a dialog over it closes the dialog
-        // and stays; the app is closing, so the form goes first.
+        // The app is closing, so the form goes first.
         if let Some(form) = imp.adding_account.take() {
             form.force_close();
         }
@@ -2003,16 +1697,10 @@ impl FocusWindow {
         true
     }
 
-    /// The add-account form's dialog, while it is open.
     pub fn add_account_dialog(&self) -> Option<adw::Dialog> {
         self.imp().adding_account.borrow().clone()
     }
 
-    /// What `c` and the top bar's compose button say while there is no
-    /// account to write from (T172): the composer is mounted only once one
-    /// is known (`Self::mount_compose`), so this says what is missing and
-    /// offers the same form T171 opens on a first run, rather than doing
-    /// nothing.
     fn offer_add_account_for_compose(&self) {
         let window = self.downgrade();
         self.imp().toast.show_prompt(
@@ -2028,29 +1716,22 @@ impl FocusWindow {
         self.follow_toast();
     }
 
-    /// Open the draft behind the Drafts row `message` for editing, in the
-    /// composer's dialog: what a Drafts row does when it is opened, whichever
-    /// app left the draft there (US11 scenario 3).
     pub fn open_draft(&self, message: MessageId) {
         if let Some(compose) = self.compose() {
             compose.open_draft(message);
         }
     }
 
-    /// The key that shows a forwarded thread's messages, as the keymap in
-    /// force spells it.
     fn expand_quoted_cap(&self) -> Option<String> {
         postio_ui::hints::key(&self.keymap(), CommandId::ExpandQuoted)
     }
 
-    /// Open the unsent reply a thread shows, by its draft's id.
     pub fn open_thread_draft(&self, draft: postio_model::DraftId) {
         if let Some(compose) = self.compose() {
             compose.open_thread_draft(draft);
         }
     }
 
-    /// Start the composer's editing surface, while nobody is waiting on it.
     pub fn warm_composer(&self) {
         self.imp().warm.set(true);
         if let Some(compose) = self.compose() {
@@ -2058,15 +1739,10 @@ impl FocusWindow {
         }
     }
 
-    /// Run the command `id` means here: the cursor and the selection are the
-    /// window's own, and a verb on mail goes to the host aimed at them.
     pub fn act(&self, id: CommandId) {
-        // A stall after this is blamed on it (`postio_widgets::jank`).
         postio_widgets::jank::note_action(id);
-        // A search's results are the controller's to drive: their keys --
-        // Quick Look, Save file, the tabs -- and the verbs on a result.
-        // Not a message open over them: its reply is the window's composer,
-        // as anywhere else.
+        // A search's results are the controller's to drive, but not a message open over them: its
+        // reply is the window's composer.
         if self.results().is_some()
             && self.top_surface().is_none()
             && let Some(pane) = self.pane()
@@ -2074,28 +1750,18 @@ impl FocusWindow {
         {
             return self.run_in_controller(id);
         }
-        // A key that means something only among results -- Quick Look, a
-        // looser search, a step of the dates -- is the controller's too,
-        // which does nothing with it while no results are up.
         if postio_core::registry::get(id).contexts
             == postio_core::ContextSet::of(postio_core::Context::Results)
         {
             return self.run_in_controller(id);
         }
-        // The rules list takes the list's keys for its own rows; a verb on
-        // mail has nothing under it there.
         if self.rules().is_some() && self.rules_act(id) {
             return;
         }
-        // So does Filtered: its rows are walked and opened as the list's
-        // are, and `g i` goes back (screen 21's footer).
         if self.filtered().is_some() && filtered_owns(id) {
             return self.run_in_controller(id);
         }
         match id {
-            // The cursor's and the selection's, and `!`: the controller's
-            // rules (`postio_focus`, ADR 0045); the intents it answers with
-            // are drawn by `show_intent`.
             CommandId::NextMessage
             | CommandId::PrevMessage
             | CommandId::FirstMessage
@@ -2114,17 +1780,12 @@ impl FocusWindow {
             CommandId::Back => {
                 if let Some(places) = self.places().filter(|places| places.is_open()) {
                     places.close();
-                } else if self.bar().is_some_and(|bar| bar.is_open()) || self.filtered().is_some()
-                {
+                } else if self.bar().is_some_and(|bar| bar.is_open()) || self.filtered().is_some() {
                     self.run_in_controller(CommandId::Back);
                 } else {
                     self.cursor_command(CommandId::Back);
                 }
             }
-            // The bar, its keys, the saved searches and the go-to keys are
-            // the controller's (spec 009 slice 8, spec 010): it opens the bar, says
-            // what it shows, and goes where a line or a key says. `/` is for
-            // mail and `Ctrl K` for commands: one bar, opened two ways (C24).
             CommandId::SavedSearch1
             | CommandId::SavedSearch2
             | CommandId::SavedSearch3
@@ -2134,8 +1795,6 @@ impl FocusWindow {
             | CommandId::BackToWords
             | CommandId::SaveSearch
             | CommandId::ToggleResultOrder
-            // The dropdown's keys, and History back and forward, which
-            // reach the results from the inbox (spec 010 D17).
             | CommandId::ShowAllResults
             | CommandId::ForgetRecent
             | CommandId::ExcludeSuggestion
@@ -2155,12 +1814,10 @@ impl FocusWindow {
             | CommandId::GoToJunk
             | CommandId::GoToTrash
             | CommandId::GoToOutbox => self.run_in_controller(id),
-            // The host's own verbs: `postio_ui::focus_target::dispatch` says
-            // which are aimed at mail and which are not. Undo is the last
-            // action this window took, whatever it was and however long ago
-            // the toast went (FR-041): the host keeps the stack.
-            // A toast with an Undo of its own -- a send, queued -- is the
-            // last thing said, so Undo takes that back first (#1752).
+            // Undo is the last action this window took, however long ago the toast went: the host
+            // keeps the stack.
+            // A toast with an Undo of its own (a send, queued) is the last thing said, so Undo
+            // takes that back first (#1752).
             CommandId::Undo if self.imp().toast.activate_undo() => {}
             CommandId::Archive
             | CommandId::Delete
@@ -2172,19 +1829,14 @@ impl FocusWindow {
             CommandId::Quit => self.close(),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
-            // Settings (T234) and its file in the person's editor (T235):
-            // `crate::settings`.
             CommandId::Settings => self.toggle_settings(),
             CommandId::EditConfig => self.edit_config(),
-            // The account verbs, on the row Settings has focused (T258).
             CommandId::ToggleAccountEnabled
             | CommandId::RemoveAccount
             | CommandId::RebuildAccountIndex
             | CommandId::SetDefaultAccount
             | CommandId::MapMailboxRole => self.account_verb(id),
-            // Edit, on a draft on its way or stopped that is open (T239):
-            // the composer takes a waiting send off the queue before
-            // anything is edited.
+            // The composer takes a waiting send off the queue before anything is edited.
             CommandId::OpenMessage if self.offered_on_open_draft(id) => {
                 if let Some(reading) = self.reading()
                     && let Some(message) = reading.shown()
@@ -2199,15 +1851,11 @@ impl FocusWindow {
             },
             CommandId::NextScope => self.next_scope(),
             CommandId::ViewSource => self.view_source(),
-            // Contacts: the controller opens it and says what to draw.
             CommandId::OpenContacts
             | CommandId::ContactsSuggestions
             | CommandId::ContactPopover => {
                 self.run_in_controller(id);
             }
-            // The Contacts view's, and the popover's and the form's over it:
-            // the controller owns what each does where it applies, and
-            // nothing where it does not.
             CommandId::ContactOpenCard
             | CommandId::ContactAdd
             | CommandId::ContactIgnore
@@ -2256,35 +1904,27 @@ impl FocusWindow {
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
             CommandId::AddLabel => self.open_labels(),
             CommandId::Move => self.open_moves(),
-            // Answered from the row (US8): the invitation the cursor is on.
             CommandId::AcceptInvite | CommandId::DeclineInvite => {
                 if let Some(message) = self.aimed_message() {
                     self.answer(message, id);
                 }
             }
-            // A send on its way or stopped, from the list or the open
-            // message (T239): the draft behind the message aimed at.
             CommandId::CancelSend | CommandId::RetrySend | CommandId::MarkSent => {
-                // One the open message offers moves the message out of the
-                // list it was opened from, so it closes; the cursor stays,
-                // and the list's next row -- a draft being written, often --
-                // is not opened in its place.
+                // One the open message offers moves the message out of the list it was opened from,
+                // so it closes; the cursor stays, and the list's next row is not opened in its
+                // place.
                 let offered = self.offered_on_open_draft(id);
                 self.settle_send(id);
                 if offered && let Some(reading) = self.reading() {
                     reading.close();
                 }
             }
-            // The capture sheet (US15), from the row or the open message.
             CommandId::CaptureTask => self.open_capture(crate::capture::Mode::Task),
             CommandId::CaptureNote => self.open_capture(crate::capture::Mode::Note),
-            // The shared composer, in its dialog (US3). With no
-            // account there is nothing to write from yet (T172).
             CommandId::Compose => match self.compose() {
                 Some(compose) => compose.dispatch(id),
                 None => self.offer_add_account_for_compose(),
             },
-            // Not on mail still on its way out (#1749): a notice says why.
             CommandId::Reply | CommandId::ReplyAll
                 if postio_ui::focus_target::refuses_reply(self.aimed_send_state()) =>
             {
@@ -2293,8 +1933,6 @@ impl FocusWindow {
                     .show_notice(postio_ui::focus_target::NO_REPLY_TO_OUTGOING);
                 self.follow_toast();
             }
-            // Nor on a draft another client wrote (#1212): the row does not
-            // offer them either.
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward
                 if self
                     .reading()
@@ -2309,15 +1947,10 @@ impl FocusWindow {
                     .show_notice(postio_ui::focus_target::NO_REPLY_TO_OUTGOING);
                 self.follow_toast();
             }
-            // Writing an answer is the controller's: it knows the thread, and
-            // says what the composer is for (spec 013 US7).
             CommandId::Reply
             | CommandId::ReplyAll
             | CommandId::Forward
             | CommandId::ReplyToLatest
-            // The thread's own steps and the composer's thread rows, which
-            // the keys reach the same way (spec 013 FR-016, FR-020): the
-            // controller knows the walk and does nothing with none.
             | CommandId::NextInConversation
             | CommandId::PrevInConversation
             | CommandId::FirstInConversation
@@ -2331,12 +1964,7 @@ impl FocusWindow {
             | CommandId::ForwardWhat3
             | CommandId::ShowNewer
             | CommandId::ExpandQuoted => self.run_in_controller(id),
-            // Focus's first run (T171), and what `c` offers with no
-            // account (T172).
             CommandId::AddAccount => self.open_add_account(),
-            // The open message's size and its banner's buttons (T242,
-            // T247): nothing happens with no message open or nothing held
-            // back.
             CommandId::ZoomIn | CommandId::ZoomOut | CommandId::ZoomReset => {
                 if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
                     match id {
@@ -2346,9 +1974,8 @@ impl FocusWindow {
                     }
                 }
             }
-            // `M` leaves the list on any message the shared rule allows, band
-            // or not: the band only shows for list mail (T261), the key is
-            // not tied to it.
+            // `M` leaves the list on any message the shared rule allows: the key is not tied to the
+            // band, which shows only for list mail.
             CommandId::Unsubscribe => {
                 if let Some(reading) = self.reading().filter(|reading| reading.is_open())
                     && postio_ui::reader::header::ReaderAction::unsubscribable(reading.send_state())
@@ -2369,43 +1996,28 @@ impl FocusWindow {
         }
     }
 
-    /// The commands `act` has had no arm for since this was last called.
     pub fn take_unanswered(&self) -> Vec<CommandId> {
         std::mem::take(&mut *self.imp().unanswered.borrow_mut())
     }
 
-    /// Give the keyboard to the list: the one place it rests when nothing
-    /// else is being typed into. At launch, after the bar closes, after a
-    /// place is chosen and after an overlay goes, the window's real focus is
-    /// the list view -- not the top bar's Compose button, nor the header's
-    /// place button, where Space or Return would press a control instead of
-    /// acting on the row under the cursor. On the cursor's row: the cursor
-    /// is the row that is drawn, and GTK's focus left on another row would
-    /// be a second ring.
+    /// GTK's focus on a row other than the cursor's would be a second ring, and on the top bar's
+    /// Compose button Space or Return would press a control instead of acting on the row.
     pub fn focus_list(&self) {
-        // A search's results stand in the list's place while they are up:
-        // the inbox's list behind them is not shown, and a keyboard left
-        // on it reaches nothing.
         if let Some(results) = self.results() {
             results.focus();
             return;
         }
-        // An empty page stands in the list's place the same way, and holds
-        // the keyboard itself: the list behind it is not shown (#2195).
         if self.take_keyboard_to_the_empty_page() {
             return;
         }
-        // The view takes it on its cursor's row: given to the view alone,
-        // GTK puts it on whichever row it last had, and a row other than
-        // the cursor's is a second place the keyboard seems to be.
+        // Given to the view alone, GTK puts the keyboard on whichever row it last had: a row other
+        // than the cursor's is a second place the keyboard seems to be.
         if let Some(pane) = self.pane() {
             gtk::prelude::GtkWindowExt::set_focus(self, Some(pane.view()));
             pane.focus_cursor();
         }
     }
 
-    /// [`Self::focus_list`] once what is closing has had its say: a popover
-    /// hands the keyboard back to what had it before, on the way out.
     fn focus_list_soon(&self) {
         glib::idle_add_local_once(glib::clone!(
             #[weak(rename_to = window)]
@@ -2418,8 +2030,6 @@ impl FocusWindow {
         ));
     }
 
-    /// The keyboard on the cursor's row, once a dialog that was over the list
-    /// has finished handing it back to the row it last held.
     fn focus_cursor_soon(&self) {
         glib::idle_add_local_once(glib::clone!(
             #[weak(rename_to = window)]
@@ -2432,10 +2042,6 @@ impl FocusWindow {
         ));
     }
 
-    /// The keyboard on the cursor's row: the list's, or a search's results'
-    /// while they stand in its place -- the inbox's row behind them is not
-    /// shown, and a keyboard left there reaches nothing -- or the empty page
-    /// while it stands there, which has no row.
     pub fn focus_cursor(&self) {
         if let Some(results) = self.results() {
             results.focus();
@@ -2446,7 +2052,6 @@ impl FocusWindow {
         }
     }
 
-    /// Whether the empty page is the one showing in the list's place.
     fn empty_page_showing(&self) -> bool {
         self.imp()
             .list_or_empty
@@ -2455,8 +2060,6 @@ impl FocusWindow {
             .is_some_and(|stack| stack.visible_child_name().as_deref() == Some(EMPTY))
     }
 
-    /// The keyboard on the empty page, while it is the one showing: true if
-    /// it is there now.
     fn take_keyboard_to_the_empty_page(&self) -> bool {
         self.empty_page_showing()
             && self
@@ -2467,8 +2070,6 @@ impl FocusWindow {
                 .is_some_and(|page| page.take_the_keyboard())
     }
 
-    /// Whether nothing is holding the keyboard for itself: no dialog over
-    /// the window, no open bar or popover, and nothing being typed.
     fn keyboard_is_free(&self) -> bool {
         self.visible_dialog().is_none()
             && !self.is_typing()
@@ -2476,17 +2077,12 @@ impl FocusWindow {
             && self.places().is_none_or(|places| !places.is_open())
     }
 
-    /// Put the cursor on `position`: the controller says whether that is a
-    /// row, and answers with the `Cursor` intent that [`Self::show_cursor`]
-    /// draws.
     fn point_cursor(&self, position: u32) {
         if let Some(pane) = self.pane() {
             pane.feed().input(postio_focus::Input::Point(position));
         }
     }
 
-    /// Run a command the controller decides -- the cursor's, the
-    /// selection's, `!` -- and draw what it says.
     fn cursor_command(&self, id: CommandId) {
         self.sync_surfaces();
         if let Some(pane) = self.pane() {
@@ -2494,8 +2090,6 @@ impl FocusWindow {
         }
     }
 
-    /// Draw the cursor on `position` and bring it into view. Where the
-    /// cursor goes is the controller's; this is the list view's half.
     fn show_cursor(&self, position: u32, to_top: bool) {
         let Some(pane) = self.pane() else {
             return;
@@ -2522,9 +2116,6 @@ impl FocusWindow {
         }
     }
 
-    /// Draw what the controller says about the list: where the cursor is,
-    /// what is selected, the heading, the strip's counts, the page that
-    /// stands in for an empty list (ADR 0045).
     fn show_intent(&self, intent: &postio_focus::Intent) {
         use postio_focus::Intent;
         match intent {
@@ -2601,19 +2192,14 @@ impl FocusWindow {
                 total,
                 host: postio_focus::Host::Own,
             } => self.show_message(*message, *index, *total),
-            // `j` onto a digest's row with a message open leaves the message
-            // up and the cursor on the row, as it always did here; the
-            // digest's window opens with Enter. The controller has opened
-            // the digest on its side, as it does on the Mac, and that copy
-            // is dropped: the window is GTK's until slice 12.
+            // `j` onto a digest's row with a message open leaves the message up; the digest's
+            // window opens with Enter. The controller's own copy of the digest is dropped.
             Intent::OpenDigest { .. } => {
                 if let Some(pane) = self.pane() {
                     pane.feed()
                         .input(postio_focus::Input::SurfaceClosed(SurfaceKind::Digest));
                 }
             }
-            // A draft is written: the composer's dialog is GTK's until
-            // slice 7.
             Intent::Composer {
                 kind: postio_focus::ComposerKind::Draft,
                 message: Some(message),
@@ -2663,8 +2249,6 @@ impl FocusWindow {
                 }
             }
             Intent::CloseSurface(kind) => self.close_surface(*kind),
-            // The picker the controller drives (`MoveThisMessage`); the
-            // others are GTK's own, opened by their keys.
             Intent::OpenPicker(view) if view.kind == postio_focus::PickerKind::Move => {
                 self.open_driven_picker(view);
             }
@@ -2673,8 +2257,6 @@ impl FocusWindow {
                     driven.show_rows(view);
                 }
             }
-            // The Contacts view and what lies over it: the controller keeps
-            // the state, this draws it (specs/011-focus-contacts S13).
             Intent::Contacts(view) => self.show_contacts(view),
             Intent::ContactsRows { .. } => {
                 if let Some(view) = self.contacts() {
@@ -2691,8 +2273,6 @@ impl FocusWindow {
                     view.show_card(card.as_deref().cloned());
                 }
             }
-            // The bar (spec 009 slice 8): shown on the controller's words,
-            // drawn whole, closed by `CloseSurface(Bar)`.
             Intent::OpenBar { text, select, .. } => {
                 if let Some(bar) = self.bar() {
                     bar.open_on(text, *select);
@@ -2708,8 +2288,6 @@ impl FocusWindow {
                     bar.show_dropdown(view);
                 }
             }
-            // Spec 010's results, in the inbox's place: drawn whole, their
-            // rows read when the list draws them.
             Intent::ShowResults(view) => self.show_results(view),
             Intent::ResultsPage { first, count } => {
                 if let Some(results) = self.results() {
@@ -2734,11 +2312,8 @@ impl FocusWindow {
             Intent::MatchBanner(banner) => {
                 if let Some(reading) = self.reading() {
                     reading.set_match_banner(banner.as_ref());
-                    // The window looks for the search's words in each message
-                    // it shows: its own matches are stepped before the next
-                    // matched message is. As words, as the index found them:
-                    // "rate limit headers" matched "rate-limit headers"
-                    // (#2193).
+                    // As words, as the index found them: "rate limit headers" matched "rate-limit
+                    // headers" (#2193).
                     let words = self.imp().search_words.borrow().clone();
                     let from_end = self.imp().match_from_end.replace(false);
                     let query = if banner.is_some() {
@@ -2785,8 +2360,6 @@ impl FocusWindow {
                 if let Some(places) = self.places() {
                     places.redraw();
                 }
-                // The sync label names a folder that can't sync by the name
-                // the places list it under, which may only now be known.
                 self.show_state();
             }
             Intent::ShowFiltered => self.show_filtered(),
@@ -2816,14 +2389,11 @@ impl FocusWindow {
                 }
             }
             Intent::SaveSearch(save) => self.save_search(save),
-            // The Save popover over the results (spec 010 §3.9).
             Intent::SavePopover(view) => {
                 if let Some(results) = self.results() {
                     results.show_save(view.as_deref());
                 }
             }
-            // A command the controller does not answer itself, run from the
-            // bar: the host's verbs, Compose, Settings.
             Intent::Run(id) => self.act(*id),
             Intent::ContactPopover(view) => self.show_contact_popover(view),
             Intent::ContactsSettings(view) => {
@@ -2856,8 +2426,6 @@ impl FocusWindow {
         }
     }
 
-    /// Say what the host said about a verb, in the toast. How long it
-    /// stays, and whether it offers Undo, are the controller's.
     fn show_toast(&self, text: &str, kind: &postio_focus::ToastKind) {
         use postio_focus::ToastKind;
         let toast = &self.imp().toast;
@@ -2878,15 +2446,11 @@ impl FocusWindow {
             }
             ToastKind::Undone => toast.show_undo_performed(text),
             ToastKind::Notice => toast.show_notice(text),
-            // What is missing and its one remedy: the surfaces that offer
-            // one draw their own until slice 10.
             ToastKind::Offer { .. } => return,
         }
         self.follow_toast();
     }
 
-    /// A Ctrl-click (`Toggle`: `x` on that row) or Shift-click (`Range`: the
-    /// `Shift`+`j`/`k` walk from the anchor to that row): the controller's.
     fn pick(&self, row: &FocusRow, pick: crate::list::row::Pick) {
         use crate::list::row::Pick;
         let Some(pane) = self.pane() else {
@@ -2897,14 +2461,12 @@ impl FocusWindow {
         }
     }
 
-    /// Drop the selection; the cursor stays where it is.
     pub fn clear_selection(&self) {
         if let Some(pane) = self.pane() {
             pane.feed().clear_selection();
         }
     }
 
-    /// What is selected now: what `e` would archive.
     pub fn selection(&self) -> Selection {
         self.pane().map_or_else(
             || Selection::These(Vec::new()),
@@ -2912,7 +2474,6 @@ impl FocusWindow {
         )
     }
 
-    /// The row the cursor is on, once its page has landed.
     pub fn cursor_row(&self) -> Option<FocusRow> {
         let pane = self.pane()?;
         let at = pane.cursor().selected();
@@ -2926,8 +2487,6 @@ impl FocusWindow {
             .and_then(|row| row.item())
     }
 
-    /// What the cursor is on when it is a child of the open thread rather
-    /// than a row of the list.
     pub fn cursor_child(&self) -> Option<postio_ui::thread_list::ChildRowView> {
         let pane = self.pane()?;
         let at = pane.cursor().selected();
@@ -2937,9 +2496,6 @@ impl FocusWindow {
         pane.feed().shown().child_at(at)
     }
 
-    /// Where a verb goes, for the label picker, which sends its own: the
-    /// controller's aim (`postio_focus::Verbs`), with a whole-view
-    /// selection put into the host's state as the host resolves it.
     fn aims(&self) -> Vec<MessageTarget> {
         let Some(pane) = self.pane() else {
             return Vec::new();
@@ -2968,25 +2524,18 @@ impl FocusWindow {
         vec![MessageTarget::Selection]
     }
 
-    /// Send `command` to the host as it is: a verb that aims at nothing.
-    /// The controller sends it (`Input::Post`).
     fn post(&self, command: Command) {
         if let Some(pane) = self.pane() {
             pane.feed().input(postio_focus::Input::Post(command));
         }
     }
 
-    /// Send `command` to the host, aimed as the controller says -- the
-    /// selection when there is one, the cursor's row otherwise -- and let
-    /// the selection go (`Input::Verb`).
     fn send(&self, command: Command) {
         if let Some(pane) = self.pane() {
             pane.feed().input(postio_focus::Input::Verb(command));
         }
     }
 
-    /// Say what the store is being waited on for -- once the wait has
-    /// outlasted [`OPENING_THRESHOLD`], and not before.
     pub fn set_waiting_on(&self, waiting: Waiting) {
         let imp = self.imp();
         imp.waiting.set(Some(waiting));
@@ -3021,7 +2570,6 @@ impl FocusWindow {
         imp.pages.set_visible_child_name(OPENING);
     }
 
-    /// What the window says while it waits, empty when it says nothing.
     pub fn waiting_text(&self) -> String {
         let imp = self.imp();
         if imp.pages.visible_child_name().as_deref() != Some(OPENING) {
@@ -3034,8 +2582,6 @@ impl FocusWindow {
         )
     }
 
-    /// There is no mail to show, and `reason` says why -- among them another
-    /// Postio having the store open. "Try again" runs `retry`.
     pub fn show_unavailable(&self, reason: &str, retry: impl Fn() + 'static) {
         self.show_refusal(
             postio_ui::focus_state::CANT_OPEN_MAIL,
@@ -3045,11 +2591,9 @@ impl FocusWindow {
         );
     }
 
-    /// The store can never be read here -- written at a schema no migration
-    /// carries forward (T215), or under a key the keyring does not hold
-    /// (#1598) -- so trying again would meet the same file: say so, say what
-    /// a fresh store keeps and what stays behind before it is chosen, and
-    /// offer it. "Start a fresh store" runs `start_over`.
+    /// The store can never be read here (a schema no migration carries forward, or a key the
+    /// keyring does not hold), so trying again would meet the same file: say what a fresh store
+    /// keeps and what stays behind before it is chosen.
     pub fn show_start_over(
         &self,
         because: postio_session::Unreadable,
@@ -3073,8 +2617,6 @@ impl FocusWindow {
         );
     }
 
-    /// Say a fresh store is being started, with the button that started it
-    /// held until the store opens or says why not.
     pub fn show_starting_over(&self) {
         let imp = self.imp();
         postio_widgets::widgets::keyhint::dress(
@@ -3097,9 +2639,8 @@ impl FocusWindow {
         postio_widgets::widgets::keyhint::dress(&imp.retry, action, Some("Return"));
         imp.retry.set_sensitive(true);
         imp.on_retry.replace(Some(run));
-        // The inbox's own top bar took the close button when it opened and
-        // is behind this page now: the one before mail comes back, so the
-        // page that says why there is no mail can always be closed.
+        // The inbox's own top bar took the close button when it opened: the one before mail comes
+        // back, so the page saying why there is no mail can always be closed.
         if imp.bar_before_mail.parent().is_none()
             && let Some(before_mail) = imp.stage.child().and_downcast::<gtk::Box>()
         {
@@ -3109,8 +2650,6 @@ impl FocusWindow {
         imp.retry.grab_focus();
     }
 
-    /// Whether the window has a close button on show: the inbox's top bar
-    /// has it over the inbox, the bar before mail over every other page.
     pub fn close_button_showing(&self) -> bool {
         let imp = self.imp();
         if imp.pages.visible_child_name().as_deref() == Some(INBOX) {
@@ -3123,15 +2662,12 @@ impl FocusWindow {
         }
     }
 
-    /// The sentence the window shows when it has no mail, if it is showing
-    /// one.
     pub fn unavailable_reason(&self) -> Option<String> {
         let imp = self.imp();
         (imp.pages.visible_child_name().as_deref() == Some(UNAVAILABLE))
             .then(|| imp.refusal.borrow().clone())
     }
 
-    /// Press "Try again", as a click does.
     pub fn retry(&self) {
         let retry = self.imp().on_retry.borrow().clone();
         if let Some(retry) = retry {
@@ -3139,14 +2675,10 @@ impl FocusWindow {
         }
     }
 
-    /// Show the inbox, read through `client` with `keymap`'s keys, and
-    /// follow what the store says from here on. `state` is the host's view
-    /// of this window's aim, which a whole-view selection is written to.
     pub fn show_inbox(&self, client: Client, state: SharedState, keymap: Keymap) {
         self.imp().state.replace(Some(state));
         let imp = self.imp();
-        // The inbox's own top bar has the close button from here on: out of
-        // the tree, not hidden, so the window has one close button.
+        // Out of the tree, not hidden, so the window has one close button.
         if let Some(holder) = imp.bar_before_mail.parent().and_downcast::<gtk::Box>() {
             holder.remove(&imp.bar_before_mail);
         }
@@ -3162,8 +2694,6 @@ impl FocusWindow {
         titlebar.set_child(Some(chrome.top_bar()));
         self.follow_maximized(chrome.maximize());
         imp.inbox.append(&titlebar);
-        // Under the top bar, the mail or the Contacts view in its place: the
-        // bar (Compose, the box, the window's buttons) stays through both.
         imp.mail.set_vexpand(true);
         imp.body.set_vexpand(true);
         imp.body.set_transition_type(gtk::StackTransitionType::None);
@@ -3200,7 +2730,6 @@ impl FocusWindow {
             imp.saved.borrow().clone(),
         ));
         let pane = ListPane::new(feed.clone(), self.keymap(), imp.picked.clone());
-        // A row's drawn action does what its key does, for that row.
         pane.connect_row_action(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -3219,15 +2748,11 @@ impl FocusWindow {
                 }
             }
         ));
-        // Ctrl-click and Shift-click are `x` and `Shift`+`j`/`k` for the
-        // row clicked: the cursor goes to it and the same commands run.
         pane.connect_row_pick(glib::clone!(
             #[weak(rename_to = window)]
             self,
             move |row, pick| window.pick(row, pick)
         ));
-        // A click on a thread row's chevron puts the cursor on the row and
-        // opens or folds it, as the Mac does: `Point`, then the command.
         pane.connect_row_chevron(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -3246,8 +2771,6 @@ impl FocusWindow {
                 });
             }
         ));
-        // Double-click (GTK's `activate` on the list) opens the row, as Enter
-        // does: the cursor goes to it and the one `OpenMessage` command runs.
         pane.view().connect_activate(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -3256,16 +2779,14 @@ impl FocusWindow {
                 window.act(CommandId::OpenMessage);
             }
         ));
-        // While a message is open beside the list, the pane shows the
-        // cursor's row wherever the cursor goes: a click on a row is the
-        // pointer's `j`/`k` (T232).
+        // While a message is open beside the list, the pane shows the cursor's row wherever the
+        // cursor goes: a click is the pointer's `j`/`k`.
         pane.cursor().connect_selected_notify(glib::clone!(
             #[weak(rename_to = window)]
             self,
             move |cursor| {
-                // The list view moves the cursor on its own -- a click, a
-                // row archived from under it -- and the controller walks on
-                // from wherever it is.
+                // The list view moves the cursor on its own (a click, a row archived from under it)
+                // and the controller walks on from wherever it is.
                 if let Some(pane) = window.pane() {
                     let at = cursor.selected();
                     pane.feed()
@@ -3274,9 +2795,7 @@ impl FocusWindow {
                 window.follow_cursor();
             }
         ));
-        // A row pulled out of the window offers its message as a file (T245).
         self.connect_drag_out(&pane);
-        // A right-click opens the row's menu (T199).
         pane.connect_row_menu(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -3294,9 +2813,7 @@ impl FocusWindow {
         list_or_empty.add_named(pane.widget(), Some(LIST));
         list_or_empty.add_named(empty.widget(), Some(EMPTY));
         list_or_empty.set_visible_child_name(LIST);
-        // The command bar lies over the window, never beside the list.
         let bar = crate::bar::Bar::new(&self.keymap());
-        // What is typed, run and tabbed into is the controller's to answer.
         bar.connect_input({
             let feed = feed.clone();
             let window = self.downgrade();
@@ -3319,23 +2836,16 @@ impl FocusWindow {
             let feed = feed.clone();
             move || feed.bar_tab()
         });
-        // Closing it hands the keyboard home: to the list, or to a
-        // search's results while they stand in its place.
         bar.set_home(glib::clone!(
             #[weak(rename_to = window)]
             self,
             move || window.focus_list()
         ));
-        // In place (spec C24): the bar's input is drawn over the top bar's
-        // own field and its results hang below, so the bar lies over the
-        // whole window rather than over the list.
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
             bar.set_field(chrome.center().clone().upcast());
         }
         imp.stage.add_overlay(bar.widget());
         list_or_empty.set_vexpand(true);
-        // The list, and the reading pane beside it (T232): hidden until the
-        // person reads beside the list.
         let list_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         list_column.set_hexpand(true);
         list_column.append(&list_or_empty);
@@ -3360,14 +2870,13 @@ impl FocusWindow {
             self,
             move |id| window.act(id)
         ));
-        // At the window's foot, under the list and the pane alike: its verbs
-        // want the window's width, not the list's.
+        // At the window's foot, under the list and the pane alike: its verbs want the window's
+        // width, not the list's.
         imp.mail.append(bulk.widget());
         imp.bulk.replace(Some(Rc::clone(&bulk)));
         let scope_footer = Rc::new(crate::scope_footer::ScopeFooter::new());
         imp.mail.append(scope_footer.widget());
         imp.scope_footer.replace(Some(scope_footer));
-        // The accounts a whole-view selection spans.
         self.refresh_accounts(client.clone());
         pane.set_capture(imp.focus_config.borrow().vault.is_some());
         imp.pane.replace(Some(pane));
@@ -3380,12 +2889,10 @@ impl FocusWindow {
         crate::motion::keep_to_budget(self);
         self.place_reading();
         feed.open(ListScope::Focus(FocusScope::Inbox));
-        // Opened with the keyboard in the list, not on the first control GTK
-        // finds in the top bar.
         self.focus_list();
 
-        // Exactly one reader of the client's events, on the main loop:
-        // clones of the receiver would compete for them (research R3).
+        // Exactly one reader of the client's events, on the main loop: clones of the receiver would
+        // compete for them.
         let events = client.events();
         let window = self.downgrade();
         glib::spawn_future_local(async move {
@@ -3398,8 +2905,6 @@ impl FocusWindow {
         });
     }
 
-    /// The selection changed: the mirror takes it, the bar says so, and the
-    /// rows redraw their boxes.
     fn show_selection(&self, selection: &Selection, summary: Option<&str>) {
         let imp = self.imp();
         imp.picked.set(selection.clone());
@@ -3411,16 +2916,12 @@ impl FocusWindow {
         }
     }
 
-    /// The list has landed or moved: the controller puts the cursor on its
-    /// first row, or back where `!` left it, and asks the host for the
-    /// strip's counts again.
     fn list_landed(&self) {
         let Some(pane) = self.pane() else {
             return;
         };
-        // Placing the cursor is not reading: it opens nothing, even with
-        // the reading pane beside -- unless an undo is putting it on the
-        // row it brought back, which the pane follows as it follows a click.
+        // Placing the cursor is not reading: it opens nothing, even with the reading pane beside,
+        // unless an undo puts it on the row it brought back.
         if pane.feed().restoring() {
             pane.feed().landed();
         } else {
@@ -3429,12 +2930,9 @@ impl FocusWindow {
         if pane.feed().take_restored() {
             self.reopen_restored();
         }
-        // A place counts what the list now holds.
         self.show_counts();
     }
 
-    /// Run `place`, which puts the cursor somewhere, without the reading
-    /// pane following it.
     fn placing(&self, place: impl FnOnce()) {
         let imp = self.imp();
         let before = imp.placing_cursor.replace(true);
@@ -3442,8 +2940,6 @@ impl FocusWindow {
         imp.placing_cursor.set(before);
     }
 
-    /// Answer the invitation on `message`, as `id` says: through the host,
-    /// which queues the reply for the answer's window (FR-102).
     fn answer(&self, message: MessageId, id: CommandId) {
         let message = Some(message);
         self.post(match id {
@@ -3452,17 +2948,14 @@ impl FocusWindow {
         });
     }
 
-    /// With a message open over the list, an undo takes it back to the
-    /// conversation it brought back -- the one the cursor is on now -- so the
-    /// dialog and the list never point at two.
+    /// With a message open over the list, an undo takes it back to the conversation it brought
+    /// back, so the dialog and the list never point at two.
     fn reopen_restored(&self) {
         if self.reading().is_some_and(|reading| reading.is_open()) {
             self.open_message();
         }
     }
 
-    /// The one message a reply or an answer is about: the message open over
-    /// the list when one is, the cursor's row otherwise.
     fn aimed_message(&self) -> Option<MessageId> {
         let open = self
             .reading()
@@ -3480,15 +2973,11 @@ impl FocusWindow {
                 .next()
             && let [message] = messages.as_slice()
         {
-            // A child is a message of its own: a reply or a forward on it
-            // is about that message, not its thread's latest.
             return Some(*message);
         }
         postio_ui::focus_target::aimed_message(open, self.cursor_row().as_ref())
     }
 
-    /// The send state of the message a verb is aimed at: the open message's,
-    /// else the cursor's row.
     fn aimed_send_state(&self) -> Option<postio_model::DraftState> {
         if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
             return reading.send_state();
@@ -3498,8 +2987,6 @@ impl FocusWindow {
             .and_then(|row| row.summary.representative.send_state)
     }
 
-    /// Whether the open message is a draft on its way or stopped whose
-    /// action row offers `id` (T239).
     fn offered_on_open_draft(&self, id: CommandId) -> bool {
         self.reading()
             .filter(|reading| reading.is_open())
@@ -3507,10 +2994,6 @@ impl FocusWindow {
             .is_some_and(|verbs| verbs.contains(&id))
     }
 
-    /// Cancel, retry or settle the send of the draft behind the message
-    /// aimed at (T239), naming the draft so the host acts on that one and
-    /// says so in the toast, or says why not. A message that is no draft
-    /// says that instead of doing nothing.
     fn settle_send(&self, id: CommandId) {
         let (Some(message), Some(client)) =
             (self.aimed_message(), self.imp().client.borrow().clone())
@@ -3539,9 +3022,6 @@ impl FocusWindow {
         });
     }
 
-    /// Say the counts the host last gave, which the controller keeps: the
-    /// strip's, the toggle's, and how many of how many the filter is
-    /// showing. A place that is not the inbox counts what it lists.
     fn show_counts(&self) {
         let imp = self.imp();
         let Some(chrome) = imp.chrome.borrow().clone() else {
@@ -3549,8 +3029,8 @@ impl FocusWindow {
         };
         let feed = self.pane().map(|pane| pane.feed().clone());
         chrome.set_digest_rules(imp.focus_config.borrow().digests.len());
-        // The host's counts are the inbox's, and beside "Flagged" they
-        // described a place the person had left.
+        // The host's counts are the inbox's: beside "Flagged" they described a place the person had
+        // left.
         if !self.at_inbox() {
             let listed = feed
                 .as_ref()
@@ -3563,19 +3043,15 @@ impl FocusWindow {
         let counts = feed.as_ref().and_then(Feed::counts);
         if let Some(counts) = counts {
             chrome.set_counts(counts.conversations, counts.unread);
-            // Filtering off files nothing new, and says nothing about it;
-            // the strip says nothing of a day with nothing filtered (C10).
             let filtered = imp
                 .focus_config
                 .borrow()
                 .filtering
                 .then_some(counts.filtered_today);
             chrome.set_filtered_today(filtered.filter(|count| *count > 0));
-            // The popover lists Filtered with the controller's count.
             if let Some(places) = imp.places.borrow().as_ref() {
                 places.redraw();
             }
-            // Settings' Filtering page says the same count (US9).
             if let Some(settings) = imp.settings.borrow().as_ref() {
                 settings.panel().set_filtered_today(filtered);
             }
@@ -3600,17 +3076,13 @@ impl FocusWindow {
         }
     }
 
-    /// The page the controller puts in the list's place -- an empty inbox,
-    /// an empty place (screen 16) -- or the list again with `None`.
     fn show_empty(&self, page: Option<&postio_ui::focus_state::EmptyInbox>) {
         let imp = self.imp();
         let Some(stack) = imp.list_or_empty.borrow().clone() else {
             return;
         };
-        // Whether the keyboard was at home, in the list or on the page, or
-        // nowhere: then it goes with the switch to the page that comes in,
-        // and never where GTK's own hand-over would put it -- the page's
-        // first shortcut, or the list's last-focused row (#2195).
+        // Whether the keyboard was at home: then it goes with the switch to the page that comes in,
+        // never where GTK's own hand-over would put it (#2195).
         let was_home =
             gtk::prelude::GtkWindowExt::focus(self).is_none_or(|focus| focus.is_ancestor(&stack));
         let before = stack.visible_child_name();
@@ -3624,16 +3096,12 @@ impl FocusWindow {
         if was_home && before != stack.visible_child_name() && self.keyboard_is_free() {
             self.focus_list();
         }
-        // An empty inbox takes the window: there is nothing to read beside it.
         let beside = self.imp().placement.get() == postio_ui::focus_dialog::Placement::Pane;
         if beside != (stack.visible_child_name().as_deref() == Some(LIST)) {
             self.place_reading();
         }
     }
 
-    /// How many messages were filtered today, while filtering is on and the
-    /// count is in: what the strip, the folders popover and Settings'
-    /// Filtering page say.
     pub(crate) fn filtered_today(&self) -> Option<u32> {
         let imp = self.imp();
         let filtering = imp.focus_config.borrow().filtering;
@@ -3643,7 +3111,6 @@ impl FocusWindow {
             .map(|counts| counts.filtered_today)
     }
 
-    /// `[focus]`, for what the empty inbox names.
     pub fn set_focus_config(&self, focus: postio_config::FocusConfig) {
         let capture = focus.vault.is_some();
         let beside = focus.reading == postio_config::Reading::Pane;
@@ -3660,8 +3127,6 @@ impl FocusWindow {
             menu.change_state(&beside.to_variant());
         }
         self.show_capture(capture);
-        // The empty inbox names the digests, and offers Filtered while Focus
-        // files mail away.
         if let Some(pane) = self.pane() {
             pane.feed()
                 .input(postio_focus::Input::Config(for_controller));
@@ -3670,8 +3135,6 @@ impl FocusWindow {
         self.place_reading();
     }
 
-    /// Whether rows and the marker card offer Task: once a vault is
-    /// configured (spec C9, milestone 3).
     fn show_capture(&self, capture: bool) {
         if let Some(pane) = self.pane() {
             pane.set_capture(capture);
@@ -3681,21 +3144,16 @@ impl FocusWindow {
         }
     }
 
-    /// The window's chrome, once the inbox is showing.
     pub fn chrome(&self) -> Option<Rc<Chrome>> {
         self.imp().chrome.borrow().clone()
     }
 
-    /// What the store just said.
     fn hear(&self, event: &postio_core::Event) {
         use postio_core::Event;
         match event {
             Event::NewMail {
                 mailbox, messages, ..
             } => self.announce(*mailbox, messages.clone()),
-            // The open message's words landed: drawn in place (#1788). A
-            // forward of it stops drawing the parts that landed as
-            // downloading (#1690).
             Event::BodyLoaded {
                 message, sections, ..
             }
@@ -3720,13 +3178,8 @@ impl FocusWindow {
         if let Some(settings) = self.imp().settings.borrow().as_ref() {
             settings.hear(event);
         }
-        // What this window's own commands say about themselves -- a verb
-        // done, an undo, a refusal -- is the controller's to turn into toasts
-        // and into the cursor's way back to a restored row; only the client
-        // that sent a command hears these (postio-host).
         if let Some(pane) = self.imp().pane.borrow().as_ref() {
             if matches!(event, Event::UndoPerformed { .. }) {
-                // Where the list stood when the undo ran: it goes back there.
                 pane.feed().input(postio_focus::Input::AtTop(
                     pane.widget().vadjustment().value() <= 0.0,
                 ));
@@ -3735,35 +3188,23 @@ impl FocusWindow {
         }
     }
 
-    /// Hand every notification to `sink` instead of the desktop: what a
-    /// test records.
     pub fn set_notification_sink(&self, sink: impl Fn(&postio_ui::notify::Notification) + 'static) {
         self.imp().notification_sink.replace(Some(Rc::new(sink)));
     }
 
-    /// Decide notifications with `notifier`: the host's, which names only
-    /// what stayed in Focus's inbox (FR-153).
     pub fn set_notifier(&self, notifier: Notifier) {
         self.imp().notifier.replace(Some(notifier));
     }
 
-    /// Bring every enabled account's connection up, through `start`: the
-    /// host's own `start_syncing` (ADR 0041), set once from
-    /// `startup::adopt_at`. Called again once an account is saved on a
-    /// first run that began with none (T171), so its engine comes up
-    /// without a restart.
     pub fn set_start_syncing(&self, start: Rc<dyn Fn()>) {
         self.imp().start_syncing.replace(Some(start));
     }
 
-    /// New mail in `mailbox`: a notification, if the host decides it is
-    /// worth one while the person is looking where they are.
     fn announce(&self, mailbox: postio_model::MailboxId, messages: Vec<MessageId>) {
         let Some(notifier) = self.imp().notifier.borrow().clone() else {
             return;
         };
         let imp = self.imp();
-        // Looking at Focus's inbox is looking at every inbox it is made of.
         let looking = imp.pages.visible_child_name().as_deref() == Some(INBOX)
             && self.at_inbox()
             && self
@@ -3788,8 +3229,6 @@ impl FocusWindow {
         ));
     }
 
-    /// Post `notification`, replacing the one already showing for its
-    /// folder, or hand it to the test's sink.
     fn deliver(&self, notification: &postio_ui::notify::Notification) {
         let sink = self.imp().notification_sink.borrow().clone();
         if let Some(sink) = sink {
@@ -3804,17 +3243,14 @@ impl FocusWindow {
         application.send_notification(Some(&notification.identifier), &built);
     }
 
-    /// `-` (T118): take the marker off the open message, or off what a
-    /// verb would aim at in the list. One undo puts it back.
     fn dismiss_marker(&self) {
         if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
             let Some(message) = reading.shown() else {
                 return;
             };
             reading.clear_marker();
-            // The controller aims it at the message it shows; one the
-            // window showed itself (a hit, a digest's email) it does not
-            // know, and the marker goes by the message the dialog holds.
+            // The controller aims it at the message it shows; one the window showed itself (a hit,
+            // a digest's email) it does not know.
             if self.pane().and_then(|pane| pane.feed().reading()) == Some(message) {
                 self.cursor_command(CommandId::DismissMarker);
             } else {
@@ -3828,7 +3264,6 @@ impl FocusWindow {
         self.cursor_command(CommandId::DismissMarker);
     }
 
-    /// The digest the cursor is on, when it is on one.
     fn digest_at_cursor(&self) -> Option<crate::list::Digest> {
         match self.cursor_row()? {
             FocusRow::Digest(digest) => Some(digest),
@@ -3836,8 +3271,6 @@ impl FocusWindow {
         }
     }
 
-    /// Archive a whole delivery: one undo (FR-125). Its row goes with it
-    /// and comes back with the undo; the controller keeps both.
     fn archive_digest(&self, delivery: postio_model::DeliveryId) {
         if let Some(pane) = self.pane() {
             pane.feed()
@@ -3845,7 +3278,6 @@ impl FocusWindow {
         }
     }
 
-    /// Open `digest`'s window over the inbox (T137): its plain list.
     fn open_digest(&self, digest: crate::list::Digest) {
         let imp = self.imp();
         let Some(client) = imp.client.borrow().clone() else {
@@ -3878,14 +3310,12 @@ impl FocusWindow {
         crate::motion::keep_to_budget(window.dialog());
     }
 
-    /// The digest window, while it is open.
     pub fn digest(&self) -> Option<Rc<crate::digest::DigestWindow>> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == crate::digest::DIALOG_NAME)?;
         self.imp().digest_window.borrow().clone()
     }
 
-    /// What the digest window asked for.
     fn digest_action(&self, action: crate::digest::DigestAction) {
         use crate::digest::DigestAction;
         let Some(window) = self.imp().digest_window.borrow().clone() else {
@@ -3905,7 +3335,6 @@ impl FocusWindow {
             }
             DigestAction::Open { message, subject } => {
                 if let Some(reading) = self.reading_dialog() {
-                    // Over the digest, not in the pane behind it.
                     self.place_reading();
                     reading.show_found(self, message, &subject, None);
                 }
@@ -3913,7 +3342,6 @@ impl FocusWindow {
         }
     }
 
-    /// A key while a digest is open (US10): its keys are `Context::Digest`'s.
     fn digest_key(&self, outcome: Outcome) -> glib::Propagation {
         let Outcome::Command(id) = outcome else {
             return match outcome {
@@ -3955,9 +3383,6 @@ impl FocusWindow {
         glib::Propagation::Stop
     }
 
-    /// `D` in a digest (US10 scenario 5): ask, then stop digesting the
-    /// message's sender -- out of `config.toml`, releasing what the rule
-    /// holds from them.
     fn ask_stop_digesting(&self, message: &postio_model::listing::MessageSummary) {
         let sender = message
             .from
@@ -3994,19 +3419,14 @@ impl FocusWindow {
         dialog.present(Some(self));
     }
 
-    /// The stop-digesting confirmation, while it is up.
     pub fn stop_digesting_confirmation(&self) -> Option<adw::AlertDialog> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == STOP_DIALOG)
             .and_then(|dialog| dialog.downcast().ok())
     }
 
-    /// `M`: leave the list `message` came from -- only ever on this key.
-    ///
-    /// One toast, not two things: when the list left mail behind it says so
-    /// and offers the one action `[focus] after_unsubscribe` names, with the
-    /// button; otherwise it only confirms (#1952). The toast never blocks:
-    /// ignoring it, or `Esc` on whatever is open, keeps everything.
+    /// One toast: when the list left mail behind it says so and offers the one action `[focus]
+    /// after_unsubscribe` names; otherwise it only confirms (#1952). It never blocks.
     fn unsubscribe(&self, message: MessageId) {
         let Some(client) = self.imp().client.borrow().clone() else {
             return;
@@ -4031,9 +3451,6 @@ impl FocusWindow {
         ));
     }
 
-    /// The toast after a list is left: the confirmation, and when mail is
-    /// still here, the one action to clear it (#1931, #1952). The action is
-    /// one command on exactly the found messages, so one undo.
     fn confirm_unsubscribed(
         &self,
         name: &str,
@@ -4071,7 +3488,6 @@ impl FocusWindow {
         self.follow_toast();
     }
 
-    /// Edit the digest rule called `name` (T138), from its digest's `d`.
     fn edit_digest_rule(&self, name: &str) {
         let rule = self
             .imp()
@@ -4095,8 +3511,6 @@ impl FocusWindow {
         }
     }
 
-    /// `d` on a message, or "Digest these…" in the bulk bar (T138): a new
-    /// rule for the senders of what a verb would aim at.
     fn new_digest_rule(&self) {
         let senders = self.aimed_senders();
         if senders.is_empty() {
@@ -4110,11 +3524,8 @@ impl FocusWindow {
         }
     }
 
-    /// The one message "Digest mail like this" would check other mail
-    /// against: the cursor's, when nothing beyond it is selected, and only
-    /// when the user has brought a model with `like_this` on (US14, FR-171)
-    /// -- whether it connects is a further question the dialog leaves to
-    /// `Client::digest_like_this`.
+    /// Only when the user has brought a model with `like_this` on; whether it connects is a further
+    /// question left to `Client::digest_like_this`.
     fn aimed_message_for_like_this(&self) -> Option<MessageId> {
         let enabled = self
             .imp()
@@ -4129,8 +3540,6 @@ impl FocusWindow {
         )
     }
 
-    /// The senders of the selection, or of the cursor's conversation, once
-    /// each.
     fn aimed_senders(&self) -> Vec<postio_model::EmailAddress> {
         let resident = self
             .pane()
@@ -4150,24 +3559,18 @@ impl FocusWindow {
         postio_ui::focus_target::senders(&rows)
     }
 
-    /// Measure this window's start on `timeline` (`startup::time`).
     pub fn set_timeline(&self, timeline: postio_widgets::startup::Timeline) {
         self.imp().timeline.replace(Some(timeline));
     }
 
-    /// The start being measured, if one is.
     pub fn timeline(&self) -> Option<postio_widgets::startup::Timeline> {
         self.imp().timeline.borrow().clone()
     }
 
-    /// Where `config.toml` is, for the corrections the window writes itself.
     pub fn set_config_path(&self, path: Option<std::path::PathBuf>) {
         self.imp().config_path.replace(path);
     }
 
-    /// `Ctrl+S` in the bar (T086): the controller says what to save; it is
-    /// written to `config.toml` as `postio_focus::save_search` writes it,
-    /// and the controller told how that went, which it says.
     fn save_search(&self, save: &postio_focus::SaveSearch) {
         let path = self.imp().config_path.borrow().clone();
         let saved = postio_focus::save_search(path.as_deref(), save);
@@ -4179,7 +3582,6 @@ impl FocusWindow {
         }
     }
 
-    /// The digest rules list, while it is the page on screen.
     pub fn rules(&self) -> Option<Rc<crate::rules::RulesView>> {
         let imp = self.imp();
         if imp.pages.visible_child_name().as_deref() != Some(RULES) {
@@ -4188,7 +3590,6 @@ impl FocusWindow {
         imp.rules_view.borrow().clone()
     }
 
-    /// `g r`: every digest rule, in place of the inbox (T139).
     fn show_rules(&self) {
         let imp = self.imp();
         let Some(client) = imp.client.borrow().clone() else {
@@ -4207,15 +3608,12 @@ impl FocusWindow {
             view
         });
         imp.pages.set_visible_child_name(RULES);
-        // `RulesView::show` teaches its own caps: it redraws rows again
-        // once `read_holds`'s async fetch lands, and a call only here
-        // would miss those.
+        // `RulesView::show` teaches its own caps: it redraws rows once `read_holds`'s fetch lands,
+        // and a call only here would miss those.
         view.open(imp.focus_config.borrow().digests.clone());
     }
 
-    /// A command while the rules list is on screen; whether it was the
-    /// list's. What only the inbox answers is refused there, so a key does
-    /// not act on mail nobody can see.
+    /// What only the inbox answers is refused there, so a key does not act on mail nobody can see.
     fn rules_act(&self, id: CommandId) -> bool {
         let Some(view) = self.rules() else {
             return false;
@@ -4246,7 +3644,6 @@ impl FocusWindow {
         true
     }
 
-    /// What the rules list asked for.
     fn rules_action(&self, action: crate::rules::RulesAction) {
         use crate::rules::RulesAction;
         match action {
@@ -4256,9 +3653,7 @@ impl FocusWindow {
         }
     }
 
-    /// `Delete` on a rule (FR-126): ask, then take it out of `config.toml`
-    /// and release what it holds into the inbox. No undo takes that mail
-    /// back into the rule, so this is the one place the list asks first.
+    /// No undo takes that mail back into the rule, so this is the one place the list asks first.
     fn ask_remove_rule(&self, name: &str, holds: u32) {
         let dialog = adw::AlertDialog::new(
             Some(&postio_ui::focus_target::remove_rule_title(name)),
@@ -4285,15 +3680,12 @@ impl FocusWindow {
         dialog.present(Some(self));
     }
 
-    /// Removing a rule's confirmation, while it is up.
     pub fn remove_rule_confirmation(&self) -> Option<adw::AlertDialog> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == REMOVE_RULE_DIALOG)
             .and_then(|dialog| dialog.downcast().ok())
     }
 
-    /// Take the rule called `name` out of `config.toml`, releasing what it
-    /// held, and say how much came back.
     fn remove_rule(&self, name: String) {
         let Some(client) = self.imp().client.borrow().clone() else {
             return;
@@ -4325,7 +3717,6 @@ impl FocusWindow {
         ));
     }
 
-    /// The rule dialog, built the first time it is asked for.
     fn rule_dialog_built(&self) -> Option<Rc<crate::rule_dialog::RuleDialog>> {
         let imp = self.imp();
         let client = imp.client.borrow().clone()?;
@@ -4348,22 +3739,18 @@ impl FocusWindow {
         }))
     }
 
-    /// The rule dialog, while it is open.
     pub fn rule_dialog(&self) -> Option<Rc<crate::rule_dialog::RuleDialog>> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == crate::rule_dialog::DIALOG_NAME)?;
         self.imp().rule_dialog.borrow().clone()
     }
 
-    /// The sweep's confirmation, while it is up.
     pub fn sweep_confirmation(&self) -> Option<adw::AlertDialog> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == SWEEP_DIALOG)
             .and_then(|dialog| dialog.downcast().ok())
     }
 
-    /// `F` (FR-118): say how much of the inbox the filtering rules would
-    /// file away, and sweep only when the person says so.
     fn ask_sweep(&self) {
         let Some(client) = self.imp().client.borrow().clone() else {
             return;
@@ -4419,7 +3806,6 @@ impl FocusWindow {
         ));
     }
 
-    /// The Filtered view, while it is the page on screen.
     pub fn filtered(&self) -> Option<Rc<crate::filtered::FilteredView>> {
         let imp = self.imp();
         if imp.pages.visible_child_name().as_deref() != Some(FILTERED) {
@@ -4428,16 +3814,14 @@ impl FocusWindow {
         imp.filtered.borrow().clone()
     }
 
-    /// `g f`: the Filtered view in place of the inbox (screen 21). The
-    /// controller has opened its Filtered surface and says what to draw.
     fn show_filtered(&self) {
         let imp = self.imp();
         let Some(pane) = self.pane() else {
             return;
         };
         let view = imp.filtered.borrow().clone();
-        // A view that is still here from the last visit is shown empty: its
-        // rows were the controller's then, not now.
+        // A view still here from the last visit is shown empty: its rows were the controller's
+        // then, not now.
         if let Some(view) = &view {
             view.clear();
         }
@@ -4465,7 +3849,6 @@ impl FocusWindow {
         view.focus_list();
     }
 
-    /// The Contacts view, while it is the page on screen.
     pub fn contacts(&self) -> Option<Rc<crate::contacts::ContactsView>> {
         let imp = self.imp();
         if imp.body.visible_child_name().as_deref() != Some(CONTACTS) {
@@ -4474,7 +3857,6 @@ impl FocusWindow {
         imp.contacts.borrow().clone()
     }
 
-    /// Spec 010's results view, while it is the page on screen.
     pub fn results(&self) -> Option<Rc<crate::results::ResultsPane>> {
         let imp = self.imp();
         if imp.body.visible_child_name().as_deref() != Some(RESULTS) {
@@ -4483,8 +3865,6 @@ impl FocusWindow {
         imp.results.borrow().clone()
     }
 
-    /// Show all: the results in the inbox's place, as the controller says.
-    /// The first frame builds the page.
     fn show_results(&self, frame: &postio_focus::ResultsView) {
         let imp = self.imp();
         let Some(pane) = self.pane() else {
@@ -4514,7 +3894,6 @@ impl FocusWindow {
         }
     }
 
-    /// The results are gone: the inbox is back, with the keyboard.
     fn leave_results(&self) {
         let imp = self.imp();
         if imp.body.visible_child_name().as_deref() == Some(RESULTS) {
@@ -4524,16 +3903,13 @@ impl FocusWindow {
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
             chrome.show_query(None);
         }
-        // The page is kept for the next search, and nothing of this one's
-        // may show in it: the controller says "found nothing" of the
-        // results it holds, and once they are left it holds none.
+        // The page is kept for the next search, and the controller says "found nothing" of the
+        // results it holds: once they are left it holds none.
         if let Some(results) = imp.results.borrow().as_ref() {
             results.show_relaxations(None);
         }
     }
 
-    /// `g c`: the Contacts view in place of the inbox. The controller opened
-    /// it and says what to draw; the first frame builds the page.
     fn show_contacts(&self, frame: &postio_focus::ContactsView) {
         let imp = self.imp();
         let Some(pane) = self.pane() else {
@@ -4560,9 +3936,7 @@ impl FocusWindow {
         }
     }
 
-    /// File > Import Contacts (`v i`): the person picks a `.vcf`, Rust reads
-    /// and applies it, and a sheet says what happened. Nothing is merged: the
-    /// look-alikes wait in the review.
+    /// Nothing is merged: the look-alikes wait in the review.
     fn contacts_import(&self) {
         let weak = self.downgrade();
         // POSTIO-CONSENT: a file is read only because somebody chose it in
@@ -4587,8 +3961,6 @@ impl FocusWindow {
                 match client.import_contacts(bytes).await {
                     Ok(summary) => {
                         if let Some(pane) = window.pane() {
-                            // The cursor goes to the first new person and the
-                            // review looks at what the import found first.
                             pane.feed().input(postio_focus::Input::ContactsImported {
                                 made: summary.made.clone(),
                                 touched: summary.touched.clone(),
@@ -4606,8 +3978,6 @@ impl FocusWindow {
         });
     }
 
-    /// File > Export Contacts (`v x`): the people the list holds, as one
-    /// `.vcf` at a place the person names.
     fn contacts_export(&self) {
         let words = postio_ui::contacts_io::panel_words();
         let Some(client) = self.imp().client.borrow().clone() else {
@@ -4651,8 +4021,6 @@ impl FocusWindow {
         });
     }
 
-    /// The sheet after an import or an export: what happened, and Review
-    /// when the import left people to look at.
     fn show_contacts_io(&self, sheet: postio_ui::contacts_io::IoSheetView) {
         let dialog = adw::AlertDialog::new(Some(&sheet.title), Some(&sheet.lines.join("\n\n")));
         dialog.set_widget_name(CONTACTS_IO_DIALOG);
@@ -4681,8 +4049,6 @@ impl FocusWindow {
         dialog.present(Some(self));
     }
 
-    /// Close whatever dialog is up, as Escape does: a case that has read a
-    /// sheet goes on to the next thing.
     pub fn close_dialogs_for_test(&self) {
         if let Some(dialog) = self.visible_dialog() {
             dialog.close();
@@ -4690,12 +4056,10 @@ impl FocusWindow {
         self.imp().contacts_io.take();
     }
 
-    /// What the import or export sheet says, while it is up.
     pub fn contacts_io_sheet(&self) -> Option<postio_ui::contacts_io::IoSheetView> {
         self.imp().contacts_io.borrow().clone()
     }
 
-    /// What the contact popover says, while one is up: what a test reads.
     pub fn contact_popover(&self) -> Option<postio_ui::contact_popover::PopoverView> {
         self.imp()
             .contact_popover
@@ -4704,7 +4068,6 @@ impl FocusWindow {
             .map(|(_, view)| view.clone())
     }
 
-    /// Every text the contact popover shows, while one is up.
     pub fn contact_popover_texts(&self) -> Vec<String> {
         self.imp()
             .contact_popover
@@ -4714,8 +4077,6 @@ impl FocusWindow {
             .unwrap_or_default()
     }
 
-    /// The contact popover, at the sender's name on the cursor's row (or
-    /// where it already was, when it is only redrawn).
     fn show_contact_popover(&self, view: &postio_ui::contact_popover::PopoverView) {
         use crate::contacts::popover;
         let imp = self.imp();
@@ -4757,9 +4118,6 @@ impl FocusWindow {
             .replace(Some((card.upcast(), view.clone())));
     }
 
-    /// Where the popover goes: under the cursor's row, a little in from the
-    /// left where the sender's name is; over the middle when the cursor is
-    /// not on a row that can be seen.
     fn popover_anchor(&self, pane: &ListPane) -> (i32, i32) {
         let stage = &self.imp().stage;
         let (width, height) = (stage.width(), stage.height());
@@ -4794,8 +4152,6 @@ impl FocusWindow {
         }
     }
 
-    /// A control drawn for a command does what its key does: the
-    /// controller's when it owns the command over what is on screen.
     pub fn press_command(&self, command: CommandId) {
         match self.route(command) {
             Route::Controller => self.run_in_controller(command),
@@ -4803,42 +4159,33 @@ impl FocusWindow {
         }
     }
 
-    /// Back from Contacts to the inbox, as it was.
     fn leave_contacts(&self) {
         self.imp().body.set_visible_child_name(MAIL);
         self.focus_list();
     }
 
-    /// Back from the digest rules to the inbox, as it was.
     fn leave_filtered(&self) {
         self.imp().pages.set_visible_child_name(INBOX);
-        // The list opens on its first row, as every list does.
         self.placing(|| self.cursor_command(CommandId::FirstMessage));
         self.focus_list();
     }
 
-    /// Filtered is gone, as the controller says: the inbox is back, with
-    /// the keyboard where the controller put it.
     fn hide_filtered(&self) {
         self.imp().pages.set_visible_child_name(INBOX);
         self.focus_list();
     }
 
-    /// What the Filtered view asked for.
     fn filtered_action(&self, action: crate::filtered::FilteredAction) {
         match action {
             crate::filtered::FilteredAction::Sweep => self.ask_sweep(),
         }
     }
 
-    /// What sync said about an account: the banner and the label follow.
     fn hear_sync(&self, event: &postio_core::Event) {
         use postio_core::Event;
         let imp = self.imp();
-        // The first word about an account is news even when it changes
-        // nothing in its tracker: a tracker starts at `Offline`, so an
-        // account whose first report is `Offline` would otherwise never
-        // be drawn as such.
+        // The first word about an account is news even when it changes nothing in its tracker: a
+        // tracker starts at `Offline`, so a first report of `Offline` would never be drawn.
         let first = match event {
             Event::ConnectionChanged { account, .. }
             | Event::SyncProgress { account, .. }
@@ -4857,7 +4204,6 @@ impl FocusWindow {
         self.show_state();
     }
 
-    /// Follow `account`'s sync state from here on; whether it is new.
     fn note_account(&self, account: AccountId) -> bool {
         let mut tracked = self.imp().tracked.borrow_mut();
         let new = !tracked.contains(&account);
@@ -4867,7 +4213,6 @@ impl FocusWindow {
         new
     }
 
-    /// Draw the banner and the sync label for where every account stands.
     fn show_state(&self) {
         let imp = self.imp();
         let statuses = imp.trackers.borrow().statuses(&imp.tracked.borrow());
@@ -4892,8 +4237,6 @@ impl FocusWindow {
         }
     }
 
-    /// The banner under the strip, while one shows: what it says, its
-    /// button's label, and the first sync's progress.
     pub fn banner_showing(&self) -> Option<(String, Option<String>, Option<f64>)> {
         self.imp()
             .state_banner
@@ -4902,21 +4245,16 @@ impl FocusWindow {
             .and_then(|slot| slot.showing())
     }
 
-    /// What the top bar's sync label says.
     pub fn sync_said(&self) -> String {
         self.chrome()
             .map(|chrome| chrome.sync_said())
             .unwrap_or_default()
     }
 
-    /// What the top bar's sync label's tooltip says, when it says anything.
     pub fn sync_detail(&self) -> Option<String> {
         self.chrome().and_then(|chrome| chrome.sync_detail())
     }
 
-    /// "Update password…": the credential dialog both desktop apps share,
-    /// for the account the sign-in banner names (US6 scenario 3). Once the
-    /// new password is saved, sync tries again at once.
     fn update_credential(&self) {
         let imp = self.imp();
         let Some(client) = imp.client.borrow().clone() else {
@@ -4952,14 +4290,8 @@ impl FocusWindow {
         });
     }
 
-    /// Go to the message a `postio://` link names (T159, US15 scenario 2):
-    /// open it over the list and do nothing else to it. A link that is not
-    /// one of Postio's, or names a message not in this store, is refused
-    /// with a sentence. A link that arrives before the store is open waits
-    /// for it.
+    /// A link that arrives before the store is open waits for it.
     pub fn open_link(&self, uri: &str) {
-        // The desktop hands over every scheme the entry registers: a
-        // `mailto:` link starts a message (row 46, T244).
         if let Some(mailto) = postio_model::mailto::Mailto::parse(uri) {
             return self.open_mailto(mailto);
         }
@@ -4992,9 +4324,8 @@ impl FocusWindow {
         ));
     }
 
-    /// A `mailto:` link: a new message with its recipients, subject and body
-    /// filled in, in the composer's dialog. A link that arrives before the
-    /// composer is mounted -- a cold launch from a browser -- waits for it.
+    /// A link that arrives before the composer is mounted (a cold launch from a browser) waits for
+    /// it.
     fn open_mailto(&self, mailto: postio_model::mailto::Mailto) {
         match self.compose() {
             Some(compose) => compose.open_mailto(mailto),
@@ -5004,13 +4335,9 @@ impl FocusWindow {
         }
     }
 
-    /// The list's column and the reading pane, side by side (T232): the pane
-    /// as wide as `focus_dialog::pane_width` says for the split's width, the
-    /// list the rest. A layout of its own, so the widths come from the
-    /// allocation itself and never from a size request the window would
-    /// then refuse to shrink below; and the place a crossing of the
-    /// narrowest width a pane fits is noticed, to move an open message
-    /// between pane and dialog.
+    /// A layout of its own, so the widths come from the allocation and never from a size request
+    /// the window would then refuse to shrink below;
+    /// a crossing of the narrowest width a pane fits moves an open message between pane and dialog.
     fn split(&self, list: &gtk::Box, pane: &gtk::Widget) -> gtk::Box {
         let split = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         split.add_css_class("focus-split");
@@ -5021,7 +4348,6 @@ impl FocusWindow {
         split.set_layout_manager(Some(crate::split::SplitLayout::new(move |width| {
             let now = postio_ui::focus_dialog::pane_width(width).is_some();
             if fits.replace(Some(now)) != Some(now) {
-                // Not from inside an allocation: once it is done.
                 let window = window.clone();
                 glib::idle_add_local_once(move || {
                     if let Some(window) = window.upgrade() {
@@ -5033,10 +4359,6 @@ impl FocusWindow {
         split
     }
 
-    /// Where an open message goes now, and put it there (T232): beside the
-    /// list when the person reads beside it, the window has room for a pane
-    /// and the inbox's list is what is on screen; over it otherwise. An open
-    /// message, and an open composer, move with it and stay open.
     fn place_reading(&self) {
         use postio_ui::focus_dialog::{self, Placement};
         let imp = self.imp();
@@ -5054,9 +4376,8 @@ impl FocusWindow {
             0 => self.width(),
             width => width,
         };
-        // The pane is the inbox list's: Filtered, the digest rules and a
-        // digest over the window have no list beside it, and an empty inbox
-        // has nothing to open.
+        // The pane is the inbox list's: Filtered, the digest rules and a digest over the window
+        // have no list beside it, and an empty inbox has nothing to open.
         let listing = imp.pages.visible_child_name().as_deref() == Some(INBOX)
             && self.digest().is_none()
             && imp
@@ -5081,8 +4402,6 @@ impl FocusWindow {
         self.show_pane_page();
     }
 
-    /// Show in the reading pane what is open: the composer, which takes the
-    /// open message's place, then the message, then nothing (T232).
     pub(crate) fn show_pane_page(&self) {
         use crate::reading_pane::Page;
         let Some(pane) = self.imp().reading_pane.borrow().clone() else {
@@ -5101,13 +4420,11 @@ impl FocusWindow {
         pane.show(page);
     }
 
-    /// Whether a message is open in the reading pane beside the list.
     fn reading_beside(&self) -> bool {
         self.reading()
             .is_some_and(|reading| reading.in_pane() && reading.is_open())
     }
 
-    /// The reading pane, once the inbox is showing: what a test reads.
     pub fn reading_pane(&self) -> Option<gtk::Widget> {
         self.imp()
             .reading_pane
@@ -5116,25 +4433,17 @@ impl FocusWindow {
             .map(|pane| pane.widget())
     }
 
-    /// The cursor moved: while a message is open beside the list, show the
-    /// cursor's row in its place, as `j`/`k` would (T232). Over the list the
-    /// dialog takes the pointer, so only the keys move it, and they open
+    /// Over the list the dialog takes the pointer, so only the keys move the cursor, and they open
     /// what they land on themselves.
     fn follow_cursor(&self) {
         if self.imp().placing_cursor.get() || !self.reading_beside() {
             return;
         }
-        // A draft is written, not read, and a digest has its own window:
-        // passing over one puts the pane's message away. Which is the
-        // controller's to say.
         self.open_message();
     }
 
-    /// `F8`: open messages beside the list, or over it again (T232). The
-    /// window switches at once, an open message moving with it, and the
-    /// choice is written to `config.toml` as `[focus] reading`, so it
-    /// outlives the session; the watcher's echo of the write changes
-    /// nothing.
+    /// The choice is written to `config.toml` as `[focus] reading`; the watcher's echo of the write
+    /// changes nothing.
     fn toggle_reading_pane(&self) {
         use postio_config::Reading;
         let imp = self.imp();
@@ -5167,13 +4476,11 @@ impl FocusWindow {
         let said = postio_ui::focus_target::reading_placement(next == Reading::Pane, beside);
         imp.toast.show_notice(said);
         self.follow_toast();
-        // Where the keyboard was, the message beside it or over it.
         if !beside && let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
             reading.dialog().grab_focus();
         }
     }
 
-    /// The open-email dialog, built the first time anything opens.
     fn reading_dialog(&self) -> Option<Rc<crate::open::OpenMessage>> {
         let client = self.imp().client.borrow().clone()?;
         let reading = self
@@ -5192,10 +4499,6 @@ impl FocusWindow {
                     self,
                     move |id| window.act(id)
                 ));
-                // Open for the dwell, it counts as read (T237): the host
-                // marks it without an undo entry.
-                // The bar says how many chips fit; the controller composes it
-                // again for that many.
                 reading.connect_bar_room(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -5233,9 +4536,6 @@ impl FocusWindow {
                     move |message| window.post(Command::MarkReadOnDwell { message })
                 ));
                 self.imp().toast.set_over(Some(reading.toast_overlay()));
-                // The dialog gives the keyboard back to what had it before,
-                // which for the list is its first row: the cursor's row is
-                // where it belongs.
                 reading.dialog().connect_closed(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -5250,13 +4550,11 @@ impl FocusWindow {
                         .map(|facts| (facts.id, facts.address.clone()))
                         .collect(),
                 );
-                // The zoom `[reader]` says (T235).
                 if let Some(zoom) = self.imp().zoom.get() {
                     reading.reader().set_zoom(zoom);
                 }
-                // A zoom a person chose is the next message's too (T242):
-                // written to `[reader]` alone, which the watcher then reads
-                // back as the zoom it already is.
+                // A zoom a person chose is the next message's too: written to `[reader]` alone,
+                // which the watcher reads back as the zoom it already is.
                 reading.reader().connect_zoom_changed(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -5268,8 +4566,8 @@ impl FocusWindow {
                         }
                     }
                 ));
-                // The notice only asks; leaving the list is logged by the
-                // host, on this one deliberate click (T261).
+                // The notice only asks; leaving the list is logged by the host, on this one
+                // deliberate click.
                 reading.reader().connect_unsubscribe_activated(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -5279,14 +4577,11 @@ impl FocusWindow {
                         }
                     }
                 ));
-                // A chip asks for the chooser, at its part (T240).
                 reading.connect_chip(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
                     move |part| window.offer_choices(Some(part))
                 ));
-                // Opening or closing it changes what the reading pane shows,
-                // and closing it there gives the keyboard back to the list.
                 reading.connect_changed(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -5303,29 +4598,22 @@ impl FocusWindow {
         Some(reading)
     }
 
-    /// The open message opened or closed: the pane shows what is open now,
-    /// and a message closed beside the list leaves the keyboard in the list,
-    /// on the row it was on (T232).
     fn reading_changed(&self) {
-        // Told at once, so a message closed by its own button is off the
-        // controller's stack before any key is resolved.
+        // Told at once, so a message closed by its own button is off the controller's stack before
+        // any key is resolved.
         self.sync_surfaces();
         let Some(reading) = self.reading() else {
             return;
         };
-        // A message opened where the pane does not reach -- over a digest --
-        // goes back to where messages open, once it closes.
         if !reading.is_open() {
-            // What was said while the message was up -- a send queued, an
-            // archive done -- goes on being said, with its Undo, over the
-            // list the message leaves.
+            // What was said while the message was up (a send queued, an archive done) goes on being
+            // said, with its Undo, over the list.
             if self.imp().toast.rehome() {
                 self.follow_toast();
             }
             self.place_reading();
         }
-        // A message opening over an offer hides it: the offer ends with the
-        // moment it was made, rather than staying reachable by key unseen.
+        // The offer ends with the moment it was made, rather than staying reachable by key unseen.
         if reading.is_open() && self.imp().toast.drop_offer() {
             self.imp().on_screen.take();
         }
@@ -5338,10 +4626,8 @@ impl FocusWindow {
         }
     }
 
-    /// `Enter`: the conversation under the cursor, over the list (screen 04).
-    /// The controller decides what opens (a draft is written, not read) and
-    /// where its place in the list is; [`Self::show_message`] draws it. With
-    /// a message already up, it is asked to follow the cursor instead.
+    /// The controller decides what opens (a draft is written, not read). With a message already up,
+    /// it follows the cursor instead.
     fn open_message(&self) {
         self.sync_surfaces();
         let Some(pane) = self.pane() else {
@@ -5354,11 +4640,7 @@ impl FocusWindow {
         }
     }
 
-    /// Show `message`, which the controller opened, at `index` of `total`
-    /// messages in the list: the open-email dialog, or the pane beside it.
     fn show_message(&self, message: MessageId, index: u32, total: u32) {
-        // Filtered's messages are not in the list behind it: the window
-        // opens one by its id, titled by the row it came from.
         if let Some(view) = self.filtered()
             && let Some(reading) = self.reading_dialog()
         {
@@ -5368,8 +4650,6 @@ impl FocusWindow {
             crate::motion::keep_to_budget(&reading.view());
             return;
         }
-        // A step of the thread the window is walking: the same window, the
-        // message in place, and the list's cursor where it was.
         if let Some(reading) = self.reading_dialog()
             && reading.is_open()
             && self
@@ -5387,8 +4667,6 @@ impl FocusWindow {
                 .and_downcast::<RowObject>()
                 .and_then(|row| row.item())
         });
-        // A search's hit (slice 8): the controller opened it among the hits,
-        // which its place is among, whether or not the list has it too.
         if self
             .pane()
             .is_some_and(|pane| pane.feed().among_hits(message))
@@ -5405,9 +4683,8 @@ impl FocusWindow {
             crate::motion::keep_to_budget(&reading.view());
             return;
         }
-        // A message of a thread that is not its newest has no row of the
-        // list: it opens as a hit does, by its id, titled by the row the
-        // cursor is on, or by the open thread's row when it is on a child.
+        // A message of a thread that is not its newest has no list row: it opens by its id, titled
+        // by the cursor's row, or the open thread's row on a child.
         if row.is_none()
             && let Some(pane) = self.pane()
             && let Some(reading) = self.reading_dialog()
@@ -5426,7 +4703,6 @@ impl FocusWindow {
                         .and_then(|conversation| conversation.summary.subject.clone())
                 })
                 .unwrap_or_default();
-            // The header is the thread's, not a result's: no hit.
             let _ = (index, total);
             reading.show_found(self, message, &subject, None);
             crate::a11y::teach_shortcuts(&reading.view());
@@ -5434,8 +4710,6 @@ impl FocusWindow {
             return;
         }
         let (Some(row), Some(reading)) = (row, self.reading_dialog()) else {
-            // Nothing to show: the controller has the message on its stack,
-            // and it comes off.
             if let Some(pane) = self.pane() {
                 pane.feed()
                     .input(postio_focus::Input::SurfaceClosed(SurfaceKind::Message));
@@ -5443,8 +4717,7 @@ impl FocusWindow {
             return;
         };
         let position = crate::open::Position { index, total };
-        // The row already on screen is not read again: beside the list the
-        // pane follows the cursor, and `j` both moves it and asks.
+        // Beside the list the pane follows the cursor, and `j` both moves it and asks.
         if reading.showing_row() == Some(row.id()) && reading.in_pane() {
             return;
         }
@@ -5453,18 +4726,14 @@ impl FocusWindow {
         crate::motion::keep_to_budget(&reading.view());
     }
 
-    /// Open URIs through `launch` rather than the desktop: what a test
-    /// records instead of starting a browser.
     pub fn set_launcher(&self, launch: impl Fn(&str) + 'static) {
         self.imp().launcher.replace(Some(Rc::new(launch)));
     }
 
-    /// A copy of a search's file, for the system (spec 010 FR-053). Space's
-    /// preview opens it in the desktop's app for its type: Linux has no
-    /// system Quick Look to hand it to. The copy stays until the controller
-    /// takes it away -- Space again, or leaving the results -- since the app
-    /// may still be reading it. Save asks where, writes it there, and lets
-    /// the copy go either way.
+    /// Linux has no system Quick Look, so Space opens the copy in the desktop's app. The copy stays
+    /// until the controller takes it away,
+    /// since the app may still be reading it; Save writes it elsewhere and lets the copy go either
+    /// way.
     fn file_copy(&self, copy: Option<&postio_focus::FileCopy>) {
         let Some(copy) = copy else {
             return;
@@ -5503,7 +4772,6 @@ impl FocusWindow {
         }
     }
 
-    /// Open `uri` outside Postio: a deliberate choice's only consequence.
     fn launch(&self, uri: &str) {
         let launch = self.imp().launcher.borrow().clone();
         match launch {
@@ -5517,8 +4785,6 @@ impl FocusWindow {
         }
     }
 
-    /// `A`: offer the open message's links and parts (US2 scenario 9), or
-    /// a chip's part, which is the same chooser opened at that part (T240).
     fn offer_choices(&self, at: Option<postio_model::ids::AttachmentId>) {
         let Some(reading) = self.reading().filter(|reading| reading.is_open()) else {
             return;
@@ -5546,8 +4812,6 @@ impl FocusWindow {
         .present(Some(self));
     }
 
-    /// Ask the file-chooser portal where to save, through the seam a test
-    /// answers for itself.
     pub fn set_file_picker(
         &self,
         pick: impl Fn(crate::chooser::SavePick, Box<dyn FnOnce(Option<std::path::PathBuf>)>) + 'static,
@@ -5560,8 +4824,7 @@ impl FocusWindow {
         pick: crate::chooser::SavePick,
         then: impl FnOnce(std::path::PathBuf) + 'static,
     ) {
-        // Dismissed is a person's answer, not a fault: nothing is written
-        // and nothing is said.
+        // Dismissed is a person's answer, not a fault: nothing is written and nothing is said.
         self.pick_place_or_not(pick, move |chosen| {
             if let Some(path) = chosen {
                 then(path);
@@ -5569,8 +4832,6 @@ impl FocusWindow {
         });
     }
 
-    /// As [`pick_place`](Self::pick_place), but a dismissal is heard too,
-    /// as `None`: for a caller with something to undo either way.
     fn pick_place_or_not(
         &self,
         pick: crate::chooser::SavePick,
@@ -5583,7 +4844,6 @@ impl FocusWindow {
         // POSTIO-CONSENT: runs only when the person pressed Save or Save all
         // in the chooser; the portal's dialog is theirs to dismiss.
         let dialog = gtk::FileDialog::new();
-        // The portal hands back a local path for every choice.
         let done = move |chosen: Result<gio::File, glib::Error>| {
             answer(chosen.ok().and_then(|file| file.path()));
         };
@@ -5609,8 +4869,6 @@ impl FocusWindow {
         }
     }
 
-    /// What the open-with chooser offers, each as its words and its target
-    /// or size; empty while it is not shown.
     pub fn choices_shown(&self) -> Vec<(String, String)> {
         let shown = self
             .visible_dialog()
@@ -5626,13 +4884,11 @@ impl FocusWindow {
             .collect()
     }
 
-    /// Choose the `index`th thing the chooser offers, as a click on it does.
     pub fn choose(&self, index: usize) {
         self.close_chooser();
         self.open_choice(index);
     }
 
-    /// The row the chooser opened on: where a chip took it.
     pub fn choice_focused(&self) -> Option<String> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == crate::chooser::DIALOG_NAME)
@@ -5657,8 +4913,6 @@ impl FocusWindow {
         }
     }
 
-    /// Save the part the chooser offered at `index` to a file the portal
-    /// names, written by the host (a part not here yet is fetched first).
     fn save_choice(&self, index: usize) {
         let choice = self.imp().choices.borrow().get(index).cloned();
         self.imp().choices.borrow_mut().clear();
@@ -5700,8 +4954,6 @@ impl FocusWindow {
         });
     }
 
-    /// Save every attachment into a folder the portal names, each under the
-    /// name the sender gave it, no two over one another.
     fn save_all_parts(&self) {
         self.imp().choices.borrow_mut().clear();
         let (Some(reading), Some(client)) = (self.reading(), self.imp().client.borrow().clone())
@@ -5740,8 +4992,6 @@ impl FocusWindow {
         });
     }
 
-    /// Open what the chooser offered at `index`: a link as it is, a part
-    /// written out by the host first.
     fn open_choice(&self, index: usize) {
         let Some(choice) = self.imp().choices.borrow().get(index).cloned() else {
             return;
@@ -5776,16 +5026,12 @@ impl FocusWindow {
         }
     }
 
-    /// The raw source on screen, while it is shown.
     pub fn source_shown(&self) -> Option<String> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == crate::source::DIALOG_NAME)
             .and_then(|dialog| crate::source::shown(&dialog))
     }
 
-    /// `V`: the raw source of the message open, or else of the row under
-    /// the cursor, read through the host and fetched only now if it is not
-    /// here (US2 scenario 5).
     fn view_source(&self) {
         let message = self
             .reading()
@@ -5813,14 +5059,10 @@ impl FocusWindow {
         });
     }
 
-    /// Where remote images a person allowed are fetched: the host's
-    /// runtime, which the desktop app's fetcher runs on too.
     pub fn set_remote_runtime(&self, runtime: tokio::runtime::Handle) {
         self.imp().runtime.replace(Some(runtime));
     }
 
-    /// The pinned saved searches, in `config.toml`'s order: what `alt+1`-`4`
-    /// and the bar's pills run.
     pub fn set_saved_searches(&self, saved: Vec<postio_ui::saved_search::SavedSearch>) {
         if let Some(pane) = self.pane() {
             pane.feed()
@@ -5829,19 +5071,16 @@ impl FocusWindow {
         self.imp().saved.replace(saved);
     }
 
-    /// The folders popover, once it has been opened.
     pub fn places(&self) -> Option<Rc<crate::places::Places>> {
         self.imp().places.borrow().clone()
     }
 
-    /// What the header strip names the list: the place it shows.
     pub fn place_name(&self) -> String {
         self.chrome()
             .map(|chrome| chrome.place())
             .unwrap_or_default()
     }
 
-    /// `g l`, or a click on "Inbox ▾": the folders popover (screen 10).
     fn open_places(&self) {
         let (Some(chrome), Some(pane)) = (self.chrome(), self.pane()) else {
             return;
@@ -5860,9 +5099,8 @@ impl FocusWindow {
                     let feed = pane.feed().clone();
                     move |token| feed.input(postio_focus::Input::OpenPlace(token))
                 });
-                // Chosen from or dismissed, the keyboard goes back to the
-                // list, not to the button the popover hangs from, and its
-                // counts need no more reading.
+                // Chosen from or dismissed, the keyboard goes back to the list, not to the button
+                // the popover hangs from.
                 places.connect_closed(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -5881,7 +5119,6 @@ impl FocusWindow {
         crate::motion::keep_to_budget(self);
     }
 
-    /// List one mailbox as a folder, named `name` in the header strip.
     fn open_mailbox(&self, mailbox: postio_model::MailboxId, name: &str) {
         let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
             return;
@@ -5894,9 +5131,6 @@ impl FocusWindow {
         self.focus_list_soon();
     }
 
-    /// `g c`: Focus's inbox, then each account's inbox in turn
-    /// ([`postio_ui::places::next_scope`]). With one account there is only
-    /// Focus's, and nothing changes.
     fn next_scope(&self) {
         use postio_model::listing::MailStore as _;
         use postio_ui::places::{Scope, next_scope};
@@ -5947,7 +5181,6 @@ impl FocusWindow {
         });
     }
 
-    /// Back to Focus's own inbox: `g i`.
     fn go_to_inbox(&self) {
         let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
             return;
@@ -5959,9 +5192,6 @@ impl FocusWindow {
         self.focus_list_soon();
     }
 
-    /// Whether the list shows Focus's own inbox, rather than a folder or a
-    /// view: what the strip counts, and whether new mail is being looked
-    /// at. `!` narrows the inbox to what has an action, and is still it.
     fn at_inbox(&self) -> bool {
         self.pane().is_none_or(|pane| {
             matches!(
@@ -5971,8 +5201,6 @@ impl FocusWindow {
         })
     }
 
-    /// The controller has taken the list to `name` (spec 009 slice 8): the
-    /// strip names it and counts what it lists, and the keyboard is on it.
     fn show_place(&self, name: &str) {
         if let Some(chrome) = self.chrome() {
             chrome.set_place(name);
@@ -5981,27 +5209,22 @@ impl FocusWindow {
         self.focus_list_soon();
     }
 
-    /// The command bar, once the inbox is showing.
     pub fn bar(&self) -> Option<Rc<crate::bar::Bar>> {
         self.imp().bar.borrow().clone()
     }
 
-    /// The window became the active one, or stopped being it: the open
-    /// message's read clock runs only while it is. Called from the window's
-    /// own notification; public because a headless compositor grants no
-    /// focus, so a test says what the notification would.
+    /// Public because a headless compositor grants no focus, so a test says what the notification
+    /// would.
     pub fn focus_changed(&self, active: bool) {
         if let Some(reading) = self.reading() {
             reading.set_window_active(active);
         }
     }
 
-    /// The open-email dialog, once a message has been opened.
     pub fn reading(&self) -> Option<Rc<crate::open::OpenMessage>> {
         self.imp().reading.borrow().clone()
     }
 
-    /// `?`: the key map, over the window (screen 20).
     fn show_key_map(&self) {
         let dialog = crate::keymap_dialog::build(&self.keymap());
         dialog.set_widget_name(KEY_MAP);
@@ -6009,17 +5232,10 @@ impl FocusWindow {
         dialog.present(Some(self));
     }
 
-    /// Every command the command bar can list, by typing its name.
     pub fn command_bar_rows(&self) -> Vec<CommandId> {
         self.bar().map(|bar| bar.commands()).unwrap_or_default()
     }
 
-    /// Every command a person can reach with the mouse somewhere in the
-    /// window: the chrome and its menu, the bulk bar, the banner's button,
-    /// the empty inbox's shortcuts, the toast's Undo, and the toast that
-    /// offers to add an account when compose has none to write from
-    /// (T172), and the sweep button of the toast after an unsubscribe. Each
-    /// is read from the table that builds it.
     pub fn controls(&self) -> Vec<CommandId> {
         let mut commands = Chrome::commands();
         commands.extend(Bulk::commands());
@@ -6046,7 +5262,6 @@ impl FocusWindow {
             .map(|(_, _, command)| command),
         );
         commands.extend(crate::open::OpenMessage::controls());
-        // The empty reading pane's shortcuts (T232).
         commands.extend(
             postio_ui::focus_state::empty_pane(&self.keymap())
                 .shortcuts
@@ -6055,38 +5270,27 @@ impl FocusWindow {
         );
         commands.extend(crate::places::Places::controls());
         commands.extend(crate::row_menu::RowMenu::commands());
-        // The thread menu's entries, and the chevron on a thread's row
-        // (the list's and Filtered's), which opens or folds it.
         commands.extend(crate::thread_popovers::ThreadMenu::controls());
         commands.extend([CommandId::ExpandThread, CommandId::CollapseThread]);
         commands.extend(crate::bar::Bar::controls());
         commands.extend(crate::filtered::FilteredView::controls());
         commands.extend(crate::contacts::ContactsView::controls());
         commands.extend(crate::digest::DigestWindow::controls());
-        // The strip's counts are ways there: "186 filtered today g f" and
-        // "4 digest rules g d".
         commands.extend([CommandId::GoToFiltered, CommandId::GoToDigestRules]);
         commands.push(CommandId::Undo);
         commands.push(CommandId::AddAccount);
-        // The toast after an unsubscribe: its sweep button (`Archive 14`)
-        // runs exactly what the key does (#1953).
         commands.push(CommandId::ClearListMail);
         commands.extend(crate::settings::Settings::controls());
         commands.extend(crate::compose::Compose::controls());
         commands.extend(crate::capture::CaptureSheet::controls());
-        // The answering actions a marked row draws, each a button.
         commands.extend([CommandId::AcceptInvite, CommandId::DeclineInvite]);
         commands.sort_by_key(|command| command.as_str());
         commands.dedup();
         commands
     }
 
-    /// Open the row menu on the row at `position`, at `at` in the list's
-    /// coordinates (T199). The cursor goes to the row, as a click's does.
-    /// A row inside the selection gets a menu for the selection, and says
-    /// so; a row outside it gets one for itself, and the selection is let
-    /// go only when one of its verbs runs, so dismissing loses nothing. A
-    /// digest's row has its own verbs and no menu.
+    /// A row inside the selection gets a menu for the selection; a row outside gets one for itself,
+    /// and the selection is let go only when one of its verbs runs, so dismissing loses nothing.
     pub fn open_row_menu(&self, position: u32, at: gdk::Rectangle) {
         let imp = self.imp();
         let Some(pane) = self.pane() else {
@@ -6137,8 +5341,6 @@ impl FocusWindow {
         );
     }
 
-    /// A verb chosen from the row menu: the one command its key runs, on
-    /// the selection or, for a row outside it, on the row alone.
     fn row_menu_chose(&self, id: CommandId) {
         if self.imp().row_menu_alone.replace(false) {
             self.clear_selection();
@@ -6146,12 +5348,10 @@ impl FocusWindow {
         self.act(id);
     }
 
-    /// The row's right-click menu, once a right-click has built it.
     pub fn row_menu(&self) -> Option<Rc<crate::row_menu::RowMenu>> {
         self.imp().row_menu.borrow().clone()
     }
 
-    /// The picker open at the row, if one is.
     pub fn open_picker(&self) -> Option<Rc<Picker>> {
         let imp = self.imp();
         [&imp.snooze, &imp.remind]
@@ -6180,13 +5380,10 @@ impl FocusWindow {
                     .as_ref()
                     .map(|driven| Rc::clone(driven.picker())),
             )
-            // The composer's remind picker, at its footer (US3).
             .chain(self.compose().and_then(|compose| compose.open_picker()))
             .find(|picker| picker.is_open())
     }
 
-    /// Open the move picker at the cursor's row (US5 scenario 6): the
-    /// move goes where every verb goes, and the selection with it.
     fn open_moves(&self) {
         let imp = self.imp();
         let Some(client) = imp.client.borrow().clone() else {
@@ -6214,8 +5411,6 @@ impl FocusWindow {
         );
     }
 
-    /// Draw the move picker the controller opened, hung where it says: the
-    /// cursor's row, or the open message's action row.
     fn open_driven_picker(&self, view: &postio_focus::PickerView) {
         let imp = self.imp();
         let picker = imp.driven_picker.borrow().clone();
@@ -6239,9 +5434,6 @@ impl FocusWindow {
         picker.open(view, &anchor, Some(&rect));
     }
 
-    /// Open the label picker at the cursor's row, over what a verb would
-    /// aim at now (US5 scenario 5). Each change it makes is sent to those
-    /// same conversations, and the selection goes when it closes.
     fn open_labels(&self) {
         let imp = self.imp();
         let Some(client) = imp.client.borrow().clone() else {
@@ -6296,8 +5488,6 @@ impl FocusWindow {
         });
     }
 
-    /// Open the snooze or remind picker at the cursor's row, aimed at the
-    /// selection when there is one (US5).
     fn open_when(&self, when: When) {
         let imp = self.imp();
         let slot = match when {
@@ -6335,13 +5525,9 @@ impl FocusWindow {
         );
     }
 
-    /// Where a picker hangs: from the list, under the cursor's row, at the
-    /// subject column (screens 11-14).
     fn at_the_row(&self) -> Option<(gtk::Widget, gdk::Rectangle)> {
-        // With the message open over the list, the list is behind a modal
-        // dialog and cannot hold the keyboard, so a picker hung from it
-        // would never get the caret: it hangs from the dialog, under its
-        // action row.
+        // With the message open over the list, the list is behind a modal dialog and cannot hold
+        // the keyboard: a picker hangs from the dialog, under its action row.
         if let Some(reading) = self.reading()
             && reading.is_open()
             && let Some(hung) = reading.picker_anchor()
@@ -6350,7 +5536,6 @@ impl FocusWindow {
         }
         let pane = self.pane()?;
         let view = pane.view().clone();
-        // The keyboard is on a child of an opened thread, or on a row.
         let row = match self.cursor_row() {
             Some(cursor) => pane
                 .rows_on_screen()
@@ -6378,34 +5563,27 @@ impl FocusWindow {
         Some((view.upcast(), rect))
     }
 
-    /// What a picker names as its target: the cursor's conversation, or
-    /// how many are selected.
     fn picker_target(&self) -> String {
         postio_ui::focus_target::picker_target(&self.selection(), self.cursor_row().as_ref())
     }
 
-    /// The key map, while it is open.
     pub fn key_map(&self) -> Option<adw::Dialog> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == KEY_MAP)
     }
 
-    /// The compose dialog, while it is over the window (screens 05, 06).
     pub fn compose_dialog(&self) -> Option<adw::Dialog> {
         self.compose().and_then(|compose| compose.dialog())
     }
 
-    /// The composer Focus writes in: the shared one, in a dialog.
     pub fn composer(&self) -> Option<postio_widgets::composer::Composer> {
         self.compose().map(|compose| compose.composer().clone())
     }
 
-    /// The list pane, once the inbox is showing.
     pub fn pane(&self) -> Option<ListPane> {
         self.imp().pane.borrow().clone()
     }
 
-    /// The rows a person can see, top to bottom, each as it reads.
     pub fn rows_on_screen(&self) -> Vec<String> {
         self.pane()
             .map(|pane| {
@@ -6417,14 +5595,11 @@ impl FocusWindow {
             .unwrap_or_default()
     }
 
-    /// Say `sentence` in a toast: something that happened, with nothing
-    /// to undo.
     pub fn say(&self, sentence: &str) {
         self.imp().toast.show_notice(sentence);
         self.follow_toast();
     }
 
-    /// Tell the toasts which key undoes, for the cap beside their Undo.
     pub(crate) fn teach_undo_key(&self) {
         let key = postio_ui::hints::key(&self.keymap(), CommandId::Undo);
         self.imp().toast.set_undo_key(key.clone());
@@ -6433,7 +5608,6 @@ impl FocusWindow {
         }
     }
 
-    /// Say `sentence` in a toast whose Undo runs `on_undo`.
     pub(crate) fn show_removable(&self, sentence: &str, on_undo: impl Fn() + 'static) {
         self.teach_undo_key();
         self.imp().toast.show_removable(sentence, on_undo);
@@ -6457,7 +5631,6 @@ impl FocusWindow {
         self.imp().on_screen.replace(Some(toast));
     }
 
-    /// The words of the toast on screen, if one is.
     pub fn toast_showing(&self) -> Option<String> {
         self.imp()
             .on_screen
@@ -6466,19 +5639,14 @@ impl FocusWindow {
             .and_then(|toast| toast.title().map(|title| title.to_string()))
     }
 
-    /// The overlay the toast on screen is drawn in: the dialog's while a
-    /// message is open over the window, the window's otherwise.
     pub fn toast_host(&self) -> Option<adw::ToastOverlay> {
         self.imp().toast.host()
     }
 
-    /// The toast on screen, if one is: its words, its button and how long
-    /// it stays.
     pub fn toast(&self) -> Option<adw::Toast> {
         self.imp().on_screen.borrow().clone()
     }
 
-    /// Take the toast on screen away, as its timeout would.
     pub fn dismiss_toast(&self) {
         let toast = self.imp().on_screen.borrow().clone();
         if let Some(toast) = toast {
@@ -6488,20 +5656,10 @@ impl FocusWindow {
 }
 
 impl FocusWindow {
-    /// Where everything is, for a storyboard (specs/008-storyboards,
-    /// contracts/observation.md § Focus).
-    ///
-    /// Every field is read off what is on screen -- the widget that really
-    /// holds the keyboard, the cursor's row, the toast that is up -- and not
-    /// off what a surface was told. It reads only: no store, no command, no
-    /// focus change, and it builds no surface that is not already there.
-    ///
-    /// Unobserved, and left empty so a check on them reads "not applicable"
-    /// and never a pass: `rows.first_visible` (the list is windowed over the
-    /// store, so a row's index is not its place on screen),
-    /// `reading.focused` (the open message shows one message, not a
-    /// conversation of them) and `back_depth` (Back is a cascade, not a
-    /// stack).
+    /// Reads only: no store, no command, no focus change, and builds no surface not already there.
+    /// Every field comes off what is on screen, not what a surface was told.
+    /// `rows.first_visible`, `reading.focused` and `back_depth` are unobserved and left empty, so a
+    /// check reads "not applicable".
     pub fn observe(&self) -> postio_ui::observe::Observation {
         use postio_ui::observe::{
             Banner, Composer as ComposerState, Cursor, Keyboard, Notice, Observation, Overlay,
@@ -6511,8 +5669,8 @@ impl FocusWindow {
         use postio_widgets::storyboard::{deliver, reach};
 
         let toplevel: &gtk::Window = self.upcast_ref();
-        // A composition in a window of its own holds the keyboard there: the
-        // widget a key reaches is that window's focus, not a row of this one.
+        // A composition in a window of its own holds the keyboard there: the widget a key reaches
+        // is that window's focus.
         let detached = self
             .compose()
             .and_then(|compose| compose.composer().detached_window())
@@ -6538,23 +5696,17 @@ impl FocusWindow {
         let rule = self.rule_dialog().filter(|rule| rule.dialog().is_mapped());
         let reading = self.reading().filter(|reading| reading.is_open());
         let digest = self.digest();
-        // The composer in its dialog or in the reading pane (T232).
         let compose_open = self.compose().is_some_and(|compose| compose.is_showing());
         let composition_detached = self
             .compose()
             .is_some_and(|compose| compose.composer().is_detached());
         let sign_in = self.add_account_dialog().is_some();
         let settings = self.settings_dialog().is_some();
-        // The raw source and the open chooser are dialogs of their own over
-        // the open message.
         let small_dialog = [crate::source::DIALOG_NAME, crate::chooser::DIALOG_NAME]
             .into_iter()
             .find(|name| dialog_named(name));
-        // A message open beside the list, the keyboard on it (T232): the
-        // window's own context says so, as it does for every key.
         let reading_here = self.visible_dialog().is_none() && self.reading_beside();
-        // The merge sheet over the Contacts view takes every key until it is
-        // answered: the keyboard is the sheet's, not the dimmed list's.
+        // The merge sheet over the Contacts view takes every key until answered.
         let merging = self.contacts().is_some_and(|view| view.merge_open());
 
         let region = if menu.is_some() {
@@ -6572,30 +5724,21 @@ impl FocusWindow {
         {
             Region::Dialog
         } else if compose_open || composition_detached {
-            // A detached composition is in a window of its own, where the
-            // keyboard went with it: what is typed next is the message's.
             Region::Composer
         } else if dialog_named(crate::open::DIALOG_NAME) || reading_here {
             Region::Reader
         } else if digest.is_some() {
             Region::Dialog
         } else if self.results().is_some() && self.key_context() == KeyContext::Results {
-            // A search's results in the list's place, nothing over them:
-            // the window's controller hands their keys to the controller
-            // (`act`), wherever in the pane the focus sits.
             Region::Results
         } else if focus.is_none() {
-            // Focus leaves the keyboard on the window itself when nothing
-            // is focused (a closed bar hands focus back to nothing, by
-            // design: `Bar::close`), and the window's own key controller
-            // is where its list's keys are handled.
+            // Focus leaves the keyboard on the window itself when nothing is focused (a closed bar
+            // hands focus back to nothing: `Bar::close`).
             Region::List
         } else if focus.as_ref().is_some_and(|widget| {
             std::iter::successors(Some(widget.clone()), |widget| widget.parent())
                 .any(|widget| widget.type_().name() == "AdwToastWidget")
         }) {
-            // On a toast's own button: Return or Space there answers the
-            // toast, and the list's keys are not the ones this is.
             Region::Other
         } else if bar
             .as_ref()
@@ -6612,9 +5755,8 @@ impl FocusWindow {
             && self.key_context() == KeyContext::List
             && self.unavailable_reason().is_none()
         {
-            // A control in the top bar or the foot strip holds focus, but
-            // the window's controller takes every key first (capture
-            // phase), and in the list's context they are the list's.
+            // A control in the top bar or foot strip holds focus, but the window's controller takes
+            // every key first (capture phase).
             Region::List
         } else {
             Region::Other
@@ -6622,8 +5764,6 @@ impl FocusWindow {
 
         let field = match region {
             Region::Search | Region::Picker => Some("query".to_owned()),
-            // The composer's field, named as contracts/observation.md names
-            // them: the one the keyboard is in, in its dialog or the pane.
             Region::Composer => self
                 .compose()
                 .and_then(|compose| compose.composer().focused_field())
@@ -6656,11 +5796,8 @@ impl FocusWindow {
             .filter(|at| *at != gtk::INVALID_LIST_POSITION);
         let row = self.cursor_row();
         let count = pane.as_ref().map(|pane| pane.feed().shown().n_items());
-        // The rows a whole-view selection spans: children are not among
-        // them.
         let row_count = pane.as_ref().map(|pane| pane.feed().list().n_items());
         let selected = match self.selection() {
-            // Filtered's rows are selected apart from the list behind them.
             _ if let Some(view) = self.filtered() => view.selected().len() as u32,
             Selection::These(ids) => ids.len() as u32,
             Selection::Everything { except } => {
@@ -6721,8 +5858,7 @@ impl FocusWindow {
         };
 
         let imp = self.imp();
-        // A toast whose overlay is not on screen -- the message dialog's,
-        // once the dialog has gone -- is not a notice anyone can read.
+        // A toast whose overlay is not on screen is not a notice anyone can read.
         let notice = if imp.toast.host().is_some_and(|host| host.is_mapped()) {
             Notice {
                 text: self.toast_showing(),
@@ -6739,8 +5875,6 @@ impl FocusWindow {
 
         let locked = self.unavailable_reason().is_some();
         let view = if locked {
-            // The page a store that will not open leaves, a locked keyring
-            // among the reasons: what the window shows instead of mail.
             View::Locked
         } else if settings {
             View::Settings
@@ -6779,9 +5913,8 @@ impl FocusWindow {
             serde_json::Value::Bool(self.close_button_showing()),
         );
         let bulk = imp.bulk.borrow().as_ref().and_then(|bulk| bulk.summary());
-        // The row that really holds GTK's focus, and the More item that
-        // does: the cursor's ring is drawn from the cursor, so only these
-        // say whether the keyboard and what a person sees are the same row.
+        // The cursor's ring is drawn from the cursor, so only these say whether the keyboard and
+        // what a person sees are the same row.
         if let Some(widget) = focus.as_ref()
             && let Some(pane) = self.pane()
             && widget.is_ancestor(pane.view())
@@ -6802,8 +5935,6 @@ impl FocusWindow {
                 );
             }
         }
-        // Whether the keyboard is on a control Space or Return would press:
-        // its home, the list or the page in its place, never is (#2195).
         app.insert(
             "focus.keyboard.on_control".to_owned(),
             serde_json::json!(focus.as_ref().is_some_and(|widget| {
@@ -6813,9 +5944,6 @@ impl FocusWindow {
                     || widget.is::<gtk::Switch>()
             })),
         );
-        // The mark the list's cursor row wears: the accent ring while the
-        // list holds the keyboard, a quiet one while the composer or a
-        // dialog does. Read off the class the style sheet reads.
         app.insert(
             "focus.cursor.ring".to_owned(),
             serde_json::json!(if self.has_css_class(KEYBOARD_AWAY) {
@@ -6824,9 +5952,6 @@ impl FocusWindow {
                 "accent"
             }),
         );
-        // Whether the keyboard is on the message itself -- its column, where
-        // Space scrolls and the verbs' keys act -- and not on a control
-        // around it, which Space or Return would press instead.
         if let Some(reading) = reading.as_ref()
             && view == View::Reader
         {
@@ -6835,8 +5960,6 @@ impl FocusWindow {
                 serde_json::json!(reading.message_has(&target)),
             );
         }
-        // What the open message's header says of where it is: its place in
-        // the list, which must agree with the list's own.
         if let Some(reading) = reading.as_ref()
             && view == View::Reader
         {
@@ -6845,8 +5968,6 @@ impl FocusWindow {
                 serde_json::json!(reading.subtitle()),
             );
         }
-        // What the open message's body says: its words once they are here,
-        // or that it is still on its way.
         if let Some(reading) = reading.as_ref()
             && view == View::Reader
         {
@@ -6862,15 +5983,12 @@ impl FocusWindow {
         {
             app.insert("focus.keyboard.item".to_owned(), serde_json::json!(item));
         }
-        // Which statement of the digest's summary holds the keyboard.
         if let Some(digest) = digest.as_ref() {
             app.insert(
                 "focus.digest.reference".to_owned(),
                 serde_json::json!(digest.focused_reference()),
             );
         }
-        // What the empty page says, when it is the page showing in place of
-        // the list: a place with nothing in it is not a blank pane.
         let empty = self
             .imp()
             .list_or_empty
@@ -6880,7 +5998,6 @@ impl FocusWindow {
             .and(imp.empty.borrow().as_ref())
             .map(|page| page.heading());
         app.insert("focus.empty.heading".to_owned(), serde_json::json!(empty));
-        // What the header strip counts beside the place's name.
         if let Some(chrome) = self.chrome() {
             app.insert(
                 "focus.strip.counts".to_owned(),
@@ -6891,8 +6008,6 @@ impl FocusWindow {
                 serde_json::json!(chrome.has_action_shown()),
             );
         }
-        // What the composition holds, for a check that names it: whether a
-        // reply carries anything of what it answers.
         if let Some(compose) = self.compose()
             && let composer = compose.composer()
             && composer.is_open()
@@ -6908,9 +6023,6 @@ impl FocusWindow {
                 "focus.composer.quoted".to_owned(),
                 serde_json::json!(composer.draft().body.text.is_some()),
             );
-            // The formatting the toolbar shows lit where the caret is, as
-            // one string ("heading_1", "bold italic"), since a check
-            // compares a literal.
             app.insert(
                 "focus.composer.marks".to_owned(),
                 serde_json::json!(composer.marks_lit().join(" ")),
@@ -6920,15 +6032,12 @@ impl FocusWindow {
             "focus.bulk".to_owned(),
             serde_json::json!({ "shown": bulk.is_some(), "summary": bulk }),
         );
-        // How many of the cursor's conversation are still unread: a
-        // message read by the dwell takes one off.
         if let Some(conversation) = row.as_ref().and_then(|row| row.as_conversation()) {
             app.insert(
                 "focus.cursor.unread".to_owned(),
                 serde_json::json!(conversation.summary.unread_count),
             );
         }
-        // What the window says of the thread it is walking.
         if let Some(reading) = reading.as_ref()
             && view == View::Reader
         {
@@ -6966,9 +6075,6 @@ impl FocusWindow {
                 "focus.reading.reply_to".to_owned(),
                 serde_json::json!(reading.reply_to_said()),
             );
-            // How many places the message on screen marks as the search's
-            // or the find bar's: none is a message the window says matched
-            // and shows no match in (#2193).
             app.insert(
                 "focus.reading.find_matches".to_owned(),
                 serde_json::json!(reading.reader().view().find_state().1),
@@ -6983,7 +6089,6 @@ impl FocusWindow {
                 "focus.results.child".to_owned(),
                 serde_json::json!(results.child_focus()),
             );
-            // The words a check holds the results to (#2118: "Threads").
             app.insert(
                 "focus.results.tab".to_owned(),
                 serde_json::json!(results.tab_said()),
@@ -6997,7 +6102,6 @@ impl FocusWindow {
                 serde_json::json!(results.top_reason()),
             );
         }
-        // What the composer holds of a thread (spec 013 US7).
         if let Some(compose) = self.compose()
             && compose.is_showing()
         {
@@ -7077,7 +6181,6 @@ impl FocusWindow {
                 serde_json::json!(forwarded_count(&draft.subject)),
             );
         }
-        // The thread menu and the outline, while they are up.
         let (menu, outline) = (
             self.imp().thread_menu.borrow().clone(),
             self.imp().outline.borrow().clone(),
@@ -7118,10 +6221,6 @@ impl FocusWindow {
                 );
             }
         }
-        // What the footer says: the scope of the keys under the list, under
-        // Filtered's rows, or under a window opened over the results. The
-        // results' own footer is theirs, and the list's is not on screen
-        // behind them (#2193).
         let footer = match (self.filtered(), self.results()) {
             (Some(view), _) => Some(view.scope_footer().clone()),
             (None, Some(results)) => results.window_footer(),
@@ -7141,8 +6240,6 @@ impl FocusWindow {
                 serde_json::json!(footer.note()),
             );
         }
-        // What the cursor is on: a row of the list, or one message of the
-        // open thread, with the tag and the words that child says.
         let child = self.cursor_child();
         if child.is_some() || row.is_some() {
             app.insert(
@@ -7156,8 +6253,6 @@ impl FocusWindow {
                 .muted
                 .map(postio_ui::thread_outline::muted_badge);
             app.insert("focus.row.muted".to_owned(), serde_json::json!(badge));
-            // What the cursor's thread row says of who wrote and what the
-            // newest said: a reply moves both (#2107).
             if conversation.summary.message_count > 1 {
                 let me = pane
                     .as_ref()
@@ -7188,10 +6283,7 @@ impl FocusWindow {
             );
         }
         if let Some(bar) = &bar {
-            // What the bar lists, which the list behind it never shows: how
-            // many messages it found and the row Return runs.
-            // One key each, because a check names an app field by its whole
-            // key (`app.focus.bar.messages`).
+            // One key each, because a check names an app field by its whole key.
             let highlighted = bar.highlighted();
             let fields = [
                 ("focus.bar.typed", serde_json::json!(bar.typed())),
@@ -7221,8 +6313,6 @@ impl FocusWindow {
             );
             app.insert(
                 "focus.settings.listed".to_owned(),
-                // One string, as a check compares a literal: "Accounts,
-                // Filtering, ...".
                 serde_json::json!(
                     panel
                         .listed_sections()
@@ -7251,10 +6341,8 @@ impl FocusWindow {
             keyboard: Keyboard {
                 region,
                 field,
-                // With the composition in a window of its own, the keyboard is
-                // that window's, and it is typing when its focus is a field.
-                // (`is_typing` stays the main window's: its keys are the
-                // list's, whatever the other window is doing.)
+                // With the composition in a window of its own, the keyboard is that window's.
+                // `is_typing` stays the main window's.
                 typing: match detached.as_ref() {
                     Some(_) => {
                         target.is::<gtk::Text>()
@@ -7263,8 +6351,6 @@ impl FocusWindow {
                     }
                     None => self.is_typing(),
                 },
-                // The window's own controller takes a key when nothing is
-                // focused and nothing is over it, so that is reachable.
                 reachable: reach::reachable(toplevel)
                     || (focus.is_none() && dialog.is_none() && self.is_visible()),
                 widget: path.join("/"),
@@ -7299,8 +6385,6 @@ impl FocusWindow {
                 scroll,
             },
             composer: ComposerState {
-                // A composition in a window of its own is still open, though
-                // this window shows the list again.
                 open: compose_open || composition_detached,
                 detached: composition_detached,
             },
@@ -7310,11 +6394,8 @@ impl FocusWindow {
     }
 }
 
-/// The command a banner's button runs.
-/// The commands the controller's Filtered surface answers while it has the
-/// keyboard: walking, selecting, opening, restoring, the tabs, the verbs on
-/// the focused message, and the way out. The sweep is the window's (it asks
-/// first, in a dialog); everything else is the app's wherever it is.
+/// The sweep is the window's (it asks first, in a dialog); everything else is the app's wherever it
+/// is.
 fn filtered_owns(id: CommandId) -> bool {
     postio_ui::filtered::TAB_COMMANDS.contains(&id)
         || matches!(
@@ -7345,7 +6426,6 @@ fn banner_command(action: postio_ui::focus_state::BannerAction) -> CommandId {
     }
 }
 
-/// What was typed in a reply's body: the words above its quote.
 fn typed_part(body: &str) -> String {
     match body.find("\n\nOn ") {
         Some(at) => body[..at].to_owned(),
@@ -7353,8 +6433,6 @@ fn typed_part(body: &str) -> String {
     }
 }
 
-/// How many messages a whole-thread forward's subject says it holds: "(6
-/// messages)".
 fn forwarded_count(subject: &str) -> Option<u32> {
     let open = subject.rfind('(')?;
     subject[open + 1..]

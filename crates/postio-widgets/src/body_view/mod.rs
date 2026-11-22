@@ -1,10 +1,6 @@
-//! The reading surface (spec 006 research R8): a `gtk::Scrollable` that
-//! paints a `postio-render` snapshot as tiles. It never touches the engine:
-//! a render thread lays the message out, and this draws what comes back.
-//!
-//! Everything interactive -- selection, find, links, the rail -- is a pure
-//! function over the snapshot (research R7), added by the stories that need
-//! it; this is the surface they share.
+//! The reading surface: a `gtk::Scrollable` that paints a `postio-render` snapshot as tiles. It
+//! never
+//! touches the engine; a render thread lays the message out.
 
 mod a11y;
 pub mod find;
@@ -24,27 +20,18 @@ use postio_render::{RenderRequest, RenderedDocument, Renderer, Resources, Theme,
 
 pub use postio_render::DEFAULT_RENDER_DEADLINE;
 
-/// What follows an external link in place of the desktop's launcher.
 type Launcher = Box<dyn Fn(&str)>;
 
-/// What a `BodyView` shows: a composed document and everything it may load.
 #[derive(Clone)]
 pub struct Content {
-    /// The composed HTML (`postio_ui::reader::document`).
     pub document: String,
-    /// The parts and faces the document may name; nothing else loads.
     pub resources: Arc<Resources>,
-    /// The plain-text alternative, drawn if the render falls back.
     pub plain_text: String,
-    /// That text as the reader composes a plain-text body, drawn in its
-    /// place when there is one: the same column, face and rhythm (T218).
     pub fallback: Option<postio_render::Fallback>,
-    /// The input cap the sanitizer found the body over, if any.
     pub over_cap: Option<postio_body::Cap>,
 }
 
-/// The process's font set: the bundled faces, then everything installed.
-/// Built once; [`prewarm_fonts`] starts it off the UI thread at startup.
+/// Built once; `prewarm_fonts` starts it off the UI thread.
 pub fn font_set() -> &'static FontSet {
     static FONTS: OnceLock<FontSet> = OnceLock::new();
     FONTS.get_or_init(|| {
@@ -59,8 +46,6 @@ pub fn font_set() -> &'static FontSet {
     })
 }
 
-/// Build the font set on a thread of its own, so the first message opened
-/// does not wait for font discovery.
 pub fn prewarm_fonts() {
     std::thread::spawn(|| {
         font_set();
@@ -84,74 +69,35 @@ pub(super) mod imp {
         pub(super) renderer: OnceLock<Renderer>,
         pub(super) deadline: Cell<Duration>,
         pub(super) content: RefCell<Option<Content>>,
-        /// The newest generation asked for.
         pub(super) generation: Cell<u64>,
-        /// The generation still being rendered, if any: what the deadline
-        /// gives up on.
         pub(super) pending: Cell<Option<u64>>,
-        /// The width the current request or snapshot was laid out at.
         pub(super) laid_out_width: Cell<i32>,
-        /// What is on screen.
         pub(super) document: RefCell<Option<Arc<RenderedDocument>>>,
         pub(super) tiles: RefCell<tiles::Tiles>,
-        /// The character to bring back to the top when the next snapshot
-        /// arrives: a theme change keeps the reader's place.
-        /// A character, and the height in the view it should come back to,
-        /// when the next snapshot arrives: what a theme change or a zoom
-        /// keeps in place.
+        /// The character to bring back to the top, and its height in the view, when the next
+        /// snapshot arrives.
         pub(super) anchor: Cell<Option<(usize, f64)>>,
         /// The zoom, in percent: one of `postio_config::ZOOM_STEPS`.
         pub(super) zoom: Cell<u16>,
-        /// The next snapshot starts at the top: a new message, not a redraw.
         pub(super) to_top: Cell<bool>,
-        /// A pinch in progress: its scale so far, drawn over the snapshot
-        /// until it ends and one render takes its place.
         pub(super) pinch: Cell<Option<f64>>,
-        /// Where the pointer last was, for Ctrl+scroll's anchor.
         pub(super) pointer: Cell<Option<gtk::graphene::Point>>,
-        /// The selection, as a range of the text index (FR-017).
         pub(super) selection: RefCell<Option<std::ops::Range<usize>>>,
-        /// The folds the user has flipped from how the document sets them.
         pub(super) toggled_folds: RefCell<Vec<String>>,
-        /// The link keyboard focus is on, by its index in the snapshot.
         pub(super) focused_link: Cell<Option<usize>>,
-        /// What follows an external link; the desktop's launcher unless a
-        /// test replaced it.
         pub(super) launcher: RefCell<Option<Launcher>>,
-        /// The find in progress (FR-018).
         pub(super) find: RefCell<super::find::FindState>,
-        /// The range highlighted in the text on screen, if one is.
         pub(super) highlight: RefCell<Option<std::ops::Range<usize>>>,
-        /// A highlight still to be brought into view, waiting for the
-        /// column to grow to the document it is in: the adjustment watched,
-        /// and the handler to let go of.
         pub(super) reveal: RefCell<Option<(gtk::Adjustment, glib::SignalHandlerId)>>,
-        /// Where a drag began, in the view's coordinates.
         pub(super) drag_start: Cell<Option<gtk::graphene::Point>>,
-        /// The scroller this view is laid out inside, when it takes its
-        /// place from that instead of scrolling itself: see
-        /// [`super::BodyView::flow_in`].
         pub(super) flow: RefCell<Option<glib::WeakRef<gtk::ScrolledWindow>>>,
-        /// What a highlight's reveal must not scroll off the column's top
-        /// ([`super::BodyView::keep_in_view_on_reveal`]).
         pub(super) keep: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
-        /// What the column's ground is read from, when the view flows: a
-        /// widget whose CSS `color` is the column's ground token
-        /// ([`super::BodyView::set_ground`]).
         pub(super) ground: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
-        /// The rest of the column's palette, read the same way: each a
-        /// reader variable (`--r-ink`) and the widget whose `color` is the
-        /// token it stands for ([`super::BodyView::add_palette_probe`]).
         pub(super) palette: RefCell<Vec<(&'static str, glib::WeakRef<gtk::Widget>)>>,
-        /// The ground the last render was asked for.
         pub(super) ground_drawn: RefCell<Option<String>>,
-        /// The messages the user darkened (FR-013a): for this session only,
-        /// never stored.
+        /// Messages the user darkened; this session only, never stored.
         pub(super) darkened: RefCell<Vec<String>>,
-        /// The style manager's handlers, disconnected on dispose.
         pub(super) theme_handlers: RefCell<Vec<glib::SignalHandlerId>>,
-        /// Renders held on the render thread, and the gates holding them:
-        /// see [`super::BodyView::hold_renders`].
         #[cfg(feature = "test-hooks")]
         pub(super) held: RefCell<Option<Vec<Arc<postio_render::resources::Gate>>>>,
     }
@@ -205,10 +151,7 @@ pub(super) mod imp {
         type Interfaces = (gtk::Scrollable, gtk::AccessibleText);
 
         fn class_init(klass: &mut Self::Class) {
-            // A document, read as text (FR-020).
             klass.set_accessible_role(gtk::AccessibleRole::Document);
-            // The fallback notice's way to what was actually sent; the
-            // reader connects it to the original-source view.
             klass.install_action("clipboard.copy", None, |view, _, _| view.copy());
             klass.install_action("body.view-source", None, |view, _, _| {
                 view.emit_by_name::<()>("view-source", &[]);
@@ -223,8 +166,6 @@ pub(super) mod imp {
             self.obj().set_focusable(true);
             super::interact::install(&self.obj());
             super::zoom::install(&self.obj());
-            // The theme source (FR-011): the app's dark and high-contrast
-            // state, and nothing else.
             let style = adw::StyleManager::default();
             let mut handlers = Vec::new();
             for property in ["dark", "high-contrast"] {
@@ -250,9 +191,7 @@ pub(super) mod imp {
             SIGNALS.get_or_init(|| {
                 vec![
                     glib::subclass::Signal::builder("view-source").build(),
-                    // The zoom changed; its new value is `zoom()`.
                     glib::subclass::Signal::builder("zoom-changed").build(),
-                    // A snapshot reached the screen.
                     glib::subclass::Signal::builder("rendered").build(),
                 ]
             })
@@ -260,9 +199,8 @@ pub(super) mod imp {
     }
 
     impl WidgetImpl for BodyView {
-        /// A view that flows inside a scroller is as tall as its document,
-        /// so the scroller's column is what scrolls; on its own it asks for
-        /// nothing and takes what it is given.
+        /// A flowing view is as tall as its document so the scroller scrolls; alone it asks for
+        /// nothing.
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             if orientation == gtk::Orientation::Vertical && self.flow.borrow().is_some() {
                 let height = self
@@ -311,32 +249,22 @@ pub(super) mod imp {
 }
 
 glib::wrapper! {
-    /// The reading surface: a snapshot drawn as tiles.
     pub struct BodyView(ObjectSubclass<imp::BodyView>)
         @extends gtk::Widget,
         @implements gtk::Accessible, gtk::AccessibleText, gtk::Buildable, gtk::ConstraintTarget, gtk::Scrollable;
 }
 
 impl BodyView {
-    /// A view whose renders fall back after `deadline`: production passes
-    /// [`DEFAULT_RENDER_DEADLINE`], tests a scaled or tiny one.
     pub fn new(deadline: Duration) -> BodyView {
         let view: BodyView = glib::Object::new();
         view.imp().deadline.set(deadline);
         view
     }
 
-    /// Show `content` from its top: a different message, not a redraw of
-    /// the one on screen.
-    ///
-    /// Nothing the user did to the last message is drawn over this one: it
-    /// is shown as it was sent. A darkening applies to the one message it
-    /// was asked of (spec 006 FR-013a), and a single message's scope is the
-    /// empty string, so a darkened scope kept here would darken every
-    /// message after it. A selection, a focused link and a fold are places
-    /// in one message's text. Focus's dialog shows every message in one
-    /// view, which is where this was found (specs/007-postio-focus research
-    /// R1).
+    /// Shows `content` from its top, with nothing of the last message drawn over it: a darkening is
+    /// scoped to
+    /// one message and a single message's scope is the empty string, so a kept one would darken
+    /// every later one.
     pub fn set_content_from_top(&self, content: Content) {
         let imp = self.imp();
         imp.to_top.set(true);
@@ -352,10 +280,9 @@ impl BodyView {
         self.set_content(content);
     }
 
-    /// Show `content` in place of what is on screen, keeping the reader's
-    /// place: the character at the top of the view stays where it is, so a
-    /// late body or a shown image above it does not move the words being
-    /// read.
+    /// Shows `content`, keeping the character at the top of the view in place so a late body or
+    /// image above it
+    /// does not move the words being read.
     pub fn set_content(&self, content: Content) {
         if !self.imp().to_top.get() {
             self.keep_place();
@@ -364,17 +291,14 @@ impl BodyView {
         self.request_render();
     }
 
-    /// Remember the character at the top of the view, and how far above the
-    /// view's top it starts, for the next snapshot to put back.
     fn keep_place(&self) {
         let imp = self.imp();
         let Some(document) = imp.document.borrow().clone() else {
             return;
         };
         let top = self.window().0;
-        // At the very top there is no place inside the body to keep: the
-        // first line is not "where the reader is", and anchoring it would
-        // carry the column down to wherever the next layout puts it.
+        // At the very top there is no place to keep; anchoring the first line would carry the
+        // column down.
         if top <= 0.0 {
             imp.anchor.set(None);
             return;
@@ -390,17 +314,14 @@ impl BodyView {
         imp.anchor.set(Some((offset, at)));
     }
 
-    /// Hold every render this view asks for from now on, on the render
-    /// thread, until [`release_renders`](Self::release_renders): how a test
-    /// makes a render outlast its deadline (spec 006 FR-023) through a
-    /// caller that builds the view's content itself, such as a reader.
+    /// Holds every render on the render thread until `release_renders`: how a test makes a render
+    /// outlast its deadline.
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn hold_renders(&self) {
         self.imp().held.replace(Some(Vec::new()));
     }
 
-    /// Let every held render go on, and hold no more.
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn release_renders(&self) {
@@ -409,20 +330,16 @@ impl BodyView {
         }
     }
 
-    /// The bytes of tile textures held now.
     #[doc(hidden)]
     pub fn tile_bytes(&self) -> usize {
         self.imp().tiles.borrow().bytes()
     }
 
-    /// Whether the view has drawn at its current scroll position with every
-    /// tile it needed.
     #[doc(hidden)]
     pub fn tiles_settled(&self) -> bool {
         self.imp().tiles.borrow().settled(self.window().0)
     }
 
-    /// Call `f` when the fallback notice's "View source" is chosen.
     pub fn connect_view_source(&self, f: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
         self.connect_local("view-source", false, move |values| {
             let view = values[0].get::<BodyView>().expect("the signal's own view");
@@ -431,9 +348,6 @@ impl BodyView {
         })
     }
 
-    /// Every fold in the message on screen: its id, what its line says,
-    /// and whether it is open -- for a surface outside the body that names
-    /// them (Focus's fold line, screen 04).
     pub fn folds(&self) -> Vec<(String, String, bool)> {
         let Some(document) = self.document() else {
             return Vec::new();
@@ -442,7 +356,6 @@ impl BodyView {
             .folds
             .iter()
             .map(|fold| {
-                // The line's words are the text drawn inside its summary.
                 let inside: Vec<&postio_render::Cluster> = document
                     .text
                     .clusters
@@ -459,7 +372,6 @@ impl BodyView {
                     inside.iter().map(|c| c.range.start).min(),
                     inside.iter().map(|c| c.range.end).max(),
                 ) {
-                    // Less the disclosure triangle the summary draws.
                     (Some(start), Some(end)) => document
                         .text
                         .slice(start..end)
@@ -473,7 +385,6 @@ impl BodyView {
             .collect()
     }
 
-    /// Open the fold `id` if it is closed; an open one stays open.
     pub fn open_fold(&self, id: &str) {
         let closed = self.document().is_some_and(|document| {
             document
@@ -486,7 +397,6 @@ impl BodyView {
         }
     }
 
-    /// Open a closed fold, or close an open one, and re-render.
     fn toggle_fold(&self, id: &str) {
         {
             let mut toggled = self.imp().toggled_folds.borrow_mut();
@@ -500,7 +410,6 @@ impl BodyView {
         self.request_render();
     }
 
-    /// Darken the message on screen, or show it as sent again (FR-013a).
     /// False when there is nothing to darken: not dark, or not paper.
     pub fn toggle_darken(&self) -> bool {
         let Some((scope, _)) = self.darkenable() else {
@@ -519,8 +428,6 @@ impl BodyView {
         true
     }
 
-    /// `darken_message`'s title for the message on screen, or `None` when
-    /// the command does not apply to it.
     pub fn darken_title(&self) -> Option<&'static str> {
         let (_, presentation) = self.darkenable()?;
         Some(match presentation {
@@ -529,8 +436,6 @@ impl BodyView {
         })
     }
 
-    /// The message on screen `darken_message` acts on, and how it is shown:
-    /// the one a third of the way down the view, if it is paper.
     fn darkenable(&self) -> Option<(String, postio_render::Presentation)> {
         use postio_render::Presentation::{Darkened, Paper};
         let imp = self.imp();
@@ -546,14 +451,11 @@ impl BodyView {
             .then(|| (message.scope.clone(), message.presentation))
     }
 
-    /// Select from `from` to `to`, in the view's coordinates: what a drag
-    /// does.
     #[doc(hidden)]
     pub fn drag_select(&self, from: gtk::graphene::Point, to: gtk::graphene::Point) {
         self.select_points(from, to, true);
     }
 
-    /// Select the word (`presses == 2`) or line (`3`) at `at`.
     #[doc(hidden)]
     pub fn click_select(&self, at: gtk::graphene::Point, presses: i32) {
         let Some(document) = self.document() else {
@@ -561,8 +463,7 @@ impl BodyView {
         };
         if presses == 1 {
             let point = self.document_point(at);
-            // A link first: the reader's verbs sit inside a message's
-            // header, which is its fold's summary.
+            // A link first: verbs sit inside a message's header, which is its fold's summary.
             if let Some(link) = document.link_at(point) {
                 self.follow(&link.target.clone());
                 return;
@@ -592,12 +493,10 @@ impl BodyView {
         self.offer_primary();
     }
 
-    /// The selected range of the text index.
     pub fn selection(&self) -> Option<std::ops::Range<usize>> {
         self.imp().selection.borrow().clone()
     }
 
-    /// The selection's highlight rectangles, in document coordinates.
     #[doc(hidden)]
     pub fn selection_rects(&self) -> Vec<postio_render::Rect> {
         match (self.selection(), self.document()) {
@@ -606,14 +505,11 @@ impl BodyView {
         }
     }
 
-    /// Follow external links with `launch` instead of the desktop's
-    /// launcher: how a test sees what would have opened.
     #[doc(hidden)]
     pub fn set_launcher(&self, launch: impl Fn(&str) + 'static) {
         self.imp().launcher.replace(Some(Box::new(launch)));
     }
 
-    /// The pointer is at `at`, in the view's coordinates.
     #[doc(hidden)]
     pub fn hover(&self, at: gtk::graphene::Point) {
         let point = self.document_point(at);
@@ -624,7 +520,6 @@ impl BodyView {
         self.set_cursor_from_name(Some(if target.is_some() { "pointer" } else { "text" }));
     }
 
-    /// Move keyboard focus to the next link (`forward`) or the previous.
     #[doc(hidden)]
     pub fn focus_next_link(&self, forward: bool) {
         let Some(document) = self.document() else {
@@ -645,7 +540,6 @@ impl BodyView {
         self.queue_draw();
     }
 
-    /// Where the focused link goes, as its tooltip says it.
     #[doc(hidden)]
     pub fn focused_link_target(&self) -> Option<String> {
         let document = self.document()?;
@@ -653,7 +547,6 @@ impl BodyView {
         Some(link.target.describe())
     }
 
-    /// Follow the focused link.
     #[doc(hidden)]
     pub fn activate_focused_link(&self) {
         let Some(document) = self.document() else {
@@ -690,14 +583,11 @@ impl BodyView {
                     |_| {},
                 );
             }
-            // A verb link belongs to a conversation drawn as one document,
-            // which no Postio window hands this view.
             LinkTarget::Verb { .. } => {}
             LinkTarget::Fragment { scope, id } => {
                 let Some(document) = self.document() else {
                     return;
                 };
-                // The element with that id, or failing that its message's top.
                 let top = document
                     .anchors
                     .iter()
@@ -717,7 +607,6 @@ impl BodyView {
         }
     }
 
-    /// Scroll so `rect`, in document coordinates, is in view.
     pub(super) fn scroll_into_view(&self, rect: postio_render::Rect) {
         let (top, page) = self.window();
         if rect.y0 < top {
@@ -727,7 +616,6 @@ impl BodyView {
         }
     }
 
-    /// Call `f` each time a snapshot reaches the screen.
     pub fn connect_rendered(&self, f: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
         self.connect_local("rendered", false, move |values| {
             let view = values[0].get::<BodyView>().expect("the signal's own view");
@@ -736,8 +624,6 @@ impl BodyView {
         })
     }
 
-    /// Scroll one page down (`forward`) or up: the view's own height, or a
-    /// flowing view's scroller's.
     pub fn page(&self, forward: bool) {
         let Some(adjustment) = self.scrolling() else {
             return;
@@ -750,8 +636,7 @@ impl BodyView {
         adjustment.set_value(adjustment.value() + step);
     }
 
-    /// Scroll by `lines` steps of the view's own line increment: down for
-    /// a positive count, up for a negative one. The adjustment clamps.
+    /// Negative scrolls up; the adjustment clamps.
     pub fn scroll_lines(&self, lines: i32) {
         let Some(adjustment) = self.scrolling() else {
             return;
@@ -759,8 +644,6 @@ impl BodyView {
         adjustment.set_value(adjustment.value() + f64::from(lines) * adjustment.step_increment());
     }
 
-    /// Scroll to the top of the document, or to the end of it; for a view
-    /// that flows, the top or end of the whole column.
     pub fn scroll_to_edge(&self, bottom: bool) {
         let Some(adjustment) = self.scrolling() else {
             return;
@@ -772,19 +655,12 @@ impl BodyView {
         });
     }
 
-    /// Lay this view out inside `scroller`, one column with whatever sits
-    /// beside it, instead of scrolling itself.
-    ///
-    /// The view is then as tall as its document and never scrolls; what is
-    /// in view is read from `scroller`'s adjustment each time it draws, so
-    /// only the tiles under the scroller's window are rasterised and a long
-    /// message costs what a screenful does (research R8 still holds). Keys
-    /// and finds scroll the scroller.
+    /// Lays the view out inside `scroller`: as tall as its document and never scrolling itself, so
+    /// only the
+    /// tiles under the scroller's window are rasterised. Keys and finds scroll the scroller.
     pub fn flow_in(&self, scroller: &gtk::ScrolledWindow) {
         let imp = self.imp();
         imp.flow.replace(Some(scroller.downgrade()));
-        // Its own adjustments stay at rest, so a point in the view is a
-        // point in the document.
         self.set_vadjustment(Some(&gtk::Adjustment::new(0.0, 0.0, 0.0, 1.0, 1.0, 0.0)));
         self.set_hadjustment(Some(&gtk::Adjustment::new(0.0, 0.0, 0.0, 1.0, 1.0, 0.0)));
         let view = self.downgrade();
@@ -797,12 +673,9 @@ impl BodyView {
         self.queue_resize();
     }
 
-    /// Take a sideways scroll -- a touchpad's, or Shift with the wheel --
-    /// for a page wider than the column: one on paper that fitting would
-    /// have zoomed under `postio_render::render::PAPER_FIT_FLOOR`, which is
-    /// drawn at the floor and read across instead (T207). The column only
-    /// scrolls down, so the view moves its own sideways adjustment; a scroll
-    /// with nothing sideways in it is the column's.
+    /// Takes a sideways scroll for a paper page wider than the column (drawn at `PAPER_FIT_FLOOR`);
+    /// the column
+    /// only scrolls down, so the view moves its own sideways adjustment.
     fn scroll_sideways(&self) {
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
         scroll.connect_scroll({
@@ -836,7 +709,6 @@ impl BodyView {
                 let most = adjustment.upper() - adjustment.page_size();
                 adjustment.set_value((adjustment.value() + across * step).clamp(0.0, most));
                 view.queue_draw();
-                // A diagonal touchpad scroll still moves the column down.
                 if dy != 0.0 && !shifted {
                     glib::Propagation::Proceed
                 } else {
@@ -847,25 +719,17 @@ impl BodyView {
         self.add_controller(scroll);
     }
 
-    /// Read the document's ground from `probe`: a widget styled so its CSS
-    /// `color` is the ground token of the column the view flows in
-    /// (`.postio-flow-ground`). The renderer has no GTK style context, so
-    /// the colour is resolved here, at each render -- a switch to dark
-    /// renders again and reads the dark value -- and handed to the document
-    /// as `--flow-ground`, never written into it as a literal (T203).
+    /// Reads the document's ground from `probe`, a widget whose CSS `color` is the column's ground
+    /// token. The
+    /// renderer has no style context, so it is resolved at each render and passed as
+    /// `--flow-ground`.
     pub fn set_ground(&self, probe: &impl IsA<gtk::Widget>) {
         self.imp().ground.replace(Some(probe.as_ref().downgrade()));
     }
 
-    /// Read the document's `variable` (a reader palette variable such as
-    /// `--r-ink`) from `probe`, as [`set_ground`](Self::set_ground) reads
-    /// the ground: a widget whose CSS `color` is the column's token for it.
-    ///
-    /// What lets a body drawn in the app's colours (specs/007-postio-focus
-    /// T211) be drawn in the column's own ink, accent and hairlines rather
-    /// than the generated reader palette's -- the same tokens the chrome
-    /// around it is drawn in, in light and dark, with no colour written in
-    /// Rust.
+    /// Reads reader palette `variable` (such as `--r-ink`) from `probe`, as `set_ground` does, so
+    /// the body is
+    /// drawn in the column's own colours.
     pub fn add_palette_probe(&self, variable: &'static str, probe: &impl IsA<gtk::Widget>) {
         self.imp()
             .palette
@@ -873,8 +737,6 @@ impl BodyView {
             .push((variable, probe.as_ref().downgrade()));
     }
 
-    /// The ground and palette the document is drawn with, as CSS, when the
-    /// view reads any.
     fn ground_css(&self) -> Option<String> {
         let imp = self.imp();
         let mut declarations = Vec::new();
@@ -889,7 +751,6 @@ impl BodyView {
         (!declarations.is_empty()).then(|| format!(":root{{{};}}", declarations.join(";")))
     }
 
-    /// Whether the view flows inside a scroller.
     pub fn flows(&self) -> bool {
         self.imp().flow.borrow().is_some()
     }
@@ -902,7 +763,6 @@ impl BodyView {
             .and_then(|weak| weak.upgrade())
     }
 
-    /// What scrolls the document: the view's own adjustment, or the column's.
     fn scrolling(&self) -> Option<gtk::Adjustment> {
         match self.flow_scroller() {
             Some(scroller) => Some(scroller.vadjustment()),
@@ -910,8 +770,6 @@ impl BodyView {
         }
     }
 
-    /// The part of the document in view: its top, and its height, in
-    /// document coordinates.
     pub(super) fn window(&self) -> (f64, f64) {
         if self.flows() {
             let Some(scroller) = self.flow_scroller() else {
@@ -920,8 +778,6 @@ impl BodyView {
             let Some(bounds) = self.compute_bounds(&scroller) else {
                 return (0.0, 0.0);
             };
-            // `bounds` is where the view is in the scroller's window, which
-            // already has the scrolling in it.
             let above = f64::from(bounds.y()).min(0.0).abs();
             let below = (f64::from(scroller.height()) - f64::from(bounds.y()))
                 .min(f64::from(self.height()));
@@ -936,14 +792,12 @@ impl BodyView {
         (top, f64::from(self.height()))
     }
 
-    /// Scroll so document height `y` is at the top of what is in view.
     pub(super) fn scroll_document_to(&self, y: f64) {
         self.scroll_document_reaching(y);
     }
 
-    /// [`scroll_document_to`](Self::scroll_document_to), saying whether the
-    /// scroll got there: false when the adjustment stopped short, which a
-    /// column does when it has not yet grown to a document just drawn.
+    /// False when the adjustment stopped short, as a column does before it has grown to a document
+    /// just drawn.
     pub(super) fn scroll_document_reaching(&self, y: f64) -> bool {
         let (adjustment, want) = match self.flow_scroller() {
             Some(scroller) => {
@@ -951,8 +805,6 @@ impl BodyView {
                     return false;
                 };
                 let adjustment = scroller.vadjustment();
-                // Where the view starts in the column, whatever the column
-                // is scrolled to now.
                 let start = adjustment.value() + f64::from(bounds.y());
                 (adjustment, start + y)
             }
@@ -965,25 +817,20 @@ impl BodyView {
         (adjustment.value() - want).abs() < 0.5
     }
 
-    /// How far the message is scrolled: the column's for a flowing view.
     pub fn scrolled(&self) -> f64 {
         self.scrolling().map_or(0.0, |a| a.value())
     }
 
-    /// How far the message is scrolled and how far it can go, as a pair:
-    /// `None` until something scrolls it. For a storyboard's observation.
+    /// `None` until something scrolls it.
     pub fn scroll_extent(&self) -> Option<(f64, f64)> {
         self.scrolling()
             .map(|a| (a.value(), (a.upper() - a.page_size()).max(0.0)))
     }
 
-    /// The snapshot on screen, if one has arrived.
     pub fn document(&self) -> Option<Arc<RenderedDocument>> {
         self.imp().document.borrow().clone()
     }
 
-    /// Drop every tile, as memory pressure would: what shows until they
-    /// are drawn again is the snapshot's low-resolution copy.
     #[doc(hidden)]
     pub fn evict_tiles(&self) {
         if let Some(document) = self.imp().document.borrow().clone() {
@@ -998,8 +845,8 @@ impl BodyView {
             .get_or_init(|| Renderer::new(font_set()))
     }
 
-    /// The surface's fractional scale: 1.0, 1.25, 2.0. Painting at 1.0 and
-    /// letting the compositor stretch it is what looked blurry on HiDPI.
+    /// Fractional (1.0, 1.25, 2.0); painting at 1.0 and letting the compositor stretch blurs on
+    /// HiDPI.
     fn surface_scale(&self) -> f64 {
         self.native()
             .and_then(|native| native.surface())
@@ -1021,7 +868,6 @@ impl BodyView {
         let style = adw::StyleManager::default();
         let ground = self.ground_css();
         imp.ground_drawn.replace(ground.clone());
-        // The column's ground, in the document and in its fallback alike.
         let grounded = |document: String| match &ground {
             Some(ground) if document.contains("</style>") => {
                 document.replacen("</style>", &format!("{ground}</style>"), 1)
@@ -1053,7 +899,6 @@ impl BodyView {
             toggled_folds: imp.toggled_folds.borrow().clone(),
             reader_view: Vec::new(),
         };
-        // What the deadline draws instead: everything but the document.
         let fallback = RenderRequest {
             generation,
             document: String::new(),
@@ -1073,8 +918,6 @@ impl BodyView {
         }
         let result = std::rc::Rc::new(self.renderer().request(request));
         imp.pending.set(Some(generation));
-        // The deadline (FR-023): if the render is still out when it passes,
-        // give up on it and show the plain text instead.
         let view = self.downgrade();
         let answered = std::rc::Rc::clone(&result);
         glib::timeout_add_local_once(imp.deadline.get(), move || {
@@ -1083,10 +926,8 @@ impl BodyView {
             if imp.pending.get() != Some(generation) {
                 return;
             }
-            // Out by the deadline, or only not yet collected? The poll
-            // below is a main-loop timer too, and a main thread busy past
-            // the deadline finds both due at once; a render that finished
-            // in time is the one shown (T218).
+            // The poll below is also a main-loop timer: a render that finished in time wins when
+            // both are due at once.
             if let Ok(document) = answered.try_recv() {
                 view.show(document);
                 return;
@@ -1120,14 +961,12 @@ impl BodyView {
         });
     }
 
-    /// The theme changed: re-render, keeping the character at the top.
     fn theme_changed(&self) {
         self.keep_place();
         self.request_render();
-        // The style manager says the scheme changed before the stylesheet
-        // that paints it is in place, so the column's ground read just now
-        // can be the old scheme's: read it again once the main loop has
-        // turned, and draw again if it moved.
+        // The style manager signals before the stylesheet is in place, so the ground read now can
+        // be the old
+        // scheme's: read it again once the main loop has turned.
         if self.imp().ground.borrow().is_some() || !self.imp().palette.borrow().is_empty() {
             let view = self.downgrade();
             glib::idle_add_local_once(move || {
@@ -1177,7 +1016,6 @@ impl BodyView {
         self.configure_adjustments();
         if imp.to_top.take() {
             match self.flow_scroller() {
-                // The top of the column, not of the body inside it.
                 Some(scroller) => scroller.vadjustment().set_value(0.0),
                 None => self.scroll_document_to(0.0),
             }
@@ -1187,7 +1025,6 @@ impl BodyView {
         if self.flows() {
             self.queue_resize();
         }
-        // The text is the same, so a find carries over to the new snapshot.
         self.refresh_find();
         self.announce_contents(old_len);
         self.emit_by_name::<()>("rendered", &[]);
@@ -1196,9 +1033,6 @@ impl BodyView {
 
     fn configure_adjustments(&self) {
         let imp = self.imp();
-        // A flowing view's height is its document's and the column scrolls
-        // it; across, a page wider than the column is still the view's own
-        // to scroll (`scroll_sideways`).
         if !self.flows() {
             let height = f64::from(self.height());
             let upper = imp
@@ -1232,7 +1066,6 @@ impl BodyView {
         let left = imp.hadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
         let width = f64::from(self.width());
         if self.flows() {
-            // Only the window in the scroller is drawn, placed where it is.
             snapshot.push_clip(&gtk::graphene::Rect::new(
                 0.0,
                 top as f32,
@@ -1248,14 +1081,11 @@ impl BodyView {
                 height as f32,
             ));
         }
-        // A pinch scales what is already drawn; the render comes at its end.
         let pinch = imp.pinch.get();
         if let Some(scale) = pinch {
             snapshot.save();
             snapshot.scale(scale as f32, scale as f32);
         }
-        // Where the space tiles are placed in sits in the surface, so their
-        // edges can be put on its device pixels.
         let scale = self.surface_scale();
         let origin = self
             .native()
@@ -1289,8 +1119,6 @@ impl BodyView {
     }
 }
 
-/// A toolkit colour as CSS: `rgb()`, or `rgba()` when it is see-through --
-/// a hairline is a translucent ink.
 pub(crate) fn css_colour(colour: &gtk::gdk::RGBA) -> String {
     let channel = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
     let (r, g, b) = (

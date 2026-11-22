@@ -1,13 +1,6 @@
-//! The desktop search, answered for any frontend.
-//!
-//! Moved from the classic app's search surface (`docs/archive/specs/005-tui-frontend` T018).
-//! The desktop ran its two reads -- the hits, then the columns -- on a warm
-//! reader of its own; the store's owner runs the same two, with the same
-//! executor (`postio_session::search`, `postio_index::executor::facets`),
-//! and a frontend asks for each once.
-//!
-//! Logs here carry counts and outcomes only: never the query, which is the
-//! user's words, or anything it matched.
+//! The desktop search, answered for any frontend: two reads, the hits then the columns, with the
+//! same executor (`postio_session::search`, `postio_index::executor::facets`).
+//! Logs carry counts and outcomes only: never the query or what it matched.
 
 use chrono::NaiveDate;
 use postio_client::protocol::SavedCount;
@@ -20,11 +13,8 @@ use postio_session::search::{HIT_LIMIT, execute_with_snippets};
 use postio_storage::Store;
 use postio_storage::searches::SearchRepository;
 
-/// The hits for `query`, excerpted for the first `snippets`, on one reader
-/// turn. `None` when the store could not be read or the search did not run.
-///
-/// A turn on a warm reader rather than a connection of its own: a search run
-/// took four cold caches per keystroke that way (#1602).
+/// `None` when the store could not be read or the search did not run. A turn on a warm reader: a
+/// connection of its own took four cold caches per keystroke (#1602).
 pub async fn hits(
     database: &Store,
     account: AccountScope,
@@ -41,10 +31,7 @@ pub async fn hits(
     execute_with_snippets(&reader, account, query, scope, order, snippets).await
 }
 
-/// What the results' columns say about `query`: every scope's count and the
-/// refinements measured against it. `None` when they did not run.
-///
-/// Counted in relevance order and to the hit limit whatever the list is
+/// `None` when they did not run. Counted in relevance order to the hit limit whatever the list is
 /// sorted by: the columns describe the result set, not its order.
 pub async fn facets(
     database: &Store,
@@ -72,8 +59,7 @@ pub async fn facets(
     .ok()
 }
 
-/// One page of Focus's conversation search, on one reader turn. `None` when
-/// the store could not be read or the search did not run.
+/// `None` when the store could not be read or the search did not run.
 pub async fn conversations(
     database: &Store,
     account: AccountScope,
@@ -90,8 +76,7 @@ pub async fn conversations(
     postio_session::search::conversations(&reader, account, query, order, offset, limit).await
 }
 
-/// The passages of the hits on screen, on one reader turn: one body read
-/// each, never fetched. Empty when the store could not be read.
+/// One body read each, never fetched. Empty when the store could not be read.
 pub async fn passages(
     database: &Store,
     query: &ParsedQuery,
@@ -107,8 +92,7 @@ pub async fn passages(
     }
 }
 
-/// Every match in the conversation `key`, for Quick Look, on one reader
-/// turn. Empty when the store could not be read.
+/// Empty when the store could not be read.
 pub async fn conversation_matches(
     database: &Store,
     query: &ParsedQuery,
@@ -123,8 +107,7 @@ pub async fn conversation_matches(
     }
 }
 
-/// The People tab's rows, on one reader turn. Empty when the store could
-/// not be read.
+/// Empty when the store could not be read.
 pub async fn people(
     database: &Store,
     account: AccountScope,
@@ -143,8 +126,7 @@ pub async fn people(
     }
 }
 
-/// The Files tab's cards, on one reader turn. Empty when the store could
-/// not be read.
+/// Empty when the store could not be read.
 pub async fn files(
     database: &Store,
     account: AccountScope,
@@ -163,9 +145,8 @@ pub async fn files(
     }
 }
 
-/// The ways out of a search that found nothing, counted on one reader turn.
-/// Empty when none would find anything, or when they could not be counted:
-/// an offer that cannot be made is not made.
+/// Empty when none would find anything or they could not be counted: an offer that cannot be made
+/// is not made.
 pub async fn relaxations(
     database: &Store,
     account: AccountScope,
@@ -184,8 +165,7 @@ pub async fn relaxations(
         .unwrap_or_default()
 }
 
-/// What a prefix could become, on one reader turn. Empty when the store
-/// could not be read: no offer is better than a wrong one.
+/// Empty when the store could not be read: no offer is better than a wrong one.
 pub async fn suggest(
     database: &Store,
     account: AccountScope,
@@ -208,7 +188,6 @@ fn failed(error: postio_storage::Error) -> postio_model::listing::StoreError {
     postio_model::listing::StoreError::new(error.to_string())
 }
 
-/// The searches a person ran, newest first.
 pub async fn recent(
     database: &Store,
 ) -> Result<Vec<postio_client::protocol::RecentSearch>, postio_model::listing::StoreError> {
@@ -229,8 +208,6 @@ pub async fn recent(
         .collect())
 }
 
-/// Record that `query` ran now and matched `hits` conversations, a floor
-/// when `capped`.
 pub async fn remember(
     database: &Store,
     query: &str,
@@ -246,7 +223,6 @@ pub async fn remember(
     write.await.map_err(failed)
 }
 
-/// Forget one recent search.
 pub async fn forget(
     database: &Store,
     query: &str,
@@ -258,8 +234,6 @@ pub async fn forget(
     write.await.map(|_| ()).map_err(failed)
 }
 
-/// The saved search `key` has been viewed: its badge counts from now
-/// (D15).
 pub async fn mark_seen(
     database: &Store,
     key: &str,
@@ -273,23 +247,14 @@ pub async fn mark_seen(
     write.await.map_err(failed)
 }
 
-/// The most a badge counts: past it, "99 new" is as much as a quiet badge
-/// needs to say.
 pub const NEW_CAP: u32 = 99;
 
-/// Each saved search counted, in the order given. `total` is the
-/// conversations it matches, capped as a search's count is and a floor
-/// past it. `new` is how many of them have a match received after the
-/// search was last viewed ([`mark_seen`]), up to [`NEW_CAP`] and a floor
-/// when every one read was new (D30); zero for a search never viewed,
-/// which is one nobody asked to be told about. One conversation
-/// search each, newest first, read only as far as the badge needs. A
-/// search that cannot be counted is zero rather than missing, so the row
-/// stays.
-///
-/// Also drops the seen-progress of any saved search not listed: one deleted
-/// from `config.toml` leaves an orphan, and this is the read that sees the
-/// whole list.
+/// `total` is capped as a search's count is and a floor past it; `new` counts matches received
+/// after the search was last viewed
+/// ([`mark_seen`]), up to [`NEW_CAP`], zero for a search never viewed. A search that cannot be
+/// counted is zero, so the row stays.
+/// Drops the seen-progress of any saved search not listed: one deleted from `config.toml` leaves an
+/// orphan.
 pub async fn saved_counts(
     database: &Store,
     account: AccountScope,
@@ -345,8 +310,6 @@ pub async fn saved_counts(
                     .iter()
                     .take_while(|hit| hit.newest_match > seen)
                     .count() as u64;
-                // Every one read was new, and there are more than were
-                // read: the badge stopped, and says so.
                 let stopped = fresh == u64::from(NEW_CAP)
                     && (found.capped || found.total > u64::from(NEW_CAP));
                 Counted {
@@ -365,8 +328,6 @@ pub async fn saved_counts(
     counted
 }
 
-/// A message's stored words, for a search preview; empty when none are
-/// here. Never fetched.
 pub async fn stored_body(
     database: &Store,
     message: postio_model::MessageId,

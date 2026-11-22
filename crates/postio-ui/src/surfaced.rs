@@ -1,45 +1,26 @@
-//! Where Focus's surfaced rows sit in its list (spec 007 T095, research
-//! R3): a digest delivery or a fired reminder is spliced among the
-//! conversations at its position -- after the conversations newer than it
-//! came due -- and the list pages over both.
-//!
-//! The store pages conversations; the list pages positions. This is the
-//! arithmetic between them, with no toolkit and no store in it: which of a
-//! page's positions are surfaced rows, and which run of the store's
-//! conversations fills the rest.
+//! Where Focus's surfaced rows (digest deliveries, fired reminders) sit among conversations, and
+//! the arithmetic between the store's pages and the list's positions.
 
-/// What fills one position of a page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
-    /// The `n`th surfaced row, in the order given to [`Spliced::new`].
     Surfaced(usize),
-    /// The `n`th conversation of the store's page asked for.
     Stored(usize),
 }
 
-/// A page of the list, in the store's terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorePage {
-    /// The first conversation the page needs.
     pub offset: u32,
-    /// How many conversations it needs.
     pub limit: u32,
-    /// What fills each of the page's positions, in order.
     pub slots: Vec<Slot>,
 }
 
-/// The surfaced rows' places among the conversations.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Spliced {
-    /// Each surfaced row's list position, and its index as given, in list
-    /// order.
     at: Vec<(u32, usize)>,
 }
 
 impl Spliced {
-    /// Place rows whose positions -- how many conversations sort above
-    /// each -- are `positions`, in any order. Rows at one position keep the
-    /// order they were given in.
+    /// Rows at one position keep the order they were given in.
     pub fn new(positions: &[u32]) -> Self {
         let mut order: Vec<usize> = (0..positions.len()).collect();
         order.sort_by_key(|index| (positions[*index], *index));
@@ -51,26 +32,20 @@ impl Spliced {
         Spliced { at }
     }
 
-    /// How many surfaced rows there are.
     pub fn len(&self) -> u32 {
         self.at.len() as u32
     }
 
-    /// Whether there are none.
     pub fn is_empty(&self) -> bool {
         self.at.is_empty()
     }
 
-    /// How long the list is over `conversations` conversations.
     pub fn total(&self, conversations: u32) -> u32 {
         conversations.saturating_add(self.len())
     }
 
-    /// Where the row at `index` of the list stands among the messages alone,
-    /// and how many messages the list holds, when the surfaced rows given
-    /// by `digests` (indices as given to [`Spliced::new`]) are not messages:
-    /// a digest stands for many and opens as a window, so neither the
-    /// position line nor the strip's count includes it.
+    /// A digest stands for many and opens as a window, so neither the position line nor the strip's
+    /// count includes it.
     pub fn message_place(&self, digests: &[usize], index: u32, total: u32) -> (u32, u32) {
         let before = self
             .at
@@ -85,8 +60,6 @@ impl Spliced {
         (index.saturating_sub(before), total.saturating_sub(held))
     }
 
-    /// What fills the `count` positions from `start`, over a store of
-    /// `conversations`, and which of its conversations to ask for.
     pub fn page(&self, start: u32, count: u32, conversations: u32) -> StorePage {
         let end = start.saturating_add(count).min(self.total(conversations));
         let before = self.at.iter().filter(|(at, _)| *at < start).count() as u32;
@@ -100,8 +73,6 @@ impl Spliced {
                     slots.push(Slot::Stored(stored as usize));
                     stored += 1;
                 }
-                // A surfaced row placed past the last conversation sits
-                // after it; nothing else is past the end.
                 None => {}
             }
         }
@@ -128,8 +99,6 @@ mod tests {
 
     #[test]
     fn a_digest_is_not_a_message_in_the_place_line() {
-        // Digest (index 0) at the top, a reminder (index 1) after two
-        // conversations: 7 rows, 6 messages.
         let spliced = Spliced::new(&[0, 2]);
         assert_eq!(spliced.message_place(&[0], 1, 7), (0, 6), "first message");
         assert_eq!(spliced.message_place(&[0], 3, 7), (2, 6), "the reminder");
@@ -139,7 +108,6 @@ mod tests {
 
     #[test]
     fn a_row_at_its_position_pushes_the_conversations_after_it_down() {
-        // Positions 0 and 2: one row on top, one after two conversations.
         let spliced = Spliced::new(&[2, 0]);
         assert_eq!(spliced.total(5), 7);
         let page = spliced.page(0, 4, 5);
@@ -163,8 +131,6 @@ mod tests {
 
     #[test]
     fn an_unknown_store_total_asks_for_every_position_not_surfaced() {
-        // The feed asks before it knows how the store has moved, and places
-        // the answer by the total that comes back.
         let spliced = Spliced::new(&[0]);
         let asked = spliced.page(0, 50, u32::MAX);
         assert_eq!((asked.offset, asked.limit), (0, 49));

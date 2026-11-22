@@ -1,21 +1,7 @@
-//! Every command Focus binds does something a person can see, or is on the
-//! gap list with a reason (specs/008-storyboards US6, FR-028/029).
-//!
-//! The generated pass presses each command by its own chord, from a fresh
-//! seeded window in each context's starting state, and judges whether the
-//! frame or the shared observation changed. A command with no visible effect
-//! that `storyboards/gaps/focus.toml` does not name fails this case, and so
-//! does a listed gap that now has an effect -- the list is wrong, and saying
-//! so is how it stays true.
-//!
 //! POSTIO-MEASUREMENT: it opens a fresh window for every command in every
 //! context, about six minutes, so it runs on the nightly timer rather than
 //! the merge path. `.config/nextest.toml`'s `profile.default` filter is what
 //! holds it back; run it with
-//!
-//! ```text
-//! cargo nextest run -p postio-gtk --test focus_suite --profile nightly every_command
-//! ```
 
 use std::path::Path;
 
@@ -46,8 +32,6 @@ pub fn every_bound_command_shows_or_is_a_listed_gap() {
             "a context the pass could not reach:\n  {}",
             unreached.join("\n  ")
         );
-        // Per shard when the pass is split across runners
-        // (`POSTIO_STORYBOARD_SHARD`), so the floor is split with it.
         let shard = postio_storyboard::shard::Shard::from_env();
         let pressed: usize = all.iter().map(|c| c.presses.len()).sum();
         assert!(

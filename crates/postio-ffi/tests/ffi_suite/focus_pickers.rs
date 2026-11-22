@@ -1,14 +1,3 @@
-//! The pickers at the row and the toast's policy at the boundary
-//! (specs/009-focus-macos T089, for the Mac's T091-T093).
-//!
-//! The controller decides (`postio-focus`'s `tests/pickers.rs`); these
-//! assert the Mac gets it through the session: `s`, `h`, `l` and `m` open a
-//! picker as `FocusOpenPicker`, what it lists comes as `FocusPickerRows`
-//! once read, a row is chosen or toggled by its token, the number keys and
-//! Return run through `invoke`, and what is chosen reaches the host, which
-//! answers with the toast. A toast says how long it stays, and a queued
-//! send's Undo cancels the send.
-
 use std::time::Duration;
 
 use chrono::Utc;
@@ -29,17 +18,13 @@ const NONE: ModifiersFfi = ModifiersFfi {
     command: false,
 };
 
-/// Wait for the picker to be opened or redrawn as `wanted` accepts, and
-/// hand it back.
 async fn picker(
     session: &Session,
     mut wanted: impl FnMut(&PickerViewFfi) -> bool,
 ) -> PickerViewFfi {
     let mut seen = None;
-    // What was drawn instead, so a failure says whether the picker never
-    // opened or opened without what was wanted; and what else was said,
-    // with whether the first row was held, for a picker that never
-    // opened at all (#2154).
+    // Record what was drawn and said, so a failure shows whether the picker never opened or lacked
+    // the wanted rows (#2154).
     let mut drawn = Vec::new();
     let mut said = Vec::new();
     let held = session.focus_resident_row_at(0).is_some();
@@ -66,9 +51,6 @@ async fn picker(
     seen.expect("seen")
 }
 
-/// Whether the list's first row stops being `subject`'s within a scaled
-/// deadline: a move reaching the list. The events are drained meanwhile,
-/// as the Mac's loop does: the store's changes reach the list through them.
 async fn the_list_lets_go_of(session: &Session, subject: &str) -> bool {
     let gone = || {
         !session
@@ -90,7 +72,6 @@ async fn closes_the_picker(session: &Session) -> bool {
     .await
 }
 
-/// The next toast, as the Mac hears it.
 async fn toast(session: &Session) -> (String, ToastKindFfi, bool, Option<u32>) {
     let mut said = None;
     assert!(
@@ -128,7 +109,6 @@ async fn s_opens_the_snooze_picker_at_the_cursors_row_and_a_number_chooses() {
     let keys: Vec<Option<&str>> = view.rows.iter().map(|row| row.key.as_deref()).collect();
     assert_eq!(keys, [Some("1"), Some("2"), Some("3"), Some("4")]);
 
-    // `1` is the picker's while it is up: the key context is the picker's.
     assert_eq!(
         session.key(Some("1"), None, NONE, UiContext::List, false),
         KeyOutcomeFfi::Command {
@@ -191,7 +171,6 @@ async fn a_new_label_is_made_with_return_and_space_takes_it_off() {
     assert_eq!(opened.kind, PickerKindFfi::Label);
     assert_eq!(opened.field, PickerFieldFfi::Filter);
     assert_eq!(opened.placeholder, postio_ui::pickers::LABEL_FILTER);
-    // The labels are read once it is up; the fixture account has none.
     session.focus_picker_typed("Receipts".to_owned());
     let view = picker(&session, |view| view.rows.iter().any(|row| row.create)).await;
     assert_eq!(
@@ -207,7 +186,6 @@ async fn a_new_label_is_made_with_return_and_space_takes_it_off() {
     assert_eq!(kind, ToastKindFfi::Completed, "{text}");
     assert!(undoable, "the host put the label on: {text}");
 
-    // Open again: it is there, and on the conversation.
     session.invoke("add_label");
     let view = picker(&session, |view| {
         view.rows.iter().any(|row| row.name == "Receipts")
@@ -232,9 +210,6 @@ async fn a_new_label_is_made_with_return_and_space_takes_it_off() {
     session.shutdown();
 }
 
-/// A session whose inbox holds two conversations from Ada, "Invoice" on
-/// top, beside a Receipts folder. Two, so a row is left under the cursor
-/// once one has moved.
 async fn an_inbox_and_receipts() -> std::sync::Arc<Session> {
     let database = test_support::memory().await;
     {
@@ -289,9 +264,8 @@ async fn move_lists_the_destinations_and_choosing_one_moves_the_mail() {
         "the controller says how long, not the Mac"
     );
 
-    // Moved once, it is Recent and `1` the next time. The move is let reach
-    // the list first: a loaded runner re-reads it before the next key as
-    // often as not, and the `m` then aims at whatever row is left (#2154).
+    // Let the move reach the list first: a loaded runner re-reads it before the next key, and `m`
+    // then aims at the wrong row (#2154).
     assert!(
         the_list_lets_go_of(&session, "Invoice").await,
         "the moved mail left the inbox's list"

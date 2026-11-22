@@ -1,10 +1,3 @@
-//! The reader says how the body on screen is drawn -- in the app's colours
-//! or on paper -- so a surface can size its column by it (specs/007 T207).
-//! The answer is the renderer's own decision, not a value someone sets: a
-//! reader that draws treatments reports what it drew, tells its listeners on
-//! every treated draw, and tells them again after `O` switches it; a reader
-//! that does not draw treatments always answers app colours.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -112,7 +105,6 @@ pub fn a_reader_opens_a_message_in_the_treatment_the_store_remembers_for_its_sen
         support::until(|| reader.treated().is_some()),
         "the newsletter was never drawn under a treatment"
     );
-    // The rule says paper for this newsletter; the person chose app colours.
     assert_eq!(
         reader.treatment(),
         Treatment::AppColours,

@@ -1,6 +1,3 @@
-//! The local-first mutation queue: enqueue atomicity, inverses, and the order
-//! the queue comes back in after a restart.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
 
@@ -20,8 +17,6 @@ fn flags(raw: &str) -> FlagSet {
     raw.split_whitespace().map(Flag::parse).collect()
 }
 
-/// Inserts a message straight into the table: these tests are about the queue
-/// beside the local write, not about the message repository.
 async fn insert_message(connection: &Connection, mailbox: MailboxId) -> MessageId {
     connection
         .execute(
@@ -93,10 +88,6 @@ async fn fixture(connection: &Connection) -> Fixture {
         trash,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Enqueue
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn an_enqueued_operation_round_trips_with_its_inverse() {
@@ -231,10 +222,6 @@ async fn an_irreversible_operation_stores_no_inverse() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Atomicity with the local write
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_local_write_and_the_enqueue_commit_together() {
     let database = test_support::memory().await;
@@ -288,11 +275,9 @@ async fn a_rolled_back_local_write_takes_its_operation_with_it() {
         )
         .await
         .expect("enqueue");
-    // What a session action does on an early `?`: the transaction and the
-    // checkout it was opened on go together. A dropped transaction is only
-    // rolled back by the engine's next uncached statement on that same
-    // handle, and the storage layer's statements are cached, so the handle
-    // going is what ends it.
+    // A dropped transaction is rolled back only by the engine's next uncached statement on that
+    // handle;
+    // storage statements are cached, so dropping the checkout ends it.
     drop(transaction);
     drop(connection);
     let connection = database.connect().await.expect("checkout");
@@ -345,14 +330,6 @@ async fn enqueueing_marks_the_message_as_having_work_outstanding() {
     assert!(!has_pending_column(&connection, message).await);
     assert!(!queue.has_pending(queued.target).await.expect("has_pending"));
 }
-
-// ---------------------------------------------------------------------------
-// Enqueueing a named list at once
-// ---------------------------------------------------------------------------
-//
-// The multi-select twin of `enqueue_set`: a selection built by clicking is a
-// list of ids rather than a mailbox predicate, but it still must not cost one
-// statement per message the way looping over `enqueue` does.
 
 #[tokio::test]
 async fn enqueueing_many_writes_one_row_per_message_naming_each_one() {
@@ -461,10 +438,6 @@ async fn enqueueing_many_with_no_ids_writes_nothing() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Order, and surviving a restart
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_queue_survives_a_restart_in_enqueue_order() {
     let database = test_support::temp().await;
@@ -507,7 +480,6 @@ async fn the_queue_survives_a_restart_in_enqueue_order() {
         }
     }
 
-    // A new pool, and for a file-backed database a genuinely new connection.
     let reopened = postio_storage::Store::open(
         database.directory().join("postio.db"),
         &postio_storage::test_support::key(),
@@ -589,9 +561,6 @@ async fn a_backed_off_operation_is_skipped_until_its_time() {
     assert_eq!(deferred.last_error.as_deref(), Some("connection reset"));
 }
 
-/// A scheduled send (or anything else with a deliberate "not before" time)
-/// uses the same skip-until-due gate a backed-off retry does, but must not
-/// look like one: no attempt has been made yet, and nothing has failed.
 #[tokio::test]
 async fn a_scheduled_operation_is_skipped_until_its_send_time() {
     let database = test_support::memory().await;
@@ -692,7 +661,6 @@ async fn an_operation_left_in_flight_by_a_crash_is_retried_rather_than_dropped()
         "it is somebody else's now"
     );
 
-    // The crash, and the next start.
     let recovered = queue
         .requeue_in_flight(fixture.account.id, at(11))
         .await

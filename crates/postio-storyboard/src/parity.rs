@@ -1,17 +1,6 @@
-//! One storyboard, every app: where the apps agree, and where they diverge
-//! (spec US3, FR-016).
-//!
-//! A shared storyboard describes one interaction for every app it applies
-//! to. Where an app legitimately behaves differently -- Focus opens a dialog
-//! where the terminal fills a pane -- the storyboard says so with an override for
-//! that app and step. Anywhere else, two apps reporting different shared
-//! observations after the same step is a **divergence**: one of them is wrong,
-//! or an override is missing, and either way somebody should look. Side by
-//! side is the only view that shows it, because each app may pass its own
-//! checks.
-//!
-//! Compared on [`Observation::shared_eq`]: the widget path and `app.*` name a
-//! toolkit's internals, and every app has its own.
+//! One storyboard, every app. After the same step, two apps reporting different shared observations
+//! with no override is a divergence: one is wrong or an override is missing. Compared on
+//! [`Observation::shared_eq`]: the widget path and `app.*` name a toolkit's internals.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,41 +11,28 @@ use crate::apply::App;
 use crate::format::Storyboard;
 use crate::run::{Run, StepOutcome, variant_key};
 
-/// One step across the apps.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParityRow {
-    /// The step, 0 being the starting state.
     pub step: usize,
-    /// What each app observed after it.
     pub observations: BTreeMap<App, Observation>,
-    /// Apps for which this step does not exist (an override's `skip`).
     pub skipped: Vec<App>,
-    /// The apps disagree and no override explains it.
     pub diverging: bool,
 }
 
-/// One shared storyboard in one variant, across the apps that played it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Parity {
-    /// The storyboard.
     pub storyboard: String,
-    /// The variant key, `default` when nothing varies.
     pub variant: String,
-    /// The apps, in order.
     pub apps: Vec<App>,
-    /// Step by step.
     pub rows: Vec<ParityRow>,
 }
 
 impl Parity {
-    /// The steps that diverge.
     pub fn diverging(&self) -> impl Iterator<Item = &ParityRow> {
         self.rows.iter().filter(|row| row.diverging)
     }
 }
 
-/// Lines up `runs` by storyboard and variant, and marks divergence. Only
-/// storyboards played by two or more apps have parity to show.
 pub fn parity(runs: &[Run], storyboards: &BTreeMap<String, Storyboard>) -> Vec<Parity> {
     let mut groups: BTreeMap<(String, String), Vec<&Run>> = BTreeMap::new();
     for run in runs {
@@ -112,8 +88,6 @@ pub fn parity(runs: &[Run], storyboards: &BTreeMap<String, Storyboard>) -> Vec<P
     all
 }
 
-/// Whether any app overrides step `n` (1-based; 0, the starting state, has
-/// no step to override), by its id or its index.
 fn overridden(board: &Storyboard, n: usize) -> bool {
     let Some(step) = n.checked_sub(1).and_then(|i| board.steps.get(i)) else {
         return false;

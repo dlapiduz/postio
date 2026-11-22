@@ -1,15 +1,7 @@
-//! The list and the reading pane, side by side (T232; screens.md, "Reading
-//! beside the list").
-//!
-//! A layout manager of its own, so the two widths come from the allocation
-//! itself -- the pane `postio_ui::focus_dialog::pane_width` of the split's
-//! width, the list the rest -- and never from a size request: a request the
-//! window would refuse to shrink below, so a window could never be narrowed
-//! past the point where the pane should give way to the dialog. The pane
-//! asks only for what its content cannot do without.
-//!
-//! The first child is the list, the second the pane. A hidden pane gives
-//! the list the whole width.
+//! The list and the reading pane, side by side, in a layout manager of its own: widths come from
+//! the allocation, never from a size request,
+//! which a window would refuse to shrink below, so it could never be narrowed past the point where
+//! the pane should give way to the dialog.
 
 use std::cell::RefCell;
 
@@ -18,7 +10,6 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_ui::focus_dialog;
 
-/// Told the split's width at every allocation.
 type WidthHandler = Box<dyn Fn(i32)>;
 
 mod imp {
@@ -92,13 +83,11 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// The split's layout: the list, and the reading pane at its right.
     pub struct SplitLayout(ObjectSubclass<imp::SplitLayout>)
         @extends gtk::LayoutManager;
 }
 
 impl SplitLayout {
-    /// A layout telling `on_width` the split's width at every allocation.
     pub fn new(on_width: impl Fn(i32) + 'static) -> Self {
         let layout: Self = glib::Object::new();
         layout.imp().on_width.replace(Some(Box::new(on_width)));
@@ -106,18 +95,15 @@ impl SplitLayout {
     }
 }
 
-/// The split's two children: the list, then the pane.
 fn children(widget: &gtk::Widget) -> (Option<gtk::Widget>, Option<gtk::Widget>) {
     let list = widget.first_child();
     let pane = list.as_ref().and_then(gtk::Widget::next_sibling);
     (list, pane)
 }
 
-/// The pane's width in a split `width` wide: the geometry's, kept at least
-/// `pane_min` (what its content cannot do without) and, beyond that, short
-/// of the list's own `list_min`. Between the moment a window narrows past
-/// the pane's room and the moment the pane gives way, the geometry has no
-/// width to give, and the pane keeps its floor.
+/// Kept at least `pane_min` and, beyond that, short of the list's own `list_min`. When a window
+/// narrows past the pane's room
+/// and before the pane gives way, the pane keeps its floor.
 fn split(width: i32, pane_min: i32, list_min: i32) -> i32 {
     focus_dialog::pane_width(width)
         .unwrap_or(focus_dialog::PANE_MIN)

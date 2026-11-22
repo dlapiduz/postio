@@ -1,20 +1,10 @@
-//! T192: one rule for every close control. Each surface that closes has
-//! the one X icon button the shared constructor draws, at the right end of
-//! its header, and nothing else in that header is further right or says
-//! "Close".
-
 use adw::prelude::AdwDialogExt;
 use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// How tall a header band is: anything whose top is above this is "the
-/// header" of its surface.
 const BAND: f32 = 72.0;
 
-/// The surface's one close control: it is the shared X, and it is the
-/// right-most button in the top band; no other button there is worded
-/// "Close".
 fn assert_one_close_at_the_right(name: &str, surface: &impl IsA<gtk::Widget>) {
     let root: gtk::Widget = surface.as_ref().clone();
     let closes = support::with_class(&root, "postio-close-button");
@@ -68,10 +58,8 @@ pub fn every_closable_surface_has_the_same_x_at_the_right() {
         window.set_default_size(1000, 640);
         crate::settle();
 
-        // The window's own top bar.
         assert_one_close_at_the_right("the window", &window);
 
-        // The key map.
         let keys = postio_gtk::keymap_dialog::build(&window.keymap());
         keys.present(Some(&window));
         assert!(
@@ -84,7 +72,6 @@ pub fn every_closable_surface_has_the_same_x_at_the_right() {
         keys.close();
         crate::settle();
 
-        // The raw source.
         let source = postio_gtk::source::dialog(b"From: a@example.com\r\n\r\nx", &window.keymap());
         source.present(Some(&window));
         assert!(
@@ -97,7 +84,6 @@ pub fn every_closable_surface_has_the_same_x_at_the_right() {
         source.close();
         crate::settle();
 
-        // The open message.
         support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Enter opened the message");
@@ -112,7 +98,6 @@ pub fn every_closable_surface_has_the_same_x_at_the_right() {
         reading.close();
         crate::settle();
 
-        // The composer.
         support::keys(&window, &["c"]);
         assert!(crate::settle_until(async || window.compose_dialog().is_some()).await);
         let compose = window.compose_dialog().expect("the compose dialog");
@@ -167,8 +152,6 @@ pub fn settings_has_the_same_x_at_the_right() {
     });
 }
 
-/// T216, again for the form that adds an account: each of its three steps
-/// ends its header in the shared X, and pressing it closes the dialog.
 pub fn add_account_has_the_same_x_at_the_right_on_every_step() {
     use postio_widgets::onboarding::{Onboarding, Status};
 
@@ -220,10 +203,8 @@ pub fn add_account_has_the_same_x_at_the_right_on_every_step() {
     });
 }
 
-/// The add-account form opens with the keyboard in its first field, not on
-/// its close X: the X closes with the mouse, and Escape is its key. Putting
-/// the X first in the header put it first in the dialog's focus order, so the
-/// form opened with the keyboard on the one control that throws it away.
+/// Putting the X first in the header put it first in the dialog's focus order, so the form opened
+/// with the keyboard on the control that throws it away.
 pub fn add_account_opens_with_the_keyboard_in_its_first_field() {
     crate::gtk_case(async {
         if !support::display() {
@@ -244,8 +225,6 @@ pub fn add_account_opens_with_the_keyboard_in_its_first_field() {
             gtk::prelude::RootExt::focus(&window).map(|focus| focus.type_().name())
         );
 
-        // Waiting for the browser there is nothing to type: the keyboard
-        // goes to Cancel sign-in, still not to the X.
         let dialog = window.add_account_dialog().expect("the dialog");
         let form = support::descendants(dialog.upcast_ref::<gtk::Widget>())
             .into_iter()

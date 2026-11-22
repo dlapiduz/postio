@@ -1,15 +1,3 @@
-//! `[sync]` on disk, all the way to the `WatchPolicy` the engine is spawned
-//! with (#932).
-//!
-//! The same shape as `backfill_policy.rs`: `WatchPolicy::idle` and
-//! `::poll_interval` can be perfect in `postio-sync` while `[sync] idle` and
-//! `poll_interval_secs` reach neither, because `postio-session::engine::start`
-//! spawned `EngineParts { watch: Default::default(), .. }` and nothing
-//! carried a config value into it. `WatchPolicy::default()` was the only
-//! constructor ever called outside its own tests.
-//!
-//! Nothing here touches the network.
-
 use std::io::Write;
 use std::time::Duration;
 
@@ -46,9 +34,6 @@ fn check_for_mail_poll_on_disk_turns_idle_off() {
 
 #[test]
 fn the_retired_idle_key_still_reaches_the_policy() {
-    // #867: `idle = true`/`idle = false` still parses, only ever writing
-    // `check_for_mail` back out. The policy has to honour a file nobody has
-    // migrated yet, the same way `SyncConfig::deserialize` does.
     for (text, expected) in [("idle = true", true), ("idle = false", false)] {
         let file = config_file(&format!("[sync]\n{text}\n"));
         assert_eq!(watch_policy_at(file.path()).idle, expected, "for {text:?}");
@@ -66,9 +51,6 @@ fn poll_interval_secs_on_disk_reaches_the_policy() {
 
 #[test]
 fn a_file_that_will_not_parse_leaves_the_defaults_standing() {
-    // Same tolerance `backfill_policy_at` and `notifications::config_at`
-    // keep: a broken file is reported by the settings panel, not a reason to
-    // sync differently.
     let file = config_file("[sync\ncheck_for_mail =");
 
     let policy = watch_policy_at(file.path());
@@ -78,9 +60,6 @@ fn a_file_that_will_not_parse_leaves_the_defaults_standing() {
 
 #[test]
 fn idle_refresh_is_untouched_by_config_and_keeps_its_own_default() {
-    // Nothing in `[sync]` names it -- it is a protocol-tolerance constant,
-    // not a setting -- so a config that changes everything else must not
-    // move it.
     let file = config_file("[sync]\ncheck_for_mail = \"poll\"\npoll_interval_secs = 30\n");
     assert_eq!(
         watch_policy_at(file.path()).idle_refresh,
@@ -90,10 +69,6 @@ fn idle_refresh_is_untouched_by_config_and_keeps_its_own_default() {
 
 #[test]
 fn check_for_mail_manual_turns_off_idle_and_sets_manual() {
-    // #1013: `WatchPolicy::manual` is what actually silences the periodic
-    // check -- `idle` stays consistent with the other two variants for
-    // anything that reads it directly, but the watcher itself checks
-    // `manual` first and never gets as far as consulting `idle`.
     let file = config_file("[sync]\ncheck_for_mail = \"manual\"\n");
     let policy = watch_policy_at(file.path());
     assert!(!policy.idle);

@@ -2,38 +2,20 @@ import AppKit
 import PostioFFI
 import PostioKit
 
-/// The results' query field (specs/010-focus-search T070; design §1 and
-/// §3.1; research R11): the chips first, in the query's order, then the
-/// plain words. An `NSTextView` whose chips are text attachments, because
-/// `NSTokenField` can neither hold free words between tokens nor strike an
-/// excluded one through.
-///
-/// It draws what `FocusQuery` said (`show`) and reports what the keyboard
-/// did; it never edits the query itself, and no query text is spelled
-/// here:
-///
-/// - Backspace at the start of the words selects the last chip, and a
-///   second one removes it: `onRemove` with its token.
-/// - A click, or `/`, asks for the dropdown (`onFocus`): editing happens
-///   in the bar's field, on the query text the controller hands it.
-/// - Anything typed is handed on (`onType`) for the bar to take, rather
-///   than changing words the controller would not hear of.
+/// The results' query field: an `NSTextView` whose chips are text attachments, because
+/// `NSTokenField`
+/// can neither hold free words between tokens nor strike an excluded one through. It draws what
+/// `FocusQuery` said and never edits the query itself.
 @MainActor
 public final class ChipQueryField: NSTextView {
-    /// A chip's token, to remove.
     public var onRemove: ((UInt32) -> Void)?
-    /// The field wants the dropdown: a click, or `/`.
     public var onFocus: (() -> Void)?
-    /// Words typed into the field, for the bar's field to take.
     public var onType: ((String) -> Void)?
 
-    /// The chips drawn, in order.
     public private(set) var chips: [SearchQueryModel.Chip] = []
 
-    /// Where the words start: after the chips, and the space between.
     private var wordsStart = 0
 
-    /// The words' size (§3.1: 14.5).
     nonisolated static var wordsFont: NSFont { NSFont.systemFont(ofSize: 14.5) }
 
     public override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
@@ -55,7 +37,6 @@ public final class ChipQueryField: NSTextView {
         owned = storage
     }
 
-    /// The storage this field built (TextKit 1, for its attachments).
     private var owned: NSTextStorage?
 
     @available(*, unavailable)
@@ -78,7 +59,6 @@ public final class ChipQueryField: NSTextView {
         setAccessibilityLabel(focusSearchWords().queryLabel)
     }
 
-    /// The attachments in the text, in order: what is drawn.
     public var chipAttachments: [ChipAttachment] {
         guard let storage = textStorage else { return [] }
         var found: [ChipAttachment] = []
@@ -88,7 +68,6 @@ public final class ChipQueryField: NSTextView {
         return found
     }
 
-    /// The plain words after the chips.
     public var words: String {
         guard let storage = textStorage else { return "" }
         let text = storage.string as NSString
@@ -96,7 +75,6 @@ public final class ChipQueryField: NSTextView {
         return text.substring(from: start).trimmingCharacters(in: .whitespaces)
     }
 
-    /// Draw `chips` then `words`, as `FocusQuery` said.
     public func show(chips: [SearchQueryModel.Chip], words: String) {
         self.chips = chips
         let text = NSMutableAttributedString()
@@ -119,26 +97,20 @@ public final class ChipQueryField: NSTextView {
         setSelectedRange(NSRange(location: text.length, length: 0))
     }
 
-    /// What VoiceOver reads: each chip as its term, "not" before an
-    /// excluded one, then the words. (Setting a text view's accessibility
-    /// value replaces its text, so it is answered rather than set.)
+    /// Setting a text view's accessibility value replaces its text, so it is answered rather than
+    /// set.
     public override func accessibilityValue() -> String? {
         (chips.map { ($0.excluded ? "not " : "") + $0.op + $0.value } + [words])
             .filter { !$0.isEmpty }
             .joined(separator: " ")
     }
 
-    // MARK: the keyboard
-
-    /// Take the keyboard and ask for the dropdown: a click, and the path
-    /// `/` takes.
     public func focusAndAsk() {
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         onFocus?()
     }
 
     public override func mouseDown(with event: NSEvent) {
-        // A click on a chip's × removes it; anywhere else edits the query.
         let point = convert(event.locationInWindow, from: nil)
         if let token = crossed(at: point) {
             onRemove?(token)
@@ -147,8 +119,6 @@ public final class ChipQueryField: NSTextView {
         focusAndAsk()
     }
 
-    /// The token of the chip whose × is under `point`, in the view's
-    /// coordinates.
     func crossed(at point: NSPoint) -> UInt32? {
         guard let layout = layoutManager, let container = textContainer else { return nil }
         let origin = textContainerOrigin
@@ -185,17 +155,14 @@ public final class ChipQueryField: NSTextView {
     public override func deleteBackward(_ sender: Any?) {
         let selection = selectedRange()
         if selection.length == 1, selection.location < chips.count {
-            // A chip is selected: the second Backspace removes it.
             onRemove?(chips[selection.location].id)
             return
         }
         if selection.length == 0, selection.location <= wordsStart, !chips.isEmpty {
-            // At the start of the words: select the chip before.
             let before = min(selection.location, chips.count)
             setSelectedRange(NSRange(location: max(before, 1) - 1, length: 1))
             return
         }
-        // Inside the words: the bar edits them, on the query text.
         onType?("")
     }
 
@@ -212,31 +179,22 @@ public final class ChipQueryField: NSTextView {
     }
 }
 
-/// One chip in the field (design §1): SF Mono 12.5, 26 tall, radius 6,
-/// the quaternary fill, the operator tertiary, the value in label colour,
-/// and × -- struck through when excluded, the accent ring when focused.
-///
-/// Drawn by a handler at draw time, so the semantic colours follow the
-/// appearance the field is drawn in.
+/// Drawn by a handler at draw time, so the semantic colours follow the appearance.
 public final class ChipAttachment: NSTextAttachment {
     public let chip: SearchQueryModel.Chip
 
     static var font: NSFont { NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular) }
     static var valueFont: NSFont { NSFont.monospacedSystemFont(ofSize: 12.5, weight: .medium) }
     static let height: CGFloat = 26
-    /// The space after a chip, before the next one or the words.
     static let gap: CGFloat = 6
     static let cross: CGFloat = 12
 
-    /// The operator and the value as drawn, struck through when excluded.
     public var label: NSAttributedString {
         let strike: [NSAttributedString.Key: Any] = chip.excluded
             ? [.strikethroughStyle: NSUnderlineStyle.single.rawValue] : [:]
         let text = NSMutableAttributedString(
             string: chip.op,
             attributes: [.font: Self.font, .foregroundColor: NSColor.tertiaryLabelColor].merging(strike) { $1 })
-        // Screen 10's "from: Ada Moreno": 4 points between the operator and
-        // its value.
         if text.length > 0 {
             text.addAttribute(.kern, value: 4, range: NSRange(location: text.length - 1, length: 1))
         }
@@ -251,7 +209,6 @@ public final class ChipAttachment: NSTextAttachment {
         super.init(data: nil, ofType: nil)
         let label = self.label
         let textWidth = ceil(label.size().width)
-        // 8 before the words, 4 between them and ×, 4 after it.
         let pill = NSSize(width: 8 + textWidth + 4 + Self.cross + 4, height: Self.height)
         let size = NSSize(width: pill.width + Self.gap, height: pill.height)
         let focused = chip.focused
@@ -267,7 +224,6 @@ public final class ChipAttachment: NSTextAttachment {
             }
             let textHeight = label.size().height
             label.draw(at: NSPoint(x: 8, y: (pill.height - textHeight) / 2))
-            // The ×, tertiary.
             let cross = NSBezierPath()
             let box = NSRect(x: 8 + textWidth + 4, y: (pill.height - Self.cross) / 2, width: Self.cross, height: Self.cross)
                 .insetBy(dx: 3, dy: 3)
@@ -281,7 +237,6 @@ public final class ChipAttachment: NSTextAttachment {
             cross.stroke()
             return true
         }
-        // Centred on the words' line rather than sat on its baseline.
         bounds = NSRect(x: 0, y: (ChipQueryField.wordsFont.capHeight - Self.height) / 2, width: size.width, height: size.height)
     }
 
@@ -289,17 +244,8 @@ public final class ChipAttachment: NSTextAttachment {
     required init?(coder: NSCoder) { fatalError("not from a nib") }
 }
 
-/// The results toolbar's query box (specs/010-focus-search T070; design
-/// §3.1): 34 tall, radius 8, on the text background with a hairline ring
-/// -- the magnifier, the chips and words (`ChipQueryField`), and the quiet
-/// hint on the right, "/ to edit".
-///
-/// While the dropdown is up the query is edited as text, in the bar's own
-/// search field (`editor`), laid over the chips in the same place: the
-/// controller hands the bar the query text and reads it back, so nothing
-/// here spells it. It is ringed then, as the inbox's field is when it
-/// opens (`ToolbarSearchBox`, the same `SearchFieldChrome`), and while
-/// nothing matches (screen 13), when the hint says how to clear filters.
+/// The results toolbar's query box. While the dropdown is up the query is edited as text in the
+/// bar's own search field (`editor`), laid over the chips; nothing here spells it.
 @MainActor
 public final class ResultsQueryBox: NSView {
     public let field = ChipQueryField(frame: NSRect(x: 0, y: 0, width: 400, height: 34))
@@ -308,7 +254,6 @@ public final class ResultsQueryBox: NSView {
     private let magnifier = NSImageView()
     private let chrome = SearchFieldChrome()
 
-    /// The box's height (§3.1).
     public static let height: CGFloat = 34
 
     public init() {
@@ -331,7 +276,6 @@ public final class ResultsQueryBox: NSView {
             cell.lineBreakMode = .byClipping
             cell.isScrollable = true
         }
-        // §2: the words 15 pt while the query is edited as text.
         editor.textFont = .systemFont(ofSize: 15)
         editor.frameView = self
         for view in [magnifier, field, hint, editor] as [NSView] {
@@ -362,26 +306,21 @@ public final class ResultsQueryBox: NSView {
 
     private var widthConstraint: NSLayoutConstraint?
 
-    /// How wide the box is: what the toolbar leaves it.
     public var boxWidth: CGFloat {
         get { widthConstraint?.constant ?? 0 }
         set { widthConstraint?.constant = newValue }
     }
 
-    /// Draw the query as `FocusQuery` said it, with its hint; `nothingFound`
-    /// rings the field (screen 13).
     public func show(chips: [SearchQueryModel.Chip], words: String, hint: String, nothingFound: Bool = false) {
         field.show(chips: chips, words: words)
         self.hint.stringValue = hint
         self.nothingFound = nothingFound
     }
 
-    /// Nothing matches: the field is ringed while the page is up.
     public private(set) var nothingFound = false {
         didSet { needsDisplay = true }
     }
 
-    /// The dropdown is up: the query is edited as text in `editor`.
     public var editing: Bool = false {
         didSet {
             editor.isHidden = !editing
@@ -392,7 +331,6 @@ public final class ResultsQueryBox: NSView {
         }
     }
 
-    /// Whether the accent ring and halo are drawn.
     public var ringed: Bool { editing || nothingFound }
 
     public override var wantsUpdateLayer: Bool { true }

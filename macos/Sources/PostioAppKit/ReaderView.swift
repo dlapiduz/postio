@@ -4,47 +4,28 @@ import SwiftUI
 import WebKit
 import PostioKit
 
-/// The reading pane.
-///
-/// Its entire job is to build a hardened configuration, hand it a string, and
-/// refuse navigations. The content security policy, the embedded font faces,
-/// the sanitized body inside its container and the scroll markers all arrive
-/// from the engine as one document — the same one the GTK reader renders, from
-/// the same function. The two readers do not *agree* on the policy; there is
-/// one that produces it.
+/// Builds a hardened configuration, hands it a string, refuses navigations. The CSP, fonts,
+/// sanitized body and
+/// scroll markers arrive from the engine as one document, the same one GTK renders.
 public struct ReaderView: NSViewRepresentable {
     private let source: any ReaderSource
     private let message: Int64?
     private let remoteImages: RemoteImagesFfi
-    /// Whether to draw this message in reader view rather than as sent.
     private let reduced: Bool
-    /// The reader's zoom, as `WKWebView.pageZoom` takes it (`ReaderZoom`).
     private let zoom: Double
-    /// What to find in the page, and where to say whether it was there.
     private let find: FindInMessage.Request?
     private let onFound: (Bool) -> Void
     private let onHeight: ((CGFloat) -> Void)?
-    /// Called with the two facts the render already paid for — the notice
-    /// and the caveat (#1589). They used to be their own boundary calls,
-    /// each re-loading the body this render loads anyway.
     private let onAnswers: ((ReaderNoticeFfi?, String?) -> Void)?
-    /// Which scroll anchor to sit on, and a token that changes every time it
-    /// is asked for.
-    ///
-    /// A hardened web view has no scroll-by-amount call — script that arrived
-    /// in the message is off (ADR 0003) — so paging is a jump between the
-    /// anchors the shared document lays down. See `ReaderPaging`.
-    ///
-    /// The token, not the page: paging down at the last anchor leaves the
-    /// number where it was, and a view watching the value alone would not
-    /// act on the press.
+    /// A hardened web view has no scroll-by-amount call (message script is off, ADR 0003), so
+    /// paging jumps between
+    /// the document's anchors (`ReaderPaging`). The token, not the page: paging down at the last
+    /// anchor leaves the number where it was.
     private let page: UInt32
     private let pageToken: Int
 
-    /// `onHeight` is how a *stacked* reader is drawn: inside a conversation
-    /// the pane scrolls and each body is sized to its content, so the height
-    /// has to be measured from the laid-out document. Left `nil` the view
-    /// fills whatever it is given, which is what a single-message pane wants.
+    /// `onHeight` is for a stacked reader: each body is sized to its content, measured from the
+    /// laid-out document. `nil` fills what it is given.
     public init(
         source: any ReaderSource,
         message: Int64?,
@@ -85,18 +66,9 @@ public struct ReaderView: NSViewRepresentable {
         view.navigationDelegate = coordinator.policy
         view.uiDelegate = coordinator.policy
         view.setValue(false, forKey: "drawsBackground")
-        // The pane is Postio's chrome, not a browser: no rubber-banding past
-        // the document, and no back-forward gestures into a history that does
-        // not exist.
         view.allowsBackForwardNavigationGestures = false
-        // The pane is an article, not an unlabelled group. The GTK reader sets
-        // `AccessibleRole::Article` for the same reason: VoiceOver's
-        // rotor and its "read from here" both key off the role, and a web view
-        // that does not claim one is a region a screen-reader user has no way
-        // to enter deliberately. The document's own markup does the rest --
-        // headings, paragraphs, and the absence plates' `role="status"`, which
-        // is what makes "not downloaded yet" a sentence rather than invisible
-        // decoration.
+        // An article role: VoiceOver's rotor and "read from here" key off the role, as in the GTK
+        // reader (`AccessibleRole::Article`).
         view.setAccessibilityRole(.group)
         view.setAccessibilityRoleDescription("article")
         view.setAccessibilityLabel("Message")
@@ -110,27 +82,19 @@ public struct ReaderView: NSViewRepresentable {
         if view.pageZoom != zoom { view.pageZoom = zoom }
         context.coordinator.load(into: view, message: message, remote: remoteImages, reduced: reduced)
         context.coordinator.finder.perform(find, in: view, onFound: onFound)
-        // After the load, so a page turn that arrives with a new message
-        // lands in the document that message produced rather than in the one
-        // being replaced.
+        // After the load, so a page turn with a new message lands in that message's document.
         context.coordinator.page(view, to: page, token: pageToken)
     }
 
-    /// Holds the handlers and remembers what is on screen.
-    ///
-    /// `@MainActor` for the same reason the configuration is: a web view, its
-    /// scheme handlers and its navigation delegate all live on the main
-    /// thread, and a handler called back from anywhere else would be resolving
-    /// blobs off it.
+    /// `@MainActor`: a web view, its scheme handlers and navigation delegate live on the main
+    /// thread.
     @MainActor
     public final class Coordinator {
         let cid: CidSchemeHandler
         let closed = ClosedSchemeHandler()
-        /// The last page turn acted on, so SwiftUI's repeated `updateNSView`
-        /// calls do not re-scroll a document somebody has since moved by
-        /// hand.
+        /// So SwiftUI's repeated `updateNSView` calls do not re-scroll a document somebody has
+        /// moved by hand.
         private var pagedTo: Int?
-        /// What `find_in_message` last asked of this view.
         let finder = ReaderFind()
         let policy: ReaderNavigationPolicy
         private let source: any ReaderSource
@@ -142,13 +106,10 @@ public struct ReaderView: NSViewRepresentable {
         private var pending: Task<Void, Never>?
         private let onHeight: ((CGFloat) -> Void)?
 
-        /// Jump to scroll anchor `page`, once per `token`.
         func page(_ view: WKWebView, to page: UInt32, token: Int) {
             guard pagedTo != token else { return }
             pagedTo = token
-            // Token zero is the initial state, not a press: acting on it
-            // would scroll every message to `pos-0` on open, which is where
-            // it already is and one round trip to say so.
+            // Token zero is the initial state, not a press.
             guard token != 0 else { return }
             Task { @MainActor in await ReaderPaging.scroll(view, to: page) }
         }
@@ -170,10 +131,8 @@ public struct ReaderView: NSViewRepresentable {
             }
             self.policy = policy
             guard let onHeight else { return }
-            // Measured in the client's own content world, which runs even
-            // though the *page* has no JavaScript: `allowsContentJavaScript`
-            // is about the sender's markup, and nothing here executes any of
-            // it. The measurement is the only thing this asks the document.
+            // Measured in the client's content world, which runs though the page has no JavaScript:
+            // `allowsContentJavaScript` is about the sender's markup.
             policy.didFinish = { view in
                 view.evaluateJavaScript(
                     "document.documentElement.scrollHeight",
@@ -186,17 +145,10 @@ public struct ReaderView: NSViewRepresentable {
             }
         }
 
-        /// Render `message`, or the empty document when there is none.
-        ///
-        /// The document is built **off the main actor**. It is a SQLite read,
-        /// a sanitise and a wrap, and doing that on the cursor's own thread
-        /// makes every `j` cost a disk read — `PRODUCT.md` §18 budgets an
-        /// interaction at 16 ms, and a large HTML body is not that.
-        ///
-        /// Which means results can arrive out of order, so each render carries
-        /// a token and a stale one is dropped rather than drawn. Drawing it
-        /// would put one message's body under another's header, which is the
-        /// shape of #70 and the reason `reading.rs` carries the same guard.
+        /// Built off the main actor: a SQLite read, sanitise and wrap on the cursor's thread would
+        /// make every `j` a disk
+        /// read (16 ms budget). Results can arrive out of order, so each render carries a token and
+        /// a stale one is dropped (#70).
         func load(
             into view: WKWebView,
             message: Int64?,
@@ -217,40 +169,28 @@ public struct ReaderView: NSViewRepresentable {
                 cid.message = nil
                 return
             }
-            // Before the load, so a `postio-cid:` request arriving during it
-            // resolves against the right message rather than the previous one.
+            // Before the load, so a `postio-cid:` request during it resolves against the right
+            // message.
             cid.message = message
 
             let source = self.source
-            // `view` weakly, like `self`: a reader SwiftUI has let go of is
-            // not the render's to keep. Held strongly, a web view outlived its
-            // pane for as long as the store took to build a document nobody
-            // would see -- a content process kept alive for nothing, and on a
-            // busy machine long enough to read as a leak (#1586).
+            // `view` weakly: held strongly, a web view outlived its pane while the store built a
+            // document nobody would see (#1586).
             pending = Task { [weak self, weak view] in
                 let answers = await Task.detached {
                     source.readerDocument(message: message, remote: remote, reduced: reduced)
                 }.value
 
                 guard let self, let view, !Task.isCancelled, self.gate.isCurrent(token) else { return }
-                // The one load choke point, and so where a render is counted:
-                // a second path to the engine would show up here as two
-                // renders for one gesture rather than as a quiet doubling of
-                // what `j` costs. The shared counter, the one GTK's reader
-                // notes into.
+                // The one load choke point, where a render is counted: a second path to the engine
+                // would show as two renders for one gesture.
                 noteReaderRender()
                 view.loadHTMLString(
                     answers.html,
                     baseURL: URL(string: "\(ReaderConfiguration.baseScheme):///")
                 )
-                // The two by-products of the render (#1589). The notice only
-                // comes from a blocked render — an allowed one answers `nil`,
-                // and the caller keeps the notice it already has, which its
-                // own UI is hiding at that point anyway.
-                // Only from a blocked render. The allowed re-render after a
-                // grant flip answers no notice, and firing with `nil` would
-                // erase the numbers the caller is still holding; its caveat
-                // is the same one the blocked render already delivered.
+                // Only from a blocked render: an allowed re-render after a grant flip answers no
+                // notice, and firing with `nil` would erase the numbers the caller holds.
                 if remote == .blocked {
                     self.onAnswers?(answers.notice, answers.caveat)
                 }
@@ -259,17 +199,10 @@ public struct ReaderView: NSViewRepresentable {
     }
 }
 
-/// A reader's web view, which counts its own life (#1586).
-///
-/// Every web view the reader creates is one of these, so its lifetime **is**
-/// the reader's surface count, noted into the counters the classic app noted
-/// into. Counted from the view's own `init` and `deinit` rather than from
-/// `makeNSView` and `dismantleNSView`: what costs is the content process
-/// behind a web view, and that can go when the view does — which is when ARC
-/// gets round to it, not when SwiftUI takes it out of the hierarchy.
-///
-/// The conversation document's view is one of these as it is: it scrolls its
-/// own page. A stacked body's view is `PassingWebView`, which does not.
+/// Counted from the view's own `init` and `deinit`, not `makeNSView`/`dismantleNSView`: the content
+/// process
+/// goes when the view does, whenever ARC gets round to it (#1586). A stacked body's
+/// `PassingWebView` does not scroll its own page.
 public class ReaderSurface: WKWebView {
     override public init(frame: CGRect, configuration: WKWebViewConfiguration) {
         super.init(frame: frame, configuration: configuration)
@@ -286,18 +219,10 @@ public class ReaderSurface: WKWebView {
     }
 }
 
-/// A reader web view that lets the scroll wheel through to the pane behind it.
-///
-/// The single-message pane sizes its body to its whole document —
-/// `BodyHeight` is that measurement — so a body never has anything of its own
-/// to scroll. `WKWebView` does not know that: it consumes every wheel event
-/// over its own frame regardless, and the scroll view around it never sees
-/// one.
-///
-/// Forwarding is unconditionally right here **because** of that sizing: there
-/// is no case where this view has scrollable content of its own to keep. If a
-/// body ever grows past `BodyHeight.maximum` and starts scrolling internally,
-/// this has to become conditional — and that clamp is where to look.
+/// A body sized to its whole document has nothing of its own to scroll, but `WKWebView` consumes
+/// every wheel
+/// event over its frame. If a body ever scrolls internally (past `BodyHeight.maximum`), forwarding
+/// must become conditional.
 final class PassingWebView: ReaderSurface {
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)

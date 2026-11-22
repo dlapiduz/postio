@@ -1,10 +1,3 @@
-//! The queue drainer, against the `MailBackend` mock.
-//!
-//! No network and no server: `MockBackend` is an in-memory mail store with
-//! injectable faults, which is how the whole sync engine is developed
-//! (`crates/postio-account/src/backend/mod.rs`). Every conflict below is a thing a
-//! real server does.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage, UidSet};
 use postio_model::{
@@ -33,7 +26,6 @@ fn flags(raw: &str) -> FlagSet {
 const RAW: &[u8] = b"From: Ada Lovelace <ada@example.com>\r\n\
                       Subject: Analytical engine\r\n\r\nNotes.\r\n";
 
-/// A server with three folders and one message in the inbox.
 async fn server() -> MockBackend {
     let backend = MockBackend::builder()
         .mailbox(
@@ -52,8 +44,6 @@ async fn server() -> MockBackend {
     backend
 }
 
-/// The local store mirroring that server: three mailboxes and one message at
-/// UID 1 in the inbox.
 struct Local {
     account: AccountId,
     inbox: MailboxId,
@@ -141,10 +131,6 @@ async fn count(backend: &MockBackend, mailbox: &str) -> usize {
     backend.status(mailbox).await.expect("status").exists as usize
 }
 
-// ---------------------------------------------------------------------------
-// The happy path, and the offline case the queue exists for
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn an_empty_queue_is_an_idle_pass() {
     let database = test_support::memory().await;
@@ -204,7 +190,6 @@ async fn a_queue_of_offline_actions_applies_in_order() {
     let local = local(&connection).await;
     let backend = server().await;
 
-    // Read it, flag it, then archive it — a minute of work with no connection.
     enqueue(
         &connection,
         &local,
@@ -255,11 +240,8 @@ async fn a_queue_of_offline_actions_applies_in_order() {
 
 #[tokio::test]
 async fn a_flag_set_before_an_archive_reaches_the_server_with_the_message() {
-    // The same work through the verbs the app runs, which move the row as
-    // well as queueing the move: the archive clears the row's server
-    // coordinates before anything drains, so a flag change queued ahead of
-    // it has to address the message where it was when it was queued. It
-    // used to be settled as obsolete, and the read never reached the server.
+    // Through the app's verbs: the archive clears the row's server coordinates, so a flag change
+    // queued ahead must address the message where it was queued.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let local = local(&connection).await;
@@ -310,7 +292,6 @@ async fn redundant_work_never_reaches_the_server() {
     let local = local(&connection).await;
     let backend = server().await;
 
-    // Archived, then undone, while offline.
     enqueue(
         &connection,
         &local,
@@ -382,10 +363,6 @@ async fn a_delete_moves_the_message_to_the_trash() {
     assert_eq!(count(&backend, INBOX).await, 0);
 }
 
-// ---------------------------------------------------------------------------
-// Conflicts
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync() {
     let database = test_support::memory().await;
@@ -393,8 +370,6 @@ async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync(
     let local = local(&connection).await;
     let backend = server().await;
 
-    // Another client archived it while we were offline. Our queue still holds
-    // a flag change against the inbox.
     backend
         .move_messages(
             INBOX,
@@ -444,13 +419,6 @@ async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync(
 
 #[tokio::test]
 async fn a_move_confirmed_without_copyuid_is_applied_and_the_destination_resynced() {
-    // RFC 4315 §3: a UIDPLUS server SHOULD return COPYUID and MAY omit it --
-    // a UIDNOTSTICKY destination, or one the account may write to but not
-    // select. Absence means the new UIDs are unknown, which the client
-    // "can discover by selecting the destination mailbox". It does not mean
-    // the message was gone, and reading it that way settled a successful
-    // move as obsolete, never retried it, and condemned the *source* to a
-    // resync (#903).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let local = local(&connection).await;
@@ -489,18 +457,11 @@ async fn a_move_confirmed_without_copyuid_is_applied_and_the_destination_resynce
 
 #[tokio::test]
 async fn a_moved_message_with_no_message_id_keeps_one_row_with_the_servers_identity() {
-    // The row has no `Message-ID`, so once a move nulls its coordinates the
-    // only things that can name it again are the COPYUID the server answers
-    // the move with and the queue row's snapshot (#1983). Without them the
-    // destination's sync inserted the server's copy as a second row and the
-    // one in view never got a UID, so its body could never be fetched.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let local = local(&connection).await;
     let backend = server().await;
 
-    // The user's side of the move: enqueue (snapshotting where the server
-    // has it), then the local write that clears the coordinates.
     enqueue(
         &connection,
         &local,
@@ -561,11 +522,6 @@ async fn a_moved_message_with_no_message_id_keeps_one_row_with_the_servers_ident
 
 #[tokio::test]
 async fn a_moved_message_with_no_message_id_and_no_copyuid_keeps_one_row() {
-    // The server answers the move without a COPYUID (no UIDPLUS, or a
-    // UIDNOTSTICKY destination), so the drainer has no mapping to adopt and
-    // the row has no `Message-ID` for the destination's sync to match on
-    // (#1994). The sync then inserted the server's copy beside it: two rows
-    // for one message, and the one in view never got a UID.
     let raw = RAW.to_vec();
     let backend = MockBackend::builder()
         .mailbox(
@@ -582,8 +538,6 @@ async fn a_moved_message_with_no_message_id_and_no_copyuid_keeps_one_row() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let local = local(&connection).await;
-    // `local` files the row at `at(8)` with the size of `raw`, as a sync of
-    // the inbox would have.
 
     enqueue(
         &connection,
@@ -645,9 +599,6 @@ async fn a_moved_message_with_no_message_id_and_no_copyuid_keeps_one_row() {
 
 #[tokio::test]
 async fn a_bulk_moved_message_with_no_message_id_and_no_copyuid_keeps_one_row() {
-    // The same move made from a select-all: the local half is `move_set`,
-    // which must leave the row as `move_to` does, without the source's
-    // `remote_id`, or the destination's sync cannot recognise it.
     let raw = RAW.to_vec();
     let backend = MockBackend::builder()
         .mailbox(
@@ -664,8 +615,6 @@ async fn a_bulk_moved_message_with_no_message_id_and_no_copyuid_keeps_one_row() 
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let local = local(&connection).await;
-    // `local` files the row at `at(8)` with the size of `raw`, as a sync of
-    // the inbox would have.
 
     enqueue(
         &connection,
@@ -735,7 +684,6 @@ async fn a_message_moved_on_both_sides_does_not_move_twice() {
     let local = local(&connection).await;
     let backend = server().await;
 
-    // The server moved it to the archive already; we queued the same move.
     backend
         .move_messages(
             INBOX,
@@ -761,11 +709,6 @@ async fn a_message_moved_on_both_sides_does_not_move_twice() {
         .await
         .expect("drain");
 
-    // On the wire this is indistinguishable from a server that moved the
-    // message and omitted COPYUID (RFC 4315 §3), so it settles the same way
-    // (#903): applied, nothing duplicated, and the destination resynced --
-    // which is where both readings are reconciled, because it is where the
-    // message is.
     assert_eq!(report.applied, 1);
     assert_eq!(report.obsolete, 0);
     assert_eq!(
@@ -884,10 +827,6 @@ async fn a_missing_destination_mailbox_is_a_permanent_failure() {
     assert_eq!(report.deferred, 0);
 }
 
-// ---------------------------------------------------------------------------
-// Retry and backoff
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_transient_failure_comes_back_with_a_backoff() {
     let database = test_support::memory().await;
@@ -904,7 +843,6 @@ async fn a_transient_failure_comes_back_with_a_backoff() {
         at(9),
     )
     .await;
-    // The CAPABILITY the pass opens with succeeds; the STORE does not.
     backend.inject_after(1, Fault::Io("network is unreachable".to_owned()));
 
     let report = Drainer::new(&backend)
@@ -924,14 +862,12 @@ async fn a_transient_failure_comes_back_with_a_backoff() {
         "the base backoff"
     );
 
-    // Not due yet.
     let idle = Drainer::new(&backend)
         .drain(&connection, local.account, at(10) + TimeDelta::seconds(1))
         .await
         .expect("drain");
     assert!(idle.is_idle());
 
-    // Due, and the server is back.
     let recovered = Drainer::new(&backend)
         .drain(&connection, local.account, at(10) + TimeDelta::seconds(3))
         .await
@@ -1004,9 +940,6 @@ async fn an_operation_that_keeps_failing_is_reported_rather_than_retried_forever
     let mut last = DrainReport::default();
 
     for _ in 0..3 {
-        // `inject_after(1)` skips the CAPABILITY the pass opens with and lands
-        // on the STORE. It is relative to the calls served so far, so it works
-        // the same on every iteration.
         backend.inject_after(1, Fault::Io("network is unreachable".to_owned()));
         last = Drainer::with_policy(&backend, policy)
             .drain(&connection, local.account, when)
@@ -1120,10 +1053,6 @@ async fn a_folded_step_defers_every_row_behind_it_together() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Not implemented yet, but never silent
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_queued_send_is_reported_rather_than_left_pending_forever() {
     let database = test_support::memory().await;
@@ -1153,10 +1082,6 @@ async fn a_queued_send_is_reported_rather_than_left_pending_forever() {
     assert!(report.failed[0].reason.contains("SMTP"));
 }
 
-/// A failed operation's toast says what did not happen before it says why
-/// (#1487). The reason alone -- "550 mailbox unavailable" -- reads as a fact
-/// about the world rather than as the fate of something the person asked
-/// for, and the toast has no other context to lend it.
 #[test]
 fn a_failed_operation_says_what_did_not_happen_then_why() {
     let failed = FailedOperation {

@@ -1,25 +1,9 @@
-//! The settings window, joined to the store's host: the presenters both
-//! desktop apps feed [`crate::settings::SettingsPanel`] with (ADR 0043;
-//! specs/007-postio-focus T233).
-//!
-//! The panel draws the sections and calls back through its `connect_*`
-//! handlers without knowing anything persists them. These are the other
-//! half: every read and write is the host's, asked through `postio-client`
-//! (ADR 0041), so the window behaves the same over any host.
-//!
-//! - [`accounts`]: the account rows, their detail view and signatures, the
-//!   connection test, rebuilding an index, removing with undo.
-//! - [`credential`]: re-entering an account's credential.
-//! - [`egress`] and [`privacy`]: the Privacy section's logs.
-//! - [`backfill`]: skipping or resuming a folder's backfill (ADR 0016).
-//!
-//! # What stays with the app
-//!
-//! A few things are not the host's to answer and not this crate's to reach:
-//! the connection test and the token-expiry line dial out or read the
-//! keyring from the app's own process, a removal's undo is the app's toast,
-//! and a role mapping is a command the app runs. The app answers them as an
-//! [`Outside`].
+//! The settings window joined to the store's host through `postio-client` (ADR 0041, ADR 0043): the
+//! presenters both desktop
+//! apps feed [`crate::settings::SettingsPanel`] with. The app answers some things itself, as an
+//! [`Outside`]: the connection
+//! test and token-expiry line (they dial out or read the keyring in its process), a removal's undo
+//! toast, role-mapping commands.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -37,57 +21,35 @@ pub mod credential;
 pub mod egress;
 pub mod privacy;
 
-/// Accounts whose local search index is being rebuilt right now (#981).
-///
-/// Shared between [`accounts`], which adds and removes membership as a
-/// rebuild runs, and whatever in the app reads it -- a search, which can raise a corpus caveat while an account's index is
-/// mid-rebuild.
+/// Shared between [`accounts`], which adds and removes membership as a rebuild runs, and whatever
+/// reads it, such as a search
+/// raising a corpus caveat (#981).
 pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
 
-/// An answer the app gives later, on the main loop.
 pub type Later<T> = Pin<Box<dyn Future<Output = T>>>;
 
-/// What a connection test found.
 #[derive(Debug, Clone)]
 pub struct Reached {
-    /// The incoming server's answer, `Err` with the reason it refused.
     pub incoming: Result<(), String>,
-    /// The outgoing server's answer, likewise.
     pub outgoing: Result<(), String>,
-    /// What either found wrong with the credential, for the row's repair
-    /// (#1584).
     pub trouble: Option<postio_ui::account::Trouble>,
 }
 
-/// What the settings window asks of the app it is drawn in.
 pub trait Outside {
-    /// Try `account`'s stored settings against its servers (#980).
-    ///
-    /// The one thing in the window that leaves the machine, and only because
-    /// somebody pressed "Test connection".
+    /// The one thing in the window that leaves the machine, and only because somebody pressed "Test
+    /// connection" (#980).
     fn test_connection(&self, account: Account) -> Later<Reached>;
 
-    /// When each of `accounts` -- an id and its address -- has its stored
-    /// sign-in token expire, for the accounts that signed in through
-    /// Postio's own OAuth client (#878).
     fn token_expiries(
         &self,
         accounts: Vec<(AccountId, String)>,
     ) -> Later<Vec<(AccountId, Option<SystemTime>)>>;
 
-    /// Re-enter `account`'s credential, over the app's window; `saved` runs
-    /// once the new one is written.
     fn update_credential(&self, account: AccountId, saved: Box<dyn Fn()>);
 
-    /// Offer to undo something just done: `description` on the app's toast,
-    /// whose button runs `undo`.
     fn offer_undo(&self, description: &str, undo: Box<dyn Fn()>);
 
-    /// Run `command` as the app runs any other: a mailbox role mapping is
-    /// one (ADR 0035).
     fn run(&self, command: postio_core::Command);
 
-    /// Whether `[sync] attachment_fetch` is eager, which the account rows'
-    /// weights say.
     fn attachments_eager(&self) -> bool;
 }

@@ -1,11 +1,3 @@
-//! Spec 009: a verb in a message opened from a search hit aims at the
-//! message on screen, not at the list's cursor row.
-//!
-//! The controller never hears which message a hit opened, so the cursor
-//! stays on whatever row it was on. A person who searched, opened the hit
-//! and pressed `e` means the message they are reading. The store is what is
-//! asserted on: which message moved, and which did not.
-
 use postio_model::{Flag, MailboxId, MailboxRole, MessageId};
 use postio_storage::repository::{MailboxRepository, MessageRepository};
 
@@ -14,14 +6,10 @@ use crate::support::{self, Fixture};
 struct Hit {
     fixture: Fixture,
     window: postio_gtk::window::FocusWindow,
-    /// The list cursor's row: newest, matches nothing searched.
     cursor: MessageId,
-    /// The message the search finds and the person opens.
     hit: MessageId,
 }
 
-/// Two messages: the cursor is on "Atlas budget" (newest); the search for
-/// "harbor" finds only "Harbor budget", which is opened from the hit.
 async fn open_a_hit_away_from_the_cursor() -> Hit {
     let fixture = Fixture::empty().await;
     let (cursor, _) = fixture
@@ -86,8 +74,6 @@ impl Hit {
     }
 }
 
-/// Press `key` in the message opened from the hit: it, and not the cursor's
-/// row, ends in `role`'s mailbox, and the screen stops showing it.
 async fn leaves_for(key: (&str, gtk::gdk::ModifierType), role: MailboxRole, what: &str) {
     let hit = open_a_hit_away_from_the_cursor().await;
     let target = hit.role(role).await;
@@ -107,8 +93,6 @@ async fn leaves_for(key: (&str, gtk::gdk::ModifierType), role: MailboxRole, what
         shown.mailbox_id,
         cursor.mailbox_id,
     );
-    // What a person sees: the message that left is not the one still shown,
-    // and the other is still in the list.
     assert!(
         crate::settle_until(async || {
             hit.window

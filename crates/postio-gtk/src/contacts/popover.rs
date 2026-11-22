@@ -1,12 +1,7 @@
-//! The contact popover (handoff screens 04 and 05): what a person is to you,
-//! at the sender's name, without leaving the list. A known sender has three
-//! tiles, what is open between you, where their mail arrives and the
-//! actions; a sender not yet saved has how they reached you and what their
-//! signature said. Every word is `postio_ui::contact_popover::PopoverView`'s.
-//!
-//! It is a card in the window's own layer, not a separate surface: the
-//! window's keys reach it, so the controller's commands (the arrival
-//! arrows, Return for their mail) work as they do everywhere else.
+//! The contact popover: a card in the window's own layer, not a separate surface, so the window's
+//! keys reach it and the
+//! controller's commands work as elsewhere. Every word is
+//! `postio_ui::contact_popover::PopoverView`'s.
 
 use std::rc::Rc;
 
@@ -20,16 +15,12 @@ use postio_widgets::widgets::plate;
 use postio_widgets::widgets::segmented::SegmentedControl;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
-/// What a click on the popover does.
 #[derive(Clone)]
 pub struct PopoverHooks {
-    /// An action: the command its key sends.
     pub command: Rc<dyn Fn(CommandId)>,
-    /// A segment of the arrival control.
     pub arrival: Rc<dyn Fn(ContactArrival)>,
 }
 
-/// The card for `view`.
 pub fn build(view: &PopoverView, hooks: &PopoverHooks) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     card.add_css_class("focus-contact-popover");

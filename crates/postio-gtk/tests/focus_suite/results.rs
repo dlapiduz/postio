@@ -1,15 +1,5 @@
-//! The search results view (spec 010 T171, screens 06 and 07): GTK draws
-//! the controller's results in the inbox's place.
-//!
-//! What matches, how it is grouped and ordered, and where the ring goes
-//! are the controller's, asserted in `postio-focus`. These cases drive the
-//! window as a person does: Show all
-//! opens the results, the keys walk them, a filter button edits the query,
-//! and Back brings the inbox back.
-
 use crate::support::{self, Fixture};
 
-/// A window over three budget messages and one other, its inbox drawn.
 async fn budgets() -> (postio_gtk::window::FocusWindow, Fixture) {
     let fixture = Fixture::empty().await;
     fixture
@@ -47,7 +37,6 @@ async fn budgets() -> (postio_gtk::window::FocusWindow, Fixture) {
     (window, fixture)
 }
 
-/// `/`, "budget", and Return on Show all: the results, open.
 async fn show_all(
     window: &postio_gtk::window::FocusWindow,
 ) -> std::rc::Rc<postio_gtk::results::ResultsPane> {
@@ -72,9 +61,6 @@ async fn show_all(
     window.results().expect("the results are up")
 }
 
-/// Show all puts the three matches in the inbox's place, with their count;
-/// `j` moves the ring to the next; Escape gives the inbox back, all four
-/// rows, with the keyboard.
 pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
     crate::gtk_case(async {
         if !support::display() {
@@ -84,7 +70,6 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
         let results = show_all(&window).await;
         assert!(
             crate::settle_until(async || {
-                // Top hits draws them again above their months.
                 let mut subjects = results.subjects();
                 subjects.sort();
                 subjects.dedup();
@@ -103,8 +88,6 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
             !window.bar().is_some_and(|bar| bar.is_open()),
             "the bar stayed up"
         );
-        // One field: the top bar's holds the query, where `/` opens it,
-        // and the command field's prompt is not drawn beside it.
         let chrome = window.chrome().expect("the top bar");
         let said = support::texts(chrome.center());
         assert!(
@@ -123,8 +106,6 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
             support::texts(results.widget())
         );
 
-        // A storyboard says where the keyboard is as a region: the
-        // results', which the Mac's storyboards check for (#1825).
         assert!(
             crate::settle_until(async || {
                 window.observe().keyboard.region == postio_ui::observe::Region::Results
@@ -161,9 +142,6 @@ pub fn show_all_opens_the_results_and_back_returns_to_the_inbox() {
     });
 }
 
-/// Quick Look stays where it is while j walks the results under it,
-/// whatever the next one holds -- here a subject that takes two lines:
-/// its edges are the rows', not its words'.
 pub fn quick_look_stays_put_while_j_walks() {
     use gtk::prelude::*;
     crate::gtk_case(async {
@@ -214,8 +192,6 @@ pub fn quick_look_stays_put_while_j_walks() {
         );
         crate::settle();
         let before = frame();
-        // Its edges are the rows' own, inside its margins: the same place
-        // for one match as for a page of them.
         let rows = results
             .list()
             .ancestor(gtk::ScrolledWindow::static_type())
@@ -242,9 +218,6 @@ pub fn quick_look_stays_put_while_j_walks() {
     });
 }
 
-/// The results open at their top: the first group's heading, "Top hits",
-/// over the ringed first row -- the heading that says why those rows come
-/// again under their months -- and back there after a sort.
 pub fn the_results_open_on_their_first_heading() {
     use gtk::prelude::*;
     crate::gtk_case(async {
@@ -298,8 +271,6 @@ pub fn the_results_open_on_their_first_heading() {
     });
 }
 
-/// An unread result has the inbox's unread dot: the system's accent, not
-/// a grey of its own -- one state, drawn one way in both lists.
 pub fn an_unread_result_has_the_inboxs_accent_dot() {
     use gtk::prelude::*;
     crate::gtk_case(async {
@@ -324,8 +295,8 @@ pub fn an_unread_result_has_the_inboxs_accent_dot() {
         );
         let manager = adw::StyleManager::default();
         let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
-        // Channel by channel, clamped: a theme may hand the accent over
-        // with a channel past the gamut's edge, which is drawn as its edge.
+        // A theme may hand the accent over with a channel past the gamut's edge, which is drawn as
+        // its edge.
         let channels = |colour: gtk::gdk::RGBA| {
             [colour.red(), colour.green(), colour.blue(), colour.alpha()].map(|c| c.clamp(0.0, 1.0))
         };
@@ -339,8 +310,7 @@ pub fn an_unread_result_has_the_inboxs_accent_dot() {
     });
 }
 
-/// The tabs hold still when Sort changes its words: "Best match" and
-/// "Newest" are not one width, and the tabs beside Sort slid (#2082).
+/// "Best match" and "Newest" are not one width, and the tabs beside Sort once slid (#2082).
 pub fn the_tabs_hold_still_when_the_sort_changes() {
     use gtk::prelude::*;
     crate::gtk_case(async {
@@ -367,8 +337,6 @@ pub fn the_tabs_hold_still_when_the_sort_changes() {
     });
 }
 
-/// Each filter popover's button shows the key that opens it, and the key
-/// opens it (#2090).
 pub fn the_filter_buttons_show_and_answer_their_keys() {
     crate::gtk_case(async {
         if !support::display() {
@@ -395,8 +363,6 @@ pub fn the_filter_buttons_show_and_answer_their_keys() {
     });
 }
 
-/// A toggle filter button adds its term as a chip, and the chip's ✕ takes
-/// it out again.
 pub fn a_toggle_filter_adds_its_chip_and_the_chip_removes_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -437,8 +403,6 @@ pub fn a_toggle_filter_adds_its_chip_and_the_chip_removes_it() {
     });
 }
 
-/// From ▾ opens its popover over the people in the results; Space checks
-/// the one the arrows rest on and Return keeps it, as a `from:` chip.
 pub fn from_checks_a_person_and_return_keeps_the_chip() {
     crate::gtk_case(async {
         if !support::display() {
@@ -477,8 +441,6 @@ pub fn from_checks_a_person_and_return_keeps_the_chip() {
     });
 }
 
-/// A click away from a popover puts the query back as it was: what it
-/// previewed is not kept.
 pub fn a_click_away_from_a_popover_keeps_nothing() {
     crate::gtk_case(async {
         if !support::display() {
@@ -506,8 +468,6 @@ pub fn a_click_away_from_a_popover_keeps_nothing() {
     });
 }
 
-/// The timeline draws a bar a month; a drag across the newest narrows the
-/// query to it, and the bar is drawn selected.
 pub fn a_drag_across_the_timeline_narrows_the_dates() {
     crate::gtk_case(async {
         if !support::display() {
@@ -535,8 +495,6 @@ pub fn a_drag_across_the_timeline_narrows_the_dates() {
     });
 }
 
-/// The People tab lists who the results are from and to; Return on one
-/// searches their mail: a `from:` chip, and the Conversations tab again.
 pub fn return_on_a_person_searches_from_them() {
     crate::gtk_case(async {
         if !support::display() {
@@ -571,9 +529,6 @@ pub fn return_on_a_person_searches_from_them() {
     });
 }
 
-/// A filter that leaves nothing puts the no-results page in the rows'
-/// place, with a looser search that finds something; running it takes
-/// the filter off and brings the results back.
 pub fn nothing_found_offers_a_looser_search_that_finds_some() {
     crate::gtk_case(async {
         if !support::display() {
@@ -597,7 +552,6 @@ pub fn nothing_found_offers_a_looser_search_that_finds_some() {
             !results.nothing().title().is_empty(),
             "the page says nothing"
         );
-        // Nothing found has no months to chart (§3.10).
         assert!(
             !gtk::prelude::WidgetExt::is_mapped(results.timeline().widget()),
             "the timeline stayed over the page"
@@ -621,8 +575,6 @@ pub fn nothing_found_offers_a_looser_search_that_finds_some() {
     });
 }
 
-/// Spec 010 R10 (#1825): Ctrl+1-3 pick the results' tabs from the keyboard,
-/// and the keys go on reaching the results on each.
 pub fn the_tabs_go_by_their_keys() {
     crate::gtk_case(async {
         if !support::display() {
@@ -635,8 +587,6 @@ pub fn the_tabs_go_by_their_keys() {
             "the results never drew"
         );
         let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
-        // Back to the inbox and into the results again first: the second
-        // time is where the keyboard was left on a page no longer shown.
         assert!(
             support::deliver_with(&window, "bracketleft", ctrl),
             "History back was dropped"
@@ -682,9 +632,6 @@ pub fn the_tabs_go_by_their_keys() {
     });
 }
 
-/// Spec 010 (results-esc-ladder, #1825): `/` over the results opens the
-/// dropdown; Escape closes it and the results have the keyboard again;
-/// the next Escape leaves them for the inbox.
 pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
     crate::gtk_case(async {
         if !support::display() {
@@ -732,13 +679,9 @@ pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
     });
 }
 
-/// #2136: the results draw a row again whenever it changes -- checked by
-/// `x`, the ring moving onto it or off it, its page landing -- and a row
-/// drawn again is a new widget. A keyboard on the old one went with it:
-/// to nothing, or on to the next control GTK found (the results' Back
-/// button, where Space presses it). On a loaded machine a page landing
-/// just after Escape did that to the case above. The keyboard stays in
-/// the list.
+/// A row drawn again is a new widget, and a keyboard on the old one went to nothing or to the next
+/// control GTK found
+/// (the results' Back button, where Space presses it). The keyboard stays in the list (#2136).
 pub fn checking_and_walking_the_results_keeps_the_keyboard_in_their_list() {
     crate::gtk_case(async {
         if !support::display() {
@@ -754,7 +697,6 @@ pub fn checking_and_walking_the_results_keeps_the_keyboard_in_their_list() {
             crate::settle_until(async || results.cursor().is_some()).await,
             "the results never drew"
         );
-        // `/` and Escape: the keyboard comes back onto the ringed row.
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         assert!(support::deliver(&window, "Escape"), "Escape was dropped");
         assert!(
@@ -788,10 +730,8 @@ pub fn checking_and_walking_the_results_keeps_the_keyboard_in_their_list() {
     });
 }
 
-/// The keyboard was on nothing when `/`'s dropdown over the results closed
-/// -- the bar's field could not take it while the window was busy, or a
-/// popover let it go: Escape still hands it to the results' list, not to
-/// the window, where `j` and a second Escape would reach nothing.
+/// The keyboard was on nothing when the dropdown closed: Escape still hands it to the results'
+/// list, not the window, where `j` and a second Escape would reach nothing.
 pub fn escape_gives_a_keyboard_on_nothing_to_the_results() {
     crate::gtk_case(async {
         if !support::display() {
@@ -805,8 +745,7 @@ pub fn escape_gives_a_keyboard_on_nothing_to_the_results() {
             bar.is_open(),
             "/ did not open the dropdown over the results"
         );
-        // Every move of the keyboard from here, said with a failure: this
-        // has failed on CI only, and the moves say what took it.
+        // Every move of the keyboard from here is said with a failure: this has failed on CI only.
         let moves = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
         {
             use gtk::prelude::ObjectExt;
@@ -833,8 +772,6 @@ pub fn escape_gives_a_keyboard_on_nothing_to_the_results() {
     });
 }
 
-/// #1825: a search that found nothing, left, and then one that finds
-/// something: its rows are shown, not the first one's "Nothing matches".
 pub fn a_search_after_one_that_found_nothing_shows_its_rows() {
     crate::gtk_case(async {
         if !support::display() {
@@ -868,9 +805,6 @@ pub fn a_search_after_one_that_found_nothing_shows_its_rows() {
     });
 }
 
-/// storyboards/flows/search-open-reply-back on spec 010 (#1825): a result
-/// opened from the results answers `r` with a reply quoting it, and Escape
-/// walks back out: the reply, the message, then the results.
 pub fn replying_to_a_result_and_escaping_back_to_the_results() {
     crate::gtk_case(async {
         if !support::display() {
@@ -912,7 +846,6 @@ pub fn replying_to_a_result_and_escaping_back_to_the_results() {
             "the keyboard is not back on the results: {}",
             window.observe().keyboard.widget
         );
-        // On the ringed result itself, not on a group's heading: one ring.
         let on_the_ring = || {
             use gtk::prelude::WidgetExt;
             gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| {
@@ -928,8 +861,6 @@ pub fn replying_to_a_result_and_escaping_back_to_the_results() {
     });
 }
 
-/// Spec 010 US5 (§3.5): checking results turns the footer into the bulk
-/// bar, which says how many the next verb will reach.
 pub fn checking_results_says_how_many_are_selected() {
     crate::gtk_case(async {
         if !support::display() {
@@ -957,9 +888,6 @@ pub fn checking_results_says_how_many_are_selected() {
     });
 }
 
-/// Spec 010 D24 (#1825): Ctrl+Backspace on the no-results page clears the
-/// filters, and the keyboard is on the results that come back -- not left
-/// on the page that went, nor handed to the top bar.
 pub fn clearing_the_filters_keeps_the_keyboard_on_the_results() {
     crate::gtk_case(async {
         if !support::display() {
@@ -995,10 +923,6 @@ pub fn clearing_the_filters_keeps_the_keyboard_on_the_results() {
     });
 }
 
-/// Spec 010 US5 (§3.9, screen 12): Ctrl+S over the results opens the Save
-/// popover -- a name made from the query, its terms, Pin on -- with the
-/// keyboard in its Name field; Return saves it to `config.toml`, pinned,
-/// and the popover goes.
 pub fn ctrl_s_opens_the_save_popover_and_return_saves() {
     crate::gtk_case(async {
         if !support::display() {

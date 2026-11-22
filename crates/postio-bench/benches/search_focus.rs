@@ -1,50 +1,4 @@
-//! Conversation search for Focus (spec 010), against its 50 ms budget.
-//!
-//! The results view asks the engine for a page of conversations with their
-//! facets and months, then for the passages of that page, and prints how long
-//! that took in its footer. So this measures the executor's calls
-//! (`search_conversations`, `relaxation_counts`) and, as one more shape of its
-//! own, that whole exchange as the session makes it: `conversations` for a
-//! first page of 50 hits, then `passages` for those hits. That last number is
-//! the one a person is shown.
-//!
-//! # The corpus
-//!
-//! 20,000 messages, deterministic (fixed-seed xorshift, no clock, no OS
-//! randomness): threads of 1 to 12 messages, 40 senders with a Zipf spread,
-//! 12 labels, 30% of messages with an attachment, spread over 24 months, and
-//! 2,000 extracted attachment units (step 9): ten pages each of 200
-//! attachments, written as the indexer writes them, one attachment in ten
-//! saying [`FILE_WORD`], which nothing in any mail says.
-//!
-//! # The shapes
-//!
-//! One word (about 1% of messages), two words, an operator alone, an operator
-//! with words, a common word (most messages), zero hits with four filters
-//! (the relaxation path), and what the search bar sends while `a`, `at`, `atl` are typed (the words as typed: the
-//! dropdown's Conversations read; `completions` is step 8's, T115). Step 4
-//! adds the filter popovers' live preview -- the same request asked again
-//! per check, with a person, a label or a folder added or excluded -- and
-//! the timeline's and the Date popover's dates, alone and with words.
-//! Step 8 (T115) adds `completions` -- what the dropdown asks while `a`,
-//! `at`, `atl` and `from:a` are typed -- against its own 20 ms budget
-//! (SC-002), over the same corpus plus 2,000 contacts beside the 40
-//! senders, some of whom the person has written to.
-//!
-//! # Running
-//!
-//! ```sh
-//! cargo bench -p postio-bench --bench search_focus
-//! ```
-//!
-//! It prints p50 and p95 per shape and the statement counts, then asserts
-//! that every full-search shape's p95 is under [`BUDGET`]. Release, on the
-//! development machine: a shared CI runner cannot defend a millisecond
-//! budget, so CI compiles this (`cargo bench --workspace --no-run`) and
-//! times nothing. The numbers are recorded in `docs/notes/`.
-
 #![allow(missing_docs)]
-// A bench is not public API; see `search_budget.rs`.
 
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -62,31 +16,21 @@ use postio_storage::repository::{LabelRepository, MessageRepository, ThreadRepos
 use postio_storage::test_support::{self, counting};
 use postio_storage::{Checkout, Store};
 
-/// The spec's budget (FR-062): a full search, facets included, over this
-/// corpus, at the 95th percentile.
 const BUDGET: Duration = Duration::from_millis(50);
 
-/// Suggestions for a prefix (SC-002): what one keystroke of a short prefix
-/// or an operator's value asks, at the 95th percentile.
 const COMPLETIONS_BUDGET: Duration = Duration::from_millis(20);
 
-/// Contacts beyond the senders: the address book a person who has mailed
-/// for a while has.
 const CONTACTS: u64 = 2_000;
 
 const MESSAGES: u64 = 20_000;
 const SENDERS: usize = 40;
 const LABELS: usize = 12;
 const MONTHS: i64 = 24;
-/// Timed runs per shape, after [`WARMUP`] untimed ones.
 const SAMPLES: usize = 60;
 const WARMUP: usize = 5;
 
-/// About 1% of messages carry this.
 const ONE_WORD: &str = "quarterly";
-/// About 5%.
 const SECOND_WORD: &str = "forecast";
-/// 95% of messages: "most".
 const COMMON_WORD: &str = "regarding";
 
 fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -102,7 +46,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-/// A fixed-seed xorshift64: reproducible, and not worth a `rand` dependency.
 struct Rng(u64);
 
 impl Rng {
@@ -119,19 +62,16 @@ impl Rng {
         self.next() % bound
     }
 
-    /// True `per_mille` times in a thousand.
     fn chance(&mut self, per_mille: u64) -> bool {
         self.below(1000) < per_mille
     }
 }
 
-/// The day the corpus ends with, and the clock the app would read.
 fn today() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 9, 30, 12, 0, 0).unwrap()
 }
 
 struct Corpus {
-    // Held so the in-memory store outlives the checkout.
     _store: Store,
     connection: Checkout,
     account: Account,
@@ -142,7 +82,6 @@ fn corpus() -> &'static Corpus {
     CORPUS.get_or_init(|| on_runtime(build()))
 }
 
-/// Sender `k` of 40 with weight 1/(k+1): the first writes the most.
 fn zipf_sender(rng: &mut Rng, cumulative: &[u64]) -> usize {
     let total = *cumulative.last().expect("senders");
     let pick = rng.below(total);
@@ -238,10 +177,9 @@ async fn build() -> Corpus {
             if rng.chance(50) {
                 body.push_str(&format!("{SECOND_WORD} numbers "));
             }
-            // The body stored, then indexed (storing one drops its index
-            // row for the indexer to write again), so the passages the
-            // results ask for and Quick Look's matches are cut from text
-            // rather than read as nothing (SC-003).
+            // The body is stored, then indexed (storing drops its index row), so passages are cut
+            // from
+            // text rather than read as nothing.
             messages
                 .set_body(
                     message.id,
@@ -272,9 +210,6 @@ async fn build() -> Corpus {
             threads.add_message(id, message).await.expect("join");
         }
     }
-    // The address book: every sender, counted as the collector counts them,
-    // and two thousand more people, a quarter of whom were written to.
-    // A person for each sender, owning the address, with the mail's count.
     for statement in [
         // `note` carries the address across the next statement and is cleared.
         "INSERT INTO contacts (note, seen_name, times_seen, last_seen_at, created_at, updated_at)
@@ -348,9 +283,6 @@ async fn build() -> Corpus {
                 .expect("a correspondent");
         }
     }
-    // What the attachment indexer would have read (step 9): ten located
-    // units of each of the first 200 attachments, folded for the index as
-    // `index_attachment_text` folds them, and each part's record.
     let parts: Vec<(i64, i64)> = postio_storage::sql::all_unbounded(
         &connection,
         "SELECT m.content_id, a.position FROM attachments a JOIN messages m ON m.id = a.message_id
@@ -408,7 +340,6 @@ async fn build() -> Corpus {
     }
 }
 
-/// One shape: a name, a query, and what one run of it does.
 struct Shape {
     name: &'static str,
     query: &'static str,
@@ -417,23 +348,15 @@ struct Shape {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
-    /// `search_conversations`, first page of 50, facets and months included.
     Executor,
-    /// The session's `conversations` then `passages`: the results view.
     EndToEnd,
-    /// `relaxation_counts` over `relax(query)`, after a search that found nothing.
     Relaxations,
-    /// `completions` for the prefix typed, or for `from:`'s value (step 8).
     Completions,
-    /// `executor::files`: the Files tab's cards (step 9).
     Files,
-    /// The session's `conversation_matches` for the query's best
-    /// conversation: what Quick Look reads as it opens (T090), the To
-    /// lines included. The conversation is found once, untimed.
+    /// The conversation is found once, untimed.
     QuickLook,
 }
 
-/// A word only attachments say (step 9).
 const FILE_WORD: &str = "kestrel";
 
 const SHAPES: &[Shape] = &[
@@ -532,10 +455,6 @@ const SHAPES: &[Shape] = &[
         query: "atl",
         kind: Kind::EndToEnd,
     },
-    // Step 4's live preview (T084): a popover's check asks the same
-    // request again with one term added, per toggle, and Esc asks the
-    // query it opened on once more; the timeline and the Date popover ask
-    // the words with `after:` and `before:`.
     Shape {
         name: "preview check a person",
         query: "quarterly from:sender3",
@@ -576,7 +495,6 @@ const SHAPES: &[Shape] = &[
         query: "from:sender3 after:2026-07-01 before:2026-10-01",
         kind: Kind::Executor,
     },
-    // Step 9: a word only inside attachments, and the Files tab.
     Shape {
         name: "file word",
         query: FILE_WORD,
@@ -619,11 +537,8 @@ const SHAPES: &[Shape] = &[
     },
 ];
 
-/// The conversation the Quick Look shape opens: the best match of its
-/// query, found on its first run.
 static QUICK_LOOK: OnceLock<postio_search::results::ConversationKey> = OnceLock::new();
 
-/// Runs the shape once; returns the conversations it found.
 async fn run_once(shape: &Shape, query: &ParsedQuery) -> u64 {
     let corpus = corpus();
     let now = today();
@@ -668,7 +583,7 @@ async fn run_once(shape: &Shape, query: &ParsedQuery) -> u64 {
                     )
                 })
                 .collect();
-            // Results avoid the first line, which the row shows (D7).
+            // Results avoid the first line, which the row shows.
             let passages = postio_session::search::passages(
                 &corpus.connection,
                 query,
@@ -757,7 +672,6 @@ fn ms(d: Duration) -> f64 {
 }
 
 fn main() {
-    // `cargo bench` also passes `--bench`; nothing here takes arguments.
     postio_model::clock::freeze(today());
     let _ = corpus();
     let today: NaiveDate = today().date_naive();

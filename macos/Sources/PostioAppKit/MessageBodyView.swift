@@ -4,33 +4,17 @@ import PostioKit
 import SwiftUI
 import WebKit
 
-/// The message window's body (specs/009-focus-macos T069, M5): the engine's
-/// treated document in a hardened `WKWebView`.
-///
-/// - **Hardened** (`ReaderConfiguration.focus`): page script off, a
-///   non-persistent store, loaded from a string with no base URL, the
-///   document's own CSP, and a content rule list that blocks every load not
-///   on Postio's own schemes -- a second wall, so a policy that is present
-///   and wrong still fetches nothing (`ReaderEgressTests`).
-/// - **App colours**: the web view is transparent and follows the window's
-///   appearance; the document's own stylesheet draws it.
-/// - **Paper**: light appearance forced on the web view, a white
-///   `underPageBackgroundColor`, a radius-6 sheet with a hairline edge, dimmed
-///   to `brightness(0.92)` in dark appearance, and zoomed to fit its column
-///   no lower than the engine's floor (`PaperFit`). Never inverted, never
-///   recoloured.
-/// - **Sized to its document**, so the window's one scroll view scrolls the
-///   header block and the body together; the web view hands the wheel on.
-/// - **The action sentence** is marked in the body, the accent at 8% with a
-///   2pt accent underline (SPEC section 5), when the body holds it whole.
-/// - **Out of sight until drawn.** A new web view paints white at the
-///   minimum height, then at its measured height before its document, so
-///   the body stays transparent until it has its height and has painted,
-///   then says so (`messageBodyDrawn`). Stepping showed all three frames.
-///
-/// The height, the fit and the mark are Postio's own script, run in the
-/// client's content world on the main actor; the sender's script never runs
-/// (`MessageBodyTests`).
+/// The message window's body: the engine's treated document in a hardened `WKWebView`
+/// (`ReaderConfiguration.focus`): page script off, non-persistent store, no base URL, the
+/// document's CSP,
+/// and a content rule list blocking every load off Postio's schemes, so a wrong policy still
+/// fetches nothing.
+/// Sized to its document so the window's one scroll view scrolls header and body together;
+/// transparent
+/// until it has its height and has painted (`messageBodyDrawn`), since a new web view paints white
+/// first.
+/// The height, fit and mark are Postio's own script in the client's content world; the sender's
+/// never runs.
 public struct MessageBodyView: View {
     let message: Int64
     let document: FocusReaderDocumentFfi
@@ -45,10 +29,7 @@ public struct MessageBodyView: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.messageBodyDrawn) private var sayDrawn
 
-    /// The sheet's corner.
     public static let sheetRadius: CGFloat = 6
-    /// `brightness(0.92)`: in dark appearance the sheet is drawn at 92%, by
-    /// laying black at 8% over it.
     public static let paperDim = 0.08
 
     public init(
@@ -100,14 +81,10 @@ public struct MessageBodyView: View {
     }
 }
 
-/// Tells the body when a `<details>` fold in its document opens or closes.
-///
-/// The web view is sized to its document (`MessageBodyView`), measured at
-/// load and at a resize, and a fold opens inside the page with the page's
-/// script off -- so the frame kept the closed height and the opened quote
-/// was clipped away. This is Postio's own script, in the client's content
-/// world: the sender's never runs. `toggle` does not bubble, hence the
-/// capture listener on the document.
+/// A `<details>` fold opens inside the page with its script off, so the frame kept the closed
+/// height and
+/// clipped the quote. `toggle` does not bubble, hence the capture listener. Postio's own script, in
+/// the client's content world.
 @MainActor
 final class FoldWatcher {
     static let name = "postioFoldToggled"
@@ -115,7 +92,6 @@ final class FoldWatcher {
 
     init(onToggle: @escaping () -> Void) { self.onToggle = onToggle }
 
-    /// Before the web view is made: it copies its configuration.
     func install(in configuration: WKWebViewConfiguration) {
         let source = """
             document.addEventListener('toggle', function (event) {
@@ -132,7 +108,6 @@ final class FoldWatcher {
             WeakHandler(self), contentWorld: .defaultClient, name: Self.name)
     }
 
-    /// The controller keeps its handlers for good; this lets the watcher go.
     private final class WeakHandler: NSObject, WKScriptMessageHandler {
         weak var target: FoldWatcher?
         init(_ target: FoldWatcher) { self.target = target }
@@ -144,11 +119,8 @@ final class FoldWatcher {
     }
 }
 
-/// What the body view asks of its document, in the client's content world.
-/// On the main actor, where a web view is, and only there.
 @MainActor
 public enum MessageBodyMeasure {
-    /// The document's laid-out size, in CSS pixels.
     public static func size(of view: WKWebView) async throws -> CGSize? {
         let answer = try await view.evaluateJavaScript(
             "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]",
@@ -157,13 +129,9 @@ public enum MessageBodyMeasure {
         return CGSize(width: pair[0], height: pair[1])
     }
 
-    /// How wide the sender's layout is, in CSS pixels: what the paper fit
-    /// divides the column by.
-    ///
-    /// The page's own width is not it: the reader's body box scrolls
-    /// sideways on its own (`overflow-x: auto`), so the page is always the
-    /// column's width and what overflows is inside the box. The width is
-    /// the page's, plus what the widest scrolling box holds beyond its own.
+    /// The page's own width is not it: the reader's body box scrolls sideways itself (`overflow-x:
+    /// auto`),
+    /// so the width is the page's plus what the widest scrolling box holds beyond its own.
     public static func layoutWidth(of view: WKWebView) async throws -> Double? {
         let answer = try await view.evaluateJavaScript(
             """
@@ -180,11 +148,9 @@ public enum MessageBodyMeasure {
         return answer as? Double
     }
 
-    /// The bottom of the body's content: the lowest edge of what the body
-    /// holds, less the scroll anchors the shared document lays down the page
-    /// for the classic reader's paging -- absolutely placed at multiples of
-    /// the viewport's height, they would make any body as tall as the
-    /// clamp, and a web view that tall drew nothing.
+    /// Less the scroll anchors the shared document lays down for paging: placed at multiples of the
+    /// viewport height, they would make any body as tall as the clamp, and a web view that tall
+    /// drew nothing.
     static let contentBottom = """
         (function () {
             let bottom = 0;
@@ -200,15 +166,13 @@ public enum MessageBodyMeasure {
         })()
         """
 
-    /// How tall the body's content is, in CSS pixels.
     public static func contentHeight(of view: WKWebView) async throws -> Double? {
         let answer = try await view.evaluateJavaScript(contentBottom, in: nil, contentWorld: .defaultClient)
         return answer as? Double
     }
 
-    /// The height once the document's faces have arrived: `postio-font:` is
-    /// served asynchronously and `font-display: block` holds the text until
-    /// it is, so a height read at the load is the fallback's.
+    /// `postio-font:` is served asynchronously and `font-display: block` holds the text until it
+    /// is, so a height read at load is the fallback's.
     public static func settledHeight(of view: WKWebView) async throws -> Double? {
         let answer = try await view.callAsyncJavaScript(
             "await document.fonts.ready; return \(contentBottom);",
@@ -216,9 +180,7 @@ public enum MessageBodyMeasure {
         return answer as? Double
     }
 
-    /// Wait for the web view to paint twice: once for the frame the height
-    /// was set in, once more for that size drawn. Bounded, so a view that
-    /// is not painting (no window) does not hold the body back.
+    /// Bounded, so a view that is not painting (no window) does not hold the body back.
     public static func painted(_ view: WKWebView) async throws {
         _ = try await view.callAsyncJavaScript(
             """
@@ -231,10 +193,8 @@ public enum MessageBodyMeasure {
             arguments: [:], in: nil, contentWorld: .defaultClient)
     }
 
-    /// Mark the first place the body holds `sentence` whole, inside one run
-    /// of text, with `fill` behind it and a 2px `line` under it. Whether it
-    /// was found: a sentence the sender's markup split across elements is
-    /// left unmarked rather than guessed at.
+    /// A sentence the sender's markup split across elements is left unmarked rather than guessed
+    /// at.
     public static func highlight(
         _ sentence: String, in view: WKWebView, fill: String, line: String
     ) async throws -> Bool {
@@ -264,8 +224,6 @@ public enum MessageBodyMeasure {
         return (answer as? Bool) ?? false
     }
 
-    /// The accent as CSS, at `alpha`: the system's accent, whatever the
-    /// person chose, read when the body is drawn.
     public static func accent(alpha: Double) -> String {
         let colour = NSColor.controlAccentColor.usingColorSpace(.sRGB) ?? .controlAccentColor
         let channel = { (value: CGFloat) in Int((value * 255).rounded()) }
@@ -274,7 +232,6 @@ public enum MessageBodyMeasure {
     }
 }
 
-/// The web view itself.
 struct MessageWebView: NSViewRepresentable {
     let message: Int64
     let document: FocusReaderDocumentFfi
@@ -294,8 +251,8 @@ struct MessageWebView: NSViewRepresentable {
         let coordinator = context.coordinator
         let configuration = ReaderConfiguration.hardened(
             cidHandler: coordinator.cid, baseHandler: coordinator.closed)
-        // Before the view is made: a web view copies its configuration, and
-        // a handler set on the copy afterwards is never asked.
+        // Before the view is made: a web view copies its configuration, so a handler set afterwards
+        // is never asked.
         configuration.setURLSchemeHandler(coordinator.font, forURLScheme: ReaderConfiguration.fontScheme)
         coordinator.folds.install(in: configuration)
         let view = MessageBodySurface(frame: .zero, configuration: configuration)
@@ -332,7 +289,6 @@ struct MessageWebView: NSViewRepresentable {
         private var showing: (message: Int64, html: String)?
         private var rulesInstalled = false
         private var task: Task<Void, Never>?
-        /// What a resize fits again: set once the document is laid out.
         private var fit: (paper: Bool, column: CGFloat, floor: Double, onHeight: (CGFloat) -> Void)?
         private var refit: Task<Void, Never>?
 
@@ -346,7 +302,6 @@ struct MessageWebView: NSViewRepresentable {
             }
         }
 
-        /// Load `document` unless it is the one on screen.
         func show(
             _ document: FocusReaderDocumentFfi, of message: Int64, sentence: String?,
             in view: WKWebView, onHeight: @escaping (CGFloat) -> Void, onDrawn: @escaping () -> Void
@@ -358,8 +313,6 @@ struct MessageWebView: NSViewRepresentable {
             refit?.cancel()
             cid.message = message
             let paper = document.treatmentShown == .paper
-            // Paper is the sender's page as sent: light, on white, whatever
-            // the window's appearance. App colours follow the window.
             view.appearance = paper ? NSAppearance(named: .aqua) : nil
             view.underPageBackgroundColor = paper ? .white : .clear
             view.setValue(paper, forKey: "drawsBackground")
@@ -384,16 +337,12 @@ struct MessageWebView: NSViewRepresentable {
             }
         }
 
-        /// The document is in: fit it, mark the sentence, say how tall, and
-        /// once that height has painted, say it is drawn.
         private func laidOut(
             _ view: WKWebView, paper: Bool, column: CGFloat, floor: Double, sentence: String?,
             onHeight: @escaping (CGFloat) -> Void, onDrawn: @escaping () -> Void
         ) {
             Task { @MainActor [weak self, weak view] in
                 guard let view else { return }
-                // The column the window has now: the person may have
-                // resized it since the document was asked for.
                 let column = view.frame.width > 0 ? view.frame.width : column
                 self?.fit = (paper, column, floor, onHeight)
                 var zoom = 1.0
@@ -417,8 +366,6 @@ struct MessageWebView: NSViewRepresentable {
             }
         }
 
-        /// A fold opened or closed: the document is taller or shorter, so
-        /// say the new height.
         func foldToggled() {
             guard let fit, let view = surface else { return }
             refit?.cancel()
@@ -430,9 +377,6 @@ struct MessageWebView: NSViewRepresentable {
             }
         }
 
-        /// The window was resized, and the body with it: the text has
-        /// reflowed to the new column, so fit the paper to it again and say
-        /// the new height. The sentence stays marked; the document stays.
         func resized(_ view: WKWebView) {
             guard let fit, view.frame.width > 0, view.frame.width != fit.column else { return }
             self.fit = (fit.paper, view.frame.width, fit.floor, fit.onHeight)
@@ -441,8 +385,8 @@ struct MessageWebView: NSViewRepresentable {
                 guard let view, !Task.isCancelled else { return }
                 var zoom = 1.0
                 if fit.paper {
-                    // Measured unzoomed: at the old zoom, a sheet that
-                    // flows to its column measures the old column.
+                    // Measured unzoomed: at the old zoom a sheet that flows to its column measures
+                    // the old column.
                     view.pageZoom = 1
                     if let width = try? await MessageBodyMeasure.layoutWidth(of: view) {
                         guard !Task.isCancelled else { return }
@@ -459,12 +403,10 @@ struct MessageWebView: NSViewRepresentable {
     }
 }
 
-/// The body's web view: counted as a reader surface, and handing a
-/// vertical wheel to the scroll view around it, since it is sized to its
-/// whole document. A paper sheet wider than its column at the floor keeps
-/// the sideways wheel, which is the one scroll it has of its own.
+/// Hands a vertical wheel to the scroll view around it, since it is sized to its whole document. A
+/// paper
+/// sheet wider than its column keeps the sideways wheel.
 final class MessageBodySurface: ReaderSurface {
-    /// Told the new width whenever the window's resize changes it.
     var onWidth: ((CGFloat) -> Void)?
 
     override func setFrameSize(_ size: NSSize) {

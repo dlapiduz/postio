@@ -4,32 +4,18 @@ import PostioKit
 import UserNotifications
 import os
 
-/// Posting a new-mail notification, handling the click, and the Dock's
-/// unread count.
-///
-/// The *decision* — whether an arrival is worth interrupting somebody for and
-/// what it may say — is `MailNotifier` in PostioKit, where it is pure and
-/// tested. This is the half that talks to the system, and it is deliberately
-/// almost empty: everything here needs an authorised bundle, which is exactly
-/// what a test cannot have.
+/// The half that talks to the system; the decision is `MailNotifier` in PostioKit. Everything here
+/// needs an authorised bundle, which a test cannot have.
 @MainActor
 final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
-    /// What a click should open. Set by the engine, called on the main actor.
     var open: ((Int64, Int64?) -> Void)?
 
-    /// Whether permission has been asked for yet.
-    ///
-    /// Asked on the first arrival worth notifying about rather than at launch.
-    /// macOS remembers a refusal permanently, and an application that asks in
-    /// its first second — before the user has seen a single message — is
-    /// asking someone with no reason to say yes.
+    /// Asked on the first arrival worth notifying about, not at launch: macOS remembers a refusal
+    /// permanently.
     private var asked = false
 
-    /// The notification centre, or `nil` when there is no bundle.
-    ///
-    /// `UNUserNotificationCenter.current()` traps in an unbundled process, and
-    /// `swift run` from the package is exactly that. Returning `nil` keeps the
-    /// development loop working with notifications simply absent.
+    /// `nil` when there is no bundle: `UNUserNotificationCenter.current()` traps in an unbundled
+    /// process (`swift run`).
     private var center: UNUserNotificationCenter? {
         guard Bundle.main.bundleIdentifier != nil else { return nil }
         return .current()
@@ -37,9 +23,8 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
 
     func start() {
         center?.delegate = self
-        // The person may have turned badges off in System Settings while
-        // Postio was not looking; read it now and whenever Postio comes back
-        // to the front, which is where somebody returns from System Settings.
+        // Read at launch and whenever Postio returns to the front: the person may turn badges off
+        // in System Settings.
         offerTheBadge()
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
@@ -48,20 +33,12 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    // MARK: the Dock's count
-
-    /// The inbox's unread figure, as the strip last said it.
     private var unread: UInt32?
-    /// `[sync] badge`.
     private var badgeOn = true
-    /// What System Settings says about badges.
     private var system = SystemBadge.unknown
 
     private static let log = Logger(subsystem: "dev.postio.Postio", category: "notifications")
 
-    /// The strip's unread figure and `[sync] badge`, as they now stand:
-    /// draw the Dock's count, and withdraw what was delivered once there is
-    /// nothing left unread.
     func unread(_ unread: UInt32?, badge: Bool) {
         let withdraw = MailBadge.withdrawsDelivered(unread: unread) && self.unread != 0
         self.unread = unread
@@ -70,10 +47,9 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
         if withdraw { center?.removeAllDeliveredNotifications() }
     }
 
-    /// The Dock tile's label: it needs no notification permission, so the
-    /// count is there for somebody who refused the banners too. Notification
-    /// Center's own `setBadgeCount` draws on this same tile, and would only
-    /// work with permission, so it is not used as a second writer.
+    /// Needs no notification permission. `setBadgeCount` draws on this same tile and needs
+    /// permission,
+    /// so it is not a second writer.
     private func drawBadge() {
         let label = MailBadge.label(unread: unread, enabled: badgeOn, system: system)
         guard NSApp.dockTile.badgeLabel != label else { return }
@@ -82,12 +58,10 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
         Self.log.debug("dock badge \(label ?? "cleared", privacy: .public)")
     }
 
-    /// Postio once asked for alerts and sounds only, and the Dock draws no
-    /// tile badge for a bundle authorised without `.badge`. Asking again
-    /// once the person has answered shows no prompt; it registers the
-    /// option, so System Settings offers its Badges switch. Before there is
-    /// an answer this asks nothing: the first question waits for the first
-    /// notification worth posting.
+    /// Earlier builds asked for alerts and sounds only, and the Dock draws no badge without
+    /// `.badge`.
+    /// Asking again after the person has answered shows no prompt and registers the option; before
+    /// an answer this asks nothing.
     private func offerTheBadge() {
         guard let center else { return }
         Task { @MainActor in
@@ -109,8 +83,6 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// The message `message` was opened: withdraw a notification about it
-    /// alone. One about a batch stays until nothing is unread.
     func opened(_ message: Int64) {
         guard let center else { return }
         Task { @MainActor in
@@ -124,26 +96,21 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Post `notification`, asking for permission first if this is the first.
     func post(_ notification: MailNotification) {
         guard let center else { return }
         let content = UNMutableNotificationContent()
         content.title = notification.title
         content.body = notification.body
-        // One stack per account in Notification Center.
         content.threadIdentifier = notification.thread
-        // Ids only. The visible text already carries everything this
-        // notification says; anything extra riding along in `userInfo` would
-        // be content leaving the application for the notification database,
-        // which is not somewhere Postio's privacy rules reach.
+        // Ids only: anything extra in `userInfo` would be content leaving for the notification
+        // database.
         content.userInfo = [
             Self.mailboxKey: notification.mailbox,
             Self.messageKey: notification.message as Any,
         ]
 
         let request = UNNotificationRequest(
-            // Stable per folder: this is what makes a second batch replace the
-            // one on screen instead of stacking beside it.
+            // Stable per folder, so a second batch replaces the one on screen.
             identifier: notification.identifier,
             content: content,
             trigger: nil
@@ -151,8 +118,8 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
 
         guard asked else {
             asked = true
-            // `.badge` too, so System Settings offers its "Badge application
-            // icon" switch for Postio, which `readSystemBadge` then honours.
+            // `.badge` too, so System Settings offers its badge switch, which `readSystemBadge`
+            // honours.
             Task { @MainActor in
                 let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
                 readSystemBadge()
@@ -164,8 +131,6 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
         center.add(request)
     }
 
-    // MARK: - UNUserNotificationCenterDelegate
-
     nonisolated func userNotificationCenter(
         _: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
@@ -174,17 +139,15 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
         guard let mailbox = info[Self.mailboxKey] as? Int64 else { return }
         let message = info[Self.messageKey] as? Int64
         await MainActor.run {
-            // Raise the window first: a click on a notification activates the
-            // application whether or not any window had focus, and opening a
-            // message behind another app is the same as doing nothing.
+            // Raise the window first: opening a message behind another app is the same as doing
+            // nothing.
             NSApp.activate(ignoringOtherApps: true)
             open?(mailbox, message)
         }
     }
 
-    // `nonisolated` because the delegate callback is: the keys are constants,
-    // and making the callback hop to the main actor just to read two strings
-    // would be an actor hop for nothing.
+    // `nonisolated` because the delegate callback is; hopping to the main actor to read constants
+    // is waste.
     nonisolated private static let mailboxKey = "mailbox"
     nonisolated private static let messageKey = "message"
 }

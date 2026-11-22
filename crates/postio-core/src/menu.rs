@@ -1,72 +1,28 @@
-//! Where each command belongs in a platform menu bar.
+//! Where each command belongs in a platform menu bar, shared by frontends so they cannot disagree
+//! (ADR 0019).
 //!
-//! A menu bar is a *grouped* rendering of a flat registry, and the grouping
-//! has to live somewhere. It lives here — beside the registry, in the crate
-//! that owns the vocabulary — rather than as a `switch` in a frontend, for the
-//! reason ADR 0019 keeps returning to: two frontends that each decide where
-//! `archive` goes will disagree the first time a command is added, and the
-//! disagreement is invisible until somebody looks at both machines.
-//!
-//! # Why this is a `match` and not a field
-//!
-//! [`section_for`] is exhaustive over [`CommandId`], so **adding a command
-//! does not compile until somebody says where it goes.** That is the whole
-//! mechanism behind #657's "adding a command in Rust puts it in the menu with
-//! no Swift change": the decision is forced at the moment the command is
-//! written, in the same file-adjacent place as the rest of its metadata,
-//! rather than being noticed later as a gap in a menu nobody was looking at.
-//!
-//! A field on `CommandSpec` would do the same and would also make the
-//! registry's eighty-one literals wider for something only one platform reads
-//! today. This can become a field the moment a second thing needs it.
-//!
-//! # Why some commands have no section
-//!
-//! [`None`] is a decision, not an oversight, and every one of them is
-//! commented. `PRODUCT.md` §8's rule is that *a command that is not in the
-//! registry does not exist* — it is not that every command must be in a menu.
-//! Cursor motion, chord completion and the composer's own text editing are
-//! reachable, discoverable through the palette and the cheat sheet, and would
-//! turn a menu into a list of everything.
+//! `section_for` is an exhaustive match, so a new command does not compile until placed (#657).
+//! `None` is a decision, not an oversight.
 
 use crate::command::CommandId;
 use postio_config::paths::Platform;
 
-/// A top-level menu, in the order a menu bar shows them.
-///
-/// Apple's conventions rather than Postio's preferences: a Mac user looks for
-/// undo under Edit and for "reply" under a message-shaped menu, and an
-/// application that invents its own arrangement reads as ported rather than
-/// native. `Postio` and `Window` are AppKit's own and carry nothing from the
-/// registry, so they are not here.
+/// Apple's conventions, so a Mac user finds undo under Edit. `Postio` and `Window` are AppKit's own
+/// and absent here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MenuSection {
-    /// The application menu: settings, accounts, the config file.
-    ///
-    /// macOS has one and expects `⌘,` to live in it; freedesktop has no such
-    /// menu, and [`MenuSection::bar_for`] folds this into [`Edit`](Self::Edit)
-    /// there. The variant exists so the *placement* is decided once, in the
-    /// table both frontends read, rather than as a list of three command ids
-    /// kept by hand in one of them.
+    /// freedesktop has no application menu, so `bar_for` folds this into Edit there.
     App,
-    /// New mail, drafts, attachments, and getting things out of Postio.
     File,
-    /// Undo, selection, and the editing verbs a text surface expects.
     Edit,
-    /// What is on screen: panes, sidebars, ordering, folding.
     View,
-    /// Moving: between messages, folders, panes and parts.
     Go,
-    /// Acting on mail: reply, archive, flag, move, snooze, label.
     Message,
-    /// The composer's rich-text verbs.
     Format,
-    /// The cheat sheet and the rest of what a Help menu is for.
     Help,
 }
 
 impl MenuSection {
-    /// Every section, in menu-bar order.
     pub const ALL: &'static [MenuSection] = &[
         MenuSection::App,
         MenuSection::File,
@@ -78,12 +34,8 @@ impl MenuSection {
         MenuSection::Help,
     ];
 
-    /// The title a menu bar shows.
-    /// The sections a menu bar shows on `platform`, left to right.
-    ///
-    /// The application menu is first where there is one and absent where
-    /// there is not — its commands reach Edit instead, through
-    /// [`section_on`].
+    /// The application menu is absent where there is none; its commands reach Edit through
+    /// `section_on`.
     pub fn bar_for(platform: Platform) -> Vec<MenuSection> {
         MenuSection::ALL
             .iter()
@@ -92,7 +44,6 @@ impl MenuSection {
             .collect()
     }
 
-    /// The title a menu bar shows.
     pub fn title(self) -> &'static str {
         match self {
             // AppKit names this one after the application itself; the string
@@ -109,34 +60,24 @@ impl MenuSection {
     }
 }
 
-/// Which menu `command` belongs under, or `None` when it is deliberately not
-/// a menu item.
-///
-/// Exhaustive on purpose: see the module note. A new command is a compile
-/// error here until it is placed.
+/// `None` when the command is deliberately not a menu item. Exhaustive: a new command is a compile
+/// error until placed.
 pub fn section_for(command: CommandId) -> Option<MenuSection> {
     use CommandId as C;
     use MenuSection as M;
     match command {
-        // ── Go: moving around ────────────────────────────────────────────
-        // Cursor motion is `j`/`k` and the arrows. It is in the palette and
-        // the cheat sheet; a menu item for "next message" is a row nobody
-        // has ever clicked, and seven of them crowd out the ones people do.
+        // Cursor motion is in the palette and cheat sheet; seven menu items nobody clicks crowd out
+        // the ones people do.
         C::NextMessage | C::PrevMessage | C::ExtendSelectionDown | C::ExtendSelectionUp => None,
         C::FirstMessage | C::LastMessage => Some(M::Go),
         C::GoToFolders => Some(M::Go),
-        // The destinations belong in the Go menu for the same reason they
-        // belong in the palette: a person who does not know `g i` still wants
-        // the inbox, and this is where they look for it.
         C::GoToInbox | C::GoToDrafts | C::GoToSent | C::GoToFlagged => Some(M::Go),
         C::GoToArchive | C::GoToSnoozed => Some(M::Go),
         C::GoToOutbox | C::GoToJunk | C::GoToTrash => Some(M::Go),
-        // The pinned searches are places too, and a person who does not know
-        // `alt+1` looks for them where the other places are.
         C::SavedSearch1 | C::SavedSearch2 | C::SavedSearch3 | C::SavedSearch4 => Some(M::Go),
         C::NextScope => Some(M::Go),
-        // Contacts is a destination like the inbox. Its own commands act on a
-        // focused row, and a global menu cannot say which person.
+        // Contacts is a destination; its own commands act on a focused row, which a global menu
+        // cannot name.
         C::OpenContacts => Some(M::Go),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
         C::FirstInConversation | C::LatestInConversation | C::FirstUnreadInConversation => {
@@ -144,28 +85,18 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         }
         C::Back | C::PrevView => Some(M::Go),
 
-        // ── File ─────────────────────────────────────────────────────────
         C::Compose | C::Send | C::ScheduleSend | C::SaveDraft | C::DiscardDraft => Some(M::File),
-        // Retry and cancel sit with `MarkSent`: all three are about a message
-        // that has left the composer and not arrived, which is a File concern
-        // rather than an editing one.
         C::AttachFile | C::DetachComposer | C::MarkSent | C::RetrySend | C::CancelSend => {
             Some(M::File)
         }
         C::Refresh => Some(M::File),
-        // The Mac presents the panels; the file is the user's.
         C::ContactsImport | C::ContactsExport | C::ContactsSync => Some(M::File),
 
-        // ── Edit ─────────────────────────────────────────────────────────
         C::Undo | C::SelectAll | C::ToggleSelection => Some(M::Edit),
         C::Search | C::SaveSearch => Some(M::Edit),
         C::Settings | C::EditConfig | C::AddAccount | C::Quit => Some(M::App),
         C::ShowImages | C::AlwaysShowImages | C::Unsubscribe | C::ClearListMail => Some(M::Message),
-        // Settings surfaces act on the row the settings list has focus on.
-        // They are commands so `[keys]` can reach them and so the palette
-        // can offer them where they apply; a menu bar item for "remove the
-        // account you are looking at" is meaningless anywhere else, and
-        // a menu is global.
+        // Settings surfaces act on the focused row, which a global menu cannot name.
         C::ToggleAccountEnabled
         | C::RemoveAccount
         | C::UpdateCredential
@@ -173,67 +104,44 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::SetDefaultAccount
         | C::MapMailboxRole => None,
 
-        // ── View ─────────────────────────────────────────────────────────
         C::ToggleFold | C::ExpandAll => Some(M::View),
-        // The thread's own views: its rows in the list, its outline, and the
-        // composer's older and newer quoted text.
         C::ExpandThread | C::CollapseThread | C::ThreadOutline => Some(M::View),
         C::ShowNewer | C::ExpandQuoted => Some(M::View),
-        // With the other two show/hide toggles rather than under File
-        // beside the composer's verbs: this raises and lowers rows, it
-        // does not do anything to the draft.
         C::CopyFields => Some(M::View),
         C::ToggleResultOrder => Some(M::View),
-        // Beside Sort: the filter bar's popovers, each by its key (#2090).
         C::FilterFrom | C::FilterTo | C::FilterDate | C::FilterAnywhere | C::FilterLabel => {
             Some(M::View)
         }
         C::ViewOriginal | C::ToggleReaderView => Some(M::View),
-        // Spec 006: how the message on screen is drawn.
         C::DarkenMessage | C::SwitchTreatment | C::ZoomIn | C::ZoomOut | C::ZoomReset => {
             Some(M::View)
         }
         C::FindInMessage | C::FindNext | C::FindPrevious => Some(M::Edit),
         C::CommandPalette => Some(M::View),
 
-        // ── Help ─────────────────────────────────────────────────────────
-        // The cheat sheet, where a Mac user looks for it: every application
-        // has a Help menu and "what are the keys" is the question it answers.
-        // It is also the one menu item that is *about* the menu bar's own
-        // limitation -- a sequence like `g g` has no key equivalent, so the
-        // cheat sheet is where the keyboard is described in full.
+        // The cheat sheet is where a Mac user looks, and it describes sequences like `g g` that
+        // have no key equivalent.
         C::CheatSheet => Some(M::Help),
-        // Scrolling the reader is what a scroll wheel and the space bar are
-        // for. A menu item that scrolls by one screen is a control, not a
-        // command, and putting it in a menu invites the reader to be driven
-        // from one.
+        // Scrolling is for the wheel and space bar; a menu item invites driving the reader from
+        // one.
         C::ScrollReaderDown | C::ScrollReaderUp => None,
 
-        // ── Message ──────────────────────────────────────────────────────
         C::Reply | C::ReplyAll | C::Forward => Some(M::Message),
         C::Archive | C::Delete | C::Move => Some(M::Message),
         C::Flag | C::ToggleRead | C::AddLabel => Some(M::Message),
         C::Snooze | C::Unsnooze => Some(M::Message),
         C::OpenMessage => Some(M::Message),
-        // A thread's verbs, and the two that act on one message of it.
         C::ReplyToLatest | C::MuteThread | C::SplitThread => Some(M::Message),
         C::MoveThisMessage | C::DeleteThisMessage => Some(M::Message),
 
-        // ── Format ───────────────────────────────────────────────────────
         C::Bold | C::Italic | C::BulletList | C::NumberedList => Some(M::Format),
-        // With the other thing you put into the text, not under File with
-        // the attachment it is deliberately not.
         C::InsertImage => Some(M::Format),
         C::InsertLink | C::QuoteBlock => Some(M::Format),
         C::Heading1 => Some(M::Format),
-        // The terminal composer's own (`Requirement::Terminal`), and the
-        // terminal has no menu bar: no menu anywhere offers them.
+        // The terminal composer's own, and a terminal has no menu bar.
         C::EditExternally | C::TogglePreview => None,
 
-        // ── Postio Focus's own (`Requirement::Focus`) ────────────────────
-        // Focus has no menu bar, and no other app offers these: a menu
-        // item for one would be a row that can never run. Its key map
-        // (screen 20) and its command bar are where they are listed.
+        // Focus has no menu bar and no other app offers these: a menu item could never run.
         C::RemindIfNoReply
         | C::AcceptInvite
         | C::DeclineInvite
@@ -328,15 +236,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
     }
 }
 
-/// [`section_for`], folded for a platform that has no application menu, and
-/// empty for a command the platform does not offer.
-///
-/// Freedesktop has none, so its three commands appear under Edit — which is
-/// where they were before this variant existed, and where the GTK menu still
-/// draws them.
+/// `section_for`, folded for a platform with no application menu, and `None` for a command the
+/// platform does not offer.
 pub fn section_on(command: CommandId, platform: Platform) -> Option<MenuSection> {
-    // Not a menu item where the platform does not offer it at all: see
-    // [`crate::registry::offered_on`].
     if !crate::registry::offered_on(crate::ActionId::Builtin(command), platform) {
         return None;
     }
@@ -352,8 +254,6 @@ mod tests {
 
     #[test]
     fn a_command_a_platform_does_not_offer_is_no_menu_item_there() {
-        // A menu item for a surface the platform does not have is a key that
-        // does nothing, drawn where everybody looks.
         for platform in [Platform::Freedesktop, Platform::Apple] {
             for command in [CommandId::DetachComposer, CommandId::NextScope] {
                 let offered =
@@ -370,8 +270,6 @@ mod tests {
 
     #[test]
     fn every_section_holds_something() {
-        // A section with no commands draws an empty menu, which looks like a
-        // bug in the application rather than a gap in a table.
         for section in MenuSection::ALL {
             assert!(
                 crate::registry::all().any(|spec| section_for(spec.id) == Some(*section)),
@@ -382,13 +280,9 @@ mod tests {
 
     #[test]
     fn most_of_the_registry_reaches_a_menu() {
-        // Not "all": the `None` arms above are deliberate and commented. What
-        // this guards is the opposite failure -- a table that fell out of
-        // date and started answering `None` broadly, leaving a menu bar that
-        // is technically generated and practically empty.
-        // Less Contacts' own commands: they act on a focused row, which a
-        // global menu cannot say (the arm above), and there are more of them
-        // than any other surface has.
+        // Guards a table that fell out of date and answers `None` broadly. Contacts' own commands
+        // are
+        // excluded: they act on a focused row, which a global menu cannot name.
         let counted = || {
             crate::registry::all().filter(|spec| spec.contexts != crate::Context::Contacts.as_set())
         };
@@ -404,11 +298,8 @@ mod tests {
 
     #[test]
     fn settings_lives_in_the_application_menu_on_apple_and_in_edit_elsewhere() {
-        // `⌘,` is discoverable in the application menu on macOS and nowhere
-        // else; freedesktop has no such menu, so the same three verbs fold
-        // into Edit. One table, two renderings — the alternative is a
-        // hand-maintained list of command ids in the Swift menu builder,
-        // which is what #1158 existed to remove.
+        // `⌘,` lives in the application menu on macOS; freedesktop has none, so the same verbs fold
+        // into Edit (#1158).
         use postio_config::paths::Platform;
         for command in [
             CommandId::Settings,
@@ -444,7 +335,6 @@ mod tests {
             !freedesktop.contains(&MenuSection::App),
             "freedesktop drew an application menu it has no place for"
         );
-        // Everything else is the same bar, in the same order.
         let without_app: Vec<_> = apple
             .iter()
             .filter(|section| **section != MenuSection::App)

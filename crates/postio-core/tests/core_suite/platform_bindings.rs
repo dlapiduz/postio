@@ -1,38 +1,9 @@
-//! `mod` resolves to the right accelerator, and Linux does not move.
-//!
-//! The golden file was captured from the registry *before* `mod` existed, so
-//! `the_freedesktop_table_is_byte_identical_to_before` is a genuine
-//! before-and-after comparison rather than a restatement of the current code.
-//!
-//! A *new* command adds a row to it, and that row is added by hand on
-//! purpose: the file exists to catch bindings that moved, so regenerating it
-//! wholesale would let exactly the change it guards against slip in as a
-//! diff nobody reads. `mark_sent ctrl+shift+s` was added for #674, and the
-//! sixteen `alt+` alternates a legacy terminal can deliver for
-//! `docs/archive/specs/005-tui-frontend` T017, and `quit ctrl+q` for the terminal, which has
-//! no close button (T039), and `show_images`, `always_show_images` and
-//! `unsubscribe`, which were banner buttons with no key (T044, T048).
-//!
-//! The one keymap every app shares (specs/007-postio-focus T029,
-//! contracts/keymap.md) is the one deliberate move of existing rows: each
-//! line it changed is a key the contract names, `mark_unread` and
-//! `focus_sidebar` became `toggle_read` and `go_to_folders`, and Focus's
-//! own commands were added as rows of their own -- `switch_treatment O`,
-//! the open message's app colours or original (T213), among them. `quit`
-//! gained `ctrl+w`, Close window, so the window that says why there is no
-//! mail closes as every desktop window does (T216).
-//!
-//! The Gmail keymap (docs/PRODUCT.md §8, the maintainer's decision of
-//! 2026-10-14) is the second: every row it changed is a default moved to
-//! Gmail's key for the command, or off a key Gmail's took.
-
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_core::config::Keymap;
 use postio_core::registry;
 
-/// Every command and the bindings it holds, in registry order.
 fn table(platform: Platform) -> String {
     let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
     let mut out = String::new();
@@ -48,8 +19,6 @@ fn table(platform: Platform) -> String {
 
 #[test]
 fn the_freedesktop_table_is_byte_identical_to_before() {
-    // The argument for landing this before macOS ships bindings: if `mod` is
-    // right, a Linux user cannot tell it happened.
     let golden = include_str!("../golden/linux-bindings.txt");
     assert_eq!(
         table(Platform::Freedesktop),
@@ -58,12 +27,6 @@ fn the_freedesktop_table_is_byte_identical_to_before() {
     );
 }
 
-/// `table`'s rows for the commands the Mac offers.
-///
-/// Those are the one deliberate difference besides the modifier: a command a
-/// platform has no surface for has no key there (`registry::offered_on`), so
-/// comparing the tables means setting those rows aside -- and asserting them
-/// on their own, below.
 fn offered_on_the_mac(table: &str) -> String {
     table
         .lines()
@@ -77,8 +40,6 @@ fn offered_on_the_mac(table: &str) -> String {
         .collect()
 }
 
-/// `table`'s rows for the commands Linux offers: a command a platform has
-/// no surface for has no key there (`registry::offered_on`).
 fn offered_on_linux(table: &str) -> String {
     table
         .lines()
@@ -92,9 +53,6 @@ fn offered_on_linux(table: &str) -> String {
         .collect()
 }
 
-/// A Linux row as the Mac spells it: Command for Control, and the key a Mac
-/// labels "delete" -- BackSpace -- for Delete (specs/009-focus-macos M6).
-/// The only two translations `expand_mod` makes.
 fn as_the_mac_spells_it(table: &str) -> String {
     table
         .lines()
@@ -131,13 +89,8 @@ fn apple_gets_command_wherever_freedesktop_gets_control() {
     let linux = table(Platform::Freedesktop);
     let apple = table(Platform::Apple);
     assert_ne!(linux, apple, "nothing was translated at all");
-    // The one alternate the Mac keeps for itself: ⌘W closes the window in
-    // front there, where GTK's one window closing is quitting
-    // (`registry::binding_offered_on`, specs/009-focus-macos T105).
-    // The other: `alt+BackSpace` is the Mac's forget-recent, so Back to
-    // words keeps only `cmd+BackSpace` there (spec 010 D23), and Linux
-    // forgets on Alt+Delete instead (#1825), which the Mac spells as its
-    // own `alt+BackSpace`.
+    // ⌘W closes the front window on the Mac, and `alt+BackSpace` is its forget-recent
+    // (`registry::binding_offered_on`).
     let linux = as_the_mac_spells_it(&offered_on_the_mac(&offered_on_linux(&linux)))
         .replace("quit\tcmd+q | cmd+w\n", "quit\tcmd+q\n")
         .replace(
@@ -171,9 +124,6 @@ fn a_command_the_mac_does_not_offer_is_unbound_there_and_nowhere_else() {
 
 #[test]
 fn no_binding_reaches_the_resolver_still_saying_mod() {
-    // `mod` is a config-file word. Below this point everything is a concrete
-    // accelerator, because the resolver, the conflict check and the cheat
-    // sheet all match on the literal string.
     for platform in [Platform::Freedesktop, Platform::Apple] {
         let table = table(platform);
         assert!(
@@ -195,8 +145,6 @@ fn a_literal_ctrl_override_still_means_control_on_a_mac() {
 
 #[test]
 fn a_mod_override_beats_a_default_it_would_otherwise_collide_with() {
-    // Expansion happens before the conflict check, so `mod+k` and the palette's
-    // own `ctrl+k` are recognised as the same key rather than both claimed.
     let mut overrides = KeyBindings::default();
     overrides
         .overrides_mut()

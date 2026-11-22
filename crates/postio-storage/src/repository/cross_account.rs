@@ -1,10 +1,6 @@
-//! The cross-account move saga's own state (#188, ADR 0005 Q9).
-//!
-//! See migration 0020 for the table and the phase vocabulary. What this
-//! repository adds over plain rows is the **transition rule**: a phase can
-//! only move forward along the saga, and in particular nothing can reach
-//! `done` except from `confirmed` — the ordering that makes the only
-//! possible failure a duplicate, never a loss.
+//! The cross-account move saga's state (#188, ADR 0005 Q9; migration 0020). A phase moves only
+//! forward and `done` is reachable only from `confirmed`, so the only possible failure is a
+//! duplicate, never a loss.
 
 use chrono::Utc;
 use postio_model::ids::{AccountId, CrossAccountMoveId, MailboxId, MessageId, RemoteId};
@@ -13,23 +9,16 @@ use crate::error::{Error, Result};
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
-/// Where a saga is in its life. See migration 0020 for what each means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MovePhase {
-    /// The copy may be (re-)attempted; nothing is deleted.
     Copying,
-    /// The append ran but arrival could not be proven: stop and ask.
     Unconfirmed,
-    /// The target has the message; the source's remove may run.
     Confirmed,
-    /// The source copy is gone; the move is complete.
     Done,
-    /// Ended without deleting anything; the source copy is intact.
     Aborted,
 }
 
 impl MovePhase {
-    /// The stored spelling, constrained by the schema's `CHECK`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Copying => "copying",
@@ -40,7 +29,6 @@ impl MovePhase {
         }
     }
 
-    /// The inverse of [`as_str`](Self::as_str).
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "copying" => Some(Self::Copying),
@@ -52,11 +40,8 @@ impl MovePhase {
         }
     }
 
-    /// Whether the saga may move from `self` to `next`.
-    ///
-    /// Forward only, and `done` is reachable **only** from `confirmed`:
-    /// however the drainers race or replay, a phase walk that deletes the
-    /// source cannot happen before a phase walk that proved the copy.
+    /// Forward only, and `done` only from `confirmed`: however drainers race or replay, deleting
+    /// the source cannot precede proving the copy.
     pub fn allows(self, next: MovePhase) -> bool {
         matches!(
             (self, next),
@@ -71,67 +56,43 @@ impl MovePhase {
     }
 }
 
-/// One saga, as stored.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrossAccountMove {
-    /// The saga's id, referenced by both queues' operations.
     pub id: CrossAccountMoveId,
-    /// The source row, until phase 3 removes it.
     pub source_message: Option<MessageId>,
-    /// The account the message leaves.
     pub source_account: Option<AccountId>,
-    /// The mailbox it leaves.
     pub source_mailbox: Option<MailboxId>,
-    /// The account it arrives in.
     pub target_account: Option<AccountId>,
-    /// The mailbox it arrives in.
     pub target_mailbox: Option<MailboxId>,
-    /// The provisional local row shown in the target immediately.
     pub target_message: Option<MessageId>,
-    /// The raw bytes to append, content-addressed.
     pub raw_blob_id: Option<String>,
-    /// The Message-ID: idempotency key, and the no-UIDPLUS confirmation.
     pub rfc_message_id: Option<String>,
-    /// Where the saga is.
     pub phase: MovePhase,
-    /// Where the target server filed it, once proven.
     pub confirmed_remote_id: Option<RemoteId>,
 }
 
-/// What a new saga needs to exist. Everything else starts empty.
 #[derive(Debug, Clone)]
 pub struct NewCrossAccountMove {
-    /// The source row.
     pub source_message: MessageId,
-    /// The account the message leaves.
     pub source_account: AccountId,
-    /// The mailbox it leaves.
     pub source_mailbox: MailboxId,
-    /// The account it arrives in.
     pub target_account: AccountId,
-    /// The mailbox it arrives in.
     pub target_mailbox: MailboxId,
-    /// The provisional local row in the target.
     pub target_message: Option<MessageId>,
-    /// The raw bytes to append.
     pub raw_blob_id: Option<String>,
-    /// The Message-ID, when the message has one.
     pub rfc_message_id: Option<String>,
 }
 
-/// Read and write sagas on one connection.
 pub struct CrossAccountMoveRepository<'a> {
     connection: &'a Connection,
 }
 
 impl<'a> CrossAccountMoveRepository<'a> {
-    /// Borrow `connection`.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Start a saga, in `copying`. The row is on disk before either queue
-    /// runs anything — resumability is this insert.
+    /// The row is on disk before either queue runs anything: resumability is this insert.
     pub async fn create(&self, saga: &NewCrossAccountMove) -> Result<CrossAccountMoveId> {
         let now = Utc::now().timestamp_millis();
         sql::execute(
@@ -157,7 +118,6 @@ impl<'a> CrossAccountMoveRepository<'a> {
         Ok(CrossAccountMoveId::new(self.connection.last_insert_rowid()))
     }
 
-    /// One saga, or `None`.
     pub async fn get(&self, id: CrossAccountMoveId) -> Result<Option<CrossAccountMove>> {
         sql::first(
             self.connection,
@@ -185,13 +145,8 @@ impl<'a> CrossAccountMoveRepository<'a> {
         )
         .await
     }
-    /// Every saga in one of `phases` whose *source* is among `sources`.
-    ///
-    /// Phases are the caller's because the two callers want different sets.
-    /// The forward path asks about sagas it can still walk out of; undo has
-    /// to see `done` as well, since a move that finished is exactly the one
-    /// a user is most likely to take back and is not "open" by any
-    /// definition the forward path needed (#531).
+    /// Phases are the caller's: undo must see `done` too, since a finished move is the one most
+    /// likely taken back (#531).
     pub async fn for_sources(
         &self,
         sources: &[MessageId],
@@ -233,11 +188,8 @@ impl<'a> CrossAccountMoveRepository<'a> {
         Ok(found)
     }
 
-    /// Move the saga to `next`, enforcing [`MovePhase::allows`].
-    ///
-    /// Refusal is an error, not a no-op: a drainer asking for an illegal
-    /// transition has misread the saga, and silently ignoring it would let
-    /// the walk continue on a wrong belief.
+    /// Refusal is an error, not a no-op: a drainer asking for an illegal transition has misread the
+    /// saga.
     pub async fn transition(&self, id: CrossAccountMoveId, next: MovePhase) -> Result<()> {
         let Some(current) = self.get(id).await? else {
             return Err(Error::NotFound {
@@ -265,10 +217,8 @@ impl<'a> CrossAccountMoveRepository<'a> {
         Ok(())
     }
 
-    /// Record the proof of arrival and move to `confirmed`.
-    ///
-    /// `remote_id` is `Some` from APPENDUID, `None` when a Message-ID
-    /// search proved presence without naming where.
+    /// `remote_id` is `Some` from APPENDUID, `None` when a Message-ID search proved presence
+    /// without naming where.
     pub async fn confirm(
         &self,
         id: CrossAccountMoveId,
@@ -285,22 +235,10 @@ impl<'a> CrossAccountMoveRepository<'a> {
         )
         .await?;
 
-        // And onto the row the user is looking at (ADR 0026, #531).
-        //
-        // The confirmation is a whole identity, not half of one: `APPENDUID`
-        // carries the destination mailbox's `UIDVALIDITY` as well as the
-        // assigned UID, and the no-UIDPLUS fallback searches a mailbox whose
-        // live generation `ensure_selected` has just observed. So there is no
-        // half-identified row to be afraid of here — the fear that kept this
-        // write out is answered in the ADR.
-        //
-        // Two things go wrong without it. The target account's next sync
-        // matches fetched mail to existing rows by
-        // `find_by_remote_id(mailbox_id, remote_id)`, so a provisional copy
-        // carrying nothing gets no match and becomes a **second** row for the
-        // same message. And an inverse saga (#531) has no coordinate for the
-        // copy it must remove — which is the failure that reaches no server
-        // and reports success.
+        // Also onto the row the user is looking at (ADR 0026, #531); the confirmation is a whole
+        // identity, since `APPENDUID` carries UIDVALIDITY too.
+        // Without it the target's next sync finds no row by `find_by_remote_id` and creates a
+        // second one, and an inverse saga has no coordinate for the copy it must remove.
         sql::execute(
             self.connection,
             "UPDATE messages SET remote_id = ?2
@@ -355,8 +293,6 @@ mod tests {
         let sagas = CrossAccountMoveRepository::new(&connection);
         let id = a_saga(&connection).await;
 
-        // The transition that would lose mail: deleting the source while
-        // the copy is unproven. Refused however it is asked for.
         assert!(
             sagas.transition(id, MovePhase::Done).await.is_err(),
             "copying -> done skips the proof, and the proof is the point"
@@ -411,9 +347,8 @@ mod tests {
 
     #[tokio::test]
     async fn removing_the_target_account_leaves_the_saga_naming_nobody() {
-        // Q13: the CASCADE that removes an account must not silently vanish
-        // a half-finished saga — SET NULL leaves the row to be aborted by
-        // whoever reads it next, with the source intact.
+        // The CASCADE that removes an account must not vanish a half-finished saga: SET NULL leaves
+        // the row to be aborted with the source intact.
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
         let sagas = CrossAccountMoveRepository::new(&connection);

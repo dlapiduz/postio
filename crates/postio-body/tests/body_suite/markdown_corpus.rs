@@ -1,16 +1,6 @@
-//! `markdown::from_html` over the whole corpus: what the reader's sanitiser
-//! emits, as Markdown a terminal can show safely (`docs/archive/specs/005-tui-frontend`
-//! T005, then T040; SC-005).
-//!
-//! The promises are `contracts/markdown.md`'s `from_html` list. The input is
-//! always sanitised HTML, never raw mail -- converting *after* the sanitiser is
-//! what keeps its guarantees (research R5).
-
 use postio_body::markdown::from_html;
 use postio_body::{RemoteImages, fold_html_quotes, sanitize_body};
 
-/// Every corpus message with an HTML body, sanitised as the reader does it
-/// and converted, with its fixture name.
 fn converted() -> Vec<(String, String)> {
     postio_model::test_corpus::all()
         .iter()
@@ -53,7 +43,6 @@ fn no_corpus_message_converts_to_markup_script_or_a_remote_image() {
             "](http://",
             "](https://",
         ] {
-            // A link is fine; an *image* pointing at the network is not.
             let hit = match forbidden {
                 "](http://" | "](https://" => {
                     lower.contains(&format!("!{}", "["))

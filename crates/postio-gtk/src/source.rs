@@ -1,22 +1,15 @@
-//! The raw source (US2 scenario 5): the message as it came off the wire,
-//! header lines first, in a read-only view over the window.
-//!
-//! The bytes come from `Client::raw_source`, which fetches the message only
-//! when this asks for it and never otherwise. They are shown as text, never
-//! interpreted: invalid UTF-8 becomes the replacement character.
+//! The raw source: the message as it came off the wire, in a read-only view. `Client::raw_source`
+//! fetches it only when this asks.
+//! Shown as text, never interpreted: invalid UTF-8 becomes the replacement character.
 
 use adw::prelude::*;
 use postio_core::Keymap;
 
-/// The dialog's widget name, so it can be told from another dialog.
 pub const DIALOG_NAME: &str = "focus-raw-source";
 
-/// The source dialog's size.
 const WIDTH: i32 = 860;
 const HEIGHT: i32 = 680;
 
-/// A dialog showing `raw`, with the X at the right (T192; Escape also
-/// closes, so no keycap and `keymap` goes unread).
 pub fn dialog(raw: &[u8], _keymap: &Keymap) -> adw::Dialog {
     let close = postio_widgets::widgets::close_button();
     close.set_valign(gtk::Align::Center);
@@ -59,7 +52,6 @@ pub fn dialog(raw: &[u8], _keymap: &Keymap) -> adw::Dialog {
     dialog
 }
 
-/// The text a source dialog shows.
 pub fn shown(dialog: &adw::Dialog) -> Option<String> {
     let mut stack = vec![dialog.clone().upcast::<gtk::Widget>()];
     while let Some(widget) = stack.pop() {

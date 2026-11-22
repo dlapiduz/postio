@@ -1,23 +1,7 @@
-//! One binary for the GTK cases of the crate the desktop app draws with
-//! (ADR 0043), under a custom harness, for two reasons:
-//!
-//!   * GTK may be initialized from exactly one thread per process (#41), and
-//!     libtest runs `#[test]` functions on a thread pool;
-//!   * every extra test *binary* links the whole GTK stack, and linking was
-//!     once the dominant cost of a GTK crate's tests (#329).
-//!
-//! So: `harness = false`, one `adw::init`, every case a plain `pub fn` in
-//! `widgets_suite/`, run in sequence under `catch_unwind` so one failure does
-//! not hide the rest.
-//!
-//! **A new case is a module here and a row in `CASES`.** `--list` and name
-//! filtering behave enough like libtest for `cargo test`, nextest and the
-//! tooling's test counting to work, and that output is a contract:
-//! `list_contract.rs` is what notices when it breaks, because a runner that
-//! misreads it runs nothing and reports success.
-//!
-//! A panicking case can leave toolkit state behind that fails a later case:
-//! when several cases fail at once, trust the first.
+//! One custom-harness binary for the crate's GTK cases (ADR 0043): GTK may be initialised from one
+//! thread per process (#41), and linking GTK per binary was the dominant cost (#329).
+//! A new case is a module here and a row in `CASES`; `--list` output is a contract that
+//! `list_contract.rs` checks.
 
 mod body_view;
 mod body_view_a11y;
@@ -111,11 +95,8 @@ mod toast;
 mod toast_tone_and_undo;
 mod widgets_css;
 
-/// Cases held out of a default run, by name -- the table-driven spelling of
-/// `#[ignore]`, which means one thing here: this machine may not have what
-/// the case needs. A name here still runs when asked for explicitly, and still
-/// appears in `--list`, exactly as an ignored libtest case does. Say in a
-/// comment beside the name which issue or task takes it back.
+/// A name here still runs when asked for explicitly and still appears in `--list`. `#[ignore]`
+/// means only that this machine may lack what the case needs.
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
@@ -1079,8 +1060,6 @@ const CASES: &[(&str, fn())] = &[
     ),
 ];
 
-/// Destroy every window a case left open, and let the teardown run, so the
-/// next case starts on an empty display.
 fn close_all_windows() {
     use gtk::prelude::*;
     if !gtk::is_initialized() {
@@ -1100,27 +1079,23 @@ fn close_all_windows() {
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.iter().any(|a| a == "--list") {
-        // Two questions, and a libtest-compatible runner asks both: every
-        // test, then `--ignored` for the ignored subset. Answering the second
-        // with the full list tells a process-per-test runner that everything
-        // is ignored -- it then runs nothing and reports success.
+        // A process-per-test runner asks for `--ignored` after the full list; answering with the
+        // full list tells it everything is ignored and it runs nothing.
         let only_ignored = arguments.iter().any(|a| a == "--ignored");
         for (name, _) in CASES {
             if !only_ignored || IGNORED.contains(name) {
                 println!("{name}: test");
             }
         }
-        // `--format terse` is a machine-readable contract: real libtest emits
-        // the names and nothing else. The count is for the non-terse form.
+        // Terse output is machine-readable: names only; the count is for the non-terse form.
         if !arguments.iter().any(|a| a == "terse") {
             println!();
             println!("{} tests, 0 benchmarks", CASES.len());
         }
         return;
     }
-    // `--exact` means the argument is a whole test name, not a substring: a
-    // process-per-test runner passes it for every case, and without it a name
-    // that is a prefix of another would run both.
+    // `--exact` means a whole test name; without it a name that is a prefix of another would run
+    // both.
     let exact = arguments.iter().any(|a| a == "--exact");
     let run_ignored_only = arguments.iter().any(|a| a == "--ignored");
     let filters: Vec<&str> = arguments
@@ -1129,9 +1104,8 @@ fn main() {
         .map(|s| s.as_str())
         .collect();
 
-    // One initialisation for the process, before any case: each case's own
-    // guard then becomes a harmless re-init. No display is not an error
-    // here; a case that needs one says so itself.
+    // One initialisation for the process; no display is not an error here, a case that needs one
+    // says so.
     let _ = adw::init();
 
     let mut failed = Vec::new();
@@ -1143,8 +1117,6 @@ fn main() {
         if !filters.is_empty() && !matched {
             continue;
         }
-        // An ignored case runs only when it is asked for by name, or when
-        // `--ignored` asks for exactly those -- same rule libtest uses.
         if IGNORED.contains(name) && filters.is_empty() && !run_ignored_only {
             continue;
         }

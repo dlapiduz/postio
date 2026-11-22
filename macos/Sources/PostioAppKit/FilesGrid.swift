@@ -4,31 +4,18 @@ import PostioKit
 import QuickLookUI
 import SwiftUI
 
-/// The Files tab on the Mac (specs/010-focus-search T130; design §3.8,
-/// screen 11): an `NSCollectionView` of `FileCardView`s, four across with
-/// 12 between them and 20 at either side, in the results table's place.
-///
-/// The ring is the controller's (`FocusResultsCursor`), drawn by the card.
-/// The arrows are the grid's, as any collection view's are -- ← and → a
-/// card, ↑ and ↓ a row of four -- and say where the ring goes with
-/// `focusSearchPoint`; the key monitor leaves them to it
-/// (`KeyDisposition.belongsToGrid`). Every other key -- Space, ↩, ⌘↓, j/k
-/// -- is a command the controller answers.
+/// The arrows are the grid's, as any collection view's; the key monitor leaves them to it
+/// (`KeyDisposition.belongsToGrid`). Every other key is a command the controller answers.
 @MainActor
 public final class FilesGrid: NSObject {
-    /// Cards across (§3.8).
     public nonisolated static let columns = 4
-    /// Between cards, across and down.
     public static let gap: CGFloat = 12
-    /// Either side of the grid, and under its last row.
     public static let inset: CGFloat = 20
 
     public let model: ResultsModel
     public let collectionView: FilesCollectionView
     public let scrollView: NSScrollView
 
-    /// The system's Quick Look over a file, which the grid lets take the
-    /// panel's control when Space has asked for it.
     public var preview: FilePreview? {
         get { collectionView.preview }
         set { collectionView.preview = newValue }
@@ -63,17 +50,12 @@ public final class FilesGrid: NSObject {
         scrollView.backgroundColor = .textBackgroundColor
     }
 
-    /// A card's size in a grid `width` wide: four across, the gaps and the
-    /// insets taken out.
     public func itemSize(forWidth width: CGFloat) -> NSSize {
         let columns = CGFloat(Self.columns)
         let room = width - 2 * Self.inset - (columns - 1) * Self.gap
         return NSSize(width: max(120, room / columns), height: FileCardView.Metrics.height)
     }
 
-    // MARK: what the engine says
-
-    /// Draw what one of the model's changes said.
     public func apply(_ change: ResultsModel.Change) {
         guard model.isFiles else { return }
         switch change {
@@ -96,23 +78,17 @@ public final class FilesGrid: NSObject {
         collectionView.scrollToItems(at: [IndexPath(item: Int(cursor), section: 0)], scrollPosition: .nearestHorizontalEdge)
     }
 
-    /// Bring the keyboard to the grid: `FocusKeyboardHome` on the Files tab.
     public func takeKeyboard() {
         guard let window = collectionView.window else { return }
         window.makeFirstResponder(collectionView)
     }
 
-    // MARK: the keyboard and the pointer
-
-    /// An arrow on the grid.
     public enum Arrow: Equatable, Sendable {
         case left, right, up, down
     }
 
-    /// Where `arrow` takes the ring from `cursor` among `count` cards,
-    /// `columns` across; `nil` when it goes nowhere. Down from a row with
-    /// a shorter row under it lands on that row's last card, as Finder's
-    /// grid does.
+    /// Down from a row with a shorter row under it lands on that row's last card, as Finder's grid
+    /// does.
     public nonisolated static func target(
         from cursor: UInt64?, arrow: Arrow, count: UInt64, columns: UInt64 = UInt64(FilesGrid.columns)
     ) -> UInt64? {
@@ -129,7 +105,6 @@ public final class FilesGrid: NSObject {
         }
     }
 
-    /// Say where `arrow` takes the ring; whether it went anywhere.
     @discardableResult
     func move(_ arrow: Arrow) -> Bool {
         guard let target = Self.target(from: model.cursor, arrow: arrow, count: UInt64(model.cardCount)) else {
@@ -166,8 +141,6 @@ extension FilesGrid: NSCollectionViewDelegateFlowLayout {
 }
 
 extension FilesGrid {
-    /// The flow, laid out again when the grid's width changes, so four
-    /// cards stay four across.
     final class Layout: NSCollectionViewFlowLayout {
         override func shouldInvalidateLayout(forBoundsChange newBounds: NSRect) -> Bool {
             newBounds.width != collectionView?.bounds.width
@@ -175,7 +148,6 @@ extension FilesGrid {
     }
 }
 
-/// One card's cell: the SwiftUI card, hosted.
 final class FileCardItem: NSCollectionViewItem {
     private var host: NSHostingView<FileCardView>?
 
@@ -197,8 +169,6 @@ final class FileCardItem: NSCollectionViewItem {
     }
 }
 
-/// The grid's view: its arrows, its clicks, and Quick Look's panel while
-/// Space has a file in it.
 public final class FilesCollectionView: NSCollectionView {
     weak var grid: FilesGrid?
     weak var preview: FilePreview?
@@ -233,9 +203,6 @@ public final class FilesCollectionView: NSCollectionView {
         }
     }
 
-    // The system's Quick Look asks the responder chain who drives it: the
-    // grid, while a copy is up (FR-053).
-
     public override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
         preview?.url != nil
     }
@@ -249,7 +216,6 @@ public final class FilesCollectionView: NSCollectionView {
     }
 }
 
-/// The grid in a SwiftUI tree: the Files tab's body.
 public struct FilesGridRepresentable: NSViewRepresentable {
     private let grid: FilesGrid
 

@@ -1,52 +1,8 @@
-//! Postio's configuration: the schema for `~/.config/postio/config.toml` and
-//! its typed deserialization.
-//!
-//! # The one source of truth
-//!
-//! There is no separate settings store. `config.toml` *is* the settings: the
-//! settings panel edits this same file in place, `Ctrl+E` opens it in
-//! `$EDITOR`, and a watcher re-parses it and applies the change live. That
-//! shapes three rules the schema follows:
-//!
-//! 1. **A missing or empty file is not an error.** It yields working defaults,
-//!    so first run needs nothing on disk to *function* — [`Config::seed_if_missing`]
-//!    is a separate, later concern: Postio writes a starter file anyway, so
-//!    there is something to find and edit rather than a blank buffer.
-//! 2. **Unknown keys survive a round trip.** People hand-edit this file, and a
-//!    key written by a newer Postio (or a typo the user wants to see and fix)
-//!    must not be silently deleted when the settings panel saves. Every section
-//!    carries an `extra` passthrough for exactly this.
-//! 3. **Secrets can never be stored here.** Passwords live in the Secret
-//!    Service keyring; an account only references a keyring entry. Secret-
-//!    looking keys are stripped on the way in *and* on the way out, and parser
-//!    errors are redacted. See [`secrets`].
-//!
-//! Parsing is deliberately lenient: every field has a default, so a
-//! half-written account still loads. Telling the user what is wrong in readable
-//! prose is the job of [`validate`], which builds on this schema; [`live`]
-//! keeps the last good configuration in force while the file is broken, and
-//! [`watch`] re-runs both when the file changes underneath the app.
-//!
-//! ```
-//! use postio_config::{Config, Density};
-//!
-//! let cfg = Config::from_toml_str(r#"
-//!     [ui]
-//!     density = "compact"
-//! "#).unwrap();
-//!
-//! assert_eq!(cfg.ui.density, Density::Compact);
-//! assert_eq!(cfg.ui.theme, postio_config::Theme::System); // untouched default
-//! ```
-//!
-//! # Accounts are not configured here
-//!
-//! `[accounts.<id>]` used to describe an account's host, port, security and
-//! display name, and nothing ever read it: those come from the store, written
-//! once by onboarding. Editing the section saved, re-parsed without
-//! complaint, and changed nothing about the running account, so it was
-//! retired (#470). The section still round-trips as an unknown table, and
-//! [`validate`] reports it so an edit cannot look like it worked.
+//! The schema for `config.toml`, which is the settings: the panel edits the same file and a watcher
+//! applies changes live. A missing or empty file yields defaults; unknown keys survive a round
+//! trip;
+//! secrets can never be stored here (stripped on the way in and out, parser errors redacted).
+//! `[accounts]` is retired (#470): it round-trips as an unknown table and `validate` reports it.
 
 pub mod change;
 pub mod compose;
@@ -102,31 +58,19 @@ pub use ui::{Density, Theme, UiConfig, patch_ui};
 pub use validate::{Checked, ErrorKind, Validation, ValidationError};
 pub use watch::{ConfigWatcher, WatchOptions};
 
-/// Whether a role is one a user may point at a folder of their choosing.
-///
-/// `Inbox` is not: IMAP names that folder itself (RFC 3501), so remapping it
-/// would put Postio at odds with every other client on the account about
-/// where mail arrives. `Regular` is not either — it is the absence of a role,
-/// and "this folder is an ordinary folder" is what happens anyway.
-///
-/// Shared with [`validate`] so the section and its error
-/// messages cannot disagree about what is allowed.
+/// `Inbox` is not overridable: IMAP names that folder itself (RFC 3501), so remapping it would
+/// disagree
+/// with every other client. `Regular` is the absence of a role.
 pub(crate) fn overridable(role: MailboxRole) -> bool {
     !matches!(role, MailboxRole::Inbox | MailboxRole::Regular)
 }
 
-/// Unknown keys preserved verbatim so a round trip never loses a hand-edit.
 pub type Extras = Table;
 
-/// `#[serde(default)]` helper for fields that default to `true`.
 pub(crate) fn yes() -> bool {
     true
 }
 
-/// Prefixed onto a file [`Config::seed_if_missing`] writes. Every key below
-/// is a real, in-effect default, not a documented reference of every
-/// option — see the module docs for why a fuller generated reference is a
-/// separate, later effort.
 const STARTER_HEADER: &str = "\
 # Postio didn't find a config.toml here, so it wrote this one with its
 # current defaults. Every key is optional -- delete a key, a section, or
@@ -134,58 +78,35 @@ const STARTER_HEADER: &str = "\
 # apply live; no restart needed.
 ";
 
-/// The whole of `config.toml`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Config {
-    /// `[ui]` — density, theme, hover actions, key hints.
     #[serde(default)]
     pub ui: UiConfig,
-    /// `[keys]` — command id to binding, overriding the built-in defaults
-    /// `postio-core`'s command registry carries (#1227).
     #[serde(default)]
     pub keys: KeyBindings,
-    /// `[sync]` — IDLE, polling, connection budget.
     #[serde(default)]
     pub sync: SyncConfig,
-    /// `[saved_searches]` — named saved queries.
     #[serde(default, rename = "saved_searches")]
     pub filters: BTreeMap<String, FilterConfig>,
-    /// `[mailboxes]` — role to the server's own folder path.
-    ///
-    /// Keyed by role and valued by path, the way `[keys]` is keyed by the
-    /// thing you mean and valued by its spelling: a person knows what they
-    /// want archived, and can read the folder's name off their own server.
-    ///
-    /// A `String` rather than a parsed role because an unknown key has to
-    /// survive to validation, where it can be reported with a line number.
-    /// Parsing here would drop a typo silently, which is the one thing this
-    /// section must not do — see [`Config::role_overrides`].
+    /// A `String` rather than a parsed role: an unknown key has to survive to validation, which
+    /// reports it
+    /// with a line number; parsing here would drop a typo silently (see `Config::role_overrides`).
     #[serde(default)]
     pub mailboxes: BTreeMap<String, String>,
-    /// `[logging]` — how much Postio says about what it is doing.
     #[serde(default)]
     pub logging: LoggingConfig,
-    /// `[storage]` — how much disk the local store may use.
     #[serde(default)]
     pub storage: StorageConfig,
-    /// `[compose]` — where a signature goes when a quote sits under it.
     #[serde(default)]
     pub compose: ComposeConfig,
-    /// `[tui]` — how the terminal frontend looks and behaves.
     #[serde(default)]
     pub tui: TuiConfig,
-    /// `[reader]` — how the reading pane draws a message: its zoom.
     #[serde(default)]
     pub reader: ReaderConfig,
-    /// `[focus]` — Focus's own settings: filtering, the senders it never
-    /// files away, and its digest rules (spec 007).
     #[serde(default)]
     pub focus: FocusConfig,
-    /// `[mcp]` — the accounts and folders an AI agent may read through
-    /// `postio-mcp`; none until this says so (ADR 0010 Q6).
     #[serde(default)]
     pub mcp: McpConfig,
-    /// Top-level keys this version of Postio does not know.
     #[serde(flatten)]
     pub extra: Extras,
 
@@ -195,16 +116,10 @@ pub struct Config {
 }
 
 impl Config {
-    /// `[mailboxes]` as the model's own override type.
-    ///
-    /// Keys that are not roles are **dropped, never guessed**. This cannot
-    /// report a problem — validation does that, with the line number — and a
-    /// typo silently resolved to the nearest role would file mail somewhere
-    /// nobody chose. `inbox` is dropped for a different reason: IMAP names
-    /// that folder itself in RFC 3501, so pointing it elsewhere would make
-    /// Postio disagree with every other client on the same account about
-    /// where mail arrives. Both are reported by
-    /// [`validate`].
+    /// Keys that are not roles are dropped, never guessed: a typo resolved to the nearest role
+    /// would file
+    /// mail somewhere nobody chose. `inbox` is dropped because IMAP names that folder itself.
+    /// Validation reports both.
     pub fn role_overrides(&self) -> RoleOverrides {
         RoleOverrides::from_pairs(self.mailboxes.iter().filter_map(|(role, path)| {
             let role = MailboxRole::from_name(role)?;
@@ -212,19 +127,13 @@ impl Config {
         }))
     }
 
-    /// Parse a TOML document.
-    ///
-    /// Secret-bearing keys are removed before deserialization, so no value here
-    /// can ever hold a password; use [`Config::rejected_secrets`] to see what
-    /// was dropped.
+    /// Secret-bearing keys are removed before deserialization, so no value here can hold a
+    /// password.
     pub fn from_toml_str(text: &str) -> Result<Self> {
         Self::parse(text, None)
     }
 
-    /// Load `config.toml` from `path`.
-    ///
-    /// A missing file yields [`Config::default`] — first run needs nothing on
-    /// disk. An unreadable or malformed file is an error.
+    /// A missing file yields the defaults; an unreadable or malformed file is an error.
     pub fn load_from_path(path: &Path) -> Result<Self> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -241,10 +150,6 @@ impl Config {
         Self::parse(&text, Some(path))
     }
 
-    /// Load `config.toml` from its standard location.
-    ///
-    /// See [`paths::config_path`]: `$POSTIO_CONFIG`, else
-    /// `$XDG_CONFIG_HOME/postio/config.toml`, else `~/.config/postio/config.toml`.
     pub fn load() -> Result<Self> {
         Self::load_from_path(&paths::config_path()?)
     }
@@ -253,11 +158,9 @@ impl Config {
         Self::parse_raw(text).map_err(|err| ConfigError::parse(path, &err))
     }
 
-    /// The whole parse, keeping the `toml` error rather than flattening it.
-    ///
-    /// Validation needs the error's span and key path to point the validity
-    /// line at the right character, which [`ConfigError::Parse`] deliberately
-    /// does not carry.
+    /// Keeps the `toml` error: validation needs its span and key path to point the validity line at
+    /// the
+    /// right character.
     pub(crate) fn parse_raw(text: &str) -> std::result::Result<Self, toml::de::Error> {
         let mut table: Table = toml::from_str(text)?;
         let rejected_secrets = secrets::strip_secrets(&mut table);
@@ -266,18 +169,15 @@ impl Config {
         Ok(config)
     }
 
-    /// Deserialize a table that has already had its secrets stripped.
     pub(crate) fn from_table(table: Table) -> std::result::Result<Self, toml::de::Error> {
         let mut config: Config = Value::Table(table).try_into()?;
         config.normalize();
         Ok(config)
     }
 
-    /// Render back to TOML.
-    ///
-    /// Unknown keys are written back out; secret-bearing keys are stripped
-    /// again on the way, so a secret cannot reach disk even if one was injected
-    /// into an [`Extras`] map programmatically.
+    /// Secret-bearing keys are stripped again on the way out, so a secret cannot reach disk even if
+    /// one
+    /// was injected into an `Extras` map.
     pub fn to_toml_string(&self) -> Result<String> {
         let value = Value::try_from(self).map_err(|err| ConfigError::Serialize(err.to_string()))?;
         let Value::Table(mut table) = value else {
@@ -289,18 +189,8 @@ impl Config {
         toml::to_string_pretty(&table).map_err(|err| ConfigError::Serialize(err.to_string()))
     }
 
-    /// Write a starter `config.toml` at `path` if nothing is there yet.
-    ///
-    /// Returns `Ok(true)` if it wrote one, `Ok(false)` if a file already
-    /// existed there — untouched either way, however it parses or fails to.
-    ///
-    /// The seeded file is [`Config::default`] in effect: [`load_from_path`]
-    /// on a missing path already yields the same defaults with no error, so
-    /// this changes discoverability, not behaviour. It exists so `Ctrl+E`
-    /// (or a file manager, or `cat`) has something to read and edit on first
-    /// run, rather than opening a blank buffer that documents nothing.
-    ///
-    /// [`load_from_path`]: Config::load_from_path
+    /// Returns `Ok(false)` if a file already existed, untouched however it parses. Seeding changes
+    /// discoverability, not behaviour: it gives `Ctrl+E` something to open.
     pub fn seed_if_missing(path: &Path) -> Result<bool> {
         match std::fs::metadata(path) {
             Ok(_) => Ok(false),
@@ -316,14 +206,7 @@ impl Config {
         }
     }
 
-    /// Writes already-rendered TOML text to `path`, creating parent
-    /// directories and setting `0600` on Unix.
-    ///
-    /// Shared by [`Config::seed_if_missing`], which writes a starter file
-    /// with a header prepended, and by [`patch_filters`]'s callers, which
-    /// write a *patched* text rather than a freshly serialized `Config` —
-    /// see that function's own doc for why a whole-struct reserialize is
-    /// exactly what a structured edit here must not do.
+    /// Creates parent directories and sets `0600` on Unix.
     pub fn write_text_to_path(text: &str, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
@@ -348,20 +231,12 @@ impl Config {
         Ok(())
     }
 
-    /// Secret keys that were present in the file and dropped, as dotted paths.
-    ///
-    /// The settings panel surfaces these so the user knows to move the value
-    /// into the keyring instead of quietly losing it.
+    /// The settings panel surfaces these so the user moves the value into the keyring instead of
+    /// losing it.
     pub fn rejected_secrets(&self) -> &[String] {
         &self.rejected_secrets
     }
 
-    /// Fill in the derived fields that TOML does not carry.
-    ///
-    /// Nothing needs it now that `[accounts]` is retired (#470) -- it existed
-    /// to copy each table's key onto the account it described. Kept as the
-    /// hook the next derived field will want, rather than deleted and
-    /// rediscovered.
     fn normalize(&mut self) {}
 }
 

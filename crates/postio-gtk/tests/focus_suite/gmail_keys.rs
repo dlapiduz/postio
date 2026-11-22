@@ -1,21 +1,6 @@
-//! Gmail's keyboard shortcuts, pressed end to end in the real window
-//! (specs/007-postio-focus contracts/keymap.md, the 2026-10-14 amendment;
-//! docs/PRODUCT.md §8).
-//!
-//! The registry says which key runs which command. These cases say the
-//! window agrees, for every command with a Gmail key and every surface that
-//! offers it: the key is spelled as a US keyboard delivers it (a capital or
-//! a shifted symbol arrives as its own keyval with Shift held, `#` as
-//! `numbersign`, `*` as `asterisk`, `;` bare), pressed through GTK's own
-//! controller chain, and judged by what a person would see -- the cursor,
-//! the rows, the message in the store, the dialog that opened -- never by
-//! what a layer was handed.
-//!
-//! The table is the registry's. A command's bindings (its default and its
-//! alternates) and its contexts come from `postio_core::registry`; the cases
-//! only say what each command does where, so a binding the registry gains
-//! is pressed without anyone remembering to add it here, and a command with
-//! a Gmail key that no probe or reason accounts for fails
+//! Gmail's keyboard shortcuts pressed through GTK's own controller chain in the real window, judged
+//! by what a person would see.
+//! The table is the registry's; a Gmail-key command with no probe or reason fails
 //! `every_gmail_command_is_probed_or_excused`.
 //!
 //! POSTIO-MEASUREMENT: it presses every Gmail key in every pane through the
@@ -40,12 +25,6 @@ use crate::support::{self, Fixture};
 
 type Window = postio_gtk::window::FocusWindow;
 
-// ---------------------------------------------------------------------------
-// The keyboard
-// ---------------------------------------------------------------------------
-
-/// What a US keyboard types with Shift held, and the keysym GTK names it:
-/// the key's keyval is the symbol, and Shift is in the state.
 const US_SHIFTED: &[(char, &str)] = &[
     ('!', "exclam"),
     ('@', "at"),
@@ -70,7 +49,6 @@ const US_SHIFTED: &[(char, &str)] = &[
     ('~', "asciitilde"),
 ];
 
-/// What a US keyboard types without it, for the punctuation a binding uses.
 const US_PLAIN: &[(char, &str)] = &[
     (';', "semicolon"),
     (',', "comma"),
@@ -85,9 +63,7 @@ const US_PLAIN: &[(char, &str)] = &[
     ('`', "grave"),
 ];
 
-/// The key a person presses for `chord` on a US keyboard: the keysym GTK
-/// delivers and the modifiers held. Written out here rather than asked of
-/// the code under test, which is also what the storyboard runner uses.
+/// Written out here rather than asked of the code under test (the storyboard runner does the same).
 fn us_keyboard(chord: &Chord) -> (String, Mods) {
     let mut state = Mods::empty();
     for (modifier, mask) in [
@@ -121,8 +97,6 @@ fn us_keyboard(chord: &Chord) -> (String, Mods) {
     (name, state)
 }
 
-/// Press every chord of `binding` (`"g i"`, `"ctrl+shift+a"`, `"#"`), one
-/// after another, as the keyboard delivers them. Whether the last was taken.
 fn press_binding(window: &Window, binding: &str) -> bool {
     let mut taken = false;
     for chord in binding.split(' ') {
@@ -135,34 +109,20 @@ fn press_binding(window: &Window, binding: &str) -> bool {
     taken
 }
 
-/// Every key that runs `command` by default: its primary and its
-/// alternates, as this machine spells them.
 fn bindings_of(command: CommandId) -> Vec<String> {
     Keymap::defaults()
         .bindings(ActionId::Builtin(command))
         .to_vec()
 }
 
-// ---------------------------------------------------------------------------
-// The surfaces
-// ---------------------------------------------------------------------------
-
-/// Where the keyboard is when the key is pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Surface {
-    /// The inbox list, the cursor on its first row.
     List,
-    /// The message open in its dialog.
     Reader,
-    /// The message open beside the list (F8).
     Pane,
-    /// A digest's window, over the inbox.
     Digest,
-    /// The Filtered view.
     Filtered,
-    /// The capture sheet.
     Capture,
-    /// The menu a right-click opens over a row, which runs a verb's key.
     Menu,
 }
 
@@ -177,7 +137,6 @@ impl Surface {
         Surface::Menu,
     ];
 
-    /// The registry's context this surface is.
     fn context(self) -> Context {
         match self {
             Surface::List | Surface::Menu => Context::List,
@@ -189,37 +148,24 @@ impl Surface {
     }
 }
 
-/// What the mailbox holds, because some keys need a particular message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flavor {
-    /// Twenty plain conversations.
     Plain,
-    /// The first row has an attached file.
     Attachment,
-    /// The first row is a newsletter, offering to unsubscribe.
     Newsletter,
-    /// The first row is a conversation of three messages.
     Thread,
-    /// Plain, over a vault the capture sheet can write to.
     Vault,
-    /// Three conversations and a digest of two newsletters.
     Digest,
-    /// One conversation, and three filtered messages.
     Filtered,
 }
 
-/// A mailbox, a window over it, and what is needed to read either.
 struct World {
     fixture: Fixture,
     window: Window,
-    /// What a digest holds, newest first.
     held: Vec<MessageId>,
-    /// The conversation of the thread flavor, oldest first.
     thread: Vec<MessageId>,
-    /// The mailboxes the verbs move to.
     archive: Option<MailboxId>,
     trash: Option<MailboxId>,
-    /// Keeps the vault's folder alive.
     _vault: Option<tempfile::TempDir>,
 }
 
@@ -398,13 +344,10 @@ impl World {
         }
     }
 
-    /// Put the window back as a person finds it: nothing open, the inbox,
-    /// the cursor on its first row, the keyboard on the list. Escape does
-    /// the closing, as a person's would.
     async fn reset(&self) {
         let window = &self.window;
-        // A message that is still drawing is let finish: closing it under
-        // its web view mid-paint is not what a person's Escape does.
+        // Let a drawing message finish: closing it under its web view mid-paint is not what a
+        // person's Escape does.
         if let Some(reading) = window.reading().filter(|reading| reading.is_open()) {
             crate::settle_until_within(std::time::Duration::from_millis(1500), async || {
                 reading.reader().view().tiles_settled()
@@ -443,10 +386,8 @@ impl World {
         window.take_unanswered();
     }
 
-    /// Wait until the open message is drawn with its own words. The reader
-    /// shows a plate while it reads a message and keeps drawing the one
-    /// before until the new snapshot arrives, so what is on screen right
-    /// after a step is not yet what the step went to.
+    /// The reader keeps drawing the previous message until the new snapshot arrives, so what is on
+    /// screen after a step is not yet what the step went to.
     async fn drawn(&self) -> bool {
         let window = &self.window;
         crate::settle_until(async || {
@@ -464,7 +405,6 @@ impl World {
         .await
     }
 
-    /// The message the cursor is on.
     fn aimed(&self) -> Option<MessageId> {
         self.window.cursor_row().map(|row| row.id())
     }
@@ -491,7 +431,6 @@ impl World {
             .len()
     }
 
-    /// Bring `surface` up over the cursor's row.
     async fn enter(&self, surface: Surface) {
         let window = &self.window;
         match surface {
@@ -510,10 +449,8 @@ impl World {
                 }
             }
             Surface::Digest => {
-                // The digest's row is wherever it sorts, and the list may
-                // still be settling under the cursor. Steer the cursor to the
-                // row by what it is, a step a turn, and open it only once the
-                // cursor is on it.
+                // The digest's row is wherever it sorts and the list may still be settling: steer
+                // the cursor to it, and open it only once the cursor is on it.
                 let pane = window.pane().expect("the list pane");
                 let digest_row = || {
                     let list = pane.feed().list();
@@ -588,14 +525,12 @@ impl World {
     }
 }
 
-/// A message as the store holds it.
 #[derive(Clone, Debug, PartialEq)]
 struct Stored {
     flags: Vec<Flag>,
     mailbox: MailboxId,
 }
 
-/// Everything a person could tell about the window at a moment.
 #[derive(Clone, Debug)]
 struct Snap {
     obs: Observation,
@@ -690,36 +625,24 @@ impl Snap {
     }
 }
 
-/// What a probe is given to judge.
 struct Seen<'a> {
     before: &'a Snap,
     after: &'a Snap,
     archive: Option<MailboxId>,
     trash: Option<MailboxId>,
-    /// Commands the window had no arm for since the key was pressed.
     unanswered: &'a [CommandId],
-    /// How many rows the mailbox had on screen.
     rows: usize,
 }
 
 type Verdict = fn(&Seen) -> Result<(), String>;
 
-/// What to do before the key, and what the key must have done.
 struct Probe {
     flavor: Flavor,
-    /// Rows to step the cursor down before the surface comes up.
     cursor_down: usize,
-    /// A command run (not pressed) before the key, whose effect the key is
-    /// then judged against. For the list and the open message it runs
-    /// before the surface comes up; for the others, once it is up.
     before: Option<CommandId>,
-    /// Something done once the surface is up, before the key.
     once_up: Option<fn(&Window)>,
-    /// What a person would see, in a sentence.
     expected: &'static str,
     verdict: Verdict,
-    /// The key undoes what the world is made of (a digest, a filtered
-    /// message), so the next press gets a world of its own.
     fresh: bool,
 }
 
@@ -807,7 +730,6 @@ fn answered(seen: &Seen) -> Result<(), String> {
     ok_if(seen.unanswered.is_empty(), seen)
 }
 
-/// Step a thread open in the dialog to an earlier message, as `p` does.
 fn thread_back(window: &Window) {
     if let Some(reading) = window.reading() {
         reading.step_thread(-1);
@@ -815,8 +737,6 @@ fn thread_back(window: &Window) {
     crate::settle();
 }
 
-/// Step the open message one on through its thread, so that a step back has
-/// somewhere to go whichever message the window opened on.
 fn thread_forward(window: &Window) {
     if let Some(reading) = window.reading() {
         reading.step_thread(1);
@@ -827,7 +747,6 @@ fn thread_forward(window: &Window) {
     crate::settle();
 }
 
-/// Step a digest's or Filtered's cursor down a row.
 fn step_down(window: &Window) {
     if let Some(digest) = window.digest() {
         digest.step(1);
@@ -837,18 +756,15 @@ fn step_down(window: &Window) {
     crate::settle();
 }
 
-/// Open the capture sheet as a task, so `N` has a mode to switch it from.
 fn as_a_task(window: &Window) {
     window.act(CommandId::CaptureTask);
     crate::settle();
 }
 
-/// The probe for `command` on `surface`, or why there is none.
 fn probe(command: CommandId, surface: Surface) -> Result<Probe, &'static str> {
     use CommandId as C;
     use Surface as S;
     Ok(match (command, surface) {
-        // -- Walking -----------------------------------------------------
         (C::NextMessage, S::Reader | S::Pane) => Probe::new("the next message shows", |s| {
             ok_if(s.after.reading_open && s.after.reading_title == "M02", s)
         }),
@@ -977,7 +893,6 @@ fn probe(command: CommandId, surface: Surface) -> Result<Probe, &'static str> {
         (C::ToggleFold | C::ExpandAll, _) => {
             return Err("Conversation is a stacked-pane context; GTK has no such surface");
         }
-        // -- Verbs ---------------------------------------------------------
         (C::Archive, S::List | S::Reader | S::Pane | S::Menu) => {
             Probe::new("the message leaves the inbox for the archive", |s| {
                 ok_if(s.after.mailbox() == s.archive && s.archive.is_some(), s)
@@ -1058,7 +973,6 @@ fn probe(command: CommandId, surface: Surface) -> Result<Probe, &'static str> {
                 probe
             }
         }
-        // -- What opens something ------------------------------------------
         (C::Reply | C::ReplyAll | C::Forward, S::List | S::Menu | S::Reader | S::Pane)
         | (C::Compose, S::List | S::Reader | S::Pane) => {
             Probe::new("the composer opens", |s| ok_if(s.after.compose, s))
@@ -1115,7 +1029,6 @@ fn probe(command: CommandId, surface: Surface) -> Result<Probe, &'static str> {
         (C::CheatSheet, S::List | S::Reader | S::Pane) => {
             Probe::new("the key map opens", |s| ok_if(s.after.key_map, s))
         }
-        // -- Going places --------------------------------------------------
         (C::GoToFolders, S::List | S::Reader | S::Pane) => {
             Probe::new("the folders open", |s| ok_if(s.after.places, s))
         }
@@ -1153,7 +1066,6 @@ fn probe(command: CommandId, surface: Surface) -> Result<Probe, &'static str> {
     })
 }
 
-/// A probe for a `g` destination: the place's name is what the header says.
 fn place(name: &'static str) -> Probe {
     // A closure cannot capture, so the destinations are matched by a table.
     match name {
@@ -1176,8 +1088,6 @@ fn place(name: &'static str) -> Probe {
     }
 }
 
-/// The commands that carry a Gmail key (docs/PRODUCT.md §8), in the
-/// registry's order.
 const GMAIL: &[CommandId] = &[
     CommandId::NextMessage,
     CommandId::PrevMessage,
@@ -1228,9 +1138,6 @@ const GMAIL: &[CommandId] = &[
     CommandId::NextScope,
 ];
 
-/// Presses that are in the registry and are not run here, each with the
-/// reason. A key that is here and is no longer bound fails the completeness
-/// case, so the list cannot go stale.
 const EXCUSED: &[(Surface, CommandId, &str, &str)] = &[
     (
         Surface::Reader,
@@ -1314,7 +1221,6 @@ fn excused(surface: Surface, command: CommandId, binding: &str) -> bool {
         .any(|(s, c, b, _)| *s == surface && *c == command && *b == binding)
 }
 
-/// A failed press: the key, the surface, what should have happened, what did.
 struct Red {
     surface: Surface,
     command: CommandId,
@@ -1337,21 +1243,13 @@ impl std::fmt::Display for Red {
     }
 }
 
-/// The commands pressed together, so that no case outlasts the runner's
-/// patience and a red one names its neighbours.
+/// Pressed in groups so no case outlasts the runner's patience and a red one names its neighbours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Group {
-    /// Walking, opening, selecting.
     Walk,
-    /// The verbs on a message: archive, delete, flag, read, snooze, move,
-    /// label, undo.
     Verbs,
-    /// The composer: reply, reply all, forward, compose.
     Writes,
-    /// What opens something: the source, the attachments, the unsubscribe,
-    /// the capture sheet, search, the key map.
     Opens,
-    /// The `g` destinations.
     Go,
 }
 
@@ -1400,7 +1298,6 @@ impl Group {
     }
 }
 
-/// Every (command, binding, probe) that `surface` offers in `group`.
 fn presses(surface: Surface, group: Group) -> Vec<(CommandId, String, Probe)> {
     let mut all = Vec::new();
     for command in GMAIL.iter().filter(|command| Group::of(**command) == group) {
@@ -1415,8 +1312,6 @@ fn presses(surface: Surface, group: Group) -> Vec<(CommandId, String, Probe)> {
                 continue;
             }
             let mut probe = probe(*command, surface).expect("the same probe");
-            // Digest and Filtered have a world of their own whatever the
-            // probe says.
             probe.flavor = match surface {
                 Surface::Digest => Flavor::Digest,
                 Surface::Filtered => Flavor::Filtered,
@@ -1428,8 +1323,6 @@ fn presses(surface: Surface, group: Group) -> Vec<(CommandId, String, Probe)> {
     all
 }
 
-/// Press every binding of every Gmail command in `group` that `surface`
-/// offers, and answer what did not do what it should.
 async fn press_all(surface: Surface, group: Group) -> Vec<Red> {
     let mut reds = Vec::new();
     let mut pressed = 0;
@@ -1492,8 +1385,7 @@ async fn press_one(
         "{surface:?}: the cursor never reached row {walked}: {:?}",
         window.observe().cursor
     );
-    // What the verbs act on before the surface comes up: the list's row.
-    // Filtered acts on what it holds, so it is acted on once it is up.
+    // Filtered acts on what it holds, so the verb runs once it is up.
     let up_first = surface != Surface::Filtered;
     let mut watch = world.aimed();
     let left = async |watch: Option<MessageId>, was: Option<MailboxId>| {
@@ -1537,7 +1429,6 @@ async fn press_one(
     if probe.flavor == Flavor::Thread
         && let Some(reading) = window.reading()
     {
-        // The conversation's other messages arrive a moment after the first.
         let known = crate::settle_until(async || reading.thread_known() == 3).await;
         assert!(known, "the thread's messages were never read");
         assert!(world.drawn().await, "the open message was never drawn");
@@ -1605,7 +1496,6 @@ fn report(reds: &[Red]) -> String {
     reds.iter().map(|red| format!("\n  {red}")).collect()
 }
 
-/// One case per surface and group, each reporting every red press at once.
 macro_rules! cases {
     ($($name:ident: $surface:ident, $group:ident;)*) => {
         $(
@@ -1651,9 +1541,6 @@ cases! {
     menu_writes: Menu, Writes;
 }
 
-/// Every Gmail command is pressed somewhere, or says why not. The registry
-/// is the source of the contexts, so a command that gains one is caught
-/// here, not left unpressed.
 pub fn every_gmail_command_is_probed_or_excused() {
     let mut unprobed = Vec::new();
     for command in GMAIL {
@@ -1667,7 +1554,6 @@ pub fn every_gmail_command_is_probed_or_excused() {
             unprobed.push(command.as_str());
         }
     }
-    // Conversation is a stacked-pane context GTK does not have.
     let allowed = ["toggle_fold", "expand_all"];
     unprobed.retain(|id| !allowed.contains(id));
     assert!(
@@ -1680,7 +1566,6 @@ pub fn every_gmail_command_is_probed_or_excused() {
             "{why}: {command:?} no longer has {binding}; take the excuse out ({surface:?})"
         );
     }
-    // Every Gmail key the contract names is bound to the command it names.
     for (key, command) in [
         ("e", CommandId::Archive),
         ("r", CommandId::Reply),
@@ -1733,13 +1618,8 @@ pub fn every_gmail_command_is_probed_or_excused() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// What the window says about the keys
-// ---------------------------------------------------------------------------
-
-/// The keys Gmail's adoption retired, per command: what each was before
-/// 2026-10-14 and is not now. Nothing the window teaches may still say them
-/// for that command.
+/// Keys Gmail's adoption retired per command; nothing the window teaches may still say them for
+/// that command.
 const RETIRED: &[(CommandId, &str)] = &[
     (CommandId::Archive, "a"),
     (CommandId::Reply, "e"),
@@ -1766,8 +1646,6 @@ const RETIRED: &[(CommandId, &str)] = &[
     (CommandId::NextScope, "g a"),
 ];
 
-/// The key `command` is taught by: its primary binding, as the registry
-/// spells it for this machine.
 fn taught(command: CommandId) -> String {
     Keymap::defaults()
         .binding(command)
@@ -1775,8 +1653,6 @@ fn taught(command: CommandId) -> String {
         .to_owned()
 }
 
-/// Each keycap under `root` that is on screen, with the words of the control
-/// it sits in: the first label, and all of them.
 fn caps_beside(root: &impl IsA<gtk::Widget>) -> Vec<(String, String, String)> {
     let mut found = Vec::new();
     for widget in support::descendants(root) {
@@ -1804,11 +1680,8 @@ fn caps_beside(root: &impl IsA<gtk::Widget>) -> Vec<(String, String, String)> {
     found
 }
 
-/// Words a control says, and the commands whose key may sit beside them.
 type Words<'a> = &'a [(&'a str, &'a [CommandId])];
 
-/// Check that every control in `words` is on screen under `root`, and that
-/// the key beside it is the registry's for the command it names.
 fn teaches(scene: &str, root: &impl IsA<gtk::Widget>, words: Words, problems: &mut Vec<String>) {
     let pairs = caps_beside(root);
     for (said, commands) in words {
@@ -1832,7 +1705,6 @@ fn teaches(scene: &str, root: &impl IsA<gtk::Widget>, words: Words, problems: &m
 
 use CommandId as K;
 
-/// The verbs the message dialog, the row menu and the bulk bar draw.
 const VERBS: Words = &[
     ("Reply", &[K::Reply]),
     ("Reply all", &[K::ReplyAll]),
@@ -1849,7 +1721,6 @@ const VERBS: Words = &[
     ("Delete", &[K::Delete]),
 ];
 
-/// The strings that only some of those scenes draw; a scene says which.
 fn only<'a>(all: Words<'a>, wanted: &[&str]) -> Vec<(&'a str, &'a [CommandId])> {
     all.iter()
         .filter(|(said, _)| wanted.contains(said))
@@ -1864,8 +1735,6 @@ pub fn the_controls_teach_the_gmail_keys_and_no_old_ones() {
         }
         let mut problems = Vec::new();
 
-        // The chrome, the bulk bar a selection brings, the toast an archive
-        // leaves, and the folders.
         let world = World::new(Flavor::Plain, Surface::List).await;
         let window = &world.window;
         teaches(
@@ -1928,7 +1797,6 @@ pub fn the_controls_teach_the_gmail_keys_and_no_old_ones() {
         );
         world.reset().await;
 
-        // The row's menu.
         window.open_row_menu(0, gtk::gdk::Rectangle::new(40, 120, 1, 1));
         crate::settle();
         if let Some(menu) = window.row_menu() {
@@ -1958,7 +1826,6 @@ pub fn the_controls_teach_the_gmail_keys_and_no_old_ones() {
         }
         world.reset().await;
 
-        // The open message.
         world.enter(Surface::Reader).await;
         let mut reading = only(
             VERBS,
@@ -1990,7 +1857,6 @@ pub fn the_controls_teach_the_gmail_keys_and_no_old_ones() {
         world.reset().await;
         window.act(CommandId::CaptureTask);
         crate::settle_until(async || window.capture().is_some_and(|sheet| sheet.is_shown())).await;
-        // The capture sheet is not open without a vault; the toast says why.
         world.reset().await;
 
         assert!(
@@ -2035,7 +1901,6 @@ pub fn the_attachment_and_unsubscribe_controls_teach_their_keys() {
             &mut problems,
         );
 
-        // The page an empty inbox shows.
         let fixture = Fixture::empty().await;
         let window = Window::new(None);
         window.present();
@@ -2068,8 +1933,6 @@ pub fn the_attachment_and_unsubscribe_controls_teach_their_keys() {
     });
 }
 
-/// `?`'s key map: each Gmail command's row shows every key the registry
-/// gives it, and none that it had before.
 pub fn the_key_map_shows_the_gmail_keys_and_no_old_ones() {
     crate::gtk_case(async {
         if !support::display() {
@@ -2140,7 +2003,6 @@ pub fn the_key_map_shows_the_gmail_keys_and_no_old_ones() {
     });
 }
 
-/// Ctrl+K's palette: type a command's name and its row shows its key.
 pub fn the_palette_shows_the_gmail_keys_and_no_old_ones() {
     crate::gtk_case(async {
         if !support::display() {
@@ -2196,7 +2058,6 @@ pub fn the_palette_shows_the_gmail_keys_and_no_old_ones() {
     });
 }
 
-/// Settings' Keyboard section lists each command with the key it runs on.
 pub fn settings_keyboard_lists_the_gmail_keys() {
     crate::gtk_case(async {
         if !support::display() {
@@ -2225,7 +2086,6 @@ pub fn settings_keyboard_lists_the_gmail_keys() {
                 continue;
             };
             checked += 1;
-            // Settings writes the binding as the file does: `mod`, not `ctrl`.
             let shown = texts.get(at + 1).cloned().unwrap_or_default();
             if shown != spec.default_binding {
                 problems.push(format!(
@@ -2246,12 +2106,6 @@ pub fn settings_keyboard_lists_the_gmail_keys() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Where text is typed, Gmail's letters are letters
-// ---------------------------------------------------------------------------
-
-/// Gmail's keys are bare letters, so wherever text is being typed they must
-/// type, not run: `e` in the composer's field is an `e`, not an archive.
 pub fn gmail_letters_type_in_the_composer_and_in_the_search_bar() {
     crate::gtk_case(async {
         if !support::display() {
@@ -2317,12 +2171,6 @@ pub fn gmail_letters_type_in_the_composer_and_in_the_search_bar() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Words built elsewhere
-// ---------------------------------------------------------------------------
-
-/// The reader's pane for a message whose body is not here names the key that
-/// checks for new mail; it must be one the registry gives Refresh.
 pub fn the_reader_names_the_key_that_checks_for_new_mail() {
     use postio_ui::reader::document::{Absent, absent_html};
     let bound = bindings_of(CommandId::Refresh);
@@ -2345,11 +2193,8 @@ pub fn the_reader_names_the_key_that_checks_for_new_mail() {
     assert_eq!(checked, 2);
 }
 
-/// The digest comes up whichever row the cursor was on, because the walk
-/// finds the row by what it is. The cases above reach it from the first row;
-/// a list that settles after the cursor was placed leaves the cursor
-/// anywhere, and walking a fixed count forward from row 0 opened whatever
-/// row the cursor was on instead (#1800).
+/// Found by what the row is, not a fixed count from row 0: a list that settles after the cursor was
+/// placed leaves it anywhere (#1800).
 pub fn the_digest_opens_from_a_cursor_below_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -2369,12 +2214,6 @@ pub fn the_digest_opens_from_a_cursor_below_it() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Settings' account list
-// ---------------------------------------------------------------------------
-
-/// `z`, Gmail's undo, takes back a removed account where the list has the
-/// keyboard, as `mod+z` always did.
 pub fn z_takes_back_a_removed_account_in_settings() {
     crate::gtk_case(async {
         if !support::display() {
@@ -2421,8 +2260,7 @@ pub fn z_takes_back_a_removed_account_in_settings() {
                 crate::settle_until(async || pending().await).await,
                 "Delete marked the account for removal"
             );
-            // The removal's own toast would answer an Undo first; the row is
-            // what has the keyboard, so put it back there.
+            // The removal's own toast would answer an Undo first; put the keyboard back on the row.
             let row = rows()
                 .into_iter()
                 .find(|row| row.widget_name() == name.as_str());
@@ -2437,7 +2275,6 @@ pub fn z_takes_back_a_removed_account_in_settings() {
             .await
             {
                 reds.push(format!("{undo} did not restore the removed account"));
-                // Put it back so the next key starts from the same place.
                 support::deliver_with(&window, "z", Mods::CONTROL_MASK);
                 crate::settle_until(async || !pending().await).await;
             }

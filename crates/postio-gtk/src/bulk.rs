@@ -1,11 +1,5 @@
-//! The bulk bar: what is selected, and what to do with it
-//! (contracts/focus-surface.md, "The window": 44 px, while anything is
-//! selected).
-//!
-//! The count; Archive, Snooze, Mark read, Digest these…, Label, Move and Delete,
-//! each with its key; and on the right the selection's own keys. Every
-//! button is the shared action bar's, so a press runs the command's id
-//! through the window's one `act`, the path its key takes.
+//! Every button is the shared action bar's, so a press runs the command through the window's one
+//! `act`, the path its key takes.
 
 use std::rc::Rc;
 
@@ -15,13 +9,10 @@ use postio_ui::focus_dialog::Verb;
 use postio_ui::hints;
 use postio_widgets::widgets::{Action, ActionBar, KeyLine};
 
-/// What the list's bar offers: `postio_ui::focus_dialog::BULK`, each button
-/// named `focus-bulk-<slug>`.
 fn actions() -> &'static [Action] {
     crate::verbs::actions("focus-bulk-", postio_ui::focus_dialog::BULK)
 }
 
-/// The bar, its count and its keys.
 pub struct Bulk {
     root: gtk::Box,
     count: gtk::Label,
@@ -30,14 +21,10 @@ pub struct Bulk {
 }
 
 impl Bulk {
-    /// The list's bar, hidden until something is selected, its keys from
-    /// `keymap`.
     pub fn new(keymap: &Keymap) -> Self {
         Self::offering(actions(), keymap)
     }
 
-    /// The same bar offering `verbs` instead, for another list of mail
-    /// (Filtered), so a selection looks the same wherever it is made.
     pub fn with_verbs(verbs: &'static [Verb], keymap: &Keymap) -> Self {
         Self::offering(crate::verbs::actions("focus-bulk-", verbs), keymap)
     }
@@ -65,23 +52,19 @@ impl Bulk {
         bulk
     }
 
-    /// Every command the bar has a button for.
     pub fn commands() -> Vec<CommandId> {
         actions().iter().map(|action| action.command).collect()
     }
 
-    /// The bar, to place under the list.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Run `handler` with the command a button stands for when it is pressed.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.actions
             .connect_command(move |command| handler(command.id()));
     }
 
-    /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.actions.set_keymap(keymap);
         let said: Vec<_> = [
@@ -100,15 +83,13 @@ impl Bulk {
         self.keys.set(&said);
     }
 
-    /// What the bar says while it is up: `None` while it is hidden. Read off
-    /// the widgets, for a storyboard's observation.
+    /// `None` while the bar is hidden.
     pub fn summary(&self) -> Option<String> {
         self.root
             .is_visible()
             .then(|| self.count.text().to_string())
     }
 
-    /// Say what is selected, or hide the bar when nothing is.
     pub fn set_summary(&self, summary: Option<&str>) {
         match summary {
             Some(said) => {

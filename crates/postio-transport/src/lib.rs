@@ -1,19 +1,8 @@
-//! Sockets and TLS, kept out of the protocols.
-//!
-//! `io-imap` and `io-smtp` are both sans-I/O: a session-opening coroutine
-//! *asks* for a TCP connect, a TLS connect or an upgrade and never performs
-//! one. That is what lets Postio own its runtime and TLS stack -- and what
-//! lets a whole handshake be driven over a canned transcript with no socket
-//! at all. This is the half both protocols share: the error, the two traits
-//! a session drives, and the real tokio and `tokio-rustls` implementation.
-//! Each protocol crate keeps its own scripted double and its own mapping of
-//! [`TransportError`] into its error type.
-//!
-//! # There is no plaintext fallback
-//!
-//! A failed TLS handshake is [`TransportError::Tls`] and the connection ends.
-//! Retrying in the clear is a decision no mail client gets to make on the
-//! user's behalf, so the code to do it does not exist.
+//! Sockets and TLS, kept out of the protocols: `io-imap` and `io-smtp` are sans-I/O, so a handshake
+//! can be driven over a canned transcript with no socket. The half both share: the error, the two
+//! traits a session drives, and the real tokio and `tokio-rustls` implementation.
+//! No plaintext fallback: a failed TLS handshake is [`TransportError::Tls`] and the connection
+//! ends.
 
 mod deflate;
 
@@ -33,10 +22,8 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
-/// How long to wait for a socket or a TLS handshake.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The most bytes [`Stream::write_within`] asks a peer to take at once.
 const WRITE_CHUNK: usize = 16 * 1024;
 
 /// Everything the transport layer can fail with.
@@ -45,58 +32,29 @@ const WRITE_CHUNK: usize = 16 * 1024;
 /// message, only the reason a socket or a certificate did not work out.
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
-    /// The TCP connection could not be established.
     #[error("could not reach {host}:{port}: {reason}")]
     Connect {
-        /// The host that was unreachable.
         host: String,
-        /// The port that was tried.
         port: u16,
-        /// What the OS reported.
         reason: String,
     },
 
-    /// The TLS handshake failed or the certificate did not verify.
     #[error("TLS failed for {host}: {reason}")]
-    Tls {
-        /// The host whose certificate was rejected.
-        host: String,
-        /// What the TLS stack reported.
-        reason: String,
-    },
+    Tls { host: String, reason: String },
 
-    /// The server closed the connection.
     #[error("the server closed the connection")]
     Closed,
 
-    /// Reading or writing failed.
     #[error("{context} failed: {reason}")]
-    Io {
-        /// What was being attempted.
-        context: String,
-        /// The underlying error.
-        reason: String,
-    },
+    Io { context: String, reason: String },
 
-    /// The server accepted something and then said nothing.
     #[error("{context} timed out after {after:?}")]
-    TimedOut {
-        /// What was being waited for.
-        context: String,
-        /// How long we waited.
-        after: Duration,
-    },
+    TimedOut { context: String, after: Duration },
 
-    /// The transport cannot do what the protocol asked of it.
     #[error("{0}")]
     Unsupported(String),
 }
 
-/// An open connection to a server.
-///
-/// Byte-level and deliberately dumb: it reads, it writes, and it can hand
-/// itself to a TLS stack once. Everything about *what* those bytes mean lives
-/// above it.
 #[async_trait]
 pub trait Stream: Send + fmt::Debug {
     /// Reads whatever is available. `Ok(0)` means the peer closed.
@@ -169,20 +127,15 @@ pub trait Stream: Send + fmt::Debug {
     /// Consumes the plaintext stream, so there is no way to keep using it.
     async fn upgrade_tls(self: Box<Self>, host: &str) -> Result<Box<dyn Stream>, TransportError>;
 
-    /// Whether the bytes on this connection are encrypted.
     fn is_encrypted(&self) -> bool;
 }
 
-/// Opens the connections the session coroutine asks for.
 #[async_trait]
 pub trait Connector: Send + Sync + fmt::Debug {
-    /// Opens a plaintext TCP connection.
     async fn connect_tcp(&self, host: &str, port: u16) -> Result<Box<dyn Stream>, TransportError>;
 
-    /// Opens a TLS connection, verifying the certificate against `host`.
     async fn connect_tls(&self, host: &str, port: u16) -> Result<Box<dyn Stream>, TransportError>;
 
-    /// Opens a local unix socket, for a pre-authenticated socket proxy.
     async fn connect_unix(&self, path: &str) -> Result<Box<dyn Stream>, TransportError> {
         Err(TransportError::Unsupported(format!(
             "this connector cannot open the unix socket at {path}"
@@ -190,11 +143,6 @@ pub trait Connector: Send + Sync + fmt::Debug {
     }
 }
 
-// ---------------------------------------------------------------------------
-// tokio + rustls
-// ---------------------------------------------------------------------------
-
-/// Installs the ring crypto provider exactly once per process.
 pub fn install_crypto_provider() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -218,7 +166,6 @@ pub struct RustlsConnector {
     /// connector a test builds without a sink still connects, it just
     /// proves nothing.
     egress: Option<Arc<dyn postio_model::egress::EgressSink>>,
-    /// Which protocol this connector's attempts are logged under.
     subsystem: postio_model::egress::EgressSubsystem,
 }
 
@@ -231,7 +178,6 @@ impl fmt::Debug for RustlsConnector {
 }
 
 impl RustlsConnector {
-    /// A connector using the platform trust store.
     pub fn new() -> Result<Self, TransportError> {
         install_crypto_provider();
         let config =
@@ -247,19 +193,14 @@ impl RustlsConnector {
         })
     }
 
-    /// Sets how long a connect or handshake may take.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
-    /// Report every connection attempt to `sink` — the egress log's seam
-    /// (#151). Success and failure alike: a log that only showed successes
-    /// would hide exactly the traffic a user most wants to see.
-    ///
-    /// `subsystem` is the protocol the log files them under: one connector
-    /// type serves both IMAP and SMTP, and a user reading the log needs to
-    /// know which of the two opened a connection.
+    /// Success and failure alike: a log that only showed successes would hide exactly the traffic a
+    /// user most wants to see. `subsystem` is the protocol the log files them under: one connector
+    /// type serves both IMAP and SMTP.
     pub fn with_egress(
         mut self,
         sink: Arc<dyn postio_model::egress::EgressSink>,
@@ -352,10 +293,8 @@ impl Connector for RustlsConnector {
     }
 }
 
-/// The two shapes a real connection takes.
 #[derive(Debug)]
 enum TokioStream {
-    /// Plain TCP, waiting for a `STARTTLS` upgrade that may never come.
     Plain {
         stream: TcpStream,
         connector: RustlsConnector,
@@ -406,9 +345,6 @@ impl Stream for TokioStream {
     }
 }
 
-/// An I/O error as a [`TransportError`]: a closed peer is
-/// [`TransportError::Closed`], a timeout [`TransportError::TimedOut`], anything
-/// else [`TransportError::Io`] with `context` saying what was being done.
 pub fn map_io(context: &str, error: io::Error) -> TransportError {
     if error.kind() == io::ErrorKind::UnexpectedEof {
         return TransportError::Closed;

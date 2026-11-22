@@ -1,11 +1,5 @@
-//! What the search bar remembers (spec 010): the queries a person ran, and
-//! how far they have seen each saved search's results.
-//!
-//! Two small tables, no foreign keys. `recent_searches` is the last
-//! [`RECENT_KEPT`] distinct queries, written when a search is committed
-//! (the results view opens, a hit is opened, a saved search is run) and
-//! never per keystroke. `saved_search_seen` holds, per saved search key, the
-//! `received_at` its badge counts from.
+//! Recent searches (written when a search is committed, never per keystroke) and how far each
+//! saved search's results have been seen.
 
 use chrono::{DateTime, TimeZone, Utc};
 
@@ -13,23 +7,17 @@ use crate::error::Result;
 use crate::sql::{self, RowExt as _};
 use crate::store::Connection;
 
-/// How many distinct queries Recent keeps.
 pub const RECENT_KEPT: usize = 20;
 
-/// A query a person ran.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentSearch {
-    /// Exactly as run.
     pub query: String,
-    /// When it last ran.
     pub last_run_at: DateTime<Utc>,
-    /// Conversations it matched, as the footer said.
+    /// The search stopped at the walk's cap, so `hits` is a floor.
     pub hits: u64,
-    /// Its search stopped at the walk's cap: `hits` is a floor (D30).
     pub capped: bool,
 }
 
-/// Recent searches and saved-search progress on one connection.
 pub struct SearchRepository<'a> {
     connection: &'a Connection,
 }
@@ -39,12 +27,10 @@ fn from_millis(ms: i64) -> DateTime<Utc> {
 }
 
 impl<'a> SearchRepository<'a> {
-    /// Borrow `connection` for these reads and writes.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// The remembered queries, newest first, at most [`RECENT_KEPT`].
     pub async fn recent(&self) -> Result<Vec<RecentSearch>> {
         sql::all(
             self.connection,
@@ -63,9 +49,7 @@ impl<'a> SearchRepository<'a> {
         .await
     }
 
-    /// Record that `query` ran at `at` and matched `hits` conversations, a
-    /// floor when `capped`: one row per query, then everything past the
-    /// newest [`RECENT_KEPT`] is deleted.
+    /// One row per query; everything past the newest `RECENT_KEPT` is deleted.
     pub async fn remember(
         &self,
         query: &str,
@@ -97,7 +81,6 @@ impl<'a> SearchRepository<'a> {
         .await
     }
 
-    /// Forget `query`; whether it was remembered.
     pub async fn forget(&self, query: &str) -> Result<bool> {
         Ok(sql::execute(
             self.connection,
@@ -108,8 +91,7 @@ impl<'a> SearchRepository<'a> {
             > 0)
     }
 
-    /// The newest `received_at` the person has seen saved search `key`'s
-    /// results up to, or `None` before they first looked.
+    /// `None` before the person first looked.
     pub async fn seen_up_to(&self, key: &str) -> Result<Option<DateTime<Utc>>> {
         sql::first(
             self.connection,
@@ -120,7 +102,6 @@ impl<'a> SearchRepository<'a> {
         .await
     }
 
-    /// Record that `key`'s results have been seen up to `up_to`.
     pub async fn mark_seen(&self, key: &str, up_to: DateTime<Utc>) -> Result<()> {
         sql::execute(
             self.connection,
@@ -132,8 +113,7 @@ impl<'a> SearchRepository<'a> {
         Ok(())
     }
 
-    /// Delete the progress rows of saved searches no longer in `keys`
-    /// (deleted from `config.toml`); how many went.
+    /// Deletes progress for saved searches no longer in `keys`; returns how many.
     pub async fn forget_seen_except(&self, keys: &[&str]) -> Result<u64> {
         let placeholders = (1..=keys.len())
             .map(|n| format!("?{n}"))

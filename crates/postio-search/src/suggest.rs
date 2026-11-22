@@ -1,50 +1,24 @@
-//! What to search for instead, when what was typed found nothing.
-//!
-//! # Why this is not a looser match
-//!
-//! ADR 0037. A query string here is not only a way to draw a list: a saved
-//! search is a query with a name, and *a rule is a saved search plus actions*
-//! (`docs/PRODUCT.md`). Widening the match so `hanah` finds `hannah` would
-//! therefore make rules archive, label and move mail on terms that are only
-//! approximately present, silently. A search that finds nothing is visible in
-//! the same second; a rule that fired on a near-miss is not.
-//!
-//! So the query keeps meaning exactly what it says, and a near-miss is
-//! answered by offering *a different query* — one the user could have typed,
-//! and accepts deliberately.
-//!
-//! # Why it lives in this crate
-//!
-//! Ranking a candidate is arithmetic over two strings and a count. It needs
-//! no database, so it is testable without one, and this crate is the leaf
-//! that may not have `rusqlite` anyway. Reading the vocabulary is
+//! What to search for instead when what was typed found nothing (ADR 0037). The query keeps meaning
+//! exactly what it says, because a saved search and a rule are queries too and a widened match
+//! would act on mail only approximately present; a near-miss is answered by offering a different
+//! query the user accepts deliberately.
+//! Pure arithmetic over strings and a count, so it needs no database; reading the vocabulary is
 //! `postio-index`'s half.
 
-/// A term the index holds, and how many documents hold it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Term<'a> {
-    /// The term as the index tokenized it.
     pub text: &'a str,
-    /// How many documents contain it. A tie-breaker, and a guard against
-    /// offering a term that one message once misspelled.
     pub documents: u64,
 }
 
-/// What to offer instead of a term that matched nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Suggestion {
-    /// The term to search for instead.
     pub term: String,
-    /// How many documents hold it, so the offer can say what it would find.
     pub documents: u64,
 }
 
-/// The most a term may be mistyped and still be recognisable.
-///
-/// One edit for a short word and two for a long one, rather than a flat
-/// number: at distance two, `cat` reaches `dog`'s neighbourhood and every
-/// three-letter word is a candidate for every other. Length is what makes an
-/// edit meaningful.
+/// One edit for a short word and two for a long one: at distance two `cat` reaches `dog`'s
+/// neighbourhood and every three-letter word is a candidate for every other.
 fn tolerance(typed: &str) -> usize {
     match typed.chars().count() {
         0..=3 => 0,
@@ -53,16 +27,11 @@ fn tolerance(typed: &str) -> usize {
     }
 }
 
-/// Damerau-Levenshtein distance, capped: returns `None` once it is certain
-/// the distance exceeds `limit`.
-///
-/// Transpositions count as one edit rather than two, because swapping two
-/// letters is among the commonest ways to mistype a name and `hnanah` is one
-/// slip rather than two.
+/// Transpositions count as one edit: swapping two letters is among the commonest ways to mistype a
+/// name.
 fn distance_within(a: &str, b: &str, limit: usize) -> Option<usize> {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
-    // A length gap wider than the limit cannot be closed by edits.
     if a.len().abs_diff(b.len()) > limit {
         return None;
     }
@@ -85,7 +54,6 @@ fn distance_within(a: &str, b: &str, limit: usize) -> Option<usize> {
             current[j] = value;
             best_in_row = best_in_row.min(value);
         }
-        // Every distance from here on is at least this row's best.
         if best_in_row > limit {
             return None;
         }
@@ -97,26 +65,16 @@ fn distance_within(a: &str, b: &str, limit: usize) -> Option<usize> {
     (distance <= limit).then_some(distance)
 }
 
-/// The fewest letters that are a beginning worth completing.
-///
-/// Three, the same floor below which [`tolerance`] corrects nothing: two
-/// letters begin a quarter of the vocabulary, and the offer would be noise.
+/// The same floor below which [`tolerance`] corrects nothing: two letters begin a quarter of the
+/// vocabulary.
 const SHORTEST_BEGINNING: usize = 3;
 
-/// The query that asks the index for every term [`suggest`] could offer for
-/// `typed`, or `None` when nothing could be offered.
-///
-/// The index expands it against its own term dictionary, so the offer is
-/// drawn from every word the mailbox holds rather than a sample of them.
-/// `typed~N` reaches terms that *begin* within `N` edits of the word -- the
-/// word mistyped, left unfinished, or both -- and `typed*` only the ones
-/// that begin with it, for a word too short to correct. `N` is
-/// `tolerance`, so the index widens exactly as far as the ranking will
-/// accept and no further.
-///
-/// Unquoted, which is the point: the index reads a quoted term exactly and
-/// an unquoted one as this. Only ever a single word of letters and digits,
-/// so nothing typed reaches the index as syntax.
+/// `typed~N` reaches terms that begin within `N` edits of the word (mistyped, unfinished, or both)
+/// and `typed*` only
+/// those that begin with it, for a word too short to correct. Unquoted, which is the point: the
+/// index reads a quoted
+/// term exactly. Only ever a single word of letters and digits, so nothing typed reaches the index
+/// as syntax.
 pub fn widened(typed: &str) -> Option<String> {
     let typed = typed.to_lowercase();
     if typed.chars().count() < SHORTEST_BEGINNING || !typed.chars().all(char::is_alphanumeric) {
@@ -128,18 +86,10 @@ pub fn widened(typed: &str) -> Option<String> {
     })
 }
 
-/// The term to offer instead of `typed`, or `None` when nothing is close
-/// enough to be worth offering.
-///
-/// Two ways to be close. A term that **begins** with what was typed is the
-/// word left unfinished -- whole-word matching finds nothing for half a word
-/// -- and it outranks every correction, because nothing was mistyped. Past
-/// that, a term within `tolerance` edits is the word mistyped, closest
-/// first.
-///
-/// Between two equally close terms, the one more of the mailbox holds — a
-/// term in four hundred messages is likelier to be the word than one in a
-/// single message that misspelled it the other way.
+/// A term that begins with what was typed is the word left unfinished and outranks every
+/// correction. Past that, a
+/// term within `tolerance` edits, closest first; between equally close terms the one more of the
+/// mailbox holds.
 pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> Option<Suggestion> {
     let typed = typed.to_lowercase();
     let limit = tolerance(&typed);
@@ -150,14 +100,12 @@ pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> O
 
     let mut best: Option<(usize, Term<'a>)> = None;
     for term in vocabulary {
-        // A term that *is* what was typed is not a suggestion. The query
-        // found nothing for some other reason -- a second term, a scope --
-        // and offering the same words back is a shrug with extra steps.
+        // A term that is what was typed is not a suggestion: the query found nothing for another
+        // reason.
         if term.text.eq_ignore_ascii_case(&typed) {
             return None;
         }
         let text = term.text.to_lowercase();
-        // A completion ranks as distance zero: ahead of any correction.
         let distance = if completes && text.starts_with(&typed) {
             0
         } else if limit == 0 {
@@ -170,11 +118,8 @@ pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> O
         };
         let better = match &best {
             None => true,
-            // Closer wins; between two equally close, the commoner one.
-            // Not a tuple comparison: that orders `documents` *ascending* on a
-            // tie, which is precisely backwards and offered `hanna` over
-            // `hannah` because two messages hold it and sixty-six hold the
-            // other.
+            // Closer wins; between equals the commoner. Not a tuple comparison: that orders
+            // `documents` ascending on a tie and offered `hanna` over `hannah`.
             Some((best_distance, best_term)) => {
                 distance < *best_distance
                     || (distance == *best_distance && term.documents > best_term.documents)
@@ -190,18 +135,12 @@ pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> O
         documents: term.documents,
     })
 }
-/// The words a forgiving search reads `typed` as: the word itself when the
-/// vocabulary holds it, then the words it begins, then the words it is a
-/// misspelling of -- the same two kinds of closeness [`suggest`] ranks, and
-/// in the same order -- at most `most` of them.
-///
-/// This is the one place a query is widened rather than answered with an
-/// offer, and only for the command bar's interactive search: ADR 0037, as
-/// amended. A rule's query never comes here.
-///
-/// A word the vocabulary holds is not corrected: spelled right, `tour` meant
-/// tour, and `your`, one edit away and in every other message, would drown
-/// it. Only the words it begins -- `tours` -- are near it then.
+/// The word itself when the vocabulary holds it, then the words it begins, then the words it is a
+/// misspelling of, at
+/// most `most`. The one place a query is widened rather than answered with an offer, only for the
+/// command bar's
+/// interactive search (ADR 0037). A word the vocabulary holds is not corrected: `your`, one edit
+/// from `tour`, would drown it.
 pub fn near<'a>(
     typed: &str,
     vocabulary: impl Iterator<Item = Term<'a>>,
@@ -215,8 +154,6 @@ pub fn near<'a>(
     let limit = if held { 0 } else { tolerance(&typed) };
     let completes = typed.chars().count() >= SHORTEST_BEGINNING;
 
-    // Ranked: the word itself, then a completion, then a correction by how
-    // many edits it is away; between equals, the commoner word.
     let mut found: Vec<(usize, u64, String)> = Vec::new();
     for term in vocabulary {
         let text = term.text.to_lowercase();
@@ -243,61 +180,36 @@ pub fn near<'a>(
         .collect()
 }
 
-/// What the dropdown offers for a prefix (spec 010, step 8).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Suggestions {
-    /// The rest of the best word, drawn after the caret: "las" after "at".
     pub ghost: Option<String>,
-    /// Vocabulary words.
     pub words: Vec<Completion>,
-    /// Labels.
     pub labels: Vec<Completion>,
-    /// Mailing lists.
     pub lists: Vec<Completion>,
-    /// File names.
     pub files: Vec<Completion>,
-    /// Folders, for `in:`.
     pub folders: Vec<Completion>,
-    /// People.
     pub people: Vec<Person>,
 }
 
-/// One completion, and how much it would find.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Completion {
-    /// What the row says.
     pub text: String,
-    /// The query it runs.
     pub query: String,
-    /// What that query counts.
     pub count: u64,
-    /// Whether the count stopped at a cap and is a floor ("1,000+"):
-    /// a suggestion as common as `as` is not counted to the end of the
-    /// mailbox while a key is being typed (spec 010 D29).
+    /// A floor ("1,000+"): a suggestion as common as `as` is not counted to the end of the mailbox
+    /// while a key is being typed (D29).
     pub capped: bool,
 }
 
-/// A person `from:` and `to:` complete to, ranked two-way (D21).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Person {
-    /// Their name, when their mail gives one.
     pub name: Option<String>,
-    /// Their address.
     pub address: String,
-    /// Messages from them.
     pub received: u64,
-    /// Messages to them.
     pub sent: u64,
-    /// The newest message either way.
     pub last: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// The words `vocabulary` holds that complete `prefix`, best first: the
-/// ones more of the mailbox holds, then the shorter, then alphabetically.
-/// The prefix itself is not a completion -- it adds nothing to what was
-/// typed -- and neither is a word that only matches it ignoring case in a
-/// way that changes its length. Each comes back as its own query, counted
-/// in documents; the executor counts the query itself before it is shown.
 pub fn rank_words<'a>(prefix: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> Vec<Completion> {
     let prefix = prefix.to_lowercase();
     if prefix.is_empty() {
@@ -330,8 +242,6 @@ pub fn rank_words<'a>(prefix: &str, vocabulary: impl Iterator<Item = Term<'a>>) 
         .collect()
 }
 
-/// What to draw after the caret for `typed`, when `word` completes it: the
-/// rest of the word, in its own letters. `None` when it does not begin so.
 pub fn ghost(typed: &str, word: &str) -> Option<String> {
     let typed_chars = typed.chars().count();
     let lowered: String = word.chars().take(typed_chars).collect();
@@ -432,18 +342,12 @@ mod tests {
 
     #[test]
     fn a_transposition_counts_as_one_slip_not_two() {
-        // Swapping two letters is among the commonest ways to mistype a name.
-        // At two edits `hnanah` would still be reachable, but only because the
-        // word is long; the point is that it costs one.
         let offered = suggest("hnanah", vocabulary().into_iter()).expect("a suggestion");
         assert_eq!(offered.term, "hannah");
     }
 
     #[test]
     fn the_closer_term_wins_and_then_the_commoner_one() {
-        // `hanna` is one edit from `hannah` and one from `hanah`, so both are
-        // candidates for `hannh`; the one more of the mailbox holds is the
-        // likelier word.
         let offered = suggest("hannh", vocabulary().into_iter()).expect("a suggestion");
         assert_eq!(
             offered.term, "hannah",
@@ -453,16 +357,12 @@ mod tests {
 
     #[test]
     fn a_short_word_is_never_corrected() {
-        // At one edit `cat` reaches `dog`'s neighbourhood and every
-        // three-letter word is a candidate for every other.
         assert_eq!(suggest("cot", vocabulary().into_iter()), None);
         assert_eq!(suggest("dot", vocabulary().into_iter()), None);
     }
 
     #[test]
     fn a_term_the_index_holds_is_never_offered_back() {
-        // The query found nothing for some other reason -- a second term, a
-        // scope -- and offering the same words back is a shrug with steps.
         assert_eq!(suggest("hannah", vocabulary().into_iter()), None);
     }
 
@@ -473,16 +373,12 @@ mod tests {
 
     #[test]
     fn an_unfinished_word_is_offered_the_word_it_begins() {
-        // Nobody misspelled anything: the word was simply not finished, and
-        // whole-word matching finds nothing for half a word.
         let offered = suggest("quart", vocabulary().into_iter()).expect("a completion");
         assert_eq!(offered.term, "quarterly");
     }
 
     #[test]
     fn a_short_start_is_still_completed_though_never_corrected() {
-        // Three letters are too few to correct -- every such word is one edit
-        // from another -- but they are a real beginning.
         let offered = suggest("ban", vocabulary().into_iter()).expect("a completion");
         assert_eq!(offered.term, "banana");
     }
@@ -506,15 +402,12 @@ mod tests {
 
     #[test]
     fn a_short_word_is_widened_only_to_what_begins_with_it() {
-        // Three letters are too few to correct, but a real beginning.
         assert_eq!(widened("Ban").as_deref(), Some("ban*"));
     }
 
     #[test]
     fn nothing_widens_two_letters_or_anything_that_is_not_one_word() {
         assert_eq!(widened("ha"), None);
-        // Punctuation would be read as query syntax, or split into two
-        // words the offer could not name as one.
         assert_eq!(widened("ada@example"), None);
         assert_eq!(widened("hanah~"), None);
         assert_eq!(widened("\"hanah\""), None);
@@ -562,8 +455,6 @@ mod tests {
 
     #[test]
     fn a_word_the_vocabulary_holds_is_near_only_what_it_begins() {
-        // "tour" is spelled right, so "your" -- one edit away and in every
-        // other message -- is not what was meant; "tours" may be.
         let vocabulary: Vec<Term<'static>> = [("tour", 3), ("tours", 2), ("your", 900)]
             .into_iter()
             .map(|(text, documents)| Term { text, documents })

@@ -1,15 +1,5 @@
-//! Keeping a query, across the boundary.
-//!
-//! The surface #1574 is about: the macOS search field draws *Save search as
-//! folder*, enabled, and pressing it did nothing. These assertions are all of
-//! the form "the file on disk says so afterwards", because a verb that
-//! returns a plausible list without writing anything is exactly the failure
-//! that shipped — a frontend cannot tell the difference, and neither can a
-//! test that only reads the return value.
-
 use postio_ffi::{save_search, saved_searches};
 
-/// A file with the things a careless rewrite destroys, and one search in it.
 const SAMPLE: &str = "\
 # hand-written, and it should stay that way
 [sync]
@@ -20,7 +10,6 @@ query = \"is:unread\"
 pinned = true
 ";
 
-/// A `config.toml` in a directory of its own, holding `text`.
 fn config(text: &str) -> (tempfile::TempDir, String) {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let path = dir.path().join("config.toml");
@@ -46,7 +35,6 @@ fn a_saved_query_becomes_a_row_the_sidebar_can_draw() {
         "a search nobody has renamed draws under its key"
     );
 
-    // The half that matters: it is in the file, so the next launch has it.
     assert_eq!(
         saved_searches(path),
         edit.searches,
@@ -57,14 +45,11 @@ fn a_saved_query_becomes_a_row_the_sidebar_can_draw() {
 
 #[test]
 fn a_machine_with_no_config_file_yet_has_no_saved_searches() {
-    // First run, before the settings panel has ever been opened. Not an
-    // error, and not a reason for the sidebar to show anything at all.
     let dir = tempfile::tempdir().expect("a scratch directory");
     let path = dir.path().join("nothing-here.toml").display().to_string();
 
     assert!(saved_searches(path.clone()).is_empty());
 
-    // And saving still works: the file is created by the first save.
     let edit = save_search(path.clone(), "has:attach".to_owned()).expect("a save creates the file");
     assert_eq!(edit.changed.as_deref(), Some("has-attach"));
     assert_eq!(saved_searches(path).len(), 1);
@@ -72,8 +57,6 @@ fn a_machine_with_no_config_file_yet_has_no_saved_searches() {
 
 #[test]
 fn saving_an_empty_query_is_not_a_row_and_not_an_error() {
-    // Pinning an empty query pins "everything", which is not a folder anybody
-    // meant to make. The affordance stays pressable; it just declines.
     let (dir, path) = config(SAMPLE);
 
     let edit = save_search(path.clone(), "   ".to_owned()).expect("an empty query is not a fault");
@@ -94,8 +77,7 @@ fn saving_an_empty_query_is_not_a_row_and_not_an_error() {
 
 #[test]
 fn the_rest_of_the_file_survives_a_saved_search() {
-    // ADR 0031's load-bearing clause. `config.toml` is a file a person edits
-    // by hand, and saving a search is not permission to reformat it.
+    // ADR 0031: `config.toml` is hand-edited, and saving a search is not permission to reformat it.
     let (dir, path) = config(SAMPLE);
 
     save_search(path, "has:attach".to_owned()).expect("the sample parses");
@@ -114,9 +96,8 @@ fn the_rest_of_the_file_survives_a_saved_search() {
 
 #[test]
 fn a_config_that_will_not_parse_is_refused_and_left_alone() {
-    // The tempting fallback -- a broken file tells us nothing, so start from
-    // the defaults -- would write an empty `[saved_searches]` over searches the user
-    // still has. Refusing is the only reading that cannot lose them.
+    // Falling back to defaults would write an empty `[saved_searches]` over searches the user still
+    // has; refusing cannot lose them.
     let broken =
         "[ui]\ndensity = 42\n\n[saved_searches.keep]\nquery = \"is:unread\"\npinned = true\n";
     let (dir, path) = config(broken);
@@ -130,9 +111,6 @@ fn a_config_that_will_not_parse_is_refused_and_left_alone() {
     );
 }
 
-/// ⌘S in Focus's results, then Save ↩ with Notify and Keep the date
-/// rolling on (spec 010 US5, FR-029): the session's own `config.toml`
-/// holds the search afterwards, named, notifying, its date relative.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_save_popover_writes_name_notify_and_a_rolling_date_to_config_toml() {
     use postio_ffi::{DropdownStateFfi, Session, SessionOptions, UiEvent};

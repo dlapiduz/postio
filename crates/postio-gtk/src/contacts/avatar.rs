@@ -1,10 +1,6 @@
-//! A person's avatar: the controller's initials or glyph on its colour, a
-//! circle for a person and a rounded square for everything else.
-
 use gtk::prelude::*;
 use postio_ui::contact_popover::Avatar;
 
-/// `avatar`, `size` pixels square.
 pub fn widget(avatar: &Avatar, size: i32) -> gtk::Overlay {
     let ground = gtk::DrawingArea::new();
     ground.set_content_width(size);

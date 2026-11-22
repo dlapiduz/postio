@@ -1,19 +1,6 @@
-//! Skipping or resuming a folder's background backfill (ADR 0016, #350):
-//! the per-folder control in Settings' Sync & storage section, and the one
-//! write a folder's own menu can make too.
-//!
-//! The panel draws a check per folder and calls back through
-//! `connect_backfill_exclusion_changed` without knowing anything persists
-//! it. This is the other half.
-//!
-//! # Reflected immediately, not on the next sync
-//!
-//! Unlike a server-driven change to the mailbox tree, nothing here ever
-//! emits `Event::MailboxesChanged` -- there is no sync pass involved, only a
-//! local column write. So the write's answer is the account's folders, and
-//! whatever drew them is handed them again at once, rather than waiting for
-//! an event that will never come. Without it, the control would still say
-//! the state it just left.
+//! Skipping or resuming a folder's backfill (ADR 0016). Nothing emits `Event::MailboxesChanged`
+//! here (no sync pass), so
+//! the write's answer is the account's folders, handed to whatever drew them at once.
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -24,9 +11,6 @@ use postio_model::mailbox::Mailbox;
 
 use crate::settings::SettingsPanel;
 
-/// Skip (`excluded`) or resume `mailbox`'s backfill. The answer is its
-/// account's folders as they now stand; `None` when the write failed, which
-/// is logged here.
 pub async fn set_excluded(
     client: &Client,
     mailbox: MailboxId,
@@ -43,9 +27,6 @@ pub async fn set_excluded(
     }
 }
 
-/// Wire `panel`'s per-folder backfill control to the store's owner: every
-/// account's folders, read whenever the panel comes on screen, and each
-/// check's change written and drawn again from the answer.
 pub fn install(panel: &SettingsPanel, client: Client) {
     // Weak: the panel owns these handlers (#1072).
     let weak = panel.downgrade();
@@ -78,7 +59,6 @@ pub fn install(panel: &SettingsPanel, client: Client) {
     });
 }
 
-/// Every account's folders, read by the store's owner.
 async fn refresh(panel: &SettingsPanel, client: &Client) {
     // POSTIO-GLIB-SAFE: client calls are oneshot receives; the host answers
     // on its own runtime.

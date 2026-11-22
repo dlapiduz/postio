@@ -1,62 +1,33 @@
-//! The message list, windowed.
-//!
-//! The frontend gets a count and one row at a time, synchronously, and pages
-//! arrive behind it. That shape is not an implementation detail: it is what
-//! `PRODUCT.md` §18 requires — *a mailbox is never loaded into memory* — held
-//! across an FFI, where handing the caller a vector would be the obvious and
-//! wrong thing to do.
+//! The message list, windowed: a count and one row at a time, synchronously, with pages arriving
+//! behind (PRODUCT.md §18).
 
 use postio_model::{MessageId, ThreadId};
 use postio_runtime::store::{ListPage, ListScope, MessageSummary, ThreadSummary};
 use postio_ui::list::ListRow;
 
-/// Which messages the list is showing.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum ScopeFfi {
-    /// One folder.
     Mailbox {
-        /// The folder.
         mailbox: i64,
     },
-    /// Every folder in an account: that account's whole mail.
     Account {
-        /// The account.
         account: i64,
     },
-    /// Every folder in every enabled account at once (ADR 0005 Q4).
-    ///
-    /// A view, never a destination: it names no account, so it carries no
-    /// field. Present here because this enum is the ABI mirror of
-    /// `ListScope`, and a variant missing from it is a view the second
-    /// frontend cannot select at all.
+    /// Every folder in every enabled account at once (ADR 0005 Q4): a view, so it names no account.
     Unified,
-    /// The sidebar's "Flagged" view.
     Flagged {
-        /// The account.
         account: i64,
     },
-    /// The sidebar's "Snoozed" view.
     Snoozed {
-        /// The account.
         account: i64,
     },
     /// The sidebar's "Outbox" view: drafts whose send is under way.
-    ///
-    /// Here because this enum is the ABI mirror of `ListScope` and a variant
-    /// missing from it is a view the second frontend cannot select at all —
-    /// which was true of this one, so a macOS user had no way to see mail
-    /// that was on its way or had failed to leave.
     Outbox {
-        /// The account.
         account: i64,
     },
-    /// One conversation, wherever its messages are filed.
-    ///
-    /// Not a narrowing of a mailbox: a thread routinely spans folders, and a
-    /// pane that filtered the list's own resident rows would show only the
-    /// part of the conversation that happened to be paged in.
+    /// One conversation, wherever its messages are filed: a thread spans folders, so it is not a
+    /// narrowing of a mailbox.
     Thread {
-        /// The conversation.
         thread: i64,
     },
 }
@@ -75,86 +46,40 @@ impl From<ScopeFfi> for ListScope {
     }
 }
 
-/// One row of the list, however its scope lists itself.
-///
-/// One type for both message rows and conversation rows, because a folder
-/// shows conversations and a query view shows messages (ADR 0015) and a
-/// frontend that understood only one would draw the wrong thing in half the
-/// application. A conversation row is its representative message plus the
-/// conversation's own subject and count — which is what the GTK row draws too.
+/// One row of the list. Message rows and conversation rows share a type: a folder shows
+/// conversations, a query view messages (ADR 0015).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RowFfi {
     /// The message this row opens. For a conversation row, its representative.
     pub id: i64,
-    /// The conversation this row belongs to, if the store knows one.
-    ///
-    /// Set for a message that is part of a thread as well as for a row that
-    /// *stands for* one, so it is not on its own the answer to "is this a
-    /// conversation row" — see [`is_thread`](Self::is_thread).
+    /// Set for a message in a thread as well as for a row standing for one; see `is_thread`.
     pub thread: Option<i64>,
-    /// Whether this row stands for a whole conversation rather than one
-    /// message.
-    ///
-    /// The discriminator the verbs need: a thread row's `id` is its newest
-    /// message, so without this a marked set of conversation rows and a
-    /// marked set of messages that happen to have threads are the same value
-    /// (#468). GTK answers the same question with a non-empty participant
-    /// list, which is a drawing detail and does not belong on a boundary
-    /// type; both reach `postio_core::aim::RowKind` through
-    /// [`ListRow::thread`], so the two frontends cannot disagree about what a
-    /// thread row is.
+    /// Whether this row stands for a whole conversation: a thread row's `id` is its newest message,
+    /// so verbs cannot otherwise tell the two apart (#468).
     pub is_thread: bool,
-    /// Who it is from, already rendered for display.
     pub from: Option<String>,
-    /// The sender's address, unrendered: `hello@pinepoint-radon.example`.
-    ///
-    /// Beside [`from`](Self::from) rather than folded into it, because the
-    /// two are drawn in different weights on different lines — and because a
-    /// per-sender privacy decision ("always allow this address") is made
-    /// about *this*, never about a display name that anyone can choose.
+    /// The sender's address, unrendered: `hello@pinepoint-radon.example`. A per-sender privacy
+    /// decision is made about this, never a display name.
     pub from_address: Option<String>,
-    /// The two letters the avatar chip shows for the sender.
-    ///
-    /// Derived here rather than in the frontend, from
-    /// `postio_ui::row::initials`, so both platforms abbreviate a name the
-    /// same way — a mailing list reads as `LK` on each rather than one of
-    /// them shrugging.
+    /// The two letters of the avatar chip, from `postio_ui::row::initials` so both platforms
+    /// abbreviate alike.
     pub initials: String,
-    /// The subject: the conversation's when there is one, else the message's.
     pub subject: Option<String>,
-    /// The snippet under the subject.
     pub preview: Option<String>,
     /// The sort key, as seconds since the epoch.
     pub received_at: i64,
-    /// Whether it has been read.
     pub seen: bool,
-    /// Whether it carries `\Flagged`.
     pub flagged: bool,
-    /// Whether it has been replied to.
     pub answered: bool,
-    /// Whether it is a draft, and which state its send is in, as the stored
-    /// spelling — `"editing"`, `"queued"`, `"sending"`, `"failed"`,
-    /// `"unconfirmed"` — or `None` for ordinary mail.
-    ///
-    /// A string rather than a mirrored enum: this is the one field a frontend
-    /// only ever renders, and a tenth `*Ffi` enum to keep in step buys nothing
-    /// a `match` on the spelling does not. It is carried at all so macOS can
-    /// draw what GTK draws — flattening it to a bool here would re-open the
-    /// gap spec 003's US4 just closed.
+    /// The draft's send state as the stored spelling (`"editing"`, `"queued"`, `"sending"`,
+    /// `"failed"`, `"unconfirmed"`),
+    /// or `None` for ordinary mail. A string, not a mirrored enum: the frontend only renders it.
     pub send_state: Option<String>,
-    /// Whether it has an attachment.
     pub has_attachments: bool,
     /// How many messages the conversation holds; the badge appears above one.
     pub thread_count: u32,
-    /// Who is in the conversation, elided: `Tessa, Mara, Pinepoint`.
-    ///
-    /// Empty on a message row, and that is how the two are told apart — the
-    /// same rule the classic app's list row stated about its own participants.
-    /// Already shortened here rather than crossing as a list of addresses,
-    /// because how a crowd of names is shortened is a decision both frontends
-    /// have to make the same way (`postio_ui::conversation::participants`),
-    /// and the row is the only thing that knows how much room there is for
-    /// what is left.
+    /// Who is in the conversation, elided: `Tessa, Mara, Pinepoint`. Empty on a message row, which
+    /// is how the two are told apart.
     pub participants: String,
 }
 
@@ -164,10 +89,9 @@ impl ListRow for RowFfi {
     }
 
     fn thread(&self) -> Option<ThreadId> {
-        // Both conditions, exactly as the GTK row applies them: a row that
-        // stands for a conversation but carries no thread id is not one the
-        // verbs can name, and a message row that belongs to a thread is not
-        // standing for it.
+        // Both conditions, as the GTK row applies them: a conversation row with no thread id is not
+        // one verbs can name,
+        // and a message row in a thread is not standing for it.
         self.is_thread
             .then(|| self.thread.map(Into::into))
             .flatten()
@@ -180,9 +104,8 @@ impl postio_ui::conversation::ConversationMessage for RowFfi {
     }
 
     fn received_at(&self) -> chrono::DateTime<chrono::Utc> {
-        // A row carries seconds because that is what crosses a C ABI; the
-        // rules want a time. An unrepresentable stamp sorts as the epoch
-        // rather than panicking a frontend's redraw.
+        // Seconds cross the C ABI; an unrepresentable stamp sorts as the epoch rather than
+        // panicking a redraw.
         chrono::DateTime::from_timestamp(self.received_at, 0).unwrap_or_default()
     }
 
@@ -196,13 +119,8 @@ impl From<MessageSummary> for RowFfi {
         RowFfi {
             id: row.id.into(),
             thread: row.thread.map(Into::into),
-            // `display()`, not `to_string()`. The second is the RFC form,
-            // `Ada Lovelace <ada@example.com>`, and a list drawing it spends
-            // the whole line on an address nobody reads and truncates the
-            // name. The classic app's row called `display()`; this called the
-            // other one, so the two frontends drew different senders for the
-            // same message (#1150) -- on a field whose doc comment says
-            // "already rendered for display".
+            // `display()`, not `to_string()`: the RFC form spends the line on an address and
+            // truncates the name (#1150).
             initials: postio_ui::row::initials(row.from.as_ref()),
             from_address: row.from.as_ref().map(|address| address.address.clone()),
             from: row.from.map(|address| address.display().to_string()),
@@ -212,13 +130,9 @@ impl From<MessageSummary> for RowFfi {
             seen: row.seen,
             flagged: row.flagged,
             answered: row.answered,
-            // The reader's word, not the state machine's. `as_str` is the
-            // database's spelling — `queued`, `failed`, `unconfirmed` — and
-            // a frontend drawing those would be a second vocabulary for the
-            // same five states, which is what this function exists to
-            // prevent. "Not sent" rather than "failed" because what matters
-            // is that it did not go (#1487); "Not confirmed" because ADR
-            // 0021 Decision 3 says nobody can tell whether it arrived.
+            // The reader's word, not the database's spelling: "Not sent" because what matters is
+            // that it did not go (#1487);
+            // "Not confirmed" because nobody can tell whether it arrived (ADR 0021 D3).
             send_state: row
                 .send_state
                 .map(|state| postio_ui::row::send_state_word(state).to_owned()),
@@ -232,9 +146,8 @@ impl From<MessageSummary> for RowFfi {
 
 impl From<ThreadSummary> for RowFfi {
     fn from(row: ThreadSummary) -> Self {
-        // The representative carries the message-level truth; the thread
-        // carries the conversation-level truth. Where they disagree the
-        // conversation wins, because that is what the row is standing for.
+        // Where the representative and the thread disagree the conversation wins: that is what the
+        // row stands for.
         let mut base = RowFfi::from(row.representative);
         base.thread = row.id.map(Into::into);
         if row.subject.is_some() {
@@ -243,9 +156,7 @@ impl From<ThreadSummary> for RowFfi {
         base.flagged = row.flagged;
         base.has_attachments = row.has_attachments;
         base.received_at = row.last_at.timestamp();
-        // Scoped, unlike `message_count`: unread is what you act on from this
-        // folder, so a conversation whose only unread member is filed
-        // elsewhere reads as handled here.
+        // Scoped, unlike `message_count`: unread is what you act on from this folder.
         base.seen = row.unread_count == 0;
         base.thread_count = row.message_count;
         base.is_thread = true;
@@ -254,10 +165,8 @@ impl From<ThreadSummary> for RowFfi {
     }
 }
 
-/// One page as the window takes it, whichever way the scope lists itself.
-///
-/// The total travels with the rows: they come from one read, so the count
-/// the window reports and the page it draws can never disagree.
+/// One page as the window takes it. The total travels with the rows, from one read, so count and
+/// page cannot disagree.
 pub fn page_of(page: ListPage) -> postio_ui::paging::Page<RowFfi> {
     match page {
         ListPage::Messages(page) => postio_ui::paging::Page {

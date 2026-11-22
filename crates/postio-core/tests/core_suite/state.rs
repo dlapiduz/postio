@@ -1,12 +1,3 @@
-//! Application state: one coherent answer to "what is the user looking at".
-//!
-//! Widgets hold no authoritative state of their own — they render what these
-//! accessors say and repaint from the events these mutations return. The
-//! sharpest requirement is canvas 3a's `t`/`Esc` round trip: drilling into a
-//! thread and coming back must restore the *exact* prior position, which only
-//! works if the position lives here rather than in whichever widget happened to
-//! have it last.
-
 use std::sync::Arc;
 
 use postio_core::ActionId;
@@ -27,8 +18,6 @@ fn selection(state: &AppState) -> (Vec<MessageId>, Option<MessageId>) {
     )
 }
 
-/// A state scoped to `account`: the scope a frontend's snapshot carries when
-/// the host adopts it, which is how a state comes to have one.
 fn on_account(account: i64) -> AppState {
     let mut snapshot =
         serde_json::to_value(AppState::new().snapshot()).expect("a snapshot serialises");
@@ -39,8 +28,6 @@ fn on_account(account: i64) -> AppState {
     state
 }
 
-/// A state parked in the inbox with three messages selected and the middle one
-/// focused: the position a `t`/`Esc` round trip has to bring back intact.
 fn in_the_inbox() -> AppState {
     let mut state = on_account(1);
     state.open_mailbox(MailboxId::new(7));
@@ -78,11 +65,6 @@ fn opening_a_mailbox_tells_the_list_to_reload() {
 
 #[test]
 fn opening_a_mailbox_with_no_account_open_reloads_nothing() {
-    // A mailbox belongs to an account, so a reload event has to say whose
-    // list moved (ADR 0005 Q11) -- and a state holding a mailbox with no
-    // account has nothing true to say. Emitting nothing is deliberate and
-    // this test is its record; #182's `Scope` makes the state
-    // unrepresentable, at which point this test goes with it.
     let mut state = AppState::new();
 
     let events = state.open_mailbox(MailboxId::new(7));
@@ -98,8 +80,6 @@ fn opening_a_mailbox_with_no_account_open_reloads_nothing() {
 
 #[test]
 fn switching_mailboxes_drops_a_selection_that_is_no_longer_visible() {
-    // The selected rows belong to the mailbox that is going away; keeping them
-    // would archive messages the user can no longer see.
     let mut state = in_the_inbox();
 
     let events = state.open_mailbox(MailboxId::new(9));
@@ -113,8 +93,6 @@ fn switching_mailboxes_drops_a_selection_that_is_no_longer_visible() {
         "{events:?}"
     );
 }
-
-// -- The t / Esc round trip --------------------------------------------------
 
 #[test]
 fn drilling_into_a_thread_and_back_restores_the_exact_position() {
@@ -136,7 +114,6 @@ fn drilling_into_a_thread_and_back_restores_the_exact_position() {
         "{opened:?}"
     );
 
-    // Move around inside the thread, so coming back has something to restore.
     state.select(vec![message(11)], Some(message(11)));
 
     let back = state.back();
@@ -153,8 +130,6 @@ fn drilling_into_a_thread_and_back_restores_the_exact_position() {
 
 #[test]
 fn back_unwinds_one_step_at_a_time() {
-    // list -> thread -> message, then Esc, Esc: the reader returns to the
-    // thread it was opened from, not all the way out to the list.
     let mut state = in_the_inbox();
     state.open_conversation(ThreadId::new(42));
     state.select(vec![message(11)], Some(message(11)));
@@ -182,7 +157,6 @@ fn back_unwinds_one_step_at_a_time() {
 
 #[test]
 fn back_from_the_list_changes_nothing() {
-    // There is nowhere further out; the bus turns this into a quiet rejection.
     let mut state = in_the_inbox();
     let before = state.clone();
 
@@ -194,7 +168,6 @@ fn back_from_the_list_changes_nothing() {
 
 #[test]
 fn the_back_stack_is_bounded() {
-    // Drill in and out forever without the stack growing forever.
     let mut state = in_the_inbox();
     for id in 0..1_000 {
         state.open_conversation(ThreadId::new(id));
@@ -202,16 +175,12 @@ fn the_back_stack_is_bounded() {
 
     assert!(state.back_depth() <= AppState::MAX_BACK_DEPTH);
 
-    // However deep the wandering went, enough `Esc`s still get the user out.
     while !state.back().is_empty() {}
     assert_eq!(*state.view(), ViewMode::List);
 }
 
-// -- The composer -------------------------------------------------
-
 #[test]
 fn the_composer_takes_over_the_pane_and_gives_it_back() {
-    // The canvas is explicit: compose is not a separate window.
     let mut state = in_the_inbox();
     let before = selection(&state);
 
@@ -236,8 +205,6 @@ fn the_composer_takes_over_the_pane_and_gives_it_back() {
         "{closed:?}"
     );
 }
-
-// -- The invariants -----------------------------------------------------------
 
 #[test]
 fn the_context_follows_the_view() {
@@ -269,7 +236,6 @@ fn the_context_follows_the_view() {
 
 #[test]
 fn a_change_always_emits_an_event_and_a_no_op_never_does() {
-    // Widgets repaint from events only. A silent mutation is a stale pane.
     type Mutation = fn(&mut AppState) -> Vec<Event>;
     let mutations: Vec<(&str, Mutation)> = vec![
         ("mailbox", |state| state.open_mailbox(MailboxId::new(7))),
@@ -296,8 +262,6 @@ fn a_change_always_emits_an_event_and_a_no_op_never_does() {
             state != before
         );
 
-        // Applied twice, the second application is a no-op and stays silent —
-        // except for the ones that are a step by construction.
         if !matches!(name, "thread" | "message" | "composer" | "back") {
             let again = mutate(&mut state);
             assert!(again.is_empty(), "`{name}` repeated itself: {again:?}");
@@ -305,12 +269,8 @@ fn a_change_always_emits_an_event_and_a_no_op_never_does() {
     }
 }
 
-// -- Only the bus mutates it --------------------------------------------------
-
 #[test]
 fn state_changes_arrive_at_the_ui_as_events_from_the_bus() {
-    // The wiring the application uses: handlers own the state, widgets own
-    // nothing, and every repaint comes off the event stream.
     let state = SharedState::new(in_the_inbox());
     let for_open = state.clone();
     let for_back = state.clone();
@@ -371,7 +331,6 @@ fn state_changes_arrive_at_the_ui_as_events_from_the_bus() {
         "the second Esc had nowhere to go: {seen:?}"
     );
 
-    // And the shared state is where the truth ended up.
     state.read(|state| {
         assert_eq!(*state.view(), ViewMode::List);
         assert_eq!(state.focus(), Some(message(3)));
@@ -386,14 +345,6 @@ fn a_snapshot_can_be_read_without_holding_the_lock() {
     state.read(|live| assert_eq!(*live, *snapshot));
 }
 
-// ---------------------------------------------------------------------------
-// Scope replaces Option<AccountId>
-// ---------------------------------------------------------------------------
-
-/// ADR 0005 Q4 (#182). The old `account: Option<AccountId>` meant two things
-/// at once, and `None` was both of them. `Scope` splits them: a view is
-/// either one account's or it is every enabled account's, and there is always
-/// one of those.
 #[test]
 fn a_fresh_state_is_unified_over_nothing_rather_than_an_absent_account() {
     let state = AppState::new();
@@ -411,8 +362,6 @@ fn a_fresh_state_is_unified_over_nothing_rather_than_an_absent_account() {
     );
 }
 
-/// The acceptance criterion that protects everyone who has one account: the
-/// single-account path must behave exactly as it did.
 #[test]
 fn one_account_still_behaves_as_it_always_did() {
     let mut state = on_account(1);

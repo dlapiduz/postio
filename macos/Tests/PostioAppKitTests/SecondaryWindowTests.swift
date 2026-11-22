@@ -5,18 +5,8 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// The secondary windows over Focus's list (specs/009-focus-macos T065,
-/// contracts/mac-surfaces.md): one at a time (M4), centred on the main
-/// window and sized from the engine's geometry (M1), and every way of
-/// closing one reported once, so the controller's stack and the screen
-/// never disagree about what is open.
-///
-/// No window is put on screen: `present` is the one step that orders a
-/// window in, and these replace it, so the suite needs no window server
-/// for anything but the windows' own objects.
 @MainActor
 struct SecondaryWindowTests {
-    /// A main window, never shown.
     static func main(_ frame: NSRect = NSRect(x: 100, y: 100, width: 1440, height: 900)) -> NSWindow {
         let window = NSWindow(
             contentRect: frame, styleMask: [.titled, .closable, .resizable],
@@ -26,7 +16,6 @@ struct SecondaryWindowTests {
         return window
     }
 
-    /// What was reported closed, in order.
     final class Closed { var kinds: [SurfaceKindFfi] = [] }
 
     static func controller() -> (SecondaryWindowController, Closed) {
@@ -42,17 +31,12 @@ struct SecondaryWindowTests {
         let main = Self.main()
         controller.show(.message, content: NSView(), width: 720, title: "Harbor", over: main)
         let frame = try? #require(controller.window?.frame)
-        // 720 wide (M1 at 1440), the main window's height less 80, and
-        // centred both ways: x 100 + (1440 - 720) / 2, y 100 + 40.
         #expect(frame == NSRect(x: 460, y: 140, width: 720, height: 820))
         #expect(controller.kind == .message)
         #expect(controller.window?.title == "Harbor", "the Window menu and VoiceOver name it")
     }
 
     @Test func aSurfaceShorterThanTheMessageWindowKeepsItsOwnHeightCentred() {
-        // Capture (screen 25) is a form, not a page to read: it is as tall
-        // as it asks, centred on the main window like the others, and
-        // never taller than the message window would be.
         let (controller, _) = Self.controller()
         let main = Self.main()
         controller.show(.capture, content: NSView(), width: 660, height: 600, title: "", over: main)
@@ -64,10 +48,6 @@ struct SecondaryWindowTests {
     }
 
     @Test func aSurfaceSizedToItsContentGrowsDownwardAndStaysUnderTheMessageWindowsHeight() {
-        // Capture is as tall as what it shows (screen 25): no grey below
-        // the footnote, and when the project list opens the window grows
-        // down from where its top already is, never past the message
-        // window's height or off the main window.
         let (controller, _) = Self.controller()
         let main = Self.main()
         controller.show(.capture, content: NSView(), width: 660, height: 600, title: "", over: main)
@@ -105,7 +85,6 @@ struct SecondaryWindowTests {
     }
 
     @Test func openingAnotherKindClosesTheFirst() {
-        // M4: one secondary window at a time.
         let (controller, closed) = Self.controller()
         let main = Self.main()
         controller.show(.message, content: NSView(), width: 720, title: "", over: main)
@@ -117,8 +96,6 @@ struct SecondaryWindowTests {
     }
 
     @Test func theSameKindReplacesItsContentAndKeepsItsFrame() {
-        // j and k never resize the window, and a size the person chose
-        // survives the next message.
         let (controller, closed) = Self.controller()
         let main = Self.main()
         controller.show(.message, content: NSView(), width: 720, title: "One", over: main)
@@ -146,7 +123,6 @@ struct SecondaryWindowTests {
     }
 
     @Test func theControllerClosingItIsReportedToo() {
-        // FocusCloseSurface (Esc through Back): close, then say so.
         let (controller, closed) = Self.controller()
         let main = Self.main()
         controller.show(.message, content: NSView(), width: 720, title: "", over: main)
@@ -167,8 +143,6 @@ struct SecondaryWindowTests {
     }
 
     @Test func aNarrowMainWindowKeepsTheMinimumAndFitsTheHeight() {
-        // The width is the engine's (M1 keeps 640 below 1024); the height
-        // follows the main window, and never goes negative.
         let (controller, _) = Self.controller()
         let main = Self.main(NSRect(x: 0, y: 0, width: 800, height: 60))
         controller.show(.message, content: NSView(), width: 640, title: "", over: main)
@@ -178,9 +152,6 @@ struct SecondaryWindowTests {
     }
 
     @Test func aToolbarTheContentPutsOnDoesNotGrowTheWindow() {
-        // The message window's title area is a unified toolbar, and AppKit
-        // keeps the content's size when one is added -- so the window grew
-        // past the main window by the toolbar's height.
         let (controller, _) = Self.controller()
         let main = Self.main()
         controller.show(

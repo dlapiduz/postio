@@ -1,10 +1,3 @@
-//! The settings panel's Agents pane (ADR 0010 Q6, #1832): which accounts an
-//! agent may read, taking that back, and what agents did lately.
-//!
-//! Revoking edits the panel's own buffer through `postio_config`'s patchers,
-//! and the panel's debounced write takes it to disk, as for every other
-//! pane. Skips without a display. Nothing here touches the network.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -176,8 +169,6 @@ fn pump() {
     while context.iteration(false) {}
 }
 
-/// Each shared row's words as a person reads them: the address, what an
-/// agent may do, and the button.
 fn shared(panel: &SettingsPanel) -> Vec<String> {
     collect(panel.upcast_ref(), "postio-settings-agents-row")
         .iter()
@@ -208,8 +199,6 @@ fn buttons(panel: &SettingsPanel, class: &str) -> Vec<gtk::Button> {
         .collect()
 }
 
-/// Every widget in the tree carrying `class` (or, when `class` is empty,
-/// every widget), depth first.
 fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if class.is_empty() || widget.has_css_class(class) {

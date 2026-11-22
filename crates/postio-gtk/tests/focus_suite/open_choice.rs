@@ -1,7 +1,3 @@
-//! `A`: open an attachment or a link (US2 scenario 9, T071). The message's
-//! links and parts are offered, each link's full target shown before
-//! anything opens, and nothing opens until one is chosen.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 

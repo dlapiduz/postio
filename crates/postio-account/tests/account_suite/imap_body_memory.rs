@@ -1,24 +1,9 @@
-//! Proves `BodyPart::Whole` streams a large message rather than buffering
-//! it: peak heap usage stays flat as the fetched message grows, not
-//! proportional to it.
-//!
-//! A global allocator tracks live and peak bytes for the whole test binary.
-//! [`ScriptedConnector`]'s canned reply is itself generated on demand via
-//! [`postio_account::imap::ImapScript::on_generated`] rather than held as one
-//! big buffer — otherwise the *test double* would dominate the measurement
-//! this test exists to take on the code under test.
-
 #![allow(unsafe_code)]
-// Installing a `GlobalAlloc` is `unsafe impl` by definition. That is the whole
-// technique here: counting allocations is how this test proves a body fetch
-// does not materialise the whole message. The crate's library code has no
-// `unsafe` at all.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The identity the scripted generation (UIDVALIDITY 100) gives `uid`.
 fn rid(uid: u32) -> postio_model::RemoteId {
     postio_model::RemoteId::new(format!("100:{uid}"))
 }
@@ -31,10 +16,6 @@ use postio_account::imap::{
 };
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::TransportSecurity;
-
-// ---------------------------------------------------------------------------
-// A peak-tracking global allocator
-// ---------------------------------------------------------------------------
 
 struct TrackingAllocator;
 
@@ -60,14 +41,9 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 #[global_allocator]
 static ALLOCATOR: TrackingAllocator = TrackingAllocator;
 
-/// The high-water mark of live bytes since the process started.
 fn peak_bytes() -> usize {
     PEAK.load(Ordering::SeqCst)
 }
-
-// ---------------------------------------------------------------------------
-// Fetching a message of `len` bytes
-// ---------------------------------------------------------------------------
 
 const ACCOUNT: &str = "someone@example.com";
 
@@ -106,16 +82,10 @@ async fn fetch_whole_message_of(len: u32) -> usize {
         Arc::new(connector),
         PoolConfig::default(),
     );
-    // `CountingSink`, not `VecSink`: a `VecSink` retains every byte by
-    // design, so its own accumulator would scale with `len` regardless of
-    // whether the fetch itself streams — exactly the confound this test
-    // must avoid. `CountingSink` only ever holds a counter, which isolates
-    // the fetch machinery's own behaviour.
+    // `CountingSink`, not `VecSink`: a `VecSink`'s own accumulator would scale with `len` whatever
+    // the fetch does.
     let mut sink = CountingSink::new();
 
-    // The peak just before the operation under test: everything up to here
-    // (the tokio runtime, TLS setup, the pool, the scripted transcript's own
-    // small fixed strings) is setup, not what this test is measuring.
     let before = peak_bytes();
 
     let result = fetch_part(
@@ -136,20 +106,13 @@ async fn fetch_whole_message_of(len: u32) -> usize {
     peak_bytes().saturating_sub(before)
 }
 
-/// A message a hundred times the size of the small one costs no more peak
-/// memory than a generous constant multiple of the read buffer — proving
-/// `BodyPart::Whole` streams into the sink rather than buffering the whole
-/// message, which would make this scale with `len` instead.
+/// Peak memory for a message a hundred times larger stays within a constant multiple of the read
+/// buffer.
 #[tokio::test(flavor = "current_thread")]
 async fn peak_memory_does_not_grow_with_message_size() {
     const SMALL: u32 = 64 * 1024; // one read buffer's worth
     const LARGE: u32 = 20 * 1024 * 1024; // 20 MiB: if this were buffered
-    // whole, it alone would blow past the cap below by two orders of
-    // magnitude.
 
-    // A single generous cap, not a ratio against the small run: a ratio
-    // would itself scale with message size for anything less than a
-    // perfectly flat implementation, defeating the point of the assertion.
     const CAP: usize = 4 * 1024 * 1024;
 
     let small_delta = fetch_whole_message_of(SMALL).await;

@@ -1,11 +1,7 @@
-//! The command bar (US4, T086; screens 07-09): `/` opens one bar for
-//! search, places and commands.
-
 use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// Open the bar over `window` with `/`.
 fn open_bar(window: &postio_gtk::window::FocusWindow) -> std::rc::Rc<postio_gtk::bar::Bar> {
     support::press(window, "slash", gtk::gdk::ModifierType::empty());
     let bar = window.bar().expect("/ opened the bar");
@@ -13,7 +9,6 @@ fn open_bar(window: &postio_gtk::window::FocusWindow) -> std::rc::Rc<postio_gtk:
     bar
 }
 
-/// Type `text` into the bar one character at a time, as a person does.
 async fn type_in(bar: &postio_gtk::bar::Bar, text: &str) {
     for end in 1..=text.chars().count() {
         let typed: String = text.chars().take(end).collect();
@@ -22,9 +17,6 @@ async fn type_in(bar: &postio_gtk::bar::Bar, text: &str) {
     }
 }
 
-/// Spec 010 US7: `in:Rec` lists the folders it could mean, Receipts with
-/// its count; Return makes its chip, and the dropdown's hits are Receipts'
-/// mail.
 pub fn in_rec_offers_receipts_and_return_searches_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -77,8 +69,6 @@ pub fn in_rec_offers_receipts_and_return_searches_it() {
     });
 }
 
-/// US4 scenario 5: a saved search pinned at `Alt+2` runs from the list,
-/// and its results are shown.
 pub fn alt_2_runs_the_second_saved_search() {
     crate::gtk_case(async {
         if !support::display() {
@@ -122,8 +112,6 @@ pub fn alt_2_runs_the_second_saved_search() {
             "the second saved search's results are not shown: {:?}",
             bar.result_subjects()
         );
-        // The empty field lists the saved searches as pills, each with its
-        // key; a click on one runs it, as its key does.
         bar.set_text("");
         assert!(
             crate::settle_until(async || {
@@ -149,12 +137,8 @@ pub fn alt_2_runs_the_second_saved_search() {
     });
 }
 
-/// US4 scenario 7: with no network, a search answers from this machine's
-/// index, and within its budget -- counted, not timed. Each keystroke is at
-/// most one search request to the store's owner and nothing else; what that
-/// request costs at the store is the index's own budget, a flat four
-/// statements a page whatever it matches (postio-index
-/// `search_statement_budget.rs`).
+/// Counted, not timed: each keystroke is at most one search request; the index's own budget is four
+/// statements a page (postio-index `search_statement_budget.rs`).
 pub fn offline_search_answers_locally_one_request_a_keystroke() {
     crate::gtk_case(async {
         if !support::display() {
@@ -195,7 +179,6 @@ pub fn offline_search_answers_locally_one_request_a_keystroke() {
         assert!(crate::settle_until(async || window.sync_said() == "Offline").await);
 
         let bar = open_bar(&window);
-        // Opening reads where the bar can go; typing is what is counted.
         assert!(crate::settle_until(async || bar.places_known()).await);
         let before = client.counts().snapshot();
         type_in(&bar, "budget").await;
@@ -210,13 +193,9 @@ pub fn offline_search_answers_locally_one_request_a_keystroke() {
             .map(|(family, count)| (*family, count - before.get(family).copied().unwrap_or(0)))
             .filter(|(_, count)| *count > 0)
             .collect();
-        // A keystroke that makes a search is one conversation search, as it
-        // is typed: not every keystroke makes one -- a single letter is in
-        // most of a mailbox and is not a search yet
-        // (`ParsedQuery::is_searchable`). One to three letters also ask what
-        // they could become (spec 010 US7), and the hits that land ask for
-        // their passages. With no digest rule nothing is asked about held
-        // mail, and nothing else is asked at all.
+        // Not every keystroke makes a search: a single letter is in most of a mailbox
+        // (`ParsedQuery::is_searchable`). One to three letters also ask what they could become, and
+        // hits ask for their passages.
         let count = |family: &str| {
             asked
                 .iter()
@@ -235,10 +214,6 @@ pub fn offline_search_answers_locally_one_request_a_keystroke() {
     });
 }
 
-/// Spec 010 US1: a word lists its top hits under the field, each with its
-/// folder; Show all is what the highlight starts on, so Return opens the
-/// results. A word in the search's field is never a command: the commands
-/// are `>`'s and Ctrl+K's.
 pub fn a_word_lists_top_hits_and_return_shows_all() {
     crate::gtk_case(async {
         if !support::display() {
@@ -290,9 +265,6 @@ pub fn a_word_lists_top_hits_and_return_shows_all() {
     });
 }
 
-/// The dropdown opens on its default row, the newest recent search,
-/// wherever the arrows were when it last closed: Return runs again what
-/// was just searched.
 pub fn the_dropdown_opens_on_the_newest_recent_search() {
     crate::gtk_case(async {
         if !support::display() {
@@ -365,9 +337,6 @@ pub fn the_dropdown_opens_on_the_newest_recent_search() {
     });
 }
 
-/// The operator terms typed into the field are drawn as chips where they
-/// stand, an exclusion struck through (spec 010 screens 04-05, #2082);
-/// the plain words stay plain.
 pub fn the_fields_operator_terms_are_chips() {
     crate::gtk_case(async {
         if !support::display() {
@@ -408,9 +377,6 @@ pub fn the_fields_operator_terms_are_chips() {
     });
 }
 
-/// `@` offers the correspondents the address book holds, and choosing one
-/// puts their `with:` search in the box: mail involving any of the person's
-/// addresses, as specs/005-contacts/contracts/query-with.md has the finder do.
 pub fn at_offers_correspondents() {
     crate::gtk_case(async {
         if !support::display() {
@@ -440,8 +406,6 @@ pub fn at_offers_correspondents() {
     });
 }
 
-/// With two accounts the same message filed in each is two rows, and each
-/// row says which account it is in.
 pub fn a_result_names_its_account_when_there_are_two() {
     crate::gtk_case(async {
         if !support::display() {
@@ -468,10 +432,6 @@ pub fn a_result_names_its_account_when_there_are_two() {
     });
 }
 
-/// Spec 010 US7: plain English is shown as what it was understood as, a
-/// tile a term; `Ctrl+Backspace` keeps the words as words; `Tab` makes the
-/// tiles chips in the field; `Ctrl+S` saves the query to `config.toml`,
-/// pinned, and the empty field's pills show it with its key.
 pub fn plain_english_is_understood_tab_makes_chips_and_ctrl_s_saves() {
     crate::gtk_case(async {
         if !support::display() {
@@ -595,8 +555,6 @@ async fn three_and_open() -> postio_gtk::window::FocusWindow {
     window
 }
 
-/// C24 (T182): `Ctrl K` opens the bar in command mode -- `>` already filled
-/// in, so only commands show -- and `/` opens it for mail search.
 pub fn ctrl_k_opens_the_bar_for_commands_and_slash_for_search() {
     crate::gtk_case(async {
         if !support::display() {
@@ -621,7 +579,6 @@ pub fn ctrl_k_opens_the_bar_for_commands_and_slash_for_search() {
             !said.iter().any(|line| line == "Go to"),
             "places in command mode: {said:?}"
         );
-        // What is typed after the prefix narrows the commands.
         type_in(&bar, ">arch").await;
         assert!(
             bar.texts().iter().any(|line| line == "Archive"),
@@ -649,9 +606,6 @@ pub fn ctrl_k_opens_the_bar_for_commands_and_slash_for_search() {
     });
 }
 
-/// C24 (T182): the bar opens in place -- the top bar's own field is where
-/// the typing happens, and the results drop below it -- not as a panel
-/// somewhere else over the list.
 pub fn the_bar_opens_in_the_top_bars_field() {
     crate::gtk_case(async {
         if !support::display() {
@@ -698,9 +652,6 @@ pub fn the_bar_opens_in_the_top_bars_field() {
     });
 }
 
-/// T241, ADR 0037 as amended 2026-10-08: the bar's search forgives, so a
-/// misspelled word finds the mail that was meant, after anything it finds
-/// exactly; quoted, the word is exactly itself, which is the way out.
 pub fn a_misspelled_word_finds_what_was_meant_and_quoted_is_exact() {
     crate::gtk_case(async {
         if !support::display() {
@@ -738,9 +689,6 @@ pub fn a_misspelled_word_finds_what_was_meant_and_quoted_is_exact() {
     });
 }
 
-/// gtk-design: in a hit the passage gives way before the subject. A
-/// subject of ordinary length, beside a long passage, is drawn whole at
-/// 1280 px.
 pub fn a_result_gives_its_subject_room_before_its_first_line() {
     crate::gtk_case(async {
         if !support::display() {
@@ -769,7 +717,6 @@ pub fn a_result_gives_its_subject_room_before_its_first_line() {
             "typing searched nothing: {:?}",
             bar.result_subjects()
         );
-        // Found again each time: the passages landing draws the rows anew.
         let label = || {
             support::with_class(bar.dropdown().widget(), "focus-dropdown-row-title")
                 .into_iter()
@@ -789,8 +736,6 @@ pub fn a_result_gives_its_subject_room_before_its_first_line() {
     });
 }
 
-/// `O` is a letter in the field, whatever is highlighted; `alt+o` is the
-/// results' Sort, between best match and newest, and the button says which.
 pub fn o_is_a_letter_and_alt_o_switches_the_results_sort() {
     crate::gtk_case(async {
         if !support::display() {
@@ -829,7 +774,6 @@ pub fn o_is_a_letter_and_alt_o_switches_the_results_sort() {
             "no hits: {:?}",
             bar.texts()
         );
-        // Typing wins, with a hit highlighted or not: `O` is a letter.
         support::press(&window, "Up", gtk::gdk::ModifierType::empty());
         assert!(
             !support::deliver(&window, "O"),
@@ -865,10 +809,6 @@ pub fn o_is_a_letter_and_alt_o_switches_the_results_sort() {
     });
 }
 
-/// A result whose best match is not its conversation's newest message
-/// opens on that match, and says where it is in the thread rather than
-/// calling it the latest: the replies say "Re:", so the first message's
-/// subject is the best match for its words.
 pub fn a_hit_opened_from_the_results_says_where_it_is_in_its_thread() {
     crate::gtk_case(async {
         if !support::display() {
@@ -913,9 +853,6 @@ pub fn a_hit_opened_from_the_results_says_where_it_is_in_its_thread() {
     });
 }
 
-/// A message opened from the results steps the results it came from: `j`
-/// and `k` walk them, "Result n of m" says where, `n` and `p` step the
-/// result's own thread, and Escape returns to the results.
 pub fn a_hit_steps_the_results_and_its_own_thread() {
     crate::gtk_case(async {
         if !support::display() {
@@ -950,9 +887,6 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
             "Show all did not open the results"
         );
         let results = window.results().expect("the results");
-        // Every row, in the results' own order: Top hits, then each of them
-        // again under its month. The walk is each conversation once, where
-        // it first comes.
         assert!(
             crate::settle_until(async || results.subjects().len() == 4).await,
             "the results found {:?}",
@@ -1004,9 +938,6 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
             reading.title()
         );
 
-        // The hit's own thread: step to the three-message conversation and
-        // through it with `[` and `]`. Its row is whichever of its messages
-        // ranked first -- all three say "harbor", so the newest, a reply.
         let thread_hit = hits
             .iter()
             .position(|subject| subject.ends_with("Harbor draft"))
@@ -1020,7 +951,6 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
             "the hit's thread was never read: {}",
             reading.thread_known()
         );
-        // Toward the middle message, from whichever end the hit opened at.
         assert!(
             crate::settle_until(async || reading.body_text().contains("Message ")).await,
             "the hit's body never drew: {:?}",
@@ -1043,7 +973,6 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
             reading.subtitle()
         );
 
-        // Escape closes the message and the results are back.
         chain(&window, "Escape");
         assert!(
             crate::settle_until(async || {
@@ -1056,7 +985,6 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
     });
 }
 
-/// A key pressed along the real focus chain, as a storyboard does.
 fn chain(window: &postio_gtk::window::FocusWindow, key: &str) {
     let chord: postio_ui::keymap::Chord = key.parse().expect("a chord");
     let delivery = postio_widgets::storyboard::deliver::press(window.upcast_ref(), &chord)
@@ -1071,9 +999,6 @@ fn chain(window: &postio_gtk::window::FocusWindow, key: &str) {
     crate::settle();
 }
 
-/// Walking the results with the keys keeps the ringed row in view: the
-/// ring went below the bottom of the list and the list stayed where it was,
-/// so the row Return would open could not be seen.
 pub fn walking_the_results_keeps_the_ringed_row_in_view() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1120,7 +1045,6 @@ pub fn walking_the_results_keeps_the_ringed_row_in_view() {
             scroller.vadjustment().upper(),
             scroller.height()
         );
-        // Whether the ringed row lies wholly inside what the scroller shows.
         let in_view = || {
             let Some(ringed) = support::with_class(&list, "focus-results-cursor")
                 .into_iter()

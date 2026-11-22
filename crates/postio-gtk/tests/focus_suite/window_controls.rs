@@ -1,14 +1,11 @@
-//! T193: the window's title-bar buttons hover in their own shape. The top
-//! bar is a `CenterBox` whose ends fill its height, so an icon button left
-//! at the default `valign` was laid out 26x46 and hovered as a tall pill,
-//! whatever its `border-radius`; the buttons are centred at their own size.
+//! An icon button left at the default `valign` in the top bar (a `CenterBox` whose ends fill its
+//! height) was laid out 26x46 and hovered as a tall pill; the buttons are centred at their own
+//! size.
 
 use gtk::prelude::*;
 
 use crate::support;
 
-/// The populated inbox keeps GTK's native titlebar gestures, just as the
-/// waiting page does: drag, double-click maximize and the window menu.
 pub fn the_inbox_top_bar_is_a_window_handle() {
     crate::gtk_case(async {
         if !support::display() {
@@ -57,7 +54,6 @@ async fn maximize_and_restore(window: &postio_gtk::window::FocusWindow) {
     assert_eq!(button.tooltip_text().as_deref(), Some("Maximize window"));
 }
 
-/// Window controls remain available while opening, then on the inbox.
 pub fn maximize_and_restore_work_before_and_after_mail_opens() {
     crate::gtk_case(async {
         if !support::display() {
@@ -78,9 +74,6 @@ pub fn maximize_and_restore_work_before_and_after_mail_opens() {
     });
 }
 
-/// The top bar's icon buttons (compose, the main menu, close) are laid out
-/// at their own size, not stretched to the bar's height; close is square,
-/// which `circular` then makes a circle.
 pub fn the_top_bars_icon_buttons_hover_in_their_own_shape() {
     crate::gtk_case(async {
         if !support::display() {

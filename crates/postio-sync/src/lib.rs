@@ -1,56 +1,7 @@
-//! Postio's sync engine: the queue drainer, resync, IDLE and backoff.
-//!
-//! # Where this sits
-//!
-//! Everything below is reached through
-//! [`MailBackend`](postio_account::backend::MailBackend); nothing here names a
-//! protocol type. That is ADR 0001's requirement and it is what makes the whole
-//! engine testable against
-//! [`MockBackend`](postio_account::backend::MockBackend) with no server and no
-//! network — every test in this crate does exactly that.
-//!
-//! # Local-first, drained later
-//!
-//! A mutating action writes SQLite and enqueues an operation in one
-//! transaction, and the UI repaints without waiting (`CLAUDE.md`). This crate
-//! owns what happens next:
-//!
-//! - [`backfill`] decides which message body to download next: newest first
-//!   in the background, and immediately for the one the user just opened.
-//! - [`coalesce()`] folds a batch down to the operations the server actually
-//!   needs, so a minute of offline flagging is not replayed keystroke by
-//!   keystroke.
-//! - `contacts` records a sighting of every correspondent on a message as
-//!   [`initial`] and [`resync`] insert it, which is what @ and recipient
-//!   completion read.
-//! - [`drain`] sends them in order, resolves conflicts against what the server
-//!   says, and settles each queue row.
-//! - [`filing`] is the seam a host in Focus mode files new mail through, in
-//!   the transaction an incremental pass files it in.
-//! - [`send`] is what [`drain`] calls for `Operation::Send`: build the
-//!   message, hand it to SMTP, file the Sent copy.
-//! - [`retry`] decides when a failure is worth another attempt, and when the
-//!   user has to be told instead.
-//! - [`connect`] keeps the session up underneath all of it: exponential
-//!   backoff with jitter, a flapping link that converges rather than thrashes,
-//!   and a hard stop on a refused password.
-//! - [`initial`] enumerates a mailbox for the first time, newest message
-//!   first, so the app feels usable before the sync is done.
-//! - [`order`] ranks mailboxes *against each other* so INBOX and the folders a
-//!   person reads next are queued before a large Archive or Junk. INBOX is
-//!   further held apart: its headers, then its newest page of bodies, are
-//!   synced before any other mailbox's pass or body begins, on a first sync
-//!   and after any gap (#1709) -- see [`order`] for the rule.
-//! - [`resync`] keeps an already-synced mailbox current: QRESYNC/CONDSTORE
-//!   incremental pulls, falling back to [`initial`] for a full re-enumeration
-//!   when the local state cannot answer "what changed" — most importantly
-//!   when `UIDVALIDITY` moves.
-//! - [`status`] turns [`connect::Link`] transitions and [`initial::Progress`]
-//!   batches into the throttled status-line state the UI needs, without this
-//!   crate having to know what an `Event` is.
-//! - [`watch`] decides when to look: `IDLE` on the one mailbox worth a
-//!   connection of its own, interval polling everywhere else, and a periodic
-//!   reconciliation that keeps a silently deaf `IDLE` from hiding new mail.
+//! Postio's sync engine: queue drainer, resync, IDLE, backoff, backfill. Everything goes through
+//! `MailBackend`; nothing here names a protocol type (ADR 0001),
+//! so every test runs against `MockBackend`. A mutating action writes SQLite and enqueues in one
+//! transaction; this crate owns what happens next.
 
 pub mod backfill;
 pub mod blob_sink;

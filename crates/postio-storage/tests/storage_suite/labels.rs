@@ -1,13 +1,3 @@
-//! Labels: the account's set, and which messages carry them (#780).
-//!
-//! The schema had `labels` and `message_labels` from migration 0001 and
-//! `MessageRepository` wrote a message's whole label set on create and update,
-//! but nothing listed an account's labels, created one, or moved a single
-//! label on and off a message that already exists. That last shape is the one
-//! a command needs: `AddLabel` is incremental, undoable and queued, the way
-//! `Flag` is, and rewriting a whole message row to add one label would race
-//! every other write to it.
-
 use postio_model::{AccountId, Label, LabelId};
 use postio_storage::Connection;
 use postio_storage::repository::{LabelRepository, MessageRepository};
@@ -25,7 +15,6 @@ async fn a_message(
         .expect("create a message")
 }
 
-/// A second account, so "this account's labels" means something.
 async fn another_account(connection: &Connection) -> postio_model::Account {
     let mut account = postio_model::Account::new(
         "Quinn",
@@ -63,8 +52,6 @@ async fn an_account_lists_the_labels_it_owns_and_no_others() {
         "a picker shows them in a stable order a person can scan"
     );
 
-    // A second account's labels are its own: the picker for one account must
-    // never offer another's, which is the mistake a missing scope makes.
     let other = another_account(&connection).await;
     let mut theirs = Label::new(other.id, "Theirs");
     labels.create(&mut theirs).await.expect("create");
@@ -77,9 +64,6 @@ async fn an_account_lists_the_labels_it_owns_and_no_others() {
 
 #[tokio::test]
 async fn a_label_name_is_unique_per_account_whatever_its_case() {
-    // `idx_labels_account_name` is `COLLATE NOCASE`, so this is the schema's
-    // rule; the repository has to answer it as something a caller can act on
-    // rather than a raw constraint violation.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, _inbox) = test_support::account_with_inbox(&connection).await;
@@ -95,7 +79,6 @@ async fn a_label_name_is_unique_per_account_whatever_its_case() {
          and like two to the picker"
     );
 
-    // The same name under a different account is a different label.
     let other = another_account(&connection).await;
     let mut theirs = Label::new(other.id, "Work");
     labels
@@ -123,8 +106,6 @@ async fn a_label_goes_on_and_off_one_message_without_rewriting_it() {
         labels.for_message(message).await.expect("read back"),
         vec![work.id]
     );
-    // The message row itself agrees, which is what the list and the reader
-    // render from.
     assert_eq!(
         MessageRepository::new(&connection)
             .get(message)
@@ -135,8 +116,6 @@ async fn a_label_goes_on_and_off_one_message_without_rewriting_it() {
         vec![work.id]
     );
 
-    // Attaching again is not an error and not a second row: `message_labels`
-    // is keyed on the pair, and a command that ran twice must be harmless.
     assert!(
         !labels.attach(message, work.id).await.expect("attach again"),
         "the second attach reports that nothing changed"
@@ -166,8 +145,6 @@ async fn a_label_goes_on_and_off_one_message_without_rewriting_it() {
 
 #[tokio::test]
 async fn deleting_a_label_takes_it_off_every_message_carrying_it() {
-    // `ON DELETE CASCADE` on `message_labels`, asserted because a label that
-    // outlived its rows would leave messages pointing at nothing.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -198,13 +175,8 @@ async fn deleting_a_label_takes_it_off_every_message_carrying_it() {
 
 #[tokio::test]
 async fn a_resync_does_not_take_a_label_off_a_message() {
-    // The hazard that decides how labels are designed (#780). `write_update`
-    // -- which `upsert_batch` uses for every message a sync already knows --
-    // replaces a message's whole label set from `message.labels`, and a
-    // `Message` built from the wire carries none. So a label attached locally
-    // was deleted by the next resync of its mailbox: a feature that works, is
-    // tested, and is quietly undone by another layer, which is this
-    // repository's characteristic bug.
+    // `write_update` replaces a message's whole label set from `message.labels`, which a wire
+    // `Message` leaves empty: a locally attached label would be undone by the next resync (#780).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -221,8 +193,6 @@ async fn a_resync_does_not_take_a_label_off_a_message() {
     labels.create(&mut work).await.expect("create");
     labels.attach(message.id, work.id).await.expect("attach");
 
-    // The same message coming back from the server, as a sync builds it:
-    // flags and coordinates, and no idea about labels.
     let mut fetched = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
     fetched.server = message.server.clone();
     messages
@@ -238,7 +208,6 @@ async fn a_resync_does_not_take_a_label_off_a_message() {
     );
 }
 
-/// Files a message into `mailbox` under `rfc`, threaded, carrying `labels`.
 async fn a_threaded_message(
     connection: &Connection,
     account: AccountId,
@@ -272,10 +241,6 @@ async fn a_threaded_message(
 
 #[tokio::test]
 async fn a_page_s_labels_are_one_statement_that_reads_them_and_scans_no_table() {
-    // A Focus page draws each conversation's label pills (spec 007 T043),
-    // read for the whole page at once: a conversation's labels are every
-    // label any of its messages carries, each once, in the order they were
-    // made -- and never one statement a row.
     use postio_storage::test_support::counting::{counted_async, scans};
 
     let database = test_support::memory().await;
@@ -289,8 +254,6 @@ async fn a_page_s_labels_are_one_statement_that_reads_them_and_scans_no_table() 
         made.push(label);
     }
     let (atlas, harbor, home) = (made[0].id, made[1].id, made[2].id);
-    // A conversation of two carrying all three between its messages, one
-    // label on both; another carrying one; a third carrying none.
     let three = a_threaded_message(
         &connection,
         account.id,
@@ -351,10 +314,6 @@ async fn a_page_s_labels_are_one_statement_that_reads_them_and_scans_no_table() 
 
 #[tokio::test]
 async fn each_label_counts_its_conversations_in_one_statement() {
-    // Focus's label picker and folders popover show each label with how
-    // many conversations carry it (screens 10 and 13): every label of the
-    // account at once, a conversation counted once however many of its
-    // messages carry the label, and a label nobody uses counted as none.
     use postio_storage::test_support::counting::{counted_async, scans};
 
     let database = test_support::memory().await;

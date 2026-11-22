@@ -3,39 +3,19 @@ import PostioFFI
 import PostioAppKit
 import PostioKit
 
-/// The window-level `NSEvent` monitor that dispatches every keystroke.
-///
-/// **Not `.keyboardShortcut`** (ADR 0019 Q4). SwiftUI's modifier is a
-/// menu-accelerator model, and it cannot express any of the three things this
-/// application's keyboard is built on: a `g g` sequence, an `Esc` whose
-/// meaning depends on which surface has focus, or *typing always wins*. A
-/// local monitor can, and it is the shape the resolver expects. Menu items
-/// draw their accelerators from `binding(for:)` and are given **no key
-/// equivalent**, so nothing races this for the same keystroke.
-///
-/// It owns no keymap. Everything it does is: reduce the event, ask, and act on
-/// one of three answers.
-///
-/// **It moves nothing in the list either** (specs/009-focus-macos T050). `j`,
-/// `k`, `x`, `X`, `J`, `K`, `!` and Back on the list resolve to commands that
-/// `invoke` hands to Focus's controller, and the cursor, the selection and
-/// the heading move when its intents come back (`FocusIntents`). What stays
-/// the frontend's is the surfaces above the list: Escape closes the command
-/// bar's question, the key map or the search field first (`Engine.run`), and
-/// only then reaches `back`, which clears the selection.
+/// The window-level `NSEvent` monitor that dispatches every keystroke. Not `.keyboardShortcut`:
+/// SwiftUI's modifier cannot express `g g` sequences, a surface-dependent `Esc`, or typing always
+/// winning (ADR 0019 Q4).
+/// Menu items draw accelerators from `binding(for:)` with no key equivalent, so nothing races this
+/// monitor.
 @MainActor
 final class KeyMonitor {
-    /// Ask the boundary what a press means.
     private let resolve: (KeyEvent.Reduced, UiContext, Bool) -> KeyOutcomeFfi
-    /// Run a command the boundary named, and say whether anything acted.
-    ///
-    /// The answer decides whether the key is swallowed. See `KeyDisposition`:
-    /// this monitor runs ahead of the responder chain, so a key it takes for
-    /// a command nothing handled is a key the view underneath never sees.
+    /// The answer decides whether the key is swallowed: this monitor runs ahead of the responder
+    /// chain,
+    /// so a key taken for a command nothing handled never reaches the view underneath.
     private let run: (String) -> Bool
-    /// Show, or clear, a half-typed sequence.
     private let pending: (String?) -> Void
-    /// Which surface has focus, as the application understands it.
     private let context: () -> UiContext
 
     private var monitor: Any?
@@ -52,11 +32,8 @@ final class KeyMonitor {
         self.context = context
     }
 
-    /// Start listening, until `stop()`.
-    ///
-    /// A *local* monitor: it sees this application's events only. A global one
-    /// would need accessibility permission and would read every keystroke on
-    /// the machine, which is not something a mail client gets to ask for.
+    /// A *local* monitor: a global one needs accessibility permission and reads every keystroke on
+    /// the machine.
     func start() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -70,24 +47,14 @@ final class KeyMonitor {
         monitor = nil
     }
 
-    /// Whether Postio handled `event`, and it should therefore be swallowed.
-    ///
-    /// Separated from the monitor closure so the decision can be exercised
-    /// without a window server: what this returns is exactly what decides
-    /// whether a key reaches the widget underneath.
+    /// Separated from the monitor closure so the decision can be exercised without a window server.
     func handle(_ event: NSEvent) -> Bool {
         guard let reduced = KeyEvent.reduce(event) else { return false }
-        // Mid-composition, the input method's -- see
-        // `KeyDisposition.belongsToInputMethod`. Asked of the responder
-        // rather than the event, because it is a fact about what the input
-        // context is holding.
+        // Mid-composition the key is the input method's (`KeyDisposition.belongsToInputMethod`).
         if KeyDisposition.belongsToInputMethod(reduced, composing: isComposing()) { return false }
 
         let typing = Self.isTyping()
-        // The field's own editing, before anything resolves it -- see
-        // `KeyDisposition.belongsToText`.
         if KeyDisposition.belongsToText(reduced, typing: typing) { return false }
-        // The Files tab's arrows are its grid's -- see `belongsToGrid`.
         let grid = NSApp.keyWindow?.firstResponder is FilesCollectionView
         if KeyDisposition.belongsToGrid(reduced, gridFocused: grid) { return false }
         let outcome = resolve(reduced, context(), typing)
@@ -97,18 +64,15 @@ final class KeyMonitor {
             pending(nil)
             acted = run(id)
         case let .pending(description):
-            // Shown, so a half-typed `g` is never invisible.
             pending(description)
         case .unhandled:
             pending(nil)
         }
-        // `KeyDisposition` decides, and it is in `PostioKit` where it can be
-        // tested: this file is in the executable target and nothing can
-        // reach it.
+        // `KeyDisposition` is in `PostioKit` so it can be tested; this file is in the executable
+        // target.
         return KeyDisposition.swallows(outcome: outcome, acted: acted)
     }
 
-    /// Whether an input method is part-way through composing a character.
     private func isComposing() -> Bool {
         guard let responder = NSApp.keyWindow?.firstResponder as? NSTextInputClient else {
             return false
@@ -116,24 +80,15 @@ final class KeyMonitor {
         return responder.hasMarkedText()
     }
 
-    /// Whether the focused responder takes text.
-    ///
-    /// The flag the resolver uses to make typing win, and the most visible
-    /// thing this file can get wrong: a search field that archives mail on
-    /// `a` reads as a broken application, not as a misrouted key. Answered
-    /// from the first responder rather than tracked, because focus is a live
-    /// property and a cached copy goes stale in exactly the window that
-    /// matters.
-    ///
-    /// `NSTextInputClient` rather than a list of view classes: it is the
-    /// protocol a responder adopts *because* it accepts text, so a field this
-    /// application has not thought of is covered by construction.
+    /// The flag that makes typing win; wrong, a search field archives mail on `a`. Read from the
+    /// first
+    /// responder, not tracked: a cached copy goes stale exactly when it matters.
+    /// `NSTextInputClient` rather than view classes: a responder adopts it because it accepts text.
     static func isTyping() -> Bool {
-        // The rule is `TypingResponder`'s, in `PostioKit` where a test can
-        // reach it. It used to be three lines here, and the third asked
-        // whether the *window* had a field editor rather than whether this
-        // responder was a text field — so once the toolbar's search box had
-        // made one, every bare-character binding was refused.
+        // The rule is `TypingResponder`'s, in `PostioKit` where a test can reach it. Asking whether
+        // the
+        // *window* had a field editor refused every bare-character binding once the toolbar search
+        // box made one.
         TypingResponder.isTyping(NSApp.keyWindow?.firstResponder)
     }
 }

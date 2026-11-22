@@ -1,24 +1,12 @@
-//! Filtered, the digest window, the rule sheet and capture at the boundary
-//! (specs/009-focus-macos T111, for the Mac's T113-T116).
-//!
-//! The surfaces are the controller's (`postio_focus`, slice 12): what each
-//! holds, what each key does, which read is current. The Mac draws what it
-//! is told -- `FocusFiltered`, `FocusDigest`, `FocusOpenRule`/`FocusRule`,
-//! `FocusOpenCapture`/`FocusCapture`, each a whole view -- and reports what
-//! the person did that is not a key: a click on a row, text typed, a day or
-//! a project chosen. The keys (`1`-`7`, `R`, `]`/`[`, Tab, `D`, `U`, `⇧A`,
-//! `d`, `t`/`n`, `⌥S`, `⌘P`, `⌘↩`, Esc) are commands `key` resolves in the
-//! surface's context and `invoke` runs.
-//!
-//! Three reads cross as well, for what Swift may want without a surface: a
-//! digest's summary, the vault, and a task written straight to it.
+//! Filtered, the digest window, the rule sheet and capture. The controller (`postio_focus`) decides
+//! what each holds and
+//! does; the Mac draws each as a whole view and reports clicks, typed text and chosen days. Keys
+//! are commands `key` resolves.
 
 use crate::session::{Session, SessionError, blocking};
 
-/// One key hint: the key as the keymap in force spells it, and its words.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusHintFfi {
-    /// "R", "1–7", "Return".
     pub key: String,
     /// "restore + never filter sender".
     pub label: String,
@@ -33,11 +21,8 @@ impl From<postio_ui::hints::Hint> for FocusHintFfi {
     }
 }
 
-/// Filtered, drawn whole (screen 21). It replaces the list in the main
-/// window; the controller has put it on the stack.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteredViewFfi {
-    /// "Filtered".
     pub title: String,
     /// "Archived automatically · newest first".
     pub subtitle: String,
@@ -45,46 +30,34 @@ pub struct FilteredViewFfi {
     pub note: String,
     /// "Sweep the inbox…": a click is `invoke("sweep_inbox")`.
     pub sweep: String,
-    /// Its key.
     pub sweep_key: Option<String>,
     /// The focused row's button: a click is `invoke("restore_filtered")`.
     pub restore: String,
-    /// Its key.
     pub restore_key: Option<String>,
     /// The tabs, `1` to `7`: a click is `invoke("filtered_tab_<n>")`.
     pub tabs: Vec<FilteredTabFfi>,
-    /// The rows read so far, newest first.
     pub rows: Vec<FilteredLineFfi>,
-    /// The row with the keyboard.
     pub focused: Option<u32>,
     /// Whether there may be more: `focus_filtered_more()` at the end.
     pub more: bool,
-    /// The footer's hints.
     pub footer: Vec<FocusHintFfi>,
-    /// The selection bar, while anything is selected.
     pub bar: Option<FilteredBarFfi>,
-    /// What to say in place of the rows when the tab has none.
     pub empty: Option<String>,
     /// The thread open under one of the rows, when one is; `focused` then
     /// counts its children.
     pub expanded: Option<FilteredSpliceFfi>,
 }
 
-/// The children of Filtered's open thread.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteredSpliceFfi {
-    /// The expanded row, an index into `rows`.
     pub anchor: u32,
     /// One per message, oldest first, then the unsent reply.
     pub children: Vec<crate::ChildRowFfi>,
 }
 
-/// What the bar over Filtered says while anything is selected: the count,
-/// the verbs, and the selection's own keys. A verb's press is
-/// `invoke(command)`; the words and keys are the controller's.
+/// The bar over Filtered while anything is selected. A verb's press is `invoke(command)`.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteredBarFfi {
-    /// "3 selected".
     pub summary: String,
     /// The verbs, the first the one a selection is usually for.
     pub actions: Vec<FilteredBarActionFfi>,
@@ -92,16 +65,12 @@ pub struct FilteredBarFfi {
     pub hints: Vec<FocusHintFfi>,
 }
 
-/// One verb on the bar over Filtered.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteredBarActionFfi {
     /// The registry id a press invokes: "restore_filtered".
     pub command: String,
-    /// Its words.
     pub label: String,
-    /// Its key.
     pub key: Option<String>,
-    /// Whether it is the verb a selection is usually for.
     pub primary: bool,
 }
 
@@ -124,37 +93,25 @@ impl From<postio_focus::FilteredBar> for FilteredBarFfi {
     }
 }
 
-/// One of Filtered's tabs.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteredTabFfi {
-    /// "All", "Spam".
     pub name: String,
-    /// How many it holds.
     pub count: u32,
-    /// The number key that shows it.
     pub key: Option<String>,
-    /// Whether it is the one showing.
     pub on: bool,
 }
 
-/// One filtered message.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteredLineFfi {
-    /// The message.
     pub message: i64,
-    /// Who sent it.
     pub sender: String,
-    /// Its subject.
     pub subject: String,
-    /// Its first line.
     pub preview: Option<String>,
     /// The reason pill: "notification · Forge".
     pub pill: String,
-    /// When it was filed.
     pub time: String,
     /// The day heading above it, on the first row of each day.
     pub heading: Option<String>,
-    /// Whether it is in the selection: its box is checked.
     pub selected: bool,
     /// How many messages its conversation holds; more than one opens in
     /// place (`invoke("expand_thread")`).
@@ -213,14 +170,10 @@ impl From<postio_focus::FilteredView> for FilteredViewFfi {
     }
 }
 
-/// What the digest's window shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum DigestPageFfi {
-    /// The summary by topic (screen 22).
     Summary,
-    /// The plain list of its messages.
     List,
-    /// An email, in place (screen 23).
     Email,
 }
 
@@ -234,13 +187,9 @@ impl From<postio_focus::DigestPage> for DigestPageFfi {
     }
 }
 
-/// The digest's window, drawn whole (screens 22 and 23), at the message
-/// window's size and column (M1).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DigestViewFfi {
-    /// The delivery, as `FocusOpenDigest` named it.
     pub delivery: i64,
-    /// The page showing.
     pub page: DigestPageFfi,
     /// "Weekly · Newsletters"; the email's subject on the email page.
     pub title: String,
@@ -249,31 +198,23 @@ pub struct DigestViewFfi {
     pub subtitle: String,
     /// "Archive all 14": a click is `invoke("archive")`.
     pub archive: String,
-    /// Its key.
     pub archive_key: Option<String>,
     /// "Weekly, Sunday 09:00 · Edit rule and cadence": a click is
     /// `invoke("digest_rule")`.
     pub rule_line: String,
-    /// Its key.
     pub rule_key: Option<String>,
-    /// Whether the Summary and list tabs show.
     pub tabs: bool,
-    /// The list tab's words: "14 messages".
     pub list_tab: String,
     /// The key that switches: a click on a tab is
     /// `invoke("toggle_digest_summary")`.
     pub tab_key: Option<String>,
-    /// The plain list.
     pub rows: Vec<DigestLineFfi>,
     /// Its row with the keyboard: what `D` and `U` act on.
     pub focused: Option<u32>,
-    /// The summary, by topic.
     pub topics: Vec<DigestTopicFfi>,
     /// The focused reference, in reading order (`DigestStatementFfi.index`).
     pub focused_reference: Option<u32>,
-    /// The card under the paragraphs.
     pub card: Option<DigestCardFfi>,
-    /// The line under the summary.
     pub footer: Option<String>,
     /// The email on the email page: draw `reader_document(email.message)`
     /// in the window, the banner over it, `excerpt` highlighted.
@@ -281,37 +222,27 @@ pub struct DigestViewFfi {
     /// The email page's "‹ Summary" (or "‹ 3 messages"): a click is
     /// `invoke("back")`.
     pub back: String,
-    /// Its key.
     pub back_key: Option<String>,
     /// Whether what it holds is still being read.
     pub loading: bool,
 }
 
-/// One message of the digest's plain list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DigestLineFfi {
-    /// The message.
     pub message: i64,
-    /// Who sent it.
     pub sender: String,
-    /// Its subject.
     pub subject: String,
-    /// Its first line.
     pub preview: Option<String>,
-    /// When it came.
     pub time: String,
 }
 
-/// A topic of the summary.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DigestTopicFfi {
     /// "Rates · 3 statements from 2 messages".
     pub heading: String,
-    /// Its statements, in reading order.
     pub statements: Vec<DigestStatementFfi>,
 }
 
-/// One statement, ending in its numbered reference.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DigestStatementFfi {
     /// Its place among every statement: what `focus_digest_reference`
@@ -319,33 +250,25 @@ pub struct DigestStatementFfi {
     pub index: u32,
     /// Plain text, never markup (FR-174).
     pub text: String,
-    /// Its reference's number, drawn as a chip after it.
     pub number: u32,
-    /// The message it cites.
     pub message: i64,
 }
 
-/// The card for the focused reference.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DigestCardFfi {
     /// "Reference 3 · Ada Moreno · The rate decision".
     pub title: String,
     /// "open the full email".
     pub hint: String,
-    /// Its key.
     pub key: Option<String>,
 }
 
-/// The email shown in the digest's window.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DigestEmailFfi {
-    /// The message.
     pub message: i64,
     /// The reference that cites it, when one does.
     pub number: Option<u32>,
-    /// The passage to highlight.
     pub excerpt: Option<String>,
-    /// The banner over it.
     pub banner: Option<String>,
 }
 
@@ -412,17 +335,12 @@ impl From<postio_focus::DigestView> for DigestViewFfi {
     }
 }
 
-/// A question to ask before doing something no single undo takes back
-/// whole: an alert with Cancel and one button.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ConfirmFfi {
     /// What `focus_confirmed` names it by.
     pub token: u64,
-    /// The heading.
     pub heading: String,
-    /// The sentence under it.
     pub body: String,
-    /// The button that says yes.
     pub confirm: String,
     /// Draw the button as destructive rather than as the default.
     pub destructive: bool,
@@ -440,7 +358,6 @@ impl From<postio_focus::Confirm> for ConfirmFfi {
     }
 }
 
-/// The rule's schedule, as the sheet's controls hold it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RuleScheduleFfi {
     /// Index into `RuleViewFfi.cadences`.
@@ -475,53 +392,40 @@ impl From<RuleScheduleFfi> for postio_focus::RuleSchedule {
     }
 }
 
-/// The digest-this-sender sheet, drawn whole (screen 24).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RuleViewFfi {
     /// "Digest this sender", "Digest rule · Newsletters".
     pub heading: String,
-    /// "From".
     pub from_label: String,
     /// The senders, as a plain line; `None` once the query field is up.
     pub from: Option<String>,
     /// The query field's text while it is up: set the field from it only
     /// when it differs.
     pub query: Option<String>,
-    /// The query field's placeholder.
     pub placeholder: String,
     /// "Match a list or a search instead…": a click is
     /// `focus_rule_match_instead()`.
     pub match_instead: Option<String>,
     /// "Digest mail like this": a click is `focus_rule_like_this()`.
     pub like_this: Option<String>,
-    /// "Deliver".
     pub deliver_label: String,
-    /// The schedule.
     pub schedule: RuleScheduleFfi,
-    /// "Daily", "Weekly", "Monthly".
     pub cadences: Vec<String>,
-    /// "Monday" to "Sunday".
     pub weekdays: Vec<String>,
-    /// What still comes straight to the inbox.
     pub note: String,
     /// "Create" or "Save": a click is `focus_rule_create()`.
     pub create: String,
-    /// Its key.
     pub create_key: Option<String>,
     /// "Would have caught 9 messages in the last 90 days", once read.
     pub preview_heading: Option<String>,
-    /// The newest of them.
     pub preview: Vec<RulePreviewLineFfi>,
-    /// "and 5 more".
     pub more: Option<String>,
     /// Why the rule cannot be written as it stands.
     pub error: Option<String>,
 }
 
-/// One message the rule would have caught.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RulePreviewLineFfi {
-    /// Its subject.
     pub subject: String,
     /// "Today", "Tue", "12 Sep".
     pub day: String,
@@ -559,16 +463,12 @@ impl From<postio_focus::RuleView> for RuleViewFfi {
     }
 }
 
-/// A task or a note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum CaptureModeFfi {
-    /// A line in the Obsidian Tasks format.
     Task,
-    /// An entry appended to a note.
     Note,
 }
 
-/// One quick pick for the due day.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CapturePickFfi {
     /// "Today", "Mon", "None".
@@ -577,22 +477,18 @@ pub struct CapturePickFfi {
     pub day: Option<String>,
 }
 
-/// One project the capture can go to.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CaptureProjectFfi {
     /// What `focus_capture_project` takes.
     pub token: u64,
     /// Its name, or "Inbox".
     pub name: String,
-    /// Its note.
     pub note: String,
     /// "3 open".
     pub open: String,
-    /// Whether it is the one chosen.
     pub chosen: bool,
 }
 
-/// The capture window, drawn whole (screen 25).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CaptureViewFfi {
     /// Task or note: the segmented control, whose clicks are
@@ -600,15 +496,11 @@ pub struct CaptureViewFfi {
     pub mode: CaptureModeFfi,
     /// "From Ada · Quarterly review · Mon".
     pub from: String,
-    /// "Task", "Note".
     pub field: String,
     /// The text, verbatim: set the field from it only when it differs.
     pub text: String,
-    /// `⌥S`'s keycap.
     pub subject_key: Option<String>,
-    /// Whether the due row shows.
     pub has_due: bool,
-    /// The due day, "YYYY-MM-DD".
     pub due: Option<String>,
     /// "Friday, 2 October 2026", "No due date".
     pub due_label: String,
@@ -616,27 +508,20 @@ pub struct CaptureViewFfi {
     pub picks: Vec<CapturePickFfi>,
     /// "Project · suggested: the subject names Review".
     pub project_title: String,
-    /// The project chosen, or "Inbox".
     pub project: String,
-    /// Its note.
     pub project_note: String,
     /// `⌘P`'s keycap: `invoke("capture_change_project")` opens the list.
     pub project_key: Option<String>,
-    /// Whether the project list is open.
     pub projects_open: bool,
-    /// Its filter's text.
     pub filter: String,
     /// The projects the filter lets through, then the Inbox.
     pub projects: Vec<CaptureProjectFfi>,
     /// "This exact line will be appended".
     pub preview_title: String,
-    /// The exact line written.
     pub preview: String,
-    /// Where it goes and when it is due.
     pub footnote: String,
     /// "Add task", "Add note": a click is `invoke("capture_write")`.
     pub button: String,
-    /// Its key.
     pub button_key: Option<String>,
     /// Why the vault could not be read or written.
     pub error: Option<String>,
@@ -696,59 +581,38 @@ impl From<postio_focus::CaptureView> for CaptureViewFfi {
     }
 }
 
-/// A digest's summary, as the host reads it back: every statement whose
-/// passage is still in its message's own text.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DigestSummaryFfi {
-    /// The statements, in reading order.
     pub statements: Vec<SummaryStatementFfi>,
-    /// How many messages it was written from.
     pub messages: u32,
-    /// From how many senders.
     pub senders: u32,
 }
 
-/// One statement of a summary.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SummaryStatementFfi {
-    /// Its topic.
     pub topic: String,
-    /// What it says.
     pub text: String,
-    /// Its reference's number.
     pub number: u32,
-    /// The message it cites.
     pub message: i64,
-    /// The passage it cites, verbatim.
     pub excerpt: String,
 }
 
-/// A project note in the vault.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct VaultProjectFfi {
-    /// Its name.
     pub name: String,
-    /// Its note, relative to the vault.
     pub note: String,
 }
 
-/// What capture needs of the vault for a message.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct VaultPictureFfi {
-    /// The projects.
     pub projects: Vec<VaultProjectFfi>,
-    /// The one the subject suggests.
     pub suggested: Option<VaultProjectFfi>,
-    /// The note a task goes to with no project.
     pub tasks_note: String,
 }
 
-/// What a capture appended.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CapturedFfi {
-    /// The note, relative to the vault.
     pub note: String,
-    /// The line appended.
     pub line: String,
 }
 
@@ -767,32 +631,27 @@ fn unavailable(message: impl ToString) -> SessionError {
 
 #[uniffi::export]
 impl Session {
-    /// A click on Filtered's row at `index`: the keyboard goes to it.
     pub fn focus_filtered_point(&self, index: u32) {
         self.focus_driver()
             .input(postio_focus::Input::FilteredPoint(index));
     }
 
-    /// A modified click on Filtered's row at `position`: `range` when
-    /// Shift was held, a toggle when the platform's toggle modifier was
-    /// (Command on the Mac). As `focus_pick` is for the list.
+    /// A modified click on Filtered's row at `position`: `range` when Shift was held, a toggle for
+    /// the platform's toggle modifier.
     pub fn focus_filtered_pick(&self, position: u32, range: bool) {
         self.focus_driver()
             .input(postio_focus::Input::FilteredPick { position, range });
     }
 
-    /// Filtered was scrolled to its end: its next page, when `more`.
     pub fn focus_filtered_more(&self) {
         self.focus_driver().input(postio_focus::Input::FilteredMore);
     }
 
-    /// A click on the digest's list row at `index`.
     pub fn focus_digest_point(&self, index: u32) {
         self.focus_driver()
             .input(postio_focus::Input::DigestPoint(index));
     }
 
-    /// A click on the summary's statement at `index` (its `index`).
     pub fn focus_digest_reference(&self, index: u32) {
         self.focus_driver()
             .input(postio_focus::Input::DigestReference(index));
@@ -804,24 +663,20 @@ impl Session {
             .input(postio_focus::Input::Confirmed(token));
     }
 
-    /// The rule sheet's query field holds `text` now.
     pub fn focus_rule_query(&self, text: String) {
         self.focus_driver()
             .input(postio_focus::Input::RuleQuery { text });
     }
 
-    /// "Match a list or a search instead…".
     pub fn focus_rule_match_instead(&self) {
         self.focus_driver()
             .input(postio_focus::Input::RuleMatchInstead);
     }
 
-    /// "Digest mail like this".
     pub fn focus_rule_like_this(&self) {
         self.focus_driver().input(postio_focus::Input::RuleLikeThis);
     }
 
-    /// The rule sheet's cadence, day or time changed.
     pub fn focus_rule_schedule(&self, schedule: RuleScheduleFfi) {
         self.focus_driver()
             .input(postio_focus::Input::RuleSchedule(schedule.into()));
@@ -834,7 +689,6 @@ impl Session {
         self.focus_driver().input(postio_focus::Input::RuleCreate);
     }
 
-    /// The capture field holds `text` now.
     pub fn focus_capture_typed(&self, text: String) {
         self.focus_driver()
             .input(postio_focus::Input::CaptureTyped { text });
@@ -848,13 +702,11 @@ impl Session {
             .input(postio_focus::Input::CaptureDue(due));
     }
 
-    /// The project list's filter holds `text` now.
     pub fn focus_capture_filter(&self, text: String) {
         self.focus_driver()
             .input(postio_focus::Input::CaptureFilter { text });
     }
 
-    /// The project row with `token` was chosen.
     pub fn focus_capture_project(&self, token: u64) {
         self.focus_driver()
             .input(postio_focus::Input::CaptureProject(token));
@@ -867,10 +719,8 @@ impl Session {
             .input(postio_focus::Input::OpenLink(uri));
     }
 
-    /// `delivery`'s summary as the host reads it back, or `None` when none
-    /// is written or none is left to show. Blocks: call it off the main
-    /// actor. The digest window does not need it -- `FocusDigest` carries
-    /// the summary -- and reads it only when a model is configured (C6).
+    /// `delivery`'s summary as the host reads it back, or `None` when none is written or left to
+    /// show. Blocks: call it off the main actor.
     pub fn digest_summary(&self, delivery: i64) -> Result<Option<DigestSummaryFfi>, SessionError> {
         let client = self
             .client()
@@ -894,9 +744,8 @@ impl Session {
         }))
     }
 
-    /// What capture needs of the vault for a message with `subject`. Fails
-    /// with the host's sentence naming `[focus.vault]` when none is
-    /// configured (C9). Blocks.
+    /// What capture needs of the vault for a message with `subject`. Fails with the host's sentence
+    /// naming `[focus.vault]` when none is configured. Blocks.
     pub fn vault(&self, subject: String) -> Result<VaultPictureFfi, SessionError> {
         let client = self
             .client()
@@ -911,9 +760,8 @@ impl Session {
         })
     }
 
-    /// Append a task to `project`'s note in the vault, or to the tasks note
-    /// with none: the exact line, the message's `postio://` link before the
-    /// due day (C21). `due` is "YYYY-MM-DD". Blocks.
+    /// Append a task to `project`'s note, or to the tasks note with none: the exact line, the
+    /// message's `postio://` link before the due day. `due` is "YYYY-MM-DD". Blocks.
     pub fn capture_task(
         &self,
         project: Option<VaultProjectFfi>,
@@ -941,20 +789,14 @@ impl Session {
     }
 }
 
-/// The digest window's size across, and its reading column's (M1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct FocusDigestGeometryFfi {
-    /// The window's width.
     pub window_width: i32,
-    /// The summary's column.
     pub column_width: i32,
 }
 
-/// The digest's window beside a main window `main_width` wide, on the
-/// Mac: the message window's width (`clamp(640, W − 2·max(96, 0.18·W),
-/// 880)`), so a reference opened inside it never resizes it, and the
-/// summary's column, `min(960, w − 80)` (M1). Its height is the message
-/// window's as well, which the window controller already keeps.
+/// The digest's window beside a main window `main_width` wide: the message window's width, so a
+/// reference opened inside it never resizes it, and the summary's column, `min(960, w − 80)`.
 #[uniffi::export]
 pub fn focus_digest_geometry(main_width: i32) -> FocusDigestGeometryFfi {
     let geometry =

@@ -1,29 +1,15 @@
-//! Writing and replying at the boundary (specs/009-focus-macos T073).
-//!
-//! The rules are the controller's (`postio_focus`'s compose slice): which
-//! composer opens, what it answers, when what is written is saved, and
-//! what is said once a composition ends. The draft's words stay the
-//! Mac's -- its fields and its editing surface hold them, and it saves
-//! them with `save_draft` when `FocusSaveDraft` says -- so what crosses
-//! here is the composer opening (`FocusComposer`), the edits that arm the
-//! autosave (`focus_composer_edited`), and how each save went
-//! (`focus_draft_saved`).
+//! Writing and replying at the boundary. The controller decides which composer opens and when to
+//! save; the
+//! draft's words stay the Mac's, saved with `save_draft` on `FocusSaveDraft`.
 
 use crate::session::Session;
 
-/// What the composer is asked to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ComposerKindFfi {
-    /// A new message: `newDraft()`.
     New,
-    /// A reply to the message's sender: `replyDraft(message, false)`.
     Reply,
-    /// A reply to everyone on it: `replyDraft(message, true)`.
     ReplyAll,
-    /// A forward: `forwardDraft(message)`.
     Forward,
-    /// The draft behind the message, to go on writing:
-    /// `draftForMessage(message)`.
     Draft,
     /// An unsent reply shown in a thread: the event's `message` is the
     /// draft's own id, and `draft(id)` is what to show.
@@ -47,14 +33,10 @@ impl ComposerKindFfi {
     }
 }
 
-/// What a forward carries (spec 013 FR-023): a chooser card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ForwardFormFfi {
-    /// The one message, quoted as usual.
     This,
-    /// Every message, oldest first, in one.
     Thread,
-    /// Each message as an `.eml` attachment.
     Attachments,
 }
 
@@ -78,17 +60,11 @@ impl From<ForwardFormFfi> for postio_model::ForwardForm {
     }
 }
 
-/// A change the engine makes to the composer's draft, which the composer
-/// is asked for first so what was typed is in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum DraftEditFfi {
-    /// The forward carries `this` form.
     ForwardThis,
-    /// The forward carries the whole thread.
     ForwardThread,
-    /// The forward carries each message as an attachment.
     ForwardAttachments,
-    /// The reply answers the thread's latest received message.
     ReplyToLatest,
 }
 
@@ -118,27 +94,18 @@ impl DraftEditFfi {
     }
 }
 
-/// One card of the *What to forward* chooser.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ChooserCardFfi {
-    /// What choosing it does.
     pub form: ForwardFormFfi,
-    /// Its number key, as the keymap spells it.
     pub key: Option<String>,
-    /// "This message".
     pub title: String,
-    /// One line under it.
     pub detail: String,
 }
 
-/// The chooser above To when a thread of two or more is forwarded.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ChooserFfi {
-    /// "What to forward".
     pub heading: String,
-    /// The three cards, in key order.
     pub cards: Vec<ChooserCardFfi>,
-    /// The one chosen: its card is ringed.
     pub selected: ForwardFormFfi,
 }
 
@@ -161,26 +128,17 @@ impl From<postio_ui::compose::ChooserView> for ChooserFfi {
     }
 }
 
-/// An action on the older-reply bar.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BarActionFfi {
-    /// "Show them", "Reply to latest".
     pub label: String,
-    /// Its key, as the keymap spells it.
     pub key: Option<String>,
 }
 
-/// The bar under the composer's title on a reply to a message that is not
-/// the latest.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OlderReplyFfi {
-    /// "You're replying to message 4 of 6, not the latest".
     pub title: String,
-    /// Which newer messages there are, and what the reply quotes.
     pub detail: String,
-    /// Show them (or Hide them), then Reply to latest.
     pub actions: Vec<BarActionFfi>,
-    /// Whether the newer messages are on show.
     pub newer_shown: bool,
 }
 
@@ -202,17 +160,11 @@ impl From<postio_ui::compose::OlderReplyView> for OlderReplyFfi {
     }
 }
 
-/// A message newer than the one a reply answers, shown read-only in the
-/// composer (spec 013 FR-022, "Show them").
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct NewerMessageFfi {
-    /// The message.
     pub id: i64,
-    /// Who wrote it: their name or address.
     pub who: String,
-    /// When: "Tue 22 Sep 15:22".
     pub when: String,
-    /// What it says, as text.
     pub text: String,
 }
 
@@ -266,9 +218,9 @@ impl Session {
         })
     }
 
-    /// The composer's draft, as `FocusComposerDraftWanted { edit }` asked
-    /// for it, with what was typed in it. The controller has the engine
-    /// change it and answers with `FocusComposerDraft`.
+    /// The composer's draft as `FocusComposerDraftWanted { edit }` asked, with what was typed. The
+    /// controller
+    /// answers with `FocusComposerDraft`.
     pub fn focus_composer_draft(&self, edit: DraftEditFfi, draft: crate::DraftFfi) {
         let Some((database, _)) = self.store_and_blobs() else {
             return;
@@ -283,7 +235,6 @@ impl Session {
             ));
     }
 
-    /// A chooser card was clicked: as its number key.
     pub fn focus_forward_form_clicked(&self, form: ForwardFormFfi) {
         self.focus_driver()
             .input(postio_focus::Input::ForwardFormClicked(form.into()));
@@ -297,10 +248,8 @@ impl Session {
             .input(postio_focus::Input::ComposerEdited);
     }
 
-    /// How the save `FocusSaveDraft { composition }` asked for went: `kept`
-    /// when the draft was written to the store, `false` when there was
-    /// nothing in it worth keeping (or it was sent), `error` the sentence
-    /// when it could not be saved.
+    /// `kept` when the draft was written, `false` when nothing was worth keeping (or it was sent),
+    /// `error` the sentence when it could not be saved.
     pub fn focus_draft_saved(&self, composition: u64, kept: bool, error: Option<String>) {
         let saved = match error {
             Some(sentence) => Err(sentence),

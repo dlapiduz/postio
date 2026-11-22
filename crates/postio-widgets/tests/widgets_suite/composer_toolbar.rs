@@ -1,15 +1,3 @@
-//! Issue #339: the composer's formatting toolbar, on a real display.
-//!
-//! The toolbar is the visible half of the formatting commands #338 landed:
-//! every button dispatches the same registry command the keyboard reaches,
-//! and the toggles reflect where the caret sits — bold shows active when the
-//! selection is inside `Strong`. That reflection crosses the bridge in the
-//! other direction from an edit, which is why it needs a display: the state
-//! report comes from the editing WebView, not from the document.
-//!
-//! Its own file: GTK is single-threaded and initialised once, so one
-//! `#[test]` per integration binary. See `gtk_composer.rs`.
-
 use crate::support_compose::settle as pump;
 use std::time::{Duration, Instant};
 
@@ -20,23 +8,12 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_body::{Block, Inline};
 
-/// Issue #741: a gate run once burned 120.59s here before failing, on a box
-/// that was building elsewhere at the time; the same test passed in 0.60s
-/// run alone minutes later. 120s was sized to never be reached, which made
-/// it free to spend in full whenever something really was wrong. Twenty
-/// seconds is still 20x what a bridge round trip costs in practice (see
-/// `bridge_latency`), so a genuine stall still has generous room, but a gate
-/// run can no longer lose two minutes finding out.
+/// 20 s is still 20x a bridge round trip, so a real stall has room but a gate run cannot lose two
+/// minutes (#741).
 const SETTLE_DEADLINE: Duration = Duration::from_secs(20);
 
-/// The wall-clock cost, measured now, of a trivial round trip through the
-/// same WebKit bridge every reflection in this test depends on.
-///
-/// This is what turns a timeout into a diagnosis instead of a shrug: slow
-/// here means the machine was contended and the wait above was racing load,
-/// not a real regression; fast here means the report `settle` was waiting on
-/// was never going to arrive at all, which is the failure this test exists
-/// to catch.
+/// Turns a timeout into a diagnosis: slow means a contended machine, fast means the awaited report
+/// was never going to arrive.
 fn bridge_latency(composer: &composer::Composer) -> Duration {
     let start = Instant::now();
     composer.test_body_eval("'ping'");
@@ -75,7 +52,6 @@ fn settle(composer: &composer::Composer, what: &str, done: impl Fn() -> bool) {
     );
 }
 
-/// Depth-first search of a widget tree for the first one carrying `class`.
 fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
     if widget.has_css_class(class) {
         return Some(widget.clone());
@@ -119,7 +95,6 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
     pump();
     assert!(composer.is_open());
 
-    // ── the toolbar exists, between the fields and the body ───────────────
     let toolbar = find(
         composer.upcast_ref::<gtk::Widget>(),
         "postio-compose-toolbar",
@@ -130,8 +105,8 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
     let bold = toggle(&composer, "postio-toolbar-bold");
     let italic = toggle(&composer, "postio-toolbar-italic");
     let heading = toggle(&composer, "postio-toolbar-heading");
-    // Postio's own glyph (#1485): Adwaita draws no heading, and a name the
-    // theme cannot find is drawn as the missing-image icon.
+    // Postio's own glyph (#1485): Adwaita draws no heading, and a name the theme cannot find shows
+    // the missing-image icon.
     let glyph = heading.icon_name().expect("the Heading toggle has an icon");
     assert!(
         gtk::IconTheme::for_display(&display).has_icon(&glyph),
@@ -145,8 +120,6 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
         .downcast()
         .expect("the link button is a plain Button — a dialog, not a state");
 
-    // Every button names itself and its key, from the registry, and none
-    // steals the focus a click needs to keep in the editor.
     for button in [
         bold.clone().upcast::<gtk::Widget>(),
         italic.clone().upcast(),
@@ -167,10 +140,7 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
         );
     }
 
-    // ── a click lands as the registry command does: canonical structure ───
-    // Focus the body first, as a hand would have: the click acts on the
-    // editor's selection, and WebKit only arms editing commands in a
-    // focused frame.
+    // Focus the body first: WebKit only arms editing commands in a focused frame.
     composer.test_focus_field(composer::Field::Body);
     pump();
     composer.test_set_body("make this strong");
@@ -189,24 +159,19 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
     assert!(!numbered.is_active());
     assert!(!quote.is_active());
 
-    // ── the toggles reflect the caret, not the last click ─────────────────
-    // A click flips a ToggleButton on its own, so clicking proves nothing
-    // about reflection. Moving the caret does: no click happens here, and
-    // only the editor's format report can change the button.
+    // A click flips a ToggleButton itself, so clicking proves nothing about reflection; moving the
+    // caret does.
     composer.test_select_body(0, 0, 2);
     settle(
         &composer,
         "the bold toggle to clear once the caret leaves Strong",
         || !bold.is_active(),
     );
-    // Bolding split the paragraph's text into three nodes; the Strong run
-    // is the second. Back inside it, the report lights the toggle again.
     composer.test_select_body(1, 1, 3);
     settle(&composer, "the bold toggle to light inside Strong", || {
         bold.is_active()
     });
 
-    // ── clicking again toggles it off, in the document and the button ─────
     composer.test_select_body(1, 0, 4);
     bold.emit_clicked();
     settle(&composer, "bold to toggle back off", || {
@@ -218,21 +183,12 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
     });
     settle(&composer, "the toggle to follow", || !bold.is_active());
 
-    // ── the quote button walks the same path as its command ──────────────
     quote.emit_clicked();
     settle(&composer, "the quote block to land", || {
         matches!(composer.document().blocks.first(), Some(Block::Quote(_)))
     });
 }
 
-/// #1197: the toolbar has a control for attaching a file, and it runs the
-/// registry command rather than a path of its own.
-///
-/// Everything behind it already worked — the command, its `mod+shift+a`
-/// binding, the file chooser, the drop target, and the
-/// blob-store write. What was missing was any way to *find* it, which made
-/// the honest answer to "how do I attach a file" a keybinding you had to
-/// already know.
 pub fn the_toolbar_offers_attaching_a_file() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under the headless runner to exercise this)");

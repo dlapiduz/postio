@@ -2,48 +2,29 @@ import Observation
 import PostioFFI
 import SwiftUI
 
-// The thread outline (spec 013 US5, T066; the threads SPEC section 4, screen
-// 05): a 440-point popover from Thread ▾ listing every message, with a
-// filter field, person chips with counts, 34-point rows and a footer of
-// keys. The controller keeps the filter, the person and the cursor and
-// hands the whole outline over on every change (`FocusOutline`); this draws
-// it and reports what was typed, chosen, moved to or shown.
+// The controller keeps the filter, person and cursor and hands over the whole outline on every
+// change (`FocusOutline`); this draws it and reports what the person did.
 
-/// What the outline tells the engine. `PostioSession` is the one real
-/// answer; the protocol is what lets a test drive `ThreadOutlineModel`
-/// against a recording.
 public protocol ThreadOutlineEngine: AnyObject {
-    /// The filter field holds this text now.
     func focusOutlineTyped(text: String)
-    /// A person chip was chosen, or cleared with `nil`.
     func focusOutlinePerson(name: String?)
-    /// ↑ or ↓: by this many rows.
     func focusOutlineMove(by: Int32)
-    /// Return, or a click on a row; `nil` is the cursor's.
     func focusOutlineShow(row: UInt32?)
-    /// `/`: the keyboard goes to the field.
     func focusOutlineFocusFilter()
 }
 
 extension PostioSession: ThreadOutlineEngine {}
 
-/// The outline, as the controller's last `FocusOutline` drew it.
 @MainActor
 @Observable
 public final class ThreadOutlineModel {
-    /// What one applied event changed.
     public enum Change: Equatable {
-        /// It opened: hang it from Thread ▾.
         case open
-        /// It was drawn again, whole, in place.
         case redraw
-        /// The controller put it away.
         case close
-        /// The keyboard goes to the filter field.
         case focusFilter
     }
 
-    /// What it draws; `nil` while it is closed.
     public private(set) var view: OutlineFfi?
 
     @ObservationIgnored private let engine: ThreadOutlineEngine
@@ -52,10 +33,8 @@ public final class ThreadOutlineModel {
         self.engine = engine
     }
 
-    /// Whether it is up.
     public var isOpen: Bool { view != nil }
 
-    /// Apply `event` if it is the outline's, and say what it changed.
     @discardableResult
     public func apply(_ event: UiEvent) -> Change? {
         switch event {
@@ -74,33 +53,27 @@ public final class ThreadOutlineModel {
         }
     }
 
-    /// The field's text changed.
     public func typed(_ text: String) {
         guard let view, view.filter != text else { return }
         engine.focusOutlineTyped(text: text)
     }
 
-    /// A chip was clicked: it filters, and a second click on the chosen one
-    /// clears it.
     public func choose(person name: String) {
         guard let view else { return }
         engine.focusOutlinePerson(name: view.person == name ? nil : name)
     }
 
-    /// ↑ or ↓.
     public func move(by step: Int) {
         guard view != nil else { return }
         engine.focusOutlineMove(by: Int32(step))
     }
 
-    /// Return shows the cursor's row; a click shows its own.
     public func show(row: Int? = nil) {
         guard view != nil else { return }
         engine.focusOutlineShow(row: row.map { UInt32($0) })
     }
 
-    /// The toolkit took it down: a click away. The controller is told by
-    /// whoever presents it. `true` when it was up.
+    /// The controller is told by whoever presents it. `true` when it was up.
     @discardableResult
     public func closedByToolkit() -> Bool {
         defer { view = nil }
@@ -108,22 +81,19 @@ public final class ThreadOutlineModel {
     }
 }
 
-/// The outline's measures, in points.
 public enum ThreadOutlineMetrics {
     public static let width: CGFloat = 440
     public static let row: CGFloat = 34
     public static let field: CGFloat = 30
-    /// Rows drawn before the list scrolls.
     public static let visibleRows: CGFloat = 14
 }
 
-/// The outline: field and chips over the rows over the footer.
 public struct ThreadOutlineView<Field: View>: View {
     let model: ThreadOutlineModel
     let field: () -> Field
 
-    /// `field` is the AppKit filter field, which `ThreadOutlinePopover` owns
-    /// because it has to take the keyboard when the controller says.
+    /// `field` is AppKit's: `ThreadOutlinePopover` owns it because it must take the keyboard when
+    /// the controller says.
     public init(model: ThreadOutlineModel, @ViewBuilder field: @escaping () -> Field) {
         self.model = model
         self.field = field
@@ -219,7 +189,6 @@ public struct ThreadOutlineView<Field: View>: View {
     }
 }
 
-/// One message of the outline: number, avatar, name, first line, date.
 struct OutlineRowView: View {
     let row: OutlineRowFfi
     let cursor: Bool

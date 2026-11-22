@@ -1,29 +1,13 @@
-//! The fixture must not supply what the application is supposed to produce.
-//!
-//! `postio-bl2`: eight capabilities were found fully implemented, tested and
-//! never called, and the reason none of the tests caught any of it is that
-//! every fixture below the composition root answered — by hand — the question
-//! the layer above was supposed to answer.
-//!
-//! [`seed`](postio_storage::seed) was one of the two. It called
-//! `MailboxRepository::recount_account` after inserting, so a seeded store
-//! came out with correct cached counts. A real one did not, because nothing
-//! maintained them: the message list drew rows from every fixture in the
-//! project and nothing at all from a live account with 81,716 messages in it,
-//! and no test could tell the difference. One line in a helper, and it made a
-//! green suite compatible with an application that listed nothing.
-//!
-//! The counts now come from migration 0003's triggers — the same mechanism a
-//! real sync goes through — so a seeded store is listable only if the
-//! production path works. This file is what keeps it that way: if `seed` ever
-//! grows a shortcut again, or the triggers stop maintaining what they claim
-//! to, one of these fails.
+//! A fixture must not supply what the application produces: `seed` once called `recount_account`,
+//! so
+//! seeded stores listed while a real account's counts were never maintained (`postio-bl2`). Counts
+//! now
+//! come from migration 0003's triggers, so a seeded store lists only if the production path works.
 
 use postio_model::MailboxRole;
 use postio_storage::seed::{seed_large, seed_small};
 use postio_storage::test_support;
 
-/// Every folder's cached counts, against the rows actually in it.
 async fn assert_counts_are_real(
     database: &postio_storage::Store,
     mailboxes: &[postio_model::Mailbox],
@@ -75,9 +59,6 @@ async fn a_small_seed_leaves_counts_the_triggers_maintained() {
 
 #[tokio::test]
 async fn a_large_seed_leaves_counts_the_triggers_maintained() {
-    // Batched inserts, which is the shape a real sync writes in and the one
-    // where a trigger that fires per statement rather than per row would be
-    // caught.
     let database = test_support::memory().await;
     let report = seed_large(&database, 7, 2_000).await;
 
@@ -87,10 +68,6 @@ async fn a_large_seed_leaves_counts_the_triggers_maintained() {
 
 #[tokio::test]
 async fn a_seeded_inbox_is_not_empty() {
-    // The property the application actually depends on, stated plainly: a
-    // seeded store has mail *and says so*. the app's wiring tests
-    // assert the window lists it; this asserts the store it lists from is
-    // not lying about being empty.
     let database = test_support::memory().await;
     let report = seed_small(&database, 11).await;
 
@@ -109,15 +86,11 @@ async fn a_seeded_inbox_is_not_empty() {
 
 #[tokio::test]
 async fn the_seed_is_the_corpus_the_storyboards_were_pinned_on() {
-    // Every storyboard that counts rows or names a message id counts this
-    // seed, and the seed is a stream of random draws walked over the corpus
-    // in file order: one more fixture re-deals every mailbox after it, and the
-    // nightly's catalogue goes red on a number nobody changed (#1869 added
-    // `encoded-word-control-chars-in-header` and put one more message in the
-    // demo inbox). A fixture that is a hostile-header test rather than mail
-    // for a screenshot is left out of the seed (`UNSEEDED` in `seed.rs`); one that
-    // belongs in it is a deliberate change, made together with the
-    // storyboards' counts.
+    // The storyboards count rows and name message ids on this seed, a stream of random draws over
+    // the
+    // corpus in file order: one more fixture re-deals every mailbox after it (#1869).
+    // Hostile-header
+    // fixtures go in `UNSEEDED` in `seed.rs`.
     let database = test_support::memory().await;
     let report = seed_small(&database, 1).await;
 
@@ -130,7 +103,6 @@ async fn the_seed_is_the_corpus_the_storyboards_were_pinned_on() {
         report.message_count
     );
 
-    // The second account of the "two-accounts" seed walks the corpus too.
     let second =
         postio_storage::seed::seed_extra_account(&database, "Home", "home@example.net", 12).await;
     assert_eq!(

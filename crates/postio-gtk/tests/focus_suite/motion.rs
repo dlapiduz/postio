@@ -1,20 +1,12 @@
-//! Motion (FR-094, T143): no transition in Focus runs longer than 100 ms,
-//! and with reduced motion asked for -- `gtk-enable-animations` off, which
-//! is what the desktop's "reduce animation" sets -- nothing animates.
-//!
-//! What is read is what GTK will run: every revealer and stack in the
-//! window's tree, with the state banner up, the picker open and a message
-//! open over the list, and every stylesheet rule Focus loads. libadwaita's
-//! own dialog and toast motion is not a property this can read; it follows
-//! `gtk-enable-animations`, which the second half asserts is honoured.
+//! No transition in Focus runs longer than 100 ms, and with `gtk-enable-animations` off nothing
+//! animates.
+//! libadwaita's own dialog and toast motion cannot be read; it follows that setting.
 
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 
 use crate::support::{self, Fixture};
 
-/// Each revealer and stack under `root` that animates for longer than the
-/// budget, with how long.
 fn over_budget(root: &gtk::Widget) -> Vec<String> {
     let mut found = Vec::new();
     let mut stack = vec![root.clone()];
@@ -48,7 +40,6 @@ fn over_budget(root: &gtk::Widget) -> Vec<String> {
     found
 }
 
-/// Where `widget` is: its nearest ancestor's CSS classes.
 fn describe(widget: &gtk::Widget) -> String {
     let mut up = Some(widget.clone());
     while let Some(current) = up {
@@ -61,7 +52,6 @@ fn describe(widget: &gtk::Widget) -> String {
     widget.type_().name().to_owned()
 }
 
-/// Every transition or animation duration in `css`, in milliseconds.
 fn durations(css: &str) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     for line in css.lines() {
@@ -92,7 +82,6 @@ pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
         if !support::display() {
             return;
         }
-        // The stylesheets Focus loads, its own and the shared one it imports.
         for (name, css) in [
             ("focus.css", postio_gtk::style::SURFACES),
             ("focus-colours.css", postio_gtk::style::COLOURS),
@@ -130,7 +119,6 @@ pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
             crate::settle_until(async || support::subjects(&window).len() == 2).await,
             "the inbox never reached the screen"
         );
-        // The surfaces that move: the banner, a picker, a dialog.
         assert!(sink.emit(Event::ConnectionChanged {
             account: fixture.account.id,
             state: ConnectionState::Offline,
@@ -154,8 +142,6 @@ pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
             problems.join("\n  ")
         );
 
-        // Reduced motion: with animations off, the banner and the dialog
-        // are where they end up the moment they are asked for.
         let settings = gtk::Settings::default().expect("GTK settings");
         let animated = settings.is_gtk_enable_animations();
         settings.set_gtk_enable_animations(false);
@@ -194,8 +180,6 @@ pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
     });
 }
 
-/// The declarations of the first rule in `css` whose selector is exactly
-/// `selector`.
 fn rule_body<'a>(css: &'a str, selector: &str) -> Option<&'a str> {
     let mut rest = css;
     while let Some(open) = rest.find('{') {
@@ -214,10 +198,6 @@ fn rule_body<'a>(css: &'a str, selector: &str) -> Option<&'a str> {
     None
 }
 
-/// T191: the cursor is where the keyboard is, and a move is instant. The
-/// list row's own node -- which carries the `:selected` state and the focus
-/// ring libadwaita animates -- runs no transition, so the ring is on the
-/// next row the moment `j` or `k` lands.
 pub fn the_list_rows_cursor_has_no_transition() {
     let css = postio_gtk::style::SURFACES;
     let row = rule_body(css, ".focus-list > row").expect("the list row's rule");

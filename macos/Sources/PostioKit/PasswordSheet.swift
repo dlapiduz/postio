@@ -1,14 +1,8 @@
 import PostioFFI
 import SwiftUI
 
-/// "Update password…" from the sign-in banner (screen 19): a sheet on the
-/// main window asking for the account's new password, which goes straight
-/// into the Keychain through the engine's credential store
-/// (`AccountRepair.save`, `repair_credential`).
-///
-/// The same `AccountRepair` route the settings window's row takes, so the
-/// banner and the row cannot store a password two ways. Never pre-filled:
-/// the old password is what stopped working, and Postio does not have it.
+/// Never pre-filled: the old password stopped working and Postio does not have it. Same
+/// `AccountRepair` route as the settings row, so a password is stored one way.
 public struct PasswordSheet: View {
     let account: AccountFfi
     let repair: AccountRepair

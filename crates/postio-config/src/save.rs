@@ -1,28 +1,12 @@
-//! Saving `config.toml` the way an editor saves it.
-//!
-//! This is a contract with [`crate::watch`], not a convenience.
-//! `ConfigWatcher` is built to see a create-or-modify of a scratch file
-//! followed by a rename, because that is what editors do — "editors replace
-//! the file, they do not write it". Anything that writes this file in place
-//! is invisible to the watcher, so the running application would not learn
-//! about its own settings change.
-//!
-//! Both frontends save through here, which is the point: a settings surface
-//! that saved differently would be a second answer to "how does a change
-//! reach the app", and the one that broke would be whichever nobody was
-//! looking at.
+//! A contract with `watch`: the watcher sees a create-or-modify of a scratch file followed by a
+//! rename,
+//! so an in-place write would be invisible to the running app. Both frontends save through here.
 
 use std::path::Path;
 
-/// Writes `text` to `path` the way an editor saves: a temporary file in the
-/// same directory, then a rename over the target.
-///
-/// `postio_config::watch::ConfigWatcher` is built to see exactly this shape of
-/// save — a create-or-modify of a scratch file followed by a rename — rather
-/// than an in-place write (see that module's docs on why: "editors replace
-/// the file, they do not write it"). Saving the same way means the panel's own
-/// edits reach the watcher, and therefore the rest of the running app, the
-/// same way `$EDITOR`'s do.
+/// The watcher is built to see exactly this shape of save, so the panel's edits reach the app the
+/// way
+/// `$EDITOR`'s do.
 pub fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

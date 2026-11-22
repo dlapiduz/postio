@@ -1,9 +1,6 @@
-//! A day heading over the list: "Today · Saturday 26 September" (FR-010).
-//!
-//! GTK names a section's heading by its first row, and that row can be a
-//! placeholder when the heading is bound -- its page on its way. So the
-//! heading follows the row, as a row widget does, and names the day the
-//! moment the page lands, rather than staying blank until the next bind.
+//! A day heading over the list. GTK names a section's heading by its first row, which can be a
+//! placeholder when the heading is bound,
+//! so the heading follows the row and names the day the moment its page lands.
 
 use std::cell::RefCell;
 
@@ -54,7 +51,6 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// The heading over one day's rows.
     pub struct DayHeading(ObjectSubclass<imp::DayHeading>)
         @extends gtk::Widget,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
@@ -67,8 +63,6 @@ impl Default for DayHeading {
 }
 
 impl DayHeading {
-    /// Name the day `row` arrived on -- or the heading `list` puts over
-    /// everything while a filter is on -- and follow it as its page lands.
     pub fn bind(&self, row: &RowObject, list: &FocusList) {
         self.imp().list.set(Some(list));
         self.unbind();
@@ -84,7 +78,6 @@ impl DayHeading {
         self.name(row);
     }
 
-    /// Stop following the row this heading was named from.
     pub fn unbind(&self) {
         if let Some((row, handler)) = self.imp().bound.take() {
             row.disconnect(handler);

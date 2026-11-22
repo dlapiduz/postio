@@ -4,10 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// File ▸ Import Contacts and Export Contacts (specs/011-focus-contacts S11):
-/// a panel, the engine, then the sheet the engine said. The file is the
-/// user's, so nothing is read without a panel and nothing is written without
-/// one; the engine says every word.
 @MainActor
 struct ContactsIoModelTests {
     final class Engine: ContactsIoEngine {

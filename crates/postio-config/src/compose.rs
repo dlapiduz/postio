@@ -1,47 +1,21 @@
-//! `[compose]` — where a signature goes, and which editor a draft hands off to.
-//!
-//! ```toml
-//! [compose]
-//! signature_on_reply = "above_quote"    # above_quote | below_quote
-//! signature_on_forward = "above_quote"
-//! editor = "BBEdit"                     # empty: whatever the platform opens a text file with
-//! ```
-//!
-//! # Why this is a setting and not a house style
-//!
-//! Both conventions are in wide use and neither is wrong. Bottom-posting puts
-//! the signature under everything, which is what the Usenet convention and
-//! most mailing lists expect. Top-posting puts it under what you just wrote
-//! and above the quoted message, which is what almost every graphical client
-//! now does and what most correspondents will expect to see. Postio holds no
-//! opinion; it holds the user's.
-//!
-//! New mail has no quote, so placement cannot mean anything there — both
-//! settings agree, and the signature goes at the end. That is why there is no
-//! `signature_on_new`: a key whose value can never change the output is a key
-//! that only invites a bug report.
+//! `[compose]`: where a signature goes, and which editor a draft hands off to. Top- and
+//! bottom-posting
+//! are both in wide use, so placement is the user's. New mail has no quote, so there is no
+//! `signature_on_new`: a key that can never change the output only invites a bug report.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Extras;
 
-/// Where a signature sits relative to quoted text.
-///
-/// Mirrors `postio_body::Placement`, spelled here because this crate is the
-/// *schema* and must not depend on the body crate to describe a setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SignaturePlacement {
-    /// Under what was written and above the quote — what a top-posting reply
-    /// looks like, and the default because it is what most mail looks like.
     #[default]
     AboveQuote,
-    /// Under everything, quote included.
     BelowQuote,
 }
 
 impl SignaturePlacement {
-    /// The spelling `config.toml` uses.
     pub const fn as_str(self) -> &'static str {
         match self {
             SignaturePlacement::AboveQuote => "above_quote",
@@ -56,59 +30,30 @@ impl std::fmt::Display for SignaturePlacement {
     }
 }
 
-/// The `[compose]` section.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ComposeConfig {
-    /// Where the signature goes on a reply.
     #[serde(default)]
     pub signature_on_reply: SignaturePlacement,
-    /// Where the signature goes on a forward.
-    ///
-    /// Separate from the reply setting because the two are different acts: a
-    /// reply answers a fragment, a forward hands the whole message on, and
-    /// people who bottom-post replies often still top-post forwards.
+    /// Separate because a reply answers a fragment and a forward hands the whole message on; people
+    /// who
+    /// bottom-post replies often still top-post forwards.
     #[serde(default)]
     pub signature_on_forward: SignaturePlacement,
-    /// Which editor `⌃⌘E` hands the draft to. Empty means the platform's own
-    /// idea of what opens a text file.
-    ///
-    /// # Why a setting and not `$EDITOR` (#1288)
-    ///
-    /// `$EDITOR` is the right answer on freedesktop, where an application is
-    /// usually started from a shell that has one. It is the wrong answer on
-    /// macOS, where an application launched from Finder has **no shell
-    /// environment at all** — so `$EDITOR` is simply absent for most people,
-    /// and a button promising it would promise nothing.
-    ///
-    /// A name rather than a command line: what goes here is an application on
-    /// macOS (`BBEdit`, `Visual Studio Code`) or a program on freedesktop. A
-    /// program that needs a terminal to run in cannot be opened by either
-    /// frontend, and `postio_ui::handoff` is where that is said out loud
-    /// rather than failing silently.
+    /// Empty means the platform's own idea of what opens a text file. Not `$EDITOR`: an application
+    /// launched from Finder has no shell environment (#1288). A name, not a command line.
     #[serde(default)]
     pub editor: String,
-    /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
 }
 
-/// Rewrites `text`'s `[compose]` table to match `compose`, leaving every
-/// other section — and any comment attached to one — untouched.
-///
-/// The Composing pane's write path (#1179), and the same bargain
-/// [`crate::patch_ui`] and [`crate::patch_filters`] already make for the
-/// same reason: `Config::to_toml_string` reserializes the whole file and
-/// would reorder every key and drop every comment in it, not only in the
-/// table the pane owns. `[compose]` itself is regenerated whole, so a
-/// comment attached to `[compose]`'s own header does not survive — two
-/// settings chosen from a segmented control are not the kind of TOML
-/// anyone hand-annotates.
+/// The Composing pane's write path (#1179). `[compose]` is regenerated whole, so a comment on its
+/// own
+/// header does not survive; every other section and comment is untouched.
 pub fn patch_compose(text: &str, compose: &ComposeConfig) -> crate::Result<String> {
     crate::splice::replace_section(text, "compose", &ComposeOnly { compose })
 }
 
-/// Serializes as just a `[compose]` table — [`patch_compose`]'s bridge from
-/// `toml`'s serde output to a fragment `toml_edit` can splice in.
 #[derive(Serialize)]
 struct ComposeOnly<'a> {
     compose: &'a ComposeConfig,

@@ -1,22 +1,11 @@
 import PostioFFI
 import SwiftUI
 
-/// One result row (specs/010-focus-search T072; design §3.4, screens 06
-/// and 07): the 28 gutter (the unread dot, or the box while selecting),
-/// the 176 sender column with a top hit's reason under it, the content --
-/// the subject with its label pills, paperclip and thread count, then the
-/// source tag and the matching passage -- the 96 folder column in SF Mono
-/// and the 62 date.
-///
-/// Matched words wear the find yellow with the text in label colour, never
-/// the accent, which stays the focus ring's (FR-005). The ring, the
-/// selection tint and the hairline are the table's row view's
-/// (`ResultsTable`), so this draws only words.
+/// Matched words wear the find yellow with label-colour text, never the accent, which stays the
+/// focus ring's. The ring, selection tint and hairline are `ResultsTable`'s row view's.
 public struct ResultRowView: View {
     let row: ResultRowFfi?
-    /// Rows are being checked: the gutter shows a box, not the dot.
     let selecting: Bool
-    /// A click on the sender's name: its address, for the popover.
     let onName: ((String) -> Void)?
     @Environment(\.colorScheme) private var scheme
 
@@ -26,7 +15,6 @@ public struct ResultRowView: View {
         self.onName = onName
     }
 
-    /// The columns of §3.4, and the gap between them.
     public enum Columns {
         public static let gutter: CGFloat = 28
         public static let sender: CGFloat = 176
@@ -47,15 +35,13 @@ public struct ResultRowView: View {
                     .font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .frame(width: Columns.folder, alignment: .trailing)
-                // A date never ends in an ellipsis: one with its year
-                // ("22 Oct 25") takes the room it needs if the column is short.
+                // A date never ends in an ellipsis: one with its year takes the room it needs.
                 Text(row.date)
                     .font(.system(size: 12, weight: row.unread ? .bold : .regular).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .fixedSize()
                     .frame(minWidth: Columns.date, alignment: .trailing)
             } else {
-                // Its page is on its way: the row's place, kept quiet.
                 Spacer()
             }
         }
@@ -121,8 +107,6 @@ public struct ResultRowView: View {
                     Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
                 }
-                // Several of the thread's messages matched: how many, in the
-                // snippet's place (spec 013 US6).
                 if let summary = row.summary {
                     Text(summary).font(.system(size: 13)).foregroundStyle(.secondary)
                 }
@@ -174,10 +158,6 @@ public struct ResultRowView: View {
     }
 }
 
-/// A line under an opened result (spec 013 US6; screen 06): a message that
-/// matched, with the tag that says which message it is and where it
-/// matched, and its words marked; or the one 30-point line that stands for
-/// the messages between matches that did not.
 public struct ResultChildView: View {
     let child: ResultChildFfi?
     @Environment(\.colorScheme) private var scheme
@@ -229,7 +209,6 @@ public struct ResultChildView: View {
         .accessibilityLabel(Self.accessible(child))
     }
 
-    /// What VoiceOver reads for a line.
     static func accessible(_ child: ResultChildFfi?) -> String {
         switch child {
         case let .match(_, _, tag, passage, sender, _, time):
@@ -240,8 +219,6 @@ public struct ResultChildView: View {
     }
 }
 
-/// A group's header (design §3.4): 32 tall, the title bold 12 secondary,
-/// then the count and the note tertiary.
 public struct ResultGroupHeaderView: View {
     let group: ResultGroupFfi?
 
@@ -268,17 +245,14 @@ public struct ResultGroupHeaderView: View {
     }
 }
 
-/// Runs of words with the engine's highlights, as one attributed string
-/// (FR-005): a matched run wears the find yellow -- the design's
-/// `rgb(255,204,0)` at 38% in light, `rgb(255,214,10)` at 28% in dark,
-/// which is the system yellow -- with its text in label colour.
+/// A matched run wears the find yellow (system yellow at 38% light, 28% dark) with label-colour
+/// text.
 public enum SearchRuns {
     public static func highlight(_ scheme: ColorScheme) -> Color {
         Color.yellow.opacity(scheme == .dark ? 0.28 : 0.38)
     }
 
-    /// How much of the accent tints a focused row, card or way out: the
-    /// design's `accsoft`, 8% in light and 14% in dark (screens 06, 07).
+    /// The design's `accsoft`: 8% in light, 14% in dark.
     public static func focusFill(_ scheme: ColorScheme) -> Double {
         scheme == .dark ? 0.14 : 0.08
     }

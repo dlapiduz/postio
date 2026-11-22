@@ -1,33 +1,15 @@
-//! Markdown, in both directions, for a frontend that draws text.
-//!
-//! [`from_html`] is the terminal reader's: the reader sanitiser's output, as
-//! CommonMark a terminal can style. Only ever sanitised HTML -- converting
-//! *after* the sanitiser is what keeps every guarantee it makes
-//! (`docs/archive/specs/005-tui-frontend` research R5, `contracts/markdown.md`).
-//!
-//! Two things are Postio's own on the way out, because Markdown has no word
-//! for them:
-//!
-//! * an image is `![alt](postio-image:N)`, a placeholder the terminal draws
-//!   and never follows -- including an image whose remote `src` the sanitiser
-//!   removed, which would otherwise vanish without a trace;
-//! * a folded quote (`<details>`, from [`crate::fold_html_quotes`]) is its
-//!   content between [`FOLD`] and [`END_FOLD`] lines, which the terminal
-//!   turns into a block that expands.
+//! Markdown in both directions for text frontends. `from_html` converts only sanitised HTML, so the
+//! sanitiser's guarantees hold.
+//! Images become `![alt](postio-image:N)` placeholders, never followed, even when the sanitiser
+//! removed a remote `src`; folded quotes sit between `FOLD` and `END_FOLD` lines.
 
-/// The line that opens a folded quote in [`from_html`]'s output.
-///
-/// Private-use characters, so ordinary text does not look like one. A sender
-/// who writes them can make text fold, which is all they can do with it.
+/// Private-use characters, so ordinary text does not look like one.
 pub const FOLD: &str = "\u{E000}fold\u{E000}";
 
-/// The line that closes a folded quote.
 pub const END_FOLD: &str = "\u{E000}end\u{E000}";
 
-/// The scheme an image placeholder carries in [`from_html`]'s output.
 pub const IMAGE_SCHEME: &str = "postio-image";
 
-/// Sanitised HTML as Markdown for a terminal.
 pub fn from_html(sanitized: &str) -> String {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -45,43 +27,29 @@ pub fn from_html(sanitized: &str) -> String {
                 .filter(|alt| !alt.is_empty())
                 .unwrap_or_else(|| "image".to_owned());
             let number = images.fetch_add(1, Ordering::Relaxed);
-            // Brackets would end the alt text early; the placeholder's words
-            // are the sender's, and only ever drawn, never followed.
+            // Brackets would end the alt text early.
             let alt = alt.replace(['[', ']'], "");
             Some(format!("![{alt}]({IMAGE_SCHEME}:{number})").into())
         })
         .add_handler(
             vec!["details"],
             |handlers: &dyn Handlers, element: &Element| {
-                // A fold is a container: its quote begins blocks of its own.
                 let inner = handlers.walk_children(element.node, Context::BLOCK);
                 Some(format!("\n\n{FOLD}\n\n{}\n\n{END_FOLD}\n\n", inner.content.trim()).into())
             },
         )
-        // The terminal draws its own line for a fold; the sanitiser's summary
-        // words would only repeat it.
         .add_handler(vec!["summary"], |_: &dyn Handlers, _: &Element| {
             Some("".into())
         })
         .build();
-    // A converter that cannot read what the sanitiser wrote has nothing to
-    // show; the plain text is what the reader falls back to then.
+    // The plain text is the reader's fallback when the converter cannot read the input.
     converter.convert(sanitized).unwrap_or_default()
 }
 
-/// Markdown, as the composer's own document.
-///
-/// What the terminal composer sends through: the HTML part is
-/// [`crate::render`] of this, the generator the desktop composer uses, so
-/// the same content makes the same HTML from either (`contracts/markdown.md`,
-/// SC-006). Total -- every input is some document, and it never panics.
-///
-/// What the document has no node for stays the words the person typed: a
-/// table, strikethrough, raw HTML. A link to anything but `http`, `https` or
-/// `mailto` is its words and no link. An image is an image only when it names
-/// a part attached to this draft (`cid:`); one that names the network stays
-/// the text that was written and is **never fetched** -- nothing in compose
-/// may reach a remote URL (ADR 0003's privacy rule, which holds here).
+/// The HTML part is `crate::render` of this, the desktop composer's generator, so both make the
+/// same HTML. Total: never panics.
+/// Unsupported nodes stay as typed words; a link to anything but `http`, `https` or `mailto` is its
+/// words only; an image is one only for `cid:`, and a network one is never fetched (ADR 0003).
 pub fn to_document(markdown: &str) -> crate::Document {
     use pulldown_cmark::{Event, Parser, Tag};
 
@@ -107,8 +75,6 @@ pub fn to_document(markdown: &str) -> crate::Document {
                     Frame::Inlines(Holder::Link(crate::Href::parse(&dest_url)), Vec::new())
                 }
                 Tag::Image { dest_url, .. } => Frame::Image(dest_url.into_string(), String::new()),
-                // Anything else the parser was not asked to know is not
-                // reached; what is, keeps its words below.
                 _ => Frame::Inlines(Holder::Transparent, Vec::new()),
             }),
             Event::End(_) => {
@@ -134,7 +100,6 @@ pub fn to_document(markdown: &str) -> crate::Document {
             _ => {}
         }
     }
-    // Close whatever an unfinished input left open, innermost first.
     while stack.len() > 1 {
         let frame = stack.pop().expect("more than one");
         close(&mut stack, frame);
@@ -146,22 +111,14 @@ pub fn to_document(markdown: &str) -> crate::Document {
     crate::Document { blocks }
 }
 
-/// The composer's document, as Markdown the terminal composer can edit.
-///
-/// What opens a draft written in the desktop composer: its HTML, parsed to
-/// the document, written back out as the Markdown that reads into that same
-/// document -- `to_document(&from_document(d)) == d` for any document without
-/// a carried quote. A quote carried from the message being answered
-/// (`Block::Quoted`) is not Markdown and is not written here; the composer
-/// keeps it whole beside the text.
+/// `to_document(&from_document(d)) == d` for a document without a carried quote; `Block::Quoted` is
+/// not Markdown and is not written.
 pub fn from_document(document: &crate::Document) -> String {
     let mut out = String::new();
     write_blocks(&mut out, &document.blocks, "");
     out
 }
 
-/// `blocks`, each line after the first of each block prefixed with `indent`
-/// (a list item's continuation, a quote's `> `), a blank line between them.
 fn write_blocks(out: &mut String, blocks: &[crate::Block], indent: &str) {
     let mut first = true;
     for block in blocks {
@@ -180,8 +137,7 @@ fn write_blocks(out: &mut String, blocks: &[crate::Block], indent: &str) {
     }
 }
 
-/// One block, without its trailing newline; `false` for one Markdown does
-/// not carry (a quote carried from the message being answered).
+/// `false` for a block Markdown does not carry (a carried quote).
 fn write_block(out: &mut String, block: &crate::Block) -> bool {
     use crate::Block;
     match block {
@@ -240,8 +196,6 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
     true
 }
 
-/// A list item: its first block after the marker, the rest indented under
-/// it, tight -- no blank line -- which is how a person types a list.
 fn write_item(out: &mut String, blocks: &[crate::Block], indent: &str) {
     for (index, block) in blocks.iter().enumerate() {
         let mut text = String::new();
@@ -272,7 +226,6 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline]) {
                 out.push('*');
             }
             Inline::Code(code) => {
-                // A fence longer than any run of backticks inside.
                 let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
                 let fence = "`".repeat(longest + 1);
                 let pad = if code.starts_with('`') || code.ends_with('`') {
@@ -295,7 +248,6 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline]) {
     }
 }
 
-/// Text, with everything Markdown would read as markup escaped.
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for (index, c) in text.char_indices() {
@@ -323,25 +275,19 @@ fn escape(text: &str) -> String {
     out
 }
 
-/// What holds a run of inlines.
 enum Holder {
     Paragraph,
     Heading(crate::HeadingLevel),
     Emphasis,
     Strong,
-    /// A link, when its target is one the document can carry.
     Link(Option<crate::Href>),
-    /// Something the document has no node for: its words pass through.
     Transparent,
 }
 
-/// One open container while the Markdown is read.
 enum Frame {
     Blocks(Vec<crate::Block>),
     Quote(Vec<crate::Block>),
     List(bool, Vec<Vec<crate::Block>>),
-    /// A list item: its blocks, and the words of a tight item not yet
-    /// wrapped in a paragraph.
     Item(Vec<crate::Block>, Vec<crate::Inline>),
     Inlines(Holder, Vec<crate::Inline>),
     Code(String),
@@ -351,8 +297,8 @@ enum Frame {
 fn push_inline(stack: &mut [Frame], inline: crate::Inline) {
     match stack.last_mut() {
         Some(Frame::Inlines(_, inlines) | Frame::Item(_, inlines)) => {
-            // One run of words is one text, however the parser split it -- at
-            // an escape, a soft break -- so a document reads back the same.
+            // One run of words is one text however the parser split it, so a document reads back
+            // the same.
             if let (crate::Inline::Text(more), Some(crate::Inline::Text(last))) =
                 (&inline, inlines.last_mut())
             {
@@ -385,7 +331,6 @@ fn push_block(stack: &mut [Frame], block: crate::Block) {
             blocks.push(block);
         }
         Some(Frame::List(_, items)) => items.push(vec![block]),
-        // A block inside an inline container: close it into the words.
         Some(Frame::Inlines(..) | Frame::Code(_) | Frame::Image(..)) | None => {
             if let Some(Frame::Blocks(blocks)) = stack.first_mut() {
                 blocks.push(block);

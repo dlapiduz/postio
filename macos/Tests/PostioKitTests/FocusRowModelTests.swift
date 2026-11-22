@@ -3,17 +3,7 @@ import Testing
 
 @testable import PostioKit
 
-/// A Focus row as the Mac draws it, built from what the FFI hands over
-/// (specs/009-focus-macos T030, screens 01 and 02).
-///
-/// Everything a row *says* is the engine's -- sender, subject, the
-/// marker's chip, date and quote, the actions' words. What is decided
-/// here is only how it is laid out, and these tests pin that: which of
-/// the three layouts a row takes, that no more than two pills reach the
-/// line, that an action's keycap is the user's binding rather than a
-/// letter typed into Swift, and that unread is bold.
 @Suite struct FocusRowModelTests {
-    /// The keymap as the registry would answer it.
     static let keymap: [String: String] = [
         "reply": "e",
         "accept_invite": "y",
@@ -60,8 +50,6 @@ import Testing
         actions: [FocusRowActionFfi(command: "reply", label: "Reply")]
     )
 
-    // MARK: layout
-
     @Test func aConversationWithNoMarkerIsOneLine() {
         let model = FocusRowModel(Self.row(), binding: Self.binding)
         #expect(model.layout == .oneLine)
@@ -87,16 +75,12 @@ import Testing
     }
 
     @Test func eachLayoutHasAFixedHeightSoNothingIsMeasured() {
-        // Screen 01: a one-line row is 40pt, a marked row 72pt, and a day
-        // heading adds its 32pt band above the first row of its day.
         #expect(FocusRowMetrics.height(.oneLine, headed: false) == 40)
         #expect(FocusRowMetrics.height(.digest, headed: false) == 40)
         #expect(FocusRowMetrics.height(.twoLine, headed: false) == 72)
         #expect(FocusRowMetrics.height(.oneLine, headed: true) == 72)
         #expect(FocusRowMetrics.height(.twoLine, headed: true) == 104)
     }
-
-    // MARK: pills
 
     @Test func atMostTwoPillsReachTheLine() {
         let pills = [
@@ -116,27 +100,20 @@ import Testing
         ]
         let model = FocusRowModel(Self.row(pills: pills), binding: Self.binding)
         #expect(model.pills[0].colour == LabelColour(red: 1, green: 128.0 / 255, blue: 0))
-        // FR-012: a label with no colour of its own gets one from its name,
-        // the same one GTK draws (`postio_ui::label_colour`), never grey.
         let home = LabelColour.of(name: "Home", stored: nil)
         #expect(home != nil)
         #expect(model.pills[1].colour == home)
         #expect(LabelColour.of(name: "Home", stored: nil) == LabelColour.of(name: " home ", stored: nil))
         #expect(LabelColour.of(name: "Kids", stored: "#ff8000") == model.pills[0].colour)
-        // Not a colour: drawn as the plain dot rather than guessed at.
         #expect(LabelColour(hex: "orange") == nil)
         #expect(LabelColour(hex: "#12345") == nil)
     }
-
-    // MARK: keycaps
 
     @Test func anActionsKeycapIsTheUsersBindingNotALiteral() {
         let model = FocusRowModel(Self.row(marker: Self.question), binding: Self.binding)
         #expect(model.marker?.actions.map(\.label) == ["Reply"])
         #expect(model.marker?.actions.map(\.cap) == ["e"])
 
-        // Rebinding reply moves the cap with it: nothing in the row spells
-        // `e` itself.
         let rebound = FocusRowModel(Self.row(marker: Self.question)) { command in
             command == "reply" ? "r" : nil
         }
@@ -156,48 +133,33 @@ import Testing
                 FocusRowActionFfi(command: "decline_invite", label: "Decline"),
             ])
         let model = FocusRowModel(Self.row(marker: invite), binding: Self.binding)
-        // `y` and `Y` are two keys (spec 007 C22), and the cap must not fold
-        // them into one: the shifted one says its Shift (KEYS.md's ⇧X).
         #expect(model.marker?.actions.map(\.cap) == ["y", "⇧Y"])
     }
 
     @Test func aCapIsSpelledAsTheKeymapSpellsItWithGlyphsForChords() {
         #expect(KeyCapSpelling.cap("e") == "e")
-        // A shifted letter says its Shift, as the design's ⇧X and ⇧J ⇧K do.
         #expect(KeyCapSpelling.cap("Y") == "⇧Y")
         #expect(KeyCapSpelling.cap("X") == "⇧X")
         #expect(KeyCapSpelling.cap("!") == "!")
-        // A sequence is one cap, as the strip's `g o` is on screen 01.
         #expect(KeyCapSpelling.cap("g o") == "g o")
         #expect(KeyCapSpelling.cap("cmd+k") == "⌘K")
-        // A pair, as `hints::pair` spells it: each key its own spelling,
-        // never a chord's capital, spaced as the design writes them (the
-        // results' "j k move", Quick Look's "] [ jump", KEYS.md's "⇧J ⇧K").
         #expect(KeyCapSpelling.cap("j/k") == "j k")
         #expect(KeyCapSpelling.cap("]/[") == "] [")
         #expect(KeyCapSpelling.cap("J/K") == "⇧J ⇧K")
         #expect(KeyCapSpelling.cap("alt+Left/alt+Right") == "⌥← ⌥→")
-        // Bare arrows are one glyph run, a pair or a sequence alike:
-        // screen 01's "↑↓ move", screen 11's "↑↓←→ move".
         #expect(KeyCapSpelling.cap("Up Down") == "↑↓")
         #expect(KeyCapSpelling.cap("Up/Down/Left/Right") == "↑↓←→")
-        // A numbered run (`hints::run`): screen 11's "⌘1–3", screen 01's
-        // "⌥1–4", screen 13's "1–4".
         #expect(KeyCapSpelling.cap("cmd+1\u{2013}3") == "⌘1\u{2013}3")
         #expect(KeyCapSpelling.cap("alt+1\u{2013}4") == "⌥1\u{2013}4")
         #expect(KeyCapSpelling.cap("1\u{2013}4") == "1\u{2013}4")
         #expect(KeyCapSpelling.cap("/") == "/")
         #expect(KeyCapSpelling.cap(nil) == nil)
-        // Escape and Tab are words on a cap, as every design screen and
-        // KEYS.md spell them ("Esc close", "Tab into the chips"): the
-        // menu's ⎋ and ⇥ are unreadable at a cap's 10 pt. A chord keeps
-        // the menu's glyphs, where the system draws them.
+        // Escape and Tab are words on a cap; the menu's glyphs are unreadable at a cap's 10 pt. A
+        // chord keeps the glyphs.
         #expect(KeyCapSpelling.cap("Escape") == "Esc")
         #expect(KeyCapSpelling.cap("Tab") == "Tab")
         #expect(KeyCapSpelling.cap("shift+Tab") == "⇧⇥")
     }
-
-    // MARK: the marker's words
 
     @Test func theQuoteIsDrawnVerbatimInsideQuotationMarks() {
         let model = FocusRowModel(Self.row(marker: Self.question), binding: Self.binding)
@@ -216,15 +178,11 @@ import Testing
         #expect(model.marker?.actions.isEmpty == true)
     }
 
-    // MARK: weight
-
     @Test func unreadIsBold() {
         #expect(FocusRowModel(Self.row(unread: true), binding: Self.binding).bold)
         #expect(!FocusRowModel(Self.row(unread: false), binding: Self.binding).bold)
     }
 
-    /// The gutter's dot is unread mail, beside the bold; a row's action is
-    /// its second line, and a dot there read as new mail.
     @Test func theDotIsUnreadNotAnAction() {
         let dot = { (unread: Bool, marker: MarkerLineFfi?) in
             FocusRowModel(Self.row(unread: unread, marker: marker), binding: Self.binding).dot
@@ -233,7 +191,6 @@ import Testing
         #expect(dot(true, Self.question))
         #expect(!dot(false, Self.question))
         #expect(!dot(false, nil))
-        // A digest's gutter holds its stack.
         #expect(
             !FocusRowModel(Self.row(kind: .digest, unread: true), binding: Self.binding).dot)
     }
@@ -250,11 +207,8 @@ import Testing
     }
 }
 
-/// The list over the FFI: how many rows, which of them start a day, and
-/// what a page arriving changes (T031).
 @MainActor
 @Suite struct FocusListModelTests {
-    /// Rows by position, `nil` while "its page is on its way".
     final class Rows: FocusRowSource {
         var rows: [FocusRowFfi?]
         var asked: [UInt32] = []
@@ -307,14 +261,12 @@ import Testing
     }
 
     @Test func aHeightIsAnsweredWithoutAskingTheEngine() {
-        // `heightOfRow` is asked for every row in the table; it must never
-        // reach the FFI, or a 10k-row inbox fetches every page to lay out.
+        // `heightOfRow` is asked for every row; it must never reach the FFI, or a 10k-row inbox
+        // fetches every page.
         let (model, source) = Self.list([Self.row(1, Self.today), Self.row(2, Self.today)])
         source.asked = []
         _ = (0..<2).map { model.height(at: $0) }
         #expect(source.asked.isEmpty)
-        // Before anything is known the first row is a headed one-liner and
-        // the rest one-liners.
         #expect(model.height(at: 0) == FocusRowMetrics.height(.oneLine, headed: true))
         #expect(model.height(at: 1) == FocusRowMetrics.height(.oneLine, headed: false))
     }
@@ -334,8 +286,8 @@ import Testing
     }
 
     @Test func aPageArrivingAfterTheNextOneRedrawsTheNextPagesFirstRow() {
-        // Rows 50 and 49 straddle a page boundary: whether 50 starts a day
-        // is only known once 49 is.
+        // Rows 50 and 49 straddle a page boundary: whether 50 starts a day is only known once 49
+        // is.
         let size = Int(FocusListModel.pageSize)
         var rows: [FocusRowFfi?] = Array(repeating: nil, count: size)
         rows.append(Self.row(51, Self.today))
@@ -354,7 +306,6 @@ import Testing
     }
 
     @Test func theListOpensWithTheCursorOnItsFirstRow() {
-        // C30: every list opens with the cursor on its first row.
         let (model, _) = Self.list([Self.row(1, Self.today), Self.row(2, Self.today)])
         #expect(model.cursor == 0)
         model.reset(total: 0)
@@ -379,8 +330,7 @@ import Testing
         model.reset(total: 1)
         #expect(model.row(at: 0)?.marker?.actions.first?.cap == "e")
         keys["reply"] = "r"
-        // Cached until the keymap says it changed: a binding lookup clones
-        // the keymap on the other side, and a table asks per visible row.
+        // Cached until the keymap changes: a binding lookup clones the keymap on the other side.
         #expect(model.row(at: 0)?.marker?.actions.first?.cap == "e")
         model.keymapChanged()
         #expect(model.row(at: 0)?.marker?.actions.first?.cap == "r")

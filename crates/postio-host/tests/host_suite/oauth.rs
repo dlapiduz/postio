@@ -1,18 +1,3 @@
-//! A browser sign-in begun from a frontend (US7 scenario 2, T086).
-//!
-//! Its own binary because the provider it signs in with is a user-overlay
-//! row, and the provider table is computed once per process from the
-//! environment (the classic app's OAuth sign-in test said why at length).
-//!
-//! What it proves: the consent URL comes back to the frontend in full, and
-//! nothing is opened or fetched until the person acts -- the host's browser
-//! opener only reports the URL, and the provider's token endpoint has not
-//! been contacted. Cancelling ends it, in words.
-//!
-//! The overlay is found through `XDG_CONFIG_HOME`, and this crate forbids the
-//! `unsafe` that setting it in-process takes. So the test runs itself again as
-//! a child with the variable set, and the child does the work.
-
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,7 +12,6 @@ use postio_host::Host;
 use postio_storage::test_support;
 use postio_ui::onboarding::{OAuthClientSubmission, Status, Submission};
 
-/// No network: discovery answers from the provider table.
 struct Offline;
 
 #[async_trait::async_trait]
@@ -57,7 +41,6 @@ impl DiscoveryTransport for Offline {
     }
 }
 
-/// Set in the child that does the work.
 const INNER: &str = "POSTIO_OAUTH_TEST_INNER";
 
 #[test]
@@ -88,9 +71,7 @@ fn the_consent_url_comes_back_whole_and_nothing_is_opened_or_fetched() {
     );
 }
 
-/// The test itself, with `XDG_CONFIG_HOME` pointing somewhere of its own.
 fn signs_in_as_asked() {
-    // A token endpoint that counts who calls it.
     let token = TcpListener::bind("127.0.0.1:0").expect("a port");
     let token_url = format!("http://{}/token", token.local_addr().unwrap());
     let calls = Arc::new(AtomicUsize::new(0));

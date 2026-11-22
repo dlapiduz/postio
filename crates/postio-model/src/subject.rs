@@ -1,37 +1,16 @@
-//! Subject normalization, shared by threading and by the UI.
-
-/// Reply and forward prefixes, lowercased, across the languages Postio is
-/// likely to meet. Longer forms come first so `fwd` wins over `fw`.
+/// Longer forms come first so `fwd` wins over `fw`.
 const PREFIXES: &[&str] = &[
     "fwd", "fw", "re", "aw", "sv", "vs", "antw", "odp", "ref", "rif", "enc", "tr", "res",
 ];
 
-/// How far apart, in days, two rootless conversations can be and still be
-/// the same conversation to the unified list's subject fallback (#184,
-/// ADR 0005 Q2).
-///
-/// Within one account, subject-fallback threading matches on the normalised
-/// subject alone — an account's own mail gives `References` headers most of
-/// the time, and the fallback exists for the remainder. Across accounts the
-/// fallback is doing more of the work and a bare subject match would fold
-/// every "Weekly digest" the user receives at two addresses into one
-/// eternal conversation. A week is the window in which "same words, both
-/// inboxes" overwhelmingly *is* the same conversation.
+/// How far apart, in days, two rootless conversations can be and still be the same to the unified
+/// list's subject fallback
+/// (#184, ADR 0005 Q2): across accounts a bare subject match would fold every "Weekly digest" into
+/// one conversation.
 pub const COALESCING_WINDOW_DAYS: i64 = 7;
 
-/// Strips reply and forward decoration from a subject and folds case.
-///
-/// Used to group messages whose `References` chains were broken in transit — a
-/// mailing list that rewrites headers, or a client that replies without
-/// `In-Reply-To`. Deliberately conservative: a leading bracketed list tag such
-/// as `[postio-dev]` is *kept*, because two different lists are two different
-/// conversations, but prefixes after it are still stripped.
-///
-/// ```
-/// use postio_model::normalize_subject;
-/// assert_eq!(normalize_subject("RE: Re: FWD: Contract"), "contract");
-/// assert_eq!(normalize_subject("[list] Re: Contract"), "[list] contract");
-/// ```
+/// Groups messages whose `References` were broken in transit. Conservative: a leading `[list]` tag
+/// is kept, since two lists are two conversations, but prefixes after it are stripped.
 pub fn normalize_subject(subject: &str) -> String {
     let collapsed = subject
         .to_lowercase()
@@ -54,7 +33,6 @@ pub fn normalize_subject(subject: &str) -> String {
     }
 }
 
-/// Splits off a leading `[tag]`, returning the tag and everything after it.
 fn split_leading_tag(subject: &str) -> (&str, &str) {
     if !subject.starts_with('[') {
         return ("", subject);
@@ -65,7 +43,6 @@ fn split_leading_tag(subject: &str) -> (&str, &str) {
     }
 }
 
-/// Strips one `re:` / `fwd:` style prefix, including `re[2]:` and `re(2):`.
 fn strip_one_prefix(subject: &str) -> Option<&str> {
     let subject = subject.trim_start();
     for prefix in PREFIXES {
@@ -80,65 +57,25 @@ fn strip_one_prefix(subject: &str) -> Option<&str> {
     None
 }
 
-/// Whether a subject carries reply or forward decoration.
-///
-/// The safeguard on subject-based threading. JWZ groups by subject only as a
-/// fallback for a broken `References` chain, and only where one side *looks*
-/// like a reply — otherwise every message anyone ever titled "Hello" collapses
-/// into one conversation, which is worse than the broken chain it was meant to
-/// repair.
-///
-/// ```
-/// use postio_model::subject::is_reply;
-/// assert!(is_reply("Re: Contract"));
-/// assert!(is_reply("[list] FWD: Contract"));
-/// assert!(!is_reply("Contract"));
-/// assert!(!is_reply("Reference check"));
-/// ```
+/// The safeguard on subject-based threading: JWZ groups by subject only where one side looks like a
+/// reply, or every "Hello" collapses into one conversation.
 pub fn is_reply(subject: &str) -> bool {
     let collapsed = subject.to_lowercase();
     let (_, rest) = split_leading_tag(collapsed.trim());
     strip_one_prefix(rest).is_some()
 }
 
-/// The subject line for a reply to `original`.
-///
-/// Prepends `Re: ` unless `original` already starts with one — checking only
-/// that spelling, deliberately not [`is_reply`]'s conservative multi-language
-/// recognition: this is Postio's own outgoing subject, not a judgement about
-/// whether somebody else's decoration means "reply" or "forward", so replying
-/// to a message titled `Fwd: Quarterly report` is meant to read `Re: Fwd:
-/// Quarterly report` — a reply *to* a forward — not lose the `Fwd:` entirely.
-///
-/// ```
-/// use postio_model::subject::reply_subject;
-/// assert_eq!(reply_subject("Quarterly report"), "Re: Quarterly report");
-/// assert_eq!(reply_subject("Re: Quarterly report"), "Re: Quarterly report");
-/// assert_eq!(reply_subject("re[2]: Quarterly report"), "re[2]: Quarterly report");
-/// ```
+/// Checks only the `Re:` spelling, not `is_reply`'s multi-language recognition: this is Postio's
+/// own outgoing subject, so replying to `Fwd: X` reads `Re: Fwd: X`.
 pub fn reply_subject(original: &str) -> String {
     prefixed_subject(original, "Re:", &["re"])
 }
 
-/// The subject line for forwarding `original`.
-///
-/// Prepends `Fwd: ` unless `original` already starts with `Fwd:` or `Fw:` —
-/// see [`reply_subject`] for why this checks only its own prefix rather than
-/// every language [`is_reply`] recognizes.
-///
-/// ```
-/// use postio_model::subject::forward_subject;
-/// assert_eq!(forward_subject("Quarterly report"), "Fwd: Quarterly report");
-/// assert_eq!(forward_subject("Fwd: Quarterly report"), "Fwd: Quarterly report");
-/// assert_eq!(forward_subject("Re: Quarterly report"), "Fwd: Re: Quarterly report");
-/// ```
+/// Checks only its own prefix (`Fwd:`, `Fw:`), for the reason given on `reply_subject`.
 pub fn forward_subject(original: &str) -> String {
     prefixed_subject(original, "Fwd:", &["fwd", "fw"])
 }
 
-/// Shared machinery for [`reply_subject`] and [`forward_subject`]: prepend
-/// `label` unless `original` already opens with one of `prefixes` (optionally
-/// followed by a `[2]`/`(2)` counter) and a colon.
 fn prefixed_subject(original: &str, label: &str, prefixes: &[&str]) -> String {
     let trimmed = original.trim();
     if starts_with_one_of(trimmed, prefixes) {
@@ -150,9 +87,6 @@ fn prefixed_subject(original: &str, label: &str, prefixes: &[&str]) -> String {
     format!("{label} {trimmed}")
 }
 
-/// Whether `subject` opens with one of `prefixes`, optionally counter-suffixed,
-/// followed by a colon — the same shape [`strip_one_prefix`] recognizes, kept
-/// separate because the caller here chooses which prefixes count.
 fn starts_with_one_of(subject: &str, prefixes: &[&str]) -> bool {
     let lowered = subject.to_lowercase();
     for prefix in prefixes {
@@ -167,7 +101,6 @@ fn starts_with_one_of(subject: &str, prefixes: &[&str]) -> bool {
     false
 }
 
-/// Strips a `[2]` or `(2)` repetition counter, if one is there.
 fn strip_counter(subject: &str) -> &str {
     for (open, close) in [('[', ']'), ('(', ')')] {
         let Some(inner) = subject.strip_prefix(open) else {

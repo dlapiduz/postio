@@ -1,25 +1,16 @@
-//! Mail participants as they appear in address headers.
-
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// A single RFC 5322 address: an optional display name plus an addr-spec.
-///
-/// The `address` is stored exactly as it was received. Comparisons that should
-/// ignore case go through [`EmailAddress::normalized`] or
-/// [`EmailAddress::same_address`]; derived `PartialEq` is exact, because two
-/// headers that differ only in display name are genuinely different headers.
+/// `address` is stored as received; case-insensitive comparison goes through `normalized` or
+/// `same_address`. Derived `PartialEq` is exact.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 pub struct EmailAddress {
-    /// The display name, if the header carried one.
     pub name: Option<String>,
-    /// The addr-spec, e.g. `alice@example.com`, verbatim.
     pub address: String,
 }
 
 impl EmailAddress {
-    /// Builds an address from an optional display name and an addr-spec.
     pub fn new(name: Option<impl Into<String>>, address: impl Into<String>) -> Self {
         Self {
             name: name.map(Into::into),
@@ -27,27 +18,22 @@ impl EmailAddress {
         }
     }
 
-    /// The lowercased addr-spec, for indexing and equality.
     pub fn normalized(&self) -> String {
         self.address.to_lowercase()
     }
 
-    /// Whether both values name the same mailbox, ignoring display name and case.
     pub fn same_address(&self, other: &Self) -> bool {
         self.address.eq_ignore_ascii_case(&other.address)
     }
 
-    /// The part before the last `@`.
     pub fn local_part(&self) -> Option<&str> {
         self.address.rsplit_once('@').map(|(local, _)| local)
     }
 
-    /// The part after the last `@`.
     pub fn domain(&self) -> Option<&str> {
         self.address.rsplit_once('@').map(|(_, domain)| domain)
     }
 
-    /// What to show in the UI: the display name if there is one, else the address.
     pub fn display(&self) -> &str {
         match self.name.as_deref() {
             Some(name) if !name.trim().is_empty() => name,
@@ -55,17 +41,9 @@ impl EmailAddress {
         }
     }
 
-    /// Whether the addr-spec could plausibly be delivered to.
-    ///
-    /// A shape check, not a validation: exactly one `@`, something either
-    /// side of it, a dot in the domain, and no whitespace. It exists so the
-    /// composer can *mark* a recipient that will not work while still holding
-    /// on to it — the alternative, refusing to accept the text, loses what the
-    /// user typed and tells them nothing about why.
-    ///
-    /// Deliberately not RFC 5322: a quoted local part and an address literal
-    /// are both legal and both vanishingly rare next to a typo, and the only
-    /// authority on whether an address exists is the receiving server.
+    /// A shape check, not validation, so the composer can mark a bad recipient while keeping the
+    /// text.
+    /// Not RFC 5322: quoted local parts and address literals are rarer than typos.
     pub fn is_plausible(&self) -> bool {
         let address = self.address.trim();
         if address != self.address || address.contains(char::is_whitespace) {
@@ -82,34 +60,11 @@ impl EmailAddress {
     }
 }
 
-/// Parses a header-style address list as a person would type it into a
-/// composer field.
-///
-/// Deliberately forgiving. This runs on every keystroke of a `To` field, where
-/// the text is *mid-edit* far more often than it is finished, so a strict RFC
-/// 5322 parser would spend most of its life rejecting input that is merely
-/// unfinished. What it does guarantee:
-///
-/// * `,` and `;` separate addresses, unless they are inside a quoted display
-///   name or inside the angle brackets of an addr-spec.
-/// * `Ada Lovelace <ada@example.com>` splits into name and address; a bare
-///   `ada@example.com` is all address.
-/// * A quoted display name comes back unquoted, so what the field shows is
-///   what the header will carry.
-/// * Whitespace-only entries vanish rather than becoming empty addresses.
-///
-/// Whether an entry is *deliverable* is a different question, answered by
-/// [`EmailAddress::is_plausible`] — the composer wants to show a half-typed
-/// address as a recipient and merely mark it, not drop it.
-///
-/// ```
-/// use postio_model::address::parse_list;
-///
-/// let parsed = parse_list("Ada Lovelace <ada@example.com>, grace@example.net");
-/// assert_eq!(parsed.len(), 2);
-/// assert_eq!(parsed[0].name.as_deref(), Some("Ada Lovelace"));
-/// assert_eq!(parsed[1].address, "grace@example.net");
-/// ```
+/// Deliberately forgiving: this runs on every keystroke of a `To` field, where text is mid-edit far
+/// more often than finished. `,` and `;` separate
+/// addresses unless inside a quoted name or angle brackets; a quoted display name comes back
+/// unquoted; whitespace-only entries vanish.
+/// Deliverability is `EmailAddress::is_plausible`'s question.
 pub fn parse_list(input: &str) -> Vec<EmailAddress> {
     split_list(input)
         .into_iter()
@@ -117,11 +72,7 @@ pub fn parse_list(input: &str) -> Vec<EmailAddress> {
         .collect()
 }
 
-/// Renders addresses back into what a composer field should show.
-///
-/// The inverse of [`parse_list`] for anything [`parse_list`] produced: the
-/// separator is `, ` and each address is its [`Display`](fmt::Display) form,
-/// so a draft that is saved and reopened puts the same text back in the field.
+/// Inverse of `parse_list`: `, `-separated, so a saved draft reopens with the same field text.
 pub fn format_list(addresses: &[EmailAddress]) -> String {
     addresses
         .iter()
@@ -130,35 +81,17 @@ pub fn format_list(addresses: &[EmailAddress]) -> String {
         .join(", ")
 }
 
-/// The last address in `input`, still being typed — what recipient
-/// completion should search contacts for and, if the user picks one, replace.
-///
-/// Returns `(start, text)`: `text` is the token to search for, and `start` is
-/// its byte offset in `input`, so a caller can replace exactly
-/// `input[start..]` with whatever was chosen and leave every address typed
-/// before it untouched. Splits on the same rules as [`parse_list`] — a comma
-/// or semicolon inside a quoted name or an angle-bracketed address is not a
-/// separator — and the whitespace after a separator is not part of the token:
-/// completing `"Ada <ada@example.com>, gr"` searches for `"gr"` starting where
-/// the letter is, not at the space right after the comma.
-///
-/// ```
-/// use postio_model::address::current_entry;
-/// assert_eq!(current_entry("grace"), (0, "grace"));
-/// assert_eq!(current_entry("ada@example.com, gr"), (17, "gr"));
-/// assert_eq!(current_entry("ada@example.com, "), (17, ""));
-/// ```
+/// The last address in `input`, still being typed: `(start, text)`, where `start` is its byte
+/// offset so a caller can replace `input[start..]`.
+/// Splits as `parse_list` does; whitespace after a separator is not part of the token.
 pub fn current_entry(input: &str) -> (usize, &str) {
     let last = split_list(input).pop().unwrap_or(input);
-    // `last` is a subslice of `input` by construction, so this offset is
-    // sound and is the only way to recover it without `split_list` keeping
-    // more than the borrowed text itself.
+    // `last` is a subslice of `input` by construction, so pointer subtraction gives its offset.
     let start = last.as_ptr() as usize - input.as_ptr() as usize;
     let trimmed = last.trim_start();
     (start + (last.len() - trimmed.len()), trimmed)
 }
 
-/// Splits on the separators that are not inside quotes or angle brackets.
 fn split_list(input: &str) -> Vec<&str> {
     let mut entries = Vec::new();
     let mut start = 0;
@@ -187,7 +120,6 @@ fn split_list(input: &str) -> Vec<&str> {
     entries
 }
 
-/// One entry, already trimmed. `None` for an entry that held nothing.
 fn parse_one(entry: &str) -> Option<EmailAddress> {
     if entry.is_empty() {
         return None;
@@ -200,7 +132,6 @@ fn parse_one(entry: &str) -> Option<EmailAddress> {
 
     let address = match close {
         Some(close) => &entry[open + 1..close],
-        // `Ada <ada@example.com` — the bracket the user has not typed yet.
         None => &entry[open + 1..],
     };
     let address = address.trim();
@@ -215,7 +146,6 @@ fn parse_one(entry: &str) -> Option<EmailAddress> {
     ))
 }
 
-/// Strips the quotes around a display name, and the backslashes inside them.
 fn unquote(name: &str) -> String {
     let Some(inner) = name
         .strip_prefix('"')
@@ -246,26 +176,10 @@ impl fmt::Display for EmailAddress {
     }
 }
 
-/// Replace the local part of every address in `text` with `…`.
-///
-/// For **logs**, and only for logs. An error carrying an address is right on
-/// screen — it is how the user knows which account to fix — and wrong in a
-/// file people paste into bug reports. The domain survives because it is what
-/// makes the line diagnostic at all: telling an iCloud failure from a Fastmail
-/// one is most of the triage, and it identifies nobody.
-///
-/// Deliberately crude, and deliberately over-matching. It finds every `@` and
-/// walks left over the characters an address can contain; a log line is not
-/// the place to be precise about RFC 5322 at the cost of missing one.
-///
-/// ```
-/// use postio_model::address::redact_addresses;
-///
-/// assert_eq!(
-///     redact_addresses("no password is stored for ada@example.com; add one"),
-///     "no password is stored for \u{2026}@example.com; add one"
-/// );
-/// ```
+/// For logs only: an error carrying an address is right on screen and wrong in a file pasted into
+/// bug reports. The domain survives because it
+/// makes the line diagnostic. Deliberately crude and over-matching: finds every `@` and walks left
+/// over characters an address can contain.
 pub fn redact_addresses(text: &str) -> String {
     if !text.contains('@') {
         return text.to_owned();
@@ -279,7 +193,6 @@ pub fn redact_addresses(text: &str) -> String {
             index += 1;
             continue;
         }
-        // Walk back over the local part already written out and drop it.
         let mut local = 0;
         for ch in out.chars().rev() {
             if is_local_part_char(ch) {
@@ -298,8 +211,7 @@ pub fn redact_addresses(text: &str) -> String {
     out
 }
 
-/// The characters an address's local part is allowed to use, per RFC 5322's
-/// `atext` plus `.` — a superset is the safe direction here.
+/// RFC 5322 `atext` plus `.`; a superset is the safe direction for redaction.
 fn is_local_part_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || "!#$%&'*+-/=?^_`{|}~.".contains(ch)
 }
@@ -310,8 +222,6 @@ mod tests {
 
     #[test]
     fn redaction_keeps_the_domain_and_drops_who() {
-        // The domain is what makes a log line diagnostic; the local part is
-        // what identifies a person.
         assert_eq!(
             redact_addresses("no password is stored for ada@example.com; add one"),
             "no password is stored for \u{2026}@example.com; add one"
@@ -332,8 +242,6 @@ mod tests {
 
     #[test]
     fn redaction_over_matches_rather_than_missing_one() {
-        // A dotted local part, a plus tag, and an address flush against
-        // punctuation all have to lose their local part.
         assert_eq!(
             redact_addresses("<ada.b+postio@example.com>"),
             "<\u{2026}@example.com>"
@@ -357,8 +265,6 @@ mod tests {
 
     #[test]
     fn a_half_typed_field_still_parses_into_what_is_there() {
-        // Every one of these is a state a To field passes through while it is
-        // being typed, and none of them may lose a character of it.
         assert_eq!(parse_list("").len(), 0);
         assert_eq!(parse_list("   ,  ; ").len(), 0);
         assert_eq!(

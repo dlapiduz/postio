@@ -1,17 +1,12 @@
-//! Parses the automated-senders table, `data/senders.toml`, into rows.
-//!
-//! `build.rs` compiles this file a second time through `#[path]`, so the
-//! parser that validates the shipped table at build time is the parser the
-//! classifier loads it with: there is no second copy to drift (the idiom
-//! `postio-account` uses for its provider presets). For that reason it
-//! names nothing else in the crate, only `serde`, `toml` and `std`, and its
-//! reasons are strings that [`super`] turns into the crate's own type.
+//! Parsed here and compiled a second time by `build.rs` through `#[path]`, so the parser that
+//! validates
+//! the shipped table at build time is the one the classifier loads. It names nothing else in the
+//! crate.
 
 use std::fmt;
 
 use serde::Deserialize;
 
-/// FR-113's vocabulary, spelled as the table and the store spell it.
 pub const REASONS: &[&str] = &[
     "spam",
     "promotion",
@@ -21,25 +16,18 @@ pub const REASONS: &[&str] = &[
     "social",
 ];
 
-/// One `[[sender]]` entry, validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub name: String,
-    /// Each local-part pattern, as its lowercase words.
     pub local: Vec<Vec<String>>,
-    /// Each subdomain label, lowercase.
     pub domain: Vec<String>,
-    /// One of [`REASONS`].
     pub reason: String,
     pub source: Option<String>,
 }
 
-/// Why the table does not load: which entry, when one is to blame, and what
-/// is wrong with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableError {
-    /// The entry's name, or its position when it has none; `None` when the
-    /// file itself is not a table.
+    /// `None` when the file itself is not a table.
     pub entry: Option<String>,
     pub problem: String,
 }
@@ -55,7 +43,6 @@ impl fmt::Display for TableError {
 
 impl std::error::Error for TableError {}
 
-/// The file: a list of `[[sender]]` tables and nothing else.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct File {
@@ -63,7 +50,6 @@ struct File {
     sender: Vec<toml::Table>,
 }
 
-/// One `[[sender]]` table, before it is checked.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
@@ -76,9 +62,8 @@ struct Entry {
     source: Option<String>,
 }
 
-/// The table's rows, in file order, or the first thing wrong with it. An
-/// entry is named by its `name`, or by its position when it has none, so
-/// the error says where to look without quoting anything else.
+/// An entry is named by its `name`, or by its position when it has none, so the error says where to
+/// look without quoting anything else.
 pub fn parse(text: &str) -> Result<Vec<Row>, TableError> {
     let file: File = toml::from_str(text).map_err(|error| TableError {
         entry: None,
@@ -106,8 +91,6 @@ pub fn parse(text: &str) -> Result<Vec<Row>, TableError> {
     Ok(rows)
 }
 
-/// An entry, checked: a name, a pattern at least, patterns that are the
-/// right shape, and a reason from the vocabulary.
 fn row(entry: Entry) -> Result<Row, String> {
     if entry.name.trim().is_empty() {
         return Err("its name is empty".to_owned());
@@ -148,11 +131,8 @@ fn row(entry: Entry) -> Result<Row, String> {
     })
 }
 
-/// The characters that part a local part's words.
 pub const SEPARATORS: [char; 4] = ['.', '-', '_', '+'];
 
-/// A local-part pattern as its words: letters and digits, parted by `.`,
-/// `-`, `_` or `+`. The part before the at sign, never a whole address.
 fn local_words(pattern: &str) -> Result<Vec<String>, String> {
     let words: Vec<String> = pattern
         .split(SEPARATORS)
@@ -170,8 +150,6 @@ fn local_words(pattern: &str) -> Result<Vec<String>, String> {
     }
 }
 
-/// A domain pattern: one label of a subdomain, letters, digits and inner
-/// hyphens.
 fn domain_label(label: &str) -> Result<String, String> {
     let well_formed = !label.is_empty()
         && !label.starts_with('-')

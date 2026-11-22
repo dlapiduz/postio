@@ -6,13 +6,7 @@ import UniformTypeIdentifiers
 
 @testable import PostioKit
 
-/// What a picture's bytes say it is (#1571).
-///
-/// From the bytes rather than the name, for the reason the classic app's
-/// composer gave: a `.png` that is really a JPEG would reach the recipient
-/// declared wrongly, and the declaration is all their client has to go on.
 @Suite struct MimeTypeTests {
-    /// A one-pixel picture, encoded as `type`.
     private func picture(_ type: UTType) throws -> Data {
         let context = try #require(
             CGContext(
@@ -37,8 +31,6 @@ import UniformTypeIdentifiers
     }
 
     @Test func bytesThatAreNotAPictureAreNone() {
-        // `nil`, so the caller falls back to the name and the boundary
-        // refuses a non-image in its own words.
         #expect(MimeType.ofImage(Data("%PDF-1.7".utf8)) == nil)
         #expect(MimeType.ofImage(Data()) == nil)
     }

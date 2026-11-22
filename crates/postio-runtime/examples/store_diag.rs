@@ -1,49 +1,3 @@
-//! Read-only search diagnosis against a real store.
-//!
-//! `postio-y47`'s bench corpus proved every search fast; a real store still
-//! reported multi-second ones (#746). No bench could tell the two apart — the
-//! gap was in what the corpus left empty, not in what it measured — so this
-//! opens an existing store **read-only** and runs the real
-//! `postio_index::search` over it, timed, then repeats the same search on a
-//! warm connection to separate "the query is expensive" from "the cache
-//! cannot hold the working set and every run re-decrypts it".
-//!
-//! Prints statement shapes, counts and durations only — never message
-//! content, never a query a user typed, never the key.
-//!
-//! ```sh
-//! POSTIO_DIAG_KEY=$(secret-tool lookup application postio account "local store encryption key") \
-//!   cargo run --release -p postio-runtime --example store_diag [-- /path/to/postio.db]
-//! ```
-//!
-//! `--release` is not optional: the page cipher is compiled at the profile's
-//! opt level, so a debug build measures unoptimised crypto.
-//!
-//! # What this can no longer see
-//!
-//! It used to install SQLite's `trace_v2` profile hook and report a duration
-//! **per statement** inside one search. This engine has no trace hook, so
-//! sections A and D — the per-statement breakdown and the plans for the three
-//! slowest — are gone with it. What is left is the whole-search timing, which
-//! is what says *whether* there is a problem, and `EXPLAIN QUERY PLAN` over
-//! the executor's own SQL, which is what usually says where.
-//!
-//! # Two traps #746 walked into before it found the real cost
-//!
-//! 1. **A `count(*)` wrapper un-measures scalar subqueries.** Timing a
-//!    suspect statement by wrapping it in `SELECT count(*) FROM (...)`
-//!    "proves" it fast, because the planner prunes subquery columns nothing
-//!    reads — the expensive expressions never execute. To time a statement,
-//!    run the statement: step every row and read every column, the way
-//!    [`run_search`] does.
-//! 2. **A plan line names an index without naming the key columns actually
-//!    used.** `SEARCH ... USING INDEX idx_name (account_id=?)` can be true
-//!    and still hide that the column that actually narrows the scan — say, an
-//!    address — silently dropped out of the probe because it was compared
-//!    against a *correlated subquery*, which cannot be used as an index key.
-//!    Read the probe's parenthesised columns, not just which index got
-//!    mentioned.
-
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -55,7 +9,6 @@ use postio_storage::{Checkout, Store};
 
 use postio_index::executor::{SearchRequest, search};
 
-/// One line of SQL, whitespace collapsed, cut to something scannable.
 fn shape(sql: &str) -> String {
     let flat = sql.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.len() > 110 {
@@ -65,12 +18,7 @@ fn shape(sql: &str) -> String {
     }
 }
 
-/// Open the store at `path` under the master key in `key_hex`.
-///
-/// Not read-only in the file-permission sense any more — the engine has no
-/// `SQLITE_OPEN_READ_ONLY` equivalent in its Rust API — so **point this at a
-/// copy**, which is what the doc comment has always asked for. Nothing below
-/// writes; the risk is the engine's own recovery on open.
+/// Point this at a copy: the engine has no read-only open, and its own recovery on open can write.
 async fn open(path: &str, key_hex: &str, cache_kib: i64) -> (Store, Checkout) {
     let master = StoreKey::from_hex(key_hex.trim()).expect("POSTIO_DIAG_KEY is not a key");
     let key = master.derive(Purpose::Database);
@@ -83,7 +31,6 @@ async fn open(path: &str, key_hex: &str, cache_kib: i64) -> (Store, Checkout) {
     (store, connection)
 }
 
-/// Runs one search and prints the executor's answer and what it cost.
 async fn run_search(connection: &Checkout, text: &str, order: ResultOrder) -> Duration {
     let query = postio_search::parse(text, Utc::now().date_naive());
     let request = SearchRequest {
@@ -193,9 +140,6 @@ async fn main() {
     run_search(&big, "meeting", ResultOrder::Relevance).await;
     run_search(&big, "the", ResultOrder::Relevance).await;
 
-    // The executor builds its SQL privately, so what can be explained from
-    // out here is the shape rather than the statement. Both halves of the
-    // union, which is where a search's cost lives.
     println!("\n== D: the plans the two halves of a match take ==");
     for sql in [
         "SELECT content_id FROM search_documents

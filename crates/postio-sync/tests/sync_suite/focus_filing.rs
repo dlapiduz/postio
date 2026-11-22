@@ -1,12 +1,3 @@
-//! Focus's filing pass (spec 007 T102, `contracts/engine.md`): the guards
-//! read from the store, the writes made in the transaction that filed the
-//! mail, and what it costs per message.
-//!
-//! The classifier here is a stand-in that files every stranger's mail as a
-//! notification, asking every guard first -- the most a classifier can ask
-//! of the store. What the built-in rules decide is T122's, and its suite is
-//! `focus_rules.rs`; this one is about the pass that carries a decision out.
-
 use std::sync::Arc;
 
 use postio_account::backend::{AppendMessage, MailBackend, MockBackend, MockMailbox, MockMessage};
@@ -29,9 +20,6 @@ use postio_sync::{
 const INBOX: &str = "INBOX";
 const VALIDITY: u32 = 1_707_000_000;
 
-/// Files every message no guard covers, as a notification from its
-/// headers, asking each guard in turn -- the guards' own order, and all of
-/// them for a stranger.
 #[derive(Debug)]
 struct FilesStrangers;
 
@@ -61,7 +49,6 @@ fn pass() -> FocusFiling {
     FocusFiling::with_classifier(Arc::new(FilesStrangers))
 }
 
-/// A message from `from` to the account, `n` its subject and id.
 fn mail(n: u32, from: &str, extra: &str) -> Vec<u8> {
     format!(
         "From: {from}\r\n\
@@ -72,7 +59,6 @@ fn mail(n: u32, from: &str, extra: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// The store and a server with an inbox holding one old message, synced.
 struct World {
     backend: MockBackend,
     _database: postio_storage::Store,
@@ -135,7 +121,6 @@ impl World {
             .expect("deliver");
     }
 
-    /// The next pass over the inbox, filed by `filing`: the arrivals.
     async fn pass(&self, filing: &dyn FilingPass) -> Vec<MessageId> {
         let outcome = resync_mailbox_filing(
             &self.connection,
@@ -153,8 +138,6 @@ impl World {
         arrived
     }
 
-    /// Where the message with this subject is now, and why it is there if
-    /// Focus filed it away.
     async fn where_is(&self, subject: &str) -> (Mailbox, Option<(FilterReason, FilterLayer)>) {
         let id: i64 = postio_storage::sql::first(
             &self.connection,
@@ -196,8 +179,6 @@ impl World {
         (MessageId::new(id), ())
     }
 
-    /// A message the account sent to `to`, filed in Sent and counted as
-    /// written, the way a local send files and counts it.
     async fn sent_to(&self, to: &str, message_id: &str) {
         let raw = format!(
             "From: Test User <test@example.com>\r\nTo: {to}\r\n\
@@ -223,13 +204,8 @@ impl World {
     }
 }
 
-// --- What the pass does with a decision ------------------------------------------
-
 #[tokio::test]
 async fn a_filtered_arrival_is_archived_with_its_reason_and_the_move_queued() {
-    // FR-110, FR-113, FR-117: archived as it is filed, with its reason and
-    // the layer that decided, through the storage verbs in the transaction
-    // that filed it, and the server told by a queued move.
     let world = world(true).await;
     world
         .deliver(mail(1, "Forge <notifications@forge.example>", ""))
@@ -254,8 +230,6 @@ async fn a_filtered_arrival_is_archived_with_its_reason_and_the_move_queued() {
     assert_eq!(
         operations,
         vec![
-            // #2076: the reason first, for the account's other machines,
-            // so the server moves a message that already says why.
             Operation::SetFlags {
                 flags: [FilterReason::Notification.keyword()].into_iter().collect()
             },
@@ -270,11 +244,6 @@ async fn a_filtered_arrival_is_archived_with_its_reason_and_the_move_queued() {
 
 #[tokio::test]
 async fn a_filtered_arrival_can_be_asked_for_once_its_move_has_drained() {
-    // #1978: the row leaves the inbox with no server identity, and the
-    // reading pane's on-open request answers "nothing to fetch" for such a
-    // row. Once the server has the move, the drain must have the archive
-    // resynced, so the message has an address again and its body is asked
-    // for -- the person sees it arrive instead of "Downloading" for ever.
     let world = world(true).await;
     world
         .deliver(mail(1, "Forge <notifications@forge.example>", ""))
@@ -290,7 +259,6 @@ async fn a_filtered_arrival_can_be_asked_for_once_its_move_has_drained() {
         report.applied, 2,
         "the reason and the move reached the server: {report:?}"
     );
-    // What the engine does with the report: sync each folder it names.
     let mailboxes = postio_storage::repository::MailboxRepository::new(&world.connection);
     for mailbox in &report.needs_resync {
         let mailbox = mailboxes.get(*mailbox).await.unwrap().expect("a folder");
@@ -318,9 +286,6 @@ async fn a_filtered_arrival_can_be_asked_for_once_its_move_has_drained() {
 
 #[tokio::test]
 async fn an_account_with_no_archive_folder_keeps_its_mail_in_the_inbox() {
-    // Filtered mail is archived (FR-117). With nowhere to archive it, it is
-    // not filtered at all: a decision with the message still in the inbox
-    // would say one thing and the list another.
     let world = world(false).await;
     world
         .deliver(mail(1, "Forge <notifications@forge.example>", ""))
@@ -333,21 +298,15 @@ async fn an_account_with_no_archive_folder_keeps_its_mail_in_the_inbox() {
     assert_eq!(decision, None);
 }
 
-// --- The guards, as the store answers them (FR-111) -----------------------------------
-
 #[tokio::test]
 async fn each_guard_the_store_answers_keeps_mail_in_the_inbox() {
     let world = world(true).await;
-    // The user wrote to Grace.
     world
         .sent_to("Grace <grace@example.net>", "<to-grace@example.com>")
         .await;
-    // The user wrote in a conversation Oren now replies in; the user never
-    // wrote to Oren himself.
     world
         .sent_to("Team <team@example.org>", "<mine@example.com>")
         .await;
-    // A second identity at the user's own firm.
     let mut work = Identity::new(
         world.account.id,
         EmailAddress::new(Some("Test User"), "test@firm.example"),
@@ -394,9 +353,6 @@ async fn each_guard_the_store_answers_keeps_mail_in_the_inbox() {
     );
 }
 
-// --- What it costs ------------------------------------------------------------------
-
-/// Focus's pass, counted: what the statements it issued cost, per call.
 #[derive(Debug)]
 struct Counted {
     inner: FocusFiling,
@@ -422,10 +378,6 @@ impl FilingPass for Counted {
 
 #[tokio::test]
 async fn the_pass_reads_at_most_four_statements_per_arrival_and_scans_no_mail() {
-    // contracts/engine.md: at most 4 statements per new message, plus its
-    // writes, with no scans. The stand-in asks every guard of every
-    // stranger, which is the most a classifier can ask, and files each one,
-    // which is the most a pass writes.
     let world = world(true).await;
     for n in 1..=6 {
         world
@@ -453,14 +405,9 @@ async fn the_pass_reads_at_most_four_statements_per_arrival_and_scans_no_mail() 
         );
     }
 
-    // Every read it issues, asked of the planner: nothing walks the mail.
-    // The user's own addresses are one read of the accounts and their
-    // identities -- a handful of rows, once per call, never per message.
     let reads = FocusFiling::reads();
     assert!(!reads.is_empty());
     for sql in reads {
-        // `plan` binds every placeholder, so a plan that did not come back
-        // fails here rather than passing for having no steps.
         let plan = test_support::plan(&world.connection, &sql).await;
         assert!(!plan.is_empty(), "{sql}: no plan");
         let scanned: Vec<&str> = plan
@@ -476,8 +423,6 @@ async fn the_pass_reads_at_most_four_statements_per_arrival_and_scans_no_mail() 
     }
 }
 
-// --- `[focus] filtering` and `[focus.filter] never` (T123) -------------------------
-
 fn configured(toml: &str) -> FocusFiling {
     let config = postio_config::Config::from_toml_str(toml).expect("a config");
     pass().configured(&config.focus)
@@ -485,7 +430,6 @@ fn configured(toml: &str) -> FocusFiling {
 
 #[tokio::test]
 async fn with_filtering_off_nothing_new_is_filed_away() {
-    // FR-119: `filtering = false` stops filing new mail into Filtered.
     let world = world(true).await;
     world
         .deliver(mail(1, "Forge <notifications@forge.example>", ""))
@@ -502,8 +446,6 @@ async fn with_filtering_off_nothing_new_is_filed_away() {
 
 #[tokio::test]
 async fn a_sender_the_user_never_filters_is_not_filtered() {
-    // FR-111, FR-116: a pinned sender, or one restored from Filtered, by
-    // address or by a whole domain.
     let world = world(true).await;
     world
         .deliver(mail(1, "Forge <notifications@forge.example>", ""))
@@ -530,9 +472,6 @@ async fn a_sender_the_user_never_filters_is_not_filtered() {
     assert!(decision.is_some(), "and a sender nobody pinned is filed");
 }
 
-// --- Reminders: a reply from somebody else answers one (spec 007 T094) ------------
-
-/// The conversation of the message whose `Message-ID` is `<arrival-{n}@example.com>`.
 async fn conversation_of(world: &World, n: u32) -> (MessageId, postio_model::ThreadId) {
     let id: i64 = postio_storage::sql::first(
         &world.connection,
@@ -551,7 +490,6 @@ async fn conversation_of(world: &World, n: u32) -> (MessageId, postio_model::Thr
     (message.id, message.thread_id.expect("threaded"))
 }
 
-/// A reply to the message `<arrival-{to}@example.com>`, from `from`.
 fn reply(n: u32, to: u32, from: &str) -> Vec<u8> {
     mail(
         n,
@@ -562,7 +500,6 @@ fn reply(n: u32, to: u32, from: &str) -> Vec<u8> {
     )
 }
 
-/// A reminder on the old message's conversation, due in a day.
 async fn waiting_on_the_old_message(world: &World) -> postio_model::ThreadId {
     let (anchor, thread) = conversation_of(world, 0).await;
     postio_storage::repository::ReminderRepository::new(&world.connection)
@@ -577,7 +514,6 @@ async fn waiting_on_the_old_message(world: &World) -> postio_model::ThreadId {
     thread
 }
 
-/// Every reminder on `thread`, as (cancelled, fired, settled).
 async fn reminder_states(world: &World, thread: postio_model::ThreadId) -> Vec<(bool, bool, bool)> {
     postio_storage::sql::all(
         &world.connection,
@@ -595,7 +531,6 @@ async fn reminder_states(world: &World, thread: postio_model::ThreadId) -> Vec<(
 
 #[tokio::test]
 async fn a_reply_from_somebody_else_cancels_the_reminder_waiting_on_it() {
-    // FR-044, in the transaction that files the reply.
     let world = world(true).await;
     let thread = waiting_on_the_old_message(&world).await;
     world.deliver(reply(1, 0, "Old <old@example.org>")).await;
@@ -616,7 +551,6 @@ async fn a_reply_from_somebody_else_cancels_the_reminder_waiting_on_it() {
 
 #[tokio::test]
 async fn the_person_s_own_follow_up_leaves_the_reminder_waiting() {
-    // A reply from anyone *but the user* cancels it (FR-044).
     let world = world(true).await;
     let thread = waiting_on_the_old_message(&world).await;
     world
@@ -633,8 +567,6 @@ async fn the_person_s_own_follow_up_leaves_the_reminder_waiting() {
 
 #[tokio::test]
 async fn a_reply_to_a_surfaced_reminder_settles_it() {
-    // The conversation came back marked "No reply since"; then the reply
-    // came after all, and the surfaced row stops standing.
     let world = world(true).await;
     let thread = waiting_on_the_old_message(&world).await;
     let reminders = postio_storage::repository::ReminderRepository::new(&world.connection);
@@ -661,10 +593,6 @@ async fn a_reply_to_a_surfaced_reminder_settles_it() {
     );
 }
 
-// --- Another machine on the same account (#2076) -----------------------------------
-
-/// A second store, for the same account: another machine, with its own
-/// inbox and archive, that has synced neither yet.
 async fn another_machine() -> (postio_storage::Store, Checkout, Mailbox, Mailbox) {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -675,8 +603,6 @@ async fn another_machine() -> (postio_storage::Store, Checkout, Mailbox, Mailbox
     (database, connection, inbox, archive)
 }
 
-/// Sync each of `mailboxes` on `connection`, the way the other machine's
-/// engine would.
 async fn sync_each(world: &World, connection: &Checkout, mailboxes: &[&Mailbox]) {
     for mailbox in mailboxes {
         sync_mailbox(
@@ -691,7 +617,6 @@ async fn sync_each(world: &World, connection: &Checkout, mailboxes: &[&Mailbox])
     }
 }
 
-/// What `connection`'s Filtered view lists: each subject, with its reason.
 async fn filtered_on(connection: &Connection) -> Vec<(String, FilterReason)> {
     let decisions = FilterDecisionRepository::new(connection)
         .filtered(None, 0, 50)
@@ -709,7 +634,6 @@ async fn filtered_on(connection: &Connection) -> Vec<(String, FilterReason)> {
     listed
 }
 
-/// Drain `world`'s queue to the server, as its engine does once online.
 async fn drain(world: &World) {
     let report = Drainer::new(&world.backend)
         .drain(&world.connection, world.account.id, chrono::Utc::now())
@@ -723,9 +647,6 @@ async fn drain(world: &World) {
 
 #[tokio::test]
 async fn a_message_filtered_on_one_machine_is_filtered_on_another() {
-    // #2076: filing used to say why only in the store that filed, so the
-    // other machine saw an archived message and no reason. The reason now
-    // travels with the message, and the other machine's Filtered lists it.
     let world = world(true).await;
     world
         .deliver(mail(1, "Forge <notifications@forge.example>", ""))
@@ -745,8 +666,6 @@ async fn a_message_filtered_on_one_machine_is_filtered_on_another() {
 
 #[tokio::test]
 async fn mail_the_person_archived_by_hand_is_not_filtered_on_another_machine() {
-    // The reason travels only with what filing filed: a message archived
-    // by hand reaches the other machine's archive with nothing to say.
     let world = world(true).await;
     world.deliver(mail(1, "Ada <ada@example.org>", "")).await;
     world
@@ -777,7 +696,6 @@ async fn mail_the_person_archived_by_hand_is_not_filtered_on_another_machine() {
     assert_eq!(filtered_on(&other).await, Vec::new());
 }
 
-/// Files nothing.
 #[derive(Debug)]
 struct FilesNothing;
 

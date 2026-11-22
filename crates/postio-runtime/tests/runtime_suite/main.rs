@@ -1,35 +1,7 @@
-//! One binary for `postio-runtime`'s integration tests.
-//!
-//! Each file in `tests/` gets its own executable from cargo, and each links
-//! this workspace's dependency stack whether it uses it or not. That is where
-//! the test time goes: 125 integration targets across 18 crates (#1128).
-//! The classic app's crates were consolidated first; this is the same
-//! pass over the leaves.
-//!
-//! Nothing here needs a display, so unlike a suite that needs a display, this
-//! keeps libtest's ordinary harness and its thread pool. The cases already ran
-//! in parallel within each old binary and now do so across all of them, which
-//! is the same guarantee and one link.
-//!
-//! **Two cases stayed out, and their own comments say why.**
-//! `shutdown.rs` and `logging_privacy.rs` both call
-//! `tracing::subscriber::set_global_default`, which succeeds once per
-//! process -- "this test binary runs one test and owns the subscriber", as
-//! `shutdown.rs` puts it. They set it *globally* rather than per-thread on
-//! purpose, because the engine works on a thread of its own and the warning
-//! they exist to catch is raised there. Two of those in one binary is one
-//! panic, so they keep their own.
-//!
-//! **A case that needs its own process does not belong here.** None of these
-//! set a process-global -- no `set_var`, no crate attributes -- and that was
-//! checked rather than assumed. A test that grows one has to move back out, or
-//! it will change what its neighbours see.
-//!
-//! A case that only *reads* something the process shares -- a count every
-//! thread adds to, a slot the last session to open filled, a log callsite --
-//! is no setter, and still sees its neighbours under `cargo test`. It starts
-//! with `postio_test_support::alone!`, which gives it a process of its own
-//! wherever it does not already have one (#1976).
+//! One binary for the integration tests, to cut link time (#1128). `shutdown.rs` and
+//! `logging_privacy.rs` stay out: each sets
+//! the global tracing subscriber. A case reading shared state starts with
+//! `postio_test_support::alone!` (#1976).
 
 mod concurrent_accounts;
 mod engine;
@@ -45,7 +17,5 @@ mod sync_progress;
 mod sync_wave;
 mod thread_store;
 
-// Shared by `engine`, `sync_wave` and `concurrent_accounts`, which each
-// declared it separately when they were separate binaries.
 mod engine_stack;
 mod harness;

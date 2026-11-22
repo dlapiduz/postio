@@ -1,19 +1,10 @@
-//! #1895 on the GTK app: a message opened from a search hit, then answered
-//! or forwarded, puts the composer over it with the search bar nowhere in
-//! sight and the keyboard in the composer.
-//!
-//! A hit puts the bar away and holds its words to bring the bar back when
-//! the message closes. A reply must not count as the message closing. The
-//! words and the reopening are the shared controller's (postio-focus
-//! `bar.rs`, spec 009 slice 8), and what GTK tells it is open is the window's
-//! (`window::surfaces_now`), so the window is what is asserted on: what a
-//! person sees, not what a layer was handed.
+//! A reply from a search hit must not count as the message closing, which would bring the search
+//! bar back over the composer (#1895).
 
 use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// Search "harbor", open its hit and wait for it to be read.
 async fn open_a_hit(
     fixture: &Fixture,
 ) -> (
@@ -39,8 +30,6 @@ async fn open_a_hit(
     (window, bar)
 }
 
-/// Whether anything of the search bar is on screen: its dropdown or its
-/// entry.
 fn bar_showing(bar: &postio_gtk::bar::Bar) -> bool {
     bar.is_open() || bar.input().is_mapped() || bar.widget().is_visible() && bar.hints() > 0
 }
@@ -54,7 +43,6 @@ async fn composer_without_the_bar(
         crate::settle_until(async || window.compose_dialog().is_some()).await,
         "{what} from the hit opened no composer"
     );
-    // Whatever would come back does so within a moment of the composer.
     crate::settle_for(postio_test_support::scaled(
         std::time::Duration::from_millis(400),
     ))
@@ -104,9 +92,6 @@ pub fn forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar() {
     });
 }
 
-/// The way back out (storyboards/flows/search-open-reply-back): Escape leaves
-/// the reply for the hit it answered, and a second Escape the hit for the
-/// search it was found by, its words still typed.
 pub fn escaping_a_reply_from_a_hit_returns_to_the_hit_then_the_search() {
     crate::gtk_case(async {
         if !support::display() {

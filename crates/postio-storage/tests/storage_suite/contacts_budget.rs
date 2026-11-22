@@ -1,21 +1,3 @@
-//! What contacts cost the store — counted, not timed (Principle V).
-//!
-//! Three paths, each with the budget that governs it:
-//!
-//! - **Recording**, paid per correspondent on every message a sync writes
-//!   (#728). The counter sees *reads* — the seam counts every `sql::first`,
-//!   `all` and `one`, and an `execute` goes uncounted — so this holds the
-//!   read half exactly: one lookup per known correspondent, which finds the
-//!   address and its owner together. The writes behind it (the sighting, the
-//!   person's aggregates) are two literal statements the code states in
-//!   `record_in`'s doc comment, and `threading_lookup_cost.rs` holds that each
-//!   seeks rather than walks.
-//! - **Completion**, which runs on the UI thread as the user types a
-//!   recipient: the 16 ms budget, so a fixed number of statements and no full
-//!   scan whatever the address book holds.
-//! - **The finder's load**, which holds people in memory for fuzzy matching:
-//!   bounded by its cap, never by the size of the address book.
-
 use chrono::{TimeZone, Utc};
 use postio_model::{EmailAddress, Message};
 use postio_storage::Connection;
@@ -23,11 +5,8 @@ use postio_storage::repository::ContactRepository;
 use postio_storage::test_support;
 use postio_storage::test_support::counting::{counted_async, scans};
 
-/// Enough people that a scan or a sort over all of them is a real cost.
 const PEOPLE: usize = 20_000;
 
-/// An address book the size of a real one: a person per address, each with
-/// the terms recording would have given them.
 async fn fill(connection: &Connection) {
     connection
         .execute_batch(&format!(
@@ -92,10 +71,8 @@ async fn recording_a_known_correspondent_costs_one_read() {
     })
     .await;
 
-    // This message was never stored, so each address row is made here and
-    // read back: two reads an address. Sync never pays that -- it writes a
-    // message's recipients before recording it -- and the second pass below
-    // is the shape it does pay.
+    // This message was never stored, so each address row is made and read back; sync writes
+    // recipients before recording, which the second pass shows.
     assert_eq!(
         first.statements,
         2 * addresses,
@@ -112,9 +89,6 @@ async fn recording_a_known_correspondent_costs_one_read() {
     assert_eq!(again.rows, addresses, "one row per lookup, nothing wider");
 }
 
-/// The completion read, as `ContactRepository::complete` spells it with a
-/// prefix. Copied, like `contact_rank_index.rs` copies its twin, because the
-/// SQL the planner sees is the thing being asked about.
 const COMPLETE: &str = "SELECT id, name, organization, note, source, state, \
      preferred_address, seen_name, times_seen, last_seen_at, written, kind, kind_source, \
      saved_at, given_name, family_name, show_as, title FROM contacts \
@@ -186,8 +160,6 @@ async fn the_finders_load_is_one_statement_bounded_by_its_cap() {
     );
 }
 
-/// The list read for one view's first page, as `ContactRepository::page`
-/// spells it -- the view's predicate, the own-address exclusion, the seek.
 async fn list_plans(connection: &Connection) -> Vec<(String, Vec<String>)> {
     let mut plans = Vec::new();
     for (name, sql) in postio_storage::test_support::contact_list_statements() {
@@ -259,10 +231,9 @@ async fn a_contacts_page_is_one_statement_and_no_more_rows_than_it_shows() {
         filtered.rows
     );
 
-    // The planner's half. `accounts` and `identities` are the user's own
-    // addresses -- a handful of rows, read once per statement to keep them
-    // out of the list -- and scanning those is expected; scanning people is
-    // not.
+    // `accounts` and `identities` are a handful of the user's own addresses, scanned to keep them
+    // out
+    // of the list; scanning people is not expected.
     for (name, scanned) in list_plans(&connection).await {
         let people: Vec<&String> = scanned
             .iter()
@@ -277,9 +248,9 @@ async fn a_contacts_page_is_one_statement_and_no_more_rows_than_it_shows() {
 
 #[tokio::test]
 async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
-    // docs/notes/2026-09-12-a-row-value-cursor-is-a-filter-not-a-seek.md:
-    // this engine seeks on a bare inequality on the sort column and filters
-    // on a row value, so the cursor carries the redundant `sort_key >= ?`.
+    // This engine seeks on a bare inequality on the sort column and filters on a row value, so the
+    // cursor carries the redundant `sort_key >= ?`
+    // (docs/notes/2026-09-12-a-row-value-cursor-is-a-filter-not-a-seek.md).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let cursors: Vec<(&str, String)> = postio_storage::test_support::contact_list_statements()

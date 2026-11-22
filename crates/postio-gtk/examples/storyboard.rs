@@ -1,37 +1,8 @@
-//! Focus's storyboard runner, as a command (specs/008-storyboards,
-//! contracts/runner.md).
-//!
-//! ```sh
-//! cargo run -p postio-gtk --example storyboard -- list
-//! cargo run -p postio-gtk --example storyboard -- \
-//!     run storyboards/list/archive-walks-down.toml --out /tmp/runs
-//! ```
-//!
-//! `scripts/storyboards.sh run` is how people and skills drive it; it builds
-//! this once and puts it on the private headless compositor.
-//!
-//! # Why it re-executes itself
-//!
-//! A storyboard's frames are compared byte for byte -- run against run, and
-//! branch against base -- so everything that decides a pixel has to be the
-//! same every time (research R5). Most of that has to be settled before GTK
-//! starts, which is why the process starts itself again with:
-//!
-//! * `TZ=UTC` and a C UTF-8 locale, so dates and collation do not follow the
-//!   machine;
-//! * a fontconfig that knows only the faces Postio embeds and the system's
-//!   Adwaita Sans and Mono (the chrome's own, C25), so no other system font
-//!   can move a glyph;
-//! * `GSK_RENDERER=cairo`, the renderer that measured byte-identical across
-//!   processes (docs/notes/2026-10-01-what-a-storyboard-capture-costs.md);
-//! * throwaway `XDG_*` directories, so no user setting or state leaks in and
-//!   nothing is left behind;
-//! * `GTK_A11Y=test`, so no accessibility bus is dialled.
-//!
-//! The clock and animations are held still inside the runner itself.
-//!
-//! Exit status: 0 every run passed (or was not applicable or not covered);
-//! 1 a run failed; 2 a storyboard did not load or a runner errored.
+//! Focus's storyboard runner (specs/008-storyboards); driven by `scripts/storyboards.sh run`.
+//! Frames are compared byte for byte, so the process re-executes itself with TZ=UTC, a C UTF-8
+//! locale, a fontconfig of Postio's own faces,
+//! `GSK_RENDERER=cairo`, throwaway XDG dirs and `GTK_A11Y=test`. Exit: 0 passed, 1 a run failed, 2
+//! a load or runner error.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -68,7 +39,6 @@ fn main() -> ExitCode {
     }
 }
 
-/// Starts this binary again inside the environment research R5 fixes.
 fn reexec(args: &[String]) -> ExitCode {
     let Ok(scratch) = tempfile::tempdir() else {
         eprintln!("storyboard: no temporary directory for the hermetic run");
@@ -94,7 +64,6 @@ fn reexec(args: &[String]) -> ExitCode {
     ];
     for face in chrome_faces(&system_roots) {
         if let Some(name) = face.file_name() {
-            // A missing system font leaves the run as it was.
             let _ = std::fs::copy(&face, fonts.join(name));
         }
     }
@@ -163,7 +132,6 @@ fn list() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The value after `--name`, if given.
 fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter()
         .position(|arg| arg == name)
@@ -176,7 +144,6 @@ fn play(args: &[String]) -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
-    // Everything that is neither a flag nor a flag's value is a storyboard.
     let takes_value = ["--out", "--delivery", "--variant", "--tree-key", "--commit"];
     let mut files = Vec::new();
     let mut skip = false;
@@ -223,8 +190,6 @@ fn play(args: &[String]) -> ExitCode {
         eprintln!("storyboard: no display; run it under scripts/test-headless.sh");
         return ExitCode::from(2);
     }
-    // The window installs Focus's style and icons itself, as it does in the
-    // application.
 
     let mut worst = 0u8;
     for file in &files {
@@ -236,9 +201,6 @@ fn play(args: &[String]) -> ExitCode {
                 continue;
             }
         };
-        // Each variant the storyboard asks for and Focus supports, with
-        // --variants; otherwise the one variant the flags named, or failing
-        // that the one the storyboard asks for by default.
         let every = args.iter().any(|arg| arg == "--variants");
         let variants = if every || options.variant.is_empty() {
             postio_gtk::demo::storyboard::variants_to_play(&board, every)
@@ -257,8 +219,6 @@ fn play(args: &[String]) -> ExitCode {
     ExitCode::from(worst)
 }
 
-/// Plays one storyboard in one variant, says how it went, and returns the
-/// exit code it is worth.
 fn play_one(board: &postio_storyboard::format::Storyboard, options: &Options) -> u8 {
     {
         let played = postio_gtk::demo::on_runtime(run(board, options));
@@ -303,9 +263,8 @@ fn play_one(board: &postio_storyboard::format::Storyboard, options: &Options) ->
     }
 }
 
-/// The generated pass (spec US6): every command in every context, judged.
-/// Writes `coverage.json`; exits 1 on any command with no visible effect
-/// that the gap list does not name, or any stale gap.
+/// Writes `coverage.json`; exits 1 on any command with no visible effect that the gap list does not
+/// name, or any stale gap.
 fn every_command(args: &[String]) -> ExitCode {
     let Some(out) = flag(args, "--out") else {
         eprintln!("{USAGE}");

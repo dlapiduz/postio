@@ -1,39 +1,8 @@
-//! Message bodies, in both directions.
-//!
-//! A mail client reads bodies and writes them, and until now only the reading
-//! half existed — inside the classic app, beside the `WebView` that consumes it.
-//! That put the one allowlist Postio has in the frontend, where a second
-//! frontend could not reach it and where the *outgoing* half would have had
-//! to grow a second copy. Two allowlists that must agree forever, with no
-//! compiler to make them, is the failure [issue #30] was filed to prevent.
-//!
-//! So this crate owns the whole of what a body is:
-//!
-//! * [`sanitize`] — incoming markup, hardened before it reaches any view.
-//! * [`quote`] — quoted-text folding, on that sanitized output.
-//! * [`own_text`](mod@own_text) — the newest message's own words, without
-//!   what [`quote`] folds or its signature, for the needs-action detector.
-//!
-//! # Why its own crate and not `postio-model`
-//!
-//! [ADR 0004]. `ammonia` pulls `html5ever`, `markup5ever` and a generated tag
-//! table, and `postio-model` is the crate every other crate in the workspace
-//! waits on — four dependencies today, and nine crates behind it with no
-//! opinion about HTML whatsoever. Putting an HTML parser there puts it in
-//! front of every `cargo test -p <crate>` in the repository.
-//!
-//! This is a domain-rank leaf beside `postio-search`, and the same argument:
-//! a pure library with no SQL and no toolkit, shared by whoever needs it,
-//! rather than a capability buried in the frontend.
-//!
-//! # What is deliberately *not* here
-//!
-//! The `WebView`, the `postio-cid:` scheme handler and the remote-image
-//! banner stay in the frontend. They are WebKit, and WebKit is the frontend's
-//! business. What crosses the boundary is the string this crate produces.
-//!
-//! [issue #30]: https://github.com/dlapiduz/postio/issues/30
-//! [ADR 0004]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0004-composer-document-model.md
+//! Message bodies in both directions: `sanitize` (incoming markup), `quote` (quoted-text folding)
+//! and `own_text` (the newest message's own words).
+//! A leaf crate apart from `postio-model`, so the HTML parser stays out of every crate's test build
+//! (ADR 0004).
+//! The `WebView`, the `postio-cid:` handler and the remote-image banner stay in the frontend.
 
 pub mod document;
 pub mod edit;

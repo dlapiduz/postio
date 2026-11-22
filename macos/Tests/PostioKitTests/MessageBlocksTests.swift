@@ -3,14 +3,6 @@ import Testing
 
 @testable import PostioKit
 
-/// What the message window's content column draws, block by block, for a
-/// message that has a banner, a caveat, both or neither (#1585).
-///
-/// The column draws exactly `MessageBlock.blocks` and nothing beside it, so
-/// this is the list of what is on screen rather than of what the view was
-/// handed. The banner is the case that needed it: the boundary carried the
-/// offer and its tests passed while Focus's message window had no banner at
-/// all.
 @Suite struct MessageBlocksTests {
     static let summary = "This message is from news.example.org"
     static let caveat = "Parts of this message could not be decoded."
@@ -70,7 +62,6 @@ import Testing
     }
 
     @Test func personalMailHasNoBanner() {
-        // The control for the test above, over the same header.
         let drawn = Self.blocks(Self.document())
         #expect(drawn.contains(.body), "the column was composed")
         #expect(!drawn.contains { if case .unsubscribe = $0 { true } else { false } })
@@ -114,8 +105,6 @@ import Testing
     }
 
     @Test func theBannerSitsOnTheRhythmGTKsNoticeSlotDoes() {
-        // 12 under the sender block, and the 24 to the body is then the
-        // notice's (`postio_ui::focus_dialog::rhythm::CARD_TO_NOTICE`).
         let banner = MessageBlock.unsubscribe(Self.offer, .offered)
         #expect(MessageBlock.gap(above: banner, after: .sender) == 12)
         #expect(MessageBlock.gap(above: .body, after: banner) == MessageRhythm.cardToBody)

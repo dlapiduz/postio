@@ -1,15 +1,10 @@
-//! T194: the mouse beside the keyboard. Enter opens the cursor's message
-//! and so does a double-click on a row; a press in a row's gutter toggles
-//! its selection as `x` does; Escape closes the dialogs.
-
 use gtk::gdk;
 use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// A double-click on a row is GTK's `activate` on the list (the list is not
-/// single-click-activate, so a single click only moves the cursor). It must
-/// open that row's message through the one `OpenMessage` command.
+/// The list is not single-click-activate, so a single click only moves the cursor; a double-click
+/// is GTK's `activate`.
 pub fn a_double_click_on_a_row_opens_its_message_as_enter_does() {
     crate::gtk_case(async {
         if !support::display() {
@@ -49,7 +44,6 @@ pub fn a_double_click_on_a_row_opens_its_message_as_enter_does() {
     });
 }
 
-/// A press in a row's gutter toggles that row's selection, as `x` does.
 pub fn a_press_in_a_rows_gutter_toggles_its_selection() {
     crate::gtk_case(async {
         if !support::display() {
@@ -80,7 +74,6 @@ pub fn a_press_in_a_rows_gutter_toggles_its_selection() {
     });
 }
 
-/// Escape closes the dialogs a person opens over the list.
 pub fn escape_closes_the_message_and_the_key_map() {
     crate::gtk_case(async {
         if !support::display() {
@@ -110,9 +103,6 @@ pub fn escape_closes_the_message_and_the_key_map() {
     });
 }
 
-/// Press a row's body the way the pointer does: through its own
-/// `GestureClick`, with `modifiers` held. (A local helper, named so it can
-/// merge into `support.rs` beside the real-input ones.)
 fn click_row_with(row: &postio_gtk::list::row::RowWidget, modifiers: gdk::ModifierType) {
     row.hold_modifiers(modifiers);
     let controllers = row.observe_controllers();
@@ -129,8 +119,6 @@ fn selected_label(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     support::texts(&support::only(window, "focus-bulk-bar"))
 }
 
-/// Ctrl-click toggles the row it lands on, as `x` does; a plain click only
-/// moves the cursor and selects nothing.
 pub fn ctrl_click_toggles_a_rows_selection() {
     crate::gtk_case(async {
         if !support::display() {
@@ -165,8 +153,6 @@ pub fn ctrl_click_toggles_a_rows_selection() {
     });
 }
 
-/// Shift-click extends the selection from the anchor to the row, the mouse
-/// pair of `Shift`+`j`/`k`.
 pub fn shift_click_extends_the_selection_to_a_range() {
     crate::gtk_case(async {
         if !support::display() {

@@ -1,12 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// What a filter popover shows (specs/010-focus-search T083; design §3.6,
-/// screens 08 and 09): the list pattern for From, To, Anywhere and Label,
-/// and the two columns of Date. Every row, count, word and check is the
-/// controller's last `FocusPopover` (`FilterPopoverModel.view`); a click,
-/// a key or a word typed goes down, and nothing here changes until it
-/// answers -- but the fields' own text and the arrows' highlight.
 public struct FilterPopoverContent: View {
     let model: FilterPopoverModel
 
@@ -25,27 +19,14 @@ public struct FilterPopoverContent: View {
     }
 }
 
-/// The popovers' sizes (§3.6).
 public enum FilterPopoverMetrics {
-    /// From, To, Anywhere and Label.
     public static let listWidth: CGFloat = 360
-    /// A list popover's row.
     public static let rowHeight: CGFloat = 44
-    /// Date, two columns.
     public static let dateWidth: CGFloat = 470
-    /// Date's presets column.
     public static let presetsWidth: CGFloat = 170
-    /// Date's month chart.
     public static let chartHeight: CGFloat = 90
 }
 
-// MARK: From, To, Anywhere, Label
-
-/// The list pattern (screen 08): its own search field, rows 44 tall with a
-/// checkbox, an avatar or an icon, the name over the address, and a bar
-/// with the count; the keys in a footer. Space toggles the highlighted
-/// row while the field is empty (with words in it, Space is a space);
-/// ⌥-click excludes.
 struct ListPopoverView: View {
     let model: FilterPopoverModel
     let view: PopoverViewFfi
@@ -106,7 +87,6 @@ struct ListPopoverView: View {
     }
 }
 
-/// One person, folder or label in a list popover.
 struct PopoverRowView: View {
     @Environment(\.colorScheme) private var scheme
     let row: PopoverRowFfi
@@ -133,7 +113,6 @@ struct PopoverRowView: View {
                 .fill(.tertiary)
                 .frame(width: max(6, 60 * row.share), height: 3)
                 .frame(width: 60, alignment: .trailing)
-            // "5,000+" past the walk's cap (D30): the controller's words.
             Text(row.countLabel)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -182,8 +161,6 @@ struct PopoverRowView: View {
         LabelColour.of(name: row.title, stored: row.color).map { AnyShapeStyle($0.swatch) } ?? AnyShapeStyle(.secondary)
     }
 
-    /// An avatar's fill: one of the system's hues, by the name, so a person
-    /// keeps theirs. Drawing only: nothing reads it.
     static func avatar(_ name: String) -> Color {
         let hues: [Color] = [.orange, .green, .gray, .purple, .blue, .brown]
         let sum = name.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff }
@@ -191,7 +168,6 @@ struct PopoverRowView: View {
     }
 }
 
-/// A popover's footer of keys: "Space toggle  ⌥ -click excludes  ↩ apply".
 struct PopoverFooter: View {
     let hints: [KeyHintFfi]
 
@@ -210,11 +186,6 @@ struct PopoverFooter: View {
     }
 }
 
-// MARK: Date
-
-/// The Date popover (screen 09): the presets with their counts on the
-/// left; on the right the plain-words field and what it became, the month
-/// chart to drag, and what the dates keep.
 struct DatePopoverView: View {
     let model: FilterPopoverModel
     let view: PopoverViewFfi

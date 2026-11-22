@@ -1,23 +1,8 @@
-//! Who the person has written to (spec 007, data-model.md
-//! "`correspondents`"): one row per address they sent mail to, in To, Cc or
-//! Bcc, and how many times.
-//!
-//! # What reads it
-//!
-//! Focus's filter never files mail from someone the person wrote to (the
-//! "wrote to" guard, FR-111), and recipient completion ranks by how often
-//! (FR-052). Both are one lookup by address here, rather than a walk of
-//! Sent's recipients.
-//!
-//! # What writes it
-//!
-//! A message counts once, when it is first filed in Sent: at local send,
-//! before the network (`postio_sync::send`), and when a Sent folder syncs a
-//! message it did not have (`postio_sync`'s passes, from the rows the
-//! upsert inserted, so a sent copy a resync adopts by its Message-ID is not
-//! counted twice). A send that fails takes its one back. The sender's own
-//! addresses -- the account's and every identity's -- are never counted:
-//! writing to yourself is not writing to someone.
+//! One row per address the person sent mail to (To, Cc, Bcc) and how many times, so the filter's
+//! "wrote to" guard and recipient completion are one lookup, not a walk of Sent.
+//! A message counts once, when first filed in Sent (a Sent sync counts only upserted rows, so a
+//! resync adoption is not double counted); a failed send takes its one back. The sender's own
+//! addresses are never counted.
 
 use chrono::{DateTime, Utc};
 use postio_model::{AccountId, EmailAddress, MessageId};
@@ -29,33 +14,24 @@ use crate::error::Result;
 use crate::sql::{self, RowExt as _};
 use crate::store::Connection;
 
-/// One address the person has sent mail to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Correspondent {
-    /// How many messages the person sent with it in To, Cc or Bcc.
     pub sent_count: u32,
-    /// When the last of them was sent.
     pub last_sent_at: Option<DateTime<Utc>>,
 }
 
-/// Reads and writes [`Correspondent`]s.
 #[derive(Debug)]
 pub struct CorrespondentRepository<'a> {
     connection: &'a Connection,
 }
 
 impl<'a> CorrespondentRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Counts `messages`, sent from `account`, once each: one more for every
-    /// address each went to in To, Cc or Bcc, an address named twice in one
-    /// message counted once, and `last_sent_at` moved to the latest.
-    ///
-    /// Two statements whatever the messages hold: the sender's own
-    /// addresses, read once, and one write from the messages' recipients.
+    /// An address named twice in one message counts once. Two statements: the sender's own
+    /// addresses, then one write from the recipients.
     pub async fn record_sent(&self, account: AccountId, messages: &[MessageId]) -> Result<()> {
         if messages.is_empty() {
             return Ok(());
@@ -80,10 +56,8 @@ impl<'a> CorrespondentRepository<'a> {
         Ok(())
     }
 
-    /// Takes back what [`Self::record_sent`] counted for `message`, whose
-    /// send failed: nothing was delivered, so nobody was written to. The
-    /// latest-sent time is left as it was; a count of zero is what says
-    /// nobody was.
+    /// A failed send delivered nothing, so nobody was written to. `last_sent_at` is left as it was;
+    /// a count of zero says nobody was.
     pub async fn unrecord_sent(&self, account: AccountId, message: MessageId) -> Result<()> {
         let own = self.own_addresses(account).await?;
         let sql = format!(
@@ -99,7 +73,6 @@ impl<'a> CorrespondentRepository<'a> {
         Ok(())
     }
 
-    /// What is known of `address`, matched as addresses are, in any case.
     pub async fn get(&self, address: &EmailAddress) -> Result<Option<Correspondent>> {
         sql::first(
             self.connection,
@@ -115,8 +88,6 @@ impl<'a> CorrespondentRepository<'a> {
         .await
     }
 
-    /// Whether the person has written to `address`: the filter's guard
-    /// (FR-111), one lookup.
     pub async fn wrote_to(&self, address: &EmailAddress) -> Result<bool> {
         Ok(self
             .get(address)
@@ -124,9 +95,7 @@ impl<'a> CorrespondentRepository<'a> {
             .is_some_and(|correspondent| correspondent.sent_count > 0))
     }
 
-    /// Which of `addresses` the person has written to, normalised: the
-    /// filter's "wrote to" guard for every sender of one message at once
-    /// (FR-111), one statement whatever their number.
+    /// One statement whatever the number of addresses.
     pub async fn written_to(&self, addresses: &[EmailAddress]) -> Result<Vec<String>> {
         if addresses.is_empty() {
             return Ok(Vec::new());
@@ -144,8 +113,6 @@ impl<'a> CorrespondentRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::written_to`] runs for `count` addresses: a seek on
-    /// each address, then the key.
     pub fn explain_written_to(count: usize) -> String {
         format!(
             "SELECT a.address_normalized
@@ -155,11 +122,7 @@ impl<'a> CorrespondentRepository<'a> {
         )
     }
 
-    /// Every address the person has written to, normalised, with how many
-    /// messages each: recipient completion's "wrote N times" for a whole
-    /// directory at once (spec 007 FR-052, T076). One statement, over the
-    /// correspondents -- the people the person writes to, a few hundred --
-    /// never over the contacts.
+    /// One statement over the correspondents (a few hundred), never over the contacts.
     pub async fn sent_counts(&self) -> Result<std::collections::HashMap<String, u32>> {
         let rows: Vec<(String, i64)> =
             sql::all(self.connection, &Self::explain_sent_counts(), (), |row| {
@@ -172,7 +135,6 @@ impl<'a> CorrespondentRepository<'a> {
             .collect())
     }
 
-    /// The SQL [`Self::sent_counts`] runs.
     pub fn explain_sent_counts() -> String {
         "SELECT a.address_normalized, c.sent_count
            FROM correspondents c JOIN addresses a ON a.id = c.address_id
@@ -180,7 +142,6 @@ impl<'a> CorrespondentRepository<'a> {
             .to_owned()
     }
 
-    /// The SQL [`Self::get`] runs: a seek on the address, then the key.
     pub fn explain_get(&self) -> String {
         "SELECT c.sent_count, c.last_sent_at
            FROM addresses a JOIN correspondents c ON c.address_id = a.id
@@ -188,8 +149,6 @@ impl<'a> CorrespondentRepository<'a> {
             .to_owned()
     }
 
-    /// Every address `account` sends as, normalised: its own and its
-    /// identities'.
     async fn own_addresses(&self, account: AccountId) -> Result<Vec<String>> {
         let addresses: Vec<String> = sql::all(
             self.connection,
@@ -213,7 +172,6 @@ impl<'a> CorrespondentRepository<'a> {
     }
 }
 
-/// The messages' ids, then the sender's own addresses, as parameters.
 fn arguments(messages: &[MessageId], own: &[String]) -> Vec<turso::Value> {
     messages
         .iter()

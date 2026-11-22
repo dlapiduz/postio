@@ -1,15 +1,9 @@
-//! Quote folds in a single message (specs/007-postio-focus T067, FR-034):
-//! the quoted part is folded behind a line that says how much it hides,
-//! and opens when that line is activated -- clicked, or asked for by the
-//! dialog's own fold line through `open_fold`.
-
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::BodyView;
 
 use crate::support::{content, reader_deadline, until};
 
-/// Something only the quoted part says.
 const QUOTED: &str = "walkthrough tomorrow";
 
 fn shown(name: &str) -> (BodyView, gtk::Window) {

@@ -1,16 +1,8 @@
-//! The page a person reads: every run as a filmstrip, with the keyboard's
-//! region outlined on every frame, what the app said it saw, and what each
-//! check came to (data-model § Review page).
-//!
-//! Self-contained HTML: one inline stylesheet that follows the reader's
-//! light or dark preference, images by relative path, nothing fetched. It is
-//! opened from disk, and it may be published as a private page when the
-//! maintainer is away from the workstation, so it can rely on nothing beside
-//! itself and its frames.
-//!
-//! A run that was not covered or not applicable is shown and counted, never
-//! folded into "passed": a page that hid what it could not check would read
-//! as though everything had been.
+//! The page a person reads: every run as a filmstrip with the keyboard's region outlined, what the
+//! app said it saw, and what each check came to. Self-contained HTML (one inline stylesheet, images
+//! by relative path, nothing fetched), since it may be published as a private page when the
+//! maintainer is away.
+//! A run that was not covered or not applicable is shown and counted, never folded into "passed".
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -26,28 +18,18 @@ use crate::verdicts::{self, Finding, Kind, Resolution, Review, Verdict};
 
 const TEMPLATE: &str = include_str!("../templates/page.html");
 
-/// One run, and where its files are relative to the page.
 #[derive(Debug, Clone)]
 pub struct Filmstrip {
-    /// The run's directory relative to the page, with `/` separators, such
-    /// as `runs/terminal/archive-walks-down/default`.
     pub dir: String,
-    /// The run.
     pub run: Run,
 }
 
-/// What the page says about itself at the top.
 #[derive(Debug, Clone, Default)]
 pub struct Header {
-    /// The page's title: the branch, usually.
     pub title: String,
-    /// The review key of the tree the runs came from.
     pub tree_key: Option<String>,
 }
 
-/// Every `run.json` under `root`, as filmstrips whose `dir` starts with
-/// `prefix` -- the path from the page to `root`. Sorted by app, storyboard
-/// and variant, so two builds of the page list runs in the same order.
 pub fn collect(root: &Path, prefix: &str) -> io::Result<Vec<Filmstrip>> {
     let mut found = Vec::new();
     walk(root, &mut found)?;
@@ -95,31 +77,20 @@ fn walk(dir: &Path, found: &mut Vec<PathBuf>) -> io::Result<()> {
     Ok(())
 }
 
-/// What the review of a bundle came to.
 #[derive(Debug, Clone)]
 pub enum ReviewState {
-    /// The bundle has no `verdicts.json`.
     NoReview,
-    /// `verdicts check` rejected it; these are the problems.
     Incomplete(Vec<String>),
-    /// It passed, with contests attached.
     Complete(Review),
 }
 
-/// A bundle as the page and the summary read it.
 #[derive(Debug, Clone)]
 pub struct Reviewed {
-    /// What was to be reviewed.
     pub manifest: Manifest,
-    /// What came back.
     pub state: ReviewState,
-    /// Where the bundle is relative to the page, for frame links, such as
-    /// `bundle`.
     pub frame_prefix: String,
 }
 
-/// Reads a bundle's manifest and review. A missing `verdicts.json` is not an
-/// error: it is the state "no review ran".
 pub fn load_review(bundle: &Path, frame_prefix: &str) -> Result<Reviewed, String> {
     let manifest = crate::prompt::load_manifest(bundle)?;
     let state = if !bundle.join("verdicts.json").exists() {
@@ -139,20 +110,16 @@ pub fn load_review(bundle: &Path, frame_prefix: &str) -> Result<Reviewed, String
     })
 }
 
-/// The page with a review's verdicts, as HTML.
 pub fn render_reviewed(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> String {
     render_with(header, strips, Some(reviewed), None)
 }
 
-/// The most `summary` may come to: under GitHub's 65,536-character limit on
-/// a pull request body, with room for what `issue-land.sh` writes around it.
+/// Under GitHub's 65,536-character limit on a pull request body, with room for what `issue-land.sh`
+/// writes around it.
 pub const SUMMARY_LIMIT: usize = 60_000;
 
-/// The summary a pull request carries, as text with no images
-/// (contracts/review.md § What reaches the maintainer). Its first line is
-/// `storyboards-key: <key>`, which is how a landing tells whether it is
-/// current. It is a digest: each item gives its first sentence, and past
-/// [`SUMMARY_LIMIT`] the rest is counted and left to the page.
+/// Its first line is `storyboards-key: <key>`, which is how a landing tells whether it is current.
+/// A digest: past [`SUMMARY_LIMIT`] the rest is counted and left to the page.
 pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> String {
     let key = header
         .tree_key
@@ -207,7 +174,6 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
 
     let mut tail = String::new();
     let _ = writeln!(tail, "\n## Changed and new storyboards\n");
-    // Each storyboard once, with the strongest class its runs have.
     let mut listed: BTreeMap<&str, Class> = BTreeMap::new();
     for run in reviewed.manifest.batches.iter().flat_map(|b| &b.runs) {
         let class = listed.entry(&run.storyboard).or_insert(run.class);
@@ -261,7 +227,6 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
     let _ = writeln!(tail, "- unchanged: {}", reviewed.manifest.unchanged);
     let _ = writeln!(tail, "- not covered: {}", count("not_covered"));
     let _ = writeln!(tail, "- not applicable: {}", count("not_applicable"));
-    // The asks, as many as fit with the tail; the rest are counted.
     let room = SUMMARY_LIMIT.saturating_sub(out.len() + tail.len() + 64);
     let mut used = 0;
     let mut shown = 0;
@@ -280,7 +245,6 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
     out
 }
 
-/// `text` up to the end of its first sentence, or its first 200 characters.
 fn first_sentence(text: &str) -> &str {
     let text = text.trim();
     let end = text
@@ -298,9 +262,6 @@ fn first_sentence(text: &str) -> &str {
     &text[..end]
 }
 
-/// The screen sweep's contact sheet (FR-030): each screen storyboard's
-/// last frame beside the design screen it answers to, one row per run.
-/// Returns the HTML and the runs that failed to render, by name.
 pub fn sheet(strips: &[Filmstrip], designs: &BTreeMap<String, String>) -> (String, Vec<String>) {
     let mut failed = Vec::new();
     let mut body = String::from(
@@ -359,8 +320,6 @@ pub fn sheet(strips: &[Filmstrip], designs: &BTreeMap<String, String>) -> (Strin
     (html, failed)
 }
 
-/// The parity section: one table per shared storyboard, a row per step, a
-/// column per app, divergence marked (spec US3).
 pub fn parity_section(parities: &[crate::parity::Parity], runs_prefix: &str) -> String {
     if parities.is_empty() {
         return String::new();
@@ -434,7 +393,6 @@ fn app_name(app: crate::apply::App) -> &'static str {
     }
 }
 
-/// The shared fields on which a diverging row's apps disagree.
 fn differing_fields(row: &crate::parity::ParityRow) -> Vec<String> {
     let flat: Vec<Vec<(String, String)>> = row
         .observations
@@ -467,28 +425,17 @@ fn differing_fields(row: &crate::parity::ParityRow) -> Vec<String> {
         .collect()
 }
 
-/// The page, as HTML.
 pub fn render(header: &Header, strips: &[Filmstrip]) -> String {
     render_with(header, strips, None, None)
 }
 
-/// Base versus branch, for the page: the comparisons, and the path from the
-/// page to the base runs (`base/`), so a changed step's base frame can sit
-/// beside the branch's.
 #[derive(Debug, Clone)]
 pub struct Compared {
-    /// Every storyboard's comparison, by run directory.
     pub comparisons: Vec<crate::compare::Comparison>,
-    /// From the page to the base runs' root, `/`-separated.
     pub base_prefix: String,
-    /// From the page to the branch runs' root -- what a strip's `dir` starts
-    /// with -- so a strip can be matched to its comparison.
     pub runs_prefix: String,
 }
 
-/// The page with the review (if any) and the base comparison: changed and new
-/// storyboards in full, a changed step's base frame beside the branch's, and
-/// unchanged storyboards counted rather than shown (spec US4).
 pub fn render_compared(
     header: &Header,
     strips: &[Filmstrip],
@@ -637,7 +584,6 @@ fn section(
         let _ = writeln!(body, "<figure class=\"step\">");
         let changed = comparison.and_then(|c| c.steps.iter().find(|d| d.step == step.step));
         if let (Some(diff), Some(compared), Some(outlined)) = (changed, compared, &step.outlined) {
-            // Base beside branch, which is the comparison a review is for.
             let base = format!(
                 "{}/{}/{}",
                 compared.base_prefix.trim_end_matches('/'),
@@ -808,7 +754,6 @@ fn finding_html(f: &Finding, prefix: &str) -> String {
     )
 }
 
-/// One thing for the maintainer: a contest or a question.
 struct Ask<'a> {
     citation: String,
     kind: &'static str,
@@ -817,7 +762,6 @@ struct Ask<'a> {
     frame: &'a str,
 }
 
-/// The reason a verdict or finding is contested, if it is.
 fn contested(resolution: &Resolution) -> Option<&str> {
     match resolution {
         Resolution::Contested { reason } => Some(reason.as_str()),
@@ -825,8 +769,6 @@ fn contested(resolution: &Resolution) -> Option<&str> {
     }
 }
 
-/// Exactly the contested verdicts and findings and the questions: what the
-/// reviewer and the implementer could not settle between them.
 fn needs_you(review: &Review) -> Vec<Ask<'_>> {
     let mut asks = Vec::new();
     for v in &review.verdicts {
@@ -859,7 +801,6 @@ fn needs_you(review: &Review) -> Vec<Ask<'_>> {
     asks
 }
 
-/// The review's status line, and **Needs you**.
 fn review_header(body: &mut String, reviewed: &Reviewed) {
     match &reviewed.state {
         ReviewState::NoReview => {
@@ -912,8 +853,6 @@ fn review_header(body: &mut String, reviewed: &Reviewed) {
     }
 }
 
-/// The observation as rows of `path value`, flattened from its JSON, with
-/// empty fields left out so the table shows what was there.
 fn observation_table(observation: &Observation) -> String {
     let mut rows = Vec::new();
     if let Ok(value) = serde_json::to_value(observation) {
@@ -1023,7 +962,6 @@ fn join_or(items: &[&str], empty: &str) -> String {
     }
 }
 
-/// HTML-escapes text for element content and attribute values.
 pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -1221,8 +1159,6 @@ mod tests {
         assert!(!html.contains("<not the top>"));
     }
 
-    // ---- the review sections (T055) ----
-
     mod reviewed {
         use super::*;
         use crate::bundle::{self, Classification, Inputs};
@@ -1261,7 +1197,6 @@ mod tests {
             })
         }
 
-        /// Two runs; the second is unchanged and not covered.
         fn bundled(
             verdicts: Option<serde_json::Value>,
             contests: bool,
@@ -1451,7 +1386,6 @@ mod tests {
 
         #[test]
         fn the_summary_gives_each_item_its_first_sentence() {
-            // A PR body is a digest: the page holds the full text.
             let mut value = verdicts_json();
             value["verdicts"][2]["says"] = json!(format!(
                 "The first sentence says it. {}",
@@ -1468,8 +1402,7 @@ mod tests {
 
         #[test]
         fn the_summary_fits_a_pull_request_body() {
-            // GitHub refuses a body over 65,536 characters, and this branch's
-            // own review came to 70,889: the PR could not be opened.
+            // GitHub refuses a body over 65,536 characters.
             let mut value = verdicts_json();
             let question = value["verdicts"][2].clone();
             let many = value["verdicts"].as_array_mut().expect("verdicts");

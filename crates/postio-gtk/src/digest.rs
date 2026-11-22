@@ -1,19 +1,7 @@
-//! The digest window (spec 007 US10, T137; screen 22's frame): a 980×820
-//! dialog over the inbox for one delivery. With no summary it opens on its
-//! plain list: one line a message, as the command bar lists a folder
-//! (screen 08). Once a summary is written (US13, T154), it opens on the
-//! summary instead: statements grouped by topic, each ending in a numbered
-//! reference to the message it came from. `Tab` switches between the two.
-//! `Enter` on a reference opens its email in the same window (screen 23),
-//! with the cited passage highlighted; `Esc` returns to the summary at the
-//! same reference.
-//!
-//! Its keys are the keymap's `Context::Digest`: `⇧A` archives all of it
-//! as one undo, `d` edits its rule, `D` stops digesting the focused
-//! message's sender once confirmed, `M` unsubscribes from its list,
-//! `]`/`[` move between references, `Tab` toggles the summary, and
-//! `Escape` closes -- or, over an email opened from a reference, goes back
-//! to the summary. The rows answer the arrows and `Enter` themselves.
+//! The digest window: a 980x820 dialog for one delivery, opening on a plain list or, once a summary
+//! is written, on the summary.
+//! `Tab` switches; `Enter` on a reference opens its email with the cited passage highlighted, and
+//! `Esc` returns to the same reference.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -32,35 +20,22 @@ use postio_widgets::widgets::space::{S1, S2, S3, S4, S6};
 
 use crate::list::Digest;
 
-/// The dialog's name, for the window to find it by.
 pub const DIALOG_NAME: &str = "focus-digest";
 
-/// The dialog's size (contracts/focus-surface.md).
 const WIDTH: i32 = 980;
 const HEIGHT: i32 = 820;
 
-/// What a person asked of the window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DigestAction {
-    /// Archive all of it.
     ArchiveAll,
-    /// Edit the rule and its cadence.
     EditRule,
-    /// Open this message.
-    Open {
-        /// The message.
-        message: MessageId,
-        /// Its subject.
-        subject: String,
-    },
+    Open { message: MessageId, subject: String },
 }
 
 type Handler = Rc<dyn Fn(DigestAction)>;
 
-/// What the window shows (`postio_ui::digest::Page`).
 pub use postio_ui::digest::Page as DigestPage;
 
-/// The window. See the module.
 pub struct DigestWindow {
     client: Client,
     dialog: adw::Dialog,
@@ -82,42 +57,26 @@ pub struct DigestWindow {
     banner: gtk::Label,
     keymap: RefCell<Keymap>,
     digest: RefCell<Option<Digest>>,
-    /// When the rule delivers, as `config.toml` says it.
     rule_when: RefCell<Option<String>>,
     rows: RefCell<Vec<MessageSummary>>,
     generation: Cell<u64>,
     handler: RefCell<Option<Handler>>,
     me: RefCell<std::rc::Weak<DigestWindow>>,
     reader: postio_widgets::reader::Reader,
-    /// What the window shows (US13).
     page: Cell<DigestPage>,
-    /// The summary read from the store, already resolved against the
-    /// digest's own messages (`client.digest_summary`, FR-173).
     summary: RefCell<Option<DigestSummary>>,
-    /// Which of the summary's statements is focused, from 0.
     focused_reference: Cell<Option<usize>>,
-    /// The statements' text labels, in reading order: what `paragraphs()`
-    /// answers.
     paragraph_labels: RefCell<Vec<gtk::Label>>,
-    /// The statements' reference chips, parallel to `paragraph_labels`.
     reference_chips: RefCell<Vec<gtk::Label>>,
-    /// The statements' rows, parallel to `paragraph_labels`: what holds the
-    /// keyboard and wears the ring while the summary is up.
     statement_rows: RefCell<Vec<gtk::Box>>,
-    /// The email on screen, from a reference.
     email_shown: Cell<Option<MessageId>>,
-    /// The email's own text, once read: where the cited passage is found.
     email_body: RefCell<Option<postio_model::MessageBody>>,
-    /// The passage the email on screen was opened to highlight.
     email_excerpt: RefCell<Option<String>>,
 }
 
 impl DigestWindow {
-    /// A closed window, reading through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap, allowlist: &std::path::Path) -> Rc<Self> {
         let reader = postio_widgets::reader::Reader::sharing(Rc::new(|_: &str| None), allowlist);
-        // The X at the right (T192); on the email page a "Summary" button
-        // at the left steps back, as Escape does.
         let close = postio_widgets::widgets::close_button();
         close.add_css_class("focus-digest-close");
         close.set_valign(gtk::Align::Center);
@@ -159,8 +118,6 @@ impl DigestWindow {
         edit.set_child(Some(&rule_line));
         edit.set_halign(gtk::Align::End);
 
-        // The Summary / plain-list tabs (US13): shown only once a summary
-        // exists (FR-175); absent otherwise, as milestone 1 was.
         let tab_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         tab_row.add_css_class("focus-digest-tabs");
         tab_row.set_visible(false);
@@ -194,9 +151,6 @@ impl DigestWindow {
             .vexpand(true)
             .build();
 
-        // The summary page (screen 22): statements grouped by topic, each
-        // ending in a numbered reference; the focused reference's message
-        // under the paragraphs; a footer naming what wrote it.
         let summary_box = gtk::Box::new(gtk::Orientation::Vertical, S3);
         summary_box.add_css_class("focus-digest-summary");
         summary_box.set_margin_start(S6);
@@ -212,8 +166,6 @@ impl DigestWindow {
         let reference_card = gtk::Box::new(gtk::Orientation::Vertical, S1);
         reference_card.add_css_class("focus-digest-reference-card");
 
-        // The email page (screen 23): a banner naming the reference, then
-        // the message view, shared with the summary and the plain list.
         let banner = gtk::Label::new(None);
         banner.add_css_class("focus-digest-reference-banner");
         banner.set_xalign(0.0);
@@ -230,8 +182,8 @@ impl DigestWindow {
             .build();
         email_box.add_css_class("focus-digest-email");
         email_box.set_visible(false);
-        // The scrolled window above is what visibility toggles; the box
-        // that holds the banner and the reader is what a test reads.
+        // The scrolled window above is what visibility toggles; the box holding the banner and the
+        // reader is what a test reads.
         let email_box: gtk::Widget = email_box.upcast();
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -363,25 +315,19 @@ impl DigestWindow {
         window
     }
 
-    /// The commands the window has a control for: Close, Archive all, and
-    /// the rule's edit.
     pub fn controls() -> Vec<CommandId> {
         vec![CommandId::Back, CommandId::Archive, CommandId::DigestRule]
     }
 
-    /// Run `handler` with what the person asks.
     pub fn connect_action(&self, handler: impl Fn(DigestAction) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.show_header();
     }
 
-    /// Open over `parent` on `digest`, whose rule delivers as `rule_when`
-    /// says, and read what it holds.
     pub fn show(&self, parent: &impl IsA<gtk::Widget>, digest: Digest, rule_when: Option<String>) {
         self.digest.replace(Some(digest));
         self.rule_when.replace(rule_when);
@@ -396,37 +342,29 @@ impl DigestWindow {
         self.read();
     }
 
-    /// Close the window.
     pub fn close(&self) {
         self.dialog.close();
     }
 
-    /// The dialog, for the window's keys.
     pub fn dialog(&self) -> &adw::Dialog {
         &self.dialog
     }
 
-    /// The digest on screen.
     pub fn digest(&self) -> Option<Digest> {
         self.digest.borrow().clone()
     }
 
-    /// The focused message, if any: what `D` and `M` act on -- the list's
-    /// cursor, kept in step with the focused reference while the summary or
-    /// its email is on screen.
+    /// What `D` and `M` act on: the list's cursor, kept in step with the focused reference while
+    /// the summary or its email is on screen.
     pub fn focused(&self) -> Option<MessageSummary> {
         let row = self.list.selected_row()?;
         let index = usize::try_from(row.index()).ok()?;
         self.rows.borrow().get(index).cloned()
     }
 
-    /// Move the focus `by` rows: `j` and `k`. Over the email opened from a
-    /// reference, it steps to the digest's next or previous source instead
-    /// (US13 scenario 2).
     pub fn step(&self, by: i32) {
-        // Over the summary the references are what there is to walk: the
-        // list behind it is not on screen, and a key that moved its cursor
-        // showed nothing.
+        // The list behind the summary is not on screen, and a key that moved its cursor showed
+        // nothing.
         if self.page.get() == DigestPage::Summary {
             self.step_reference(by);
             return;
@@ -441,8 +379,6 @@ impl DigestWindow {
         }
     }
 
-    /// Open the focused message: `Enter` over the plain list; over the
-    /// summary, opens the focused reference instead (US13 scenario 2).
     pub fn activate(&self) {
         match self.page.get() {
             DigestPage::List => {
@@ -455,19 +391,14 @@ impl DigestWindow {
         }
     }
 
-    /// `Enter` over the plain list: unchanged name, kept for callers that
-    /// only ever show the list.
     pub fn open_focused(&self) {
         self.activate();
     }
 
-    /// What the window shows.
     pub fn showing(&self) -> DigestPage {
         self.page.get()
     }
 
-    /// `Tab`: the plain list of messages, or back to the summary -- only
-    /// while there is one (FR-175).
     pub fn toggle_summary(&self) {
         let has_summary = self.summary.borrow().is_some();
         if let Some(next) = self.page.get().toggled(has_summary) {
@@ -475,8 +406,7 @@ impl DigestWindow {
         }
     }
 
-    /// `]` (`by` 1) and `[` (`by` -1): move the focused reference, clamped
-    /// to the summary's ends.
+    /// Clamped to the summary's ends.
     pub fn step_reference(&self, by: i32) {
         let len = self
             .summary
@@ -491,9 +421,7 @@ impl DigestWindow {
         self.show_focused_reference();
     }
 
-    /// `Esc` over the email opened from a reference: back to the summary,
-    /// at the same reference (US13 scenario 2). Answers whether it acted,
-    /// so a plain `Esc` still closes the window everywhere else.
+    /// Answers whether it acted, so a plain `Esc` still closes the window everywhere else.
     pub fn back(&self) -> bool {
         let Some(page) = self.page.get().back() else {
             return false;
@@ -503,8 +431,6 @@ impl DigestWindow {
         true
     }
 
-    /// The numbers of the references shown, in reading order (one a
-    /// statement, so a message cited twice appears twice).
     pub fn references(&self) -> Vec<u32> {
         self.summary
             .borrow()
@@ -519,17 +445,14 @@ impl DigestWindow {
             .unwrap_or_default()
     }
 
-    /// Which of them is focused, from 0.
     pub fn focused_reference(&self) -> Option<usize> {
         self.focused_reference.get()
     }
 
-    /// The summary's statement rows, as drawn.
     pub fn statement_rows(&self) -> Vec<gtk::Box> {
         self.statement_rows.borrow().clone()
     }
 
-    /// Whether the keyboard is on statement `index`'s row.
     pub fn keyboard_on_statement(&self, index: usize) -> bool {
         let focus = self.dialog.focus();
         self.statement_rows
@@ -538,22 +461,18 @@ impl DigestWindow {
             .is_some_and(|row| focus.as_ref().is_some_and(|focus| focus == row))
     }
 
-    /// The summary's paragraphs, as drawn: plain text, one a statement.
     pub fn paragraphs(&self) -> Vec<gtk::Label> {
         self.paragraph_labels.borrow().clone()
     }
 
-    /// The email on screen, from a reference.
     pub fn shown(&self) -> Option<MessageId> {
         self.email_shown.get()
     }
 
-    /// The email's message view.
     pub fn reader(&self) -> &postio_widgets::reader::Reader {
         &self.reader
     }
 
-    /// The listed messages' subjects, top to bottom.
     pub fn subjects(&self) -> Vec<String> {
         self.rows
             .borrow()
@@ -562,7 +481,6 @@ impl DigestWindow {
             .collect()
     }
 
-    /// Every text the window shows, in order: what a test reads.
     pub fn texts(&self) -> Vec<String> {
         let mut said = Vec::new();
         let mut stack: Vec<gtk::Widget> = self.dialog.child().into_iter().collect();
@@ -591,14 +509,11 @@ impl DigestWindow {
         }
     }
 
-    /// Switch to `page` and redraw what changes because of it.
     fn show_page(&self, page: DigestPage) {
         self.page.set(page);
         self.apply_page();
     }
 
-    /// What every page but the email's shares: which of the three areas is
-    /// visible, the header, and, on the summary, the focused reference.
     fn apply_page(&self) {
         let page = self.page.get();
         self.scrolled.set_visible(page == DigestPage::List);
@@ -621,7 +536,6 @@ impl DigestWindow {
         crate::motion::keep_to_budget(&self.dialog);
     }
 
-    /// The title, its line, Archive all and the rule's line.
     fn show_header(&self) {
         let Some(digest) = self.digest.borrow().clone() else {
             return;
@@ -658,8 +572,6 @@ impl DigestWindow {
         }
     }
 
-    /// Read what the delivery holds, and its summary once one is written
-    /// (US13).
     fn read(&self) {
         let Some(digest) = self.digest.borrow().clone() else {
             return;
@@ -702,8 +614,6 @@ impl DigestWindow {
         });
     }
 
-    /// One line a message: the sender, the subject and its first line,
-    /// and the time -- as the bar lists a folder (screen 08).
     fn show_rows(&self) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
@@ -744,8 +654,6 @@ impl DigestWindow {
             .set_text(&format!("{} messages", self.rows.borrow().len()));
     }
 
-    /// Rebuild the summary page from `self.summary`: topics, statements and
-    /// their numbered references, and the footer (FR-172, FR-174).
     fn show_summary(&self) {
         while let Some(child) = self.summary_box.first_child() {
             self.summary_box.remove(&child);
@@ -767,12 +675,11 @@ impl DigestWindow {
             for statement in topic.statements {
                 let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
                 row.add_css_class("focus-digest-summary-statement");
-                // A real place for the keyboard: the focused statement holds
-                // it, so what the outline and the ring show is where a key
-                // goes.
+                // A real place for the keyboard: the focused statement holds it, so the outline and
+                // ring show where a key goes.
                 row.set_focusable(true);
-                // Plain text, never markup (FR-174): a model's `<a href=…>` or a
-                // bare URL reads as its own characters, never a live link.
+                // Plain text, never markup: a model's `<a href=…>` or bare URL reads as its own
+                // characters, never a live link.
                 let text = gtk::Label::new(Some(&statement.text));
                 text.set_wrap(true);
                 text.set_xalign(0.0);
@@ -797,9 +704,6 @@ impl DigestWindow {
         self.summary_box.append(&footer);
     }
 
-    /// Redraw the reference card under the paragraphs for the focused
-    /// reference's message, sync the list's cursor to it (so `D` and `M`
-    /// act on it), and ring its chip.
     fn show_focused_reference(&self) {
         for chip in self.reference_chips.borrow().iter() {
             chip.remove_css_class("focus-digest-summary-reference-focused");
@@ -865,8 +769,6 @@ impl DigestWindow {
         self.reference_card.append(&hint);
     }
 
-    /// `Enter` over the summary (US13 scenario 2): open the focused
-    /// reference's email in place.
     fn open_focused_reference(&self) {
         let Some(index) = self.focused_reference.get() else {
             return;
@@ -887,9 +789,6 @@ impl DigestWindow {
         );
     }
 
-    /// `j`/`k` over the email opened from a reference: the list's cursor
-    /// already moved (`step`); open whatever it now points to, citing the
-    /// reference that names it, if there is one.
     fn open_source_at_selection(&self) {
         let Some(row) = self.focused() else {
             return;
@@ -910,9 +809,6 @@ impl DigestWindow {
         self.load_email(row.id, number, (!excerpt.is_empty()).then_some(excerpt));
     }
 
-    /// Read `message` from the store and show it, citing `number` in the
-    /// banner, with `excerpt` -- when there is one -- highlighted once it
-    /// renders (US13 scenario 2).
     fn load_email(&self, message: MessageId, number: u32, excerpt: Option<String>) {
         self.email_shown.set(Some(message));
         self.email_body.replace(None);
@@ -1004,9 +900,6 @@ impl DigestWindow {
         });
     }
 
-    /// Highlight the cited passage in the body, where it is drawn, through
-    /// `TextIndex::locate` -- the same byte-exact search the open-message
-    /// dialog uses for a marker's sentence (research R2, R16).
     fn highlight_reference(&self) {
         let (Some(excerpt), Some(body), Some(document)) = (
             self.email_excerpt.borrow().clone(),

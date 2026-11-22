@@ -1,41 +1,23 @@
-//! The privacy pane's words: what it calls each list, what it says when a
-//! list is empty, and how it sets out a connection.
-//!
-//! The pane is the privacy claim made auditable (#151), so both apps must
-//! make the same claim in the same words. It lived in the classic app's settings
-//! until spec 005 gave the terminal the same pane.
+//! The privacy pane's words, shared so both apps make the same claim in the same words (#151).
 
 use postio_model::egress::EgressEvent;
 
-/// The senders whose remote images load without asking (#871).
 pub const ALLOWED: &str = "Remote images allowed";
-/// The mailing lists left through one-click unsubscribe (#971).
 pub const LISTS_LEFT: &str = "Mailing lists left";
-/// How many messages asked for a read receipt (#970).
 pub const READ_RECEIPTS: &str = "Read receipts";
-/// The connections Postio opened (#151).
 pub const CONNECTIONS: &str = "Recent connections";
 
-/// [`ALLOWED`], with nobody on it.
 pub const NO_ALLOWED: &str = "No senders are always allowed to load remote images.";
-/// [`LISTS_LEFT`], with nothing on it.
 pub const NO_LISTS_LEFT: &str = "No mailing lists have been left yet.";
-/// [`CONNECTIONS`], with nothing on it: on a machine that has never synced,
-/// exactly the claim.
 pub const NO_CONNECTIONS: &str = "Nothing has connected out yet this session.";
 
-/// How a connection's time is set, in local time.
 pub const CONNECTION_WHEN: &str = "%d %b %H:%M";
-/// How the day a list was left is set.
 pub const LEFT_WHEN: &str = "%Y-%m-%d";
 
-/// How many connections the pane lists. An audit surface, not an archive:
-/// the store keeps everything, and the newest screenful answers "what has
-/// this thing been talking to".
+/// An audit surface, not an archive: the newest screenful answers "what has this been talking to".
 pub const CONNECTION_ROWS: u32 = 50;
 
-/// The read-receipt count as a sentence. A count, not a switch: Postio never
-/// sends a receipt automatically, so there is nothing to turn off.
+/// A count, not a switch: Postio never sends a receipt automatically.
 pub fn read_receipts(count: u64) -> String {
     match count {
         0 => "No messages have requested a read receipt.".to_owned(),
@@ -49,7 +31,6 @@ pub fn read_receipts(count: u64) -> String {
     }
 }
 
-/// What a connection was: who opened it, and to where.
 pub fn connection(event: &EgressEvent) -> String {
     format!(
         "{} · {}:{}",

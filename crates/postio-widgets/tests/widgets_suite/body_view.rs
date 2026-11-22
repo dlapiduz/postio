@@ -1,7 +1,3 @@
-//! The reading surface on a real display (spec 006 research R8): a
-//! snapshot arrives, the adjustment spans it, and the pixels on screen are
-//! the message's own.
-
 use std::sync::Arc;
 
 use gtk::prelude::*;
@@ -12,7 +8,6 @@ use postio_render::Resources;
 use postio_ui::reader::document::{self, Rendering};
 use postio_widgets::body_view::{BodyView, Content};
 
-/// The fixture as the reader composes it, with its parts and faces.
 pub(crate) fn content(name: &str) -> Content {
     let parsed = postio_model::mime::parse(test_corpus::load(name).bytes());
     let resources = Resources::new();
@@ -44,9 +39,8 @@ pub(crate) fn content(name: &str) -> Content {
     }
 }
 
-/// One turn of the main loop, blocking until something happens. The
-/// heartbeat bounds the block: the frame clock paints on the compositor's
-/// frame callbacks, which only a blocking iteration waits for.
+/// The heartbeat bounds the block: the frame clock paints on the compositor's frame callbacks,
+/// which only a blocking iteration waits for.
 fn pump() {
     let heartbeat = glib::timeout_add_local(std::time::Duration::from_millis(10), || {
         glib::ControlFlow::Continue
@@ -55,7 +49,6 @@ fn pump() {
     heartbeat.remove();
 }
 
-/// Run the main loop until `done`, painting frames; false on timeout.
 pub(crate) fn until(done: impl Fn() -> bool) -> bool {
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
@@ -65,8 +58,6 @@ pub(crate) fn until(done: impl Fn() -> bool) -> bool {
     done()
 }
 
-/// What `widget` draws, in its own coordinates, with the stride of a row in
-/// bytes; `None` before it has drawn anything.
 fn pixels(widget: &impl IsA<gtk::Widget>) -> Option<(usize, Vec<u8>)> {
     let widget = widget.as_ref();
     let (width, height) = (widget.width(), widget.height());
@@ -100,7 +91,6 @@ pub fn a_snapshot_fills_the_view_and_scrolls_with_it() {
     view.set_content(content("html-designed-three-column"));
     assert!(until(|| view.document().is_some()), "no snapshot arrived");
     let doc = view.document().expect("a snapshot");
-    // One snapshot shown, and its cost reported with it (Principle V).
     let (after, counts) = postio_ui::test_support::snapshot_counts();
     assert_eq!(after - before, 1, "one render, one snapshot counted");
     assert!(counts.nodes > 0 && counts.display_list_commands > 0);
@@ -111,12 +101,10 @@ pub fn a_snapshot_fills_the_view_and_scrolls_with_it() {
         "the adjustment does not span the document"
     );
 
-    // Just inside the Trail runner card, left of its heading: the card's
-    // own ground, #dcebe3. Scrolled 100px, it is 100px higher.
+    // Just inside the Trail runner card, left of its heading; scrolled 100px, it is 100px higher.
     let heading = doc.text.find("Trail runner")[0].clone();
     let rect = doc.text.rects(heading)[0];
     adjustment.set_value(100.0);
-    // In the view's own coordinates: 100px higher once scrolled.
     let (x, y) = (rect.x0 - 6.0, rect.center().y - 100.0);
     let at = |pixels: &[u8], stride: usize| {
         let offset = y.round() as usize * stride + x.round() as usize * 4;
@@ -132,14 +120,13 @@ pub fn a_snapshot_fills_the_view_and_scrolls_with_it() {
     window.destroy();
 }
 
-/// Near enough: the low-resolution copy is a quarter scale, upscaled.
+/// The low-resolution copy is a quarter scale, upscaled.
 fn near(a: Option<[u8; 3]>, b: [u8; 3]) -> bool {
     a.is_some_and(|a| a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 6))
 }
 
-/// No frame is blank (FR-029): a render in flight leaves the last frame up,
-/// and a tile that is not ready draws from the low-resolution copy rather
-/// than the bare ground.
+/// A render in flight leaves the last frame up, and an unready tile draws from the low-resolution
+/// copy rather than the bare ground.
 pub fn no_frame_shows_only_the_ground() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -157,8 +144,8 @@ pub fn no_frame_shows_only_the_ground() {
     assert!(until(|| view.document().is_some()), "no snapshot arrived");
     let doc = view.document().expect("a snapshot");
     let rect = doc.text.rects(doc.text.find("Trail runner")[0].clone())[0];
-    // Read through the scroller, which always paints: where the view drew
-    // nothing, its ground shows, so a blank view is seen as one.
+    // Read through the scroller, which always paints: where the view drew nothing, its ground
+    // shows.
     let point = view
         .compute_point(
             &scroller,
@@ -173,11 +160,8 @@ pub fn no_frame_shows_only_the_ground() {
     let card = [0xdc, 0xeb, 0xe3];
     assert!(until(|| seen() == Some(card)), "the card never drew");
 
-    // A second render, held inside its resource lookup: every frame
-    // painted meanwhile is still the first snapshot. A read of `None` is a
-    // frame not yet repainted, not a blank one: the paintable hands back
-    // the last node the widget drew, and there is none while a redraw is
-    // pending.
+    // A second render, held inside its resource lookup. A read of `None` is a frame not yet
+    // repainted, not a blank one.
     let mut held = content("html-designed-three-column");
     let resources = Resources::new();
     let gate = resources.hold_lookup();
@@ -205,9 +189,8 @@ pub fn no_frame_shows_only_the_ground() {
         "the second snapshot never drew"
     );
 
-    // Every tile gone: the first frame painted after is the one that asks
-    // for them again, so it cannot hold them -- it shows the low-resolution
-    // copy, or it shows the ground.
+    // The first frame painted after eviction asks for tiles again, so it shows the low-resolution
+    // copy or the ground.
     view.evict_tiles();
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(5));
@@ -228,9 +211,7 @@ pub fn no_frame_shows_only_the_ground() {
     window.destroy();
 }
 
-/// FR-023: a render that outlives its deadline is abandoned, and the plain
-/// text shows with a notice saying why and a way to the source. The render
-/// is held by the test, so nothing here depends on a clock.
+/// The render is held by the test, so nothing depends on a clock.
 pub fn a_render_past_its_deadline_shows_the_plain_text() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -277,7 +258,6 @@ pub fn a_render_past_its_deadline_shows_the_plain_text() {
         "no View source action"
     );
 
-    // The late snapshot arrives, and is not shown.
     gate.release();
     let generation = fallback.generation;
     for _ in 0..30 {
@@ -291,9 +271,6 @@ pub fn a_render_past_its_deadline_shows_the_plain_text() {
     window.destroy();
 }
 
-/// FR-022: however tall the message, the tiles held stay within their
-/// budget, and scrolling reaches the very last line.
-///
 /// POSTIO-MEASUREMENT: it renders a very tall message to its end, 8 s on a CI runner,
 /// so it runs on the nightly timer.
 pub fn a_very_tall_message_scrolls_to_its_end_within_budget() {

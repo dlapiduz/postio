@@ -1,5 +1,3 @@
-//! Opening a session, draining its events, and shutting it down.
-
 use std::sync::{Arc, Mutex};
 
 use postio_core::bridge::{CommandSender, EventStream};
@@ -8,66 +6,30 @@ use postio_session::Wiring;
 
 use crate::event::UiEvent;
 
-/// Why a session could not be opened.
-///
-/// Distinguishable cases rather than one string, because the frontend routes
-/// on them. ADR 0014 is the reason it matters: the store's master key lives in
-/// the OS keyring, so a locked keyring means *"unlock this and retry"* and not
-/// *"set up an account"* — and a caller that had to match on message text to
-/// tell those apart would send a user with working mail through onboarding.
+/// Distinguishable cases because the frontend routes on them: a locked keyring means "unlock this
+/// and retry", not "set up an account" (ADR 0014).
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SessionError {
-    /// The local store could not be opened.
     #[error("{message}")]
-    StoreUnavailable {
-        /// A sentence for the user, already written by the store layer.
-        message: String,
-    },
-    /// The OS keyring holds the store's key and would not give it up.
-    ///
-    /// Its own case, not a `StoreUnavailable`: the remedy is the user
-    /// unlocking a keyring, which is a different surface from a broken store.
+    StoreUnavailable { message: String },
+    /// Its own case: the remedy is the user unlocking a keyring, not a broken store.
     #[error("{message}")]
-    KeyringLocked {
-        /// A sentence for the user, naming the platform's keyring.
-        message: String,
-    },
-    /// The store was written at a schema this build cannot carry forward
-    /// (`postio_session::Remedy::StartOver`).
-    ///
-    /// Its own case, not a `StoreUnavailable`: trying again meets the same
-    /// file every time, so a surface that offers "Try again" for it is a dead
-    /// end. The way forward is starting the store over, which sets it aside
-    /// rather than deleting it (`postio_session::start_over`).
+    KeyringLocked { message: String },
+    /// Written at a schema this build cannot carry forward (`postio_session::Remedy::StartOver`).
+    /// Trying again meets the
+    /// same file, so the way forward is starting over, which sets the store aside rather than
+    /// deleting it.
     #[error("{message}")]
-    StoreFromAnotherBuild {
-        /// A sentence for the user, already written by the store layer.
-        message: String,
-    },
-    /// The store is encrypted under a key the keyring does not hold:
-    /// another installation's, or a keyring entry that was replaced
-    /// (`postio_session::Unreadable::AnotherKey`, #1598).
-    ///
-    /// Its own case for the same reason as [`Self::StoreFromAnotherBuild`] --
-    /// the key does not change between attempts, so the way forward is
-    /// starting over -- and not that case, because what a fresh store keeps
-    /// differs: nothing in this one decrypts, so no account comes across.
+    StoreFromAnotherBuild { message: String },
+    /// Encrypted under a key the keyring does not hold (#1598). Starting over is the way forward,
+    /// but nothing decrypts, so no account comes across.
     #[error("{message}")]
-    StoreUnderAnotherKey {
-        /// A sentence for the user, already written by the store layer.
-        message: String,
-    },
-    /// The tokio runtime the engine needs could not be started.
+    StoreUnderAnotherKey { message: String },
     #[error("{message}")]
-    RuntimeUnavailable {
-        /// What the runtime said.
-        message: String,
-    },
+    RuntimeUnavailable { message: String },
 }
 
 impl SessionError {
-    /// Maps a store refusal onto the case the frontend routes on: whether
-    /// trying again can help, or only starting the store over.
     fn from_refusal(refusal: postio_session::Refusal) -> Self {
         let message = refusal.sentence;
         match refusal.remedy {
@@ -83,16 +45,9 @@ impl SessionError {
         }
     }
 
-    /// Maps a keyring failure onto the case the frontend routes on.
-    ///
-    /// A match rather than `to_string`, and that is the entire point of this
-    /// function. ADR 0014's rule is that
-    /// [`SecretError::Locked`](postio_account::secret::SecretError::Locked) must survive
-    /// to the surface that asks the user to unlock, rather than being
-    /// flattened into "something went wrong" and sent to onboarding — which
-    /// would ask somebody with perfectly good mail to set up an account they
-    /// already have. Every other keyring failure is a store that will not
-    /// open, which is the honest reading: no key, no store.
+    /// A match rather than `to_string`: `SecretError::Locked` must survive to the surface that asks
+    /// the user to unlock,
+    /// not be flattened and sent to onboarding (ADR 0014).
     fn from_secret_error(error: postio_account::secret::SecretError) -> Self {
         let message = error.to_string();
         match error {
@@ -104,20 +59,12 @@ impl SessionError {
     }
 }
 
-/// How many messages of one conversation are read at once.
-///
-/// A conversation is bounded where a mailbox is not, so this is a ceiling
-/// against the pathological thread rather than a page size — nothing pages
-/// through it, and the pane stacks what comes back. 500 is what the GTK
-/// frontend uses for the same read.
+/// A ceiling against the pathological thread, not a page size: nothing pages through it. 500 is
+/// what the GTK frontend uses.
 const THREAD_LIMIT: u32 = 500;
 
-/// How to open a session.
-///
-/// Not a `uniffi::Record`: it can carry a caller-supplied runtime and command
-/// bus, which are Rust types with no crossing. Swift uses the exported
-/// constructor on [`Session`] instead, and this is the in-process API that
-/// callers and tests use.
+/// Not a `uniffi::Record`: it can carry a caller-supplied runtime and command bus, which have no
+/// crossing. Swift uses the exported constructor on `Session`.
 pub struct SessionOptions {
     store_path: Option<std::path::PathBuf>,
     bridge: Option<(tokio::runtime::Handle, CommandSender)>,
@@ -134,39 +81,30 @@ pub struct SessionOptions {
     discovery: Option<Arc<dyn postio_account::discovery::DiscoveryTransport>>,
     #[cfg(feature = "testing")]
     mail: Option<postio_session::MailOverride>,
-    /// Where an in-memory session answers agents, if it does: the demo's.
     #[cfg(feature = "testing")]
     agents_at: Option<std::path::PathBuf>,
 }
 
-/// What a call against a session with no store answers.
-///
-/// Its own function because four calls say it, and a store that is not open
-/// is a different thing from a part that could not be fetched — a frontend
-/// showing "that part is still downloading" for a locked keyring would send
-/// the user looking in the wrong place entirely.
+/// Its own function because four calls say it; a store that is not open is not a part that could
+/// not be fetched.
 fn no_store() -> crate::PartsError {
     crate::PartsError::Refused {
         message: "There is no open store to read that message from".to_owned(),
     }
 }
 
-/// What adding an account with no server says. Refused rather than written:
-/// an account naming no server fails later, at sync, as a connection error
-/// nobody can act on.
+/// Refused rather than written: an account naming no server fails later, at sync, as a connection
+/// error nobody can act on.
 const NO_SERVERS: &str = "Postio needs the incoming and outgoing server names — it will not guess them from your address.";
 
-/// The next session's number within this process.
-///
-/// See [`Session::serial`]. Monotonic and never reused: a session that has
-/// closed may still have a hand-off file somebody is editing.
+/// Monotonic and never reused: a closed session may still have a hand-off file somebody is editing
+/// (`Session::serial`).
 fn next_serial() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl SessionOptions {
-    /// A session over the store at the platform's usual path.
     pub fn at_default_path() -> Self {
         Self {
             store_path: None,
@@ -189,7 +127,6 @@ impl SessionOptions {
         }
     }
 
-    /// A session over the store at `path`.
     pub fn at(path: impl Into<std::path::PathBuf>) -> Self {
         Self {
             store_path: Some(path.into()),
@@ -197,41 +134,23 @@ impl SessionOptions {
         }
     }
 
-    /// Reads the store's key from `secrets` rather than the OS keyring.
-    ///
-    /// The default is this installation's real keyring, which is right for a
-    /// shipping application and wrong for a test: a test that reached for the
-    /// login keyring would prompt on a developer's machine and hang on a
-    /// headless one. It is also how the locked-keyring path is exercised at
-    /// all, since a working keyring cannot be asked to refuse.
+    /// Reads the store's key from `secrets` rather than the OS keyring, which would prompt on a
+    /// developer's machine and hang on a headless one.
     pub fn with_secrets(mut self, secrets: Arc<dyn postio_account::secret::SecretStore>) -> Self {
         self.secrets = Some(secrets);
         self
     }
 
-    /// Read this installation's real `config.toml`, whatever it says.
-    ///
-    /// The escape hatch for the rare test that is *about* the installed file.
-    /// It exists so that reading it is a sentence somebody wrote on purpose:
-    /// before #1219 it was the default, and every in-memory session did it
-    /// without saying so or meaning to.
-    ///
-    /// Anything asserting on configured behaviour wants
-    /// [`with_config_for_test`](Self::with_config_for_test) instead -- a test
-    /// that depends on the machine it runs on has no result, only a mood.
+    /// Read this installation's real `config.toml`: the escape hatch for the rare test about the
+    /// installed file. Other tests want `with_config_for_test`.
     #[cfg(feature = "testing")]
     pub fn with_installed_config_for_test(mut self) -> Self {
         self.config = ConfigSource::Installed;
         self
     }
 
-    /// A session over a store that exists only in memory.
-    ///
-    /// Configured by an **empty document**, not by whatever `config.toml` the
-    /// machine has. A test that meant the real file says so with
-    /// [`with_installed_config_for_test`](Self::with_installed_config_for_test);
-    /// every other test gets the built-in defaults wherever it runs, which is
-    /// the only way its result means anything (#1219).
+    /// Configured by an empty document, not the machine's `config.toml`, so a result means the same
+    /// wherever it runs (#1219).
     #[cfg(feature = "testing")]
     pub fn in_memory() -> Self {
         Self {
@@ -241,20 +160,16 @@ impl SessionOptions {
         }
     }
 
-    /// Answer agents' calls on the socket at `path` (ADR 0041, amended
-    /// 2026-10-14), as a session over a store file always does: for the
-    /// demo, which has no file to sit beside.
+    /// Answer agents' calls on the socket at `path` (ADR 0041), as a session over a store file
+    /// always does; for the demo, which has no file.
     #[cfg(feature = "testing")]
     pub fn answering_agents_at(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.agents_at = Some(path.into());
         self
     }
 
-    /// An in-memory session over a database the caller already seeded.
-    ///
-    /// A list test needs rows in the store *before* the session opens it, and
-    /// there is no way to reach in afterwards -- the wiring is private, which
-    /// is the point of it.
+    /// An in-memory session over a database the caller already seeded: the store wiring is private,
+    /// so rows must exist before the session opens.
     #[cfg(feature = "testing")]
     pub fn in_memory_with(database: postio_storage::Store) -> Self {
         Self {
@@ -263,12 +178,8 @@ impl SessionOptions {
         }
     }
 
-    /// Use a blob store the caller already wrote bodies into.
-    ///
-    /// A reader test has to put a body in the blob store *before* the session
-    /// opens, and the session otherwise makes its own — so a body written
-    /// afterwards would land in a different directory and the reader would
-    /// correctly report that there is nothing there.
+    /// Use a blob store the caller already wrote bodies into: a body written after the session
+    /// opens would land in a different directory.
     #[cfg(feature = "testing")]
     pub fn with_blobs_for_test(
         mut self,
@@ -279,14 +190,8 @@ impl SessionOptions {
         self
     }
 
-    /// Use this `config.toml` text rather than the one on disk.
-    ///
-    /// For tests. Reading the developer's own config would make a rebinding
-    /// on their machine fail a test on everyone else's.
-    ///
-    /// Since #1219 this is only needed to supply *content*: an in-memory
-    /// session already ignores the installed file, so a test that wants the
-    /// built-in defaults need not pass `""` to get them.
+    /// Use this `config.toml` text rather than the one on disk; since #1219 it only supplies
+    /// content, as in-memory sessions already ignore the installed file.
     #[cfg(feature = "testing")]
     pub fn with_config_for_test(mut self, text: &str) -> Self {
         self.config = ConfigSource::Document(text.to_owned());
@@ -301,11 +206,8 @@ impl SessionOptions {
         self
     }
 
-    /// An in-memory session on a runtime and command bus the caller owns.
-    ///
-    /// The classic app built its own [`Bridge`] and handed the parts to
-    /// [`Wiring`]; a frontend on this boundary must be able to do the same,
-    /// or it would end up with two runtimes and the deadlock that implies.
+    /// An in-memory session on a runtime and command bus the caller owns, or it would end up with
+    /// two runtimes and a deadlock.
     #[cfg(feature = "testing")]
     pub fn in_memory_on(runtime: tokio::runtime::Handle, commands: CommandSender) -> Self {
         Self::in_memory().on_bridge(runtime, commands)
@@ -331,34 +233,20 @@ impl SessionOptions {
         self
     }
 
-    /// Run on a runtime the caller owns, keeping whatever store these
-    /// options already name.
-    ///
-    /// The store's owner (`postio_host::Host`) is adopted onto `runtime`
-    /// rather than starting one of its own, and the session is its client
-    /// there as it is anywhere. Its verbs are the host's: `commands` is kept
-    /// in the host's wiring, but what the session sends goes through its
-    /// client, so a verb reaches real handlers whether or not the caller's
-    /// bus has any. Before the host, the default bus dropped every command,
-    /// and this was the only way a test could make a verb reach real
-    /// handlers over real rows (#721).
+    /// Run on a runtime the caller owns, keeping whatever store these options name. The host is
+    /// adopted onto `runtime`; what
+    /// the session sends goes through its client, so a verb reaches real handlers whether or not
+    /// the caller's bus has any (#721).
     pub fn on_bridge(mut self, runtime: tokio::runtime::Handle, commands: CommandSender) -> Self {
         self.bridge = Some((runtime, commands));
         self
     }
 }
 
-/// Where a session's configuration comes from.
-///
-/// Explicit because the absence of a document used to mean "read the
-/// developer's own `config.toml`", and `SessionOptions::in_memory()` left it
-/// absent (#1219). Every test that opened a session inherited whatever was on
-/// the machine running it: green on CI, which has no such file, and red on a
-/// workstation according to somebody's preferences. `[ui]` is where it was
-/// caught; `[keys]` is where it would have been worse, since one rebinding
-/// silently changes what every keyboard test resolves.
-///
-/// There is no variant meaning "whatever turns up". A session says which.
+/// Where a session's configuration comes from. Explicit because an absent document used to mean
+/// "read the developer's own
+/// config", so tests passed on CI and failed on a workstation (#1219). There is no variant meaning
+/// "whatever turns up".
 #[derive(Debug, Clone)]
 enum ConfigSource {
     /// Exactly this document. An empty one is the built-in defaults.
@@ -376,7 +264,6 @@ enum ConfigSource {
 }
 
 impl ConfigSource {
-    /// The file this source reads and the session watches, if it is one.
     fn path(&self) -> Option<std::path::PathBuf> {
         match self {
             ConfigSource::Installed => crate::settings::config_path().ok(),
@@ -386,17 +273,9 @@ impl ConfigSource {
     }
 }
 
-/// This session's configuration, whole.
-///
-/// One function and one read where there were three of each -- `[keys]`,
-/// `[sync]` and `[ui]` were three copies differing only in which field they
-/// plucked, so a real session opened and parsed `config.toml` three times, and
-/// a fix to one of them was a fix to one of them (#1219).
-///
-/// A config that will not parse is a reason to use the defaults, not a reason
-/// the application cannot open: the store and the mail are not downstream of
-/// `[keys]`, and refusing to start over a mistyped binding would be a mail
-/// client held hostage by its own preferences file.
+/// This session's configuration, whole, from one read of `config.toml` (#1219). A config that will
+/// not parse falls back to
+/// the defaults: a mistyped binding must not stop the application opening.
 fn load_config(source: &ConfigSource) -> postio_config::Config {
     let parsed = match source {
         ConfigSource::Document(text) => postio_config::Config::from_toml_str(text).ok(),
@@ -418,10 +297,8 @@ fn load_config(source: &ConfigSource) -> postio_config::Config {
     })
 }
 
-/// The source `options` asks for.
-///
-/// Without the `testing` feature there is nothing to ask: a shipping session
-/// reads the installed file, and there is no way to hand it a document.
+/// Without the `testing` feature a shipping session reads the installed file and cannot be handed a
+/// document.
 #[cfg(feature = "testing")]
 fn config_source(options: &SessionOptions) -> ConfigSource {
     options.config.clone()
@@ -432,13 +309,9 @@ fn config_source(_options: &SessionOptions) -> ConfigSource {
     ConfigSource::Installed
 }
 
-/// Switch Focus's engine on in `host`, as `[focus]` says (specs/009-focus-macos
-/// R8): the filing pass, the markers, digests and reminders, which run only
-/// once a frontend asks. The same setup the GTK app and the terminal build
-/// (`postio_tui::run::engage_focus`), at the same moment: after the host
-/// starts and before the first sync, so the filing pass is in every engine
-/// before its first pass. The Mac app's syncing starts later, on
-/// `start_syncing`.
+/// Switch Focus's engine on in `host`, as `[focus]` says: the filing pass, markers, digests and
+/// reminders. After the host
+/// starts and before the first sync, as GTK and the terminal do (`postio_tui::run::engage_focus`).
 fn engage_focus(
     host: &Host,
     focus: &postio_config::FocusConfig,
@@ -478,16 +351,10 @@ fn engage_focus(
     )
 }
 
-/// Start the store's owner over an open store, as ADR 0041 allows here:
-/// nothing else on macOS can share the store, so the host runs in this
-/// process and this frontend is its one client.
-///
-/// Over the caller's runtime when it supplied one ([`SessionOptions::on_bridge`]):
-/// the host is adopted onto it rather than starting a second, and serves
-/// its verbs there. The caller's `CommandSender` stays in the host's wiring,
-/// but what this session sends goes through its client to the host's verbs,
-/// exactly as when the host owns its runtime -- one path for a command,
-/// whoever built the threads.
+/// Start the store's owner over an open store (ADR 0041): nothing else on macOS can share the
+/// store, so the host runs in
+/// this process and this frontend is its one client. Over the caller's runtime when it supplied
+/// one, adopted rather than starting a second.
 fn serve(
     database: postio_storage::Store,
     blobs: postio_storage::BlobStore,
@@ -512,12 +379,9 @@ fn serve(
     }
 }
 
-/// Answer agents on the socket at `socket` with `host`, while the session
-/// lasts (ADR 0041, amended 2026-10-14): the Mac app is the one Postio
-/// most often open while an agent works, so its calls are served here
-/// rather than refused. `[mcp]` is read from the session's `config.toml`,
-/// or the installation's when the session has none of its own, and the
-/// access log is kept beside the store.
+/// Answer agents on the socket at `socket` with `host` while the session lasts (ADR 0041). `[mcp]`
+/// is read from the session's
+/// `config.toml`, or the installation's when it has none; the access log is kept beside the store.
 fn answer_agents(
     socket: std::path::PathBuf,
     host: &Host,
@@ -540,21 +404,17 @@ fn answer_agents(
     )
 }
 
-/// What `@` and `+` match against, read through the host.
 #[derive(Clone, Default)]
 struct FinderSources {
     contacts: Vec<postio_model::Contact>,
     labels: Vec<postio_model::Label>,
 }
 
-/// How long the box keeps `FinderSources` before reading them again.
-///
-/// GTK reads them once, when the box is built. A first sync is when the
-/// correspondents arrive, and a box that read them before it would offer
-/// none for the whole session; a minute is how stale they may be instead.
+/// How long the box keeps `FinderSources` before reading them again: correspondents arrive on a
+/// first sync, so a box
+/// that read them once would offer none all session.
 const FINDER_SOURCES_FOR: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// What a new account is looked up and signed in through, when a test says.
 type Seams = (
     Option<Arc<dyn postio_account::discovery::DiscoveryTransport>>,
     Option<postio_session::MailOverride>,
@@ -570,11 +430,9 @@ fn seams(_options: &SessionOptions) -> Seams {
     (None, None)
 }
 
-/// The wiring, looking new accounts up the way the desktop's first run
-/// does: over the network, with every connection the lookup makes written
-/// to the egress log like any other (#151). The wiring's own default
-/// transport records nothing, which would make the wizard the one thing on
-/// this Mac that dials without saying so.
+/// The wiring, looking new accounts up over the network with every connection written to the egress
+/// log (#151); the
+/// wiring's own default transport records nothing.
 fn with_onboarding(wiring: Wiring, (discovery, mail): Seams) -> Wiring {
     let discovery = discovery.unwrap_or_else(|| {
         Arc::new(
@@ -588,40 +446,19 @@ fn with_onboarding(wiring: Wiring, (discovery, mail): Seams) -> Wiring {
     }
 }
 
-/// A command on its way to the host, with the aim it was issued under.
 type Aimed = (postio_core::Command, postio_core::state::SharedState);
 
-/// This session's line to the host: where its commands go, and what keeps
-/// its drain fed. Dropped by [`Session::shutdown`], which is what ends both.
+/// This session's line to the host. Dropped by `Session::shutdown`, which ends both.
 struct Link {
-    /// The host's client itself, for the requests that are not commands --
-    /// looking a new account's servers up, which the host answers with the
-    /// desktop's own onboarding.
     client: postio_client::Client,
-    /// Commands, in the order they were issued, each with its own aim.
     outbox: async_channel::Sender<Aimed>,
-    /// Held only to be dropped: the task feeding the session's event stream
-    /// stops when this goes, and the stream ends with it. The client's own
-    /// stream closes only once the client has left, and a clone of it may
-    /// still be finishing a page read.
+    /// Held only to be dropped: the task feeding the session's event stream stops when this goes.
     _hearing: async_channel::Sender<()>,
 }
 
-/// Connect this frontend to `host` as its client, the way the classic app's
-/// window was connected to its own.
-///
-/// Answers the session's wiring, the stream it drains, and its [`Link`].
-/// The wiring is the host's with its `store` -- what the list counts and
-/// pages through -- replaced by the client. Everything else (the database
-/// for the reads that have no request of their own yet, the blobs, the
-/// engines' slot, the hub the engines report to) is the host's own, in this
-/// process. Its `commands` are not this session's way to the verbs; the
-/// link's outbox is.
-///
-/// Each command crosses with the aim it was issued under rather than
-/// whatever the selection is when the forwarding task gets to it: two
-/// verbs pressed in quick succession, the cursor moved between them, must
-/// each act on the row it was pressed on.
+/// Connect this frontend to `host` as its client. Each command crosses with the aim it was issued
+/// under, so two quick
+/// verbs each act on the row they were pressed on.
 fn connect(host: &Host) -> (Wiring, EventStream, Link) {
     let client = host.connect(postio_client::protocol::ClientKind::Ffi);
     let runtime = host.wiring().runtime.clone();
@@ -638,8 +475,6 @@ fn connect(host: &Host) -> (Wiring, EventStream, Link) {
         }
     });
 
-    // Everybody's news, and what this session's own commands said about
-    // themselves, which only this client is told.
     let (sink, stream) = postio_core::bridge::event_channel();
     let arriving = client.events();
     let (hearing, stopped) = async_channel::bounded::<()>(1);
@@ -672,187 +507,106 @@ fn connect(host: &Host) -> (Wiring, EventStream, Link) {
     )
 }
 
-/// The frontend's handle on the engine.
-///
-/// Commands go down and events come up; nothing else crosses. The `Wiring`
-/// lives behind a lock and an `Option` so that [`shutdown`](Self::shutdown)
-/// can drop it: dropping the wiring drops the event sink, which ends the
-/// stream, which ends the frontend's `while let Some(event)` loop. A drain
-/// that never ends is an application that cannot quit.
+/// The frontend's handle on the engine: commands down, events up. The `Wiring` is behind an
+/// `Option` so `shutdown`
+/// can drop it, which ends the event stream and the frontend's drain loop.
 #[derive(uniffi::Object)]
 pub struct Session {
     wiring: Mutex<Option<Wiring>>,
-    /// The accounts an aggregate view could show when `Ctrl+A` was pressed.
-    ///
-    /// The other half of the same predicate: in the unified list a whole-view
-    /// selection is about the accounts the view could actually vouch for, and
-    /// that set is fixed at the gesture rather than looked up when the verb
-    /// runs (#811, ADR 0005 Q10). Empty until a frontend says otherwise,
-    /// which makes `Ctrl+A` in the aggregate a rejection rather than an
-    /// action over accounts nobody vouched for — the behaviour this boundary
-    /// had before the scope could carry them at all.
+    /// The accounts an aggregate view could show when `Ctrl+A` was pressed, fixed at the gesture
+    /// rather than looked up
+    /// when the verb runs (#811, ADR 0005 Q10). Empty makes `Ctrl+A` in the aggregate a rejection.
     reachable: Mutex<Vec<postio_model::ids::AccountId>>,
-    /// The correspondents and labels the search box's `@` and `+` match
-    /// against, with when they were read (`finder_contacts`).
     finder_sources: Mutex<Option<(std::time::Instant, FinderSources)>>,
-    /// Each account's recipient directory, as last read, for completion
-    /// on every keystroke without a query (`recipient_suggestions`).
     pub(crate) recipient_directories: crate::contacts::Directories,
-    /// The conversation the reading pane is showing, once its read lands.
-    ///
-    /// Held here rather than paged through Focus's list: the list is the
-    /// list, and a pane that borrowed the window would have to put the folder
-    /// back afterwards. A conversation is bounded — a thread, not a mailbox — so
-    /// holding it whole breaks no promise §18 makes.
+    /// The conversation the reading pane is showing, held whole rather than paged through Focus's
+    /// list: a thread is bounded.
     conversation: Arc<Mutex<Option<crate::ConversationFfi>>>,
-    /// The store this session opened, for anything that has to *name* it —
-    /// the composer's footer says where a draft lives, and a footer naming a
-    /// path the draft is not in is worse than no footer.
+    /// The store this session opened, for the composer's footer to name where a draft lives.
     store_at: std::path::PathBuf,
-    /// The agent socket, while this session answers agents (ADR 0041,
-    /// amended 2026-10-14). Taken at shutdown, before the store goes.
+    /// The agent socket, while this session answers agents (ADR 0041). Taken at shutdown, before
+    /// the store goes.
     agents: Mutex<Option<postio_mcp::socket::Listener>>,
-    /// The sign-in in flight, so closing the sheet can cancel it.
-    ///
-    /// A token rather than a task handle: cancelling has to unwind the
-    /// loopback listener and stop a token exchange from firing for a flow
-    /// nobody is waiting on, and `CancelToken` is what the flow already
-    /// understands.
+    /// The sign-in in flight, so closing the sheet can cancel it: a token unwinds the loopback
+    /// listener and stops a token exchange.
     sign_in: Mutex<Option<postio_account::cancel::CancelToken>>,
-    /// The port that flow is listening on, or zero.
     sign_in_port: Arc<std::sync::atomic::AtomicU16>,
-    /// Where the remote-image grants live: beside the store, because they
-    /// are state Postio writes rather than configuration a person edits.
-    ///
-    /// Resolved once, at open, rather than derived from `store_at` on each
-    /// use: an in-memory store has no directory to be beside, and deriving
-    /// one gave every test in a run the same file — so a grant made by one
-    /// test was in force for the next.
+    /// Where the remote-image grants live, beside the store: resolved once at open, since an
+    /// in-memory store has no
+    /// directory and deriving one gave every test the same file.
     allow_list_at: std::path::PathBuf,
-    /// The grants and treatments at [`allow_list_at`](Self::allow_list_at),
-    /// read once and kept (#1589). Every write to that file goes through
-    /// this session and through here, so what is kept is what is on disk:
-    /// a revoke in Settings is true for the next message drawn without the
-    /// next message drawn reading the file again. `None` until first asked,
-    /// and again after a write that failed, so the next read is the disk's.
+    /// The grants and treatments at `allow_list_at`, read once and kept (#1589). Every write goes
+    /// through here; `None`
+    /// until first asked and after a failed write.
     allow_list_kept: Mutex<Option<postio_ui::allowlist::RemoteImageAllowList>>,
-    /// This session's number within the process.
-    ///
-    /// Only [`handoff_dir`](Self::handoff_dir) needs it, and only on the
-    /// path where there is no store on disk to hang a directory off — but
-    /// two sessions sharing one hand-off directory is two people's drafts in
-    /// one file, so it is worth a counter.
+    /// This session's number within the process, so two sessions never share one hand-off
+    /// directory.
     serial: u64,
-    /// Each message's drawn body in the conversation document, so a redraw
-    /// -- a body arriving, a grant -- sanitises only what changed (#1595).
-    /// The cache GTK's reader keeps, held here because the Mac's page is
-    /// composed on this side.
+    /// Each message's drawn body in the conversation document, so a redraw sanitises only what
+    /// changed (#1595).
     thread_renders: Mutex<postio_ui::reader::document::RenderCache>,
-    /// Conversation reads still in flight: what `settle_for_test` waits on.
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
-    /// How many reconnects this session has asked for, so a test can see the
-    /// nudge without needing a server to connect to.
+    /// How many reconnects this session has asked for, so a test can see the nudge.
     reconnects: Arc<std::sync::atomic::AtomicUsize>,
-    /// Whether the engine currently has no connection at all.
-    ///
-    /// Pushed down by the frontend rather than observed here: reachability is
-    /// a platform question, and Swift has `NWPathMonitor` while Rust would
-    /// need `unsafe` bindings in a crate that forbids it. It only changes
-    /// which *absence* the reader reports — "offline" against "still
-    /// downloading" — so being briefly wrong costs a word, not correctness.
+    /// Whether the engine currently has no connection at all. Pushed down by the frontend
+    /// (`NWPathMonitor`); it only
+    /// changes which absence the reader reports, so being briefly wrong costs a word.
     offline: Arc<std::sync::atomic::AtomicBool>,
-    /// The engines this session started, kept alive for as long as it is.
-    ///
-    /// Retained rather than leaked, for the reason the classic app recorded:
-    /// dropping an engine at process exit can leave a sync pass's write torn
-    /// mid-commit, and the pre-1.0 store engine's recovery is not one to bet
-    /// on when waiting for the pass is cheap.
-    ///
-    /// Keyed by account, so that `start_syncing` can tell an account that is
-    /// already running from one that was added while the application was up.
-    /// Without the key the only question it could answer was "is *any* engine
-    /// running", and under that question a newly added account got none.
+    /// The engines this session started, kept alive: dropping one at exit can tear a sync pass's
+    /// write mid-commit. Keyed
+    /// by account so `start_syncing` can tell a running account from one added while the app was
+    /// up.
     engines: Mutex<Vec<(postio_model::ids::AccountId, postio_runtime::Engine)>>,
-    /// `[keys]` as this installation has it.
-    ///
-    /// Read once at open. A menu accelerator has to reflect what the user
-    /// actually bound, and re-reading `config.toml` on every menu draw would
-    /// be a file read per repaint.
+    /// `[keys]` as this installation has it, read once at open: re-reading `config.toml` on every
+    /// menu draw would be a file read per repaint.
     keys: Mutex<postio_config::keys::KeyBindings>,
-    /// The `[ui]` table this session was opened with — row density, theme and
-    /// what the message list draws. Read once here so the list and the
-    /// settings pane cannot disagree about what the file says.
+    /// The `[ui]` table this session was opened with, read once so the list and settings pane
+    /// cannot disagree.
     ui: postio_config::ui::UiConfig,
-    /// The bindings in force, resolved once and kept: see [`Session::keymap`].
-    /// Keyed by how many commands the registry holds, so an extension that
-    /// registers later is not left out of it.
+    /// The bindings in force, resolved once: see `Session::keymap`. Keyed by how many commands the
+    /// registry holds, so a
+    /// later-registered extension is not left out.
     keymap: Mutex<Option<(usize, postio_core::Keymap)>>,
-    /// Events this boundary raises itself, merged into the drain alongside
-    /// the engine's. `FocusPageReady` lives here rather than in
-    /// `postio-core` because paging is how this frontend reads a list, not
-    /// something the engine does.
+    /// Events this boundary raises itself, merged into the drain alongside the engine's: paging is
+    /// how this frontend reads
+    /// a list, not something the engine does.
     local: (
         async_channel::Sender<UiEvent>,
         async_channel::Receiver<UiEvent>,
     ),
     events: EventStream,
-    /// Where commands go, and what keeps [`events`](Self::events) fed from
-    /// the host. Taken by [`shutdown`](Self::shutdown), which is what ends
-    /// the drain.
+    /// Where commands go, and what keeps `events` fed from the host. Taken by `shutdown`, which
+    /// ends the drain.
     link: Mutex<Option<Link>>,
-    /// The verbs the host answers. A command outside them is not sent: the
-    /// host would only answer that it is not wired up, and this boundary
-    /// has always let such a gesture pass in silence.
+    /// The verbs the host answers. A command outside them is not sent.
     wired: Vec<postio_core::CommandId>,
-    /// The store's owner, in this process (ADR 0041): its verbs are what a
-    /// command reaches, and its runtime is what every read is polled on.
-    /// Kept alive for as long as the session is, since dropping it stops that
-    /// runtime -- unless the caller supplied its own, which is not ours to
-    /// stop.
+    /// The store's owner, in this process (ADR 0041), kept alive as long as the session: dropping
+    /// it stops the runtime,
+    /// unless the caller supplied its own.
     _host: Host,
-    /// Focus's engine -- filing, markers, digests, reminders -- switched on
-    /// for this host (specs/009-focus-macos R8). Held for as long as the
-    /// session is, as the GTK app and the terminal hold theirs.
+    /// Focus's engine, switched on for this host and held as long as the session.
     _focus: postio_host::FocusHandle,
-    /// `[focus]` as it stands: what the strip's words depend on (filtering
-    /// on, how many digest rules), kept current by `follow_config`.
+    /// `[focus]` as it stands, kept current by `follow_config`.
     focus_config: Mutex<postio_config::FocusConfig>,
-    /// `[sync] notify` and `[sync] badge` as they stand, kept current by
-    /// `follow_config`.
+    /// `[sync] notify` and `[sync] badge` as they stand, kept current by `follow_config`.
     notices: Mutex<crate::NoticesFfi>,
-    /// `config.toml`, watched while the session lives: a change to `[keys]`
-    /// rebinds at once and a change to `[focus]` reaches the engine, as in
-    /// the GTK app (`follow_config`). `None` for a session given a document
-    /// rather than a file, or when the file cannot be watched.
+    /// `config.toml`, watched while the session lives (`follow_config`); `None` for a session given
+    /// a document rather
+    /// than a file, or when it cannot be watched.
     config_watch: Mutex<Option<postio_config::watch::ConfigWatcher>>,
-    /// Focus's list, driven by the controller (specs/009-focus-macos T027).
     focus_list: Arc<crate::focus_list::FocusDriver>,
-    /// The in-memory blob directory, removed when the session is dropped.
     #[cfg(feature = "testing")]
     _scratch: Option<tempfile::TempDir>,
 }
 
-/// The surface Swift sees.
-///
-/// Deliberately narrower than the Rust `impl` below it. `SessionOptions` can
-/// carry a caller-supplied runtime and command bus, which are Rust types with
-/// no crossing, so the exported constructor takes the one thing a frontend
-/// actually chooses — where the store lives — and everything else is decided
-/// on this side.
-// ---------------------------------------------------------------------------
-// The exported surface. EVERYTHING IN THIS BLOCK CROSSES TO SWIFT.
-//
-// A plain Rust method added here is exported too, and the failure is
-// bewildering: uniffi generates scaffolding for it, and a method the rest of
-// the crate calls normally reports "not found for struct `Arc<Session>`" *at
-// its own definition*. Test-only methods behind `#[cfg(feature = "testing")]`
-// produce exactly that when the feature is off.
-//
-// Rust-side methods go in the second `impl Session` block, below.
-// ---------------------------------------------------------------------------
+/// The surface Swift sees, narrower than the Rust `impl` below: the exported constructor takes only
+/// where the store lives.
+// Everything in this impl block crosses to Swift: a plain Rust method added here is exported too,
+// and a
+// `#[cfg(feature = "testing")]` method fails to build with the feature off. Rust-side methods go in
+// the second `impl Session` block.
 #[uniffi::export]
 impl Session {
-    /// Opens a session over the store at `store_path`, or the usual path.
     #[uniffi::constructor]
     pub fn open_at(store_path: Option<String>) -> Result<Arc<Self>, SessionError> {
         Self::open(match store_path {
@@ -861,12 +615,8 @@ impl Session {
         })
     }
 
-    /// The next event, or `None` once the session has stopped.
-    ///
-    /// Swift drives this as
-    /// `Task { @MainActor in while let e = await session.nextEvent() { … } }`
-    /// — the same drain the GTK window runs on the main context, so no
-    /// backend work reaches the UI thread on either platform.
+    /// The next event, or `None` once the session has stopped. Swift drives it as
+    /// `Task { @MainActor in while let e = await session.nextEvent() { … } }`.
     #[uniffi::method(name = "nextEvent")]
     pub async fn next_event_ffi(&self) -> Option<UiEvent> {
         self.next_event().await
@@ -878,21 +628,14 @@ impl Session {
         self.shutdown();
     }
 
-    /// Read a conversation into the reading pane.
-    ///
-    /// Returns at once; `ConversationReady` says when there is something to
-    /// draw, and [`conversation`](Self::conversation_ffi) is what to draw.
-    /// The list is untouched — a conversation is what the *pane* is showing,
-    /// and the list stays the list (#1003).
+    /// Read a conversation into the reading pane. Returns at once; `ConversationReady` says when to
+    /// draw. The list is untouched (#1003).
     #[uniffi::method(name = "openConversation")]
     pub fn open_conversation_ffi(&self, thread: i64) {
         self.open_conversation(thread);
     }
 
-    /// `thread` as one document, with each message's anchor. See
-    /// [`Session::thread_document`].
-    ///
-    /// Blocks on the store -- one body load per message -- so off the main
+    /// `thread` as one document, with each message's anchor. Blocks on the store, so off the main
     /// actor.
     #[uniffi::method(name = "threadDocument")]
     pub fn thread_document_ffi(&self, thread: i64, reduced: Vec<i64>) -> crate::ThreadDocumentFfi {
@@ -906,17 +649,13 @@ impl Session {
         self.conversation()
     }
 
-    /// A new message, from the account that would send it.
     #[uniffi::method(name = "newDraft")]
     pub fn new_draft_ffi(&self) -> Option<crate::DraftFfi> {
         blocking(self.new_draft())
     }
 
-    /// A draft prefilled from a `mailto:` link.
-    ///
-    /// The recipients arrive already parsed — RFC 6068 is the platform's URL
-    /// machinery to unpick, and each frontend has one. What is *not* the
-    /// platform's is what a mail client does with the result, which is this.
+    /// A draft prefilled from a `mailto:` link; the recipients arrive already parsed (RFC 6068 is
+    /// the platform's URL machinery).
     #[uniffi::method(name = "mailtoDraft")]
     pub fn mailto_draft_ffi(
         &self,
@@ -929,24 +668,18 @@ impl Session {
         blocking(self.mailto_draft(to, cc, bcc, subject, body))
     }
 
-    /// A reply to `message` — to its sender, or to everyone on it.
     #[uniffi::method(name = "replyDraft")]
     pub fn reply_draft_ffi(&self, message: i64, all: bool) -> Option<crate::DraftFfi> {
         blocking(self.reply_draft(message, all))
     }
 
-    /// A forward of `message`, addressed to nobody yet.
     #[uniffi::method(name = "forwardDraft")]
     pub fn forward_draft_ffi(&self, message: i64) -> Option<crate::DraftFfi> {
         blocking(self.forward_draft(message))
     }
 
-    /// Attach `path` to the draft and answer it with the file on it.
-    ///
-    /// `mime_type` comes from the frontend because sniffing a file's type is
-    /// a platform service — `UniformTypeIdentifiers` here, shared-mime-info
-    /// there — and everything that is not platform-specific happens on the
-    /// other side of this call.
+    /// Attach `path` to the draft and answer it with the file on it. `mime_type` comes from the
+    /// frontend, since sniffing is a platform service.
     #[uniffi::method(name = "attachToDraft")]
     pub fn attach_to_draft_ffi(
         &self,
@@ -957,13 +690,9 @@ impl Session {
         blocking(self.attach_to_draft(draft, path, mime_type))
     }
 
-    /// Put a picture into the draft's body and answer the draft with it, and
-    /// the script that draws it at the caret (#1571).
-    ///
-    /// Bytes rather than a path, because a picture arrives from a paste as
-    /// often as from a file. `mime_type` is the frontend's for
-    /// [`attach_to_draft_ffi`](Self::attach_to_draft_ffi)'s reason; that it
-    /// must be an image is decided on this side.
+    /// Put a picture into the draft's body and answer the draft with it and the script that draws
+    /// it at the caret (#1571).
+    /// Bytes, not a path, since a picture arrives from a paste; it must be an image.
     #[uniffi::method(name = "insertInlineImage")]
     pub fn insert_inline_image_ffi(
         &self,
@@ -974,12 +703,8 @@ impl Session {
         blocking(self.insert_inline_image(draft, bytes, mime_type))
     }
 
-    /// One picture in draft `draft`'s own body, by its `Content-ID`.
-    ///
-    /// What the composer's `postio-cid:` handler answers with. Scoped to the
-    /// draft for the reason [`resolve_cid_ffi`](Self::resolve_cid_ffi) is
-    /// scoped to a message: an id means something only inside the message
-    /// that declared it. `nil` is a broken picture, never a fetch.
+    /// One picture in draft `draft`'s own body, by its `Content-ID`, for the composer's
+    /// `postio-cid:` handler. `nil` is a broken picture, never a fetch.
     #[uniffi::method(name = "resolveDraftCid")]
     pub fn resolve_draft_cid_ffi(
         &self,
@@ -989,17 +714,13 @@ impl Session {
         blocking(self.resolve_draft_cid(draft, content_id))
     }
 
-    /// Write the draft where another editor can open it, and answer where.
-    ///
-    /// The file is the user's alone — a private directory, mode 0600 — for
-    /// the reason `postio_session::handoff` records: a draft is mail that has
-    /// not been sent, which is often the most private mail there is.
+    /// Write the draft where another editor can open it, and answer where: a private directory,
+    /// mode 0600, since a draft is unsent mail.
     #[uniffi::method(name = "beginHandoff")]
     pub fn begin_handoff_ffi(&self, draft: crate::DraftFfi) -> Result<String, crate::ComposeError> {
         blocking(self.begin_handoff(draft))
     }
 
-    /// Take back what the other editor wrote, and answer the draft.
     #[uniffi::method(name = "endHandoff")]
     pub fn end_handoff_ffi(
         &self,
@@ -1009,7 +730,6 @@ impl Session {
         blocking(self.end_handoff(draft, path))
     }
 
-    /// Take an attachment off a draft again.
     #[uniffi::method(name = "detachFromDraft")]
     pub fn detach_from_draft_ffi(
         &self,
@@ -1019,73 +739,58 @@ impl Session {
         blocking(self.detach_from_draft(draft, attachment))
     }
 
-    /// The draft `id` as the store has it. See [`Session::draft`].
-    ///
-    /// `nil` when there is no such draft -- a composer reopened on a draft
-    /// somebody deleted elsewhere gets nothing rather than a blank one.
+    /// The draft `id` as the store has it; `nil` when there is no such draft.
     #[uniffi::method(name = "draft")]
     pub fn draft_ffi(&self, id: i64) -> Option<crate::DraftFfi> {
         blocking(self.draft(id))
     }
 
-    /// The draft behind message `message`, for a `Continue editing` link in
-    /// a conversation (#1212). See [`Session::draft_for_message`].
+    /// The draft behind message `message`, for a `Continue editing` link (#1212).
     #[uniffi::method(name = "draftForMessage")]
     pub fn draft_for_message_ffi(&self, message: i64) -> Option<crate::DraftFfi> {
         blocking(self.draft_for_message(message))
     }
 
-    /// Narrow pasted markup to the dialect. See [`Session::narrow_paste`].
     #[uniffi::method(name = "narrowPaste")]
     pub fn narrow_paste_ffi(&self, html: String) -> crate::PastedFfi {
         self.narrow_paste(html)
     }
 
-    /// The plain text of a rich body. See [`Session::plain_text_of`].
     #[uniffi::method(name = "plainTextOf")]
     pub fn plain_text_of_ffi(&self, html: String) -> String {
         self.plain_text_of(&html)
     }
 
-    /// A plain body as a document. See [`Session::rich_html_of`].
     #[uniffi::method(name = "richHtmlOf")]
     pub fn rich_html_of_ffi(&self, text: String) -> String {
         self.rich_html_of(&text)
     }
 
-    /// The script that applies a mark to the composer's selection.
-    ///
-    /// `nil` for a command that is not one of the marks. See
-    /// [`Session::mark_script`].
+    /// The script that applies a mark to the composer's selection; `nil` for a command that is not
+    /// a mark.
     #[uniffi::method(name = "markScript")]
     pub fn mark_script_ffi(&self, command: String) -> Option<String> {
         self.mark_script(&command)
     }
 
-    /// The script that links the selection to `href`, or `nil` when a
-    /// message may not point there. See [`Session::link_script`].
+    /// The script that links the selection to `href`, or `nil` when a message may not point there.
     #[uniffi::method(name = "linkScript")]
     pub fn link_script_ffi(&self, href: String) -> Option<String> {
         self.link_script(&href)
     }
 
-    /// The one script the composer's editing surface runs.
-    ///
-    /// See [`Session::editor_script`]. Crosses so that both frontends run
-    /// one dialect rather than two that happen to agree today.
+    /// The one script the composer's editing surface runs, so both frontends run one dialect.
     #[uniffi::method(name = "editorScript")]
     pub fn editor_script_ffi(&self) -> String {
         self.editor_script().to_owned()
     }
 
-    /// Write the draft to the store, and answer it with its id.
-    /// Throw a draft away — the row and the server copy.
+    /// Throw a draft away: the row and the server copy.
     #[uniffi::method(name = "discardDraft")]
     pub fn discard_draft_ffi(&self, draft: i64) -> Option<String> {
         blocking(self.discard_draft(draft))
     }
 
-    /// Write the draft to the store, and answer it with its id.
     #[uniffi::method(name = "saveDraft")]
     pub fn save_draft_ffi(&self, draft: crate::DraftFfi) -> Option<crate::DraftFfi> {
         blocking(self.save_draft(draft))
@@ -1098,17 +803,13 @@ impl Session {
         blocking(self.send_draft(draft))
     }
 
-    /// Queue a draft to leave at `when`. See
-    /// [`Session::send_draft_later`].
     #[uniffi::method(name = "sendDraftLater")]
     pub fn send_draft_later_ffi(&self, draft: crate::DraftFfi, when: i64) -> Option<String> {
         blocking(self.send_draft_later(draft, when))
     }
 
-    /// Everything the pane asks about one open message — the notice, the
-    /// caveat, the unsubscribe offer and the recipients — in one call, one
-    /// body load and one render (#1589). Blocking; call it off the main
-    /// actor and publish the answer.
+    /// Everything the pane asks about one open message in one body load and one render (#1589).
+    /// Blocking: off the main actor.
     #[uniffi::method(name = "messageFacts")]
     pub fn message_facts_ffi(&self, message: i64) -> crate::MessageFactsFfi {
         blocking(self.message_facts(message))
@@ -1123,47 +824,35 @@ impl Session {
         blocking(self.agent_activity())
     }
 
-    /// The verbs the reading pane offers. See [`Session::reader_actions`].
     #[uniffi::method(name = "readerActions")]
     pub fn reader_actions_ffi(&self) -> Vec<crate::ReaderActionFfi> {
         self.reader_actions()
     }
 
-    /// The header bar of a conversation of `messages`, each verb saying
-    /// what it will act on. See [`Session::conversation_actions`].
     #[uniffi::method(name = "conversationActions")]
     pub fn conversation_actions_ffi(&self, messages: u32) -> Vec<crate::ConversationActionFfi> {
         self.conversation_actions(messages)
     }
 
-    /// Always allow this address's remote images, across restarts.
     #[uniffi::method(name = "allowSender")]
     pub fn allow_sender_ffi(&self, address: String) {
         self.allow_sender(address);
     }
 
-    /// `always_show_images` from the keyboard or the palette: what the
-    /// notice's "Always allow" presses, when the notice is up. See
-    /// [`Session::always_show_images_for`].
-    ///
-    /// **Off the main actor**: it renders the message to learn whether
-    /// anything was held back, the same render the notice comes from.
+    /// `always_show_images` from the keyboard or the palette. Off the main actor: it renders the
+    /// message to learn whether anything was held back.
     #[uniffi::method(name = "alwaysShowImagesFor")]
     pub fn always_show_images_for_ffi(&self, message: i64) -> bool {
         blocking(self.always_show_images_for(message))
     }
 
-    /// Always allow every address at this domain.
     #[uniffi::method(name = "allowDomain")]
     pub fn allow_domain_ffi(&self, domain: String) {
         self.allow_domain(domain);
     }
 
-    /// Every remote-image grant, addresses first, each already sorted.
-    ///
-    /// The Privacy pane's whole model. A grant the user cannot see is one
-    /// they cannot take back, and "images blocked until allowed per sender"
-    /// only means something if *allowed* is reviewable.
+    /// Every remote-image grant, addresses first, each already sorted: the Privacy pane's whole
+    /// model.
     #[uniffi::method(name = "remoteImageGrants")]
     pub fn remote_image_grants_ffi(&self) -> Vec<crate::GrantFfi> {
         self.remote_image_grants()
@@ -1175,22 +864,10 @@ impl Session {
         self.revoke_remote_images(subject);
     }
 
-    /// Leave the list this message came from — **the deliberate activation**,
-    /// and the only thing in this boundary that records one.
-    ///
-    /// Call it from a button and from nothing else. `None` when the
-    /// activation was recorded, a sentence when it was not; a message that
-    /// offers nothing is refused rather than logged, so a frontend cannot
-    /// unsubscribe anyone from a message the reader never offered it on.
-    /// See [`Session::activate_unsubscribe`].
-    ///
-    /// **Off the main actor**, unlike the offer above it. This is the only
-    /// call in the pair that writes, and a write waits on the store's
-    /// machine-wide gate — so it queues behind whatever the sync engine is
-    /// committing, which on a first sync is not a few milliseconds. The
-    /// offer, `decodeCaveat` and everything else the reading pane asks per
-    /// message are point reads and belong where the message opens; this one
-    /// belongs in a task, with the banner left as it is until it answers.
+    /// Leave the list this message came from: the deliberate activation, and the only thing here
+    /// that records one. Call it from a button and nothing else.
+    /// `None` when recorded, a sentence when not; a message that offers nothing is refused.
+    /// Off the main actor: it writes, and a write waits on the store's machine-wide gate.
     #[uniffi::method(name = "activateUnsubscribe")]
     pub fn activate_unsubscribe_ffi(&self, message: i64) -> Option<String> {
         blocking(self.activate_unsubscribe(message))
@@ -1211,20 +888,14 @@ impl Session {
         blocking(self.clear_list_mail(message, delete))
     }
 
-    /// Every activation this store holds, newest first — the Privacy pane's
-    /// list. See [`Session::unsubscribe_activations`].
     #[uniffi::method(name = "unsubscribeActivations")]
     pub fn unsubscribe_activations_ffi(&self) -> Vec<crate::UnsubscribeActivationFfi> {
         blocking(self.unsubscribe_activations())
     }
 
-    /// What looking `address` up finds: the first-run card (canvas 09).
-    ///
-    /// Asked on a deliberate step -- the address field losing focus, or
-    /// `Connect` -- never per keystroke: each lookup is DNS and HTTPS to the
-    /// address's domain, and each is written to the egress log. Blocks for
-    /// as long as the lookup takes, bounded by the probe's own deadlines, so
-    /// not from the main actor.
+    /// What looking `address` up finds. Asked on a deliberate step, never per keystroke: each
+    /// lookup is DNS and HTTPS to the
+    /// address's domain, written to the egress log. Blocks, so not from the main actor.
     #[uniffi::method(name = "discoverAccount")]
     pub fn discover_account_ffi(&self, address: String) -> crate::DiscoveredFfi {
         blocking(self.discover_account(address))
@@ -1245,23 +916,19 @@ impl Session {
         blocking(self.add_local_account(address, path))
     }
 
-    /// Whether `path` is a mail store Postio can open: `None` when it is, a
-    /// sentence naming the directory when it is not.
-    ///
-    /// Asked while somebody is still looking at the field, so the sheet can
-    /// say what is wrong with the directory before it is written down —
-    /// rather than adding an account that turns out to have no mail in it.
+    /// Whether `path` is a mail store Postio can open: `None` when it is, a sentence naming the
+    /// directory when not. Asked
+    /// while the field is still showing, so the sheet can say what is wrong before anything is
+    /// written.
     #[uniffi::method(name = "inspectLocalStore")]
     pub fn inspect_local_store_ffi(&self, path: String) -> Option<String> {
         self.inspect_local_store(path)
     }
 
-    /// Sign in to `address` through the system browser, and add the account.
-    ///
-    /// Returns when the flow is over: `None` on success, a sentence on
-    /// failure, and `Some("cancelled")`'s own wording when the user closed
-    /// the tab. Blocks — it is waiting on a person — so a Swift caller runs
-    /// it off the main actor, the way it opens a session.
+    /// Sign in to `address` through the system browser, and add the account. Returns when the flow
+    /// is over: `None` on
+    /// success, a sentence on failure or when the user closed the tab. Blocks, so off the main
+    /// actor.
     #[uniffi::method(name = "signInWithBrowser")]
     pub fn sign_in_with_browser_ffi(
         &self,
@@ -1272,13 +939,11 @@ impl Session {
         blocking(self.sign_in_with_browser(address, client_id, client_secret))
     }
 
-    /// What the sign-in in flight is doing — the port, mostly.
     #[uniffi::method(name = "signInProgress")]
     pub fn sign_in_progress_ffi(&self) -> crate::SignInProgressFfi {
         self.sign_in_progress()
     }
 
-    /// Give up on the sign-in in flight. Closing the sheet means this.
     #[uniffi::method(name = "cancelSignIn")]
     pub fn cancel_sign_in_ffi(&self) {
         self.cancel_sign_in();
@@ -1291,34 +956,26 @@ impl Session {
         blocking(self.test_connection(account))
     }
 
-    /// Rebuild `account`'s search index from the mail already in the store.
     #[uniffi::method(name = "reindexAccount")]
     pub fn reindex_account_ffi(&self, account: i64) -> Option<String> {
         blocking(self.reindex_account(account))
     }
 
-    /// How much disk this account's mail takes, in the canvas' words.
     #[uniffi::method(name = "accountWeight")]
     pub fn account_weight_ffi(&self, account: i64) -> Option<String> {
         blocking(self.account_weight(account))
     }
 
-    /// Change what an account calls itself — the one field the account form
-    /// edits.
     #[uniffi::method(name = "setDisplayName")]
     pub fn set_display_name_ffi(&self, account: i64, name: String) -> Option<String> {
         blocking(self.set_display_name(account, name))
     }
 
-    /// Switch an account's syncing on or off. See
-    /// [`set_account_enabled`](Self::set_account_enabled).
     #[uniffi::method(name = "setAccountEnabled")]
     pub fn set_account_enabled_ffi(&self, account: i64, enabled: bool) -> Option<String> {
         blocking(self.set_account_enabled(account, enabled))
     }
 
-    /// Make an account the one new mail comes from. See
-    /// [`set_default_account`](Self::set_default_account).
     #[uniffi::method(name = "setDefaultAccount")]
     pub fn set_default_account_ffi(&self, account: i64) -> Option<String> {
         blocking(self.set_default_account(account))
@@ -1330,12 +987,8 @@ impl Session {
         blocking(self.remove_account(account))
     }
 
-    /// What one key press means here. See [`Session::key`].
-    ///
-    /// The frontend reduces its own event to these three things and asks;
-    /// it owns no keymap (ADR 0019 Q4). The answer says whether to swallow
-    /// the key: a command and a pending sequence are handled, and only
-    /// `Unhandled` may reach the toolkit.
+    /// What one key press means here: the frontend owns no keymap (ADR 0019 Q4). Only `Unhandled`
+    /// may reach the toolkit.
     #[uniffi::method(name = "key")]
     pub fn key_ffi(
         &self,
@@ -1354,26 +1007,19 @@ impl Session {
         )
     }
 
-    /// Run a command, aimed the way this view says it should be.
-    ///
-    /// `id` is the registry's own name for the verb, as
-    /// [`commands`](Session::commands_ffi) reports it. Nothing comes back:
-    /// a verb is local-first, and what happened arrives on `nextEvent` like
-    /// everything else. See [`Session::invoke`].
+    /// Run a command, aimed the way this view says. `id` is the registry's name for the verb;
+    /// nothing comes back, and
+    /// what happened arrives on `nextEvent`.
     #[uniffi::method(name = "invoke")]
     pub fn invoke_ffi(&self, id: String) {
         self.invoke(&id);
     }
 
-    /// Whether `id` can run in `context`. See [`Session::is_available`].
-    ///
-    /// What a menu asks before drawing an item enabled.
     #[uniffi::method(name = "isAvailable")]
     pub fn is_available_ffi(&self, id: String, context: crate::UiContext) -> bool {
         self.is_available(&id, context)
     }
 
-    /// The palette's rows for `query`. See [`Session::palette_entries`].
     #[uniffi::method(name = "paletteEntries")]
     pub fn palette_entries_ffi(
         &self,
@@ -1383,17 +1029,12 @@ impl Session {
         self.palette_entries(&query, context)
     }
 
-    /// Every command reachable here, with the binding in force.
-    ///
-    /// The same list the palette reads, unfiltered — see
-    /// [`Session::cheat_sheet`].
+    /// Every command reachable here, with the binding in force: the palette's list, unfiltered.
     #[uniffi::method(name = "cheatSheet")]
     pub fn cheat_sheet_ffi(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
         self.cheat_sheet(context)
     }
 
-    /// The `?` sheet, grouped the way the product groups it.
-    /// See [`Session::cheat_sheet_sections`].
     #[uniffi::method(name = "cheatSheetSections")]
     pub fn cheat_sheet_sections_ffi(
         &self,
@@ -1427,29 +1068,22 @@ impl Session {
         blocking(self.finder_labels(query))
     }
 
-    /// Put `label` on the selection. See [`apply_label`](Self::apply_label).
     #[uniffi::method(name = "applyLabel")]
     pub fn apply_label_ffi(&self, label: i64) {
         self.apply_label(label);
     }
 
-    /// Report which accounts the aggregate view can currently vouch for.
-    ///
-    /// Call it whenever a connection changes, from the same states the
-    /// "showing local mail" disclosure is drawn from: it is what a whole-view
-    /// selection in the unified list is scoped to, and it is read when the
-    /// selection is *made* rather than when a verb runs (#811).
+    /// Report which accounts the aggregate view can currently vouch for; call it whenever a
+    /// connection changes. Read when
+    /// the selection is made, not when a verb runs (#811).
     #[uniffi::method(name = "setReachableAccounts")]
     pub fn set_reachable_accounts_ffi(&self, accounts: Vec<i64>) {
         self.set_reachable_accounts(&accounts);
     }
 
-    /// The whole document for a message, ready to hand a `WKWebView` — plus
-    /// the notice and the caveat the render already paid for (#1589).
-    ///
-    /// Swift's job is to build a hardened configuration, hand the HTML over,
-    /// refuse navigations, and publish the two facts. It composes no reader
-    /// HTML of its own.
+    /// The whole document for a message, ready for a `WKWebView`, plus the notice and caveat the
+    /// render paid for (#1589).
+    /// Swift builds a hardened configuration and composes no reader HTML.
     #[uniffi::method(name = "readerDocument")]
     pub fn reader_document_ffi(
         &self,
@@ -1460,35 +1094,19 @@ impl Session {
         blocking(self.reader_answers(message, remote, reduced))
     }
 
-    /// One inline part of `message`, by its `Content-ID`.
-    ///
-    /// What a `WKURLSchemeHandler` for `postio-cid:` answers with. `nil` is a
-    /// broken image, deliberately — never a fetch.
+    /// One inline part of `message`, by its `Content-ID`, for the `postio-cid:` handler. `nil` is a
+    /// broken image, never a fetch.
     #[uniffi::method(name = "resolveCid")]
     pub fn resolve_cid_ffi(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
         blocking(self.resolve_cid(message, content_id))
     }
 
-    /// One part's bytes, fetched first if they are not on this machine yet.
-    ///
-    /// **A deliberate act, and the only call here that may reach the
-    /// network.** The user pressed save, or dragged this part, or chose
-    /// "Open with…" on it — they named these bytes. Never call it to fill a
-    /// preview or to find out how big something really is; the whole
-    /// arrangement above depends on this being the one door and it being
-    /// opened on purpose.
-    ///
-    /// `partId` is the MIME path from `PartFfi.partId`. An error carries the
-    /// sentence to show the person who asked; there is never an empty
-    /// success, because a zero-byte file looks like a saved attachment.
-    ///
-    /// **Never from the main actor.** This is the one call in the parts
-    /// surface that can reach the network, so it is also the one that can
-    /// take real time: a part nobody has downloaded is queued and then
-    /// *waited on*, for up to thirty seconds, before the wait gives up and
-    /// says so. Every other blocking method here reads SQLite and answers in
-    /// milliseconds; this one answers at the speed of somebody's IMAP server.
-    /// Call it from a task and publish the result.
+    /// One part's bytes, fetched first if not on this machine. A deliberate act and the only call
+    /// here that may reach the
+    /// network: never use it for a preview or a size. `partId` is the MIME path from
+    /// `PartFfi.partId`; an error carries the
+    /// sentence to show, never an empty success. Never from the main actor: a part nobody has
+    /// downloaded is waited on for up to thirty seconds.
     #[uniffi::method(name = "partBytes")]
     pub fn part_bytes_ffi(
         &self,
@@ -1498,12 +1116,9 @@ impl Session {
         blocking(self.part_bytes(message, part_id))
     }
 
-    /// What `A` offers for `message`, as GTK's chooser offers it: the links
-    /// in `document` -- the reader document on screen, as
-    /// `focusReaderDocument` made it, so what is offered is what is read --
-    /// then the attachments as the chips list them, with the words for Save
-    /// and Save all; or the shared sentence when there is neither. A read
-    /// of the stored message; nothing is fetched.
+    /// What `A` offers for `message`: the links in `document` (as `focusReaderDocument` made it),
+    /// then the attachments, or
+    /// the shared sentence when there is neither. Reads the stored message; nothing is fetched.
     #[uniffi::method(name = "openChoices")]
     pub fn open_choices(&self, message: i64, document: String) -> crate::OpenChoicesFfi {
         let found = self.store_and_blobs().and_then(|(database, _)| {
@@ -1535,12 +1150,9 @@ impl Session {
         }
     }
 
-    /// Write one attachment to a private file under its own name, fetching
-    /// it first if it was never downloaded, and answer the file's path for
-    /// the frontend to hand to the system. Only because a person chose it.
-    ///
-    /// **Never from the main actor**, for the reason `partBytes` gives.
-    /// Logs carry the ids, never the name.
+    /// Write one attachment to a private file under its own name, fetching it first if needed, and
+    /// answer the path.
+    /// Never from the main actor (see `partBytes`). Logs carry ids, never the name.
     #[uniffi::method(name = "openAttachment")]
     pub fn open_attachment_ffi(
         &self,
@@ -1550,12 +1162,9 @@ impl Session {
         blocking(self.open_attachment(message, attachment))
     }
 
-    /// Write one attachment to `to`, the file a person named in a save
-    /// panel, fetching it first if it was never downloaded; answer what to
-    /// say ("Saved report.pdf"). Replaces whatever `to` held: the panel
-    /// asked them about that.
-    ///
-    /// **Never from the main actor**, for the reason `partBytes` gives.
+    /// Write one attachment to `to`, the file a person named in a save panel, fetching it first if
+    /// needed; answers what to
+    /// say. Replaces whatever `to` held. Never from the main actor.
     #[uniffi::method(name = "saveAttachment")]
     pub fn save_attachment_ffi(
         &self,
@@ -1566,13 +1175,9 @@ impl Session {
         blocking(self.save_attachment(message, attachment, to))
     }
 
-    /// Write every part `A` offers into `folder`, the one a person chose,
-    /// each under a name no other of them has
-    /// (`postio_ui::reader::parts::save_names`); answer what to say. A part
-    /// that cannot be had does not stop the rest, and is counted in the
-    /// answer rather than named.
-    ///
-    /// **Never from the main actor**, for the reason `partBytes` gives.
+    /// Write every part `A` offers into `folder`, each under a unique name
+    /// (`postio_ui::reader::parts::save_names`); a part
+    /// that cannot be had does not stop the rest, and is counted. Never from the main actor.
     #[uniffi::method(name = "saveAttachments")]
     pub fn save_attachments_ffi(
         &self,
@@ -1584,7 +1189,6 @@ impl Session {
 }
 
 impl Session {
-    /// [`Self::open_attachment_ffi`]'s body.
     pub async fn open_attachment(
         &self,
         message: i64,
@@ -1608,7 +1212,6 @@ impl Session {
         Ok(to.to_string_lossy().into_owned())
     }
 
-    /// [`Self::save_attachment_ffi`]'s body.
     pub async fn save_attachment(
         &self,
         message: i64,
@@ -1633,7 +1236,6 @@ impl Session {
         Ok(postio_ui::reader::parts::saved(&name))
     }
 
-    /// [`Self::save_attachments_ffi`]'s body.
     pub async fn save_attachments(
         &self,
         message: i64,
@@ -1671,8 +1273,6 @@ impl Session {
         Ok(postio_ui::reader::parts::saved_all(nodes.len(), failed))
     }
 
-    /// One attachment's file name and bytes, fetched first if they were
-    /// never downloaded.
     async fn attachment_bytes(
         &self,
         message: postio_model::MessageId,
@@ -1707,119 +1307,82 @@ impl Session {
 
 #[uniffi::export]
 impl Session {
-    /// Tell the engine whether the machine currently has a connection.
-    ///
-    /// Pushed down from Swift's `NWPathMonitor`: reachability is a platform
-    /// question, and the platform's own language is where it gets asked.
+    /// Tell the engine whether the machine has a connection, pushed down from Swift's
+    /// `NWPathMonitor`.
     #[uniffi::method(name = "setOffline")]
     pub fn set_offline_ffi(&self, offline: bool) {
         self.set_offline(offline);
     }
 
-    /// Whether the platform has told us there is no connection.
     #[uniffi::method(name = "isOffline")]
     pub fn is_offline_ffi(&self) -> bool {
         self.is_offline()
     }
 
-    /// Start syncing every configured account; answers how many started.
-    ///
-    /// Zero is not an error — a store with no account configured is the
-    /// ordinary first-run state. Does not block: the connection attempt
-    /// happens on the engine's own runtime.
+    /// Start syncing every configured account; answers how many started. Zero is not an error: no
+    /// account is the first-run state. Does not block.
     #[uniffi::method(name = "startSyncing")]
     pub fn start_syncing_ffi(&self) -> Result<u32, SessionError> {
         blocking(self.start_syncing())
     }
 
-    /// How many accounts are configured and enabled.
     #[uniffi::method(name = "configuredAccounts")]
     pub fn configured_accounts_ffi(&self) -> u32 {
         blocking(self.configured_accounts())
     }
 
-    /// Every folder of every enabled account, for the sidebar.
     #[uniffi::method(name = "mailboxes")]
     pub fn mailboxes_ffi(&self) -> Vec<crate::MailboxFfi> {
         blocking(self.mailboxes())
     }
 
-    /// Every configured account, in the order the pane lists them.
-    ///
-    /// Synchronous at the boundary like `mailboxes`: the settings pane reads
-    /// it from a computed property, and an async crossing for a handful of
-    /// rows would push a `Task` into every caller. See [`Session::accounts`].
-    ///
-    /// **Not from the main actor once an OAuth account exists.** Each one
-    /// costs a keyring read, to learn whether its token has expired, and a
-    /// Keychain that decides to ask the user about it blocks until they
-    /// answer. Read it in a task and publish the rows.
+    /// Every configured account, in the order the pane lists them. Not from the main actor once an
+    /// OAuth account exists:
+    /// each costs a keyring read, which can block on a Keychain prompt.
     #[uniffi::method(name = "accounts")]
     pub fn accounts_ffi(&self) -> Vec<crate::AccountFfi> {
         blocking(self.accounts())
     }
 
-    /// Give an account a new password: the repair `AccountFfi.repair` calls
-    /// `Password`. `None` when it was stored, a sentence when it was not.
-    ///
-    /// For the two states that leave an account unable to sign in without
-    /// anything being wrong with its row — a provider that rotated its app
-    /// password, and a row whose keyring entry never arrived or was removed
-    /// (the pane's *Partial* state). This writes the keyring and nothing
-    /// else: no server is asked, and the row is left as it is.
-    ///
-    /// Blocks on the keyring; run it off the main actor.
+    /// Give an account a new password (the repair `AccountFfi.repair` calls `Password`): `None`
+    /// when stored, a sentence
+    /// when not. Writes the keyring and nothing else. Blocks on the keyring; off the main actor.
     #[uniffi::method(name = "repairCredential")]
     pub fn repair_credential_ffi(&self, account: i64, password: String) -> Option<String> {
         blocking(self.repair_credential(account, password))
     }
 
-    /// Sign an account in again through the system browser: the repair
-    /// `AccountFfi.repair` calls `Browser`. `None` when the grant was
-    /// renewed, a sentence when it was not.
-    ///
-    /// Takes no client id, unlike `signInWithBrowser`. The account already
-    /// carries the one it registered and the keyring carries its secret, so
-    /// Reconnect is one press rather than a form asking somebody to find a
-    /// credential again in order to fix an account that used to work.
-    ///
-    /// Returns when the flow is over, which is when a person comes back from
-    /// a browser tab: run it off the main actor.
+    /// Sign an account in again through the system browser (the repair `Browser`): `None` when the
+    /// grant was renewed, a
+    /// sentence when not. Takes no client id: the account carries the one it registered. Returns
+    /// when a person comes back
+    /// from the browser: off the main actor.
     #[uniffi::method(name = "reconnectAccount")]
     pub fn reconnect_account_ffi(&self, account: i64) -> Option<String> {
         blocking(self.reconnect_account(account))
     }
 
-    /// The binding in force for a command, for drawing a native accelerator.
     #[uniffi::method(name = "bindingFor")]
     pub fn binding_for_ffi(&self, command: String) -> Option<String> {
         self.binding_for(command)
     }
 
-    /// Every binding in force for a command, the primary first. See
-    /// [`bindings_for`](Self::bindings_for).
     #[uniffi::method(name = "bindingsFor")]
     pub fn bindings_for_ffi(&self, command: String) -> Vec<String> {
         self.bindings_for(command)
     }
 
-    /// Every command the registry knows, in cheat-sheet order.
     #[uniffi::method(name = "commands")]
     pub fn commands_ffi(&self) -> Vec<crate::CommandSpecFfi> {
         self.commands()
     }
 
-    /// Whether this session still holds its store.
     #[uniffi::method(name = "isOpen")]
     pub fn is_open_ffi(&self) -> bool {
         self.is_open()
     }
-    /// The `[ui]` table this session was opened with.
-    ///
-    /// The message list draws by these: row height comes from the density,
-    /// and the three flags say what a row shows. Read from the session rather
-    /// than from the file by whoever is drawing, so the list and the settings
-    /// pane cannot end up with two different opinions of the same table.
+    /// The `[ui]` table this session was opened with, so the list and the settings pane cannot
+    /// disagree.
     pub fn appearance(&self) -> crate::AppearanceFfi {
         crate::AppearanceFfi {
             density: self.ui.density.into(),
@@ -1828,13 +1391,9 @@ impl Session {
             sender_avatars: self.ui.sender_avatars,
         }
     }
-    /// The key hints the search bar announces — `Ret open · Tab refine ·
-    /// C-s save as folder` (canvas 05).
-    ///
-    /// Read from this session's keymap, so a rebinding
-    /// reaches the footer. It is the only place most people will ever read
-    /// these keys, which is what makes teaching the wrong one worse than
-    /// teaching none.
+    /// The key hints the search bar announces (`Ret open · Tab refine · C-s save as folder`), read
+    /// from this session's
+    /// keymap so a rebinding reaches the footer.
     pub fn search_hints(&self) -> Vec<crate::KeyHintFfi> {
         postio_ui::search::hints(&self.keymap())
             .into_iter()
@@ -1846,49 +1405,21 @@ impl Session {
     }
 }
 
-/// What resuming an account's browser sign-in needs, resolved off its row.
-///
-/// Does not cross to Swift, and must not: it carries a client secret, and
-/// the frontend has nothing to do with one. `reconnectAccount` is what
-/// crosses — a button press, answered with a sentence or with nothing.
-/// This is the join behind it, public so a test can assert that the right
-/// client reaches the provider rather than an empty one (#1584).
+/// What resuming an account's browser sign-in needs, resolved off its row. Does not cross to Swift:
+/// it carries a client
+/// secret. Public so a test can assert the right client reaches the provider (#1584).
 #[derive(Debug)]
 pub struct BrowserReconnect {
-    /// The account's own address, which is what the consent screen shows.
     pub address: String,
-    /// The OAuth client the first sign-in registered, off the account row.
     pub client_id: String,
-    /// Its secret, when the provider issued one, out of the keyring.
     pub client_secret: Option<postio_account::secret::Password>,
 }
 
-// ---------------------------------------------------------------------------
-// The Rust surface. Nothing here crosses to Swift; the block above wraps what
-// should. Test-only methods belong here.
-// ---------------------------------------------------------------------------
 impl Session {
-    /// Every configured account, in the order the pane lists them.
-    ///
-    /// Disabled ones included: a list that hid them would make "where did my
-    /// account go" the next question. An empty answer means no store, which
-    /// on a machine that has never signed in is exactly the claim.
-    ///
-    /// # Why this reaches the keyring
-    ///
-    /// A row has to say when a token has expired, and the expiry lives in
-    /// the keyring beside the token it is about — `config.toml` strips
-    /// anything token-shaped on the way through, which is the whole reason
-    /// it is there (#870). So the row cannot be assembled from the store
-    /// alone, and the classic app reached for exactly the same value the same
-    /// way before handing it to its panel's `set_token_expiries`.
-    ///
-    /// **Only for an account that has one.** The filter is
-    /// `account.oauth.is_some()`, which is the only case anything ever
-    /// persisted an expiry under — so a machine with none of them makes no
-    /// keyring call here at all, and one with a single Gmail account makes
-    /// one. It is still a round trip that can block, which is why the
-    /// exported wrapper says to keep this off the main actor.
+    /// Every configured account, in the order the pane lists them; disabled ones included. An empty
+    /// answer means no store.
+    /// Reaches the keyring only for an OAuth account, to learn whether its token expired: the
+    /// expiry lives beside the token, not in `config.toml` (#870).
     pub async fn accounts(&self) -> Vec<crate::AccountFfi> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Vec::new();
@@ -1908,10 +1439,8 @@ impl Session {
         let now = std::time::SystemTime::now();
         let mut rows = Vec::with_capacity(accounts.len());
         for account in &accounts {
-            // `None` all the way through for everything that is not an
-            // OAuth account of Postio's own minting, which is what
-            // `TokenStanding::Unknown` means and is a real answer rather
-            // than a failed read.
+            // `None` for everything that is not an OAuth account of Postio's own minting:
+            // `TokenStanding::Unknown`, a real answer.
             let expiry = match (&secrets, account.oauth.is_some()) {
                 (Some(secrets), true) => {
                     postio_account::oauth::token_source::stored_expiry(
@@ -1930,24 +1459,13 @@ impl Session {
         rows
     }
 
-    /// Put a new password in the keyring for an account that is already
-    /// here. See [`repair_credential_ffi`](Self::repair_credential_ffi).
-    ///
-    /// `None` when the credential was stored, a sentence when it was not.
-    ///
-    /// The route `AccountFfi::repair` names as `Password`: the keyring alone,
-    /// for an account whose row is right. `postio_session::provision::repair`'s
-    /// own docs argue why that is shared with the headless helper.
-    ///
-    /// The password goes to the OS keyring and nowhere else — never
-    /// `config.toml`, never a log (ADR 0014). It is not echoed back in the
-    /// answer either: everything below names the account, never the secret.
+    /// Put a new password in the keyring for an account already here (`AccountFfi::repair`
+    /// `Password`). `None` when stored,
+    /// a sentence when not. The password goes to the keyring and nowhere else, never `config.toml`
+    /// or a log (ADR 0014).
     pub async fn repair_credential(&self, account: i64, password: String) -> Option<String> {
-        // Refused here rather than stored. An empty secret is worse than no
-        // secret: every later "is this account signed in?" question reads it
-        // as one, so the *Partial* state that says "put a credential in"
-        // would be unreachable for exactly the account that had been through
-        // this field.
+        // Refused: an empty secret reads as a stored credential, which makes the *Partial* state
+        // unreachable for that account.
         if password.is_empty() {
             return Some("Type the password this account signs in with.".to_owned());
         }
@@ -1968,14 +1486,9 @@ impl Session {
         .map(|error| error.to_string())
     }
 
-    /// What reconnecting `account` in a browser would sign in with, or why
-    /// it cannot be reconnected.
-    ///
-    /// The route `AccountFfi::repair` names as `Browser`, and the same
-    /// accounts: an OAuth client on the row is what makes a reconnect
-    /// possible at all, so this refuses exactly where the row offers
-    /// nothing. Two answers that could disagree would put a button on a row
-    /// it does not work on.
+    /// What reconnecting `account` in a browser would sign in with, or why it cannot be: refuses
+    /// exactly where the row
+    /// offers nothing, so the button is never on a row it does not work on.
     pub async fn browser_sign_in_for(&self, account: i64) -> Result<BrowserReconnect, String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Err("There is no store open.".to_owned());
@@ -2018,18 +1531,10 @@ impl Session {
         })
     }
 
-    /// Sign this account in again, with the client it signed in with before.
-    /// See [`reconnect_account_ffi`](Self::reconnect_account_ffi).
-    ///
-    /// Everything about the flow is [`sign_in_with_browser`](Self::sign_in_with_browser)'s
-    /// — the consent, the loopback port, the proof that the token opens the
-    /// account's real IMAP session before anything is written. The only
-    /// difference is where the client comes from, and that is the whole
-    /// feature: a person whose grant has lapsed presses one button.
-    ///
-    /// `provision_oauth` seeds the keyring before it notices the row is
-    /// already there, which is what makes a re-consent land rather than be
-    /// thrown away (#1584's first half).
+    /// Sign this account in again with the client it signed in with before:
+    /// `sign_in_with_browser`'s flow, only the
+    /// client's source differs. `provision_oauth` seeds the keyring before noticing the row exists,
+    /// so a re-consent lands (#1584).
     pub async fn reconnect_account(&self, account: i64) -> Option<String> {
         let resumed = match self.browser_sign_in_for(account).await {
             Ok(resumed) => resumed,
@@ -2046,20 +1551,10 @@ impl Session {
         .await
     }
 
-    /// Opens a session, or says why it could not.
-    ///
-    /// # This blocks
-    ///
-    /// Reading the store's key from the OS keyring is a synchronous round
-    /// trip that can wait on a user prompt, and it has to finish before there
-    /// is a store — so this blocks the calling thread, bounded by the
-    /// keyring's own timeout rather than indefinitely. The classic app did the
-    /// same thing before any window exists. **A Swift caller must not invoke
-    /// it on the main actor**: it belongs in a launch task, with the unlock
-    /// surface shown if it comes back [`SessionError::KeyringLocked`].
+    /// Opens a session, or says why it could not. Blocks: reading the store's key from the keyring
+    /// can wait on a user
+    /// prompt, bounded by its own timeout. A Swift caller must not invoke it on the main actor.
     pub fn open(options: SessionOptions) -> Result<Arc<Self>, SessionError> {
-        // Read before anything moves out of `options`, and once: both paths
-        // below build the same configuration from it.
         let source = config_source(&options);
         let seams = seams(&options);
         let caller = options.bridge;
@@ -2070,19 +1565,10 @@ impl Session {
             let database = match options.seeded {
                 Some(database) => database,
                 None => {
-                    // A fresh key per session, from the OS RNG. The database
-                    // lives and dies with this process, so there is nothing
-                    // to reopen it with later — and it still runs the
-                    // encrypted path, which is the whole point of ADR 0014
-                    // Q3's "nothing tests a plaintext configuration that no
-                    // longer ships". No keyring is touched.
-                    //
-                    // A file in a temporary directory rather than an
-                    // in-memory database: the engine refuses to key one
-                    // (research.md Q6), and `test_support::memory` has been a
-                    // file on /dev/shm since #204 for a separate reason.
-                    // Neither survives the process, which is what "in memory"
-                    // meant to a caller of this.
+                    // A fresh key per session from the OS RNG, still on the encrypted path (ADR
+                    // 0014 Q3); no keyring is touched.
+                    // A file in a temporary directory, not an in-memory database: the engine
+                    // refuses to key one.
                     let key = postio_storage::key::StoreKey::generate()
                         .derive(postio_storage::key::Purpose::Database);
                     let scratch =
@@ -2120,21 +1606,14 @@ impl Session {
                     (blobs, scratch)
                 }
             };
-            // The default secret store is left in place. It is the real
-            // keyring type, but it does not reach the keyring until something
-            // asks it for a secret, and nothing in this slice does — so an
-            // in-memory session still needs no Secret Service, no Keychain and
-            // no prompt. The moment a slice *does* read a secret, this is
-            // where a `MemorySecretStore` goes.
+            // The default secret store is left in place: it does not reach the keyring until asked
+            // for a secret, so an
+            // in-memory session needs no Secret Service, Keychain or prompt.
             let config = load_config(&source);
             let saved = postio_ui::saved_search::pinned(&config);
             let sync_config = config.sync;
-            // Honour `with_secrets` here too. It was read only on the real
-            // path, so an in-memory session that had been handed a test
-            // keyring quietly used the **login keychain** instead — which is
-            // how a test suite came to hang on a macOS permission prompt
-            // nobody could see, after writing a password into a developer's
-            // own keychain.
+            // Honour `with_secrets` here too: without it an in-memory session handed a test keyring
+            // used the login keychain and hung on a macOS prompt.
             let secrets = options.secrets.clone();
             let host = serve(database, blobs, caller, |wiring| {
                 let wiring = with_onboarding(wiring, seams)
@@ -2160,9 +1639,8 @@ impl Session {
                 wiring.events.subscribe("attachment-indexer"),
                 &wiring.runtime,
             );
-            // A file of its own per session: an in-memory store has no
-            // directory to sit beside, and one shared path made a grant
-            // from one test true for the next.
+            // A file of its own per session: an in-memory store has no directory, and one shared
+            // path made a grant from one test true for the next.
             let allow_list_at = std::env::temp_dir().join(format!(
                 "postio-allowed-{}-{}.toml",
                 std::process::id(),
@@ -2187,9 +1665,8 @@ impl Session {
                     Some(socket) => answer_agents(socket, &host, &source),
                     None => Mutex::new(None),
                 },
-                // A file of its own per session: an in-memory store has no
-                // directory to sit beside, and one shared path made a grant
-                // from one test true for the next.
+                // A file of its own per session: an in-memory store has no directory, and one
+                // shared path made a grant from one test true for the next.
                 allow_list_at: allow_list_at.clone(),
                 serial: next_serial(),
                 allow_list_kept: Mutex::new(None),
@@ -2220,13 +1697,9 @@ impl Session {
             return Ok(session);
         }
 
-        // The keyring first, and only then the store. ADR 0014: the store is
-        // encrypted under a key that lives in the OS keyring, and there is no
-        // "open it unencrypted anyway" — so a keyring that will not answer
-        // means there is no store to open, not a store to open differently.
-        // Asking in this order is what makes that true rather than merely
-        // intended: nothing has touched the database by the time the key is
-        // refused, so a locked keyring leaves no half-made store behind.
+        // The keyring first, then the store (ADR 0014): a keyring that will not answer means no
+        // store, and nothing has
+        // touched the database, so a locked keyring leaves no half-made store.
         let secrets: Arc<dyn postio_account::secret::SecretStore> = match options.secrets {
             Some(secrets) => secrets,
             None => postio_account::secret::platform_keyring(),
@@ -2237,15 +1710,11 @@ impl Session {
         let path = options
             .store_path
             .unwrap_or_else(postio_session::paths::store_path);
-        // Kept before `path` is moved: the composer's footer names where a
-        // draft lives, and the remote-image grants are written beside the
-        // store rather than into `config.toml`.
+        // Kept before `path` is moved: the composer's footer names where a draft lives, and grants
+        // are written beside the store.
         let store_at = path.clone();
-        // Blocked on here, before the host exists: opening the store is
-        // async, and this constructor's documented contract is that it
-        // blocks. That is what the sentence above about the keyring is
-        // already telling a Swift caller -- do not invoke this on the main
-        // actor -- and it covers the store open for exactly the same reason.
+        // Blocked on here, before the host exists: this constructor blocks by contract, so not on
+        // the main actor.
         let (database, blobs) =
             blocking(postio_session::open_store_at_reporting(path, &key, &|_| {}))
                 .map_err(SessionError::from_refusal)?;
@@ -2326,8 +1795,6 @@ impl Session {
         Ok(session)
     }
 
-    /// Read `thread` and hold it for the pane. See
-    /// [`open_conversation_ffi`](Self::open_conversation_ffi).
     pub fn open_conversation(&self, thread: i64) {
         let Some((store, runtime)) = self.reader() else {
             return;
@@ -2344,10 +1811,8 @@ impl Session {
                 offset: 0,
                 limit: THREAD_LIMIT,
             };
-            // An unreadable thread folds to an empty conversation rather than
-            // leaving the last one on screen: a pane still drawing the
-            // previous conversation under a new selection is worse than an
-            // empty one, because it looks like an answer.
+            // An unreadable thread folds to an empty conversation: a pane still drawing the
+            // previous one under a new selection looks like an answer.
             let asked = std::time::Instant::now();
             let rows = match store.list_page(request).await {
                 Ok(page) => crate::list::page_of(page).rows,
@@ -2369,23 +1834,12 @@ impl Session {
         });
     }
 
-    /// `thread`, drawn as one document (ADR 0032, #1595).
-    ///
-    /// Gathered from the store the way GTK's pane gathers it: every message
-    /// in the thread in the order the stacked pane used (`fold`'s), each body
-    /// loaded or said to be coming, recipients through the shared header, the
-    /// per-sender image decision made against the allow list the Privacy
-    /// pane edits, and the user's own messages marked. Every message opens as
-    /// its sender built it (spec 006 FR-031); `reduced` are the ones the
-    /// reader asked to see in reader view (`toggle_reader_view`).
-    ///
-    /// Every message opens (FR-013) -- except one whose body has not arrived,
-    /// which stays its one line unless it is the newest: the newest opens
-    /// anyway so the "still coming" plate has somewhere to appear, and one
-    /// such plate is an explanation where thirty would be noise.
-    ///
-    /// Reads the store and nothing else; a body that is not here is not
-    /// fetched from here.
+    /// `thread` drawn as one document (ADR 0032, #1595), gathered like GTK's pane: messages in the
+    /// stacked pane's order, each
+    /// body loaded or said to be coming. Every message opens, except one whose body has not arrived
+    /// unless it is the newest,
+    /// so the "still coming" plate appears once. Reads the store only; a missing body is not
+    /// fetched.
     pub async fn thread_document(
         &self,
         thread: i64,
@@ -2407,8 +1861,6 @@ impl Session {
             return empty;
         };
         let now = chrono::Local::now();
-        // The stacked pane's order, from the same fold, so moving to one
-        // document does not reorder anybody's conversation.
         let rows = crate::conversation::fold(thread, crate::list::page_of(page).rows, now).rows;
         if rows.is_empty() {
             return empty;
@@ -2431,8 +1883,6 @@ impl Session {
             let Ok(Some(stored)) = repository.get(id).await else {
                 continue;
             };
-            // The account's own addresses: its primary one and every identity
-            // it sends as. Read once per account, not per message.
             if let std::collections::hash_map::Entry::Vacant(slot) = own.entry(stored.account_id) {
                 let addresses = match accounts.get(stored.account_id).await {
                     Ok(Some(account)) => std::iter::once(account.address.address.to_lowercase())
@@ -2524,13 +1974,10 @@ impl Session {
         }
     }
 
-    /// What the pane should draw. See
-    /// [`conversation_ffi`](Self::conversation_ffi).
     pub fn conversation(&self) -> Option<crate::ConversationFfi> {
         self.conversation.lock().expect("conversation lock").clone()
     }
 
-    /// See [`agent_activity_ffi`](Self::agent_activity_ffi).
     pub async fn agent_activity(&self) -> crate::AgentActivityFfi {
         let log = postio_session::agent_access::log_path(&self.store_at)
             .and_then(|path| std::fs::read_to_string(path).ok())
@@ -2550,11 +1997,9 @@ impl Session {
         crate::agent_access::from_activity(shown)
     }
 
-    /// The row's own facts about one open message: the unsubscribe offer
-    /// and the recipients. One connection, one row read, one `send_state`
-    /// read — **no body load**: the two facts that need the body (the
-    /// notice and the caveat) ride the document render now, as by-products
-    /// of [`reader_answers`](Self::reader_answers) (#1589).
+    /// The row's own facts about one open message: the unsubscribe offer and the recipients. No
+    /// body load; the notice and
+    /// caveat ride the document render (#1589).
     pub async fn message_facts(&self, message: i64) -> crate::MessageFactsFfi {
         let nothing = crate::MessageFactsFfi {
             offer: None,
@@ -2572,8 +2017,6 @@ impl Session {
             return nothing;
         };
 
-        // Through the shared header, which is also what GTK's own reader
-        // renders from — one answer to "how does a recipient list read".
         let lines = postio_ui::reader::header::MessageHeader::of(
             &row.from,
             &row.to,
@@ -2588,10 +2031,9 @@ impl Session {
             cc: lines.cc,
         });
 
-        // The send state is the offer's gate (#1525): without it the domain
-        // fallback would offer to unsubscribe the user from their own
-        // account, so a read that fails means "do not offer", never "no
-        // send state".
+        // The send state is the offer's gate (#1525): a failed read means "do not offer", else the
+        // domain fallback would
+        // offer to unsubscribe the user from their own account.
         let offer = match repository.send_state(id).await {
             Ok(send_state) => {
                 postio_ui::unsubscribe::offer(send_state, row.list_id.as_deref(), &row.from).map(
@@ -2611,37 +2053,23 @@ impl Session {
         crate::MessageFactsFfi { offer, recipients }
     }
 
-    /// What the reader is holding back for `message`.
-    ///
-    /// Rendered with images blocked whatever the sender's standing is: the
-    /// question this answers is "what would be loaded", and asking it of an
-    /// already-allowed render would answer "nothing" and take the notice off
-    /// screen — which is where a person goes to take a grant back. That rule
-    /// lives in [`message_facts`](Self::message_facts) now, which this is a
-    /// view over.
+    /// What the reader is holding back for `message`. Rendered with images blocked whatever the
+    /// sender's standing: an
+    /// allowed render would answer "nothing" and take away the notice where a grant is revoked.
     pub async fn reader_notice(&self, message: i64) -> Option<crate::ReaderNoticeFfi> {
-        // A view over `reader_answers`, kept for its tests: they are the
-        // behavioural record of what a notice means. Blocked and as sent,
-        // which were always this question's terms.
         self.reader_answers(message, crate::RemoteImagesFfi::Blocked, false)
             .await
             .notice
     }
 
-    /// Always allow `address`. See [`allow_sender_ffi`](Self::allow_sender_ffi).
     pub fn allow_sender(&self, address: String) {
         self.amend_allow_list(|list| list.allow(&address));
     }
 
-    /// Grant `message`'s sender a standing exception, if the reader is asking
-    /// for one -- and answer whether it was.
-    ///
-    /// The command form of the notice's "Always allow" (#1706), and only
-    /// where that button would be: something held back, from a sender not
-    /// yet allowed. Anywhere else a key does nothing, GTK's rule for the
-    /// same command, because a grant written where no notice asked is
-    /// consent nobody was asked for. The address is the notice's own, so the
-    /// key and the button cannot grant different people.
+    /// Grant `message`'s sender a standing exception if the reader is asking for one, and answer
+    /// whether it was. Only where
+    /// the notice's "Always allow" would be shown: a grant written where no notice asked is consent
+    /// nobody was asked for.
     pub async fn always_show_images_for(&self, message: i64) -> bool {
         match self.reader_notice(message).await {
             Some(notice) if !notice.allowed && !notice.sender.is_empty() => {
@@ -2652,24 +2080,16 @@ impl Session {
         }
     }
 
-    /// Always allow `domain`. See [`allow_domain_ffi`](Self::allow_domain_ffi).
     pub fn allow_domain(&self, domain: String) {
         self.amend_allow_list(|list| list.allow_domain(&domain));
     }
 
-    /// The standing grants.
-    ///
-    /// From memory: the file is read once per session and every write goes
-    /// through [`amend_remote_images`](Self::amend_remote_images), which
-    /// keeps the copy current -- so the settings pane that revokes a grant
-    /// and the next message drawn cannot disagree, and drawing a message is
-    /// not a disk read (#1589).
+    /// The standing grants, from memory: the file is read once per session and every write goes
+    /// through `amend_remote_images` (#1589).
     pub(crate) fn allow_list(&self) -> postio_ui::allowlist::AllowList {
         self.with_remote_images(|list| list.grants().clone())
     }
 
-    /// `read` over the grants and treatments, read from disk only the first
-    /// time. See [`allow_list_kept`](Self::allow_list_kept).
     pub(crate) fn with_remote_images<T>(
         &self,
         read: impl FnOnce(&postio_ui::allowlist::RemoteImageAllowList) -> T,
@@ -2680,10 +2100,9 @@ impl Session {
         }))
     }
 
-    /// Change the grants or treatments, write them, and keep what was
-    /// written. Best-effort: a change that could not be written is one the
-    /// user will be asked about again, which is the safe failure -- so it is
-    /// not kept either, and the next read goes back to the file.
+    /// Change the grants or treatments, write them, and keep what was written. Best-effort: a
+    /// change that could not be
+    /// written is not kept, so the next read goes back to the file.
     pub(crate) fn amend_remote_images(
         &self,
         change: impl FnOnce(&mut postio_ui::allowlist::RemoteImageAllowList),
@@ -2699,8 +2118,6 @@ impl Session {
         Ok(())
     }
 
-    /// Every grant. See
-    /// [`remote_image_grants_ffi`](Self::remote_image_grants_ffi).
     pub fn remote_image_grants(&self) -> Vec<crate::GrantFfi> {
         let list = self.allow_list();
         let addresses = list.addresses().map(|subject| crate::GrantFfi {
@@ -2714,97 +2131,51 @@ impl Session {
         addresses.chain(domains).collect()
     }
 
-    /// Take one back. See
-    /// [`revoke_remote_images_ffi`](Self::revoke_remote_images_ffi).
-    ///
-    /// One entry point for both kinds: `revoke` removes whichever list holds
-    /// it, so the pane does not have to say which it was — and a caller that
-    /// guessed wrong would leave a grant in place while reporting it gone.
+    /// Take one back. `revoke` removes whichever list holds it, so the pane need not say which.
     pub fn revoke_remote_images(&self, subject: String) {
         self.amend_allow_list(|list| list.revoke(&subject));
     }
 
-    /// Change the grants alone. Through the shell, which writes the
-    /// senders' treatments back beside the grants; `AllowList` alone would
-    /// drop them.
+    /// Change the grants alone, through the shell: `AllowList` alone would drop the senders'
+    /// treatments.
     fn amend_allow_list(&self, change: impl FnOnce(&mut postio_ui::allowlist::AllowList)) {
         if let Err(error) = self.amend_remote_images(|list| change(list.grants_mut())) {
             tracing::error!(%error, "the remote-image allow list could not be saved: {error}");
         }
     }
 
-    /// Where the grants live.
-    ///
-    /// Beside the store rather than in `config.toml`: it is state the
-    /// application writes, not configuration a person edits, and mixing the
-    /// two would mean Postio rewriting a file the user owns.
+    /// Where the grants live: beside the store, since it is state the application writes, not
+    /// configuration a person edits.
     pub(crate) fn allow_list_path(&self) -> std::path::PathBuf {
         self.allow_list_at.clone()
     }
 
-    /// What the reader says above a body that did not fully decode, or
-    /// `None` when it decoded cleanly.
-    ///
-    /// The end of the road for `StoredBody::encoding_problems` on this
-    /// platform, which was carried all the way to
-    /// [`reader_document`](Self::reader_document) and then bound to `_`
-    /// (#901, #1585): a body that silently lost a part reads exactly like a
-    /// body the sender wrote that way. The GTK reader has said so since #901
-    /// and this frontend said nothing.
-    ///
-    /// A read of its own rather than a field on the document, because the
-    /// document is a string handed to a web view and this is native chrome
-    /// above it — the same split every notice in the strip has.
+    /// What the reader says above a body that did not fully decode, or `None`. A read of its own:
+    /// native chrome above the web view (#901, #1585).
     pub async fn decode_caveat(&self, message: i64) -> Option<String> {
-        // A view over `reader_answers` — see `reader_notice`.
         self.reader_answers(message, crate::RemoteImagesFfi::Blocked, false)
             .await
             .caveat
     }
 
-    /// What `message` offers about the list it came from, or `None`.
-    ///
-    /// **A read, and only a read.** It opens no connection to anything,
-    /// writes no row, and hands back no way to act — a sentence, an
-    /// identifier and a button label. That is what makes "only on deliberate
-    /// activation" (CLAUDE.md, privacy) a property of the boundary rather
-    /// than a habit of whoever writes the frontend: drawing a message can
-    /// reach this and cannot reach
-    /// [`activate_unsubscribe`](Self::activate_unsubscribe).
+    /// What `message` offers about the list it came from, or `None`. A read only: no connection, no
+    /// write, no way to act,
+    /// so drawing a message cannot reach `activate_unsubscribe`.
     pub async fn unsubscribe_offer(&self, message: i64) -> Option<crate::UnsubscribeOfferFfi> {
-        // A view over `message_facts` — see `reader_notice`.
         self.message_facts(message).await.offer
     }
 
-    /// Record that the user asked to leave this message's list.
-    ///
-    /// `None` when it was recorded, a sentence when it was not.
-    ///
-    /// # What this does and does not do
-    ///
-    /// It appends to the activation log and stops. Sending the real RFC 8058
-    /// request is #972 and has never been built on either platform — the GTK
-    /// banner has only ever asked, too. When it is built it belongs **here**,
-    /// inside the one function a frontend can only reach from a button,
-    /// rather than anywhere on the rendering path.
-    ///
-    /// # Why it re-derives the offer
-    ///
-    /// The caller passes a message id and nothing else: no list identifier,
-    /// no URL, nothing read off a banner and handed back. So there is no
-    /// value a frontend — or a message, through a frontend — can supply that
-    /// decides what gets recorded, and a message the reader offers nothing on
-    /// is refused rather than logged. Without that, a frontend bug over the
-    /// Outbox would record the user leaving their own account's domain
-    /// (#1525 is that bug, on the drawing side).
-    ///
-    /// See [`activate_unsubscribe_ffi`](Self::activate_unsubscribe_ffi).
+    /// Record that the user asked to leave this message's list: `None` when recorded, a sentence
+    /// when not. Appends to the
+    /// activation log and stops; sending the RFC 8058 request is #972. The caller passes only a
+    /// message id and the offer is
+    /// re-derived, so nothing a frontend supplies decides what is recorded (#1525).
     pub async fn activate_unsubscribe(&self, message: i64) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no open store to record the activation in.".to_owned());
         };
-        // An interactive write, the same priority the composer's saves take:
-        // somebody is waiting on a button they just pressed.
+        // An interactive write, the priority the composer's saves take: somebody is waiting on the
+        // button.
         let (connection, _permit) = match database.interactive_write().await {
             Ok(held) => held,
             Err(error) => return Some(format!("The store would not take a write: {error}")),
@@ -2850,7 +2221,6 @@ impl Session {
         })
     }
 
-    /// Archive or delete what the list of `message` sent, as one command.
     pub async fn clear_list_mail(&self, message: i64, delete: bool) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no open store.".to_owned());
@@ -2884,14 +2254,8 @@ impl Session {
         }
     }
 
-    /// Every activation this store holds, newest first.
-    ///
-    /// Across every account, like the remote-image grants beside it in the
-    /// same pane and for the same reason: the pane draws no account
-    /// distinction anywhere, and the privacy question is "what have I left",
-    /// not "what have I left from this address".
-    ///
-    /// See [`unsubscribe_activations_ffi`](Self::unsubscribe_activations_ffi).
+    /// Every activation this store holds, newest first, across every account like the remote-image
+    /// grants beside it.
     pub async fn unsubscribe_activations(&self) -> Vec<crate::UnsubscribeActivationFfi> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Vec::new();
@@ -2913,12 +2277,7 @@ impl Session {
                 }
             }
         }
-        // The merge rule, not a `sort_by_key` written out here: each
-        // account's rows come back newest-first on their own, and joining
-        // several of those lists is a decision about what the pane shows,
-        // which the classic app's privacy pane was already making with its own
-        // copy of the same line. `postio_ui::unsubscribe::newest_first` is
-        // the one answer now, tie-break included.
+        // `postio_ui::unsubscribe::newest_first` is the one merge rule, tie-break included.
         postio_ui::unsubscribe::newest_first(&mut activations);
         activations
             .into_iter()
@@ -2933,7 +2292,6 @@ impl Session {
             .collect()
     }
 
-    /// Look `address` up. See [`discover_account_ffi`](Self::discover_account_ffi).
     pub async fn discover_account(&self, address: String) -> crate::DiscoveredFfi {
         let client = self
             .link
@@ -2954,18 +2312,10 @@ impl Session {
         crate::provisioning::discovered(&address, status)
     }
 
-    /// Sign in, then add. See [`connect_account_ffi`](Self::connect_account_ffi).
-    ///
-    /// The desktop's order (`postio_session::onboarding`): prove the login
-    /// against the real server, then the credential to the keyring, then the
-    /// row -- so a wrong password writes nothing, and a keyring that refuses
-    /// leaves no account without one.
-    ///
-    /// The proof and the writes are the host's helpers but not the host's
-    /// `AddAccount` request, which also starts the account's engine. On the
-    /// Mac the engines are this session's (`start_syncing`), and the window
-    /// starts the new one when this answers; the host starting a second
-    /// would be two connections syncing one mailbox.
+    /// The desktop's order (`postio_session::onboarding`): prove the login against the real server,
+    /// then the credential to
+    /// the keyring, then the row, so a wrong password writes nothing. Not the host's `AddAccount`,
+    /// which would start a second engine on one mailbox.
     pub async fn connect_account(&self, account: crate::NewAccountFfi) -> Option<String> {
         if !postio_ui::onboarding::looks_like_an_address(&account.address) {
             return Some(format!(
@@ -2982,7 +2332,6 @@ impl Session {
         };
         let submission = crate::provisioning::submission(account);
         let proven = match &wiring.mail {
-            // Handed a mail server (a test's), the proof is signing in to it.
             Some(mail) => postio_account::backend::MailBackend::connect(mail.backend.as_ref())
                 .await
                 .map(|_| postio_model::account::Backend::Imap)
@@ -3003,11 +2352,7 @@ impl Session {
         .err()
     }
 
-    /// Add a local account. See
-    /// [`add_local_account_ffi`](Self::add_local_account_ffi).
-    ///
-    /// One write and no keyring: a maildir account signs in to nothing, so
-    /// there is no credential to store first and nothing to roll back.
+    /// One write and no keyring: a maildir account signs in to nothing.
     pub async fn add_local_account(&self, address: String, path: String) -> Option<String> {
         if !address.contains('@') {
             return Some(format!("{address} does not look like an email address."));
@@ -3024,20 +2369,16 @@ impl Session {
         }
     }
 
-    /// Look at a directory. See
-    /// [`inspect_local_store_ffi`](Self::inspect_local_store_ffi).
     pub fn inspect_local_store(&self, path: String) -> Option<String> {
         let root = postio_session::provision::absolute(&path);
         postio_account::maildir::LocalStore::looks_like_a_maildir(&root).err()
     }
 
-    /// The keyring this session was opened with.
     fn secret_store(&self) -> Option<Arc<dyn postio_account::secret::SecretStore>> {
         let guard = self.wiring.lock().expect("wiring lock");
         Some(guard.as_ref()?.secrets.clone())
     }
 
-    /// Test a connection. See [`test_connection_ffi`](Self::test_connection_ffi).
     pub async fn test_connection(&self, account: i64) -> crate::ConnectionReportFfi {
         let refusal = |message: &str| crate::ConnectionReportFfi {
             reachable: false,
@@ -3062,13 +2403,8 @@ impl Session {
         };
         drop(connection);
 
-        // Awaited rather than driven on a runtime built here. The session's
-        // own runtime is still not borrowed — it belongs to the engines, and
-        // this waits on a server — but the thing that turns this future back
-        // into a value is `testConnection`'s exported wrapper, through
-        // `postio_session::blocking`, which is one implementation of the
-        // `Handle::try_current` dance rather than a copy of it with only
-        // half the cases.
+        // Awaited: `testConnection`'s exported wrapper turns the future into a value through
+        // `postio_session::blocking`.
         let report = postio_session::checkup::test_connection(&found, secrets).await;
         crate::ConnectionReportFfi {
             reachable: report.reachable,
@@ -3078,8 +2414,6 @@ impl Session {
         }
     }
 
-    /// Change what an account calls itself. See
-    /// [`set_display_name_ffi`](Self::set_display_name_ffi).
     pub async fn set_display_name(&self, account: i64, name: String) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no store open.".to_owned());
@@ -3093,16 +2427,8 @@ impl Session {
         .err()
     }
 
-    /// What this account's mail weighs. See
-    /// [`account_weight_ffi`](Self::account_weight_ffi).
-    ///
-    /// `None` when there is nothing to weigh — a fresh account says nothing
-    /// rather than `0 B`, which reads as a failure.
-    ///
-    /// A row the store keeps per account (#1508), asked when a settings
-    /// window opens and not otherwise. Read fresh each time rather than
-    /// cached here: a stale size is a claim about a store that has changed
-    /// since, and the read is a point lookup.
+    /// What this account's mail weighs; `None` when there is nothing to weigh, rather than `0 B`.
+    /// Read fresh each time: a stale size is a claim about a store that has changed.
     pub async fn account_weight(&self, account: i64) -> Option<String> {
         let (database, _) = self.store_and_blobs()?;
         let connection = database.connect().await.ok()?;
@@ -3117,18 +2443,12 @@ impl Session {
                 local_bytes: footprint.local_bytes,
                 complete: footprint.complete,
             },
-            // What is on this disk, which is what the row is about. Whether
-            // the attachments *would* add more is the Sync pane's question.
             false,
         )
     }
 
-    /// Re-index an account. See [`reindex_account_ffi`](Self::reindex_account_ffi).
-    ///
-    /// Bounded by the mail already on this machine: nothing here reaches a
-    /// server. It reports as it goes, because a pass over five thousand
-    /// messages takes long enough that a button with no progress is
-    /// indistinguishable from a button that does nothing (#1284).
+    /// Bounded by the mail already on this machine: nothing here reaches a server. It reports as it
+    /// goes (#1284).
     pub async fn reindex_account(&self, account: i64) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no store open.".to_owned());
@@ -3138,10 +2458,8 @@ impl Session {
             &database,
             postio_model::ids::AccountId::new(account),
             |done, total| {
-                // `try_send` on an unbounded channel: the only way it fails
-                // is a session that has already shut down, and a re-index
-                // that kept running to report to nobody would be worse than
-                // one that quietly finishes.
+                // `try_send` fails only when the session has shut down; a re-index reporting to
+                // nobody should quietly finish.
                 let _ = local.try_send(UiEvent::ReindexProgress {
                     account,
                     done,
@@ -3156,16 +2474,8 @@ impl Session {
         }
     }
 
-    /// Flip whether an account is synced at all.
-    ///
-    /// A single-column write, and deliberately not routed through the
-    /// account update path: the caller is a toggle in a settings pane, not
-    /// code holding a freshly-loaded account, and `update` would rewrite the
-    /// identity list from whatever copy the pane happened to be drawing.
-    ///
-    /// The row keeps its place in the list either way. A disabled account is
-    /// configured and not syncing, which is a state to show rather than one
-    /// to hide — "where did my account go" is the worse question.
+    /// A single-column write, not routed through the account update path: `update` would rewrite
+    /// the identity list from whatever copy the pane was drawing.
     pub async fn set_account_enabled(&self, account: i64, enabled: bool) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no store open.".to_owned());
@@ -3178,25 +2488,19 @@ impl Session {
             .set_enabled(postio_model::ids::AccountId::new(account), enabled)
             .await
         {
-            // `false` is "no row matched", which the keyboard path can
-            // genuinely produce: a row removed in one window while the
-            // command is pressed in another. A silent no-op there would look
-            // like a switch that does not work.
+            // `false` is "no row matched", which the keyboard path can produce when a row was
+            // removed in another window;
+            // a silent no-op would look like a broken switch.
             Ok(true) => None,
             Ok(false) => Some("That account is no longer here.".to_owned()),
             Err(error) => Some(error.to_string()),
         }
     }
 
-    /// Make `account` the one new messages come from when the message itself
-    /// does not say.
-    ///
-    /// And nothing else (#960). It does not order the sidebar, prioritise
-    /// sync, or decide a reply's from address, which is settled from the
-    /// message being replied to.
-    ///
-    /// There is no way to clear it: the reversal of marking an account is
-    /// marking another, which is why the command carries no undo.
+    /// The account new messages come from when the message does not say (#960); it does not order
+    /// the sidebar, prioritise
+    /// sync, or decide a reply's from address. No way to clear it: marking another is the reversal,
+    /// so no undo.
     pub async fn set_default_account(&self, account: i64) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no store open.".to_owned());
@@ -3212,7 +2516,6 @@ impl Session {
             .map(|error| error.to_string())
     }
 
-    /// Remove an account. See [`remove_account_ffi`](Self::remove_account_ffi).
     pub async fn remove_account(&self, account: i64) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no store open.".to_owned());
@@ -3229,15 +2532,9 @@ impl Session {
         .err()
     }
 
-    /// Sign in through the browser. See
-    /// [`sign_in_with_browser_ffi`](Self::sign_in_with_browser_ffi).
-    ///
-    /// Every decision here is `postio_session::signin`'s, which is where the
-    /// GTK frontend's own sign-in is moving: the endpoints, the consent, the
-    /// **proof that the token opens the account's real IMAP session before
-    /// anything is written**, and the credential-then-row order. A consent
-    /// path implemented twice is two answers to what Postio asked permission
-    /// for, and the wrong one is invisible.
+    /// Every decision is `postio_session::signin`'s: endpoints, consent, the proof that the token
+    /// opens the account's real
+    /// IMAP session before anything is written, and the credential-then-row order.
     pub async fn sign_in_with_browser(
         &self,
         address: String,
@@ -3247,10 +2544,8 @@ impl Session {
         use postio_session::signin;
 
         if client_id.trim().is_empty() {
-            // ADR 0006 Q1: Postio ships no client id. Said as a fact about
-            // the product rather than as a validation error, because it is
-            // one — and the alternative is a shared credential every user of
-            // an open-source mail client would be sharing.
+            // ADR 0006 Q1: Postio ships no client id, so this is a fact about the product, not a
+            // validation error.
             return Some(
                 "Signing in needs an OAuth client id you registered yourself —                  Postio ships none, because a client id inside an open-source                  application is one every user of it shares."
                     .to_owned(),
@@ -3290,12 +2585,8 @@ impl Session {
         let progress = self.sign_in_port.clone();
         progress.store(0, std::sync::atomic::Ordering::SeqCst);
 
-        // Awaited. This waits on a person — a browser tab they have to come
-        // back from — which is why it had a runtime of its own rather than
-        // the session's, since that one belongs to the engines. What that
-        // reasoning missed is the caller: `blocking::now` at the FFI edge
-        // already picks the right runtime, and a private one built while the
-        // caller is on one panics.
+        // Awaited: `blocking::now` at the FFI edge picks the right runtime, and a private one built
+        // while the caller is on one panics.
         let outcome = async {
             let endpoints = signin::endpoints_for(
                 offer.authorize.as_deref(),
@@ -3326,15 +2617,12 @@ impl Session {
         progress.store(0, std::sync::atomic::Ordering::SeqCst);
         match outcome {
             Ok(_) => None,
-            // Closing the tab is not a failure and must not be reported as
-            // one; the sheet stays where it was.
+            // Closing the tab is not a failure; the sheet stays where it was.
             Err(signin::SignInError::Cancelled) => Some("The sign-in was cancelled.".to_owned()),
             Err(signin::SignInError::Failed(message)) => Some(message),
         }
     }
 
-    /// What the sign-in in flight is doing. See
-    /// [`sign_in_progress_ffi`](Self::sign_in_progress_ffi).
     pub fn sign_in_progress(&self) -> crate::SignInProgressFfi {
         let waiting = self.sign_in.lock().expect("sign-in lock").is_some();
         let port = self.sign_in_port.load(std::sync::atomic::Ordering::SeqCst);
@@ -3351,14 +2639,12 @@ impl Session {
         }
     }
 
-    /// Give up on the sign-in in flight.
     pub fn cancel_sign_in(&self) {
         if let Some(cancel) = self.sign_in.lock().expect("sign-in lock").take() {
             cancel.cancel();
         }
     }
 
-    /// A new message. See [`new_draft_ffi`](Self::new_draft_ffi).
     pub async fn new_draft(&self) -> Option<crate::DraftFfi> {
         let (database, _) = self.store_and_blobs()?;
         let account = self.writing_account(&database).await?;
@@ -3372,16 +2658,9 @@ impl Session {
         )
     }
 
-    /// A draft from a link. See [`mailto_draft_ffi`](Self::mailto_draft_ffi).
-    ///
-    /// The body **is** honoured, and it is worth saying why that is safe: it
-    /// goes into a composer the user is looking at, unsent, with the send button
-    /// under their hand. A `mailto:` that arrives with a body prefilled is
-    /// RFC 6068's own design, and refusing it would break every "email us
-    /// about this" link that carries a reference number.
-    ///
-    /// Nothing is sent, nothing is fetched, and no header a link cannot
-    /// legitimately set is set from here.
+    /// The body is honoured: it goes into an unsent composer the user is looking at, and RFC 6068
+    /// designs for it. Nothing
+    /// is sent or fetched, and no header a link cannot legitimately set is set.
     pub async fn mailto_draft(
         &self,
         to: Vec<String>,
@@ -3404,7 +2683,6 @@ impl Session {
         Some(draft)
     }
 
-    /// A reply. See [`reply_draft_ffi`](Self::reply_draft_ffi).
     pub async fn reply_draft(&self, message: i64, all: bool) -> Option<crate::DraftFfi> {
         self.answer(message, |source, account| {
             let quote = postio_model::reply::plain_quote(source);
@@ -3417,7 +2695,6 @@ impl Session {
         .await
     }
 
-    /// A forward. See [`forward_draft_ffi`](Self::forward_draft_ffi).
     pub async fn forward_draft(&self, message: i64) -> Option<crate::DraftFfi> {
         self.answer(message, |source, account| {
             let body = postio_model::reply::plain_forward(source);
@@ -3426,8 +2703,6 @@ impl Session {
         .await
     }
 
-    /// The shared half of replying and forwarding: read the message, find the
-    /// account, hand both to `build`.
     async fn answer(
         &self,
         message: i64,
@@ -3439,10 +2714,8 @@ impl Session {
             .get(postio_model::ids::MessageId::new(message))
             .await
             .ok()??;
-        // The body is not on the row: it is a compressed column read through
-        // the same path the reader uses (ADR 0020), and a quote built from
-        // the message as `get` returns it would quote nothing at all — which
-        // is a reply that silently loses what it is answering.
+        // The body is not on the row: it is a compressed column read through the reader's path (ADR
+        // 0020), so quoting the row would quote nothing.
         if let postio_session::reading::Body::Ready { body, .. } =
             postio_session::reading::load_body_or_reason(
                 &connection,
@@ -3453,17 +2726,9 @@ impl Session {
         {
             source.body = body;
         }
-        // An HTML-only message has no `text` at all: `postio_model::mime`
-        // fills that field from a `text/plain` part and never invents one,
-        // which is right for a parser and wrong for a quote. `plain_quote`
-        // then falls through to its `_` arm and produces the attribution
-        // line with **nothing under it** — a reply that silently loses the
-        // message it is answering, on the majority of real mail.
-        //
-        // Rendered here rather than in `postio-model`, which cannot depend
-        // on `postio-body` (see that crate's `outgoing` docs) — this is the
-        // nearest layer that can, and it is the one that already assembles
-        // the draft.
+        // An HTML-only message has no `text`, so `plain_quote` would give the attribution line with
+        // nothing under it; render
+        // it here, since `postio-model` cannot depend on `postio-body`.
         if source.body.text.as_deref().is_none_or(str::is_empty)
             && let Some(html) = source.body.html.as_deref()
             && !html.is_empty()
@@ -3478,9 +2743,8 @@ impl Session {
             .await
             .ok()??;
         let mut draft = build(&source, &account);
-        // A reply starts with its conversation's labels (screen 06,
-        // FR-053), as GTK's composer does; a forward starts a conversation
-        // of its own, and none.
+        // A reply starts with its conversation's labels, as GTK's composer does; a forward starts a
+        // conversation of its own.
         if matches!(
             draft.kind,
             postio_model::DraftKind::Reply | postio_model::DraftKind::ReplyAll
@@ -3503,12 +2767,8 @@ impl Session {
         )
     }
 
-    /// Save. See [`save_draft_ffi`](Self::save_draft_ffi).
-    /// The draft `id` as the store has it, or `None`.
-    ///
-    /// What a composer reopens with, and what a test asserting that marks
-    /// survived a save has to read: a round trip proved against the value
-    /// `save` handed back proves only that `save` returned its argument.
+    /// The draft `id` as the store has it, or `None`: what a composer reopens with, and what a test
+    /// must read to prove marks survived a save.
     pub async fn draft(&self, id: i64) -> Option<crate::DraftFfi> {
         let (database, _) = self.store_and_blobs()?;
         let connection = database.connect().await.ok()?;
@@ -3530,13 +2790,8 @@ impl Session {
         )
     }
 
-    /// The draft whose message row is `message`, or `None` when it is not a
-    /// draft this machine holds.
-    ///
-    /// A draft in a conversation is a message row; what resumes the composer
-    /// is the draft behind it. `None` covers another client's draft too --
-    /// there is nothing here to edit, which is #175's dead end said honestly
-    /// rather than papered over with a blank composer.
+    /// The draft whose message row is `message`, or `None` when it is not a draft this machine
+    /// holds, including another client's (#175).
     pub async fn draft_for_message(&self, message: i64) -> Option<crate::DraftFfi> {
         let (database, _) = self.store_and_blobs()?;
         let connection = database.connect().await.ok()?;
@@ -3558,18 +2813,9 @@ impl Session {
         )
     }
 
-    /// Narrow pasted markup to what a message may carry, and say what that
-    /// cost.
-    ///
-    /// The composer calls this on paste rather than letting the editing
-    /// surface keep whatever a browser put on the clipboard. Two reasons,
-    /// and only the first is about tidiness: the dialect is what the store
-    /// can hold, so markup the surface kept would be silently narrowed at
-    /// save time anyway -- and the person would watch their table turn into
-    /// four lines of text with nothing on screen explaining it.
-    ///
-    /// Pure: no store, no network, no state. It answers the same way for the
-    /// same input on either frontend, which is the point.
+    /// Narrow pasted markup to what a message may carry, and say what that cost. Called on paste so
+    /// markup the store cannot
+    /// hold is not silently narrowed at save time. Pure: no store, network or state.
     pub fn narrow_paste(&self, html: String) -> crate::PastedFfi {
         let narrowed = postio_body::narrow(&html);
         let (text, html) = postio_body::render(&narrowed.document);
@@ -3580,91 +2826,49 @@ impl Session {
         }
     }
 
-    /// What a rich body reads as in plain text.
-    ///
-    /// What the Rich/Plain switch needs at the moment it flips to Plain
-    /// (#1293). The rule the composer follows is "whichever surface is
-    /// active is authoritative" -- rich edits the document, plain edits the
-    /// text -- and that rule says nothing about the switch itself, which is
-    /// exactly when the inactive field is stale and about to become the only
-    /// one that matters. Composing in Rich and switching to Plain sent an
-    /// empty message.
-    ///
-    /// Flowed, like every other plain part Postio builds, so a paragraph
-    /// rewraps in a narrow window rather than arriving with a ragged
-    /// 72-column edge.
-    ///
-    /// Its own call rather than reading `narrow_paste`'s `text`: that
-    /// returns the same string, and a call to `narrowPaste` at the switch
-    /// would tell the next reader this was a paste.
+    /// What a rich body reads as in plain text, for the Rich/Plain switch when it flips to Plain:
+    /// the inactive field is
+    /// stale then (#1293). Flowed, so a paragraph rewraps in a narrow window.
     pub fn plain_text_of(&self, html: &str) -> String {
         postio_body::render(&postio_body::parse(html)).0
     }
 
-    /// What a plain body reads as as a document.
-    ///
-    /// What the Rich/Plain switch needs at the moment it flips to Rich: the
-    /// counterpart of [`Session::plain_text_of`]. The surface was seeded
-    /// with no document at all, so the words written in Plain left the
-    /// window, and the first keystroke made the empty document the record.
-    ///
-    /// The same document `body_of` builds from a plain field when a rich
-    /// draft arrives with none, so what Rich shows is what would be sent.
+    /// What a plain body reads as a document, for the Rich/Plain switch when it flips to Rich: the
+    /// same document `body_of`
+    /// builds from a plain field, so what Rich shows is what would be sent.
     pub fn rich_html_of(&self, text: &str) -> String {
         postio_body::render(&postio_body::Document::from_text_quoting(text)).1
     }
 
-    /// The script that applies a mark, from
-    /// [`postio_ui::compose::mark_script`].
-    ///
-    /// Shared for the same reason the bridge is: two hosts running different
-    /// scripts for `bold` would produce different markup, and the two
-    /// composers would disagree about what the same button did.
+    /// The script that applies a mark (`postio_ui::compose::mark_script`), shared so both composers
+    /// do the same for `bold`.
     pub fn mark_script(&self, command: &str) -> Option<String> {
         postio_ui::compose::mark_script(command)
     }
 
-    /// The script that links the selection to `href`, or `None` when a
-    /// message may not point there.
-    ///
-    /// The gate is the canonical subset's, applied before the document is
-    /// touched -- so a refused scheme is something the composer can say,
-    /// rather than a link that is created, looks right, and vanishes at the
-    /// next parse.
+    /// The script that links the selection to `href`, or `None` when a message may not point there.
+    /// Gated before the
+    /// document is touched, so a refused scheme is not a link that vanishes at the next parse.
     pub fn link_script(&self, href: &str) -> Option<String> {
         postio_ui::compose::link_script(href)
     }
 
-    /// The composer's editing bridge, for a frontend to inject.
-    ///
-    /// See [`postio_ui::compose::editor_script`]. It crosses rather than
-    /// being written again in Swift because it is what decides the *dialect*
-    /// the surface emits -- a second copy would emit `<div>`s where this one
-    /// emits `<p>`s, `parse` would narrow them differently, and the two
-    /// composers would disagree about what the same keystrokes wrote while
-    /// both still round-tripped through a `Document`.
-    ///
-    /// **Assembled, not the bare constant.** The body reads `POSTIO_MARKDOWN`
-    /// and does not define it; handing over
-    /// [`postio_ui::compose::EDITOR_SCRIPT`] alone gives the composer a
-    /// `ReferenceError` on the first keystroke, inside a WebView, where
-    /// nothing on this side of the boundary would hear about it.
+    /// The composer's editing bridge (`postio_ui::compose::editor_script`): it decides the dialect
+    /// the surface emits, so it
+    /// crosses rather than being rewritten in Swift. Assembled, not the bare constant: the body
+    /// reads `POSTIO_MARKDOWN` without defining it.
     pub fn editor_script(&self) -> &'static str {
         postio_ui::compose::editor_script()
     }
 
-    /// Write the draft to the store and answer it with its id.
-    ///
-    /// Idempotent on that id: a composer that forgot it would insert a
-    /// second row on every autosave, and the Drafts folder would fill with
-    /// one half-written message.
+    /// Write the draft to the store and answer it with its id; idempotent on that id, or every
+    /// autosave would insert a row.
     pub async fn save_draft(&self, edited: crate::DraftFfi) -> Option<crate::DraftFfi> {
         let (database, _) = self.store_and_blobs()?;
         let mut draft = self.rehydrate(&database, &edited).await?;
         let (connection, _permit) = database.interactive_write().await.ok()?;
-        // `save_and_sync`, for the reason `write_draft` gives: a local write
-        // without its queue row never reaches the server. This is the second
-        // of the two save paths and had the same omission.
+        // `save_and_sync`, as `write_draft`: a local write without its queue row never reaches the
+        // server.
         postio_storage::repository::DraftRepository::new(&connection)
             .save_and_sync(&mut draft, chrono::Utc::now())
             .await
@@ -3678,18 +2882,10 @@ impl Session {
         )
     }
 
-    /// Throw a draft away. See
-    /// [`discard_draft_ffi`](Self::discard_draft_ffi).
-    ///
-    /// The row *and* the server copy: `DraftRepository::discard` queues an
-    /// `Operation::DiscardDraft` carrying the UID and its generation rather
-    /// than naming the draft, because by the time that drains there is no row
-    /// left to read them from.
-    ///
-    /// Discarding one that is already gone is **not an error** — a retried
-    /// discard, or one racing a send that already cleared the row, is the
-    /// expected case. The window has closed either way, and a complaint about
-    /// it would be a dialog about nothing.
+    /// The row and the server copy: `discard` queues an `Operation::DiscardDraft` carrying the UID
+    /// and generation, since no
+    /// row is left to read them from. Discarding one already gone is not an error: a retried or
+    /// racing discard is expected.
     pub async fn discard_draft(&self, draft: i64) -> Option<String> {
         let (database, _) = self.store_and_blobs()?;
         let (connection, _permit) = match database.interactive_write().await {
@@ -3703,12 +2899,9 @@ impl Session {
             .map(|error| format!("The draft could not be discarded: {error}"))
     }
 
-    /// Attach a file. See [`attach_to_draft_ffi`](Self::attach_to_draft_ffi).
-    ///
-    /// The bytes first, then the row: a draft must never name a blob that is
-    /// not there. The draft is saved on the way out, so an attachment
-    /// survives the window closing — which is the whole reason to put it in
-    /// the store rather than hold a path.
+    /// The bytes first, then the row: a draft must never name a blob that is not there. The draft
+    /// is saved on the way out
+    /// so the attachment survives the window closing.
     pub async fn attach_to_draft(
         &self,
         edited: crate::DraftFfi,
@@ -3733,12 +2926,8 @@ impl Session {
         self.write_draft(&database, draft, &edited).await
     }
 
-    /// Put a picture in the body. See
-    /// [`insert_inline_image_ffi`](Self::insert_inline_image_ffi).
-    ///
-    /// The bytes first, then the row, as for a file -- and the script only
-    /// once both are written, so nothing can draw a picture whose part is not
-    /// in the store.
+    /// The bytes first, then the row, and the script only once both are written, so nothing draws a
+    /// picture whose part is not in the store.
     pub async fn insert_inline_image(
         &self,
         edited: crate::DraftFfi,
@@ -3776,8 +2965,6 @@ impl Session {
         Ok(crate::InlineImageFfi { draft, script })
     }
 
-    /// Resolve a picture in a draft. See
-    /// [`resolve_draft_cid_ffi`](Self::resolve_draft_cid_ffi).
     pub async fn resolve_draft_cid(
         &self,
         draft: i64,
@@ -3805,13 +2992,8 @@ impl Session {
         })
     }
 
-    /// Take one off again. See
-    /// [`detach_from_draft_ffi`](Self::detach_from_draft_ffi).
-    ///
-    /// The row goes; the blob is left to the store's own reclaim pass, which
-    /// is what `reclaim_orphaned_blobs` is for. Deleting it here would race a
-    /// second draft that had attached the same file — the store deduplicates
-    /// by content, so two drafts can name one blob.
+    /// The row goes; the blob is left to the store's reclaim pass, since the store deduplicates by
+    /// content and two drafts can name one blob.
     pub async fn detach_from_draft(
         &self,
         edited: crate::DraftFfi,
@@ -3831,10 +3013,8 @@ impl Session {
         self.write_draft(&database, draft, &edited).await
     }
 
-    /// Hand a draft out. See [`begin_handoff_ffi`](Self::begin_handoff_ffi).
-    ///
-    /// The draft is saved first: an editor that is opened on a body Postio
-    /// has not written down is one crash away from having been the only copy.
+    /// The draft is saved first: an editor opened on an unwritten body is one crash from being the
+    /// only copy.
     pub async fn begin_handoff(
         &self,
         edited: crate::DraftFfi,
@@ -3856,7 +3036,6 @@ impl Session {
             .map_err(|message| crate::ComposeError::Refused { message })
     }
 
-    /// Take it back. See [`end_handoff_ffi`](Self::end_handoff_ffi).
     pub async fn end_handoff(
         &self,
         edited: crate::DraftFfi,
@@ -3893,18 +3072,9 @@ impl Session {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .map(|dir| dir.join("drafts-out"))
-            // **Per session, not one directory for the machine.** A session
-            // with no store on disk had them all writing to
-            // `$TMPDIR/postio-drafts-out`, and a draft's filename is its id
-            // -- which starts at 1 in every fresh store. So two sessions
-            // handing out their first draft wrote to the same file and each
-            // read back the other's body.
-            //
-            // In the suite that is two test binaries racing, which passes
-            // alone and fails beside `postio-session`: a red that reads as
-            // noise. It is not only a test problem. This fallback is what a
-            // Postio with no store yet uses, and two of them on one machine
-            // would trade drafts through it.
+            // Per session, not one directory for the machine: a draft's filename is its id, which
+            // starts at 1 in every fresh
+            // store, so sessions sharing one directory read back each other's body.
             .unwrap_or_else(|| {
                 std::env::temp_dir().join(format!(
                     "postio-drafts-out-{}-{}",
@@ -3914,7 +3084,6 @@ impl Session {
             })
     }
 
-    /// Save `draft` and answer it as the frontend should now hold it.
     async fn write_draft(
         &self,
         database: &postio_storage::Store,
@@ -3928,16 +3097,9 @@ impl Session {
                 .map_err(|error| crate::ComposeError::Refused {
                     message: format!("The store would not take a write: {error}"),
                 })?;
-        // `save_and_sync`, not `save`. **A local write without its queue row
-        // never reaches the server** -- that is the repository method's own
-        // sentence, and it is why the classic app had used this one since drafts
-        // existed. Every macOS save path goes through here: autosave, attach,
-        // detach, and both ends of the editor hand-off. With the plain `save`
-        // a reply begun on the Mac was in Drafts on the Mac and nowhere else.
-        //
-        // An account with no Drafts folder enqueues nothing and is not an
-        // error: that is a real state -- a server that publishes no such
-        // role -- and the local row is still the right thing to have written.
+        // `save_and_sync`, not `save`: a local write without its queue row never reaches the
+        // server. An account with no
+        // Drafts folder enqueues nothing and is not an error.
         postio_storage::repository::DraftRepository::new(&connection)
             .save_and_sync(&mut draft, chrono::Utc::now())
             .await
@@ -3952,12 +3114,8 @@ impl Session {
             .await)
     }
 
-    /// Send. See [`send_draft_ffi`](Self::send_draft_ffi).
-    ///
-    /// **Nothing here opens a connection.** The write is one local
-    /// transaction and `postio-sync::send` drains the row it leaves whenever
-    /// there is a network, which is what lets a compose window close on the
-    /// keystroke rather than on a server.
+    /// Nothing here opens a connection: the write is one local transaction and `postio-sync::send`
+    /// drains the row when there is a network.
     pub async fn send_draft(&self, edited: crate::DraftFfi) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no store open to send from.".to_owned());
@@ -3965,26 +3123,18 @@ impl Session {
         let Some(mut draft) = self.rehydrate(&database, &edited).await else {
             return Some("This draft is no longer in the store.".to_owned());
         };
-        // Refused rather than queued: an unaddressed draft would close the
-        // window and drain as impossible — the words gone and no message
-        // sent. The same check the classic app's composer made, for the same
-        // two reasons.
+        // Refused rather than queued: an unaddressed draft would close the window and drain as
+        // impossible, losing the words.
         if !draft.has_recipients() {
             return Some("This message has no recipient yet.".to_owned());
         }
         if !draft.is_sendable() {
             return Some("This draft has already been queued to send.".to_owned());
         }
-        // What leaves is what the switch says, and the switch is not the
-        // presence of an HTML part (#1271).
-        //
-        // A plain draft may still be *holding* marks: turning Rich off does
-        // not throw them away, in case it is turned back on. But
-        // `postio_model::outgoing` builds a `multipart/alternative` from
-        // `body.html.is_some()`, so queueing that draft as it stands would
-        // send HTML under a footer that says `text/plain, format=flowed`.
-        // The footer is a claim about what leaves; this is where it is kept
-        // true, at the one point after which the marks no longer matter.
+        // What leaves is what the switch says, not the presence of an HTML part (#1271): `outgoing`
+        // builds a
+        // `multipart/alternative` from `body.html.is_some()`, so a plain draft holding marks would
+        // send HTML under a `text/plain` footer.
         if !draft.rich {
             draft.body.html = None;
         }
@@ -3996,7 +3146,6 @@ impl Session {
             .await
         {
             Ok(_) => {
-                // The toast says so, and its Undo takes the send back.
                 self.focus_list.input(postio_focus::Input::SendQueued {
                     draft: draft.id,
                     at: None,
@@ -4010,20 +3159,9 @@ impl Session {
         }
     }
 
-    /// Queue a draft to leave at `when` — *Schedule send…*.
-    ///
-    /// The same queue as an immediate send with a time on the row;
-    /// `postio-sync` is what holds it back. So the composer closes on the
-    /// keystroke exactly as it does for `⌘↵`, which is the local-first rule
-    /// applied to a send that has not happened yet.
-    ///
-    /// **Every check `send_draft` makes, made here too.** A scheduled send is
-    /// still a send, and refusing an unaddressed message at 8am tomorrow —
-    /// when nobody is watching the composer — is strictly worse than
-    /// refusing it now.
-    ///
-    /// `when` is milliseconds since the epoch, because that is what crosses
-    /// a uniffi boundary without a date type on either side of it.
+    /// Queue a draft to leave at `when` (epoch milliseconds), the same queue as an immediate send
+    /// with a time on the row.
+    /// Every check `send_draft` makes is made here too: refusing at 8am tomorrow is worse than now.
     pub async fn send_draft_later(&self, edited: crate::DraftFfi, when: i64) -> Option<String> {
         let Some(when) = chrono::DateTime::from_timestamp_millis(when) else {
             return Some("That is not a time this message could be sent at.".to_owned());
@@ -4046,8 +3184,6 @@ impl Session {
         if !draft.is_sendable() {
             return Some("This draft has already been queued to send.".to_owned());
         }
-        // The footer's claim about what leaves, kept true at the one point
-        // after which the marks no longer matter. See `send_draft`.
         if !draft.rich {
             draft.body.html = None;
         }
@@ -4072,12 +3208,9 @@ impl Session {
         }
     }
 
-    /// The stored draft this edit is about, with the frontend's fields on it.
-    ///
-    /// A round trip through the store rather than a draft rebuilt from the
-    /// fields: the kind, the ancestor and the reserved `Message-ID` are not
-    /// things a composer edits, and rebuilding would drop all three — the
-    /// last of which is what stops one message being sent twice (ADR 0021).
+    /// A round trip through the store, not a rebuild from the fields: a composer does not edit the
+    /// kind, ancestor or
+    /// reserved `Message-ID`, and the last stops one message being sent twice (ADR 0021).
     pub(crate) async fn rehydrate(
         &self,
         database: &postio_storage::Store,
@@ -4127,7 +3260,6 @@ impl Session {
         draft
     }
 
-    /// The account a new message is written from: the default one.
     async fn writing_account(
         &self,
         database: &postio_storage::Store,
@@ -4142,48 +3274,25 @@ impl Session {
             .cloned()
     }
 
-    /// Where drafts live, for the composer's footer.
-    ///
-    /// The store this session actually opened, not a guess at where one
-    /// would be: a footer naming a path the draft is not in is worse than no
-    /// footer, and this application can be pointed at another store.
+    /// Where drafts live, for the composer's footer: the store this session actually opened, not a
+    /// guess.
     fn drafts_path(&self) -> String {
         self.store_at.display().to_string()
     }
 
-    /// Turn a command id into the command it means here, and run it.
-    ///
-    /// **The whole of this frontend's aiming**, and it decides nothing: what
-    /// a gesture acts on is `postio_core::aim`'s rule, and this hands it the
-    /// facts — the scope on screen, what is marked, where the keyboard is,
-    /// and the rows the window is holding. The classic app was the same three
-    /// lines over GTK's own widgets (#589, #721). Two adapters, one rule; a
-    /// second copy of the rule here is exactly what that issue removed.
-    ///
-    /// `id` is the registry's own string — `"archive"`, `"open_message"` —
-    /// parsed through [`postio_core::CommandId`]'s `FromStr`, which is
-    /// generated from the same table the names come from. A `uniffi` enum
-    /// would be a second copy of that vocabulary, kept by hand, free to
-    /// drift; the string is the file format `ARCHITECTURE.md` §3 already
-    /// says it is.
-    ///
-    /// Returns nothing, deliberately. A verb is local-first: it writes to
-    /// SQLite, enqueues, and the frontend learns what happened from the
-    /// events it is already draining. A `Result` here would imply the caller
-    /// should wait for an answer, which is the shape this architecture spends
-    /// its effort not having.
-    ///
-    /// An id this build does not know is ignored rather than panicking — it
-    /// arrived from another process, and a boundary that aborts on a typo is
-    /// a boundary that can be crashed from Swift.
+    /// Turn a command id into the command it means here, and run it. Aiming is `postio_core::aim`'s
+    /// rule; this hands it the
+    /// facts (#589, #721). `id` is the registry's string, parsed by `CommandId`'s `FromStr`, not a
+    /// mirrored enum that could
+    /// drift. Returns nothing: a verb is local-first and events report what happened. An unknown id
+    /// is ignored, not a panic.
     pub fn invoke(&self, id: &str) {
         let Ok(id) = id.parse::<postio_core::CommandId>() else {
             tracing::debug!(id, "not a command this build knows; ignored");
             return;
         };
-        // The list's own commands are Focus's controller's, as on Linux
-        // (specs/009-focus-macos T046): it moves the cursor, keeps the
-        // selection and aims the verbs.
+        // The list's own commands are Focus's controller's, as on Linux: it moves the cursor, keeps
+        // the selection and aims the verbs.
         if self.focus_list.command(id) {
             return;
         }
@@ -4193,10 +3302,8 @@ impl Session {
 
         let (command, aimed) = self.with_aim(|aim| {
             let command = postio_core::aim::command_for(id, aim);
-            // What a verb left aimed at the selection resolves against on
-            // the host: this view's selection, cursor and scope, as they are
-            // now. `refine` names the rows only for a conversation; a
-            // message row is resolved there from this.
+            // What a verb left aimed at the selection resolves against on the host: this view's
+            // selection, cursor and scope as now.
             let aimed = postio_core::state::SharedState::default();
             let (quiet, _) = postio_core::bridge::event_channel();
             postio_core::aim::mirror(&aimed, &quiet, aim);
@@ -4214,7 +3321,6 @@ impl Session {
         }
     }
 
-    /// Where this session's commands go, while it is open.
     fn outbox(&self) -> Option<async_channel::Sender<Aimed>> {
         self.link
             .lock()
@@ -4223,28 +3329,11 @@ impl Session {
             .map(|link| link.outbox.clone())
     }
 
-    /// Resolve one key press against the bindings in force.
-    ///
-    /// **The whole of the frontend's keyboard, and it decides nothing.** The
-    /// caller reduces its own event to the three things every toolkit can
-    /// supply -- the character the key would type, the key's name when it
-    /// types none, and the modifiers held -- and this hands them to
-    /// `postio_ui::keymap`, which owns the table, the chords, the sequences
-    /// and the leader timeout. The classic app's `resolve_key` was the same shape
-    /// over GDK. Two adapters, one keymap; that is what keeps `[keys]`
-    /// meaning the same thing on both platforms (ADR 0019 Q4).
-    ///
-    /// `in_text_entry` is whether the focused surface takes text, and it is
-    /// the caller's to answer because only the caller can see its own focus.
-    /// Getting it wrong is the most visible bug this boundary can have: a
-    /// search field that archives mail on `a` reads as a broken application
-    /// rather than a misrouted key.
-    ///
-    /// Does **not** run the command. The caller needs the answer before it
-    /// acts on it -- a `Command` and a `Pending` are swallowed, an `Unhandled`
-    /// must propagate to whatever the toolkit would have done with the key --
-    /// and a method that both ran the verb and reported it would give the
-    /// caller no way to tell the third case from the first two.
+    /// Resolve one key press against the bindings in force (`postio_ui::keymap`, ADR 0019 Q4).
+    /// `in_text_entry` is the
+    /// caller's to answer: a search field that archives on `a` reads as a broken app. Does not run
+    /// the command: the caller
+    /// needs the answer first, since `Unhandled` must propagate to the toolkit.
     pub fn key(
         &self,
         character: Option<&str>,
@@ -4253,17 +3342,14 @@ impl Session {
         context: crate::UiContext,
         in_text_entry: bool,
     ) -> crate::KeyOutcomeFfi {
-        // A `String` crosses the boundary because a `char` has no uniffi
-        // type, and a frontend that sent two characters would otherwise
-        // silently bind the first. Take the whole scalar or nothing.
+        // A `String` crosses because a `char` has no uniffi type; take the whole scalar or nothing.
         let character = match character.map(|text| {
             let mut characters = text.chars();
             (characters.next(), characters.next())
         }) {
             Some((Some(one), None)) => Some(one),
-            // A grapheme cluster, or an empty string: neither is a key a
-            // binding can name, and pretending otherwise would bind whichever
-            // half came first.
+            // A grapheme cluster or empty string names no binding; pretending otherwise would bind
+            // the first half.
             Some(_) => return crate::KeyOutcomeFfi::Unhandled,
             None => None,
         };
@@ -4297,10 +3383,8 @@ impl Session {
         } else {
             in_text_entry
         };
-        // Focus's controller holds the live keymap: the binding table and
-        // whatever sequence is half-typed (ADR 0019 Q4 -- held here, not in
-        // Swift, since a sequence is state). It is built for Focus's
-        // commands from `[keys]`, resolved for the running platform, and
+        // Focus's controller holds the live keymap, including a half-typed sequence (state, so not
+        // in Swift: ADR 0019 Q4),
         // rebuilt when the file changes (`follow_config`).
         let outcome = self.focus_list.press(
             &chord,
@@ -4309,12 +3393,8 @@ impl Session {
             std::time::Instant::now(),
         );
 
-        // The silent path, and the one that is impossible to diagnose without
-        // it: a key that does nothing, with nothing said about why.
-        // The classic app's `resolve_key` logged the same three inputs for the same
-        // reason -- "it randomly stopped working" becomes one line naming
-        // which of them it was. No message content: a chord, a context and a
-        // flag are not mail.
+        // The silent path: a key that does nothing needs a log line naming chord, context and flag.
+        // No message content.
         if matches!(outcome, postio_ui::keymap::Outcome::Unhandled) {
             tracing::debug!(
                 chord = %chord,
@@ -4326,23 +3406,9 @@ impl Session {
         outcome.into()
     }
 
-    /// Whether `id` can run in `context`, given the open view.
-    ///
-    /// The same question `reachable_in` answers for the palette, asked one
-    /// command at a time — which is what a menu needs, because a menu draws
-    /// every item whether or not the focused surface can run it and has to
-    /// grey the ones it cannot.
-    ///
-    /// **The menu had no filter at all** (#1158): every registry command with
-    /// a menu section was drawn enabled, so a Mac showed Send, Bold and the
-    /// whole Format menu as live options against a build with no composer.
-    /// Seventeen of those are `Context::Composer`-only and the palette was
-    /// already hiding them — the two surfaces disagreed because only one of
-    /// them was asking.
-    ///
-    /// Asked here rather than answered in a frontend so they cannot disagree
-    /// again, and so a command added in Rust is filtered without a Swift
-    /// change — the same rule the menu's *contents* already follow (#657).
+    /// Whether `id` can run in `context`, given the open view: what a menu asks per item to grey
+    /// the ones it cannot run
+    /// (#1158), by the same rule as the palette.
     pub fn is_available(&self, id: &str, context: crate::UiContext) -> bool {
         let Ok(id) = id.parse::<postio_core::ActionId>() else {
             return false;
@@ -4359,14 +3425,9 @@ impl Session {
         .any(|spec| spec.id == id)
     }
 
-    /// What this session can currently do, as the registry evaluates it.
-    ///
-    /// Watch `source`'s file, if it has one, and follow it: `[keys]` reaches
-    /// Focus's controller, which rebuilds the resolver, and says
-    /// [`UiEvent::KeymapChanged`], so the menu bar and
-    /// every keycap re-read their keys; `[focus]` reaches the engine
-    /// (specs/009-focus-macos R6, R8). Mirrors the GTK app's `follow_config`
-    /// and the terminal's `follow_focus_config`.
+    /// Watch `source`'s file, if it has one, and follow it: `[keys]` reaches Focus's controller,
+    /// which says
+    /// `UiEvent::KeymapChanged`; `[focus]` reaches the engine. Mirrors GTK's `follow_config`.
     fn follow_config(self: &Arc<Self>, source: &ConfigSource) {
         let Some(path) = source.path() else { return };
         let mut service = postio_core::ConfigService::load(&path);
@@ -4421,11 +3482,9 @@ impl Session {
         }
     }
 
-    /// Tell Focus's controller what the configuration says it needs: the
-    /// pinned saved searches (`alt+1`-`4`), the keys in force (the bar's
-    /// keycaps), `[focus]` (whether Focus files mail away, and the digests an
-    /// empty inbox names), and the file a saved search is written to. `follow_config` keeps them
-    /// current.
+    /// Tell Focus's controller what the configuration says it needs: pinned saved searches, the
+    /// keys in force, `[focus]`
+    /// and the saved-search file; `follow_config` keeps them current.
     fn prime_focus(&self, saved: Vec<postio_ui::saved_search::SavedSearch>, source: &ConfigSource) {
         let driver = &self.focus_list;
         driver.set_config_path(source.path());
@@ -4434,16 +3493,11 @@ impl Session {
         driver.input(postio_focus::Input::Config(self.focus_config()));
     }
 
-    /// `[sync] notify` and `[sync] badge` as they stand.
     pub(crate) fn notices_now(&self) -> crate::NoticesFfi {
         self.notices.lock().expect("notices lock").clone()
     }
 
-    /// `[focus]` as it stands.
-    ///
-    /// The file's `[focus]` with what people decided added (ADR 0048): the
-    /// strip's digest count, the controller's rules and the rule dialog all
-    /// read it.
+    /// `[focus]` as it stands, with what people decided added (ADR 0048).
     pub(crate) fn focus_config(&self) -> postio_config::FocusConfig {
         let raw = self.focus_config.lock().expect("focus config lock").clone();
         self._host.wiring().focus.overlaid(&raw)
@@ -4465,12 +3519,10 @@ impl Session {
             }));
     }
 
-    /// Focus's list.
     pub(crate) fn focus_driver(&self) -> &Arc<crate::focus_list::FocusDriver> {
         &self.focus_list
     }
 
-    /// The host's client, while this session is open.
     pub(crate) fn client(&self) -> Option<postio_client::Client> {
         self.link
             .lock()
@@ -4479,14 +3531,7 @@ impl Session {
             .map(|link| link.client.clone())
     }
 
-    /// `store_open` is unconditionally true here, and that is a fact about
-    /// this type rather than an assumption: a `Session` is constructed *over*
-    /// an open store, so there is no interval in which one does not exist.
-    /// The window-first startup that makes [`Requirement::StoreOpen`] worth
-    /// evaluating was the classic app's (#1114), and a frontend that ever grows
-    /// the same shape answers here instead of at a menu.
-    ///
-    /// [`Requirement::StoreOpen`]: postio_core::Requirement::StoreOpen
+    /// `store_open` is unconditionally true: a `Session` is constructed over an open store.
     fn availability(&self) -> postio_core::Availability {
         postio_core::Availability {
             frontend: crate::FRONTEND,
@@ -4496,16 +3541,8 @@ impl Session {
         }
     }
 
-    /// The palette's rows for `query`, best first.
-    ///
-    /// **The matcher is `postio_ui::palette`'s.** Swift must not write its
-    /// own: the ranking is a product decision, and two rankings mean the same
-    /// query offers different things on each platform.
-    ///
-    /// Filtered to what `context` can actually run and to what the open scope
-    /// satisfies. Offering a command the focused surface will ignore is worse
-    /// than omitting it — the user presses Return, nothing happens, and that
-    /// reads as a broken application rather than an unavailable command.
+    /// The palette's rows for `query`, best first, filtered to what `context` can run and the open
+    /// scope satisfies. The matcher is `postio_ui::palette`'s.
     pub fn palette_entries(
         &self,
         query: &str,
@@ -4523,26 +3560,15 @@ impl Session {
         .collect()
     }
 
-    /// Every command with the binding actually in force, in cheat-sheet order.
-    ///
-    /// The same list the palette reads, unfiltered by a query — *"they are the
-    /// same list read two ways"* (#658). Building them separately would mean
-    /// two places deciding what "available here" means, and they would
-    /// disagree.
-    ///
-    /// The flat form. [`Session::cheat_sheet_sections`] is what a `?` overlay
-    /// should draw: the same rows, grouped the way the product groups them.
+    /// Every command with the binding in force, in cheat-sheet order: the palette's list unfiltered
+    /// (#658).
+    /// `cheat_sheet_sections` is the grouped form for a `?` overlay.
     pub fn cheat_sheet(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
         self.palette_entries("", context)
     }
 
-    /// The `?` sheet, grouped: Everywhere, the box's prefixes, the reader's
-    /// own surface, then one section per extension namespace.
-    ///
-    /// The grouping is [`postio_ui::cheatsheet::sections`]'s — the same
-    /// function the GTK overlay draws from, so the two frontends teach the
-    /// same sheet. The flat [`Session::cheat_sheet`] predates it and is what
-    /// an ungrouped list should keep using.
+    /// The `?` sheet, grouped by `postio_ui::cheatsheet::sections`, the same function GTK draws
+    /// from.
     pub fn cheat_sheet_sections(&self, context: crate::UiContext) -> Vec<crate::CheatSectionFfi> {
         postio_ui::cheatsheet::sections(
             &self.keymap(),
@@ -4554,14 +3580,9 @@ impl Session {
         .collect()
     }
 
-    /// The bindings in force, resolved for this platform.
-    ///
-    /// Resolved once and kept. Every button's tooltip asks for its key, the
-    /// reader's and the toolbar's re-render on every move between messages,
-    /// and resolving the keymap from the registry for each ask was about 50 ms
-    /// of the main thread per move (sampled in the running app). `[keys]`
-    /// does not change while a session is open; the registry can, when an
-    /// extension registers, and the cache is keyed by its size for that.
+    /// Resolved once and kept: resolving the keymap per tooltip cost about 50 ms of main thread per
+    /// message move. The
+    /// cache is keyed by the registry's size, so a late-registered extension is picked up.
     pub(crate) fn keymap(&self) -> postio_core::Keymap {
         let commands = postio_core::registry::every_action().count();
         let mut cached = self.keymap.lock().expect("keymap lock");
@@ -4578,25 +3599,18 @@ impl Session {
         }
     }
 
-    /// `#` in the search box: folders matching `query`. See
-    /// [`crate::finder::folders`].
     pub async fn finder_folders(&self, query: String) -> crate::FinderAnswerFfi {
         crate::finder::folders(&self.mailboxes().await, &query)
     }
 
-    /// `@` in the search box: correspondents matching `query`.
     pub async fn finder_contacts(&self, query: String) -> crate::FinderAnswerFfi {
         crate::finder::contacts(&self.finder_sources().await.contacts, &query)
     }
 
-    /// `+` in the search box: labels matching `query`.
     pub async fn finder_labels(&self, query: String) -> crate::FinderAnswerFfi {
         crate::finder::labels(&self.finder_sources().await.labels, &query)
     }
 
-    /// The correspondents and labels of every enabled account, read through
-    /// the host as GTK's box reads them, and kept for
-    /// [`FINDER_SOURCES_FOR`].
     async fn finder_sources(&self) -> FinderSources {
         if let Some((read, sources)) = &*self.finder_sources.lock().expect("finder lock")
             && read.elapsed() < FINDER_SOURCES_FOR
@@ -4638,9 +3652,8 @@ impl Session {
         sources
     }
 
-    /// `+`'s Return: put `label` on the selection -- the marked messages, or
-    /// the one under the cursor when nothing is marked -- as GTK's box does
-    /// (`Command::AddLabel`, toggled, so `u` takes it back).
+    /// `+`'s Return: put `label` on the selection (the marked messages, or the one under the
+    /// cursor), toggled so `u` takes it back.
     pub fn apply_label(&self, label: i64) {
         let Some(outbox) = self.outbox() else {
             return;
@@ -4659,9 +3672,6 @@ impl Session {
         }
     }
 
-    /// This view's selection, cursor and scope as they are now, mirrored into
-    /// the state a command is aimed with -- what `invoke` sends beside every
-    /// verb, for a command that is built here rather than from an id.
     fn aimed(&self) -> postio_core::state::SharedState {
         self.with_aim(|aim| {
             let aimed = postio_core::state::SharedState::default();
@@ -4671,16 +3681,10 @@ impl Session {
         })
     }
 
-    /// Run `f` with what a verb would be aimed at: Focus's list for the rows,
-    /// the place it shows for the scope, and the cursor the frontend last
-    /// reported.
-    ///
-    /// **The whole of this frontend's aiming**, and it decides nothing: what
-    /// a gesture acts on is `postio_core::aim`'s rule, and this hands it the
-    /// facts. Nothing is marked here -- the selection is the controller's
-    /// (specs/009-focus-macos T040), and until it drives the Mac's cursor a
-    /// verb acts on the cursor's row, which is `PRODUCT.md` section 9's rule
-    /// for nothing marked.
+    /// Run `f` with what a verb would be aimed at: Focus's list for the rows, the place it shows
+    /// for the scope, and the
+    /// cursor the frontend last reported. Nothing is marked here: the selection is the
+    /// controller's, so a verb acts on the cursor's row.
     fn with_aim<R>(&self, f: impl FnOnce(&postio_core::aim::Aim<'_>) -> R) -> R {
         // Before the rows are held: reading the cursor takes the list's lock
         // too, and a thread that already holds it would wait on itself.
@@ -4694,28 +3698,17 @@ impl Session {
                 postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
             }),
             selection: &selection,
-            // The controller's cursor, not one the frontend reports.
             cursor,
             rows: &*rows,
         };
         f(&aim)
     }
 
-    /// The cursor rested on `message` long enough for it to count as read.
-    ///
-    /// **Not `invoke`, and the difference matters.** `MarkReadOnDwell` is
-    /// deliberately not a registry command: it routes to
-    /// `CommandId::ToggleRead`'s handler so there is one "mark read" in the
-    /// vocabulary, and it is the one dispatch that is *not* recorded on the
-    /// undo stack — `u` takes back what you did, and reading a mailbox
-    /// produces one of these per message rested on. Going through `invoke`
-    /// would make every message read an undo entry and bury the archive you
-    /// actually wanted back.
-    ///
-    /// The message is named rather than taken from the cursor, for the reason
-    /// The classic app gave on the same call: the cursor may have moved on
-    /// between the frontend's timer firing and this running, and the message
-    /// that was read is the one the clock was started for.
+    /// The cursor rested on `message` long enough to count as read. Not `invoke`: `MarkReadOnDwell`
+    /// routes to `ToggleRead`'s
+    /// handler but is not recorded on the undo stack, or reading a mailbox would bury the archive
+    /// the user wants back.
+    /// The message is named, since the cursor may have moved on.
     pub fn mark_read_on_dwell(&self, message: i64) {
         let Some(outbox) = self.outbox() else {
             return;
@@ -4723,20 +3716,15 @@ impl Session {
         let command = postio_core::Command::MarkReadOnDwell {
             message: postio_model::ids::MessageId::new(message),
         };
-        // Named, so there is nothing to aim: the default state is enough.
         let aimed = postio_core::state::SharedState::default();
         if outbox.try_send((command, aimed)).is_err() {
             tracing::debug!("the runtime has stopped and did not mark that read");
         }
     }
 
-    /// Say which accounts the aggregate view can currently vouch for.
-    ///
-    /// Reported by the frontend, from the same connection states its own
-    /// "showing local mail" banner is drawn from, and read at the moment a
-    /// whole-view selection is *made*. A frontend that never calls this gets
-    /// the safe answer: `Ctrl+A` in the unified list selects nothing rather
-    /// than acting on accounts nothing vouched for (#811).
+    /// Say which accounts the aggregate view can currently vouch for, read when a whole-view
+    /// selection is made. A frontend
+    /// that never calls this gets `Ctrl+A` selecting nothing (#811).
     pub fn set_reachable_accounts(&self, accounts: &[i64]) {
         *self.reachable.lock().expect("reachable lock") = accounts
             .iter()
@@ -4745,7 +3733,6 @@ impl Session {
             .collect();
     }
 
-    /// The store and the runtime, while the session is open.
     fn reader(
         &self,
     ) -> Option<(
@@ -4757,7 +3744,6 @@ impl Session {
         Some((wiring.store.clone(), wiring.runtime.clone()))
     }
 
-    /// Whether the list a verb aims at is Has action. Test-only.
     #[cfg(feature = "testing")]
     pub fn focus_aims_at_has_action_for_test(&self) -> bool {
         matches!(
@@ -4768,30 +3754,22 @@ impl Session {
         )
     }
 
-    /// How many pages of Focus's list have been read from the store.
-    /// Test-only.
     #[cfg(feature = "testing")]
     pub fn focus_page_reads_for_test(&self) -> usize {
         self.focus_list.page_reads()
     }
 
-    /// How many of Focus's conversation searches ran to the end.
-    /// Test-only.
     #[cfg(feature = "testing")]
     pub fn focus_search_reads_for_test(&self) -> usize {
         self.focus_list.search_reads()
     }
 
-    /// How many rows Focus's list is holding. Test-only.
     #[cfg(feature = "testing")]
     pub fn focus_resident_rows_for_test(&self) -> usize {
         self.focus_list.resident_rows()
     }
 
-    /// Wait until no conversation read is in flight.
-    ///
-    /// Test-only. A production frontend never waits for this -- it redraws
-    /// when `ConversationReady` arrives, which is the whole design.
+    /// Test-only: wait until no conversation read is in flight.
     #[cfg(feature = "testing")]
     pub fn settle_for_test(&self) {
         let ordering = std::sync::atomic::Ordering::SeqCst;
@@ -4801,30 +3779,12 @@ impl Session {
         }
     }
 
-    /// The whole document for a message, ready to hand a web view.
-    ///
-    /// Not fragments to assemble: the content security policy, the
-    /// `@font-face` rules, the reader tokens, the sanitized body, its
-    /// `.postio-body` container and the scroll markers all come from
-    /// `postio_ui`, which is what the GTK reader composes through too. **The
-    /// frontend's entire job is to build a hardened web view, hand it this
-    /// string, and refuse navigations** — so the two readers cannot disagree
-    /// about the policy, because there is only one that produces it (ADR
-    /// 0019 Q6).
-    ///
-    /// # Two scheme handlers, not one
-    ///
-    /// The document *references* Postio's typefaces rather than carrying
-    /// them (ADR 0023): `font-src` is `postio-font:`, and a frontend that
-    /// does not serve it renders in system sans — silently, because a font
-    /// that never arrives is not an error. So a frontend registers two
-    /// handlers beside each other, both answering from compiled-in bytes,
-    /// neither touching the filesystem or the network:
-    ///
-    /// * `postio-cid:` — inline parts, through `postio_ui::reader::parts`.
-    /// * `postio-font:` — the eight vendored faces, through
-    ///   `postio_ui::reader::document::font_bytes`, which answers only for
-    ///   names in its `FACES` table and `None` for everything else.
+    /// The whole document for a message, ready for a web view: policy, fonts, tokens, sanitized
+    /// body and scroll markers all
+    /// come from `postio_ui`, so the two readers cannot disagree (ADR 0019 Q6). The frontend
+    /// registers two handlers answering
+    /// from compiled-in bytes: `postio-cid:` for inline parts and `postio-font:` for the vendored
+    /// faces (ADR 0023), or fonts fall back silently.
     pub async fn reader_answers(
         &self,
         message: i64,
@@ -4842,9 +3802,8 @@ impl Session {
         };
 
         let remote = postio_body::RemoteImages::from(remote);
-        // The blob store is not consulted: a body is a compressed column on
-        // the message's row since ADR 0020. Inline parts still come from it,
-        // which is why `store_and_blobs` is the accessor either way.
+        // The blob store is not consulted for the body: it is a compressed column on the row (ADR
+        // 0020); inline parts still come from it.
         let Some((database, _blobs)) = self.store_and_blobs() else {
             return plate(wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
@@ -4860,28 +3819,19 @@ impl Session {
             ));
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        // The row the body was decided from, for the notice's sender, rather
-        // than a second read of it (#1589).
         let (body, row) =
             postio_session::reading::load_with_row(&connection, message.into(), offline).await;
         match body {
-            // `encoding_problems` is bound and not used *here* deliberately,
-            // and is no longer the gap it was: the caveat it carries is
-            // native chrome above the document rather than markup inside it
-            // — the same split the classic app's reader `DecodeNotice` had (#901) —
-            // so it crosses as [`decode_caveat`](Self::decode_caveat), which
-            // reads the same flag through the same load. Named rather than
-            // elided so the next reader of this arm finds the other half.
+            // `encoding_problems` is unused here on purpose: the caveat is native chrome above the
+            // document and crosses as `decode_caveat`.
             postio_session::reading::Body::Ready {
                 body,
                 encoding_problems,
                 ..
             } => {
-                // Every message opens as its sender built it (spec 006
-                // FR-031), the rule GTK and the shared thread page follow;
-                // reader view is the reader's own choice for this message
-                // and this view (`toggle_reader_view`), never the default.
-                // Whether it reads as bulk still picks the sheet below.
+                // Every message opens as its sender built it; reader view is the reader's own
+                // choice for this message and
+                // view (`toggle_reader_view`), never the default.
                 let bulk = suits_reader_view(&body);
                 let rendering = if reduced {
                     Rendering::Reader
@@ -4889,17 +3839,11 @@ impl Session {
                     Rendering::Original
                 };
                 let drawn = body_html(&body, remote, rendering);
-                // The sender's own sheet — paper white, inset from the app's
-                // chrome — for an original that reader view would otherwise
-                // have reduced. `sheet_for` is the rule, from the same
-                // function GTK calls: the app's palette is never injected
-                // into a sender's markup.
-                // The two facts the render already paid for (#1589). The
-                // notice only from a blocked render — the question it
-                // answers is "what would be loaded" — and its counts come
-                // out of the sanitize pass, which runs before reader view's
-                // reduce, so Reader and Original renders agree on them (a
-                // test pins that).
+                // `sheet_for` (shared with GTK) picks the sender's own sheet for an original reader
+                // view would have reduced; the
+                // app's palette is never injected into a sender's markup. The notice comes only
+                // from a blocked render, with counts
+                // from the sanitize pass, so Reader and Original agree (#1589).
                 let notice = self.held_back_notice(
                     drawn.held_back,
                     remote,
@@ -4917,9 +3861,8 @@ impl Session {
                         .map(str::to_owned),
                 }
             }
-            // A state plate is Postio's own words, so it is served with remote
-            // images blocked whatever the caller asked for: there is nothing
-            // in it a sender wrote, and nothing for them to reach through.
+            // A state plate is Postio's own words: served with remote images blocked whatever was
+            // asked, since nothing in it is a sender's.
             postio_session::reading::Body::Absent(state) => plate(wrap_document(
                 &absent_html(state),
                 postio_body::RemoteImages::Blocked,
@@ -4928,12 +3871,8 @@ impl Session {
         }
     }
 
-    /// What a blocked render held back, as the notice above the body says
-    /// it, with the sender the notice's grant would name: `None` for an
-    /// allowed render, which holds nothing back, or one that held nothing.
-    ///
-    /// `from` is the message's first sender, off the row the body was read
-    /// with: the notice costs no read of its own.
+    /// What a blocked render held back, as the notice says it, with the sender the grant would
+    /// name: `None` for an allowed render or one that held nothing.
     pub(crate) fn held_back_notice(
         &self,
         held_back: postio_ui::reader::document::HeldBack,
@@ -4945,7 +3884,6 @@ impl Session {
             if summary.is_empty() {
                 None
             } else {
-                // The sender, for the grant the notice offers.
                 let sender = from
                     .map(|address| address.address.to_lowercase())
                     .unwrap_or_default();
@@ -4967,9 +3905,6 @@ impl Session {
         }
     }
 
-    /// The document alone. A view over
-    /// [`reader_answers`](Self::reader_answers), kept because a page of
-    /// tests asserts on the HTML and has no use for the facts.
     pub async fn reader_document(
         &self,
         message: i64,
@@ -4979,27 +3914,15 @@ impl Session {
         self.reader_answers(message, remote, reduced).await.html
     }
 
-    /// Who `message` was addressed to, already rendered.
-    ///
-    /// `None` for a message the store does not hold. Answered from the
-    /// envelope, which is known as soon as headers have synced — so a message
-    /// still waiting for its body still says who it went to.
-    ///
-    /// A read of its own rather than a field on `RowFfi`, because the list
-    /// does not draw recipients and paying for them per row would load a
-    /// mailbox's addresses to show one message's.
+    /// Who `message` was addressed to, already rendered; `None` for a message the store does not
+    /// hold. Answered from the
+    /// envelope, so a message awaiting its body still says who it went to.
     pub async fn recipients(&self, message: i64) -> Option<crate::RecipientsFfi> {
-        // A view over `message_facts` — see `reader_notice`.
         self.message_facts(message).await.recipients
     }
 
-    /// The verbs the reading pane offers, in canvas order.
-    ///
-    /// No key travels with them: this boundary's other frontend draws `⌘R`
-    /// rather than `e`, and the chord is [`Session::binding_for`]'s answer.
-    /// What is shared is *which* verbs, which is a product decision — a
-    /// reader offering three on one platform and four on the other is two
-    /// applications.
+    /// The verbs the reading pane offers, in canvas order. No key travels with them: the chord is
+    /// `Session::binding_for`'s.
     pub fn reader_actions(&self) -> Vec<crate::ReaderActionFfi> {
         postio_ui::reader::header::ReaderAction::ALL
             .iter()
@@ -5011,13 +3934,9 @@ impl Session {
             .collect()
     }
 
-    /// The header bar of a conversation of `messages` (FR-008, FR-008a).
-    ///
-    /// The same four verbs as [`reader_actions`](Self::reader_actions), each
-    /// with what it will act on in words and whether that is the whole
-    /// thread. The four are the reader's verbs; which message each acts on is
-    /// `ReaderAction::scope`'s, and the frontend passes the latest message or
-    /// none accordingly rather than deciding.
+    /// The header bar of a conversation of `messages`: the same four verbs as `reader_actions`,
+    /// each with what it acts on
+    /// in words. The frontend passes the latest message or none, per `ReaderAction::scope`.
     pub fn conversation_actions(&self, messages: u32) -> Vec<crate::ConversationActionFfi> {
         use postio_ui::reader::header::{ActionScope, ReaderAction};
         ReaderAction::ALL
@@ -5032,18 +3951,11 @@ impl Session {
             .collect()
     }
 
-    /// One inline part of `message`, by its `Content-ID`.
-    ///
-    /// Synchronous and local, matching the contract the GTK scheme handler
-    /// works under: a URL scheme handler runs on the main thread on both
-    /// platforms, so this must never block on I/O the reader would await.
-    ///
-    /// `message` is a parameter rather than ambient state because a
-    /// `Content-ID` means something only inside the message that declared it
-    /// — resolving one globally would let a sender address another sender's
-    /// parts. `None` when the bytes are not already here, which is the
-    /// privacy commitment rather than a gap: fetching would be the tracking
-    /// pixel arriving through the back door.
+    /// One inline part of `message`, by its `Content-ID`. Synchronous and local: a URL scheme
+    /// handler runs on the main
+    /// thread. Scoped to a message since a `Content-ID` means something only inside the message
+    /// that declared it. `None`
+    /// when the bytes are not here: fetching would be the tracking pixel through the back door.
     pub async fn resolve_cid(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
         let (database, blobs) = self.store_and_blobs()?;
         postio_session::reading::resolve_cid(&database, &blobs, message.into(), &content_id)
@@ -5051,10 +3963,6 @@ impl Session {
             .map(|(bytes, mime_type)| crate::InlinePart { bytes, mime_type })
     }
 
-    /// One part's bytes, fetching them if the user's asking is what it takes.
-    ///
-    /// See `partBytes` above for why this is the only call here allowed near
-    /// the network.
     pub async fn part_bytes(
         &self,
         message: i64,
@@ -5081,13 +3989,9 @@ impl Session {
         .await?)
     }
 
-    /// The engine of the account `message` belongs to, once it has started.
-    ///
-    /// `None` is an ordinary state rather than a fault — a store nobody has
-    /// signed into yet, or an account that is not syncing — and it is what
-    /// turns "fetch this part" into a sentence saying the account is not
-    /// syncing instead of a wait that never ends. Never another account's
-    /// engine: its server would answer for a different mailbox and UID.
+    /// The engine of the account `message` belongs to, once started; `None` is an ordinary state
+    /// and turns "fetch this
+    /// part" into a sentence. Never another account's engine.
     async fn engine_for_message(
         &self,
         message: postio_model::MessageId,
@@ -5101,11 +4005,8 @@ impl Session {
             .and_then(|wiring| wiring.engine.get(account))
     }
 
-    /// Every folder of every enabled account, for the sidebar.
-    ///
-    /// Blocks on a local read, like `openScope` does and for the same reason:
-    /// a sidebar is drawn before anything can be selected in it, and the read
-    /// is a few milliseconds of SQLite rather than the network.
+    /// Every folder of every enabled account, for the sidebar. Blocks on a local read of a few
+    /// milliseconds.
     pub async fn mailboxes(&self) -> Vec<crate::MailboxFfi> {
         let mut folders = Vec::new();
         let Some((database, _)) = self.store_and_blobs() else {
@@ -5125,36 +4026,22 @@ impl Session {
         };
         for account in accounts {
             if let Ok(mut found) = blocking(store.mailboxes(account.id)) {
-                // The rows that are views rather than folders -- Flagged,
-                // Snoozed, and the Outbox when it holds something. Built by
-                // the same shared layer the classic app's feed asked, which is the whole
-                // point: this boundary has never carried them, so the macOS
-                // sidebar has never drawn them (#1155 moved the *order* here
-                // and left the rows behind).
+                // The rows that are views rather than folders (Flagged, Snoozed, the Outbox when it
+                // holds something), built by the shared layer (#1155).
                 let counts = postio_ui::sidebar::ViewCounts {
                     flagged: found.iter().map(|folder| folder.counts.flagged).sum(),
                     snoozed: found.iter().map(|folder| folder.counts.snoozed).sum(),
-                    // Counted by the sidebar's own query in spec 003 T066;
-                    // zero keeps the row hidden, which is right until
-                    // something can count it.
                     outbox: 0,
                     drafts: 0,
                     attention: 0,
                 };
                 found.extend(postio_ui::sidebar::view_rows(account.id, &found, counts));
-                // Ordered and split here rather than in the frontend.
-                // `postio_ui::sidebar` is the canvas' order -- Inbox first --
-                // and the rule that a role gets one row however many folders
-                // carry it. A frontend sorting for itself is a second answer
-                // to "where is my inbox", and the duplicate rule took a bug
-                // report to find (#501, #1155).
+                // Ordered and split by `postio_ui::sidebar`, not the frontend: Inbox first, and a
+                // role gets one row however
+                // many folders carry it (#501, #1155).
                 let (special, ordinary) = postio_ui::sidebar::sections(&found);
-                // The name comes from the same place too, not from
-                // `mailbox.name`. A special-use folder is called what Postio
-                // calls the role rather than what the server named it -- an
-                // iCloud account's junk folder is "Junk E-mail" and the
-                // sidebar is not where somebody learns that -- and a view row
-                // has no server name at all, so the raw field is empty.
+                // The name is what Postio calls the role, not `mailbox.name`: an iCloud junk folder
+                // is "Junk E-mail", and a view row has no server name.
                 let named = |mailbox: postio_model::Mailbox, special: bool| crate::MailboxFfi {
                     name: postio_ui::sidebar::display_name(&mailbox, &found),
                     special,
@@ -5167,42 +4054,21 @@ impl Session {
         folders
     }
 
-    /// The binding in force for a command, for drawing a native accelerator.
-    ///
-    /// The user's override if there is one, the built-in default otherwise.
-    /// A menu must ask rather than read `CommandSpec::default_binding`
-    /// directly: drawing the default for a command somebody rebound is
-    /// confidently wrong, which is worse for a menu item than showing no key
-    /// at all.
-    ///
-    /// Resolved for the running platform, so a Mac gets `cmd+k` for the
-    /// palette rather than the `mod+k` the table stores. Swift renders a
-    /// `KeyboardShortcut` from this and must never see the token: it has no
-    /// way to know which key `mod` means, and that decision belongs to the
-    /// core anyway.
+    /// The binding in force for a command, for a native accelerator: the user's override or the
+    /// built-in default, resolved
+    /// for the running platform (`cmd+k`, not `mod+k`). A menu must ask rather than read
+    /// `default_binding`, which is wrong for a rebound command.
     pub fn binding_for(&self, command: String) -> Option<String> {
-        // The *resolved* keymap, not the override table. `KeyBindings` knows
-        // only what `postio-config`'s own short list of defaults says, which
-        // is 24 commands out of about eighty (#1227) -- so this answered
-        // `None` for `delete`, `flag`, `send` and 53 others whose keys work,
-        // and the menu drew no accelerator for any of them.
-        //
-        // `Keymap::resolve` is defaults-from-the-registry plus the user's
-        // overrides, with `mod` already expanded for this platform, which is
-        // exactly what a menu wants to draw.
+        // The resolved keymap, not the override table: `KeyBindings` knows only 24 of about eighty
+        // commands (#1227), so the menu drew no accelerator for the rest.
         let Ok(action) = command.parse::<postio_core::ActionId>() else {
             return None;
         };
         self.keymap().binding(action).map(str::to_string)
     }
 
-    /// Every binding in force for `command`, the primary first.
-    ///
-    /// A menu wants the chord and the cheat sheet wants the mnemonic, and
-    /// both are true at once: the canvas' two keyboard layers are two
-    /// bindings on one command (`e` and `⌘R`), not a mode. Which of them a
-    /// surface draws is that surface's business; which of them *exist* is
-    /// the registry's, and `mod` is already expanded for this platform.
+    /// Every binding in force for `command`, the primary first: the canvas' two keyboard layers are
+    /// two bindings on one command (`e` and `⌘R`).
     pub fn bindings_for(&self, command: String) -> Vec<String> {
         let Ok(action) = command.parse::<postio_core::ActionId>() else {
             return Vec::new();
@@ -5214,10 +4080,7 @@ impl Session {
             .collect()
     }
 
-    /// How many accounts are configured and enabled.
-    ///
-    /// ADR 0005 Q3: the first account is not special, so this counts every
-    /// enabled one rather than looking for a primary.
+    /// How many accounts are configured and enabled: ADR 0005 Q3, the first account is not special.
     pub async fn configured_accounts(&self) -> u32 {
         let Some((database, _)) = self.store_and_blobs() else {
             return 0;
@@ -5232,7 +4095,6 @@ impl Session {
             .unwrap_or(0)
     }
 
-    /// Whether an engine has been started and reached the slot.
     pub fn has_engine(&self) -> bool {
         self.wiring
             .lock()
@@ -5241,28 +4103,13 @@ impl Session {
             .is_some_and(|wiring| !wiring.engine.is_empty())
     }
 
-    /// Start syncing every configured account, and answer how many started.
-    ///
-    /// **The gap this closes:** the application opened a store and it stayed
-    /// empty forever, because nothing here ever started a sync. The store
-    /// being empty was never a rendering problem — nothing had fetched
-    /// anything.
-    ///
-    /// Zero accounts is `Ok(0)`, not an error. A fresh store with nothing
-    /// configured is the ordinary first-run state, and putting an error on
-    /// screen for somebody who has simply not finished setting up is worse
-    /// than saying nothing.
-    ///
-    /// Does not block: `engine::start_all` spawns onto the runtime the
-    /// session already holds, and the connection attempt happens there. The
-    /// UI never awaits the network.
+    /// Start syncing every configured account, and answer how many started. Zero accounts is
+    /// `Ok(0)`, not an error: it is
+    /// the first-run state. Does not block: the connection attempt happens on the session's
+    /// runtime.
     pub async fn start_syncing(&self) -> Result<u32, SessionError> {
-        // Cloned out and the guard dropped, rather than held across the awaits
-        // below. A `std::sync::MutexGuard` across an `.await` is a lock held
-        // for as long as the future is suspended -- and this one is suspended
-        // on the network -- so a second caller reaching this method would
-        // block a runtime worker until a server answered. `Wiring` is handles
-        // over `Arc`s; cloning it copies no mail.
+        // Cloned out and the guard dropped, not held across the awaits: a `MutexGuard` across a
+        // network await would block a runtime worker.
         let wiring = {
             let guard = self.wiring.lock().expect("wiring lock");
             match guard.as_ref() {
@@ -5289,14 +4136,9 @@ impl Session {
                     message: error.to_string(),
                 })?
         };
-        // Idempotent per account, not per session. It used to return early
-        // whenever *any* engine existed — which is right for the reason that
-        // guard was written (a window reopening, a wake from sleep, and a
-        // second set of engines doubling every connection) and wrong for the
-        // case nobody had yet: an account added while the application is
-        // running gets no engine, syncs nothing, and looks to the user as
-        // though it was never saved at all. It was saved; it was never
-        // started. Filtering by account keeps both properties.
+        // Idempotent per account, not per session: an early return on any engine kept a second set
+        // from doubling connections
+        // but left an account added while the app is running with no engine.
         let running: std::collections::HashSet<postio_model::ids::AccountId> = self
             .engines
             .lock()
@@ -5334,12 +4176,8 @@ impl Session {
         Ok(already + count)
     }
 
-    /// Adopt an engine over `MockBackend`, so adoption is testable.
-    ///
-    /// The real path builds a TLS connector and then connects, which no test
-    /// in the default suite may do. This exercises the half that is this
-    /// boundary's own — retaining the engine and filling the slot — against
-    /// the seam CLAUDE.md names for it.
+    /// Adopt an engine over `MockBackend`, so retaining the engine and filling the slot are
+    /// testable without a TLS connect.
     #[cfg(feature = "testing")]
     pub fn adopt_mock_engine_for_test(&self) {
         self.adopt_mock_engine_for(
@@ -5348,9 +4186,8 @@ impl Session {
         );
     }
 
-    /// [`Self::adopt_mock_engine_for_test`] for one named account, over the
-    /// server the caller built: what a two-account session needs, since each
-    /// account's engine must answer from its own server.
+    /// `adopt_mock_engine_for_test` for one named account, over the caller's server: each account's
+    /// engine must answer from its own.
     #[cfg(feature = "testing")]
     pub fn adopt_mock_engine_for(
         &self,
@@ -5379,8 +4216,6 @@ impl Session {
         };
         if let Ok(engine) = postio_runtime::Engine::spawn(parts) {
             wiring.engine.fill(account, engine.clone());
-            // Keyed by account, so that `start_syncing` can tell an account
-            // that is already running from one that has just been added.
             self.engines
                 .lock()
                 .expect("engines lock")
@@ -5388,38 +4223,24 @@ impl Session {
         }
     }
 
-    /// Tell the engine whether the machine currently has a connection.
     pub fn set_offline(&self, offline: bool) {
         let ordering = std::sync::atomic::Ordering::SeqCst;
         let was = self.offline.swap(offline, ordering);
 
-        // Only the transition back, and only when it really is one.
-        //
-        // `NWPathMonitor` repeats itself -- an interface changing while the
-        // path stays satisfied is a fresh callback with the same answer -- and
-        // reconnecting on each of those would hammer a server through exactly
-        // the flapping connection backoff exists to protect it from.
+        // Only the transition back: `NWPathMonitor` repeats itself, and reconnecting on each repeat
+        // would hammer a flapping connection.
         if was && !offline {
             self.reconnect();
         }
     }
 
-    /// Whether the platform has told us there is no connection.
     pub fn is_offline(&self) -> bool {
         self.offline.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Ask every engine to try the folder in view again, now.
-    ///
-    /// The engine reconnects with backoff on its own and works with no
-    /// reachability signal at all, which is why this is a nudge rather than a
-    /// mechanism: all knowing buys is *promptness*. Waking a laptop syncs
-    /// immediately instead of at whatever backoff step the engine had reached,
-    /// which can be minutes.
-    ///
-    /// Failures are the engine's to report. It announces connection state and
-    /// progress as it goes, so a nudge that could not connect has already been
-    /// said once and must not be said twice.
+    /// Ask every engine to try again now. A nudge, not a mechanism: it only buys promptness over
+    /// the engine's backoff.
+    /// Failures are the engine's to report, so one is not said twice.
     fn reconnect(&self) {
         // Counted, and nothing more: Focus's lists span every mailbox, so
         // there is no one folder in view to refresh, and the engines' own
@@ -5428,13 +4249,11 @@ impl Session {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// How many reconnects have been asked for. Test-only.
     #[cfg(feature = "testing")]
     pub fn reconnects_for_test(&self) -> usize {
         self.reconnects.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// The database and blob store, while the session is open.
     pub(crate) fn store_and_blobs(
         &self,
     ) -> Option<(postio_storage::Store, postio_storage::BlobStore)> {
@@ -5443,22 +4262,14 @@ impl Session {
         Some((wiring.database.clone(), wiring.blobs.clone()))
     }
 
-    /// Every command the registry knows, in cheat-sheet order.
-    ///
-    /// The frontend asks once and builds its palette, cheat sheet, menu bar
-    /// and key hints from the answer — the same derivation the GTK side makes.
-    /// That is what keeps `PRODUCT.md` §8 true on both platforms: *a command
-    /// that is not in the registry does not exist*, and equally, one that is
-    /// in it needs no second list to be discoverable.
+    /// Every command the registry knows, in cheat-sheet order: the frontend builds its palette,
+    /// cheat sheet, menu bar and key hints from it (PRODUCT.md §8).
     pub fn commands(&self) -> Vec<crate::CommandSpecFfi> {
         crate::registry::commands()
     }
 
-    /// Whether this session still holds its store.
-    ///
-    /// False after [`shutdown`](Self::shutdown). Exists so a caller can tell a
-    /// session that reported success from one that is actually holding
-    /// something — an assertion that would otherwise pass vacuously.
+    /// False after `shutdown`; lets a caller tell a session that holds its store from one that does
+    /// not.
     pub fn is_open(&self) -> bool {
         self.wiring
             .lock()
@@ -5466,11 +4277,8 @@ impl Session {
             .unwrap_or(false)
     }
 
-    /// Drops the store and ends the event drain.
-    ///
-    /// Idempotent: an application lifecycle can deliver a termination twice —
-    /// a window close racing an explicit quit — and taking the process down on
-    /// the second one would turn an ordinary shutdown into a crash report.
+    /// Drops the store and ends the event drain. Idempotent: a window close racing an explicit quit
+    /// can deliver termination twice.
     pub fn shutdown(&self) {
         // Agents first: nothing should be answering once the store goes.
         if let Ok(mut agents) = self.agents.lock() {
@@ -5484,13 +4292,9 @@ impl Session {
         }
     }
 
-    /// The next event, or `None` once the session has stopped.
-    ///
-    /// This is the whole reason the boundary is UniFFI rather than a
-    /// hand-written C ABI: it becomes Swift `async`, so the frontend's drain
-    /// is `while let event = await session.nextEvent()` on the main actor —
-    /// the same shape as `glib::spawn_future_local` on the GTK side, with no
-    /// callback, no continuation and no manual cancellation in between.
+    /// The next event, or `None` once the session has stopped. UniFFI makes it Swift `async`: the
+    /// frontend's drain is
+    /// `while let event = await session.nextEvent()`.
     pub async fn next_event(&self) -> Option<UiEvent> {
         // Whichever speaks first. The engine's stream ends when the session
         // shuts down, and that is what must end the frontend's loop -- so a
@@ -5504,39 +4308,24 @@ impl Session {
         }
     }
 
-    /// The next event if one is already waiting; `None` rather than a wait.
-    ///
-    /// Test-only. `next_event_blocking` is the honest shape for a headless
-    /// consumer and the wrong one for a test that wants to drain what has
-    /// arrived *so far*: with the channel still open it blocks forever, and
-    /// a test asking for one report more than was emitted hangs the binary
-    /// rather than failing (which is how two of these were found — see
-    /// `docs/notes/2026-09-06-a-test-keyring-that-was-quietly-the-login-keychain.md`
-    /// for the same symptom from a different cause).
+    /// Test-only: the next event if one is already waiting, rather than a wait; with the channel
+    /// open, a blocking read hangs the binary instead of failing.
     #[cfg(feature = "testing")]
     pub fn try_next_event(&self) -> Option<UiEvent> {
-        // Both channels, the way `next_event` selects over both: the engine's
-        // and this boundary's own. A drain that read only the engine's would
-        // silently miss every event this side invents --
-        // `ConversationReady`, `ReindexProgress` — which is most of what a
-        // test about this crate wants to see.
+        // Both channels, as `next_event`: a drain reading only the engine's would miss
+        // `ConversationReady` and `ReindexProgress`.
         match self.events.try_next() {
             Some(engine) => Some(UiEvent::from(engine)),
             None => self.local.1.try_recv().ok(),
         }
     }
 
-    /// [`next_event`](Self::next_event), for callers that are not async.
-    ///
-    /// Rust-only. Swift always awaits.
     pub fn next_event_blocking(&self) -> Option<UiEvent> {
         self.events.next_blocking().map(UiEvent::from)
     }
 
-    /// Emits an event as the engine would.
-    ///
-    /// Test-only, and behind the feature for that reason: a frontend that can
-    /// invent events is a frontend whose repaints stop meaning anything.
+    /// Test-only, behind the feature: a frontend that can invent events has repaints that mean
+    /// nothing.
     #[cfg(feature = "testing")]
     pub fn emit_for_test(&self, event: postio_core::Event) {
         if let Ok(guard) = self.wiring.lock()
@@ -5546,17 +4335,8 @@ impl Session {
         }
     }
 
-    /// Whether this session's `Wiring` was actually built with the backfill
-    /// and watch policy `[sync]` (as `expected` parses it) implies (#1014).
-    ///
-    /// Test-only, the same reason `emit_for_test` is: the wiring is private
-    /// so that nothing outside this crate can reach in, and a test proving
-    /// `open` read `[sync]` rather than merely compiling has to reach in
-    /// anyway. A comparison rather than a raw accessor so this crate need
-    /// not name `postio_sync`/`postio_runtime`'s policy types at its own
-    /// boundary — the classic app reached `with_backfill`/`with_watch` the same
-    /// way, through `postio_session`'s functions, and never names them
-    /// either.
+    /// Test-only: whether this session's `Wiring` was built with the backfill and watch policy
+    /// `[sync]` (as `expected` parses it) implies (#1014).
     #[cfg(feature = "testing")]
     pub fn honors_sync_config_for_test(&self, expected: &postio_config::SyncConfig) -> bool {
         let expected_backfill = postio_session::backfill_policy(expected);
@@ -5569,24 +4349,17 @@ impl Session {
     }
 }
 
-/// What the reader offers about `message`'s list, with the account that
-/// would own the activation.
-///
-/// One read serving both the offer and the activation, so the sentence a
-/// person saw and the row that gets written cannot be derived differently.
-/// Free rather than a method because it holds no session state: what it
-/// needs is a connection and an id.
+/// What the reader offers about `message`'s list, with the account that would own the activation:
+/// one read serving both,
+/// so the sentence seen and the row written cannot differ. Free, since it holds no session state.
 async fn unsubscribe_offer_for(
     connection: &postio_storage::Checkout,
     id: postio_model::ids::MessageId,
 ) -> Option<(postio_model::ids::AccountId, postio_ui::unsubscribe::Offer)> {
     let repository = postio_storage::repository::MessageRepository::new(connection);
     let message = repository.get(id).await.ok()??;
-    // `send_state` is a column on the row rather than a field on `Message`,
-    // so it is a second point read. It is also the gate (#1525): without it
-    // the domain fallback offers to unsubscribe the user from their own
-    // account, so a read that fails is treated as "do not offer" rather than
-    // as "no send state".
+    // `send_state` is a column on the row, so a second point read. It is the gate (#1525): a failed
+    // read means "do not offer".
     let send_state = match repository.send_state(id).await {
         Ok(state) => state,
         Err(error) => {
@@ -5599,25 +4372,17 @@ async fn unsubscribe_offer_for(
     Some((message.account_id, offer))
 }
 
-/// Where a store that was started over went, and what came across.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct StartedOverFfi {
-    /// The directory the old database, its sidecars and its blobs were set
-    /// aside in: moved, not deleted, so a build of their schema opens them
-    /// again from there.
+    /// The directory the old database, sidecars and blobs were moved to, not deleted, so a build of
+    /// their schema opens them there.
     pub set_aside: String,
-    /// How many accounts the fresh store carried over from it.
     pub accounts: u32,
 }
 
-/// Set aside the store `options` names and start a fresh one in its place,
-/// carrying its accounts across: the way past
-/// [`SessionError::StoreFromAnotherBuild`] and
-/// [`SessionError::StoreUnderAnotherKey`] (`postio_session::start_over::start_over_at`).
-///
-/// The store key comes from `options`' secret store, or the OS keyring: the
-/// one the old store was written under, which stays where it is, so the
-/// store set aside opens again under a build of its schema. Blocks; refused
+/// Set aside the store `options` names and start a fresh one, carrying its accounts across
+/// (`postio_session::start_over::start_over_at`).
+/// The store key is the one the old store was written under, which stays in place. Blocks; refused
 /// while another Postio has the store open.
 pub fn start_over_with(options: SessionOptions) -> Result<StartedOverFfi, SessionError> {
     let secrets: Arc<dyn postio_account::secret::SecretStore> = match options.secrets {
@@ -5637,30 +4402,12 @@ pub fn start_over_with(options: SessionOptions) -> Result<StartedOverFfi, Sessio
     })
 }
 
-/// Run `future` to completion on this thread, blocking until it answers,
-/// on a stack this crate owns: Swift calls in from threads with 512 KiB,
-/// and the engine's deepest compile does not fit what is left of one
-/// ([`crate::stack`]).
-///
-/// # Why the FFI blocks
-///
-/// The exported surface is synchronous, because that is what a Swift caller
-/// asked for: `session.search(query)` returns a count, not a task. The store
-/// underneath is async now, so something has to turn a future back into a
-/// value, and it is here rather than in every method.
-///
-/// These were blocking reads before as well -- the storage layer was
-/// synchronous and these methods called it directly. What changed is the
-/// spelling. The contract on the surface is unchanged and is documented on
-/// `Session::open`: a caller must not invoke these on the main actor.
-///
-/// # One implementation, in `postio-session`
-///
-/// This used to be a fourth copy of the same four lines, and it was the copy
-/// that had only half of them: a runtime built here and blocked on panics
-/// outright when the caller is already on one. `postio_session::blocking::now`
-/// is the whole of it, and the reason it is shared is that every crate that
-/// has needed this has got it wrong once.
+/// Run `future` to completion on this thread, on a stack this crate owns: Swift calls in from
+/// threads with 512 KiB, which
+/// the engine's deepest compile does not fit. The exported surface is synchronous, so callers must
+/// not invoke these on the
+/// main actor. `postio_session::blocking::now` is the one shared implementation: a runtime built
+/// here panics when the caller is already on one.
 pub(crate) fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
     crate::stack::on_engine_stack(|| postio_session::blocking::now(future))
 }

@@ -1,64 +1,19 @@
-//! Add the first account, so a frontend with no onboarding screen has mail.
-//!
-//! macOS has no way to configure an account: onboarding is GTK top to bottom,
-//! and a Mac has no Linux Postio to have set things up with (#649). This is
-//! the smallest thing that closes that gap, and it makes exactly the two
-//! writes the onboarding screen makes — see
-//! [`postio_session::provision`](../provision/index.html) for the order they
-//! go in and why that order is not negotiable.
-//!
-//! It builds on both platforms because `postio-session` does. The
-//! classic app's example this replaces did not: ADR 0019 measured the one
-//! boundary in the workspace, and it falls on the GTK crates,
-//! which is to say on the only crates a Mac cannot compile.
-//!
-//! # Use
-//!
-//! ```sh
-//! export POSTIO_ADDRESS='you@your-provider.example'
-//! read -rs POSTIO_APP_PASSWORD && export POSTIO_APP_PASSWORD
-//! cargo run -p postio-session --bin postio-provision
-//! ```
-//!
-//! The domain has to be one the provider preset table recognises; when it is
-//! not, this names the variables to set instead. A reserved domain in the
-//! usage above rather than a real provider because
-//! `scripts/checks/check-no-personal-data.py` holds every address in this
-//! repository to RFC 2606, usage strings included.
-//!
-//! **The password comes from the environment**, never from a file and never
-//! from argv — argv is visible to every process on the machine through `ps`,
-//! and a password in a file is the one thing #649's acceptance rules out. It
-//! is not printed, not logged, and not written to the store: it goes to the
-//! OS keyring and nowhere else.
-//!
-//! On Linux `scripts/run-isolated.sh HEAD --provision` runs this against a
-//! throwaway store, because that script points `XDG_DATA_HOME` at a scratch
-//! directory first. Run it outside that script and it writes the account you
-//! actually use.
-//!
-//! # iCloud
-//!
-//! An Apple ID password will not work: iCloud requires an **app-specific
-//! password**, created at appleid.apple.com under Sign-In and Security, with
-//! two-factor authentication enabled. Revoke it there when you are done
-//! testing — that takes effect immediately and costs nothing.
+//! Add the first account, so a frontend with no onboarding screen has mail (#649); it makes the two
+//! writes onboarding makes.
+//! The password comes from `POSTIO_APP_PASSWORD`, never argv or a file, and goes only to the OS
+//! keyring.
+//! Outside `scripts/run-isolated.sh` it writes the account you actually use.
 
 use std::process::ExitCode;
 
 use postio_account::secret::{Password, platform_keyring};
 use postio_session::provision::{Provisioned, account_from, provision, settings_for};
 
-/// A set variable, treating empty as unset — an exported-but-blank variable
-/// is a mistake, not an answer.
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
 fn main() -> ExitCode {
-    // The runtime comes first now: opening the store is async, so everything
-    // below it is too, and there is nothing left for a synchronous `main` to
-    // do before one exists.
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -91,8 +46,7 @@ async fn run() -> ExitCode {
         }
     };
 
-    // Everything but the password, so a mistyped host is visible before a
-    // keyring prompt rather than after a failed sync.
+    // Everything but the password, so a mistyped host shows before a keyring prompt.
     let store_path = postio_session::paths::store_path();
     println!("store:   {}", store_path.display());
     println!("address: {address}");
@@ -100,11 +54,8 @@ async fn run() -> ExitCode {
     println!("smtp:    {}", settings.smtp);
     println!("login:   {}", settings.login);
 
-    // The store is encrypted under the keyring's key (ADR 0014), so adding an
-    // account needs it exactly as the application does. `platform_keyring`
-    // rather than a named store: this is the Keychain on macOS and the Secret
-    // Service on freedesktop, and choosing here would be one more place to
-    // get it wrong.
+    // The store is encrypted under the keyring's key (ADR 0014); `platform_keyring` because the
+    // backend differs per platform.
     let secrets = platform_keyring();
     let store_key = match postio_session::store_key_blocking(secrets.as_ref()) {
         Ok(key) => key,
@@ -113,10 +64,7 @@ async fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // `open_store`, not `Store::open`: it opens the blob store beside the
-    // database and builds the search index, which is what the application
-    // does -- so this provisions into the same store rather than a partial
-    // one.
+    // `open_store`, not `Store::open`: it also opens the blob store and builds the search index.
     let (database, _blobs) = match postio_session::open_store(&store_key).await {
         Ok(opened) => opened,
         Err(message) => {

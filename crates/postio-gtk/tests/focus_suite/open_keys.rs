@@ -1,17 +1,12 @@
-//! Keys in the open message (T195, T196), pressed the way GTK delivers
-//! them: to the widget the keyboard is really on once the dialog is up,
-//! through every key controller between it and the window, in GTK's order.
-//!
-//! The earlier cases called `FocusWindow::handle_key` directly, which is
-//! the window's handler and not a key press: they passed while `j` and `k`
-//! did nothing in the running app.
+//! Keys are pressed as GTK delivers them, through every controller between the focused widget and
+//! the window:
+//! calling `FocusWindow::handle_key` directly passed while `j` and `k` did nothing in the running
+//! app.
 
 use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// A window over three messages, the cursor on the first, its message open
-/// and drawn.
 async fn opened(fixture: &Fixture) -> postio_gtk::window::FocusWindow {
     let (window, _client) = fixture.open().await;
     assert!(
@@ -49,8 +44,6 @@ async fn three(fixture: &Fixture) {
     }
 }
 
-/// T195: `j` and `k`, pressed into the open message wherever opening it
-/// left the keyboard, step the dialog to the next and previous message.
 pub fn j_and_k_step_the_open_message_from_where_the_keyboard_is() {
     crate::gtk_case(async {
         if !support::display() {
@@ -79,7 +72,6 @@ pub fn j_and_k_step_the_open_message_from_where_the_keyboard_is() {
     });
 }
 
-/// The column's vertical adjustment: what the open message scrolls by.
 fn column(reading: &postio_gtk::open::OpenMessage) -> gtk::Adjustment {
     reading
         .reader()
@@ -90,9 +82,6 @@ fn column(reading: &postio_gtk::open::OpenMessage) -> gtk::Adjustment {
         .vadjustment()
 }
 
-/// T196: Down and Up move the open message a line, Page Down and Page Up a
-/// page, wherever the keyboard is; never to an end, and never by moving the
-/// keyboard to a control further down the column.
 pub fn the_arrows_and_paging_keys_scroll_the_open_message_in_steps() {
     crate::gtk_case(async {
         if !support::display() {
@@ -144,9 +133,6 @@ pub fn the_arrows_and_paging_keys_scroll_the_open_message_in_steps() {
     });
 }
 
-/// A message opens with the keyboard on the message, not on a button of
-/// the header: Return or Space after opening scrolls it rather than
-/// stepping away.
 pub fn the_keyboard_lands_on_the_message_not_a_button() {
     crate::gtk_case(async {
         if !support::display() {
@@ -168,8 +154,6 @@ pub fn the_keyboard_lands_on_the_message_not_a_button() {
     });
 }
 
-/// The toast an act under the open message raises is drawn over the dialog,
-/// where its words and its Undo can be read and pressed.
 pub fn a_toast_raised_under_the_open_message_is_drawn_over_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -192,8 +176,6 @@ pub fn a_toast_raised_under_the_open_message_is_drawn_over_it() {
     });
 }
 
-/// `d` in the open message digests its sender, as it does beside the list
-/// (#1754): the dialog used to drop every key `reading_key` had no arm for.
 pub fn d_in_the_open_message_opens_the_digest_rule() {
     crate::gtk_case(async {
         if !support::display() {
@@ -218,8 +200,6 @@ pub fn d_in_the_open_message_opens_the_digest_rule() {
     });
 }
 
-/// A window over three messages with a vault configured, the cursor on the
-/// first.
 async fn with_a_vault(
     fixture: &Fixture,
     vault: &tempfile::TempDir,
@@ -239,7 +219,6 @@ async fn with_a_vault(
     window
 }
 
-/// As [`with_a_vault`], with the first message open.
 async fn opened_with_a_vault(
     fixture: &Fixture,
     vault: &tempfile::TempDir,
@@ -254,8 +233,6 @@ async fn opened_with_a_vault(
     window
 }
 
-/// `T` and `N` in the open message open the capture sheet for it, as a
-/// task and as a note, as they do beside the list (#1754, T056).
 pub fn t_in_the_open_message_opens_capture() {
     crate::gtk_case(async {
         if !support::display() {
@@ -278,7 +255,6 @@ pub fn t_in_the_open_message_opens_capture() {
             said.iter().any(|text| text == "Add task"),
             "the sheet is not a task: {said:?}"
         );
-        // Escape puts the sheet away and leaves the message open.
         support::deliver(&window, "Escape");
         assert!(
             crate::settle_until(async || !sheet.is_open()).await,
@@ -302,8 +278,6 @@ pub fn t_in_the_open_message_opens_capture() {
     });
 }
 
-/// The capture sheet closed, the list's keys are the keyboard's again: a
-/// sheet put away must not leave the window in the sheet's key context.
 pub fn the_list_keys_work_again_once_the_capture_sheet_is_closed() {
     crate::gtk_case(async {
         if !support::display() {

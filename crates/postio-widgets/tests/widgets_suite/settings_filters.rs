@@ -1,16 +1,3 @@
-//! The settings panel's structured `[saved_searches]` pane (#869).
-//!
-//! `Section::Filters` used to be raw-TOML-textview-jump only; this is the
-//! rendered row list layered above it, the same shape `set_accounts` already
-//! established for `[accounts]` (`gtk_settings_accounts.rs`). Unlike
-//! accounts, `[saved_searches]` lives entirely in `config.toml`, so this pane reads
-//! and writes the panel's own buffer directly rather than needing an
-//! external host: every row action is expected to reach `panel.text()`
-//! through `postio_config::patch_filters`, and from there the panel's
-//! existing debounced write already covers getting it to disk (proven in
-//! `gtk_settings.rs`). Skips without a display. Nothing here touches the
-//! network.
-
 use crate::support_compose::{fonts, style};
 use gtk::gdk;
 use gtk::prelude::*;
@@ -56,15 +43,11 @@ pub fn filters_render_as_rows_and_hide_when_there_are_none() {
 
     assert!(section_visible(&panel));
     assert!(!empty_state_visible(&panel));
-    // Two pinned, in their explicit order, then the one unpinned filter.
     assert_eq!(rows(&panel).len(), 3, "one row per filter, pinned or not");
 
     window.destroy();
 }
 
-/// The page has no add form: a saved search is made from the command bar.
-/// It says so, with the key out of the live keymap, whether or not there
-/// are rows (the storyboard frame showed four rows and no way to a fifth).
 pub fn the_page_says_how_a_saved_search_is_made() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -98,9 +81,6 @@ pub fn the_page_says_how_a_saved_search_is_made() {
     window.destroy();
 }
 
-/// A pinned search shows the key that runs it from the command bar (alt+1
-/// for the first, alt+2 for the next); an unpinned one shows none. This is
-/// the page where they are put in order, so it is where the keys are learnt.
 pub fn a_pinned_search_shows_the_key_that_runs_it() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -307,8 +287,6 @@ fn query_text(row: &gtk::ListBoxRow) -> String {
     .expect("every filter row has a query label")
 }
 
-/// The pinned checkbox. A checkbox and not a switch: pinned is a value
-/// written to `config.toml`, and ADR 0029 Q2 keeps switches for acts.
 fn pinned_switch_in(row: &gtk::ListBoxRow) -> gtk::CheckButton {
     collect(row.upcast_ref::<gtk::Widget>(), "")
         .into_iter()
@@ -368,10 +346,6 @@ fn empty_state_visible(panel: &SettingsPanel) -> bool {
     .any(|w| w.is_visible())
 }
 
-/// Every widget in the tree carrying `class` (or, when `class` is empty,
-/// every widget), depth first. Copied from `gtk_settings_accounts.rs` rather
-/// than shared, matching that file's own reason: no dependency between the
-/// two.
 fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if class.is_empty() || widget.has_css_class(class) {

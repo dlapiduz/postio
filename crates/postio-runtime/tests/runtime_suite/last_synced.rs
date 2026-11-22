@@ -1,13 +1,3 @@
-//! A completed pass writes down when it happened (#1281).
-//!
-//! `mailboxes.last_synced_at` has been in the schema since migration 0001 and
-//! both frontends' sidebars read it. **Nothing ever wrote it.** Every store in
-//! the world held `NULL`, so a Postio with five thousand messages in it told
-//! its user — truthfully, as far as the code went — that it had never synced.
-//!
-//! Found by running the macOS build against a real account and reading the
-//! footer beside a folder holding 4,985 messages.
-
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -40,7 +30,6 @@ async fn a_folder_that_has_synced_says_when() {
         (account, inbox)
     };
 
-    // Before: nothing has synced, and the store says so honestly.
     {
         let connection = database.connect().await.expect("a connection");
         let before = MailboxRepository::new(&connection)

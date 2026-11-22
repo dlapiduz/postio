@@ -1,14 +1,8 @@
-//! Opening a message over the list (US2, T069; screen 04): `Enter` opens
-//! the conversation under the cursor in a dialog at once -- its header from
-//! the row already in hand, the body from the store when it lands -- and a
-//! hundred opens reuse the one message view (scenario 7).
-
 use adw::prelude::*;
 use gtk::gdk;
 
 use crate::support::{self, Fixture};
 
-/// A window over three conversations with bodies, the cursor on the first.
 async fn three_with_bodies() -> (Fixture, postio_gtk::window::FocusWindow) {
     let fixture = Fixture::empty().await;
     for (subject, body, minutes) in [
@@ -48,7 +42,6 @@ pub fn enter_opens_the_conversation_over_the_list_at_once() {
         }
         let (_fixture, window) = three_with_bodies().await;
         enter(&window);
-        // No turn of the main loop: the header is the row's, in hand.
         let reading = window.reading().expect("Enter opened the message");
         assert!(reading.is_open(), "the dialog is up");
         assert_eq!(reading.title(), "Budget");
@@ -60,7 +53,6 @@ pub fn enter_opens_the_conversation_over_the_list_at_once() {
             "the body never arrived: {:?}",
             reading.body_text()
         );
-        // The sheet maps its content once it has opened.
         assert!(
             crate::settle_until(async || {
                 reading
@@ -151,7 +143,6 @@ pub fn a_hundredth_open_of_a_thread_builds_no_second_message_view() {
     });
 }
 
-/// Five one-message conversations with bodies, the cursor on none yet.
 async fn five_with_bodies() -> (Fixture, postio_gtk::window::FocusWindow) {
     let fixture = Fixture::empty().await;
     for (n, minutes) in [10, 20, 30, 40, 50].into_iter().enumerate() {
@@ -180,8 +171,6 @@ fn cursor_id(window: &postio_gtk::window::FocusWindow) -> Option<postio_model::M
     window.cursor_row().map(|row| row.id())
 }
 
-/// US2 scenario 1: open and close, and the list is as it was left -- the
-/// cursor on its row, the two selected rows still selected.
 pub fn escape_closes_and_keeps_the_cursor_and_the_selection() {
     crate::gtk_case(async {
         if !support::display() {
@@ -203,8 +192,6 @@ pub fn escape_closes_and_keeps_the_cursor_and_the_selection() {
     });
 }
 
-/// US2 scenario 2: `j` in the dialog shows the next message without
-/// closing, and the list's cursor behind it moves with it; `k` comes back.
 pub fn j_and_k_step_the_list_behind_the_dialog() {
     crate::gtk_case(async {
         if !support::display() {
@@ -238,8 +225,6 @@ pub fn j_and_k_step_the_list_behind_the_dialog() {
     });
 }
 
-/// US2 scenario 3: a thread opens on its latest message; `p` shows the one
-/// before it and the position line says so, and `n` steps back.
 pub fn brackets_step_through_the_thread() {
     crate::gtk_case(async {
         if !support::display() {
@@ -265,8 +250,6 @@ pub fn brackets_step_through_the_thread() {
             "the thread did not open on its latest message: {:?}",
             reading.body_text()
         );
-        // The title line says the message's place in its thread, as the
-        // kicker does (spec 013 review: one place, said one way).
         assert!(
             crate::settle_until(async || reading.subtitle() == "Message 3 of 3").await,
             "the title line: {:?}",
@@ -307,8 +290,6 @@ pub fn brackets_step_through_the_thread() {
     });
 }
 
-/// Three one-message conversations whose bodies are long enough to scroll,
-/// the cursor on the first, its message open in the dialog.
 async fn three_long_open() -> (Fixture, postio_gtk::window::FocusWindow) {
     let fixture = Fixture::empty().await;
     for (n, minutes) in [10, 20, 30].into_iter().enumerate() {
@@ -335,12 +316,9 @@ async fn three_long_open() -> (Fixture, postio_gtk::window::FocusWindow) {
     (fixture, window)
 }
 
-/// Wait until the open message is drawn tall enough to scroll through.
 async fn drawn_tall(reading: &std::rc::Rc<postio_gtk::open::OpenMessage>) {
     assert!(
         crate::settle_until(async || {
-            // The message flows in the dialog's column: it is as tall as its
-            // words, and the column is what it scrolls through.
             let view = reading.reader().view().clone();
             let Some(column) = view.ancestor(gtk::ScrolledWindow::static_type()) else {
                 return false;
@@ -364,8 +342,6 @@ fn scrolled(window: &postio_gtk::window::FocusWindow) -> f64 {
     window.reading().expect("open").reader().scrolled_for_test()
 }
 
-/// T180: a message opens at its top -- the first time, and every time the
-/// dialog steps to another one, however far the last was read.
 pub fn a_message_opens_at_its_top_every_time() {
     crate::gtk_case(async {
         if !support::display() {
@@ -389,8 +365,6 @@ pub fn a_message_opens_at_its_top_every_time() {
         assert_eq!(scrolled(&window), 0.0, "the next message opens at its top");
 
         support::press(&window, "End", gdk::ModifierType::empty());
-        // Closed at the bottom and opened again: the top, not the place
-        // it was left.
         support::press(&window, "Escape", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || !reading.is_open()).await,
@@ -422,8 +396,6 @@ pub fn a_message_opens_at_its_top_every_time() {
     });
 }
 
-/// T181: while the dialog is open, the arrows and the paging keys scroll
-/// its message and leave the list behind it alone; `j`/`k` still step.
 pub fn arrows_and_paging_keys_scroll_the_message_not_the_list() {
     crate::gtk_case(async {
         if !support::display() {
@@ -457,9 +429,6 @@ pub fn arrows_and_paging_keys_scroll_the_message_not_the_list() {
     });
 }
 
-/// T176: `j` and `k` step to the next and previous message whichever
-/// control inside the dialog has the keyboard -- the way a person's focus
-/// is, after opening it, and not only when nothing is focused.
 pub fn j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog() {
     crate::gtk_case(async {
         if !support::display() {
@@ -492,8 +461,6 @@ pub fn j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog() {
     });
 }
 
-/// T179: the toolbar's Delete deletes the message on screen, and so does its
-/// key, in the dialog as over the list.
 pub fn delete_in_the_dialog_deletes_the_message_on_screen() {
     crate::gtk_case(async {
         if !support::display() {
@@ -528,9 +495,6 @@ pub fn delete_in_the_dialog_deletes_the_message_on_screen() {
     });
 }
 
-/// T190: deleting or archiving the message on screen moves the dialog to
-/// the next message in the folder, the previous one at the end, and closes
-/// it when none is left -- the message that went is not left on screen.
 pub fn deleting_from_the_dialog_moves_to_the_next_message() {
     crate::gtk_case(async {
         if !support::display() {
@@ -541,7 +505,6 @@ pub fn deleting_from_the_dialog_moves_to_the_next_message() {
         let reading = window.reading().expect("open");
         assert_eq!(reading.title(), "Budget");
 
-        // Delete: the next message, and the deleted one is gone.
         support::press(&window, "Delete", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || reading.title() == "Harbor draft").await,
@@ -556,7 +519,6 @@ pub fn deleting_from_the_dialog_moves_to_the_next_message() {
             reading.body_text()
         );
 
-        // Archive the last one: the previous message.
         support::keys(&window, &["j"]);
         assert!(crate::settle_until(async || reading.title() == "Staffing").await);
         support::keys(&window, &["e"]);
@@ -567,7 +529,6 @@ pub fn deleting_from_the_dialog_moves_to_the_next_message() {
         );
         assert_eq!(support::subjects(&window), ["Harbor draft"]);
 
-        // Nothing left: the dialog closes.
         support::press(&window, "Delete", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || !reading.is_open()).await,
@@ -577,10 +538,6 @@ pub fn deleting_from_the_dialog_moves_to_the_next_message() {
     });
 }
 
-/// #1212: a draft written in another client opens with its notice and an
-/// action row that answers nothing -- no Reply, Reply all or Forward, which
-/// have no correspondent to answer -- while Archive and Delete stay. `r`
-/// does not open a composer either.
 pub fn a_draft_from_another_client_offers_no_reply() {
     crate::gtk_case(async {
         if !support::display() {
@@ -649,10 +606,8 @@ pub fn a_draft_from_another_client_offers_no_reply() {
     });
 }
 
-/// Spec 009 slice 6: a verb in the open message is for that message, never
-/// for the rows selected behind it (the Mac's rule, which the controller
-/// owns). Row 1 is selected, row 3 is opened, and `e` archives row 3; the
-/// dialog goes on to the one that took its place and the selection stays.
+/// A verb in the open message is for that message, never the rows selected behind it (the
+/// controller's rule, as on the Mac).
 pub fn archive_in_the_dialog_archives_the_message_not_the_selection() {
     crate::gtk_case(async {
         if !support::display() {

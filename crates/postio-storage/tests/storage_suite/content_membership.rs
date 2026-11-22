@@ -1,4 +1,3 @@
-//! Content sharing must never change the identity of a mailbox occurrence.
 use chrono::Utc;
 use postio_model::{
     BodyState, ContentIdentity, Flag, Mailbox, Message, RemoteId, RfcMessageId, Uid, UidValidity,
@@ -44,8 +43,6 @@ async fn account_wide_identity_shares_body_and_preserves_occurrences() {
     second.sync.body_state = BodyState::HeadersOnly;
     repo.create(&mut second).await.unwrap();
     assert_ne!(first.id, second.id);
-    // The reader resolves one content owner by primary keys; sharing must not
-    // turn opening a message into a mailbox-sized read.
     let counting = postio_storage::test_support::counting::here;
     postio_storage::test_support::counting::record();
     postio_storage::test_support::counting::reset();

@@ -1,13 +1,7 @@
-//! A store another process has open is refused, in a sentence that says so.
-//!
-//! Only one Postio may have the store open at a time -- the desktop app or
-//! the terminal, never both (docs/archive/specs/005-tui-frontend). The engine enforces
-//! that with a lock on the file; this is what the second one hears.
-//!
-//! Its own binary rather than a `storage_suite` module because it needs a
-//! second process: the engine's lock is a POSIX record lock, which a process
-//! never conflicts with itself on. The child is this same test binary, run
-//! again with [`HOLD`] naming the store it is to hold open.
+//! Its own binary because it needs a second process: the engine's lock is a POSIX record lock,
+//! which
+//! a process never conflicts with itself on. The child is this binary rerun with `HOLD` naming the
+//! store.
 
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
@@ -19,7 +13,6 @@ use postio_storage::{
     key::{Purpose, StoreKey},
 };
 
-/// Set in the child: the store it holds open until its stdin closes.
 const HOLD: &str = "POSTIO_TEST_HOLD_STORE";
 
 fn key() -> postio_storage::key::Subkey {
@@ -34,7 +27,6 @@ async fn a_store_open_in_another_process_is_refused_as_in_use() {
             .expect("the child opens it");
         println!("held");
         std::io::stdout().flush().unwrap();
-        // Held until the parent closes our stdin.
         let _ = std::io::stdin().read_to_end(&mut Vec::new());
         return;
     }

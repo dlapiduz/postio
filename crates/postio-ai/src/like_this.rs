@@ -1,14 +1,5 @@
-//! "Digest mail like this" (spec 007 FR-171, US14): the person's model
-//! checks which mail is alike, and a rule is made from what it picks.
-//!
-//! The model writes no rule. Postio builds the candidates itself, each a
-//! query in the one language that can hold mail as it is filed -- the
-//! message's list, its sender, its sender's domain -- and shows the model
-//! the example and a sample of the recent mail each candidate would catch.
-//! The model answers with one number: the candidate whose mail is like the
-//! example, or none. So the rule is Postio's query, previewed through the
-//! executor before it is saved like any other, and never text a model
-//! wrote.
+//! "Digest mail like this": the person's model picks which of Postio's own candidate queries
+//! catches mail like an example. The model writes no rule; the pick is previewed like any rule.
 
 use std::sync::Arc;
 
@@ -18,45 +9,33 @@ use serde_json::{Map, Value};
 use crate::client::{AiError, Client, Question};
 use crate::schema::{Field, Kind, Schema};
 
-/// The most candidates one question offers.
 pub const MAX_CANDIDATES: usize = 8;
 
-/// The message the person chose.
 #[derive(Debug, Clone, Copy)]
 pub struct Example<'a> {
-    /// Its account, for the egress log.
     pub account: AccountId,
-    /// Who sent it.
     pub sender: &'a str,
-    /// Its subject.
     pub subject: &'a str,
-    /// The start of its own text.
     pub text: &'a str,
 }
 
-/// One rule Postio could make, and a sample of what it would catch.
 #[derive(Debug, Clone)]
 pub struct Candidate<'a> {
-    /// The query, in the one language.
     pub query: &'a str,
-    /// Recent mail it matches: each one's sender and subject.
     pub sample: Vec<(&'a str, &'a str)>,
 }
 
-/// The person's model, as the judge of what is alike.
 #[derive(Debug, Clone)]
 pub struct LikeThis {
     client: Arc<Client>,
 }
 
 impl LikeThis {
-    /// Ask `client`'s model.
     pub fn new(client: Arc<Client>) -> Self {
         Self { client }
     }
 
-    /// Which of `candidates` catches mail like `example`: its index, or
-    /// `None` when the model says none does.
+    /// Which of `candidates` catches mail like `example`: its index, or `None` when none does.
     pub fn choose(
         &self,
         example: &Example<'_>,
@@ -86,7 +65,6 @@ impl LikeThis {
     }
 }
 
-/// The answer's shape: one number.
 const SCHEMA: Schema = Schema {
     name: "like_this",
     fields: &[Field {
@@ -98,14 +76,12 @@ const SCHEMA: Schema = Schema {
     }],
 };
 
-/// What the model is asked, in Postio's words.
 const ASKED: &str = "You help one person gather mail into a digest. You are given an \
     example email and numbered rules, each with a sample of the recent mail it would catch. \
     Choose the rule whose mail is most like the example -- the same kind of mail, such as \
     the same newsletter or the same sort of notice -- and that catches little else. Answer \
     with its number as candidate, or 0 if no rule's mail is like the example.";
 
-/// The candidate `answer` names, by index.
 fn pick(answer: &Map<String, Value>, offered: usize) -> Result<Option<usize>, AiError> {
     let number = answer
         .get("candidate")

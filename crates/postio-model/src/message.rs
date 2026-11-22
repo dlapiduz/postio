@@ -1,5 +1,3 @@
-//! Messages: the centre of the domain model.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -13,43 +11,31 @@ use crate::ids::{
 };
 use crate::subject::normalize_subject;
 
-/// The text and rich forms of a body.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct MessageBody {
-    /// `text/plain` form.
     pub text: Option<String>,
-    /// `text/html` form.
     pub html: Option<String>,
 }
 
 impl MessageBody {
-    /// Whether neither form is present.
     pub fn is_empty(&self) -> bool {
         self.text.as_ref().is_none_or(|text| text.is_empty())
             && self.html.as_ref().is_none_or(|html| html.is_empty())
     }
 }
 
-/// How much of a message's content has been fetched.
-///
-/// The sync engine fetches headers newest-first and backfills bodies lazily, so
-/// a message can be listed, searched by header and threaded long before its body
-/// exists locally.
+/// Headers are fetched newest-first and bodies backfilled lazily, so a message can be listed,
+/// searched by header and threaded before its body exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 pub enum BodyState {
-    /// Nothing beyond what a mailbox listing gave us.
     #[default]
     NotFetched,
-    /// Envelope and headers only.
     HeadersOnly,
-    /// Some body parts fetched, others still remote.
     Partial,
-    /// Every part of the message is available locally.
     Full,
 }
 
 impl BodyState {
-    /// A stable lowercase identifier, for storage.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NotFetched => "not_fetched",
@@ -59,7 +45,6 @@ impl BodyState {
         }
     }
 
-    /// The inverse of [`BodyState::as_str`].
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "not_fetched" => Some(Self::NotFetched),
@@ -70,32 +55,23 @@ impl BodyState {
         }
     }
 
-    /// Whether a renderable body exists locally.
     pub fn has_body(self) -> bool {
         matches!(self, Self::Partial | Self::Full)
     }
 }
 
-/// Identifiers assigned by the server, not by Postio.
-///
-/// Deliberately protocol-neutral. For IMAP, `uid`/`uid_validity`/`mod_seq` are
-/// `UID`, `UIDVALIDITY` and `MODSEQ`; another protocol may populate only
-/// `remote_id`. A `uid` is meaningless without the `uid_validity` it was seen
-/// under.
+/// Protocol-neutral: a `uid` is meaningless without the `uid_validity` it was seen under; another
+/// protocol may populate only `remote_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ServerIdentifiers {
     /// An immutable account-wide content identity explicitly guaranteed by
     /// the backend. Mailbox addressing and RFC Message-ID are not sufficient.
     pub content_identity: Option<ContentIdentity>,
-    /// Server message number within its mailbox.
     pub uid: Option<Uid>,
-    /// Generation of the UID space this `uid` belongs to.
     pub uid_validity: Option<UidValidity>,
-    /// Modification sequence at which this message was last seen changed.
     pub mod_seq: Option<ModSeq>,
-    /// The backend-neutral identity (#543, ADR 0018 Q2): the server's own
-    /// name for this message. IMAP adapters derive it from the generation
-    /// and uid; other protocols carry their native id.
+    /// The server's own name for the message (#543, ADR 0018 Q2); IMAP derives it from generation
+    /// and uid.
     pub remote_id: Option<RemoteId>,
 }
 
@@ -105,9 +81,7 @@ pub struct ServerIdentifiers {
 /// this absent unless the key identifies the same bytes across mailboxes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ContentIdentity {
-    /// The backend's immutable identity space, such as `jmap-email`.
     pub namespace: String,
-    /// An opaque native identifier within that namespace and account.
     pub key: String,
 }
 
@@ -129,176 +103,98 @@ impl ServerIdentifiers {
     }
 }
 
-/// What Postio knows locally about a message's synchronization.
-///
-/// Every mutating action is local-first: the local row changes, an operation is
-/// enqueued, the UI repaints. These fields are what tells the sync engine the
-/// local row is ahead of the server.
+/// The fields that tell the sync engine the local row is ahead of the server (every mutation is
+/// local-first).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct LocalSyncState {
-    /// How much content is available locally.
     pub body_state: BodyState,
-    /// Local flag changes not yet pushed.
     pub flags_dirty: bool,
-    /// Whether operations for this message are still in the queue.
     pub has_pending_operations: bool,
-    /// Hidden locally pending a remote delete or move.
     pub deleted_locally: bool,
-    /// When this row last agreed with the server.
     pub last_synced_at: Option<DateTime<Utc>>,
 }
 
 impl LocalSyncState {
-    /// Whether the local row has nothing outstanding to push.
     pub fn is_clean(&self) -> bool {
         !self.flags_dirty && !self.has_pending_operations && !self.deleted_locally
     }
 }
 
-/// A mail message, as Postio models it.
-///
-/// Independent of IMAP and of any other protocol: a backend translates into this
-/// type and never the other way round.
+/// Independent of IMAP: a backend translates into this type, never the other way round.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
-    /// Local id. [`MessageId::UNASSIGNED`] until the row is written.
     pub id: MessageId,
-    /// Owning account.
     pub account_id: AccountId,
-    /// Mailbox this copy lives in.
     pub mailbox_id: MailboxId,
-    /// Thread this message was grouped into, once threading has run.
     pub thread_id: Option<ThreadId>,
 
-    /// RFC 5322 `Message-ID`. Absent when the sender omitted it.
     pub rfc_message_id: Option<RfcMessageId>,
-    /// RFC 5322 `In-Reply-To`.
     pub in_reply_to: Option<RfcMessageId>,
-    /// RFC 5322 `References`, oldest ancestor first.
     pub references: Vec<RfcMessageId>,
-    /// The bracketed identifier out of `List-Id` (RFC 2919), when the
-    /// message belongs to a mailing list. What lets a list be detected
-    /// without the user naming it anywhere.
+    /// The bracketed `List-Id` (RFC 2919); lets a list be detected without the user naming it.
     pub list_id: Option<String>,
     // POSTIO-CONSENT: detection only. Postio never sends a read receipt —
-    // neither automatically nor on request — so there is no "how the user
-    // asks for it" here: the answer is that they cannot, yet. This flag only
-    // counts how often one was asked, for the privacy pane (#970); whether
-    // to ever honor the request is a separate, unbuilt decision.
-    /// Whether the sender asked for a read receipt (`Disposition-Notification-To`
-    /// or the older `Return-Receipt-To`), denormalized at ingest the same way
-    /// `list_id` is (#970). Postio never sends one automatically — CLAUDE.md's
-    /// privacy section is explicit that this is fixed policy, not a setting —
-    /// so this exists only to let the privacy pane count how often it was asked.
+    // neither automatically nor on request; this counts how often one was asked, for the privacy
+    // pane (#970).
+    /// Whether `Disposition-Notification-To` or `Return-Receipt-To` was present; denormalized at
+    /// ingest like `list_id`.
     pub read_receipt_requested: bool,
-    /// What its `List-Unsubscribe`, `Precedence` and `Auto-Submitted` say
-    /// (spec 007, research R8), or `None` while that is not known.
-    ///
-    /// Known at filing when an incremental sync asked for the three fields,
-    /// and otherwise from the body's own headers when they arrive: a first
-    /// sync does not ask, since every message it enumerates would pay for
-    /// it (ADR 0025). The filing pass reads it, and `is:bulk` and
-    /// `is:automated` answer from it.
+    /// `None` while not known. Known at filing when an incremental sync asked for the three fields,
+    /// else from the
+    /// body's headers: a first sync does not ask, since every enumerated message would pay for it
+    /// (ADR 0025).
     #[serde(default)]
     pub promoted: Option<crate::promoted::PromotedHeaders>,
 
-    /// `From`. A list because RFC 5322 permits more than one author.
     pub from: Vec<EmailAddress>,
-    /// `Sender`, when it differs from the author.
     pub sender: Option<EmailAddress>,
-    /// `Reply-To`.
     pub reply_to: Vec<EmailAddress>,
-    /// `To`.
     pub to: Vec<EmailAddress>,
-    /// `Cc`.
     pub cc: Vec<EmailAddress>,
     /// `Bcc`. Only ever populated on messages Postio itself sent.
     pub bcc: Vec<EmailAddress>,
 
-    /// `Subject`, verbatim.
     pub subject: Option<String>,
-    /// The `Date` header, as claimed by the sender.
     pub date: Option<DateTime<Utc>>,
     /// When the server received it. Always known; this is the sort key.
     pub received_at: DateTime<Utc>,
 
-    /// Body text and HTML, present once `sync.body_state.has_body()`.
     pub body: MessageBody,
-    /// Whether the text part's own `Content-Type` declared `format=flowed`
-    /// (RFC 3676): `body.text`'s lines are soft-wrapped prose, not breaks
-    /// the sender typed on purpose. `false` for a message with no text
-    /// part, same as any other fact nothing has parsed yet.
-    ///
-    /// A caller quoting `body.text` — replying, forwarding, reopening a
-    /// message this app sent as plain text only — reads this to choose
-    /// between undoing the wrap and taking every line at face value; taking
-    /// an ordinary sender's short lines as the same three typed breaks
-    /// would be exactly as wrong the other way (#456).
+    /// Whether the text part declared `format=flowed` (RFC 3676): `body.text`'s lines are
+    /// soft-wrapped, not typed
+    /// breaks. Callers quoting it choose between undoing the wrap and taking lines at face value
+    /// (#456).
     pub text_is_flowed: bool,
-    /// A short plain-text snippet for the message list.
     pub preview: Option<String>,
-    /// Attachment metadata; the bytes may not be local yet.
     pub attachments: Vec<Attachment>,
-    /// The message's own MIME type — `BODYSTRUCTURE`'s root, not any one
-    /// part's: `multipart/mixed`, `multipart/alternative`, `text/plain`, and
-    /// so on. `None` for a message no `BODYSTRUCTURE` has been parsed for
-    /// yet — a draft still being composed, or a row synced before this field
-    /// existed.
+    /// `BODYSTRUCTURE`'s root type, not any part's. `None` before a structure is parsed.
     pub content_type: Option<String>,
-    /// The `BODYSTRUCTURE` section holding the message's plain-text body —
-    /// `1`, `1.1`, and so on — or `None` when it has none, or when nothing has
-    /// parsed a structure for this row yet.
-    ///
-    /// Recorded because the backfill needs to *name* the part it wants. ADR
-    /// 0017's text axis fetches `BODY.PEEK[<section>]` rather than
-    /// `BODY.PEEK[]`, which is the difference between pulling a message's words
-    /// and pulling the forty-megabyte attachment nobody asked for. The header
-    /// sync already computes this and used to discard it.
+    /// The `BODYSTRUCTURE` section of the plain-text body (`1`, `1.1`), or `None`. Recorded so
+    /// backfill can fetch
+    /// `BODY.PEEK[<section>]` instead of the whole message, attachments included (ADR 0017).
     pub text_part_id: Option<String>,
-    /// That part's MIME headers, rebuilt from `BODYSTRUCTURE`.
-    ///
-    /// `BODY[1.1]` hands back a part's *encoded* bytes and none of its
-    /// headers, so the charset and transfer encoding that explain those bytes
-    /// have to come from somewhere. Prepending this to the fetched section
-    /// makes a self-contained entity [`crate::mime::parse`] can decode,
-    /// without spending a second round trip on `BODY[1.1.MIME]`.
+    /// That part's MIME headers rebuilt from `BODYSTRUCTURE`: `BODY[1.1]` returns encoded bytes
+    /// with no headers,
+    /// so prepending this lets `mime::parse` decode it without a second round trip.
     pub text_part_headers: Option<String>,
-    /// The `BODYSTRUCTURE` section holding the message's HTML body, on the same
-    /// terms as [`Message::text_part_id`].
     pub html_part_id: Option<String>,
-    /// The HTML part's MIME headers, on the same terms as
-    /// [`Message::text_part_headers`].
     pub html_part_headers: Option<String>,
 
-    /// Flags and keywords.
     pub flags: FlagSet,
-    /// Labels applied to this message.
     pub labels: Vec<LabelId>,
-    /// Hidden from ordinary lists until this instant, then self-restoring.
-    ///
-    /// Local only, the same as [`LocalSyncState::deleted_locally`] — no wire
-    /// format carries it, no sync pass ever sets it, and nothing but
-    /// [`crate::ids::MessageId`]-scoped snooze/unsnooze writes it. Living
-    /// here rather than in [`LocalSyncState`] because it is a user
-    /// preference like [`Message::flags`], not sync bookkeeping: a snoozed
-    /// message is not out of step with the server, it is a message the
-    /// server agrees on that the user has asked to see later.
+    /// Local only, like `LocalSyncState::deleted_locally`: no sync pass sets it. A user preference
+    /// like `flags`,
+    /// not sync bookkeeping, so it lives here rather than in `LocalSyncState`.
     pub snoozed_until: Option<DateTime<Utc>>,
-    /// Size in bytes as reported by the server.
     pub size: u64,
-    /// Full header block, preserved for display and for later reparsing.
     pub headers: Headers,
 
-    /// Identifiers assigned by the server.
     pub server: ServerIdentifiers,
-    /// Local synchronization state.
     pub sync: LocalSyncState,
-    /// Blob store key for the raw RFC 5322 bytes, once downloaded.
     pub raw_blob_id: Option<BlobId>,
 }
 
 impl Message {
-    /// Builds an empty, unpersisted message in `mailbox_id`.
     pub fn new(account_id: AccountId, mailbox_id: MailboxId, received_at: DateTime<Utc>) -> Self {
         Self {
             id: MessageId::UNASSIGNED,
@@ -340,33 +236,24 @@ impl Message {
         }
     }
 
-    /// Whether this message has been written to the database.
     pub fn is_persisted(&self) -> bool {
         self.id.is_assigned()
     }
 
-    /// Whether the message declares any attachment or inline part.
     pub fn has_attachments(&self) -> bool {
         !self.attachments.is_empty()
     }
 
-    /// The date to sort and display by: the sender's `Date` when present, else
-    /// the server's receive time.
     pub fn best_date(&self) -> DateTime<Utc> {
         self.date.unwrap_or(self.received_at)
     }
 
-    /// The subject with reply and forward prefixes stripped, for threading and
-    /// for grouping in the UI.
     pub fn normalized_subject(&self) -> String {
         normalize_subject(self.subject.as_deref().unwrap_or_default())
     }
 
-    /// Every ancestor `Message-ID` this message claims, oldest first.
-    ///
-    /// This is the input JWZ threading walks: `References` in order, with
-    /// `In-Reply-To` appended when it is not already the last link. Nothing is
-    /// deduplicated beyond that — the threading pass owns that policy.
+    /// The input JWZ threading walks: `References` in order, with `In-Reply-To` appended when not
+    /// already last.
     pub fn reference_chain(&self) -> impl Iterator<Item = &RfcMessageId> {
         let tail = match &self.in_reply_to {
             Some(in_reply_to) if self.references.last() != Some(in_reply_to) => Some(in_reply_to),
@@ -375,12 +262,10 @@ impl Message {
         self.references.iter().chain(tail)
     }
 
-    /// The address to attribute the message to in the UI.
     pub fn primary_from(&self) -> Option<&EmailAddress> {
         self.from.first().or(self.sender.as_ref())
     }
 
-    /// Every recipient across `To`, `Cc` and `Bcc`, in that order.
     pub fn all_recipients(&self) -> impl Iterator<Item = &EmailAddress> {
         self.to.iter().chain(&self.cc).chain(&self.bcc)
     }
@@ -392,8 +277,6 @@ mod tests {
 
     #[test]
     fn a_content_identity_is_its_namespace_and_key_and_survives_serde() {
-        // Two backends may use the same key for different bytes; the
-        // namespace is what keeps them apart.
         let jmap = ContentIdentity::new("jmap-email", "M1");
         assert_eq!(
             (jmap.namespace.as_str(), jmap.key.as_str()),

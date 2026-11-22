@@ -1,27 +1,8 @@
-//! Say what this build will do with the local store, and start it over when
-//! it cannot be carried forward.
-//!
-//! # Use
-//!
-//! ```sh
-//! cargo run -p postio-session --bin postio-store -- status
-//! cargo run -p postio-session --bin postio-store -- reset
-//! scripts/run-isolated.sh HEAD --reset-store   # the scratch store's
-//! ```
-//!
-//! `status` reads the store's schema stamp and says whether the next open
-//! uses it as it is, migrates it in place, or refuses it. It writes nothing.
-//!
-//! `reset` is `postio_session::start_over`, the same thing Focus's "Start a
-//! fresh store" does: the database, its sidecars and its blobs are moved into
-//! `set-aside/<when>/` beside them -- not deleted -- and a fresh store is
-//! started with the accounts carried across. `config.toml` and the keyring
-//! are not touched. Snoozes, reminders, Focus's filing history, and drafts
-//! and changes not yet sent stay in the store that was set aside.
-//!
-//! The store is the one every Postio uses: `$POSTIO_STORE`, or
-//! `$XDG_DATA_HOME/postio/postio.db`. Outside `scripts/run-isolated.sh`
-//! that is your real one.
+//! Say what this build will do with the local store (`status`, read-only), and start it over when
+//! it cannot be carried forward (`reset`).
+//! `reset` moves the store into `set-aside/<when>/` and carries accounts across; `config.toml` and
+//! the keyring are untouched.
+//! It acts on the real store outside `scripts/run-isolated.sh`.
 
 use std::process::ExitCode;
 
@@ -56,7 +37,6 @@ fn main() -> ExitCode {
     }
 }
 
-/// The store key, or the sentence for why not.
 fn store_key() -> Result<postio_storage::key::StoreKey, ExitCode> {
     postio_session::store_key_blocking(platform_keyring().as_ref()).map_err(|error| {
         eprintln!("postio-store: cannot read the store key (is the keyring unlocked?): {error}");

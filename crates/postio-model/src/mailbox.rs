@@ -1,5 +1,3 @@
-//! Mailboxes (folders) and their special-use roles.
-
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -7,64 +5,39 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{AccountId, Generation, MailboxId, ModSeq, SignatureId, Uid};
 
-/// Whether a role names a folder on the server or a view over messages filed
-/// elsewhere.
-///
-/// The distinction was implicit and enforced three different ways before spec
-/// 003 named it: by `id > 0` in a widget, by an empty `path`, and — for
-/// [`MailboxRole::Snoozed`] — by a `CHECK` constraint that happened not to list
-/// it. A view has a name, a position and a count, and nothing else: no path, no
-/// UIDVALIDITY, no sync state, and no ability to receive a moved message.
+/// A view has a name, position and count and nothing else: no path, UIDVALIDITY or sync state, and
+/// it cannot receive a moved message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum RoleKind {
-    /// A real folder on the server.
     Folder,
-    /// A saved question about messages filed elsewhere.
     View,
 }
 
-/// What a mailbox is *for*, independent of what the server calls it.
-///
-/// Postio routes archive, trash, junk and sent by role, never by name, because
-/// the names differ per provider: iCloud reports `Sent Messages` and
-/// `Deleted Messages` and advertises no RFC 6154 `SPECIAL-USE` attributes for
-/// them. Use [`MailboxRole::resolve`], which trusts the server attribute when
-/// there is one and falls back to name matching when there is not.
+/// Routed by role, never name, since names differ per provider (iCloud reports `Sent Messages` with
+/// no RFC 6154
+/// `SPECIAL-USE`). Use `resolve`: the server attribute first, name matching as fallback.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
 pub enum MailboxRole {
-    /// The account's inbox.
     Inbox,
-    /// Where `a` / `A` archive to.
     Archive,
-    /// Where sent mail is filed.
     Sent,
-    /// Where unsent drafts live.
     Drafts,
-    /// Where deleted mail is moved.
     Trash,
-    /// Junk / spam.
     Junk,
-    /// A server-side flagged/starred view.
     Flagged,
-    /// The sidebar's "Snoozed" view — client-only, the same as [`Self::Flagged`]
-    /// wearing a folder's clothes; no `SPECIAL-USE` attribute names it.
+    /// Client-only; no `SPECIAL-USE` attribute names it.
     Snoozed,
-    /// The sidebar's "Outbox" view: this account's drafts whose send is under
-    /// way. Client-only like the two above — a message on its way is filed in
-    /// Drafts on the server, and no `SPECIAL-USE` attribute names this.
+    /// Client-only: a message on its way is filed in Drafts on the server.
     Outbox,
-    /// An ordinary user folder.
     #[default]
     Regular,
 }
 
 impl MailboxRole {
-    /// Maps an RFC 6154 `SPECIAL-USE` attribute onto a role.
-    ///
-    /// Returns `None` for attributes that are not a role Postio models —
-    /// `\All`, `\HasChildren`, `\Noselect` and friends.
+    /// `None` for attributes that are not a role Postio models (`\All`, `\HasChildren`,
+    /// `\Noselect`).
     pub fn from_special_use(attribute: &str) -> Option<Self> {
         let attribute = attribute
             .trim()
@@ -82,11 +55,9 @@ impl MailboxRole {
         }
     }
 
-    /// Guesses a role from a folder name, for servers that advertise no
-    /// `SPECIAL-USE` — notably iCloud.
-    ///
-    /// Matches the full path first, then the leaf segment, so `INBOX/Drafts`
-    /// resolves but `Projects/Postio` stays [`MailboxRole::Regular`].
+    /// For servers that advertise no `SPECIAL-USE`, notably iCloud. Full path first, then the leaf
+    /// segment, so
+    /// `INBOX/Drafts` resolves but `Projects/Postio` stays `Regular`.
     pub fn guess_from_name(name: &str) -> Self {
         let name = name.trim();
         if name.eq_ignore_ascii_case("inbox") {
@@ -101,9 +72,7 @@ impl MailboxRole {
 
     fn match_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
-            // iCloud uses "Sent Messages"; Outlook/Exchange use "Sent Items".
             "sent" | "sent messages" | "sent items" | "sent mail" => Some(Self::Sent),
-            // iCloud uses "Deleted Messages"; Gmail's UI language uses "Bin".
             "trash" | "deleted messages" | "deleted items" | "bin" | "deleted" => Some(Self::Trash),
             "junk" | "spam" | "junk e-mail" | "junk email" | "bulk mail" => Some(Self::Junk),
             "archive" | "archives" | "archived" => Some(Self::Archive),
@@ -113,10 +82,8 @@ impl MailboxRole {
         }
     }
 
-    /// Resolves a role from server attributes with a name-based fallback.
-    ///
-    /// The server attribute always wins — a folder literally named
-    /// `Sent Messages` that the server marks `\Archive` is an archive.
+    /// The server attribute always wins: a folder named `Sent Messages` that the server marks
+    /// `\Archive` is an archive.
     pub fn resolve<I, S>(attributes: I, name: &str) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -130,16 +97,11 @@ impl MailboxRole {
         Self::guess_from_name(name)
     }
 
-    /// Whether this is a special-use role rather than an ordinary folder.
     pub fn is_special(self) -> bool {
         !matches!(self, Self::Regular)
     }
 
-    /// The inverse of [`MailboxRole::as_str`].
-    ///
-    /// Parses the stable identifier a role is *stored* as. Distinct from
-    /// [`MailboxRole::guess_from_name`], which guesses a role from the folder
-    /// name a server reported; this one only ever accepts what `as_str` emits.
+    /// Accepts only what `as_str` emits, unlike `guess_from_name`.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "inbox" => Some(Self::Inbox),
@@ -156,10 +118,7 @@ impl MailboxRole {
         }
     }
 
-    /// The roles every account must have a real folder for (spec 003 FR-026).
-    ///
-    /// [`Self::Regular`] is a folder but is not among them: an account is owed
-    /// an Inbox, not an arbitrary user folder.
+    /// `Regular` is not among them: an account is owed an Inbox, not an arbitrary folder.
     pub const RESERVED: [Self; 6] = [
         Self::Inbox,
         Self::Archive,
@@ -169,14 +128,10 @@ impl MailboxRole {
         Self::Junk,
     ];
 
-    /// Whether this role names a folder or is a view over messages filed
-    /// elsewhere.
-    ///
-    /// Exhaustive with no fallback arm, so a new role is a compile error until
-    /// it is classified — which is the point. A [`RoleKind::View`] must never
-    /// be stored (`MailboxRepository` refuses it, and the schema's `CHECK`
-    /// lists only the folder spellings) and must never be handed to anything
-    /// asking where a message could be put.
+    /// Exhaustive with no fallback arm, so a new role fails to compile until classified. A `View`
+    /// must never be
+    /// stored (`MailboxRepository` refuses it; the schema's `CHECK` lists only folders) nor offered
+    /// as a destination.
     pub fn kind(self) -> RoleKind {
         match self {
             Self::Inbox
@@ -186,11 +141,9 @@ impl MailboxRole {
             | Self::Trash
             | Self::Junk
             | Self::Regular
-            // A folder, despite also being a sidebar view. RFC 6154 defines
-            // `\Flagged` as a `SPECIAL-USE` attribute and
-            // [`Self::from_special_use`] honours it, so a server really can
-            // have this folder -- Gmail's "Starred" is one. The synthetic
-            // Flagged row exists for accounts whose server does not.
+            // A folder despite being a sidebar view: RFC 6154 defines `\Flagged` as `SPECIAL-USE`
+            // (Gmail's Starred);
+            // the synthetic row is for servers without one.
             | Self::Flagged => RoleKind::Folder,
             // Neither has a `SPECIAL-USE` attribute, so discovery can never
             // assign one and no server can advertise one.
@@ -198,7 +151,6 @@ impl MailboxRole {
         }
     }
 
-    /// A stable lowercase identifier, for storage and config.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Inbox => "inbox",
@@ -215,38 +167,22 @@ impl MailboxRole {
     }
 }
 
-/// Folder paths the user has assigned a role to by hand.
-///
-/// A third tier above the two [`MailboxRole::resolve`] already has, and the
-/// one that makes the other two admit they can be wrong. `SPECIAL-USE` covers
-/// servers that advertise it and name-matching covers the spellings Postio has
-/// been taught; neither covers a self-hosted server that advertises nothing
-/// and names its folders in a language nobody added to the list. On that
-/// server every role-driven verb — archive, delete, junk, file as sent —
-/// refuses permanently, and refusing is the honest answer only for as long as
-/// there is no way to say what the folder actually is (#164).
-///
-/// Keyed by the **path the server reports**, delimiters and all, rather than
-/// by the leaf name: two folders can both be called `Old` under different
-/// parents, and a leaf match would silently pick one of them.
-///
-/// The default is empty, and an empty set resolves exactly as
-/// [`MailboxRole::resolve`] does. That is a property worth stating because
-/// every account that never writes `[mailboxes]` goes through this path.
+/// Folder paths the user assigned a role by hand: a third tier above `resolve`, for self-hosted
+/// servers that advertise
+/// nothing and name folders in an unlisted language, where every role verb would refuse permanently
+/// (#164). Keyed by the
+/// full server path, not the leaf, since two folders can share a leaf. An empty set resolves
+/// exactly as `MailboxRole::resolve`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoleOverrides {
-    /// Path to role. Inverted from the `role = "path"` config writes, because
-    /// resolution asks "what is this folder for", never "where is archive".
+    /// Path to role, inverted from the config's `role = "path"` because resolution asks what a
+    /// folder is for.
     by_path: BTreeMap<String, MailboxRole>,
 }
 
 impl RoleOverrides {
-    /// Builds a set from `role = path` pairs, as `[mailboxes]` spells them.
-    ///
-    /// One folder per role: the last pair for a role wins, mirroring what a
-    /// TOML table does with a repeated key. Roles are looked up *by role*
-    /// downstream — `by_role(account, Archive)` returns one mailbox — so two
-    /// folders wearing one role is a state nothing can act on.
+    /// One folder per role: the last pair for a role wins, as in a TOML table, since two folders on
+    /// one role cannot be acted on.
     pub fn from_pairs<I, S>(pairs: I) -> Self
     where
         I: IntoIterator<Item = (MailboxRole, S)>,
@@ -264,12 +200,10 @@ impl RoleOverrides {
         }
     }
 
-    /// Whether anything has been overridden at all.
     pub fn is_empty(&self) -> bool {
         self.by_path.is_empty()
     }
 
-    /// Every mapping, as `(role, path)` pairs in role order.
     pub fn pairs(&self) -> impl Iterator<Item = (MailboxRole, &str)> {
         let mut pairs: Vec<(MailboxRole, &str)> = self
             .by_path
@@ -280,14 +214,8 @@ impl RoleOverrides {
         pairs.into_iter()
     }
 
-    /// These mappings with `pairs` laid over them: a role `pairs` names is
-    /// theirs, every other role stays as it was.
-    ///
-    /// How an account's own map (ADR 0035) sits on `[mailboxes]`: the file is
-    /// one table for every account and the store holds what the user said
-    /// about this one, so the store wins where it speaks and the file fills in
-    /// where it does not. One folder per role survives, because
-    /// [`from_pairs`](Self::from_pairs) keeps the last pair for a role.
+    /// How an account's own map (ADR 0035) sits on `[mailboxes]`: the store wins where it speaks,
+    /// the file fills in the rest.
     pub fn over<I, S>(&self, pairs: I) -> Self
     where
         I: IntoIterator<Item = (MailboxRole, S)>,
@@ -300,24 +228,13 @@ impl RoleOverrides {
         )
     }
 
-    /// The role the user assigned to `path`, if they assigned one.
     pub fn role_for(&self, path: &str) -> Option<MailboxRole> {
         self.by_path.get(path).copied()
     }
 
-    /// The full precedence: **override, then `SPECIAL-USE`, then the name.**
-    ///
-    /// Above `SPECIAL-USE` and not merely above the name guess. A server that
-    /// marks a folder `\Junk` is usually right, and "usually" is exactly what
-    /// an override is for — the user has looked at their own server and
-    /// disagreed, and there is no reading of that in which Postio knows
-    /// better.
-    ///
-    /// One function with three tiers rather than a second code path, which is
-    /// what keeps the precedence stateable in one place. It is called from
-    /// folder reconciliation rather than from the IMAP edge where `resolve`
-    /// runs, because the edge parses what the *server* said and has no
-    /// business reading the user's configuration.
+    /// Precedence: override, then `SPECIAL-USE`, then the name; the user looked at their own server
+    /// and disagreed. Called
+    /// from folder reconciliation, not the IMAP edge, which must not read user configuration.
     pub fn resolve<I, S>(&self, attributes: I, path: &str) -> MailboxRole
     where
         I: IntoIterator<Item = S>,
@@ -326,114 +243,69 @@ impl RoleOverrides {
         self.settle(MailboxRole::resolve(attributes, path), path)
     }
 
-    /// The same precedence, over a role the backend has already settled.
-    ///
-    /// A listing arrives with its contested roles resolved -- the server's
-    /// claim first, then the shallowest name, then the alphabet -- and that
-    /// verdict is what the user's mapping goes on top of. Re-deriving the
-    /// role from the name here would hand a look-alike its role straight
-    /// back, which is how one account ended up with two `sent` folders
-    /// (#943).
+    /// Over a role the backend already settled (server claim, shallowest name, alphabet):
+    /// re-deriving from the name
+    /// would hand a look-alike its role back, giving one account two `sent` folders (#943).
     pub fn settle(&self, natural: MailboxRole, path: &str) -> MailboxRole {
         if let Some(role) = self.role_for(path) {
             return role;
         }
-        // A role the user has pinned to some *other* folder is spoken for, so
-        // this one cannot also claim it. Without this, pointing `archive` at a
-        // new folder on a server that already has one called `Archive` leaves
-        // two rows wearing the role, and `by_role` returns whichever the query
-        // reaches first -- so archiving would go to an arbitrary one of them,
-        // and which one could change between runs. Demoted to `Regular`,
-        // which is what the folder is once it is not the archive.
+        // A role pinned to another folder is spoken for: otherwise two rows wear it and `by_role`
+        // returns an
+        // arbitrary one, varying between runs. Demoted to `Regular`.
         if self.claims(natural) {
             return MailboxRole::Regular;
         }
         natural
     }
 
-    /// Whether some folder has been pinned to `role`.
     fn claims(&self, role: MailboxRole) -> bool {
         self.by_path.values().any(|pinned| *pinned == role)
     }
 }
 
-/// Cached message counts for a mailbox, so the sidebar never counts rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct MailboxCounts {
-    /// Total messages.
     pub total: u32,
-    /// Messages without `\Seen`.
     pub unread: u32,
-    /// Messages with `\Flagged`.
     pub flagged: u32,
-    /// Messages currently snoozed (`snoozed_until` in the future).
     pub snoozed: u32,
-    /// Messages here that have stopped and are waiting for a person.
-    ///
-    /// Only Drafts ever has one: a send that failed, or one nobody can
-    /// confirm (spec 003 FR-022). Every other folder's mail arrived on its
-    /// own and is not waiting on anybody.
-    ///
-    /// Not maintained by the count triggers, unlike the four above — it is a
-    /// question about draft state rather than about message rows, and
-    /// `MailboxRepository::draft_counts` is what answers it. The sidebar's
-    /// feed fills it in before the row is drawn.
+    /// Only Drafts has one: failed or unconfirmed sends. Not maintained by the count triggers:
+    /// `MailboxRepository::draft_counts` answers it and the sidebar feed fills it in before the row
+    /// is drawn.
     pub attention: u32,
 }
 
-/// A folder on the server, mirrored locally.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mailbox {
-    /// Local id.
     pub id: MailboxId,
-    /// Owning account.
     pub account_id: AccountId,
-    /// Parent folder, when the hierarchy is known.
     pub parent_id: Option<MailboxId>,
-    /// Leaf name, for display.
     pub name: String,
-    /// Full server path, including hierarchy delimiters.
     pub path: String,
-    /// Hierarchy delimiter reported by the server, if any.
     pub delimiter: Option<char>,
-    /// What this folder is for.
     pub role: MailboxRole,
-    /// Whether the folder can hold messages (`\Noselect` folders cannot).
     pub selectable: bool,
-    /// Whether the account is subscribed to it.
     pub subscribed: bool,
-    /// A signature that overrides the account's own default when composing
-    /// from this folder (#394) — see [`crate::signature_default::resolve`]. Local
-    /// preference, never server state: unlike every field below these two,
-    /// nothing in a sync pass ever sets or reads it.
+    /// Overrides the account's default signature when composing from this folder (#394). Local
+    /// preference, never server state.
     #[serde(default)]
     pub signature_id: Option<SignatureId>,
-    /// Excludes this folder from the background backfill lane — both axes
-    /// ADR 0017 split it into, headers/text and attachment payloads (ADR
-    /// 0016, #350). The same local-preference shape as `signature_id`
-    /// immediately above: `postio-sync::discover::reconcile` clones the
-    /// existing row and copies across only what the server's `LIST` said, so
-    /// this survives a resync exactly the way `signature_id` does. Turning
-    /// it on does not delete or expire anything already pulled, and does not
-    /// stop an interactive, on-open fetch — the same distinction
-    /// `postio-sync`'s `BackfillPolicy::background` draws for its
-    /// account-wide knob; this is that knob, narrowed to one folder.
+    /// Excludes this folder from the background backfill lane, both axes (ADR 0016, 0017, #350).
+    /// Survives a resync because
+    /// `discover::reconcile` copies across only what `LIST` said. Deletes nothing already pulled;
+    /// interactive on-open fetches still run.
     #[serde(default)]
     pub backfill_excluded: bool,
-    /// Cached counts.
     pub counts: MailboxCounts,
     /// Generation of the mailbox's UID space; a change invalidates every UID.
     pub generation: Option<Generation>,
-    /// The UID the server will assign next.
     pub uid_next: Option<Uid>,
-    /// Highest modification sequence seen, for incremental resync.
     pub highest_mod_seq: Option<ModSeq>,
-    /// When this mailbox last completed a sync.
     pub last_synced_at: Option<DateTime<Utc>>,
 }
 
 impl Mailbox {
-    /// Builds an unpersisted mailbox, deriving its leaf name and role from `path`.
     pub fn new(account_id: AccountId, path: impl Into<String>, delimiter: Option<char>) -> Self {
         let path = path.into();
         let name = match delimiter {
@@ -461,10 +333,7 @@ impl Mailbox {
         }
     }
 
-    /// Whether every UID cached for this mailbox is stale under `observed`.
-    ///
-    /// A `UIDVALIDITY` change means the server reused or renumbered the UID
-    /// space and the mailbox must be resynchronized from scratch.
+    /// A change means the server reused or renumbered the UID space: resync from scratch.
     pub fn generation_changed(&self, observed: Generation) -> bool {
         matches!(self.generation, Some(known) if known != observed)
     }
@@ -492,13 +361,10 @@ mod tests {
         assert_eq!(MailboxRole::from_name("nonsense"), None);
     }
 
-    // ── Folder or view (spec 003, FR-037/FR-041) ─────────────────────────
-
     #[test]
     fn every_role_is_a_folder_or_a_view() {
-        // Exhaustive on purpose: adding a role without classifying it should
-        // not compile, and the count is asserted so a variant cannot be
-        // quietly dropped from this list instead.
+        // Exhaustive on purpose, with the count asserted so a variant cannot be dropped from this
+        // list.
         let all = [
             MailboxRole::Inbox,
             MailboxRole::Archive,
@@ -513,7 +379,6 @@ mod tests {
         ];
         assert_eq!(all.len(), 10, "a role was added without reaching this test");
         for role in all {
-            // Total: the match in `kind` has no fallback arm.
             let _ = role.kind();
         }
     }
@@ -543,10 +408,8 @@ mod tests {
                 "{role:?} names a folder on the server"
             );
         }
-        // Flagged is the one that is both, and the reason the split is by
-        // `SPECIAL-USE` rather than by "does the sidebar synthesise a row".
-        // RFC 6154 defines `\Flagged`, so a server can really have this
-        // folder; `Snoozed` and `Outbox` have no attribute and never can.
+        // `Flagged` is both: RFC 6154 defines it, so a server can have this folder; `Snoozed` and
+        // `Outbox` have no attribute.
         assert_eq!(
             MailboxRole::from_special_use("\\Flagged"),
             Some(MailboxRole::Flagged)
@@ -568,10 +431,8 @@ mod tests {
                 MailboxRole::Junk,
             ]
         );
-        // `Regular` is a folder but is not reserved: an account is not owed one.
         assert_eq!(MailboxRole::Regular.kind(), RoleKind::Folder);
         assert!(!MailboxRole::RESERVED.contains(&MailboxRole::Regular));
-        // Every reserved role is a folder -- a view could never be created.
         for role in MailboxRole::RESERVED {
             assert_eq!(role.kind(), RoleKind::Folder);
         }
@@ -579,8 +440,6 @@ mod tests {
 
     #[test]
     fn the_outbox_round_trips_through_its_stored_identifier() {
-        // It can never be *stored*, but the spelling is the one config and
-        // the registry use, so it must survive the round trip like the rest.
         assert_eq!(MailboxRole::Outbox.as_str(), "outbox");
         assert_eq!(MailboxRole::from_name("outbox"), Some(MailboxRole::Outbox));
     }

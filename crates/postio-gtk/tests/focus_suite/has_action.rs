@@ -1,8 +1,3 @@
-//! US1 scenario 5: `!` narrows the inbox to the rows with a marker (FR-017).
-//! The toggle carries the count, the strip says how many of how many are
-//! showing, the selection is cleared, and the cursor stays on the same
-//! message while it is still shown. `!` again restores the inbox.
-
 use crate::support::{self, Fixture, only, texts};
 
 pub fn has_action_narrows_to_the_marked_rows_and_back() {
@@ -12,7 +7,6 @@ pub fn has_action_narrows_to_the_marked_rows_and_back() {
         }
         let fixture = Fixture::empty().await;
         let filed = fixture.file_five().await;
-        // Second and Fourth ask something.
         fixture.ask(filed[1], "Can you look at this?").await;
         fixture.ask(filed[3], "Could you sign it by Friday?").await;
         let (window, client) = fixture.open_five().await;
@@ -34,7 +28,6 @@ pub fn has_action_narrows_to_the_marked_rows_and_back() {
             texts(&only(&window, "focus-counts"))
         );
 
-        // First selected; the cursor on Fourth, which is marked.
         support::keys(&window, &["x", "j", "j", "j"]);
         assert!(!window.selection().is_empty());
 
@@ -84,8 +77,6 @@ pub fn has_action_narrows_to_the_marked_rows_and_back() {
     });
 }
 
-/// Going to another place takes `!` with it: the narrowed list is the
-/// inbox's, and a selection made in it names rows that are not there.
 pub fn going_home_leaves_the_filter_off_and_the_selection_gone() {
     crate::gtk_case(async {
         if !support::display() {
@@ -125,7 +116,6 @@ pub fn going_home_leaves_the_filter_off_and_the_selection_gone() {
             window.selection().is_empty(),
             "the selection did not follow the list to the inbox"
         );
-        // `!` is off: pressing it narrows again rather than widening.
         support::keys(&window, &["exclam"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 2).await,

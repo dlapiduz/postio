@@ -1,8 +1,3 @@
-//! The cursor and the selection are two things (constitution II; FR-015):
-//! the cursor is where the keyboard is, the selection is what `e` would
-//! archive, and the bulk bar says what is selected and what to do with it
-//! (T045; US1 scenario 3).
-
 use gtk::prelude::*;
 use postio_core::{CommandId, Keymap};
 
@@ -16,8 +11,6 @@ pub fn three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three() {
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
 
-        // x on the first three, stepping with j, and j once more: the
-        // cursor sits on the fourth, which is not selected.
         support::keys(&window, &["x", "j", "x", "j", "x", "j"]);
         let bar = only(&window, "focus-bulk-bar");
         assert!(
@@ -50,8 +43,6 @@ pub fn three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three() {
     });
 }
 
-/// `a a` works down the list (#1746): the row below the archived one takes
-/// the cursor, so the second `e` archives it rather than nothing.
 pub fn archive_hands_the_cursor_to_the_row_below() {
     crate::gtk_case(async {
         if !support::display() {
@@ -127,10 +118,8 @@ pub fn escape_clears_the_selection_and_the_cursor_stays() {
 }
 
 pub fn a_select_all_archives_what_focus_lists_and_never_held_mail() {
-    // `X` is a predicate over the view (FR-015), so which view it names is
-    // the whole question: Focus's inbox leaves out held digest mail, and the
-    // unified inbox does not. `e` after `X` must take exactly what the list
-    // shows (T167).
+    // `X` is a predicate over the view: Focus's inbox leaves out held digest mail and the unified
+    // inbox does not, so `e` after `X` must take exactly what the list shows.
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -173,15 +162,12 @@ pub fn a_select_all_archives_what_focus_lists_and_never_held_mail() {
     });
 }
 
-/// The button named `class` under `root`, as a person would press it.
 fn button(root: &impl IsA<gtk::Widget>, class: &str) -> gtk::Button {
     only(root, class)
         .downcast::<gtk::Button>()
         .expect("a button")
 }
 
-/// T179: Delete has a button with its key on the bulk bar, and pressing it
-/// deletes what is selected, as the key does.
 pub fn the_bulk_bar_has_a_delete_button_that_deletes_the_selection() {
     crate::gtk_case(async {
         if !support::display() {

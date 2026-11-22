@@ -1,13 +1,3 @@
-//! Focus's inbox, counted (spec 007, `contracts/engine.md`, "Store").
-//!
-//! Focus reads its inbox as conversations over every enabled account's
-//! inbox -- the unified inbox's membership -- in at most three statements a
-//! page: the window, its participants, and its markers once Focus has them.
-//! The window is one statement however many accounts there are, each inbox
-//! sought through its own list index and the few rows merged in that same
-//! statement, so a page reads what it shows and never an inbox, let alone
-//! the archive underneath it.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::listing::{InviteAnswer, MarkerKind, MarkerSummary, MarkerWhen};
@@ -50,10 +40,6 @@ async fn file(
     (id, threaded.thread_id)
 }
 
-/// Two accounts, each with an inbox and an archive, and a third that is
-/// switched off; conversations in every one of them.
-///
-/// Answers the two enabled inboxes, in the order the store names them.
 async fn world(connection: &Connection) -> Vec<(AccountId, MailboxId)> {
     let (ada, ada_inbox) = test_support::account_with_inbox(connection).await;
     let ada_archive = test_support::mailbox(connection, &ada, "Archive").await.id;
@@ -76,8 +62,6 @@ async fn world(connection: &Connection) -> Vec<(AccountId, MailboxId)> {
 
     let ada_in = (ada.id, ada_inbox);
     let grace_in = (grace.id, grace_inbox);
-    // A conversation of three in Ada's inbox, its newest reply archived: the
-    // row is drawn from its newest member *in the inbox*.
     file(
         connection,
         ada_in,
@@ -105,7 +89,6 @@ async fn world(connection: &Connection) -> Vec<(AccountId, MailboxId)> {
         "quinn@example.com",
     )
     .await;
-    // One of one, in Ada's inbox.
     file(
         connection,
         ada_in,
@@ -115,7 +98,6 @@ async fn world(connection: &Connection) -> Vec<(AccountId, MailboxId)> {
         "ada@example.com",
     )
     .await;
-    // Archived whole: not Focus's.
     file(
         connection,
         (ada.id, ada_archive),
@@ -125,7 +107,6 @@ async fn world(connection: &Connection) -> Vec<(AccountId, MailboxId)> {
         "tove@example.com",
     )
     .await;
-    // A snoozed message is not a row until its time comes.
     let (snoozed, _) = file(
         connection,
         ada_in,
@@ -139,7 +120,6 @@ async fn world(connection: &Connection) -> Vec<(AccountId, MailboxId)> {
         .snooze(&[snoozed], Utc::now() + TimeDelta::days(1))
         .await
         .expect("snooze");
-    // Grace's inbox, interleaved in time with Ada's.
     file(
         connection,
         grace_in,
@@ -167,7 +147,6 @@ async fn world(connection: &Connection) -> Vec<(AccountId, MailboxId)> {
         "tove@example.com",
     )
     .await;
-    // The account that is off: nothing of it is listed.
     file(
         connection,
         (off.id, off_inbox),
@@ -206,14 +185,10 @@ fn focus(
     }
 }
 
-/// The rows a page of groups draws.
 fn rows(groups: Vec<ThreadGroup>) -> Vec<ThreadListRow> {
     groups.into_iter().map(|group| group.row).collect()
 }
 
-/// The same announcement delivered to both enabled inboxes: Ada's copy at
-/// `hour`, Grace's an hour later. Answers the two copies' threads, Ada's
-/// first.
 async fn delivered_to_both(
     connection: &Connection,
     inboxes: &[(AccountId, MailboxId)],
@@ -241,8 +216,6 @@ async fn delivered_to_both(
     ((ada.0, ada_copy), (grace.0, grace_copy))
 }
 
-/// The rows each inbox's own folder list shows, merged newest first: what
-/// Focus's inbox is today, row for row.
 async fn every_inbox_s_rows(
     connection: &Connection,
     inboxes: &[(AccountId, MailboxId)],
@@ -301,9 +274,6 @@ async fn focus_s_inbox_is_every_enabled_inbox_s_conversations_newest_first() {
     );
 }
 
-/// Three more conversations of one in Ada's inbox, and one of two, so her
-/// inbox alone is a page long enough to show a cost that grows with its
-/// rows.
 async fn more_of_ada_s(connection: &Connection, ada: (AccountId, MailboxId)) {
     for (hour, rfc) in [
         (11, "<weir@example.com>"),
@@ -330,11 +300,9 @@ async fn a_one_account_focus_page_is_at_most_three_statements_and_reads_only_wha
     let connection = database.connect().await.expect("checkout");
     let inboxes = world(&connection).await;
     more_of_ada_s(&connection, inboxes[0]).await;
-    // One account enabled: one inbox, and nothing any row could fold with.
     let alone = &inboxes[..1];
     let threads = ThreadRepository::new(&connection);
     let query = focus(alone, 50, None);
-    // Warm: this is about the page's shape, not a cold statement cache.
     let _ = threads
         .focus_page_at(&query, 0)
         .await
@@ -370,7 +338,6 @@ async fn a_one_account_focus_page_is_at_most_three_statements_and_reads_only_wha
          their participants, and nothing read to be thrown away"
     );
 
-    // A page resumed from a cursor costs the same.
     let head = threads
         .focus_page_at(&focus(alone, 2, None), 0)
         .await
@@ -385,7 +352,6 @@ async fn a_one_account_focus_page_is_at_most_three_statements_and_reads_only_wha
     .await;
     assert!(resumed.statements <= 3 + 1, "{resumed:?}");
 
-    // One inbox is its own list's seek: no scan and no sort at all.
     for (label, query) in [
         ("first", focus(alone, 50, None)),
         ("resumed", focus(alone, 2, after)),
@@ -411,9 +377,6 @@ async fn a_focus_window_over_several_inboxes_merges_their_seeks_and_scans_no_tab
         .expect("a head");
     let after = Some(head.last().expect("two rows").cursor());
 
-    // No mail table is scanned: each inbox is sought through its own list
-    // index, and the only thing walked whole is the few rows those seeks
-    // produced, merged.
     for (label, query) in [
         ("first", focus(&inboxes, 50, None)),
         ("resumed", focus(&inboxes, 2, after)),
@@ -464,8 +427,6 @@ async fn a_conversation_that_reached_two_inboxes_is_one_focus_row_as_it_is_in_un
         "dedupe is display-only, by Message-ID: two rows, one message"
     );
 
-    // Row for row, members and counts, what the unified inbox shows: the
-    // same partner search, not a second one.
     let unified = threads
         .unified_page(&UnifiedThreadListQuery {
             limit: 50,
@@ -475,7 +436,6 @@ async fn a_conversation_that_reached_two_inboxes_is_one_focus_row_as_it_is_in_un
         .expect("Unified's page");
     assert_eq!(page, unified, "Focus's inbox folds as Unified does");
 
-    // And the count, the cursor walk and the offsets agree with the page.
     assert_eq!(
         threads.focus_count(&inboxes).await.expect("a count") as usize,
         page.len(),
@@ -522,10 +482,8 @@ async fn folding_across_accounts_adds_only_the_partner_search_unified_pays() {
     .await;
     let folded = page.iter().filter(|group| group.members.len() > 1).count();
     assert_eq!(folded, 1, "the fixture folds one row");
-    // The page's own three, the partner search's five -- the threads, their
-    // roots, partners by root, by subject, and where those are in view --
-    // one to dedupe each folded row's counts, and the one that reads the
-    // page's mutes (spec 013).
+    // The page's three statements, the partner search's five, one per folded row's counts, and one
+    // reading the page's mutes (spec 013).
     assert!(
         counts.statements <= 3 + 1 + 5 + folded,
         "a two-account Focus page took {} statements: {counts:?}",
@@ -613,7 +571,6 @@ async fn focus_s_inbox_is_counted_in_one_statement_from_an_index() {
     );
 }
 
-/// The message filed as `rfc`.
 async fn id_of(connection: &Connection, rfc: &str) -> MessageId {
     MessageId::new(
         postio_storage::sql::one(
@@ -644,10 +601,6 @@ fn marker(message: MessageId, kind: MarkerKind, excerpt: Option<&str>) -> Marker
     }
 }
 
-/// Markers on Ada's inbox: a question on the *older* message of the gate
-/// conversation, a to-do and a dismissed one on two conversations of one,
-/// a cancelled invitation someone had accepted on a third, and one on each
-/// message of the dam conversation, whose newer one the row draws.
 async fn mark_ada_s(connection: &Connection) -> Vec<(&'static str, Option<MarkerSummary>)> {
     let markers = MarkerRepository::new(connection);
     markers
@@ -883,8 +836,6 @@ async fn markers_are_focus_s_and_a_classic_list_neither_reads_nor_draws_them() {
     );
 }
 
-/// Every row of Focus's inbox over `inboxes`, three ways -- one page, a
-/// cursor walk, and offsets -- after checking the three and the count agree.
 async fn agreed(
     threads: &ThreadRepository<'_>,
     inboxes: &[(AccountId, MailboxId)],
@@ -936,8 +887,6 @@ async fn held_mail_leaves_focus_s_inbox_at_every_membership_site() {
     mark_ada_s(&connection).await;
     let threads = ThreadRepository::new(&connection);
     let digests = DigestRepository::new(&connection);
-    // A conversation of one, held whole; and the newest message of the dam
-    // conversation, which leaves its older message to draw the row.
     for rfc in ["<weir@example.com>", "<dam-2@example.com>"] {
         digests
             .hold(id_of(&connection, rfc).await, "Newsletters", at(20))
@@ -972,7 +921,6 @@ async fn held_mail_leaves_focus_s_inbox_at_every_membership_site() {
         );
     }
 
-    // Holding is Focus's: the classic inbox and Unified still list it all.
     let (ada, ada_inbox) = inboxes[0];
     let folder = threads
         .page(&ThreadListQuery::in_mailbox(ada, ada_inbox).limit(50))
@@ -1015,7 +963,6 @@ async fn held_mail_rejoins_when_released_or_when_its_delivery_is_archived() {
     }
     assert_eq!(agreed(&threads, alone).await.len(), before - 3);
 
-    // Delivered, the mail is the digest's row, not three of the inbox's.
     let delivery = digests
         .deliver("Newsletters", at(30), at(30))
         .await
@@ -1023,13 +970,11 @@ async fn held_mail_rejoins_when_released_or_when_its_delivery_is_archived() {
         .expect("it held something");
     assert_eq!(agreed(&threads, alone).await.len(), before - 3);
 
-    // Released -- its sender stopped, or its rule removed -- it rejoins.
     digests.release(lock).await.expect("released");
     let rows = agreed(&threads, alone).await;
     assert_eq!(rows.len(), before - 2);
     assert!(subjects(&rows).contains(&"About <lock@example.com>"));
 
-    // The delivery archived, its holds no longer keep anything out.
     digests
         .archive_delivery(delivery, at(31))
         .await
@@ -1101,11 +1046,9 @@ async fn leaving_held_mail_out_costs_no_statement_and_scans_nothing() {
 
 #[tokio::test]
 async fn which_conversations_draw_a_marker_is_one_statement_sought_from_the_markers() {
-    // The has-action filter (spec 007 US1 scenario 5, T048): its rows are
-    // the Focus rows that draw a marker, and which those are is read from
-    // the markers -- a few hundred -- rather than by walking an inbox of a
-    // hundred thousand to ask each row. `idx_markers_open` was planned as a
-    // partial index, which this engine's planner does not read.
+    // Which rows draw a marker is read from the markers, not by walking an inbox;
+    // `idx_markers_open`
+    // cannot be partial because this engine's planner does not read partial indexes.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let inboxes = world(&connection).await;
@@ -1222,8 +1165,6 @@ async fn focus_s_unread_count_is_its_unread_conversations_in_one_statement() {
     let inboxes = world(&connection).await;
     let alone = &inboxes[..1];
     let threads = ThreadRepository::new(&connection);
-    // Every fixture message arrives unread: gate and tide are Ada's two
-    // conversations, and the snoozed one is not a row.
     let mut unread = 0;
     let counts = counted_async(|| async {
         unread = threads.focus_unread(alone).await.expect("the count");
@@ -1241,10 +1182,6 @@ async fn focus_s_unread_count_is_its_unread_conversations_in_one_statement() {
 
 #[tokio::test]
 async fn a_conversation_in_two_inboxes_counts_once_in_each_figure() {
-    // T168: Focus's inbox folds a conversation received at two addresses
-    // into one row (T161), so its header's figures count it once too: once
-    // unread, and once among the rows with an action, where the has-action
-    // filter draws it as one row naming both copies.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let inboxes = world(&connection).await;
@@ -1333,9 +1270,6 @@ async fn a_conversation_in_two_inboxes_counts_once_in_each_figure() {
         "the has-action figure is the filter's rows"
     );
 
-    // Counted: the one statement each, and the partner search the inbox
-    // page already pays -- the threads, their roots, partners by root, by
-    // subject, and where those are in view.
     assert!(
         unread_counts.statements <= 1 + 5,
         "folding the unread figure took {unread_counts:?}"
@@ -1348,11 +1282,6 @@ async fn a_conversation_in_two_inboxes_counts_once_in_each_figure() {
 
 #[tokio::test]
 async fn a_surfaced_conversation_is_its_reminder_row_and_not_listed_twice() {
-    // Spec 007 T095: a reminder that fired stands in Focus's inbox as its
-    // own row, spliced at its position; the conversation's ordinary row
-    // leaves at every membership site -- the window, the count and the
-    // positions -- so it is never listed twice, and comes back when the
-    // reminder settles. Its position is one statement.
     use postio_storage::repository::ReminderRepository;
 
     let database = test_support::memory().await;
@@ -1475,10 +1404,6 @@ async fn a_surfaced_conversation_is_its_reminder_row_and_not_listed_twice() {
 
 #[tokio::test]
 async fn which_arrivals_stayed_in_focus_is_one_statement() {
-    // FR-153: Focus never notifies for mail it filtered or held. Of the
-    // messages an arrival names, only those Focus's inbox still lists are
-    // worth one: not a held message, not a filtered one, not one that has
-    // since left the inbox.
     use postio_storage::repository::{
         FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason,
     };
@@ -1528,9 +1453,6 @@ async fn which_arrivals_stayed_in_focus_is_one_statement() {
 
 #[tokio::test]
 async fn a_muted_conversation_is_drawn_muted_for_one_statement_and_its_mutes_rows() {
-    // Spec 013 T061: a page with mutes costs a page without + 1, and reads
-    // one row per mute on top of what it shows. (`counting` does not see
-    // trigger firings; no trigger fires on this read.)
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let inboxes = world(&connection).await;

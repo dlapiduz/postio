@@ -1,16 +1,11 @@
-//! Focus's keyboard: the one keymap, bound for Focus alone.
-//!
-//! Every app shares one keymap (spec 007, Clarifications), and a command only
-//! another app offers keeps its key there. Focus binds only the commands it
-//! offers (`Resolver::from_commands_for(.., Frontend::Focus)`, T029), so a
-//! key the keymap keeps for another frontend -- `ctrl+shift+e` hands the
-//! terminal's composer to an editor -- does what an unbound key does here, rather than reaching a command Focus
-//! would refuse as "not wired up".
+//! Focus binds only the commands it offers, so a key the keymap keeps for another frontend
+//! (`ctrl+shift+e` hands the terminal's
+//! composer to an editor) does what an unbound key does here, rather than reaching a command Focus
+//! would refuse.
 
 use postio_core::{Frontend, Keymap};
 use postio_ui::keymap::Resolver;
 
-/// The resolver Focus presses keys through, and what could not be bound.
 pub fn resolver(keymap: &Keymap) -> (Resolver, Vec<String>) {
     Resolver::from_commands_for(keymap, Frontend::Focus)
 }
@@ -59,8 +54,6 @@ mod tests {
 
     #[test]
     fn filtered_and_a_digest_walk_open_and_go_back_as_the_list_does() {
-        // Screen 21's footer, and the digest window's list: j and k walk
-        // the rows, Return opens the focused one, g i goes to the inbox.
         let (mut resolver, _) = resolver(Keymap::defaults());
         for context in [KeyContext::Filtered, KeyContext::Digest] {
             for (key, command) in [
@@ -88,9 +81,8 @@ mod tests {
 
     #[test]
     fn mod_z_undoes_in_a_digest_and_in_filtered() {
-        // contracts/keymap.md, "Digests and Filtered": archiving a whole
-        // digest and restoring from Filtered are each one undoable action
-        // (FR-125), so the undo key has to reach them there too.
+        // Archiving a whole digest and restoring from Filtered are each one undoable action, so the
+        // undo key has to reach them there too.
         let (mut resolver, _) = resolver(Keymap::defaults());
         for context in [KeyContext::Digest, KeyContext::Filtered] {
             assert_eq!(

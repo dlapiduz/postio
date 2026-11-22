@@ -1,20 +1,3 @@
-//! `postio-43`: the composer's focus retry, forced through its unmapped path.
-//!
-//! `composer.rs::focus_first` grabs focus on a widget that has just become
-//! visible and, per its own doc comment, is not yet mapped on that frame —
-//! so a failed grab is retried once layout has run. The retry used to be
-//! scheduled with `idle_add_local_once`, which is not ordered against the
-//! frame clock driving that layout pass: whichever ran first won, same shape
-//! as the drill-in scroll race `postio-1ff` turned out to be (`8daa510`).
-//!
-//! Opening the composer before the window is ever presented guarantees the
-//! precondition deterministically — nothing in the tree is realized, so the
-//! first `grab_focus` cannot succeed — where relying on real desktop timing
-//! left it "not reproduced" (see the issue body). What is asserted here is
-//! the retry actually landing once real frames are pumped afterward.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use std::time::{Duration, Instant};
 
 use crate::support_compose::Window;
@@ -35,8 +18,6 @@ fn started(kind: DraftKind) -> Draft {
     draft
 }
 
-/// Lets the main loop run for `span`, so every timer a widget armed on the
-/// way in has fired.
 fn quiet_for(span: Duration) {
     let context = glib::MainContext::default();
     let deadline = Instant::now() + postio_test_support::scaled(span);
@@ -46,9 +27,6 @@ fn quiet_for(span: Duration) {
     }
 }
 
-/// Waits for `done`, driving both idle and frame-clock sources — a genuine
-/// regression still fails when the deadline runs out, a slow machine only
-/// makes it slower. Modelled on `gtk_thread.rs::settle_until`.
 fn settle_until(done: impl Fn() -> bool) {
     let context = glib::MainContext::default();
     let heartbeat =
@@ -72,11 +50,8 @@ pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
     let window = Window::default();
     let composer = composer::install(&window);
 
-    // Nothing has been presented yet, so nothing in the tree is realized —
-    // the very condition `focus_first`'s doc comment describes, forced
-    // rather than hoped for.
-    // New mail with nobody to send to yet: an addressed draft starts in the
-    // body (`composer::starting_field`), whatever its kind.
+    // Nothing presented yet, so nothing is realized and the first `grab_focus` cannot succeed.
+    // New mail with nobody to send to starts in the body, as any addressed draft does.
     let mut fresh = started(DraftKind::New);
     fresh.to.clear();
     composer.open(fresh);
@@ -89,8 +64,6 @@ pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
         Some(Field::To),
         "new mail starts in To, once the retry has had real frames to land in"
     );
-
-    // -- and a reply, which starts in the body instead ---------------------
 
     let window = Window::default();
     let composer = composer::install(&window);
@@ -105,19 +78,8 @@ pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
     );
 }
 
-/// Tab walks the composer in a defined order, and Shift+Tab walks back.
-///
-/// FR-003. `focused_field` is what answers this, which is why the enum had to
-/// grow: it named `To` and `Body` and nothing between them, so "the focus
-/// order is defined" was a claim about four widgets nobody could ask about.
-/// Its own doc already said the focus rules are "an acceptance criterion …
-/// worth being able to assert on rather than to look at" — this takes that
-/// literally.
-///
-/// Driven with the window's `move-focus` signal, which is what a Tab press is bound to, rather
-/// than a helper written for this test: the order under test is the one the
-/// toolkit derives from the layout, and a bespoke `focus_next()` would assert
-/// that the helper agrees with itself.
+/// Driven with the window's `move-focus` signal, which a Tab press is bound to: the order under
+/// test is the toolkit's, not a helper's.
 ///
 /// POSTIO-MEASUREMENT: it walks every control of the composer and settles after each,
 /// 9 s on a CI runner, so it runs on the nightly timer.
@@ -136,14 +98,12 @@ pub fn the_keyboard_walks_the_composer_in_a_defined_order() {
     window.present();
     settle_until(|| composer.focused_field().is_some());
 
-    // Cc and Bcc join the order only once they are showing: a hidden field
-    // that took the keyboard would be a stop nobody can see. `show_copy_fields`
-    // leaves the keyboard in Cc, so the walk is restarted from To.
+    // Cc and Bcc join the order only once showing. `show_copy_fields` leaves the keyboard in Cc, so
+    // the walk restarts from To.
     composer.show_copy_fields();
     settle_until(|| composer.focused_field() == Some(Field::Cc));
 
     let tab = |direction| {
-        // A Tab press arrives on a settled keyboard.
         quiet_for(Duration::from_millis(400));
         gtk::glib::prelude::ObjectExt::emit_by_name::<()>(
             window.gtk(),
@@ -152,7 +112,6 @@ pub fn the_keyboard_walks_the_composer_in_a_defined_order() {
         );
     };
 
-    // Back up to the top, then forward through every field in turn.
     tab(gtk::DirectionType::TabBackward);
     settle_until(|| composer.focused_field() == Some(Field::To));
     assert_eq!(
@@ -171,8 +130,6 @@ pub fn the_keyboard_walks_the_composer_in_a_defined_order() {
         );
     }
 
-    // And back the way it came. A one-way order is half an order: a person who
-    // tabs past the field they wanted has no way home but the mouse.
     for expected in [Field::Bcc, Field::Cc, Field::To] {
         tab(gtk::DirectionType::TabBackward);
         settle_until(|| composer.focused_field() == Some(expected));

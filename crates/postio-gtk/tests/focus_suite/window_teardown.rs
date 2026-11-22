@@ -1,12 +1,6 @@
-//! A window wired by Focus's real startup still frees when it is destroyed
-//! (#1072).
-//!
-//! The cycle is the one #794 catalogued: a handler stored on a child widget
-//! holding a strong reference back to the window that owns it. A bare
-//! `FocusWindow` cannot show it; the handlers `startup::adopt` registers, and
-//! the dialogs a person opens over the window, can. Nothing else notices:
-//! Focus opens one window for the life of the process, so the leak costs
-//! what a suite pays that builds and destroys a window per case.
+//! A handler stored on a child widget holding a strong reference back to its window is a cycle
+//! (#794) that a bare `FocusWindow` cannot show,
+//! but the handlers `startup::adopt` registers and the dialogs a person opens can (#1072).
 
 use adw::prelude::*;
 
@@ -27,8 +21,6 @@ pub fn a_window_startup_wired_and_used_still_frees_when_destroyed() {
 
         let (weak_window, weak_list) = {
             let (window, _client) = fixture.open().await;
-            // Open what a person opens over the window: the message dialog
-            // registers handlers on the window that owns it.
             support::keys(&window, &["j", "Return"]);
             assert!(
                 crate::settle_until(async || window
@@ -59,10 +51,8 @@ pub fn a_window_startup_wired_and_used_still_frees_when_destroyed() {
     });
 }
 
-/// Destroying is required, and that part is GTK's, not ours: a window joins
-/// the toplevel list when it is constructed and leaves on destroy, so
-/// dropping the handle is never enough on its own. If a dropped window is
-/// released by itself one day, the teardown the suite does can be dropped.
+/// Destroying is GTK's requirement: a window joins the toplevel list when constructed and leaves on
+/// destroy, so dropping the handle is never enough.
 pub fn dropping_a_window_without_destroying_it_is_not_enough() {
     if !support::display() {
         return;
@@ -83,8 +73,6 @@ pub fn dropping_a_window_without_destroying_it_is_not_enough() {
     crate::settle();
 }
 
-/// The composer Focus mounts, with its web process, frees with the window.
-/// Held out (see `IGNORED`): a mounted composer outlives its window.
 pub fn a_destroyed_window_releases_its_composer() {
     crate::gtk_case(async {
         if !support::display() {

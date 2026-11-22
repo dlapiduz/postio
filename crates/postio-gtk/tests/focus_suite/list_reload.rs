@@ -1,11 +1,5 @@
-//! Mail arriving while a person is in the list (#1177): the cursor stays on
-//! the message it was on and the marks stay on the messages they were put
-//! on, whatever a sync pass does to the order underneath them.
-//!
-//! The engine announces that a mailbox moved; it does not say how, because
-//! it does not know. A list that kept the cursor on the *row number* would,
-//! after a batch or a re-sort, put the reading pane and the next verb on
-//! whichever message now sits at that index.
+//! A cursor kept on the row number would aim the next verb at whatever message sits at that index
+//! after a re-sort (#1177).
 
 use gtk::prelude::*;
 use postio_core::Event;
@@ -13,7 +7,6 @@ use postio_core::state::Selection;
 
 use crate::support::{self, Fixture};
 
-/// A folder of `count` conversations, newest first, subjects `Mail 1`...
 async fn folder(fixture: &Fixture, count: i64) {
     for number in 1..=count {
         fixture
@@ -22,7 +15,6 @@ async fn folder(fixture: &Fixture, count: i64) {
     }
 }
 
-/// Tell the window the way sync does: this mailbox changed.
 fn moved(sink: &postio_core::bridge::EventSink, fixture: &Fixture) {
     assert!(
         sink.emit(Event::MessageListChanged {
@@ -60,7 +52,6 @@ pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
             "the first page never drew"
         );
 
-        // Where the person is: a few rows down, with three messages marked.
         support::keys(&window, &["j", "x", "j", "x", "j", "x", "j", "j", "j"]);
         crate::settle();
         let cursor = window.cursor_row().expect("the cursor is on a row").id();
@@ -71,8 +62,6 @@ pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
             "three rows are marked, or this proves nothing"
         );
 
-        // Batches commit, as a sync does for minutes rather than once: older
-        // mail filed behind the person's place.
         for batch in 0..3 {
             for number in 0..40 {
                 fixture
@@ -135,14 +124,12 @@ pub fn a_reordering_sync_leaves_the_cursor_on_the_same_message() {
             "the first page never drew"
         );
 
-        // Reading something a few rows down.
         support::keys(&window, &["j", "j", "j", "j", "j", "j"]);
         crate::settle();
         let reading = window.cursor_row().expect("the cursor is on a row");
         let reading_id = reading.id();
         let at = window.pane().expect("the list").cursor().selected();
 
-        // A sync pass files newer mail above it: every row moves down one.
         fixture.file_in(fixture.inbox, "Just arrived", 1).await;
         moved(&sink, &fixture);
         assert!(

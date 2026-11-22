@@ -1,14 +1,3 @@
-//! The composer in the running Focus: a person can detach it to a window of
-//! its own and bring it home with the keys, and its editing surface is
-//! started before anybody asks to write.
-//!
-//! The widget is proved by `postio-widgets`' own tests. That is not the same
-//! claim as this one, and the difference is `postio-bl2`: a capability built,
-//! tested, documented and wired to nothing, with every test green. So these
-//! start where Focus starts -- a store, a window, `startup::adopt` -- and
-//! assert from the far end: the keys a person presses, a second window with
-//! the composition in it, and a web process nobody asked for yet.
-
 use adw::prelude::*;
 use postio_core::CommandId;
 
@@ -56,8 +45,6 @@ pub fn the_detach_key_reaches_the_composer_in_a_wired_focus() {
             "the composition is in two places: the dialog is still over the list"
         );
 
-        // The key in the detached window puts it back, through the same
-        // registry: one command, two containers.
         composer.handle_key(
             gtk::gdk::Key::from_name("o").expect("a key"),
             gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
@@ -77,8 +64,6 @@ pub fn the_detach_key_reaches_the_composer_in_a_wired_focus() {
     });
 }
 
-/// The header's Detach button and the command both move the composition: to
-/// a window of its own, and home again.
 pub fn the_detach_command_moves_the_open_composer_to_a_window_and_back() {
     crate::gtk_case(async {
         if !support::display() {
@@ -101,8 +86,6 @@ pub fn the_detach_command_moves_the_open_composer_to_a_window_and_back() {
             "pressing Detach ({:?}) left the composer in its dialog",
             CommandId::DetachComposer
         );
-        // The keyboard went with the composition: the window observes the
-        // composer as holding it, not the list left behind.
         assert_eq!(
             window.observe().keyboard.region,
             postio_ui::observe::Region::Composer,
@@ -116,9 +99,6 @@ pub fn the_detach_command_moves_the_open_composer_to_a_window_and_back() {
     });
 }
 
-/// A detached composition has everything the dialog's has: the title, the
-/// action row with Send, Send later, Attach and Remind, and the styling --
-/// a mouse user can send from the window of its own.
 pub fn a_detached_composition_keeps_its_frame_so_a_mouse_can_send() {
     crate::gtk_case(async {
         if !support::display() {
@@ -154,7 +134,6 @@ pub fn a_detached_composition_keeps_its_frame_so_a_mouse_can_send() {
             !support::with_class(&detached, "focus-compose-surface").is_empty(),
             "the detached window lost the dialog's styling"
         );
-        // Home again, and the dialog has its frame back.
         composer.dispatch(CommandId::DetachComposer);
         assert!(crate::settle_until(async || !composer.is_detached()).await);
         assert_eq!(
@@ -165,9 +144,6 @@ pub fn a_detached_composition_keeps_its_frame_so_a_mouse_can_send() {
     });
 }
 
-/// Detaching moves the keyboard, not just the widgets: the window of its own
-/// is presented and holds the focus inside the composition, and the
-/// observation reads that window's focus rather than the list's.
 pub fn a_detached_composer_window_holds_the_keyboard() {
     crate::gtk_case(async {
         if !support::display() {
@@ -209,10 +185,6 @@ pub fn a_detached_composer_window_holds_the_keyboard() {
     });
 }
 
-/// #1216: the editing surface's web process is started before anybody
-/// composes -- `app::run` asks for it on an idle turn after the first frame
-/// -- and warming it opens nothing. It does not matter whether the ask
-/// comes before the composer is mounted (the window remembers it) or after.
 pub fn the_window_warms_its_editing_surface_without_being_asked_to_compose() {
     crate::gtk_case(async {
         if !support::display() {
@@ -250,8 +222,6 @@ pub fn the_window_warms_its_editing_surface_without_being_asked_to_compose() {
     });
 }
 
-/// The ask made before the composer is mounted -- the first frame can come
-/// before the inbox does -- still warms it once it is.
 pub fn a_warm_ask_made_before_the_composer_is_mounted_still_warms_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -277,11 +247,6 @@ pub fn a_warm_ask_made_before_the_composer_is_mounted_still_warms_it() {
     });
 }
 
-/// After detaching, the keyboard is in the detached window's To field, and
-/// what is typed there lands in the composition -- not in the list, and not
-/// nowhere -- and the observation says so: `keyboard.typing` reads the
-/// detached window's focus, not the main window's, whose focus is the list's
-/// (storyboards/screens/compose-detached.toml).
 pub fn a_key_typed_in_a_detached_composition_lands_in_it() {
     use postio_widgets::storyboard::deliver;
 
@@ -318,8 +283,6 @@ pub fn a_key_typed_in_a_detached_composition_lands_in_it() {
              observation says it is not typing"
         );
 
-        // A letter is not a command in a text field: nothing on the chain
-        // claims it, so GTK's own input method types it.
         assert!(
             matches!(
                 deliver::deliver(&host, gtk::gdk::Key::j, gtk::gdk::ModifierType::empty()),

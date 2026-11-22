@@ -1,9 +1,3 @@
-//! "Remind if no reply", set in the composer (US3 scenario 5, T096): `mod+h`
-//! in the composer opens the remind picker at its action row, the row says
-//! the time chosen, and sending the message sets that reminder on the
-//! conversation it is filed into. What the reminder does when it falls due
-//! is US5's, proven by `surfaced.rs` and the host's due timer.
-
 use chrono::Utc;
 use postio_account::backend::{MailBackend as _, MockBackend, MockMailbox};
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore as _};
@@ -53,7 +47,6 @@ pub fn mod_h_in_the_composer_sets_a_reminder_that_sending_keeps() {
         let composer = window.composer().expect("the composer");
         composer.test_set_to("Lena Park <lena@example.org>, ");
         composer.test_set_subject("Harbor API draft v3");
-        // The composer's verbs are its action row (T221).
         let verbs = || {
             support::texts(&support::only(
                 &window.compose_dialog().expect("the dialog"),
@@ -71,7 +64,6 @@ pub fn mod_h_in_the_composer_sets_a_reminder_that_sending_keeps() {
             verbs()
         );
 
-        // mod+h: the remind picker, and `1` for its first preset.
         support::press(&window, "h", gtk::gdk::ModifierType::CONTROL_MASK);
         let picker = window
             .open_picker()
@@ -99,8 +91,6 @@ pub fn mod_h_in_the_composer_sets_a_reminder_that_sending_keeps() {
             "the composer stays open while the reminder is chosen"
         );
 
-        // Sent, and delivered once the link is back: the conversation the
-        // message is filed into has the reminder, due then.
         support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_none()).await,
@@ -131,7 +121,6 @@ pub fn mod_h_in_the_composer_sets_a_reminder_that_sending_keeps() {
             .await
             .expect("the password");
         let connector = ScriptedConnector::new(accepting());
-        // After the undo-send window, as the drainer would find it.
         let later = Utc::now() + chrono::Duration::hours(1);
         let report = drain(&fixture, &backend, &secrets, &blobs, &connector, later).await;
         assert_eq!(report.applied, 1, "it left: {report:?}");

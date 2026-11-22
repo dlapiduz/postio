@@ -1,48 +1,27 @@
-//! What a correspondent decided, read as `[focus]` entries
-//! (specs/011-focus-contacts S3, ADR 0048).
-//!
-//! A pin, a marker turned off and a digest for one sender used to be entries
-//! of `config.toml` keyed by an address. They are kept on the correspondent
-//! now, so every address they own is covered, and the engine reads both: the
-//! file as it is, and [`FocusConfig::with_contacts`], which adds what the
-//! correspondents decided as the entries the file would have held. Every
-//! decision function (`never_filters`, `stops`, `applicable_digests`) then
-//! answers for both without knowing there are two homes.
+//! The engine reads both homes of a correspondent's decisions: the file, and
+//! `FocusConfig::with_contacts`,
+//! which adds them as the entries the file would have held, so every decision function answers for
+//! both.
 
 use postio_model::{ContactSettings, DigestSetting, StoppedMarker};
 
 use crate::focus::{DigestRule, FocusConfig, NeverEntry, StopMarker, never_entry};
 
-/// One correspondent's rules, with the addresses they apply to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContactRule {
-    /// The contact's id, for the page that names them and the write that
-    /// takes a rule back.
     pub contact: i64,
-    /// What the correspondent is called.
     pub name: String,
-    /// Every address they own, lowercased.
     pub addresses: Vec<String>,
-    /// What they decided.
     pub settings: ContactSettings,
 }
 
-/// What `config.toml` holds that a correspondent can hold instead.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Movable {
-    /// Addresses in `[focus.filter] never`.
     pub pins: Vec<String>,
-    /// Address entries of `[focus.filter] stop_markers`.
     pub stops: Vec<(String, StoppedMarker)>,
-    /// `[[focus.digests]]` rules that are one `from:` query for one address,
-    /// with that address.
     pub digests: Vec<(String, DigestRule)>,
 }
 
-/// What of `focus` a correspondent can hold. A domain, a `list:` or
-/// `subject:` query, a rule over several addresses, a rule with keys this
-/// version does not know and an entry validation reports all stay in the
-/// file.
 pub fn movable(focus: &FocusConfig) -> Movable {
     let mut moving = Movable::default();
     for entry in &focus.filter.never {
@@ -73,9 +52,6 @@ pub fn movable(focus: &FocusConfig) -> Movable {
     moving
 }
 
-/// The one address `rule` holds mail from, when that is all it is: a single
-/// `from:` query naming a single address, nothing else in the rule, and a
-/// time it comes due.
 pub fn digest_address(rule: &DigestRule) -> Option<String> {
     let [query] = rule.queries.as_slice() else {
         return None;
@@ -92,7 +68,6 @@ pub fn digest_address(rule: &DigestRule) -> Option<String> {
     }
 }
 
-/// What a contact keeps of `rule`: its name and when it comes due.
 pub fn setting_of(rule: &DigestRule) -> DigestSetting {
     DigestSetting {
         name: rule.name.trim().to_owned(),
@@ -105,7 +80,6 @@ pub fn setting_of(rule: &DigestRule) -> DigestSetting {
     }
 }
 
-/// The rule a contact's digest is: one `from:` query for each address.
 pub fn rule_of(setting: &DigestSetting, addresses: &[String]) -> DigestRule {
     let day = setting.day.as_ref().map(|day| match day.parse::<i64>() {
         Ok(number) if setting.cadence == "monthly" => toml::Value::Integer(number),
@@ -125,9 +99,7 @@ pub fn rule_of(setting: &DigestSetting, addresses: &[String]) -> DigestRule {
 }
 
 impl FocusConfig {
-    /// This configuration with what correspondents decided added as the
-    /// entries the file would have held. `rules` is remembered, so a page
-    /// can name the correspondent behind an entry ([`FocusConfig::contacts`]).
+    /// `rules` is remembered, so a page can name the correspondent behind an entry.
     #[must_use]
     pub fn with_contacts(&self, rules: &[ContactRule]) -> FocusConfig {
         let mut merged = self.clone();
@@ -154,13 +126,10 @@ impl FocusConfig {
         merged
     }
 
-    /// The correspondents whose decisions were added by
-    /// [`FocusConfig::with_contacts`].
     pub fn contacts(&self) -> &[ContactRule] {
         &self.contacts
     }
 
-    /// The correspondent behind a `never` entry, when it came from one.
     pub fn contact_pinned(&self, entry: &str) -> Option<&ContactRule> {
         let entry = entry.trim().to_lowercase();
         self.contacts.iter().find(|rule| {
@@ -169,7 +138,6 @@ impl FocusConfig {
         })
     }
 
-    /// The correspondent behind a `stop_markers` entry.
     pub fn contact_stopped(&self, sender: &str, kind: &str) -> Option<&ContactRule> {
         let sender = sender.trim().to_lowercase();
         let kind = StoppedMarker::from_name(kind)?;
@@ -178,7 +146,6 @@ impl FocusConfig {
             .find(|rule| rule.settings.stops(kind) && rule.addresses.contains(&sender))
     }
 
-    /// The correspondent whose digest is the rule called `name`.
     pub fn contact_digest(&self, name: &str) -> Option<&ContactRule> {
         self.contacts.iter().find(|rule| {
             rule.settings.arrival == Some(postio_model::ContactArrival::Digest)
@@ -198,7 +165,6 @@ mod tests {
     use super::*;
     use crate::Config;
 
-    /// One of each kind of entry, and the ones that must stay in the file.
     const FILE: &str = r#"
 [focus.filter]
 never = ["Ada@Example.org", "@example.net", "bob@example.org", "not an entry"]
@@ -331,14 +297,11 @@ at = "07:00"
         );
     }
 
-    /// SC-005, at the level of the decision functions: moving the entries a
-    /// correspondent can hold changes no answer about any sender.
     #[test]
     fn moving_entries_onto_correspondents_changes_no_decision() {
         let before = focus(FILE);
         let moving = movable(&before);
 
-        // What the file says once each moved entry is gone from it.
         let mut text = FILE.to_owned();
         for pin in &moving.pins {
             text = crate::focus_edit::set_never(&text, pin, false)
@@ -365,7 +328,6 @@ at = "07:00"
                 .all(|e| !e.eq_ignore_ascii_case("ada@example.org"))
         );
 
-        // What the correspondents hold instead: one each.
         let mut rules: Vec<ContactRule> = Vec::new();
         let rule_for = |address: &str, rules: &mut Vec<ContactRule>| -> usize {
             if let Some(at) = rules

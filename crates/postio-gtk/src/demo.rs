@@ -1,25 +1,12 @@
-//! The demo store and window Focus's `shot` and its storyboard runner share.
-//!
-//! `examples/shot.rs` and the storyboard runner both need a real
-//! [`FocusWindow`] over a real, migrated,
-//! seeded store, started and adopted the way the application starts it. That
-//! setup lives here so the two share it rather than each keeping a copy
-//! (specs/008-storyboards R11); argument parsing, staging a numbered screen
-//! and the pictures stay with the tools.
-//!
-//! Behind the `demo` feature, which turns on `postio-storage/test-support`:
-//! the seeds and the in-memory store are test-support code and must not
+//! The demo store and window `shot` and the storyboard runner share: a real `FocusWindow` over a
+//! migrated, seeded store, started and adopted as the app starts it.
+//! Behind the `demo` feature, which turns on `postio-storage/test-support`: that code must not
 //! reach a normal build.
-//!
-//! The store is today's inbox in the references' shape, over the storage
-//! seed. Every name is invented and every address is on a reserved domain.
-//! Nothing touches the network.
 
 #![allow(missing_docs)]
 
 pub mod storyboard;
 
-/// The stores, which every app shares (`postio-demo`).
 pub use postio_demo::*;
 
 use gtk::prelude::*;
@@ -29,11 +16,8 @@ use postio_storage::{BlobStore, Store};
 use crate::startup::Session;
 use crate::window::FocusWindow;
 
-/// The runtime the demo's reads are driven on.
-///
-/// `block_on` polls the future on *this* thread, where GTK lives, and
-/// `multi_thread` because the store's reads from a synchronous callback reach
-/// for `block_in_place`.
+/// `block_on` polls on this thread, where GTK lives; `multi_thread` because the store's reads from
+/// a synchronous callback reach for `block_in_place`.
 pub fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
     use std::sync::OnceLock;
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -48,43 +32,29 @@ pub fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-/// A window adopted over a started host, and what a tool needs to drive it.
 pub struct Started {
-    /// Focus's window, presented and adopted.
     pub window: FocusWindow,
-    /// The session over the host: stop it before the window goes.
     pub session: Session,
-    /// Where the engine's events enter: a tool says what sync would have.
     pub sink: postio_core::bridge::EventSink,
-    /// The account the store was seeded with.
     pub account: AccountId,
-    /// The store the host reads: what a tool writes to, as sync would.
     pub store: Store,
-    /// The blob directory the host reads, kept until the demo ends.
     _blobs: tempfile::TempDir,
-    /// Folders the window's config names, such as a vault, kept as long.
     kept: Vec<tempfile::TempDir>,
 }
 
 impl Started {
-    /// Keep `dir` until the demo ends: a folder the window's config names.
     pub fn keep(&mut self, dir: tempfile::TempDir) {
         self.kept.push(dir);
     }
 
-    /// Take the window down, stopping its session first.
     pub fn finish(self) {
         self.window.destroy();
         self.session.stop();
     }
 }
 
-/// Start the host over `database`, present a Focus window of `size` and
-/// adopt it, as the application starts: the path `shot` and the storyboard
-/// runner share.
-///
-/// `config` is the TOML the window runs under, written to `config_path`
-/// first: Settings shows the file it writes, and writes to it.
+/// `config` is the TOML the window runs under, written to `config_path` first: Settings shows the
+/// file it writes, and writes to it.
 pub fn start(
     database: Store,
     account: AccountId,
@@ -104,10 +74,8 @@ pub fn start(
         &postio_storage::test_support::blob_keys(),
     )
     .map_err(|error| format!("no blob store: {error}"))?;
-    // The search seed's files have their bytes on this machine, so the
-    // attachment indexer the host starts reads them (spec 010 step 9), as
-    // the Mac's demo has them: its rows name the blobs a store under the
-    // test keys gives these bytes. Another seed names none of them.
+    // The search seed's files have their bytes on this machine, so the attachment indexer reads
+    // them; another seed names none of them.
     postio_demo::store_search_blobs(&blobs).map_err(|error| format!("no search files: {error}"))?;
     postio_demo::store_threads_blobs(&blobs)
         .map_err(|error| format!("no thread sources: {error}"))?;
@@ -123,15 +91,10 @@ pub fn start(
     })
     .map_err(|error| format!("the host did not start: {error}"))?;
     let sink = sink.take().ok_or("the host kept its events to itself")?;
-    // Every body and every file on this machine indexed before the first
-    // frame, as a running app's are once it has caught up -- the search
-    // seed's workbooks read, so a word inside one is found, as the Mac's
-    // demo finds it. Left to the store's idle passes, a word was found or
-    // not by how far they had got, a count grew between two frames of one
-    // storyboard, and passes started for every window of a run piled up
-    // in its one process.
-    // On the host's own runtime, waited for here: the runner calls this
-    // from inside another, where a `block_on` may not run.
+    // Index every body and file before the first frame: left to the idle passes, a word was found
+    // or not by how far they had got,
+    // and a count grew between frames of one storyboard. Run on the host's runtime and waited for
+    // here: the runner calls this from inside another, where a `block_on` may not run.
     let (indexed, done) = std::sync::mpsc::channel();
     host.runtime().spawn({
         let store = store.clone();

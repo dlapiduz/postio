@@ -1,14 +1,3 @@
-//! `[keys]` applies live: edit `config.toml`, press the new key.
-//!
-//! The path is `ConfigService::reload` → `ConfigChange { keys: true }` → a
-//! resolver rebuilt from the reloaded keymap, as Focus's `set_keymap` does.
-//! Everything here drives a real file on disk
-//! through the real config service, because the thing being tested is that the
-//! pieces are actually joined up — a unit test of either half would pass with
-//! the wire cut.
-//!
-//! No display and no GTK main loop: only the resolver is involved on this side.
-
 use std::path::Path;
 
 use postio_core::{ConfigService, Event};
@@ -40,7 +29,6 @@ fn command(resolver: &mut Resolver, keys: &str) -> Option<String> {
     }
 }
 
-/// The problems a service reports, joined so a test can look for a phrase.
 fn problems(service: &ConfigService) -> String {
     service.keymap().problems().join("\n")
 }
@@ -48,8 +36,6 @@ fn problems(service: &ConfigService) -> String {
 #[test]
 fn editing_the_keys_section_rebinds_immediately() {
     let directory = TempDir::new().expect("a temporary directory");
-    // `w`, a key no app binds: `y` was, until the one keymap gave it to
-    // Focus's invitations (specs/007-postio-focus contracts/keymap.md).
     let path = write(directory.path(), "[keys]\narchive = \"w\"\n");
     let mut service = ConfigService::load(&path);
 
@@ -58,7 +44,6 @@ fn editing_the_keys_section_rebinds_immediately() {
     assert_eq!(command(&mut resolver, "w").as_deref(), Some("archive"));
     assert_eq!(command(&mut resolver, "e"), None, "the default moved");
 
-    // The user edits the file and saves.
     write(directory.path(), "[keys]\narchive = \"e\"\nflag = \"w\"\n");
     let update = service.reload();
 
@@ -76,14 +61,8 @@ fn editing_the_keys_section_rebinds_immediately() {
     assert_eq!(command(&mut resolver, "w").as_deref(), Some("flag"));
 }
 
-/// `/` and the go-to family resolve while the keyboard is in the folder list.
-///
-/// Reported from a live run: `g i` did nothing from the sidebar, and neither
-/// did `/`. Both were on the message surfaces only, so the resolver refused
-/// them one pane over -- indistinguishable, from the keyboard, from nothing
-/// being bound. The registry is where the contexts live, but the resolver is
-/// what enforces them, which is why this asserts here as well as in
-/// `core_suite`.
+/// `g i` and `/` did nothing from the sidebar: the resolver enforces the registry's contexts, so
+/// this asserts here as well as in `core_suite`.
 #[test]
 fn the_folder_list_reaches_search_and_the_go_to_family() {
     let directory = TempDir::new().expect("a temporary directory");
@@ -119,11 +98,6 @@ fn the_folder_list_reaches_search_and_the_go_to_family() {
 #[test]
 fn a_rebind_reaches_a_sequence_too() {
     let directory = TempDir::new().expect("a temporary directory");
-    // Any sequence the registry does not already ship: what is under test is
-    // that a rebind reaches a two-key binding at all, not this particular
-    // pair. It was `g t` until the Gmail-shaped go-to family claimed that one
-    // for Sent, at which point the rebind was a genuine conflict and the
-    // keymap said so.
     let path = write(directory.path(), "[keys]\nfirst_message = \"g m\"\n");
     let service = ConfigService::load(&path);
 
@@ -146,22 +120,11 @@ fn a_rebind_reaches_a_sequence_too() {
 #[test]
 fn a_rebind_takes_the_key_and_the_command_that_had_it_is_told() {
     let directory = TempDir::new().expect("a temporary directory");
-    // `e` already archives, in the same contexts reply is reachable in.
     let path = write(directory.path(), "[keys]\nreply = \"e\"\n");
     let service = ConfigService::load(&path);
 
-    // The override wins. `Keymap::resolve_on` resolves `[keys]` before
-    // defaults on purpose -- "a default is a suggestion; an override is not" --
-    // so a user who wrote this gets what they asked for.
-    //
-    // This case used to assert the opposite: that the entry was dropped and
-    // archive kept its key. Both rules were live at once and neither was wrong
-    // where it ran, because `postio-config` validated the collision away for
-    // the 23 commands it had defaults for and the keymap's rule governed the
-    // other 56 (#1227). With one default table there is one answer, and it is
-    // the documented one -- ignoring an explicit instruction is the worse
-    // failure, and the cost of honouring it is paid by the report below rather
-    // than in silence.
+    // The override wins: `[keys]` resolve before defaults ("a default is a suggestion; an override
+    // is not"); the loss is reported below.
     let (mut resolver, _) = Resolver::from_commands(service.keymap());
     assert_eq!(
         command(&mut resolver, "e").as_deref(),
@@ -169,9 +132,6 @@ fn a_rebind_takes_the_key_and_the_command_that_had_it_is_told() {
         "the override takes the key it asked for"
     );
 
-    // And archive is told, by name, that it lost its default -- the whole
-    // reason honouring the override is safe. Silence here would be the bug
-    // the old rule was guarding against.
     let reported = problems(&service);
     assert!(
         reported.contains("archive") && reported.contains("reply"),
@@ -197,8 +157,6 @@ fn an_unknown_command_id_is_reported_rather_than_ignored() {
         "a typo in a command id must not vanish silently: {reported}"
     );
 
-    // And it stays in the file: a binding written by a newer Postio survives a
-    // downgrade rather than being helpfully deleted.
     assert_eq!(
         service
             .config()
@@ -245,7 +203,6 @@ fn a_broken_file_leaves_the_working_keys_alone() {
     let (mut resolver, _) = Resolver::from_commands(service.keymap());
     assert_eq!(command(&mut resolver, "y").as_deref(), Some("archive"));
 
-    // Saved halfway through an edit.
     write(directory.path(), "[keys\narchive = ");
     let update = service.reload();
 
@@ -267,7 +224,6 @@ fn a_broken_file_leaves_the_working_keys_alone() {
         Some("archive"),
         "the last good keymap stays in force"
     );
-    // The service resolves for the host, so `mod+e` is spelled for it.
     let edit = postio_config::keys::expand_mod("mod+e", postio_config::paths::Platform::host());
     assert_eq!(
         command(&mut resolver, &edit).as_deref(),

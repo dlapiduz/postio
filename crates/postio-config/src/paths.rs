@@ -1,29 +1,17 @@
-//! Where `config.toml` lives.
-//!
-//! `~/.config/postio/config.toml` is the single source of truth: the settings
-//! panel edits this same file, and there is no separate settings store.
-
 use std::path::PathBuf;
 
 use crate::error::{ConfigError, Result};
 
-/// Which platform's directory layout to answer with.
-///
-/// A parameter rather than a `#[cfg]`, and that is the point: with a `cfg`
-/// each machine could only ever prove half of this, and the half nobody runs
-/// is the half that rots — which would be the macOS answer, the one most
-/// sessions cannot check. As a parameter both layouts are asserted from either
-/// host.
+/// A parameter rather than a `#[cfg]` so both layouts are asserted from either host; the macOS
+/// answer
+/// is the one most sessions cannot check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
-    /// The XDG base directory specification: Linux, the BSDs.
     Freedesktop,
-    /// Apple's layout: `~/Library/Application Support`, `~/Library/Caches`.
     Apple,
 }
 
 impl Platform {
-    /// What this build is running on.
     pub const fn host() -> Self {
         if cfg!(target_os = "macos") {
             Platform::Apple
@@ -32,11 +20,7 @@ impl Platform {
         }
     }
 
-    /// The directory Apple keeps an application's own files in.
-    ///
-    /// `Postio`, capitalised, because that is the convention on the platform
-    /// and this directory is shown to people — Finder lists it, and every
-    /// backup tool already knows to include it.
+    /// `Postio`, capitalised: the platform convention, and Finder lists it.
     pub fn apple_support_dir(home: &str) -> PathBuf {
         PathBuf::from(home)
             .join("Library")
@@ -45,24 +29,15 @@ impl Platform {
     }
 }
 
-/// File name inside the config directory.
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 
-/// Environment variable that overrides the whole path, used by tests and by
-/// `postio --config`.
 pub const CONFIG_PATH_ENV: &str = "POSTIO_CONFIG";
 
-/// The XDG base directory `name` (`XDG_DATA_HOME`, `XDG_CONFIG_HOME`) that
-/// Postio's *shared* files live under, or `None` for the default under
-/// `$HOME`.
-///
-/// Inside a Flatpak the sandbox points every XDG variable at the app's own
-/// directory under `~/.var/app`, which would give the desktop and terminal
-/// packages a store and a config each. They share both
-/// (`docs/archive/specs/005-tui-frontend` FR-040, research R10): each manifest grants the
-/// host's `postio` directories, and here the host's value is read instead --
-/// `HOST_<name>`, which Flatpak sets from the host. `$HOME` is the host's
-/// inside a sandbox, so the default needs no such care.
+/// Inside a Flatpak the sandbox points every XDG variable at the app's own directory, which would
+/// give
+/// the desktop and terminal packages a store and a config each. They share both, so the host's
+/// value is
+/// read from `HOST_<name>`, which Flatpak sets.
 pub fn shared_xdg<F>(env: &F, name: &str) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
@@ -76,17 +51,9 @@ where
     env(&key).filter(|value| !value.is_empty())
 }
 
-/// The directory holding Postio's configuration, resolved from an arbitrary
-/// environment lookup so it is testable without touching the process
-/// environment.
-///
-/// `$XDG_CONFIG_HOME/postio`, falling back to `$HOME/.config/postio` — or, on
-/// [`Platform::Apple`], `~/Library/Application Support/Postio`.
-///
-/// **`$XDG_CONFIG_HOME` still wins on Apple.** Someone who set it meant it,
-/// and the platform default has no business overruling a deliberate choice;
-/// it is also what lets one configuration be shared with a Linux VM on the
-/// same machine, and what keeps every fixture working unchanged.
+/// `$XDG_CONFIG_HOME` still wins on Apple: someone who set it meant it, and it lets one
+/// configuration
+/// be shared with a Linux VM.
 pub fn config_dir_from<F>(env: F, platform: Platform) -> Result<PathBuf>
 where
     F: Fn(&str) -> Option<String>,
@@ -103,9 +70,6 @@ where
     Err(ConfigError::NoConfigDir)
 }
 
-/// Full path to `config.toml`, resolved from an arbitrary environment lookup.
-///
-/// `$POSTIO_CONFIG` overrides everything when set.
 pub fn config_path_from<F>(env: F, platform: Platform) -> Result<PathBuf>
 where
     F: Fn(&str) -> Option<String>,
@@ -116,7 +80,6 @@ where
     Ok(config_dir_from(env, platform)?.join(CONFIG_FILE_NAME))
 }
 
-/// Full path to `config.toml`.
 pub fn config_path() -> Result<PathBuf> {
     config_path_from(|key| std::env::var(key).ok(), Platform::host())
 }
@@ -145,8 +108,6 @@ mod tests {
 
     #[test]
     fn inside_a_flatpak_the_config_is_the_hosts() {
-        // The sandbox points XDG_CONFIG_HOME at the app's own directory;
-        // both packages share one config.toml, so the host's is read.
         let sandboxed = [
             ("FLATPAK_ID", "dev.postio.PostioTui"),
             (

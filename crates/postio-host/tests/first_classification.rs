@@ -1,42 +1,7 @@
-//! Focus's first classification pass over a 100,000-message store, against
-//! SC-011's budgets (specs/007-postio-focus T147).
-//!
-//! POSTIO-MEASUREMENT: it builds a store of a hundred thousand messages, and
-//! its output is numbers a person reads, so it runs nightly
-//! (`.config/nextest.toml` excludes it from the default profile). Run it by
-//! hand with
-//! `cargo nextest run -p postio-host --profile nightly --test first_classification --no-capture`.
-//!
-//! SC-011 has two budgets, on one core of the reference workstation, with
-//! the interface keeping its interaction budget throughout:
-//!
-//! - the filtering, digest and invitation pass over the store: under five
-//!   minutes, reading no body beyond calendar parts;
-//! - the built-in needs-action pass over the inbox's last 30 days: under a
-//!   minute, reading only bodies already on this machine.
-//!
-//! Both are what Focus does when it opens, driven through
-//! [`Host::enable_focus`] as `postio-gtk` drives it, and each is measured
-//! on its own, in two opens of one store:
-//!
-//! 1. **Focus's first open.** No mark yet, so filing sorts nothing (FR-118)
-//!    and the body stage's catch-up is the whole of the work: the
-//!    needs-action pass.
-//! 2. **An open after another app filed the whole store.** The mark is put
-//!    back to the start, the worst case of the catch-up over mail filed
-//!    while Focus was closed (FR-134), and the bodies are already read: the
-//!    filtering, digest and invitation pass.
-//!
-//! 3. **Both at once.** The mark back at the start and every classifier
-//!    record forgotten: a first open over a large backlog another app kept.
-//!
-//! **What it reports rather than gates** (FR-140: "Timings are measured
-//! nightly and report without gating"): the two passes' wall-clock times, the
-//! CPU the process spent while they ran, and how long a page of the inbox
-//! took to read while they did. It gates that each pass finished and took
-//! everything it should have -- and, with both at once (3, T169), the two
-//! numbers that were the defect: the needs-action pass inside its minute,
-//! and a page read inside the interaction budget at the median.
+//! POSTIO-MEASUREMENT: builds a hundred-thousand-message store and prints timings a person reads,
+//! so it runs nightly.
+//! Run by hand: `cargo nextest run -p postio-host --profile nightly --test first_classification
+//! --no-capture`.
 
 use std::time::{Duration, Instant};
 
@@ -48,32 +13,20 @@ use postio_model::{FocusScope, ListScope};
 use postio_storage::repository::{MessageRepository, SettingsRepository};
 use postio_storage::sql::{self, RowExt as _};
 
-/// The store's size, as SC-011 names it.
 const MESSAGES: usize = 100_000;
 
-/// Of those, the inbox's last 30 days with a body here: what a working
-/// mailbox of that size receives in a month, and what the needs-action pass
-/// reads.
 const RECENT: usize = 3_000;
 
-/// SC-011's budget for the filtering, digest and invitation pass.
 const FILING_BUDGET: Duration = Duration::from_secs(5 * 60);
 
-/// SC-011's budget for the built-in needs-action pass.
 const BODY_BUDGET: Duration = Duration::from_secs(60);
 
-/// The constitution's interaction budget, which a page read is held to
-/// while the passes run.
 const INTERACTION_BUDGET: Duration = Duration::from_millis(16);
 
-/// Where Focus keeps how far it has sorted the store.
 const FILED_THROUGH: &str = "focus.filed_through";
 
-/// How long this waits before calling a pass stuck.
 const PATIENCE: Duration = Duration::from_secs(20 * 60);
 
-/// The CPU time this process has used so far, from `/proc/self/stat`: user
-/// and system clock ticks, at the kernel's usual 100 a second.
 fn cpu_time() -> Option<Duration> {
     let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
     let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
@@ -88,14 +41,8 @@ fn focus_s_first_classification_pass_over_a_hundred_thousand_messages() {
         .build()
         .expect("a runtime to seed and poll on");
 
-    // The store: a hundred thousand messages, a month of them recent, with
-    // bodies, in the inbox, sent to the user.
-    //
-    // In memory, as `postio-storage`'s `cache_pressure` seeds its 400,000:
-    // seeding a hundred thousand rows into an encrypted file in a debug
-    // build took longer than the nightly profile's clock before the pass
-    // began. So the numbers below leave out the disk -- they are the
-    // passes' own work, which is what one core pays for.
+    // In memory: seeding a hundred thousand rows into an encrypted file in a debug build took
+    // longer than the nightly profile's clock, so the numbers leave out the disk.
     let seeding = Instant::now();
     let database = rt.block_on(postio_storage::test_support::memory());
     let inbox_mail = rt.block_on(async {
@@ -124,7 +71,6 @@ fn focus_s_first_classification_pass_over_a_hundred_thousand_messages() {
         .to_string();
     let blob_dir = tempfile::tempdir().expect("a blob directory");
 
-    // 1. Focus's first open: no mark, so the needs-action pass alone.
     let body = open_focus(&rt, &database, blob_dir.path(), |focus| focus.caught_up());
     let (read, marked) = rt.block_on(async {
         (
@@ -144,8 +90,6 @@ fn focus_s_first_classification_pass_over_a_hundred_thousand_messages() {
     );
     body.report();
 
-    // 2. An open after another app filed everything: the mark back at the
-    // start, so the filtering, digest and invitation pass over the store.
     rt.block_on(async {
         let connection = database.connect().await.expect("a connection");
         SettingsRepository::new(&connection)
@@ -181,13 +125,7 @@ fn focus_s_first_classification_pass_over_a_hundred_thousand_messages() {
         "the filing pass sorted every inbox message past the mark"
     );
 
-    // 3. Both at once (T169): an open after another app filed everything,
-    // on a store whose recent bodies no classifier has read -- a first open
-    // of Focus over a large backlog another app kept. Both passes have the
-    // whole of their work, and they share the store with a person reading
-    // the inbox.
-    // What step 2 filed away has left the inbox, so this sorts what is
-    // still there.
+    // What step 2 filed away has left the inbox, so this sorts what is still there.
     let inbox_now = rt.block_on(count(
         &database,
         "SELECT count(*) FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id \
@@ -258,9 +196,6 @@ fn focus_s_first_classification_pass_over_a_hundred_thousand_messages() {
         sorted_again, inbox_now,
         "both at once, every message sorted"
     );
-    // The two things T169 is about, gated: the needs-action pass keeps its
-    // own budget however much filing waits behind it, and a person reading
-    // the inbox meanwhile keeps the interaction budget at the median.
     assert!(
         body_took <= BODY_BUDGET,
         "with the filing pass running, needs-action took {:.1}s",
@@ -274,9 +209,7 @@ fn focus_s_first_classification_pass_over_a_hundred_thousand_messages() {
     );
 }
 
-/// What one open cost.
 struct Measured {
-    /// When Focus was switched on.
     started: Instant,
     took: Duration,
     cpu: Option<Duration>,
@@ -284,7 +217,6 @@ struct Measured {
 }
 
 impl Measured {
-    /// The median page read while the passes ran.
     fn median(&self) -> Duration {
         let mut reads = self.reads.clone();
         reads.sort_unstable();
@@ -314,9 +246,6 @@ impl Measured {
     }
 }
 
-/// Start a host over `database`, switch Focus on as `postio-gtk` does,
-/// and time it until `done` -- reading a page of Focus's inbox every quarter
-/// second meanwhile, as a person would. The host stops before this answers.
 fn open_focus(
     rt: &tokio::runtime::Runtime,
     database: &postio_storage::Store,
@@ -362,7 +291,6 @@ fn open_focus(
     }
 }
 
-/// `sql`'s one number.
 async fn count(database: &postio_storage::Store, sql: &str) -> u64 {
     let reader = database.read().await.expect("a reader");
     let counted: i64 = sql::one(&reader, sql, (), |row| row.col(0))
@@ -371,7 +299,6 @@ async fn count(database: &postio_storage::Store, sql: &str) -> u64 {
     counted as u64
 }
 
-/// What to say after a number that is over its budget.
 fn over(took: Duration, budget: Duration) -> &'static str {
     if took > budget { "  OVER BUDGET" } else { "" }
 }

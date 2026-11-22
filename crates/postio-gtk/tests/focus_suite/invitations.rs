@@ -1,19 +1,5 @@
-//! Answering an invitation from its row (US8, FR-100 to FR-103; T113),
-//! over the corpus' invitations filed as sync files mail: the body stage
-//! Focus runs turns each calendar part into its marker, and the row draws
-//! it.
-//!
-//! - An open invitation's row says Invite, its time, and Accept `y` /
-//!   Decline `Y`. `y` answers it; the toast says "Accepted" with Undo, for
-//!   as long as the answer can be taken back (`RSVP_WINDOW`), and then
-//!   goes. The row says what was answered.
-//! - A click on a row's drawn Decline does what `Y` does.
-//! - A cancelled invitation, and one whose event is over, offer no answer,
-//!   and `y` on them answers nothing.
-//!
-//! The open invitation is `invite-zone-without-vtimezone` with its day moved
-//! to a month from now, so the case does not fall past its own event; the
-//! cancelled and past ones are the corpus' own, which stay so.
+//! The open invitation is `invite-zone-without-vtimezone` with its day moved a month ahead, so it
+//! does not fall past its own event.
 
 use chrono::{Datelike as _, Duration, Utc};
 use gtk::prelude::*;
@@ -25,13 +11,9 @@ use postio_storage::repository::{IdentityRepository, MessageRepository, StoredBo
 
 use crate::support::{self, Fixture};
 
-/// The address the corpus' invitations are sent to, which the account
-/// sends from, so there is someone to answer as.
 const ATTENDEE: &str = "ada.norwood@example.com";
 
 impl Fixture {
-    /// The account sends as the invitations' attendee, and has the folders
-    /// an answer is queued and filed through.
     pub async fn invited(&self) {
         let connection = self.database.connect().await.expect("a connection");
         let mut identity = Identity::new(
@@ -48,9 +30,6 @@ impl Fixture {
         }
     }
 
-    /// File `raw` into the inbox `minutes` ago, as sync and the body
-    /// backfill leave it: the message, its text, and its calendar part's
-    /// bytes in `blobs`.
     pub async fn file_raw(&self, blobs: &BlobStore, raw: &[u8], minutes: i64) -> MessageId {
         let parsed = postio_model::mime::parse(raw);
         let calendar: Vec<(Option<String>, Vec<u8>)> = parsed
@@ -64,9 +43,8 @@ impl Fixture {
             .map(|part| (part.attachment.part_id.clone(), part.content.clone()))
             .collect();
         let body = parsed.body.clone();
-        // By the real clock: Focus reads only the last 30 days of what was
-        // filed (`focus::body`'s window), and a date fixed in September has
-        // aged out of it since.
+        // By the real clock: Focus reads only the last 30 days of what was filed, so a fixed date
+        // ages out.
         let mut message = parsed.into_message(
             self.account.id,
             self.inbox,
@@ -104,7 +82,6 @@ impl Fixture {
     }
 }
 
-/// `invite-zone-without-vtimezone`, its event moved to a month from today.
 fn open_invitation() -> Vec<u8> {
     let ahead = Utc::now() + Duration::days(30);
     let day = format!("{:04}{:02}{:02}", ahead.year(), ahead.month(), ahead.day());
@@ -114,7 +91,6 @@ fn open_invitation() -> Vec<u8> {
         .into_bytes()
 }
 
-/// The row on screen whose subject contains `subject`.
 fn row(window: &FocusWindow, subject: &str) -> Option<RowWidget> {
     window.pane()?.rows_on_screen().into_iter().find(|row| {
         row.item().is_some_and(|item| {
@@ -129,14 +105,12 @@ fn row(window: &FocusWindow, subject: &str) -> Option<RowWidget> {
     })
 }
 
-/// What the row whose subject contains `subject` drew.
 fn said(window: &FocusWindow, subject: &str) -> Vec<String> {
     row(window, subject)
         .map(|row| row.drawn().texts)
         .unwrap_or_default()
 }
 
-/// Focus over a store holding `raws`, once each has its Invite marker.
 async fn open_over(raws: &[(&[u8], &str)]) -> (Fixture, FocusWindow) {
     let fixture = Fixture::empty().await;
     fixture.invited().await;
@@ -160,8 +134,6 @@ async fn open_over(raws: &[(&[u8], &str)]) -> (Fixture, FocusWindow) {
     (fixture, window)
 }
 
-/// US8 scenarios 1-3's part on screen: the row offers Accept `y` and
-/// Decline `Y`, `y` answers, and the toast lasts the answer's window.
 pub fn y_accepts_from_the_row_and_the_toast_lasts_the_window() {
     crate::gtk_case(async {
         if !support::display() {
@@ -206,8 +178,6 @@ pub fn y_accepts_from_the_row_and_the_toast_lasts_the_window() {
             said(&window, "Portfolio review")
         );
 
-        // It goes by itself once the window has closed, and not before the
-        // ordinary toast's eight seconds would have taken it.
         let shown = std::time::Instant::now();
         let gone = std::time::Duration::from_secs(u64::from(window_lasts) + 5);
         while window.toast_showing().is_some() && shown.elapsed() < gone {
@@ -229,7 +199,6 @@ pub fn y_accepts_from_the_row_and_the_toast_lasts_the_window() {
     });
 }
 
-/// A click on the row's own Decline does what `Y` does.
 pub fn a_click_on_the_row_s_decline_declines() {
     crate::gtk_case(async {
         if !support::display() {
@@ -260,8 +229,6 @@ pub fn a_click_on_the_row_s_decline_declines() {
     });
 }
 
-/// US8 scenarios 4 and 5: a cancelled invitation and one whose event is
-/// over show no Accept or Decline, and `y` on them answers nothing.
 pub fn a_cancelled_or_past_invitation_offers_no_answer() {
     crate::gtk_case(async {
         if !support::display() {
@@ -283,7 +250,6 @@ pub fn a_cancelled_or_past_invitation_offers_no_answer() {
                 );
             }
         }
-        // `y` on each: nothing is answered.
         for _ in 0..2 {
             support::keys(&window, &["j", "y"]);
         }
@@ -295,9 +261,6 @@ pub fn a_cancelled_or_past_invitation_offers_no_answer() {
     });
 }
 
-/// The open message's Invite card (T113's dialog half, screen 04): it
-/// offers Accept `y` and Decline `Y`, and `Y` in the dialog declines the
-/// invitation on screen.
 pub fn the_open_invitation_s_card_answers_with_its_keys() {
     crate::gtk_case(async {
         if !support::display() {

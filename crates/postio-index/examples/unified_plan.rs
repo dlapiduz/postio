@@ -1,27 +1,3 @@
-//! The measurement behind ADR 0005 Q5a: what unified search costs (#435).
-//!
-//! `postio-index`'s recency path walks `idx_messages_account_list`
-//! (`account_id, received_at DESC, id DESC`) in the order the caller asked
-//! for and stops at `LIMIT`. A composite index can only supply that ordering
-//! while its leading column is pinned to one value, so dropping the
-//! `account_id` predicate — which is all "unified" means — takes the ordering
-//! away with it. This runs the four candidate plans against a corpus that can
-//! actually tell them apart, and prints `EXPLAIN QUERY PLAN` beside each time.
-//!
-//! It lives here rather than in `benches/` because it answers a question that
-//! was asked once. `search_budget.rs` is the standing budget gate, and it is
-//! single-account: it cannot see any of this, which is the other half of what
-//! #435 found.
-//!
-//! ```sh
-//! cargo run --release -p postio-index --example unified_plan
-//! ```
-//!
-//! `--release` is not optional — a debug build measures rustc, not SQLite.
-//! The corpus is a fixed-seed xorshift like `search_budget.rs`'s, so a run is
-//! reproducible; the four accounts are interleaved in time so that a unified
-//! recency ordering genuinely has to merge them rather than concatenate.
-
 use chrono::{TimeZone, Utc};
 use postio_model::{EmailAddress, Message};
 use postio_storage::Connection;
@@ -70,8 +46,6 @@ async fn main() {
         account_ids.push(account.id.get());
         for i in 0..PER_ACCOUNT {
             let sender = rng.below(SENDER_COUNT);
-            // Interleaved in time across accounts, which is what a unified
-            // recency ordering actually has to merge.
             let received_at = base + chrono::Duration::minutes((i * ACCOUNTS + a) as i64);
             let mut message = Message::new(account.id, mailbox, received_at);
             message.from = vec![EmailAddress::new(
@@ -104,7 +78,6 @@ async fn main() {
     for (label, word) in [("uncommon", UNCOMMON_WORD), ("common", COMMON_WORD)] {
         println!("=========== {label} word: {word:?} ===========");
 
-        // A — today's plan, one account named.
         let a_sql = format!(
             "SELECT m.id FROM messages m
               WHERE m.account_id = ?2 AND {correlated}
@@ -121,7 +94,6 @@ async fn main() {
         )
         .await;
 
-        // B — unified, no account predicate, no new index.
         let b_sql = format!(
             "SELECT m.id FROM messages m
               WHERE {correlated}
@@ -135,7 +107,6 @@ async fn main() {
         )
         .await;
 
-        // D — per-account UNION ALL, each on its own index, merged.
         let arms: Vec<String> = account_ids
             .iter()
             .map(|id| {
@@ -160,7 +131,6 @@ async fn main() {
         .await;
     }
 
-    // C — unified with the index option 1 proposes.
     println!("\n>>> adding idx_messages_recency ON messages (received_at DESC, id DESC)");
     let built = Instant::now();
     connection
@@ -202,10 +172,6 @@ async fn main() {
         .await;
     }
 
-    // The other half of the executor: `Form::Driven`, which orders by bm25
-    // rather than by received_at. Its ORDER BY does not depend on
-    // idx_messages_account_list at all, so the account predicate should only
-    // change selectivity here, not the plan.
     let hits_join = "FROM (
              SELECT rowid AS rid, bm25(messages_fts) AS meta, NULL AS body
                FROM messages_fts WHERE messages_fts MATCH ?1
@@ -242,10 +208,7 @@ async fn main() {
         .await;
     }
 
-    // What the index costs on the write path, which is the objection to it.
-    // Measured in both orders, because the first run of the pair pays for a
-    // cold page cache and the second does not -- taking one order alone had
-    // the index looking *faster*, which it is not.
+    // Measured in both orders: the first of the pair pays for a cold page cache.
     println!("\n=========== write cost ===========");
     measure_insert(&connection, "1st: with idx_messages_recency").await;
     connection
@@ -259,9 +222,6 @@ async fn main() {
         .expect("recreate");
     measure_insert(&connection, "3rd: with it again").await;
 
-    // What the index costs used to come from `dbstat`, per b-tree. This
-    // engine has none, so the only honest figure is the whole file -- which
-    // is still the number that reaches a disk.
     let pages = postio_storage::sql::scalar(&connection, "PRAGMA page_count", ())
         .await
         .unwrap_or(0);
@@ -293,8 +253,6 @@ async fn report(label: &str, connection: &Connection, sql: &str, params: &[turso
         .expect("run")
         .len()
     };
-    // Warm, then take the best of five: the interesting quantity is the
-    // plan's cost, not the page cache's mood.
     let _ = run(connection).await;
     let mut best = std::time::Duration::MAX;
     let mut rows = 0;

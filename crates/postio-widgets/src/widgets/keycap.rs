@@ -1,16 +1,5 @@
-//! A button that says which key does the same thing.
-//!
-//! Every action surface in Postio draws the same pair — a label and, beside
-//! it in mono, the key that runs it — and every one of them built it by hand:
-//! the reader's action bar, the unavailable panel's retry, the reader's
-//! remote-image banner. Three spellings of one control, and only one of them
-//! read the key out of the live keymap, so the other two said whatever was
-//! typed into them.
-//!
-//! This is that control. **The key comes from the keymap, never from a
-//! literal** — a `[keys]` rebind changes what a button says the same moment
-//! it changes what the keyboard does — and a command with no binding at all
-//! hides its cap rather than showing a blank one.
+//! A button that says which key does the same thing. The key comes from the keymap, never a
+//! literal; a command with no binding hides its cap.
 
 use std::cell::RefCell;
 
@@ -19,34 +8,21 @@ use postio_core::CommandId;
 
 type ClickHandler = Box<dyn Fn()>;
 
-/// A label, its key, and what pressing it means.
 pub struct KeycapButton {
     button: gtk::Button,
     hint: gtk::Label,
-    /// The command this runs, when it runs one. `None` for a button whose
-    /// action is local to the widget that built it — "Show images" acts on
-    /// one message's blocked references and has no place in the command
-    /// vocabulary.
+    /// `None` for a button whose action is local to its widget and not in the command vocabulary.
     command: Option<CommandId>,
     handlers: RefCell<Vec<ClickHandler>>,
 }
 
 impl KeycapButton {
-    /// A button carrying `label`, findable by `class`, running `command`.
-    ///
-    /// `primary` gives it the suggested-action treatment: one per bar, the
-    /// verb the bar exists for.
+    /// `primary` gives the suggested-action treatment: one per bar.
     pub fn new(command: Option<CommandId>, label: &str, class: &str, primary: bool) -> Self {
         Self::build(command, label, None, class, primary)
     }
 
-    /// As [`new`](Self::new), drawn as `icon` instead of as words.
-    ///
-    /// `label` is still required and still does most of the work: it becomes
-    /// the accessible name and the tooltip, so the button is announced and
-    /// explained even though nothing on it is readable. An icon-only button
-    /// without one is a button a screen reader calls "button", which is worse
-    /// than the width it saved.
+    /// `label` is still the accessible name and the tooltip.
     pub fn with_icon(
         command: Option<CommandId>,
         label: &str,
@@ -65,9 +41,7 @@ impl KeycapButton {
         primary: bool,
     ) -> Self {
         let hint = super::keyhint::cap("");
-        // A class of its own, distinct from the button's: a test finding
-        // widgets by class needs to tell "the button" and "the label showing
-        // its key" apart.
+        // A class of its own so a test can tell the button from the label showing its key.
         hint.add_css_class(&format!("{class}-hint"));
         hint.set_visible(false);
 
@@ -77,10 +51,8 @@ impl KeycapButton {
                 let image = gtk::Image::from_icon_name(name);
                 image.set_accessible_role(gtk::AccessibleRole::Presentation);
                 content.append(&image);
-                // The key hint stays out of an icon button. Canvas screen 30
-                // gives the letter to the labelled primary only, and putting
-                // it back here returns the width the icon was for -- the
-                // tooltip and the accessible name still carry the key.
+                // No key hint on an icon button: the letter is for the labelled primary only;
+                // tooltip and accessible name carry the key.
                 hint.set_visible(false);
             }
             None => {
@@ -90,9 +62,7 @@ impl KeycapButton {
         }
 
         let button = gtk::Button::new();
-        // A button is as tall as its own words, whatever row it stands in:
-        // a bar taller than its buttons centres them rather than stretching
-        // each to the bar's height.
+        // As tall as its own words: a taller bar centres the button rather than stretching it.
         button.set_valign(gtk::Align::Center);
         button.set_child(Some(&content));
         button.add_css_class(class);
@@ -113,21 +83,15 @@ impl KeycapButton {
         }
     }
 
-    /// The widget to place in a bar.
     pub fn widget(&self) -> gtk::Widget {
         self.button.clone().upcast()
     }
 
-    /// The command this button runs, if it runs one.
     pub fn command(&self) -> Option<CommandId> {
         self.command
     }
 
-    /// Show `key` as this button's cap, or hide the cap when there is none.
-    ///
-    /// `None` is the case where the user cleared a binding, or lost it to a
-    /// collision with another command. A blank cap would read as a key that
-    /// exists and does nothing.
+    /// `None` hides the cap: a blank one reads as a key that exists and does nothing.
     pub fn set_key(&self, key: Option<&str>) {
         match key {
             Some(key) => {
@@ -138,8 +102,6 @@ impl KeycapButton {
         }
     }
 
-    /// The cap currently shown, empty when hidden. Test-facing: production
-    /// code has no reason to read a label back.
     pub fn key(&self) -> String {
         if self.hint.is_visible() {
             self.hint.label().to_string()
@@ -148,17 +110,12 @@ impl KeycapButton {
         }
     }
 
-    /// Called when the button is pressed, however it was pressed.
     pub fn connect_clicked(&self, handler: impl Fn() + 'static) {
         self.handlers.borrow_mut().push(Box::new(handler));
     }
 
-    /// Wire the GTK click into the handler list.
-    ///
-    /// Separate from [`new`](Self::new) because a `clicked` closure has to
-    /// hold the button, and a `KeycapButton` that owned its own cycle would
-    /// never drop. Whoever puts this in a bar calls this once with the
-    /// shared handle it keeps.
+    /// Separate from `new` because the `clicked` closure holds the button; owning its own cycle
+    /// would never drop.
     pub fn arm(this: &std::rc::Rc<Self>) {
         let weak = std::rc::Rc::downgrade(this);
         this.button.connect_clicked(move |_| {
@@ -168,27 +125,20 @@ impl KeycapButton {
         });
     }
 
-    /// Run this button's handlers — what a click does, and what a test uses
-    /// in place of a synthesized pointer event.
     pub fn press(&self) {
         for handler in self.handlers.borrow().iter() {
             handler();
         }
     }
 
-    /// Grey the button out without hiding it, so a bar keeps its shape.
     pub fn set_sensitive(&self, sensitive: bool) {
         self.button.set_sensitive(sensitive);
     }
 
-    /// Whether the button can be pressed.
     pub fn is_sensitive(&self) -> bool {
         self.button.is_sensitive()
     }
 
-    /// Change the words on the button. The cap is untouched — the key that
-    /// runs a verb does not change because the verb was renamed for one
-    /// message.
     pub fn set_label(&self, label: &str) {
         if let Some(content) = self.button.child().and_downcast::<gtk::Box>()
             && let Some(text) = content.first_child().and_downcast::<gtk::Label>()
@@ -199,7 +149,6 @@ impl KeycapButton {
             .update_property(&[gtk::accessible::Property::Label(label)]);
     }
 
-    /// The words currently on the button. Test-facing.
     pub fn label(&self) -> String {
         self.button
             .child()

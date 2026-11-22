@@ -1,8 +1,5 @@
-//! The closed set of resources one render may use (spec FR-003,
-//! data-model.md "Resource table"): the message's own parts and the images
-//! it embeds. Built by the caller before the render; the engine is handed
-//! this as its only `NetProvider`, so a lookup outside it resolves to
-//! nothing -- counted, never fetched.
+//! The closed set of resources one render may use: the engine's only `NetProvider`, so a lookup
+//! outside it resolves to nothing, counted and never fetched.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -12,32 +9,22 @@ use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
 
 use crate::Scope;
 
-/// The scheme the composed document's `@font-face` rules use for the
-/// bundled faces (`postio_ui::reader::document::FONT_SCHEME`).
 pub const FONT_SCHEME: &str = "postio-font";
 
-/// What an `<img>` whose `postio-cid:` names no part of the message is
-/// pointed at instead: answered with a placeholder, so the picture's box
-/// says a picture is there rather than lying blank (#1764).
+/// A placeholder answers so the picture's box says a picture is there rather than lying blank
+/// (#1764).
 pub(crate) const MISSING_PART: &str = "postio-missing-part:";
 
-/// The side of a missing part's placeholder when its `<img>` declares no
-/// size: small, but something a person can see.
 const MISSING_PART_SIDE: u32 = 24;
 
-/// The resource table.
 #[derive(Debug, Default)]
 pub struct Resources {
     /// `(scope, content-id)` → the part's bytes. An unscoped document (one
     /// message, composed without a scope) keys its parts by `None`.
     parts: Mutex<HashMap<(Option<Scope>, String), Bytes>>,
-    /// `postio-font:<name>` → a bundled face (ADR 0023). The URL scheme is
-    /// fixed; the faces are the caller's, because the composed document's
-    /// `@font-face` rules name them.
+    /// The faces are the caller's, because the composed document's `@font-face` rules name them.
     fonts: Mutex<HashMap<String, Bytes>>,
-    /// A remote image the app fetched for a consenting sender (FR-025),
-    /// by its URL. Only postio-runtime's fetcher fills this: the engine
-    /// never reaches the network.
+    /// Only postio-runtime's fetcher fills this: the engine never reaches the network.
     remote: Mutex<HashMap<String, Bytes>>,
     resolved: AtomicU32,
     unresolved: AtomicU32,
@@ -47,13 +34,10 @@ pub struct Resources {
 }
 
 impl Resources {
-    /// An empty table.
     pub fn new() -> Resources {
         Resources::default()
     }
 
-    /// Add one of a message's own parts, by its `Content-ID` (with or
-    /// without the angle brackets).
     pub fn insert_part(&self, scope: Option<&str>, content_id: &str, bytes: Vec<u8>) {
         let id = content_id
             .trim()
@@ -68,11 +52,8 @@ impl Resources {
             );
     }
 
-    /// Add an image the app fetched from `url` for this message's sender.
-    ///
-    /// Kept under the parsed URL, because that is how the engine asks for
-    /// it: `https://IMAGES.example.net/a b.png` in a document is requested
-    /// as `https://images.example.net/a%20b.png`.
+    /// Kept under the parsed URL, as the engine asks for it: `https://IMAGES.example.net/a b.png`
+    /// is requested as `https://images.example.net/a%20b.png`.
     pub fn insert_remote(&self, url: &str, bytes: Vec<u8>) {
         let key = url::Url::parse(url).map_or_else(|_| url.to_owned(), |parsed| parsed.to_string());
         self.remote
@@ -81,7 +62,6 @@ impl Resources {
             .insert(key, Bytes::from(bytes));
     }
 
-    /// Add a bundled face, answered for `postio-font:<name>`.
     pub fn insert_font(&self, name: &str, bytes: &'static [u8]) {
         self.fonts
             .lock()
@@ -89,7 +69,6 @@ impl Resources {
             .insert(name.to_owned(), Bytes::from_static(bytes));
     }
 
-    /// Lookups answered, and not, since the table was built.
     pub(crate) fn counts(&self) -> (u32, u32) {
         (
             self.resolved.load(Ordering::Relaxed),
@@ -97,12 +76,10 @@ impl Resources {
         )
     }
 
-    /// Images drawn as a placeholder since the table was built.
     pub(crate) fn placeholdered(&self) -> u32 {
         self.placeholdered.load(Ordering::Relaxed)
     }
 
-    /// `bytes` as the engine may see them: SVG contained, rasters probed.
     fn admit(&self, bytes: Bytes) -> Option<Bytes> {
         let bytes = contained(bytes)?;
         if bytes.first() == Some(&b'<') {
@@ -140,7 +117,6 @@ impl Resources {
         )
     }
 
-    /// Whether `url` is a `postio-cid:` naming a part this table lacks.
     pub(crate) fn is_missing_part(&self, url: &str) -> bool {
         matches!(self.part(url), Some(None))
     }
@@ -172,8 +148,6 @@ impl Resources {
                 .get(name.trim_start_matches([':', '/']))
                 .cloned();
         }
-        // An image the message embeds in itself: decoded here, never
-        // fetched. Any other `data:` was refused by the sanitizer.
         let payload = url.strip_prefix("data:image/")?.split_once(";base64,")?.1;
         let payload: String = payload.chars().filter(|c| !c.is_whitespace()).collect();
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload)
@@ -184,7 +158,6 @@ impl Resources {
 }
 
 impl Resources {
-    /// The bytes `url` stands for in this render, counted either way.
     fn resolve(&self, url: &str) -> Option<Bytes> {
         let found = self.lookup(url);
         let counter = if found.is_some() {
@@ -206,26 +179,17 @@ impl NetProvider for Resources {
     }
 }
 
-/// What a resource's bytes turned out to be.
 #[derive(Debug, PartialEq)]
 enum Probed {
-    /// Allowed, within the limits, and safe to hand the engine as it is.
     Image(Bytes),
-    /// Refused or over a limit: drawn as a box of this size (FR-024).
     Placeholder { width: u32, height: u32 },
 }
 
-/// The most pixels an image may have on a side (research R4).
 const MAX_SIDE: u32 = 8_192;
-/// The most pixels an image may have in all.
 const MAX_PIXELS: u64 = 40_000_000;
-/// The most encoded bytes an image may have.
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 
-/// Read what an image is from its header alone, before any decoder sees
-/// the pixels: formats the renderer does not decode, and images over the
-/// limits, become placeholders. Blitz calls the decoder itself and passes
-/// no limits, so this is the only place they can be held (research R4).
+/// Blitz calls the decoder itself and passes no limits, so this is the only place they can be held.
 fn probe(bytes: Bytes) -> Probed {
     let reader = image::ImageReader::new(std::io::Cursor::new(&bytes[..])).with_guessed_format();
     let format = reader.as_ref().ok().and_then(|reader| reader.format());
@@ -260,8 +224,6 @@ fn probe(bytes: Bytes) -> Probed {
     }
 }
 
-/// A placeholder the engine can draw: a flat box of the image's size, or
-/// one that takes the size its `<img>` declares when the size is unknown.
 fn placeholder(width: u32, height: u32) -> Bytes {
     let size = if width > 0 && height > 0 {
         format!("width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"")
@@ -274,10 +236,8 @@ fn placeholder(width: u32, height: u32) -> Bytes {
     ))
 }
 
-/// A flat placeholder `side` pixels square, in the colour of
-/// [`placeholder`]'s. A raster, not an SVG: the engine draws an SVG at its
-/// own aspect ratio inside the box, and a raster fills the box, whatever
-/// size its `<img>` declares.
+/// A raster, not an SVG: the engine draws an SVG at its own aspect ratio inside the box, and a
+/// raster fills it.
 fn stretched_placeholder(side: u32) -> Bytes {
     static PNG: std::sync::OnceLock<Bytes> = std::sync::OnceLock::new();
     PNG.get_or_init(|| {
@@ -290,11 +250,9 @@ fn stretched_placeholder(side: u32) -> Bytes {
     .clone()
 }
 
-/// `bytes` as the engine may see them: a raster as it is, and an SVG
-/// re-serialised so it names nothing outside itself (research R5). usvg's
-/// default resolver hands any `<image href>` path to `std::fs::read`, and
-/// Blitz parses SVG images with the defaults, so an SVG part could paint a
-/// local file into the page. An SVG that does not parse is dropped.
+/// An SVG is re-serialised so it names nothing outside itself: usvg's default
+/// resolver hands any `<image href>` to `std::fs::read`, so an SVG part could
+/// paint a local file into the page.
 fn contained(bytes: Bytes) -> Option<Bytes> {
     let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
     let first = text.iter().find(|b| !b.is_ascii_whitespace());
@@ -314,8 +272,7 @@ fn contained(bytes: Bytes) -> Option<Bytes> {
     Some(Bytes::from(tree.to_string(&usvg::WriteOptions::default())))
 }
 
-/// A `data:` raster inside an SVG: the four formats the renderer decodes,
-/// and nothing nested -- an SVG inside an SVG is refused, not recursed into.
+/// An SVG inside an SVG is refused, not recursed into.
 fn raster(mime: &str, data: std::sync::Arc<Vec<u8>>) -> Option<usvg::ImageKind> {
     match mime {
         "image/png" => Some(usvg::ImageKind::PNG(data)),
@@ -330,13 +287,10 @@ fn raster(mime: &str, data: std::sync::Arc<Vec<u8>>) -> Option<usvg::ImageKind> 
 mod tests {
     use super::*;
 
-    /// A GIF whose header declares `width` × `height`: all a header-only
-    /// probe reads, so an over-limit image costs nothing to make.
     fn gif_header(width: u16, height: u16) -> Vec<u8> {
         let mut bytes = b"GIF89a".to_vec();
         bytes.extend(width.to_le_bytes());
         bytes.extend(height.to_le_bytes());
-        // No global colour table; then an image descriptor and trailer.
         bytes.extend([0x00, 0x00, 0x00]);
         bytes.extend([0x2c, 0, 0, 0, 0]);
         bytes.extend(width.to_le_bytes());
@@ -362,8 +316,6 @@ mod tests {
         assert!(table.resolve("postio-cid:logo%40example.com").is_none());
     }
 
-    /// The engine asks for a remote image by its parsed URL, which is not
-    /// always how the document spelled it: the table answers either.
     #[test]
     fn a_remote_image_resolves_by_its_parsed_url() {
         let table = Resources::new();
@@ -407,7 +359,6 @@ mod tests {
                 height: 10
             }
         );
-        // 7,000 × 6,000 is 42 megapixels: each side is within 8,192.
         assert_eq!(
             probe(Bytes::from(gif_header(7_000, 6_000))),
             Probed::Placeholder {
@@ -439,8 +390,6 @@ mod tests {
         }
     }
 
-    /// No animation (FR-024): what the engine decodes of an animated GIF is
-    /// its first frame.
     #[test]
     fn an_animated_gif_yields_its_first_frame() {
         use image::codecs::gif::{GifEncoder, Repeat};
@@ -473,14 +422,12 @@ mod tests {
     }
 }
 
-/// What the render-thread tests drive, behind the `test-hooks` feature.
 #[cfg(feature = "test-hooks")]
 mod hooks {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
-    /// A lookup that panics, and a lookup held until released.
     #[derive(Debug, Default)]
     pub(super) struct Hooks {
         pub(super) panic: AtomicBool,
@@ -499,7 +446,6 @@ mod hooks {
         }
     }
 
-    /// Where a held lookup waits, and how the test knows it got there.
     #[derive(Debug, Default)]
     pub struct Gate {
         state: Mutex<(bool, bool)>,
@@ -523,7 +469,6 @@ mod hooks {
             }
         }
 
-        /// Let the held lookup go on.
         #[doc(hidden)]
         pub fn release(&self) {
             let mut state = self.state.lock().expect("the gate is never poisoned");
@@ -531,7 +476,6 @@ mod hooks {
             self.changed.notify_all();
         }
 
-        /// Wait until a lookup is being held, or `patience` passes.
         #[doc(hidden)]
         pub fn wait_until_held(&self, patience: Duration) {
             let state = self.state.lock().expect("the gate is never poisoned");
@@ -548,12 +492,10 @@ pub use hooks::Gate;
 
 #[cfg(feature = "test-hooks")]
 impl Resources {
-    /// Make every lookup panic, as an engine bug would.
     pub fn panic_on_lookup(&self) {
         self.hooks.panic.store(true, Ordering::Relaxed);
     }
 
-    /// Hold every lookup until the returned gate is released.
     pub fn hold_lookup(&self) -> std::sync::Arc<Gate> {
         let gate = std::sync::Arc::new(Gate::default());
         *self.hooks.hold.lock().expect("hooks are never poisoned") = Some(gate.clone());

@@ -2,19 +2,11 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// What a file says it is (#1269).
-///
-/// A platform service, and the only part of attaching a file that is one:
-/// macOS keeps a type database and answers from the extension and the file's
-/// own content together, the way `gio` does on freedesktop. Everything else
-/// about an attachment — the size guard, the blob write, the row on the draft
-/// — is `postio_session::attaching`'s and happens once.
+/// A platform service: macOS answers from the extension and the content together, as `gio` does.
+/// The size guard, blob write and draft row are `postio_session::attaching`'s.
 public enum MimeType {
-    /// The MIME type of `file`, or `application/octet-stream`.
-    ///
-    /// Falling back rather than failing is deliberate: "some bytes" is better
-    /// than refusing to attach a file because nothing recognised its type,
-    /// and a recipient's client will sniff it again anyway.
+    /// Falls back to `application/octet-stream` rather than refusing to attach; a recipient's
+    /// client sniffs it again.
     public static func of(_ file: URL) -> String {
         guard
             let type = UTType(filenameExtension: file.pathExtension),
@@ -25,16 +17,11 @@ public enum MimeType {
         return mime
     }
 
-    /// What an unrecognised file is called.
     public static let fallback = "application/octet-stream"
 
-    /// What a picture's bytes say it is, or `nil` when they are not one
-    /// (#1571).
-    ///
-    /// From the bytes rather than the name, for the reason the classic app's
-    /// composer gave: a `.png` that is really a JPEG would reach the
-    /// recipient declared wrongly, and the declaration is all their client
-    /// has to go on. `ImageIO`, not AppKit, so this goes to a phone as it is.
+    /// `nil` when the bytes are not an image. Read from the bytes, not the name: a `.png` that is a
+    /// JPEG would reach the recipient mis-declared. `ImageIO`, not AppKit, so it goes to a phone as
+    /// it is.
     public static func ofImage(_ bytes: Data) -> String? {
         guard !bytes.isEmpty,
               let source = CGImageSourceCreateWithData(bytes as CFData, nil),

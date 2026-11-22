@@ -1,86 +1,36 @@
-//! The settings sections: which they are, what they are called, which group
-//! they sit under, and where each one starts in the file.
-//!
-//! Canvas 3f's contract is that `config.toml` *is* the settings UI -- one
-//! store, no OK/Cancel, navigation that switches one pane rather than opening
-//! a sub-screen. That contract is the same on both platforms, so the model of
-//! it belongs here rather than in either frontend.
-//!
-//! Everything here is a pure function. [`header_key`] looks at a line's
-//! brackets and parses no TOML at all, which is what lets the nav stay live
-//! while the buffer is mid-edit and syntactically broken. Reading the file's
-//! *values* is `postio_config`'s job, and writing them is its `patch_*`
-//! functions'.
-//!
-//! What does **not** live here is anything a toolkit names: the classic app
-//! keeps its own `icon` beside this, because a GTK symbolic icon name is not
-//! an SF Symbol and neither frontend should carry the other's.
+//! The settings sections, their names, groups and where each starts in the file.
+//! `header_key` reads brackets only and parses no TOML, so the nav stays live while the buffer is
+//! mid-edit.
 
-/// One of the ten sections the nav lists, in canvas order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
-    /// One row per account, and the form for the selected one.
     Accounts,
-    /// The four Suggestions switches (specs/011-focus-contacts D7), and on
-    /// the Mac what syncs with the address book. Kept in the store, not in
-    /// `config.toml`; the terminal has no Contacts, so it has no pane.
+    /// Kept in the store, not `config.toml`; the terminal has no pane.
     Contacts,
-    /// `[focus] filtering` and `[focus.filter]` -- whether Focus files spam
-    /// and automated updates away, and what the person has told it about
-    /// that (spec 007 US9). The words are [`crate::filtering`]'s.
     Filtering,
-    /// `[saved_searches]` — named saved queries.
     Filters,
-    /// `[compose]` — signatures, and where one goes above a quote.
     Composing,
-    /// `[ui]` — theme, row density, what the message list shows.
     Appearance,
-    /// `[keys]` — command id to binding.
     Keyboard,
-    /// `[sync]` — IDLE, polling, what is fetched and when.
     Sync,
-    /// The remote-image allow-list (#871) and what has been unsubscribed
-    /// from — never a `config.toml` table at all, unlike every other pane
-    /// here: it is view state, kept in its own `$XDG_STATE_HOME` key-file
-    /// (see the classic app's reader remote-image allow-list, which owns the file;
-    /// not linkable from here — this crate is below the frontends, not beside
-    /// them).
+    /// View state kept in its own `$XDG_STATE_HOME` key-file, not a `config.toml` table.
     Privacy,
-    /// `[mcp]` -- which accounts an AI agent may read through `postio-mcp`,
-    /// what it has done lately, and taking that back (ADR 0010 Q6, #1832).
-    /// The words are [`crate::agent_access`]'s.
     Agents,
-    /// The file itself, as text — the raw `TextView` every pane used to
-    /// share. It is not a fallback: `config.toml` *is* the settings store,
-    /// and a pane that shows it whole is how a person reaches a key no form
-    /// has grown a control for yet.
+    /// Not a fallback: `config.toml` is the settings store, and this reaches keys no form has a
+    /// control for.
     ConfigFile,
 }
 
-/// Which heading a pane sits under in the sidebar.
-///
-/// Two groups, because the drawing has two and because the split is real:
-/// `Mail` is about the accounts and the messages in them, `Application` is
-/// about this program. A person looking for "how big is my index" is not
-/// looking under the same heading as one looking for "what is my address".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
-    /// Accounts, Filtering, Saved searches, Composing.
     Mail,
-    /// Appearance, Keyboard, Sync & storage, Privacy, Config file.
     Application,
 }
 
 impl Group {
-    /// Every group, in sidebar order.
     pub const ALL: [Group; 2] = [Group::Mail, Group::Application];
 
-    /// The sidebar heading, already upper-cased.
-    ///
-    /// Upper here rather than in CSS: GTK's own `text-transform` does not
-    /// apply reliably across every face this application loads, and a
-    /// kicker that is capitalised in one place and not the next is the
-    /// drift `widgets::kicker` exists to stop.
+    /// Upper-cased here, not in CSS: GTK's `text-transform` does not apply reliably across faces.
     pub fn label(self) -> &'static str {
         match self {
             Group::Mail => "MAIL",
@@ -90,7 +40,6 @@ impl Group {
 }
 
 impl Section {
-    /// Every section, in nav order — the drawing's order, grouped.
     pub const ALL: [Section; 11] = [
         Section::Accounts,
         Section::Contacts,
@@ -105,7 +54,6 @@ impl Section {
         Section::ConfigFile,
     ];
 
-    /// Which sidebar heading this pane sits under.
     pub fn group(self) -> Group {
         match self {
             Section::Accounts
@@ -122,40 +70,24 @@ impl Section {
         }
     }
 
-    /// The top-level TOML key this section's headers start with.
-    ///
-    /// `[accounts]` and `[saved_searches]` never appear as a bare header — every
-    /// account and filter is its own dotted table, `[accounts.personal]` —
-    /// so matching is by prefix, not by literal line. `Privacy` never
-    /// appears at all, the same as `Accounts` since #470: the nav item
-    /// stays and points at a structured widget instead of any text.
+    /// Matched by prefix: every account and filter is its own dotted table (`[accounts.personal]`).
+    /// `Privacy` never appears.
     pub fn key(self) -> &'static str {
         match self {
             Section::Appearance => "ui",
             Section::Keyboard => "keys",
             Section::Accounts => "accounts",
-            // Not a table either: the switches live in the store.
             Section::Contacts => "contacts",
-            // `[focus]` holds `filtering` and the `[focus.filter]` table the
-            // page lists; the rest of `[focus]` (digests, the vault, the
-            // model) is edited where it is used, and in the file.
             Section::Filtering => "focus",
             Section::Sync => "sync",
             Section::Filters => "saved_searches",
             Section::Composing => "compose",
             Section::Privacy => "privacy",
             Section::Agents => "mcp",
-            // Not a table: the pane shows every table there is.
             Section::ConfigFile => "",
         }
     }
 
-    /// The nav label, and the pane's own title.
-    ///
-    /// The pane repeats its sidebar name as its heading on purpose: with one
-    /// pane on screen at a time, the title is the only thing that says which
-    /// of them you are looking at without moving your eyes back to the
-    /// sidebar.
     pub fn label(self) -> &'static str {
         match self {
             Section::Accounts => "Accounts",
@@ -172,7 +104,6 @@ impl Section {
         }
     }
 
-    /// The one line under the pane's title, saying what it is for.
     pub fn description(self) -> &'static str {
         match self {
             Section::Accounts => "Every account this installation signs in to.",
@@ -191,14 +122,8 @@ impl Section {
         }
     }
 
-    /// What this pane is about, for the find-a-setting field.
-    ///
-    /// The words a person would type looking for something on this pane,
-    /// including the ones the pane's own title does not contain — somebody
-    /// hunting for "dark mode" is looking for Appearance, which says
-    /// neither word. Deliberately not generated from the controls: a pane
-    /// gains and loses controls, and a search that silently stopped
-    /// matching would be very hard to notice.
+    /// Not generated from the controls: a search that silently stopped matching would be hard to
+    /// notice.
     pub fn keywords(self) -> &'static str {
         match self {
             Section::Accounts => "account address imap smtp password oauth signature server remove",
@@ -221,37 +146,24 @@ impl Section {
         }
     }
 
-    /// Whether `frontend`'s settings show this section.
-    ///
-    /// A section is shown where the app honours what it sets. Focus honours
-    /// none of Appearance's `[ui]` keys -- its row is one fixed design and it
-    /// follows the system's scheme (`specs/007-postio-focus`
-    /// classic-parity.md rows 18, 19) -- so a control there would change
-    /// nothing a person could see.
-    ///
+    /// Focus honours none of Appearance's `[ui]` keys, so a control there would change nothing
+    /// visible.
     pub fn shown_in(self, frontend: postio_core::Frontend) -> bool {
         use postio_core::Frontend;
         !matches!(
             (self, frontend),
             (Section::Appearance, Frontend::Focus)
                 | (Section::Contacts, Frontend::Terminal)
-                // The terminal draws no pane for it; `[mcp]` is in the file.
                 | (Section::Agents, Frontend::Terminal)
         )
     }
 
-    /// The `config.toml` table this pane owns, for the footer line.
-    ///
-    /// `None` for the three panes that own no table: `Accounts` lives in the
-    /// encrypted store (#470), `Privacy` keeps its state outside the file
-    /// entirely, and `Config file` *is* the file.
+    /// `None` for panes owning no table: Accounts (encrypted store, #470), Privacy, and Config
+    /// file.
     pub fn table(self) -> Option<&'static str> {
         match self {
-            // **Not `[accounts]`.** That table was retired by #470 because
-            // nothing read it: accounts live in the encrypted store, written
-            // by onboarding and by the settings window. A footer claiming
-            // otherwise sends somebody to edit a file that does not describe
-            // their account, which is worse than saying nothing.
+            // Not `[accounts]`: #470 retired that table, and a footer naming it sends people to a
+            // file that does not describe their account.
             Section::Accounts | Section::Contacts => None,
             Section::Filtering => Some("[focus]"),
             Section::Filters => Some("[saved_searches]"),
@@ -264,16 +176,9 @@ impl Section {
         }
     }
 
-    /// Where this pane's settings actually live, in a phrase for a footer.
-    ///
-    /// [`table`](Self::table) answers "which `config.toml` table", which is
-    /// `None` for three panes — and a footer that then says nothing is a
-    /// footer that has stopped doing its job. This says the true thing for
-    /// every pane, which for two of them is not a file a person can edit.
+    /// Says the true thing for every pane, including the three with no table.
     pub fn stored_in(self) -> &'static str {
         match self {
-            // The one people most need told, because every other pane in the
-            // window *is* about the file.
             Section::Accounts => "accounts are in the encrypted store, not in config.toml",
             Section::Contacts => crate::contacts_settings::STORED_IN,
             Section::Filtering => "[focus] in config.toml · applied live",
@@ -289,10 +194,6 @@ impl Section {
     }
 }
 
-/// The first path segment of a `[...]` header line, if `line` is one.
-///
-/// `[accounts.personal.imap]` yields `Some("accounts")`; `density = "x"` and
-/// `[[array_of_tables]]` (unused by this schema, guarded anyway) yield `None`.
 fn header_key(line: &str) -> Option<&str> {
     let line = line.trim();
     let inner = line.strip_prefix('[')?.strip_suffix(']')?;
@@ -302,8 +203,6 @@ fn header_key(line: &str) -> Option<&str> {
     inner.split('.').next()
 }
 
-/// Every section header in `text`, as a zero-based line number, top to
-/// bottom.
 fn header_lines(text: &str) -> impl Iterator<Item = (usize, Section)> + '_ {
     text.lines().enumerate().filter_map(|(line, content)| {
         let key = header_key(content)?;
@@ -314,15 +213,13 @@ fn header_lines(text: &str) -> impl Iterator<Item = (usize, Section)> + '_ {
     })
 }
 
-/// The first line `section` is written at, if it appears in `text` at all.
 pub fn find_section(text: &str, section: Section) -> Option<usize> {
     header_lines(text)
         .find(|(_, found)| *found == section)
         .map(|(line, _)| line)
 }
 
-/// Which section a cursor on `cursor_line` sits inside — the nearest header
-/// at or above it. `None` above the first header, or in a file with none.
+/// `None` above the first header, or in a file with none.
 pub fn section_at_line(text: &str, cursor_line: usize) -> Option<Section> {
     header_lines(text)
         .filter(|(line, _)| *line <= cursor_line)
@@ -330,11 +227,6 @@ pub fn section_at_line(text: &str, cursor_line: usize) -> Option<Section> {
         .map(|(_, section)| section)
 }
 
-/// `300` → `5 min`, `90` → `90s`, `3600` → `1 h`.
-///
-/// Pure, and tested as such: this is the sentence under the Check-for-mail
-/// control, and it is the only thing on that pane that still says what the
-/// interval in the file actually is once the spin button is gone.
 pub fn humanize_interval(seconds: u64) -> String {
     match seconds {
         0 => "never".to_owned(),
@@ -350,13 +242,8 @@ pub fn humanize_interval(seconds: u64) -> String {
     }
 }
 
-/// The roles a folder can be mapped to (ADR 0035), in the order both
-/// frontends list them, with the name each shows.
-///
-/// `Inbox` is not among them: RFC 3501 names that folder itself, and pointing
-/// it elsewhere would make Postio disagree with every other client on the
-/// same account about where mail arrives. `Flagged` is a view over folders
-/// rather than one of them.
+/// `Inbox` is excluded: RFC 3501 names it, and remapping it would disagree with every other client.
+/// `Flagged` is a view, not a folder.
 pub const MAPPABLE_ROLES: [(postio_model::mailbox::MailboxRole, &str); 5] = [
     (postio_model::mailbox::MailboxRole::Sent, "Sent"),
     (postio_model::mailbox::MailboxRole::Archive, "Archive"),
@@ -365,8 +252,6 @@ pub const MAPPABLE_ROLES: [(postio_model::mailbox::MailboxRole, &str); 5] = [
     (postio_model::mailbox::MailboxRole::Junk, "Junk"),
 ];
 
-/// What the signature editor is headed: whether it makes a signature or
-/// changes one, and whose account it is for.
 pub fn signature_heading(editing: bool, account: &str) -> String {
     let verb = if editing {
         "Edit signature"
@@ -394,8 +279,6 @@ mod tests {
 
     #[test]
     fn focus_shows_every_section_but_the_one_whose_keys_it_does_not_honour() {
-        // Appearance is `[ui]`: theme, density, hover actions and avatars,
-        // none of which Focus honours (classic-parity.md rows 18, 19).
         let focus: Vec<Section> = Section::ALL
             .into_iter()
             .filter(|section| section.shown_in(postio_core::Frontend::Focus))
@@ -430,7 +313,6 @@ mod tests {
 
     #[test]
     fn agents_is_an_application_page_over_mcp_just_above_the_file() {
-        // ADR 0010 Q6, #1832: what is shared with agents, and taking it back.
         assert_eq!(Section::Agents.label(), "Agents");
         assert_eq!(Section::Agents.group(), Group::Application);
         assert_eq!(Section::Agents.key(), "mcp");
@@ -443,8 +325,6 @@ mod tests {
                 "{word} finds Agents"
             );
         }
-        // The terminal has no pane for it: it shows what agents may read in
-        // the file, as the Config file pane does.
         assert!(!Section::Agents.shown_in(postio_core::Frontend::Terminal));
         let text = "[ui]\ntheme = \"dark\"\n\n[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"INBOX\"]\n";
         assert_eq!(find_section(text, Section::Agents), Some(3));
@@ -457,7 +337,6 @@ mod tests {
         assert_eq!(Section::Filtering.table(), Some("[focus]"));
         let said = Section::Filtering.description();
         assert!(said.contains("reason"), "{said:?}");
-        // Found by what a person would type looking for it.
         for word in ["spam", "promotion", "filtered", "never"] {
             assert!(
                 Section::Filtering.keywords().contains(word),
@@ -488,8 +367,6 @@ host = \"imap.example.com\"
 idle = true
 ";
 
-    // -- header parsing -----------------------------------------------------
-
     #[test]
     fn an_interval_reads_as_the_unit_it_was_written_in() {
         assert_eq!(humanize_interval(300), "5 min");
@@ -499,18 +376,14 @@ idle = true
 
     #[test]
     fn an_interval_that_is_not_a_round_minute_says_seconds_rather_than_rounding() {
-        // The spin button is gone, so this line is the only thing that can
-        // tell somebody their interval is 90 seconds. Rounding it to
-        // "1 min" here would make the pane lie about the file.
+        // The spin button is gone, so this line is the only one that states the interval; rounding
+        // 90s to "1 min" would misstate the file.
         assert_eq!(humanize_interval(90), "90s");
         assert_eq!(humanize_interval(45), "45s");
     }
 
     #[test]
     fn every_pane_says_where_its_settings_actually_live() {
-        // A footer that says nothing is a footer that has stopped working,
-        // and one that says `[accounts] in config.toml` sends somebody to
-        // edit a file that does not describe their account.
         for section in Section::ALL {
             let said = section.stored_in();
             assert!(!said.is_empty(), "{} says nothing", section.label());
@@ -533,10 +406,7 @@ idle = true
     fn every_section_that_owns_a_table_names_one_and_the_four_that_do_not_say_so() {
         for section in Section::ALL {
             match section {
-                // Accounts joined these when the footer was found claiming
-                // `[accounts] in config.toml` about accounts that have lived
-                // in the encrypted store since #470.
-                // Contacts keeps its switches in the store (specs/011 D7).
+                // Accounts and Contacts keep their state in the store, not in `config.toml` (#470).
                 Section::Accounts | Section::Contacts | Section::Privacy | Section::ConfigFile => {
                     assert_eq!(
                         section.table(),
@@ -566,8 +436,6 @@ idle = true
 
     #[test]
     fn the_sidebar_groups_are_contiguous() {
-        // The list draws a heading wherever the group changes, so a section
-        // filed out of order would draw MAIL twice and read as two lists.
         let groups: Vec<Group> = Section::ALL.iter().map(|s| s.group()).collect();
         let mut seen = Vec::new();
         for group in groups {
@@ -605,12 +473,8 @@ idle = true
 
     #[test]
     fn an_array_of_tables_header_is_not_mistaken_for_a_section() {
-        // Unused by this schema today; guarded so a future one does not
-        // silently misfile under the wrong section.
         assert_eq!(header_key("[[items]]"), None);
     }
-
-    // -- find_section ---------------------------------------------------
 
     #[test]
     fn find_section_locates_a_bare_header() {
@@ -620,8 +484,6 @@ idle = true
 
     #[test]
     fn find_section_locates_the_first_dotted_table_for_a_prefix_section() {
-        // `[accounts]` never appears bare; the first `[accounts.*]` table is
-        // where a click on "[accounts]" has to land.
         assert_eq!(find_section(SAMPLE, Section::Accounts), Some(8));
     }
 
@@ -632,13 +494,8 @@ idle = true
 
     #[test]
     fn find_section_is_none_for_privacy_no_matter_what_the_file_says() {
-        // Privacy never has a `[privacy]` header to find, in any file --
-        // it is not a table at all, unlike `Filters` above which simply
-        // has not been written yet.
         assert_eq!(find_section(SAMPLE, Section::Privacy), None);
     }
-
-    // -- section_at_line --------------------------------------------------
 
     #[test]
     fn section_at_line_is_none_above_the_first_header() {
@@ -654,8 +511,6 @@ idle = true
 
     #[test]
     fn section_at_line_treats_every_line_of_a_dotted_table_as_its_section() {
-        // Line 11, `host = "imap.example.com"`, sits under
-        // `[accounts.personal.imap]`, which is still `accounts`.
         assert_eq!(section_at_line(SAMPLE, 11), Some(Section::Accounts));
     }
 
@@ -669,8 +524,6 @@ idle = true
 mod saved_search_words {
     use super::Section;
 
-    /// Focus has no sidebar, and "Filters" is a mailbox's name there
-    /// (`Filtered`): the page says what it is and where its pins go.
     #[test]
     fn the_saved_searches_page_names_no_sidebar_and_borrows_no_mailbox_name() {
         assert_eq!(Section::Filters.label(), "Saved searches");

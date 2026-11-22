@@ -1,22 +1,9 @@
-//! Focus's markers (spec 007): what a conversation's row calls out -- an
-//! invitation, a question, a to-do -- at most one per message.
-//!
-//! # Who writes, who reads
-//!
-//! Focus's body task writes them (T110, T117), and the filing pass will;
-//! the row reads them with its page, one batched statement for the whole
-//! page (`ThreadRepository::focus_page_at`), so drawing a row reads no body
-//! (FR-020). Nothing the classic app or the terminal lists ever reads this
-//! table.
-//!
-//! # A dismissal is for good
-//!
-//! A marker the person dismissed never comes back on that message (FR-108):
-//! [`MarkerRepository::insert`] leaves a message that already has a marker
-//! alone, and [`MarkerRepository::replace`], which an invitation update
-//! uses, keeps the dismissal as it found it. Only
-//! [`MarkerRepository::dismiss`] itself, taking the dismissal back as undo
-//! does, lifts it.
+//! Focus's markers: what a conversation's row calls out (an invitation, a question, a to-do), at
+//! most one per message. A page reads them in one batched statement, so drawing a row reads no
+//! body.
+//! A dismissal is for good: [`MarkerRepository::insert`] leaves an existing marker alone and
+//! [`MarkerRepository::replace`] keeps the dismissal; only [`MarkerRepository::dismiss`] with
+//! `None` (undo) lifts it.
 
 use chrono::{DateTime, Utc};
 use postio_model::ids::MessageId;
@@ -29,91 +16,58 @@ use crate::sql::{self, RowExt as _};
 use crate::store::Connection;
 use turso::Row;
 
-/// What made a marker (FR-104 to FR-108, SC-013).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MarkerSource {
-    /// A calendar part in the message: an invitation.
     Calendar,
-    /// The built-in needs-action detector.
     Detector,
-    /// The person's own local model (milestone 2).
     Model,
-    /// A reminder that came due with no reply.
     Reminder,
 }
 
-/// Where an invitation stands, apart from how the person answered it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InviteState {
-    /// The event is ahead and can be answered.
     Open,
-    /// The organiser cancelled it: the marker says so and offers no answer.
     Cancelled,
-    /// The event is over: the marker shows it and offers no answer.
     Past,
 }
 
-/// An invitation's iTIP identity: what decides whether a later invitation
-/// replaces or cancels this one (research R9).
+/// What decides whether a later invitation replaces or cancels this one (research R9).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteIdentity {
-    /// The event's `UID`.
     pub uid: String,
-    /// Its `SEQUENCE`.
     pub sequence: i64,
-    /// Its `DTSTAMP`, when it carries one.
     pub stamp: Option<DateTime<Utc>>,
 }
 
-/// One message's marker, as the store keeps it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Marker {
-    /// The message the marker is about.
     pub message: MessageId,
-    /// What it calls out.
     pub kind: MarkerKind,
-    /// What made it.
     pub source: MarkerSource,
-    /// Character offsets into the message's own text: where the sentence is.
     /// `None` for an invitation or a reminder.
     pub span: Option<(u32, u32)>,
-    /// The sentence, verbatim and short. `None` for an invitation.
     pub excerpt: Option<String>,
-    /// An invitation's event.
     pub starts_at: Option<DateTime<Utc>>,
-    /// When the event ends.
     pub ends_at: Option<DateTime<Utc>>,
-    /// A to-do's due date; for a reminder, the day it was set.
     pub due_at: Option<DateTime<Utc>>,
-    /// The invitation this marker is about, for an invitation.
     pub invite: Option<InviteIdentity>,
-    /// Where the invitation stands, for an invitation.
     pub invite_state: Option<InviteState>,
-    /// How the person answered the invitation, once they have.
     pub answer: Option<InviteAnswer>,
-    /// When the person dismissed it, if they have.
     pub dismissed_at: Option<DateTime<Utc>>,
 }
 
-/// Reads and writes [`Marker`]s.
 #[derive(Debug)]
 pub struct MarkerRepository<'a> {
     connection: &'a Connection,
 }
 
 impl<'a> MarkerRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Writes `marker` for its message, unless the message has one already,
-    /// and answers whether it wrote.
-    ///
-    /// A message's marker is decided once: classifying it again, or a
-    /// newer classifier catching up, does not write over what is there --
-    /// least of all over a dismissal (FR-108). An invitation update is
-    /// [`Self::replace`].
+    /// A message's marker is decided once: reclassifying or a newer classifier does not write over
+    /// it, least of all a dismissal. An invitation update is [`Self::replace`].
     pub async fn insert(&self, marker: &Marker) -> Result<bool> {
         let written = sql::execute(
             self.connection,
@@ -127,15 +81,9 @@ impl<'a> MarkerRepository<'a> {
         Ok(written > 0)
     }
 
-    /// Replaces the marker on `marker.message` with `marker`, and answers
-    /// whether there was one to replace.
-    ///
-    /// For an invitation update: a later `SEQUENCE` moves the event or
-    /// cancels it, and the marker the older invitation left takes the newer
-    /// one's time, identity, state and answer. Whether it *is* newer is the
-    /// calendar adapter's to say (`postio_calendar::supersedes`), not this.
-    /// A dismissal stands: `marker.dismissed_at` is not written, so a
-    /// marker the person dismissed stays dismissed through any update.
+    /// For an invitation update: a later `SEQUENCE` moves or cancels the event. Whether it is newer
+    /// is the calendar adapter's to say (`postio_calendar::supersedes`). `marker.dismissed_at` is
+    /// not written, so a dismissal stands through any update.
     pub async fn replace(&self, marker: &Marker) -> Result<bool> {
         let replaced = sql::execute(
             self.connection,
@@ -150,9 +98,8 @@ impl<'a> MarkerRepository<'a> {
         Ok(replaced > 0)
     }
 
-    /// Dismisses the marker on `message` at `at`, or with `None` takes the
-    /// dismissal back as undo does, and answers whether the message has a
-    /// marker at all.
+    /// With `None`, takes the dismissal back as undo does. Answers whether the message has a marker
+    /// at all.
     pub async fn dismiss(&self, message: MessageId, at: Option<DateTime<Utc>>) -> Result<bool> {
         let changed = sql::execute(
             self.connection,
@@ -167,10 +114,9 @@ impl<'a> MarkerRepository<'a> {
         Ok(changed > 0)
     }
 
-    /// Records how the person answered the invitation on `message`, and,
-    /// while the reply waits out its window, when the window closes
-    /// (research R9); `None` for both takes an answer back, as undo within
-    /// the window does. Answers whether the message has a marker.
+    /// While the reply waits out its window, also records when it closes (research R9); `None` for
+    /// both takes an answer back, as undo within the window does. Answers whether the message has a
+    /// marker.
     pub async fn answer(
         &self,
         message: MessageId,
@@ -191,8 +137,7 @@ impl<'a> MarkerRepository<'a> {
         Ok(changed > 0)
     }
 
-    /// The messages whose answer's window has closed by `now`: what Focus's
-    /// due timer makes final each tick. One statement, a seek on
+    /// What Focus's due timer makes final each tick. One statement, a seek on
     /// `idx_markers_answer_until`.
     pub async fn answers_due(&self, now: DateTime<Utc>) -> Result<Vec<MessageId>> {
         sql::all(
@@ -204,14 +149,11 @@ impl<'a> MarkerRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::answers_due`] runs.
     pub fn explain_answers_due() -> &'static str {
         "SELECT message_id FROM markers WHERE answer_until <= ?1 ORDER BY answer_until LIMIT 256"
     }
 
-    /// Makes the answer on `message` final, its window closed: `accepting`
-    /// becomes `accepted` and `declining` `declined`. Answers whether there
-    /// was one waiting.
+    /// `accepting` becomes `accepted` and `declining` `declined`. Answers whether one was waiting.
     pub async fn settle_answer(&self, message: MessageId) -> Result<bool> {
         let settled = sql::execute(
             self.connection,
@@ -227,11 +169,8 @@ impl<'a> MarkerRepository<'a> {
         Ok(settled > 0)
     }
 
-    /// How many markers of `kind` the person has dismissed in mail from
-    /// `sender` (an address, as `EmailAddress::normalized` spells it): what
-    /// decides when dismissing teaches Focus that this sender's mail does
-    /// not ask that of them (FR-108). One statement, driven from the
-    /// sender's address: a cost of their mail, never a walk of everybody's.
+    /// Decides when dismissing teaches Focus that this sender's mail does not ask that of them. One
+    /// statement driven from the sender's address.
     pub async fn dismissed_from(&self, sender: &str, kind: MarkerKind) -> Result<u32> {
         let count = sql::scalar(
             self.connection,
@@ -245,7 +184,6 @@ impl<'a> MarkerRepository<'a> {
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
-    /// The SQL [`Self::dismissed_from`] runs.
     pub fn explain_dismissed_from() -> &'static str {
         "SELECT count(DISTINCT k.message_id)
            FROM addresses a
@@ -254,8 +192,6 @@ impl<'a> MarkerRepository<'a> {
           WHERE a.address_normalized = ?1 AND k.kind = ?2 AND k.dismissed_at IS NOT NULL"
     }
 
-    /// The marker on `message`, dismissed or not: what the open message's
-    /// marker card reads.
     pub async fn get(&self, message: MessageId) -> Result<Option<Marker>> {
         sql::first(
             self.connection,
@@ -266,9 +202,8 @@ impl<'a> MarkerRepository<'a> {
         .await
     }
 
-    /// Every marker about the invitation `uid`, in message order: the ones a
-    /// later `REQUEST` or `CANCEL` for the same event may replace. One seek
-    /// on `idx_markers_invite`.
+    /// Candidates a later `REQUEST` or `CANCEL` for the same event may replace. One seek on
+    /// `idx_markers_invite`.
     pub async fn invitations(&self, uid: &str) -> Result<Vec<Marker>> {
         sql::all(
             self.connection,
@@ -280,13 +215,10 @@ impl<'a> MarkerRepository<'a> {
     }
 }
 
-/// Every column, in the order [`values`] binds them and [`read_marker`]
-/// reads them.
 const COLUMNS: &str = "message_id, kind, source, span_start, span_end, excerpt, starts_at, \
                        ends_at, due_at, invite_uid, invite_sequence, invite_stamp, \
                        invite_state, answer, dismissed_at";
 
-/// `marker`'s columns as parameters, `?1` the message.
 fn values(marker: &Marker) -> Vec<turso::Value> {
     use turso::Value::{Integer, Null, Text};
     let integer = |value: Option<i64>| value.map_or(Null, Integer);
@@ -352,7 +284,6 @@ fn read_marker(row: &Row) -> Result<Marker> {
     })
 }
 
-/// A stored character offset, which a negative number cannot be.
 fn offset(value: i64) -> Result<u32> {
     u32::try_from(value).map_err(|_| Error::ColumnType {
         column: "markers.span_start".to_owned(),

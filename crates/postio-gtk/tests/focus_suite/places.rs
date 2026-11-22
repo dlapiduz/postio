@@ -1,7 +1,3 @@
-//! The folders popover (US4 scenario 6, T088; screen 10): `g l` lists the
-//! places to go, typing filters them, and `Enter` goes to the first one --
-//! the list shows it, and the header names it.
-
 use crate::support::{self, Fixture};
 
 pub fn g_o_then_trav_and_enter_shows_travel() {
@@ -69,9 +65,6 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
     });
 }
 
-/// While the folders popover has the keyboard, the list's cursor row
-/// keeps only its quiet mark: one accent ring on the screen, the field's
-/// (#2081, FR-091). It is the accent again once the popover goes.
 pub fn the_folders_popover_quiets_the_lists_ring() {
     crate::gtk_case(async {
         if !support::display() {
@@ -114,9 +107,6 @@ pub fn the_folders_popover_quiets_the_lists_ring() {
     });
 }
 
-/// The popover lists Flagged (`g s`) and Snoozed (`g b`) among the
-/// mailboxes, each with its key inside the row, and choosing one lists the
-/// same cross-account view the key does.
 pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
     crate::gtk_case(async {
         if !support::display() {
@@ -180,9 +170,6 @@ pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
     });
 }
 
-/// Every mailbox the popover lists shows the key that goes there, `g #`
-/// takes the Trash by that key, the line under the places follows the
-/// highlighted row, and the Inbox's count is the strip's.
 pub fn every_mailbox_shows_its_key_and_the_footer_follows_the_highlight() {
     crate::gtk_case(async {
         if !support::display() {
@@ -212,7 +199,6 @@ pub fn every_mailbox_shows_its_key_and_the_footer_follows_the_highlight() {
             said.iter().any(|text| text == "g j"),
             "the Trash row shows no key: {said:?}"
         );
-        // The Inbox's count is the conversations the strip counts.
         let strip = support::texts(&window)
             .into_iter()
             .find(|text| text.contains(" unread") && text.contains('\u{b7}'))
@@ -223,7 +209,6 @@ pub fn every_mailbox_shows_its_key_and_the_footer_follows_the_highlight() {
             inbox.iter().any(|text| text == count),
             "the Inbox row says {inbox:?}, the strip {strip:?}"
         );
-        // The footer says what Return does on the highlighted row.
         assert!(
             places.footer().contains("in:Inbox"),
             "the first row is the Inbox: {:?}",
@@ -250,9 +235,6 @@ pub fn every_mailbox_shows_its_key_and_the_footer_follows_the_highlight() {
     });
 }
 
-/// Every place says how many conversations it holds, the same number its own
-/// view shows: Flagged and Snoozed, which are views over mail filed
-/// elsewhere, and each label, as the mailboxes are.
 pub fn every_place_shows_its_count() {
     crate::gtk_case(async {
         if !support::display() {
@@ -309,11 +291,8 @@ pub fn every_place_shows_its_count() {
     });
 }
 
-/// A flag written while the folders popover is up is counted in it: the
-/// popover reads the places again when mail changes, rather than showing
-/// the read it opened with until it is opened again (#2153). The same
-/// read is what a flag written just after `g l` asked for its places
-/// would otherwise miss.
+/// The popover reads the places again when mail changes, rather than showing the read it opened
+/// with (#2153).
 pub fn a_flag_while_the_folders_are_up_is_counted() {
     crate::gtk_case(async {
         if !support::display() {
@@ -352,10 +331,8 @@ pub fn a_flag_while_the_folders_are_up_is_counted() {
     });
 }
 
-/// What the popover's row for `name` says, key included.
-/// A count that moves while the popover is up is written into the row it
-/// is on, not drawn with a new list: a click across a redraw lands on a row
-/// that no longer exists and goes nowhere.
+/// A count that moves while the popover is up is written into its row, not drawn as a new list: a
+/// click across a redraw lands on a row that no longer exists.
 pub fn a_count_landing_keeps_the_rows_a_click_is_on() {
     crate::gtk_case(async {
         use gtk::prelude::*;
@@ -389,8 +366,6 @@ pub fn a_count_landing_keeps_the_rows_a_click_is_on() {
         places.close();
         crate::commands::flag(&client, harbor).await;
 
-        // Open again: the places drawn are the last ones read, and the read
-        // lands with Flagged's new count.
         support::keys(&window, &["g", "l"]);
         let row = flagged_row().expect("Flagged is listed at once");
         assert!(

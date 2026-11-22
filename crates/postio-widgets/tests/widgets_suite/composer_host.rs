@@ -1,14 +1,3 @@
-//! A composer on a host that is not the classic window (specs/007-postio-focus
-//! T023): it takes the host's pane, autosaves once an edit has been quiet
-//! for the debounce, and sends through the same seams -- which is what lets
-//! Focus's compose dialog be this composer rather than a second one.
-//!
-//! The host is this test's own: a plain window with one box for a pane. What
-//! is asserted is what the composer does -- the drafts its seams hand over,
-//! and whether it holds the pane -- never what the host was told.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -20,14 +9,11 @@ use gtk::prelude::*;
 use postio_core::{CommandId, Keymap};
 use postio_model::{AccountId, Draft};
 
-/// What a host dispatches its commands to.
 type CommandHandlers = RefCell<Vec<Box<dyn Fn(CommandId)>>>;
 
-/// A host with nothing classic in it: a window, a box, and a keymap.
 struct TestHost {
     window: gtk::Window,
     pane: gtk::Box,
-    /// Whether the composer holds the pane now.
     holding: Cell<bool>,
     commands: CommandHandlers,
 }
@@ -87,7 +73,6 @@ impl ComposerHost for TestHost {
     }
 }
 
-/// Turn the main loop, timers included, until `done` or `within` passes.
 fn until(within: Duration, done: impl Fn() -> bool) -> bool {
     let deadline = Instant::now() + postio_test_support::scaled(within);
     while !done() && Instant::now() < deadline {
@@ -136,7 +121,6 @@ pub fn a_composer_on_a_test_host_autosaves_and_sends() {
         "opening did not take the host's pane"
     );
 
-    // An edit, then quiet: exactly one autosave, after the debounce.
     composer.test_set_to("Grace Hollins <grace@example.org>");
     composer.test_set_subject("Survey dates");
     assert!(
@@ -153,7 +137,6 @@ pub fn a_composer_on_a_test_host_autosaves_and_sends() {
         "the autosave did not carry the edit"
     );
 
-    // And the host's `Send`, dispatched to it, sends it.
     for handler in host.commands.borrow().iter() {
         handler(CommandId::Send);
     }

@@ -1,8 +1,3 @@
-//! What the demo seeds promise their callers (`postio_storage::seed`): the
-//! conversation lengths asked for come out threaded as asked, a second
-//! account is a whole account of its own, and the helpers that dress a store
-//! for a picture leave what a picture shows.
-
 use chrono::{TimeZone, Utc};
 use postio_model::{BodyState, MailboxRole};
 use postio_storage::repository::{DraftRepository, MailboxRepository, MessageRepository};
@@ -105,8 +100,6 @@ async fn downloaded_seeds_have_bodies_and_the_rest_do_not() {
         "SELECT count(*) FROM messages WHERE body_state = 'full'",
     )
     .await;
-    // A fixture with no text and no html has no body to store, and stays
-    // unfetched; every other one is downloaded.
     assert!(
         full > 0 && (full as usize) <= report.message_count,
         "{full} of {} downloaded",

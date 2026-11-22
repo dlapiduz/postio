@@ -1,11 +1,3 @@
-//! The threaded window, through the store the frontend actually holds
-//! (ADR 0015, #307).
-//!
-//! `postio-storage`'s own tests cover the query. This covers the layer above
-//! it: that a folder scope answers conversations, that a query view refuses
-//! to, and that the seek marks the message window uses do not get confused by
-//! a second window over the same folder.
-
 use postio_model::mailbox::MailboxRole;
 use postio_model::{AccountId, MailboxId};
 use postio_runtime::store::{ListScope, LocalStore, MailStore, PageRequest};
@@ -78,9 +70,6 @@ async fn the_thread_count_matches_the_rows_the_window_would_produce() {
 
 #[tokio::test]
 async fn a_query_view_says_it_lists_messages_rather_than_answering_wrongly() {
-    // Folders thread; query views list messages (ADR 0015). Answering Flagged
-    // with conversations would be the wrong answer rather than a missing one,
-    // so it is refused where a caller can see it.
     let (store, account, _inbox, _database) = store(20, 4).await;
 
     let error = store
@@ -97,10 +86,6 @@ async fn a_query_view_says_it_lists_messages_rather_than_answering_wrongly() {
 
 #[tokio::test]
 async fn paging_conversations_never_repeats_or_skips_a_row() {
-    // The seek marks are the reason this is worth asserting: a page is read
-    // by seeking to a remembered boundary and skipping the remainder, so an
-    // off-by-one in the marks shows up as a duplicated or missing row rather
-    // than as an error.
     let (store, _account, inbox, _database) = store(400, 4).await;
 
     let mut seen: Vec<postio_model::ids::MessageId> = Vec::new();
@@ -109,8 +94,8 @@ async fn paging_conversations_never_repeats_or_skips_a_row() {
             .thread_page(request(ListScope::Mailbox(inbox), page * 20, 20))
             .await
             .expect("a page of conversations");
-        // By representative, because an unthreaded message is a row with no
-        // thread id and two of them must still be two rows.
+        // By representative: an unthreaded message has no thread id, and two of them must still be
+        // two rows.
         seen.extend(window.rows.iter().map(|row| row.representative.id));
     }
 
@@ -126,10 +111,6 @@ async fn paging_conversations_never_repeats_or_skips_a_row() {
 
 #[tokio::test]
 async fn the_two_windows_over_one_folder_do_not_confuse_each_others_marks() {
-    // A folder has both a message window and a thread window, with different
-    // row counts. One set of seek marks would have each read clearing the
-    // other's, which would show up as paging that silently walks from the top
-    // every time — slow rather than wrong, and so easy to miss.
     let (store, _account, inbox, _database) = store(400, 4).await;
 
     for page in 0..4 {
@@ -146,16 +127,8 @@ async fn the_two_windows_over_one_folder_do_not_confuse_each_others_marks() {
     }
 }
 
-/// The unified scope is a list over every account, and the store has to page
-/// it by position like any other.
-///
-/// The risk this covers is the offset bridge, not the grouping —
-/// `postio-storage` owns that. `read_thread_page` remembers a cursor for a
-/// row it has already handed out and then skips forward from it, and the
-/// unified walk folds threads together as it goes, so an off-by-one in that
-/// bridge shows up as a row served twice or a row never served at all.
-/// Walking the whole list and insisting every row is distinct is what would
-/// catch it.
+/// Covers the offset bridge, not the grouping: an off-by-one in remembering a cursor and skipping
+/// forward shows as a row served twice or never.
 #[tokio::test]
 async fn the_unified_scope_pages_every_account_without_repeating_a_row() {
     let database = test_support::temp().await;
@@ -211,39 +184,24 @@ async fn the_unified_scope_pages_every_account_without_repeating_a_row() {
 
 #[tokio::test]
 async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
-    // The count is the process's: alone, or a neighbour's work is counted too.
     if postio_test_support::alone!("paging_a_folder_counts_it_once_rather_than_once_per_page") {
         return;
     }
-    // #1534. `read_thread_page` recomputes `count_of` on every page, and for
-    // a threaded folder that is not a column lookup — it is a correlated
-    // subquery, one indexed probe per message. Measured on a real account:
-    // 786 ms for a 60,907-message Archive, against a 100 ms interaction
-    // budget. Paid again for every page the list asks for, which is what made
-    // the folder impossible to open.
-    //
-    // `Marks`' own doc comment states the assumption this breaks: "The total
-    // is checked on every read — it is a column lookup now, not a count."
-    // True of the message window, whose total is the trigger-maintained
-    // column. Never true of this one.
-    //
-    // Counted, not timed: the count is a statement, and statements are what
-    // `postio_storage`'s trace hook sees. Six pages of the same folder should
-    // not cost six counts.
+    // #1534: `count_of` was recomputed on every page and is a correlated subquery (786 ms on a
+    // 60,907-message Archive).
+    // Counted, not timed: six pages of one folder should not cost six counts.
     let database = test_support::temp().await;
     let report = seed_large(&database, 7, 600).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     thread_seeded_messages(&database, report.account.id, 4).await;
     let store = LocalStore::new(&database);
 
-    // One page, to establish what a page costs including its first count.
     let first = store
         .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
         .await
         .expect("the first page");
     assert!(first.total > 0, "the fixture has to have rows");
 
-    // Five more pages of the same folder, nothing changing underneath.
     let before = postio_runtime::store::folders_counted();
     for page in 1..6u32 {
         store
@@ -253,12 +211,6 @@ async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
     }
     let counted = postio_runtime::store::folders_counted() - before;
 
-    // Each page legitimately issues its own read. What it must not issue is
-    // its own count of the whole folder: the list has not changed, and the
-    // answer is the one already in hand.
-    //
-    // Two statements per page is the honest budget — the page, and whatever
-    // the scope resolution needs. Six counts on top of that is the defect.
     assert_eq!(
         counted, 0,
         "five pages of an unchanged folder counted it {counted} more times. A \
@@ -270,15 +222,12 @@ async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
 
 #[tokio::test]
 async fn paging_a_folder_opens_one_connection_rather_than_one_per_page() {
-    // The count is the process's: alone, or a neighbour's work is counted too.
     if postio_test_support::alone!("paging_a_folder_opens_one_connection_rather_than_one_per_page")
     {
         return;
     }
-    // #1602: the engine keeps no pool, so a read that opens its own
-    // connection pays a fresh pager, an empty page cache and the pragmas,
-    // and a list page opened two. Counted, not timed, like the folder count
-    // above: five pages of one folder should not cost five caches.
+    // #1602: a read opening its own connection pays a fresh pager, page cache and pragmas. Counted,
+    // not timed.
     let database = test_support::temp().await;
     let report = seed_large(&database, 7, 600).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -309,9 +258,6 @@ async fn paging_a_folder_opens_one_connection_rather_than_one_per_page() {
 
 #[tokio::test]
 async fn the_rows_for_a_changed_message_are_the_page_row_they_replace() {
-    // #1607: a mark-read re-read the whole page to learn one conversation's
-    // new state. `rows_in` answers the same ids with the same row shape the
-    // page uses, so the list can patch the row in place.
     let database = test_support::temp().await;
     let report = seed_large(&database, 7, 600).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -324,7 +270,6 @@ async fn the_rows_for_a_changed_message_are_the_page_row_they_replace() {
         .expect("the first page");
     let shown = page.rows.first().expect("a row").clone();
 
-    // The representative goes unread.
     {
         let connection = database.connect().await.expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
@@ -359,15 +304,11 @@ async fn the_rows_for_a_changed_message_are_the_page_row_they_replace() {
 
 #[tokio::test]
 async fn a_folder_told_about_an_archive_is_not_counted_again() {
-    // The count is the process's: alone, or a neighbour's work is counted too.
     if postio_test_support::alone!("a_folder_told_about_an_archive_is_not_counted_again") {
         return;
     }
-    // #1607: an archive moved the folder's `total_count`, which is the
-    // count's witness, so the next page paid the whole conversation count
-    // again -- 786 ms on a real 60k folder, in front of the first row. Told
-    // which messages left, the store adjusts the count it holds by the
-    // conversations that actually left and keeps serving it.
+    // #1607: an archive moved the folder's `total_count`, the count's witness, so the next page
+    // paid the whole count again; told which messages left, the store adjusts instead.
     let database = test_support::temp().await;
     let report = seed_large(&database, 7, 300).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -377,7 +318,6 @@ async fn a_folder_told_about_an_archive_is_not_counted_again() {
         .find(|mailbox| mailbox.id != inbox)
         .expect("another folder")
         .id;
-    // Conversations of one, so archiving any row's message removes the row.
     thread_seeded_messages(&database, report.account.id, 1).await;
     let store = LocalStore::new(&database);
     let first = store
@@ -421,18 +361,11 @@ async fn a_folder_told_about_an_archive_is_not_counted_again() {
 
 #[tokio::test]
 async fn a_folder_that_gains_a_message_is_counted_again() {
-    // The count is the process's: alone, or a neighbour's work is counted too.
     if postio_test_support::alone!("a_folder_that_gains_a_message_is_counted_again") {
         return;
     }
-    // The other half of caching the count: it has to stop being used the
-    // moment it is wrong. A cached total that outlived its folder would make
-    // the list claim a row count it cannot fill, which is a worse bug than
-    // the one the cache fixes.
-    //
-    // The witness is `mailboxes.total_count`, maintained by the counting
-    // triggers -- so this asserts the trigger and the cache agree, not just
-    // that the cache has an invalidation path.
+    // A cached total must stop being used the moment it is wrong; the witness is the
+    // trigger-maintained `total_count`, so this asserts the trigger and the cache agree.
     let database = test_support::temp().await;
     let report = seed_large(&database, 7, 300).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -444,7 +377,6 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
         .await
         .expect("a page");
 
-    // New mail, through the repository the sync uses, so the triggers run.
     {
         let connection = database.connect().await.expect("a connection");
         let mut arrival = postio_model::Message::new(
@@ -485,9 +417,8 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
 
 #[tokio::test]
 async fn a_message_list_s_rows_cost_the_same_however_many() {
-    // #1613: each message row read one `threads.get` for its conversation's
-    // size -- fifty-one statements for a page of fifty, in search results
-    // and every query view. The size is a column of the row's own query.
+    // #1613: each message row read one `threads.get` for its conversation size; the size is now a
+    // column of the row's own query.
     use postio_storage::test_support::counting::counted_async;
     let (store, account, _inbox, database) = store(200, 4).await;
     let ids: Vec<postio_model::MessageId> = {
@@ -544,13 +475,9 @@ async fn a_message_list_s_rows_cost_the_same_however_many() {
 
 #[tokio::test]
 async fn the_unified_list_is_counted_once_while_nothing_moves() {
-    // The count is the process's: alone, or a neighbour's work is counted too.
     if postio_test_support::alone!("the_unified_list_is_counted_once_while_nothing_moves") {
         return;
     }
-    // #1610: the unified view counted every conversation of every account on
-    // every page -- the folder count's correlated shape, over all of them --
-    // where a folder is counted once and kept while its witness holds.
     let (store, account, inbox, database) = store(300, 3).await;
     let before = postio_runtime::store::unified_counted();
     let mut total = 0;
@@ -567,7 +494,6 @@ async fn the_unified_list_is_counted_once_while_nothing_moves() {
         "three pages of an unchanged unified list counted it more than once"
     );
 
-    // And mail arriving is counted, not served from what was true before.
     {
         let connection = database.connect().await.expect("a connection");
         let mut message = postio_model::Message::new(account, inbox, chrono::Utc::now());
@@ -576,7 +502,6 @@ async fn the_unified_list_is_counted_once_while_nothing_moves() {
             .create(&mut message)
             .await
             .expect("a message");
-        // In a conversation of its own, as threading files every delivery.
         let mut thread = postio_model::Thread::new(account);
         let threads = postio_storage::repository::ThreadRepository::new(&connection);
         threads.create(&mut thread).await.expect("a thread");
@@ -592,12 +517,9 @@ async fn the_unified_list_is_counted_once_while_nothing_moves() {
 
 #[tokio::test]
 async fn a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips() {
-    // The count is the process's: alone, or a neighbour's work is counted too.
     if postio_test_support::alone!("a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips") {
         return;
     }
-    // #1610: a scrollbar drag into a large folder read its page with an
-    // OFFSET over the window's correlated predicate, linear in the depth.
     let (store, account, inbox, database) = store(3_000, 3).await;
     let total = store
         .thread_count(ListScope::Mailbox(inbox))
@@ -615,7 +537,6 @@ async fn a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips() {
         postio_runtime::store::last_thread_skip()
     );
 
-    // And it is the page OFFSET would have read.
     let connection = database.connect().await.expect("a connection");
     let mut query = postio_storage::repository::ThreadListQuery::in_mailbox(account, inbox);
     query.limit = 50;
@@ -637,12 +558,8 @@ async fn a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips() {
 
 #[tokio::test]
 async fn a_query_view_is_counted_from_the_folders_cached_counts() {
-    // #1614: the Flagged and Snoozed pages ran a count(*) over messages on
-    // every page read -- `flagged` is in no index, so the
-    // Flagged count read the table row of every message in the account. The
-    // sidebar already sums the folders' cached columns for the same numbers.
-    // A sentinel in the column is what proves the page read it rather than
-    // counting the messages again.
+    // #1614: the Flagged and Snoozed pages ran `count(*)` per page; a sentinel in the cached column
+    // proves the page read it instead.
     let (store, account, _inbox, database) = store(200, 4).await;
     {
         let connection = database.connect().await.expect("a connection");
@@ -680,11 +597,8 @@ async fn a_query_view_is_counted_from_the_folders_cached_counts() {
 
 #[tokio::test]
 async fn archiving_from_an_inbox_takes_the_row_out_of_unified_and_its_count() {
-    // #1692: Unified is the inboxes. An archive moves a message between two
-    // folders and leaves every folder's total summed together where it was,
-    // so a count held against that sum would still include the row -- and a
-    // list told there are more rows than its pages hold draws placeholders
-    // that never resolve.
+    // #1692: an archive moves a message between folders and leaves their summed totals unchanged,
+    // so a count held against that sum would still include the row.
     let database = test_support::temp().await;
     let report = seed_large(&database, 7, 300).await;
     let archive = report.mailbox(MailboxRole::Archive).expect("an archive").id;
@@ -728,14 +642,10 @@ async fn archiving_from_an_inbox_takes_the_row_out_of_unified_and_its_count() {
     );
 }
 
-// ── Focus's inbox (spec 007, T033) ──────────────────────────────────────────
-
 const FOCUS: ListScope = ListScope::Focus(postio_model::FocusScope::Inbox);
 
 #[tokio::test]
 async fn focus_s_inbox_is_the_unified_inbox_for_now() {
-    // One account, so Unified has nothing to fold: row for row, Focus's
-    // inbox is the unified inbox until Focus starts holding mail back.
     let (store, _account, _inbox, _database) = store(200, 4).await;
     let total = store.list_count(ListScope::Unified).await.expect("a count");
     assert!(
@@ -794,7 +704,6 @@ async fn focus_s_inbox_pages_every_account_without_repeating_a_row() {
 
 #[tokio::test]
 async fn focus_s_inbox_is_counted_once_while_nothing_moves() {
-    // The count is the process's: alone, or a neighbour's work is counted too.
     if postio_test_support::alone!("focus_s_inbox_is_counted_once_while_nothing_moves") {
         return;
     }
@@ -814,7 +723,6 @@ async fn focus_s_inbox_is_counted_once_while_nothing_moves() {
         "three pages of an unchanged inbox counted it more than once"
     );
 
-    // Mail arriving is counted, not served from what was true before.
     {
         let connection = database.connect().await.expect("a connection");
         let mut message = postio_model::Message::new(account, inbox, chrono::Utc::now());
@@ -842,8 +750,6 @@ async fn focus_s_inbox_is_counted_once_while_nothing_moves() {
 
 #[tokio::test]
 async fn no_list_but_focus_s_carries_a_marker() {
-    // Markers are Focus's, read with Focus's pages (FR-020): a classic
-    // scope's rows have none to draw, whatever the store holds.
     let (store, account, inbox, database) = store(200, 4).await;
     let top = store
         .thread_page(request(FOCUS, 0, 1))
@@ -908,10 +814,6 @@ async fn no_list_but_focus_s_carries_a_marker() {
 
 #[tokio::test]
 async fn focus_s_inbox_folds_what_the_unified_inbox_folds() {
-    // Two accounts seeded from one corpus hold the same conversations. One
-    // received at both addresses is one row, in Focus as in Unified, and
-    // the row names the other account's copy -- what archiving it has to
-    // reach as well (spec 007, Edge Cases: one inbox across all accounts).
     let database = test_support::temp().await;
     postio_storage::seed::seed_small(&database, 3).await;
     postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4).await;
@@ -954,10 +856,8 @@ async fn focus_s_inbox_folds_what_the_unified_inbox_folds() {
 
 #[tokio::test]
 async fn holding_mail_moves_focus_s_total_marks_and_rows_together() {
-    // A digest rule holding mail takes it out of Focus's inbox without any
-    // folder moving: the inbox's own counts and sync state -- the witness
-    // the count is kept against -- are what they were, and the count, the
-    // seek marks and the rows must still agree (spec 007, T134).
+    // A digest rule holding mail takes it out of Focus's inbox without any folder moving; the
+    // count, seek marks and rows must still agree.
     let (store, _account, _inbox, database) = store(200, 4).await;
     let before = store
         .thread_page(request(FOCUS, 0, 20))

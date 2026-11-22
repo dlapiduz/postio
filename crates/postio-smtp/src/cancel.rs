@@ -1,50 +1,34 @@
-//! A minimal cancellation token.
-//!
-//! Deliberately small and dependency-free: pulling in `tokio-util` for one
-//! type is not worth it. The semantics match `CancellationToken`: cloning
-//! shares one cancelled flag, cancelling is idempotent, and awaiting an
-//! already-cancelled token returns immediately.
-//!
-//! Duplicated from `postio-account::cancel` rather than shared: the two crates
-//! are deliberately independent siblings under `postio-sync` (see
-//! CLAUDE.md's architecture diagram), and this type is small enough that
-//! duplication costs less than a cross-protocol dependency would.
+//! A minimal cancellation token with `CancellationToken`'s semantics, duplicated from
+//! `postio-account::cancel`: the two crates are independent siblings and duplication costs less
+//! than a cross-protocol dependency.
 
 use std::future;
 use std::sync::Arc;
 
 use tokio::sync::watch;
 
-/// A shared "stop what you are doing" flag.
 #[derive(Clone, Debug)]
 pub struct CancelToken {
     tx: Arc<watch::Sender<bool>>,
 }
 
 impl CancelToken {
-    /// A fresh, uncancelled token.
     pub fn new() -> Self {
         Self {
             tx: Arc::new(watch::channel(false).0),
         }
     }
 
-    /// Cancels every clone of this token. Idempotent.
-    ///
-    /// `send_replace` rather than `send`: `send` discards the value when no
-    /// receiver is currently subscribed, which is exactly the case for a
-    /// token cancelled before anything awaits it.
+    /// `send_replace` rather than `send`: `send` discards the value when no receiver is subscribed,
+    /// as for a token cancelled before anything awaits it.
     pub fn cancel(&self) {
         self.tx.send_replace(true);
     }
 
-    /// Whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
         *self.tx.borrow()
     }
 
-    /// Resolves as soon as cancellation is requested — immediately if it
-    /// already has been, and never otherwise.
     pub async fn cancelled(&self) {
         let mut rx = self.tx.subscribe();
         loop {
@@ -52,7 +36,6 @@ impl CancelToken {
                 return;
             }
             if rx.changed().await.is_err() {
-                // Every sender is gone, so cancellation can never arrive.
                 future::pending::<()>().await;
             }
         }

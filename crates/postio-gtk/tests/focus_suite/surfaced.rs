@@ -1,8 +1,3 @@
-//! Surfaced rows (US5 scenario 4, T095): a reminder that found no reply by
-//! its time comes back to the top of the inbox as a row of its own, marked
-//! "No reply since …", at its place among the conversations -- and the
-//! conversation is not listed a second time.
-
 use chrono::Duration;
 use postio_storage::repository::ReminderRepository;
 
@@ -87,7 +82,6 @@ pub fn a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once() {
             "and since when: {said:?}"
         );
 
-        // Archived from its row, the reminder goes with its conversation.
         assert_eq!(
             window.cursor_row().map(|row| row.id()),
             Some(budget),
@@ -105,10 +99,6 @@ pub fn a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once() {
     });
 }
 
-/// T136, US10 scenario 3: a delivered digest is one row among the
-/// conversations, where it came due -- below the conversations newer than
-/// that -- saying its cadence, its rule, its count and its senders. What
-/// it holds is not listed besides.
 pub fn a_delivered_digest_is_one_row_where_it_came_due() {
     crate::gtk_case(async {
         if !support::display() {
@@ -182,8 +172,6 @@ pub fn a_delivered_digest_is_one_row_where_it_came_due() {
             );
         }
 
-        // `e` on the digest's row archives the whole delivery, and the row
-        // goes; what it held does not come back to the inbox.
         support::keys(&window, &["j"]);
         support::press(&window, "e", gtk::gdk::ModifierType::empty());
         assert!(

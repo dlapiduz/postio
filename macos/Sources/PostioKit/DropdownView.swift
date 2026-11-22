@@ -2,18 +2,9 @@ import Foundation
 import PostioFFI
 import SwiftUI
 
-/// The search dropdown's content (specs/010-focus-search step 2; design
-/// §2, screens 01 and 03): sections with a bold secondary title and a
-/// tertiary note, rows 38 tall inset 6 from the panel's edge, pills, the
-/// cheat sheet's grid and example, and a footer of keys with the count.
-///
-/// It draws `DropdownModel` and decides nothing: every word is the
-/// controller's, every keycap the keymap's. Heights are arithmetic
-/// (`DropdownView.height`), as the bar's lines are, so the panel's size
-/// needs no measuring.
-///
-/// Matched words get the find highlight, never the accent (FR-005); the
-/// accent is the focused row's ring and fill.
+/// Heights are arithmetic (`DropdownView.height`), so the panel's size needs no measuring. Matched
+/// words get the find
+/// highlight, never the accent; the accent is the focused row's ring and fill.
 public struct DropdownView: View {
     let model: DropdownModel
     let run: (UInt64) -> Void
@@ -25,18 +16,14 @@ public struct DropdownView: View {
         self.run = run
     }
 
-    /// The design's sizes (§2 "Panel structure").
     public enum Metrics {
         public static let header: CGFloat = 30
         public static let row: CGFloat = 38
-        /// A person's row: the avatar, the name over the address line.
         public static let personRow: CGFloat = 48
-        /// The "Understood as" bar (screen 05).
         public static let understood: CGFloat = 52
         public static let inset: CGFloat = 6
         public static let rowRadius: CGFloat = 6
         public static let pills: CGFloat = 36
-        /// Narrow to: its title and its pills on one line.
         public static let narrow: CGFloat = 48
         public static let sheetRow: CGFloat = 26
         public static let example: CGFloat = 46
@@ -45,15 +32,11 @@ public struct DropdownView: View {
         public static let folder: CGFloat = 100
         public static let right: CGFloat = 110
         public static let gap: CGFloat = 6
-        /// A row's columns: 10 in from its rounded ground, 12 apart
-        /// (`McSearchType`: `padding: 0 10px; column-gap: 12px`).
         public static let rowPadding: CGFloat = 10
         public static let columnGap: CGFloat = 12
-        /// Columns of the cheat sheet.
         public static let sheetColumns = 4
     }
 
-    /// How tall the dropdown is for what `model` holds.
     public static func height(for model: DropdownModel) -> CGFloat {
         var height = Metrics.footer + 1
         if !model.understood.isEmpty { height += Metrics.understood }
@@ -86,7 +69,6 @@ public struct DropdownView: View {
         row.kind == .person ? Metrics.personRow : Metrics.row
     }
 
-    /// Narrow to draws its title and pills on one line.
     static func isNarrow(_ section: DropdownModel.Section) -> Bool {
         !section.pills.isEmpty && section.pills.contains { $0.op != nil }
     }
@@ -109,8 +91,6 @@ public struct DropdownView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.words.suggestionsLabel)
     }
-
-    // MARK: sections
 
     @ViewBuilder
     private func sectionView(_ section: DropdownModel.Section) -> some View {
@@ -169,10 +149,6 @@ public struct DropdownView: View {
         .accessibilityAddTraits(.isHeader)
     }
 
-    // MARK: plain English
-
-    /// "Understood as", one tile a term: the term in SF Mono, and under it
-    /// at 10.5 what it came from (§1, screen 05).
     private var understoodBar: some View {
         HStack(spacing: 8) {
             Text(Self.words.understoodAs)
@@ -180,8 +156,6 @@ public struct DropdownView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize()
                 .padding(.trailing, 4)
-            // With room, the tiles and then the note; without, the note
-            // gives way and the tiles scroll rather than widen the panel.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
                     understoodTiles
@@ -232,8 +206,6 @@ public struct DropdownView: View {
         }
     }
 
-    // MARK: rows
-
     @ViewBuilder
     private func leading(_ row: DropdownModel.Row) -> some View {
         switch row.kind {
@@ -263,15 +235,10 @@ public struct DropdownView: View {
         }
     }
 
-    /// The chrome's words, composed in Rust.
     static let words = focusSearchWords()
 
-    /// The design's label dot (screen 02): the system's orange, as a
-    /// label's own colour is not read here.
     static let labelDot = Color.orange
 
-    /// A person's avatar colour: the popovers' (`PopoverRowView.avatar`),
-    /// so one person is one colour across search.
     static func avatar(_ name: String) -> Color {
         PopoverRowView.avatar(name)
     }
@@ -313,7 +280,6 @@ public struct DropdownView: View {
             HStack(spacing: 6) {
                 Spacer(minLength: 0)
                 if let hint = model.highlightedHint(row) {
-                    // "↩ adds" (screen 04): the key and its verb, unboxed.
                     Text("\(hint.cap) \(hint.words)").font(.system(size: 12)).foregroundStyle(.secondary)
                 } else if let right = row.right {
                     Text(right).font(.system(size: 12.5).monospacedDigit()).foregroundStyle(.secondary)
@@ -342,9 +308,7 @@ public struct DropdownView: View {
         .accessibilityAddTraits(focused ? [.isSelected, .isButton] : .isButton)
     }
 
-    /// A row as one sentence: its words, then the folder and the date. The
-    /// matched words are in it as words, so the highlight is never the only
-    /// signal (design §5); `postio-ui` composes it.
+    /// The matched words are in it as words, so the highlight is never the only signal (design §5).
     static func accessibleLabel(_ row: DropdownModel.Row) -> String {
         focusSearchRowAccessible(
             title: row.title.map(\.text).joined(), detail: row.detail.map(\.text).joined(),
@@ -365,8 +329,6 @@ public struct DropdownView: View {
         case .folder: return "folder"
         }
     }
-
-    // MARK: the cheat sheet
 
     private func cheatSheet(_ rows: [DropdownModel.Row]) -> some View {
         let columns = Array(
@@ -399,8 +361,6 @@ public struct DropdownView: View {
         .frame(height: Metrics.example)
     }
 
-    // MARK: the footer
-
     private var footer: some View {
         HStack(spacing: 12) {
             ForEach(Array(model.hints.enumerated()), id: \.offset) { _, hint in
@@ -419,11 +379,6 @@ public struct DropdownView: View {
         .frame(height: Metrics.footer)
     }
 
-    // MARK: runs
-
-    /// The find highlight (FR-005): the system yellow, which is the
-    /// design's `rgb(255,204,0)` in light and `rgb(255,214,10)` in dark, at
-    /// 38% and 28%.
     private var findHighlight: Color {
         Color.yellow.opacity(scheme == .dark ? 0.28 : 0.38)
     }
@@ -453,19 +408,14 @@ public struct DropdownView: View {
     }
 }
 
-/// A section's pills on one line (specs/010-focus-search, "Narrow to").
-///
-/// Each pill keeps its whole width, which is why the row is not an
-/// `HStack`: every pill fixed at its ideal size makes the row's ideal the
-/// sum of them, and a dropdown whose row is wider than its panel is laid
-/// out wider than the panel and clipped on both sides.
+/// Each pill keeps its whole width, which is why the row is not an `HStack`: a row wider than its
+/// panel is laid out wider and clipped on both sides.
 struct PillsRow: View {
     let pills: [DropdownModel.Pill]
     let run: (UInt64) -> Void
 
-    /// How many of pills `widths` wide, `spacing` apart, fit in `room`,
-    /// from the first. Never fewer than one: Tab adds the first filter, so
-    /// the first pill is drawn even where it is cut.
+    /// Never fewer than one: Tab adds the first filter, so the first pill is drawn even where it is
+    /// cut.
     static func fitting(widths: [CGFloat], spacing: CGFloat, room: CGFloat) -> Int {
         var used: CGFloat = 0
         for (index, width) in widths.enumerated() {
@@ -482,9 +432,8 @@ struct PillsRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Pills left to right at their own widths while they fit; the rest
-    /// are left out rather than squeezed, which a pill cannot be. Asks for
-    /// only the first pill's width, so the row never sets the dropdown's.
+    /// Pills that do not fit are left out rather than squeezed. Asks for only the first pill's
+    /// width, so the row never sets the dropdown's.
     private struct Fitting: Layout {
         let spacing: CGFloat
 
@@ -500,7 +449,6 @@ struct PillsRow: View {
             var x = bounds.minX
             for (index, subview) in subviews.enumerated() {
                 guard index < shown else {
-                    // Out of sight, past the panel's clipped edge.
                     subview.place(at: CGPoint(x: bounds.maxX + 10_000, y: bounds.midY), anchor: .leading, proposal: .unspecified)
                     continue
                 }
@@ -522,8 +470,6 @@ struct PillsRow: View {
                 if let count = pill.count {
                     Text(count).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 }
-                // A quiet badge, never a banner (D15): the accent's tint,
-                // small, after the count.
                 if let fresh = pill.fresh {
                     Text(fresh)
                         .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
@@ -537,8 +483,6 @@ struct PillsRow: View {
             .lineLimit(1)
             .padding(.horizontal, 10)
             .frame(height: 26)
-            // Narrow to's pills are filled capsules; a saved search's is an
-            // outlined key-like box (screens 03 and 01).
             .background(
                 RoundedRectangle(cornerRadius: pill.op != nil ? 13 : 6)
                     .fill(pill.op != nil ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))

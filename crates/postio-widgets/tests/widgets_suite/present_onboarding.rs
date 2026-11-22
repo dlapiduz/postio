@@ -1,12 +1,3 @@
-//! The credential dialog, from a client (specs/007-postio-focus T165): the
-//! account form both desktop apps open reads the account through
-//! `postio-client`, arrives filled in from its row, and saves the new
-//! password through the client, asking the host to leave the account's
-//! sync alone -- it is running already.
-//!
-//! The host is a scripted transport: what the dialog asked for is what it
-//! recorded, and what a person would see is read off the form.
-
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -23,7 +14,6 @@ use postio_widgets::onboarding::{Onboarding, Status};
 
 use crate::support::until;
 
-/// A host that knows one account and saves whatever it is asked to.
 struct Scripted {
     account: Account,
     asked: Mutex<Vec<Req>>,
@@ -49,7 +39,6 @@ impl Transport for Scripted {
     }
 }
 
-/// The account form anywhere under `widget`.
 fn form_in(widget: &gtk::Widget) -> Option<Onboarding> {
     if let Ok(form) = widget.clone().downcast::<Onboarding>() {
         return Some(form);
@@ -118,7 +107,6 @@ pub fn the_credential_dialog_reads_the_account_and_saves_through_the_client() {
     });
     let form = form_in(shown.upcast_ref()).expect("the account form in the dialog");
 
-    // Arrives as a repair of that account, read off its row.
     assert_eq!(form.address(), "ada@example.com");
     let Status::Reauthenticate(settings) = form.status() else {
         panic!("the form did not arrive as a repair: {:?}", form.status());

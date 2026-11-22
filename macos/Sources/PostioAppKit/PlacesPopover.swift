@@ -3,16 +3,6 @@ import PostioFFI
 import PostioKit
 import SwiftUI
 
-/// The folders and labels popover (specs/009-focus-macos T086; screen 10;
-/// contracts/mac-surfaces.md, "Popovers").
-///
-/// An `NSPopover` anchored to the header strip's Inbox ▾, opened on
-/// `FocusOpenPlaces` (`g o`, or a click on the button). A filter field on
-/// top keeps the keyboard: what is typed narrows the places
-/// (`focusPlaces(filter)`), ↑/↓ move the highlight and Return opens the
-/// highlighted place (`focusOpenPlace`). Below it is `PlacesView`. Escape,
-/// a click outside, or opening a place closes it, and `closed` is called
-/// once, for the keyboard to go home.
 @MainActor
 public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDelegate {
     private let model: PlacesModel
@@ -22,13 +12,10 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
     private let hosting: NSHostingView<PlacesView>
     private let controller = NSViewController()
 
-    /// The view it hangs from: the strip's Inbox ▾ (`PlacesAnchor`).
     public weak var anchor: NSView?
 
-    /// Whether it is on screen.
     public var isShown: Bool { popover.isShown }
 
-    /// The popover's filter field, for a replay to type into.
     public var filterField: NSSearchField { field }
 
     public init(model: PlacesModel, closed: @escaping () -> Void) {
@@ -70,18 +57,15 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         popover.delegate = self
     }
 
-    /// Show it under the anchor, the filter empty and holding the keyboard.
     public func show() {
         guard let anchor, anchor.window != nil else { return }
         field.stringValue = ""
         field.placeholderString = model.placeholder
         resize()
         if !popover.isShown {
-            // Hung rightward from the button's left edge, inside the
-            // window (screen 10), with no arrow: the arrow would point at
-            // the middle of that rect rather than at the button.
-            // From the window's content view: AppKit clips the rect to the
-            // view it is given, and the button is narrower than the popover.
+            // No arrow: it would point at the middle of the rect rather than the button. From the
+            // window's
+            // content view, since AppKit clips the rect to the view it is given.
             hideArrow()
             let host = anchor.window?.contentView ?? anchor
             let button = host.convert(anchor.bounds, from: anchor)
@@ -92,9 +76,8 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         popover.contentViewController?.view.window?.makeFirstResponder(field)
     }
 
-    /// The screen-10 popover has no arrow. AppKit has no public switch for
-    /// it before macOS 15's `hasFullSizeContent`; `shouldHideAnchor` is the
-    /// long-standing one, used only where the popover answers to it.
+    /// AppKit has no public switch before macOS 15's `hasFullSizeContent`; `shouldHideAnchor` is
+    /// the long-standing one.
     private func hideArrow() {
         let key = "shouldHideAnchor"
         if popover.responds(to: NSSelectorFromString("setShouldHideAnchor:")) {
@@ -102,13 +85,11 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         }
     }
 
-    /// The places were read again: the size follows them.
     public func reload() {
         guard popover.isShown else { return }
         resize()
     }
 
-    /// Close it, however it was asked to close.
     public func close() {
         guard popover.isShown else {
             if model.close() { closed() }
@@ -117,7 +98,6 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         popover.performClose(nil)
     }
 
-    /// Type `text` at the end of the filter, as a replay does.
     public func type(_ text: String) {
         field.stringValue += text
         model.filterChanged(field.stringValue)
@@ -131,13 +111,9 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         popover.contentSize = NSSize(width: PlacesView.Metrics.width, height: height)
     }
 
-    // MARK: NSPopoverDelegate
-
     public func popoverDidClose(_ notification: Notification) {
         if model.close() { closed() }
     }
-
-    // MARK: NSSearchFieldDelegate
 
     public func controlTextDidChange(_ obj: Notification) {
         model.filterChanged(field.stringValue)
@@ -160,23 +136,17 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         return true
     }
 
-    /// Return: go to the highlighted place, and close.
     public func openHighlighted() {
         guard model.openHighlighted() else { return }
         closeOpened()
     }
 
-    /// A place was opened from the list (a click), which closed the model;
-    /// the popover follows.
     func closeOpened() {
         popover.performClose(nil)
         closed()
     }
 }
 
-/// The view the folders popover hangs from: put behind the strip's
-/// Inbox ▾ (`HeaderStrip`'s `placeAnchor`), it reports itself once it is
-/// in a window.
 public struct PlacesAnchor: NSViewRepresentable {
     let found: (NSView) -> Void
 

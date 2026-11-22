@@ -1,16 +1,10 @@
-//! Mapping a dotted config key back to where it sits in the file.
-//!
-//! The validity line in the settings panel is one line long: `line 12 · "ctrl+"
-//! names a modifier but no key`. To say *line 12* the validation pass needs the
-//! position of every key in the document, which typed deserialization throws
-//! away. [`SourceMap`] keeps it, built from the spanned parse tree that the
-//! `toml` crate exposes through `DeTable`.
+//! The validity line needs the position of every key, which typed deserialization throws away;
+//! `SourceMap` keeps it from the spanned `toml` parse tree.
 
 use std::collections::BTreeMap;
 
 use toml::de::{DeTable, DeValue};
 
-/// Byte offsets of the start of every line, for offset -> line/column.
 #[derive(Debug)]
 pub(crate) struct LineIndex {
     starts: Vec<usize>,
@@ -32,8 +26,7 @@ impl LineIndex {
         }
     }
 
-    /// One-based line and column of a byte offset. The column counts
-    /// characters, so a key after a multi-byte character still points at it.
+    /// The column counts characters, so a key after a multi-byte character still points at it.
     pub(crate) fn at(&self, text: &str, offset: usize) -> (usize, usize) {
         let offset = offset.min(self.text_len);
         let line = match self.starts.binary_search(&offset) {
@@ -48,20 +41,14 @@ impl LineIndex {
     }
 }
 
-/// Where each key of a TOML document is written.
 #[derive(Debug)]
 pub(crate) struct SourceMap {
-    /// Dotted path -> (offset of the key, offset of its value).
     entries: BTreeMap<String, (usize, usize)>,
     lines: LineIndex,
     text: String,
 }
 
 impl SourceMap {
-    /// Parse `text` for positions only.
-    ///
-    /// Fails only when the document is not valid TOML, in which case the
-    /// returned error carries the span of the syntax error.
     pub(crate) fn parse(text: &str) -> Result<Self, toml::de::Error> {
         let table = DeTable::parse(text)?;
         let mut entries = BTreeMap::new();
@@ -73,32 +60,25 @@ impl SourceMap {
         })
     }
 
-    /// One-based line and column of a byte offset.
     pub(crate) fn at(&self, offset: usize) -> (usize, usize) {
         self.lines.at(&self.text, offset)
     }
 
-    /// Every dotted path in the document, in lexicographic order.
     pub(crate) fn paths(&self) -> impl Iterator<Item = &str> {
         self.entries.keys().map(String::as_str)
     }
 
-    /// Byte offset of a key, if the file sets it.
     pub(crate) fn key_offset(&self, path: &str) -> Option<usize> {
         self.entries.get(path).map(|(key, _)| *key)
     }
 
-    /// Position of a key, falling back to its nearest written ancestor and
-    /// finally to the top of the file.
-    ///
-    /// The fallback is what lets "this account has no email" point at the
-    /// `[accounts.personal]` header: the key the user needs to add is not in the
-    /// file yet, but the table it belongs to is.
+    /// Falls back to the nearest written ancestor, then the top of the file: a key the user needs
+    /// to add
+    /// is not in the file yet, but its table is.
     pub(crate) fn locate_key(&self, path: &str) -> (usize, usize) {
         self.locate(path, |(key, _)| *key)
     }
 
-    /// Position of a key's *value* — what a "this value is wrong" error wants.
     pub(crate) fn locate_value(&self, path: &str) -> (usize, usize) {
         self.locate(path, |(_, value)| *value)
     }

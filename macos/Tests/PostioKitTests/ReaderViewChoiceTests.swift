@@ -2,11 +2,6 @@ import Testing
 
 @testable import PostioKit
 
-/// Reader view, one message at a time (spec 006 FR-031, #1705).
-///
-/// Every message opens as its sender built it; reader view is a command away
-/// (`⇧⌘O`), and *View original* (`⌘O`) is the way back. Both are commands, so
-/// the choice lives where a command can reach it rather than in a view.
 @Suite struct ReaderViewChoiceTests {
     @Test func aMessageOpensAsItsSenderBuiltIt() {
         let choice = ReaderViewChoice()
@@ -30,8 +25,6 @@ import Testing
     }
 
     @Test func viewOriginalLeavesReaderViewAndOnlyLeavesIt() {
-        // `⌘O` is not a toggle: pressed over a message already shown as sent
-        // it does nothing, rather than reducing it.
         var choice = ReaderViewChoice()
         choice.toggle(7)
         choice.showOriginal(7)
@@ -41,8 +34,6 @@ import Testing
     }
 
     @Test func leavingTheConversationForgetsEverything() {
-        // "Per view": the next conversation opens as sent whatever was done
-        // to the last one.
         var choice = ReaderViewChoice()
         choice.toggle(7)
         choice.toggle(8)

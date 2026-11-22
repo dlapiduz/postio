@@ -1,13 +1,3 @@
-//! The settings panel's structured `[keys]` pane (#881): one row per
-//! registered command, its current binding, and a capture button that
-//! rebinds it to the next key pressed.
-//!
-//! `Section::Keys` used to only scroll the shared raw-text view to the
-//! `[keys]` header; this is the structured row list next to it, the same
-//! shape `redraw_filters` (#869), `redraw_ui` (#873) and `redraw_sync`
-//! (#874) established. Skips without a display. Nothing here touches the
-//! network.
-
 use crate::support_compose::{fonts, style};
 use gtk::gdk;
 use gtk::prelude::*;
@@ -43,16 +33,13 @@ pub fn capturing_a_free_key_writes_the_new_binding_to_the_buffer() {
     let row = row_for(&panel, "Next message");
     rebind_button_in(&row).emit_clicked();
     pump();
-    // Re-found rather than reused: `toggle_capture`'s redraw rebuilds every
-    // row fresh, so the row fetched before the click is a detached widget
-    // the panel has already replaced -- the same trap
-    // `settings_accounts_token_wiring.rs` names for exactly this shape.
+    // Re-found rather than reused: `toggle_capture` rebuilds every row, so the row fetched before
+    // the click is detached.
     let row = row_for(&panel, "Next message");
     assert_eq!(binding_in(&row), "press a key…");
 
     panel.test_capture_key(
-        // `n` was free until the one keymap gave it to Focus's capture_note
-        // (spec 007, T158); no app binds `q`.
+        // `n` was taken by Focus's capture_note; no app binds `q`.
         gdk::Key::from_name("q").unwrap(),
         gdk::ModifierType::empty(),
     );
@@ -78,8 +65,7 @@ pub fn capturing_a_binding_already_in_use_is_surfaced_not_silently_overwritten()
     rebind_button_in(&row).emit_clicked();
     pump();
 
-    // "k" is PrevMessage's own default, and both share the List/Thread/
-    // Reader/Search contexts -- a real collision.
+    // `k` is PrevMessage's default and shares its contexts: a real collision.
     panel.test_capture_key(
         gdk::Key::from_name("k").unwrap(),
         gdk::ModifierType::empty(),
@@ -180,9 +166,6 @@ fn title_in(row: &gtk::ListBoxRow) -> String {
 }
 
 fn binding_in(row: &gtk::ListBoxRow) -> String {
-    // The cap is the control now (#1179, Design/screens/22): pressing the
-    // key a command is bound to is what changes it, so the key is a button
-    // rather than a label with a separate `Rebind` beside it.
     rebind_button_in(row)
         .label()
         .map(|label| label.to_string())
@@ -210,9 +193,6 @@ fn rebind_button_in(row: &gtk::ListBoxRow) -> gtk::Button {
     .expect("every keys row has a keycap to press")
 }
 
-/// Every widget in the tree carrying `class` (or, when `class` is empty,
-/// every widget). Copied from `gtk_settings_sync.rs` rather than shared,
-/// matching that file's own reason: no dependency between the two.
 fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if class.is_empty() || widget.has_css_class(class) {

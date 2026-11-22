@@ -1,21 +1,7 @@
-//! Settings, as a frontend reads and writes them.
-//!
-//! **Swift never parses or writes TOML** (ADR 0031). That is not a style
-//! preference: `config.toml` is the settings store, it is a file a person
-//! edits by hand, and a second writer with its own idea of key order and
-//! comment survival would rewrite work nobody asked it to touch. So the
-//! boundary carries *values*, and every write goes back through
-//! `postio_config`'s `patch_*` functions — the same ones the classic app used,
-//! with the same format-preserving tests behind them.
-//!
-//! # Why a patch takes the text back
-//!
-//! [`settings_patch_appearance`] is handed the file, not just five fields,
-//! and re-reads `[ui]` from it before writing. `UiConfig::extra` is a
-//! `toml::Table` of keys this version of Postio does not know — a key from a
-//! newer build, or one somebody added by hand — and it cannot cross a
-//! boundary as typed fields. Reading it here means Swift cannot drop it,
-//! because Swift never holds it.
+//! Swift never parses or writes TOML (ADR 0031): values cross the boundary and every write goes
+//! back through `postio_config`'s `patch_*`.
+//! A patch takes the file text back so it can re-read `[ui]`; `UiConfig::extra` (unknown keys)
+//! cannot cross as typed fields and must not be dropped.
 
 use postio_config::Config;
 use postio_config::compose::{ComposeConfig, SignaturePlacement, patch_compose};
@@ -25,39 +11,21 @@ use postio_config::ui::{Density, Theme, UiConfig, patch_ui};
 use postio_config::validate;
 use postio_ui::settings::Section;
 
-/// One row of the settings nav.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SettingsSectionFfi {
-    /// Stable identifier — the `config.toml` table name, and what a frontend
-    /// stores to remember which pane was open. Empty for `Config file`, which
-    /// is not one table but all of them.
     pub key: String,
-    /// The nav label, and the pane's own title: "Sync & storage".
     pub label: String,
-    /// Which heading this sits under.
     pub group: GroupFfi,
-    /// The one line under the pane's title, saying what it is for.
     pub description: String,
-    /// The bracketed table this pane writes — `[ui]` — for the footer that
-    /// says where a change is going. `None` for the two panes that own no
-    /// table of their own.
     pub table: Option<String>,
-    /// Where this pane's settings actually live, in a phrase for the footer.
-    ///
-    /// Not derivable from `table`: three panes own no `config.toml` table,
-    /// and a footer that then says nothing has stopped doing its job. The
-    /// Accounts pane is the one that most needs telling — its settings are
-    /// in the encrypted store, and a footer naming `config.toml` sends
-    /// somebody to edit a file that does not describe their account.
+    /// Not derivable from `table`: three panes own no table, and Accounts lives in the
+    /// encrypted store, so a footer naming `config.toml` would send people to the wrong file.
     pub stored_in: String,
 }
 
-/// The two headings the nav groups its sections under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum GroupFfi {
-    /// Accounts, Saved searches, Composing (the Mac shows no Filtering).
     Mail,
-    /// Appearance, Keyboard, Sync & storage, Privacy, Config file.
     Application,
 }
 
@@ -72,7 +40,6 @@ impl From<postio_ui::settings::Group> for GroupFfi {
 }
 
 impl GroupFfi {
-    /// The sidebar heading, already upper-cased.
     pub fn label(self) -> &'static str {
         match self {
             GroupFfi::Mail => "MAIL",
@@ -81,132 +48,67 @@ impl GroupFfi {
     }
 }
 
-/// The validity line along the foot of the settings surface.
-///
-/// Canvas 3f puts this where a dialog would put OK and Cancel, so it is the
-/// only thing telling the user whether what they typed took effect. "invalid"
-/// on its own would be the dead end canvas 3d forbids — hence the line.
+/// The only feedback on whether typed text took effect, so "invalid" alone is not enough.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SettingsStatusFfi {
-    /// Whether the configuration is usable as written.
     pub valid: bool,
-    /// One-based line of the first problem, when there is one.
     pub line: Option<u32>,
-    /// The first problem in plain language, or "valid".
     pub message: String,
-    /// The whole footer, timing included: `valid · parsed in <1 ms`.
     pub status_line: String,
 }
 
-/// Message-list row height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum DensityFfi {
-    /// 40px rows — the default.
     Airy,
-    /// Middle setting.
     Comfortable,
-    /// Tightest rows, most messages on screen.
     Compact,
 }
 
-/// Light/dark preference. `System` follows the platform's appearance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ThemeFfi {
-    /// Follow the desktop's light/dark setting.
     System,
-    /// Always light.
     Light,
-    /// Always dark.
     Dark,
 }
 
-/// The `[ui]` table's typed settings — the Appearance pane's whole model.
-///
-/// Deliberately *not* every key in the table: `UiConfig::extra` stays on the
-/// Rust side. See this module's own doc for why that is the point rather than
-/// an omission.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AppearanceFfi {
-    /// Message-list row height.
     pub density: DensityFfi,
-    /// Light/dark preference.
     pub theme: ThemeFfi,
-    /// Show per-row actions when the pointer is over a row.
     pub show_hover_actions: bool,
-    /// Show each row's sender-initials chip, per canvas 1b's row anatomy.
     pub sender_avatars: bool,
 }
 
-/// Where a signature sits relative to quoted text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SignaturePlacementFfi {
-    /// Under what was written and above the quote.
     AboveQuote,
-    /// Under everything, the quote included.
     BelowQuote,
 }
 
-/// The `[compose]` table's typed settings — the Composing pane's model.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ComposingFfi {
-    /// Where the signature goes on a reply.
     pub signature_on_reply: SignaturePlacementFfi,
-    /// Where the signature goes on a forward.
     pub signature_on_forward: SignaturePlacementFfi,
-    /// Which editor `⌃⌘E` hands the draft to. Empty means the platform's own
-    /// idea of what opens a text file (#1288).
     pub editor: String,
 }
 
-/// What the platform found when it looked for the configured editor.
-///
-/// Three answers, not two: a name that is not an application is a terminal
-/// program on macOS and a *typo* on freedesktop, and telling somebody their
-/// editor runs in a terminal when they misspelled it is a wrong answer
-/// confidently given (#1297).
+/// Three answers, not two: an unknown name is a terminal program on macOS but a typo on
+/// freedesktop, and calling a typo a terminal program is wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FoundEditorFfi {
-    /// Something this platform can open in a window of its own.
     Application,
-    /// A real program, but a terminal one.
     TerminalProgram,
-    /// Nothing by that name at all.
     Nothing,
 }
 
-/// What the hand-off should do with the configured editor.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum HandoffTargetFfi {
-    /// Nothing is chosen: open it the way this platform opens a text file.
     PlatformDefault,
-    /// Open it with this application.
-    Application {
-        /// The application's name, as the platform knows it.
-        name: String,
-    },
-    /// A program that wants a terminal, which no frontend here can give it.
-    NeedsTerminal {
-        /// The program, and the `advice` that names it.
-        name: String,
-        /// What to tell the person who chose it.
-        advice: String,
-    },
-    /// A name the platform could not find. Almost always a typo.
-    Missing {
-        /// The name as it was typed.
-        name: String,
-        /// What to tell the person who typed it.
-        advice: String,
-    },
+    Application { name: String },
+    NeedsTerminal { name: String, advice: String },
+    Missing { name: String, advice: String },
 }
 
-/// What to do about the configured editor.
-///
-/// `found` is the frontend's answer to the one question only the platform can
-/// settle — `NSWorkspace` and the applications directories here, a desktop
-/// entry or a `PATH` lookup there. Everything that follows from it is decided
-/// in `postio_ui::handoff`, once, so both frontends say the same thing about
-/// the same name.
 #[uniffi::export]
 pub fn settings_handoff_target(configured: String, found: FoundEditorFfi) -> HandoffTargetFfi {
     let found = match found {
@@ -228,94 +130,55 @@ pub fn settings_handoff_target(configured: String, found: FoundEditorFfi) -> Han
     }
 }
 
-/// What the hand-off button should say: `Open in BBEdit`, or `Edit elsewhere`
-/// when nothing is chosen.
 #[uniffi::export]
 pub fn settings_handoff_label(configured: String) -> String {
     postio_ui::handoff::button_label(&configured)
 }
 
-/// How Postio learns about new mail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum CheckForMailFfi {
-    /// The server pushes — `IDLE`, where it is offered.
     Idle,
-    /// Ask on a timer, for folders and servers without it.
     Poll,
-    /// Only when asked.
     Manual,
 }
 
-/// When message bodies are downloaded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum BodyFetchFfi {
-    /// On opening the message.
     Lazy,
-    /// With the headers, ahead of being asked.
     Eager,
 }
 
-/// When attachment payloads are downloaded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum AttachmentFetchFfi {
-    /// When the message is opened.
     OnOpen,
-    /// With the message.
     Eager,
-    /// Never, until asked for one by name.
     Never,
 }
 
-/// The `[sync]` table's typed settings — the Sync & storage pane's model.
-///
-/// Deliberately not every key: `SyncConfig::extra` stays on the Rust side,
-/// for the reason this module's own doc gives.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SyncingFfi {
-    /// How Postio learns about new mail.
     pub check_for_mail: CheckForMailFfi,
-    /// Polling interval for folders without `IDLE`, in seconds.
     pub poll_interval_secs: u64,
-    /// Maximum simultaneous connections per account.
     pub max_connections: u8,
-    /// Start a sync as soon as the application opens.
     pub sync_on_startup: bool,
-    /// When bodies are downloaded.
     pub body_fetch: BodyFetchFfi,
-    /// When attachment payloads are downloaded.
     pub attachment_fetch: AttachmentFetchFfi,
-    /// How many messages the first sync reaches back for, newest first.
     pub initial_sync_messages: u32,
-    /// Master switch for desktop notifications on new mail.
     pub notify: bool,
-    /// The unread count on the app's icon.
     pub badge: bool,
-    /// Permanently delete Junk older than this many days; `0` never (#1932).
     pub empty_junk_after_days: u32,
-    /// The same for Trash.
     pub empty_trash_after_days: u32,
 }
 
-/// One saved search, as the Filters pane draws it.
-///
-/// The `key` is the `[saved_searches.<key>]` identity and is **not** what the user
-/// sees: #292 keeps the key stable and TOML-safe so a rename cannot orphan a
-/// filter, and `name` is whatever they actually called it.
+/// `key` is the stable `[saved_searches.<key>]` identity, not what the user sees; `name` is (#292).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilterFfi {
-    /// The stable `[saved_searches.<key>]` identity. Never shown as a label.
     pub key: String,
-    /// What the user called it, or the key when nobody has renamed it.
     pub name: String,
-    /// The search expression this filter runs.
     pub query: String,
-    /// Whether it appears in the sidebar.
     pub pinned: bool,
 }
 
-/// Every settings section the Mac shows, in nav order: those its frontend
-/// honours (`Section::shown_in(crate::FRONTEND)`). The Mac is Focus, so
-/// Filtering is in and Appearance out (specs/009-focus-macos T131).
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
     Section::ALL
@@ -332,33 +195,24 @@ pub fn settings_sections() -> Vec<SettingsSectionFfi> {
         .collect()
 }
 
-/// The sidebar heading for a group, already upper-cased.
 #[uniffi::export]
 pub fn settings_group_label(group: GroupFfi) -> String {
     group.label().to_string()
 }
 
-/// `300` → `5 min`, `90` → `90s` — the sentence under Check for mail.
 #[uniffi::export]
 pub fn settings_humanize_interval(seconds: u64) -> String {
     postio_ui::settings::humanize_interval(seconds)
 }
 
-/// The "After you unsubscribe" control of the Filtering pane (#1952).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AfterUnsubscribeFfi {
-    /// The control's heading.
     pub heading: String,
-    /// The sentence under it.
     pub note: String,
-    /// The choices' labels, the default first: `Archive`, `Delete`.
     pub choices: Vec<String>,
-    /// Whether `[focus] after_unsubscribe` is `delete` (else archive).
     pub delete: bool,
 }
 
-/// The control's words and what `text` chooses, or `None` when the file will
-/// not parse -- for the reason [`settings_appearance`] gives.
 #[uniffi::export]
 pub fn settings_after_unsubscribe(text: String) -> Option<AfterUnsubscribeFfi> {
     use postio_ui::unsubscribe as words;
@@ -374,8 +228,6 @@ pub fn settings_after_unsubscribe(text: String) -> Option<AfterUnsubscribeFfi> {
     })
 }
 
-/// Set `[focus] after_unsubscribe` in `text`, the rest verbatim: what the
-/// control writes, through the same edit GTK's makes.
 #[uniffi::export]
 pub fn settings_patch_after_unsubscribe(
     text: String,
@@ -392,16 +244,12 @@ pub fn settings_patch_after_unsubscribe(
     )
 }
 
-/// One choice of the Empty Junk and Trash control (#1932).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AutoEmptyChoiceFfi {
-    /// Days to keep mail; `0` is never.
     pub days: u32,
-    /// What the segment says.
     pub label: String,
 }
 
-/// The choices the Empty Junk and Trash control offers, in order.
 #[uniffi::export]
 pub fn settings_auto_empty_choices() -> Vec<AutoEmptyChoiceFfi> {
     postio_ui::auto_empty::CHOICES
@@ -413,7 +261,6 @@ pub fn settings_auto_empty_choices() -> Vec<AutoEmptyChoiceFfi> {
         .collect()
 }
 
-/// The control's heading and the sentence under it.
 #[uniffi::export]
 pub fn settings_auto_empty_words() -> Vec<String> {
     vec![
@@ -422,7 +269,6 @@ pub fn settings_auto_empty_words() -> Vec<String> {
     ]
 }
 
-/// Validate `text` and describe it the way the footer shows it.
 #[uniffi::export]
 pub fn settings_status(text: String) -> SettingsStatusFfi {
     let validation = validate::check_str(&text).validation;
@@ -434,12 +280,8 @@ pub fn settings_status(text: String) -> SettingsStatusFfi {
     }
 }
 
-/// The Appearance pane's values, or `None` when the file will not parse.
-///
-/// `None` rather than defaults, deliberately: a form full of plausible
-/// settings that are not the user's invites them to save it over the file
-/// they were trying to fix. The pane disables its controls instead, and the
-/// footer says what is wrong.
+/// `None` rather than defaults: a form of plausible values invites saving it over the file being
+/// fixed.
 #[uniffi::export]
 pub fn settings_appearance(text: String) -> Option<AppearanceFfi> {
     let ui = Config::from_toml_str(&text).ok()?.ui;
@@ -451,10 +293,6 @@ pub fn settings_appearance(text: String) -> Option<AppearanceFfi> {
     })
 }
 
-/// Write `appearance` into `text`'s `[ui]` table, leaving the rest verbatim.
-///
-/// Takes the whole file because it re-reads `[ui]` to recover the keys this
-/// version does not know before writing the table back.
 #[uniffi::export]
 pub fn settings_patch_appearance(
     text: String,
@@ -474,11 +312,6 @@ pub fn settings_patch_appearance(
     })
 }
 
-/// The Composing pane's values, or `None` when the file will not parse.
-///
-/// `None` rather than defaults, for the reason
-/// [`settings_appearance`] gives: a form full of plausible settings that are
-/// not the user's invites saving it over the file they were fixing.
 #[uniffi::export]
 pub fn settings_composing(text: String) -> Option<ComposingFfi> {
     let compose = Config::from_toml_str(&text).ok()?.compose;
@@ -489,8 +322,6 @@ pub fn settings_composing(text: String) -> Option<ComposingFfi> {
     })
 }
 
-/// Write `composing` into `text`'s `[compose]` table, leaving the rest
-/// verbatim.
 #[uniffi::export]
 pub fn settings_patch_composing(
     text: String,
@@ -511,7 +342,6 @@ pub fn settings_patch_composing(
     })
 }
 
-/// The Sync & storage pane's values, or `None` when the file will not parse.
 #[uniffi::export]
 pub fn settings_syncing(text: String) -> Option<SyncingFfi> {
     let sync = Config::from_toml_str(&text).ok()?.sync;
@@ -530,7 +360,6 @@ pub fn settings_syncing(text: String) -> Option<SyncingFfi> {
     })
 }
 
-/// Write `syncing` into `text`'s `[sync]` table, leaving the rest verbatim.
 #[uniffi::export]
 pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<String, SettingsError> {
     let mut sync: SyncConfig = Config::from_toml_str(&text)
@@ -554,10 +383,6 @@ pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<Strin
     })
 }
 
-/// Every filter in `text`, in the order the sidebar shows them.
-///
-/// Empty for a file with no `[saved_searches]` in it — which is different from a
-/// file that will not parse, and the pane says so differently.
 #[uniffi::export]
 pub fn settings_filters(text: String) -> Option<Vec<FilterFfi>> {
     let filters = Config::from_toml_str(&text).ok()?.filters;
@@ -577,22 +402,16 @@ pub fn settings_filters(text: String) -> Option<Vec<FilterFfi>> {
             )
         })
         .collect();
-    // `None` sorts after everything that has an order, then by key — the
-    // alphabetical order every filter had before reordering existed, so a
-    // file nobody has reordered reads exactly as it used to.
+    // `None` sorts last, then by key, so a file nobody has reordered keeps the old alphabetical
+    // order.
     rows.sort_by(|left, right| {
         (left.0.is_none(), left.0, &left.1).cmp(&(right.0.is_none(), right.0, &right.1))
     });
     Some(rows.into_iter().map(|(_, _, filter)| filter).collect())
 }
 
-/// Write one filter's editable fields back into `text`.
-///
-/// One filter rather than the whole set, because that is what a pane edits
-/// and because rewriting all of them to change one is how the fields this
-/// build does not know get lost. The key is the identity and is never
-/// written from here: renaming is `name`, and moving a filter to a new key
-/// would orphan whatever refers to it (#292).
+/// One filter, not the set: rewriting all of them loses fields this build does not know.
+/// The key is never written from here; moving to a new key would orphan references (#292).
 #[uniffi::export]
 pub fn settings_patch_filter(text: String, filter: FilterFfi) -> Result<String, SettingsError> {
     let mut filters = Config::from_toml_str(&text)
@@ -607,9 +426,7 @@ pub fn settings_patch_filter(text: String, filter: FilterFfi) -> Result<String, 
     };
     existing.query = filter.query;
     existing.pinned = filter.pinned;
-    // Blank means "not renamed", which is what `None` says in the file — so
-    // clearing the field restores the key as the label rather than saving an
-    // empty name that draws as nothing.
+    // Blank means "not renamed" (`None` in the file), not an empty name that draws as nothing.
     let name = filter.name.trim();
     existing.name = (!name.is_empty() && name != filter.key).then(|| name.to_owned());
     patch_filters(&text, &filters).map_err(|err| SettingsError::Invalid {
@@ -617,7 +434,6 @@ pub fn settings_patch_filter(text: String, filter: FilterFfi) -> Result<String, 
     })
 }
 
-/// Remove a filter entirely.
 #[uniffi::export]
 pub fn settings_remove_filter(text: String, key: String) -> Result<String, SettingsError> {
     let mut filters = Config::from_toml_str(&text)
@@ -631,7 +447,6 @@ pub fn settings_remove_filter(text: String, key: String) -> Result<String, Setti
     })
 }
 
-/// Add a filter under `key`, running `query`.
 #[uniffi::export]
 pub fn settings_add_filter(
     text: String,
@@ -666,21 +481,16 @@ pub fn settings_add_filter(
     })
 }
 
-/// The reading pane's zoom from `[reader]`, in percent, or `None` when the
-/// file will not parse (spec 006 FR-021) -- `settings_appearance`'s reason.
 #[uniffi::export]
 pub fn settings_reader_zoom(text: String) -> Option<u16> {
     Some(Config::from_toml_str(&text).ok()?.reader.zoom)
 }
 
-/// Every zoom step, in percent: the ones `[reader] zoom` takes.
 #[uniffi::export]
 pub fn settings_zoom_steps() -> Vec<u16> {
     postio_config::ZOOM_STEPS.to_vec()
 }
 
-/// Write `zoom` into `text`'s `[reader]` table, as the nearest step, leaving
-/// the rest verbatim.
 #[uniffi::export]
 pub fn settings_patch_reader_zoom(text: String, zoom: u16) -> Result<String, SettingsError> {
     let mut reader = Config::from_toml_str(&text)
@@ -694,75 +504,38 @@ pub fn settings_patch_reader_zoom(text: String, zoom: u16) -> Result<String, Set
     })
 }
 
-/// The Filtering pane, as GTK's draws it (`postio_ui::filtering::page`):
-/// the switch, what filtering does now, today's count, the keys Filtered
-/// answers, and the two `[focus.filter]` lists, each entry with what takes
-/// it back (specs/009-focus-macos T131).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteringPageFfi {
-    /// The switch's words: "Filter spam and automated updates".
     pub switch: String,
-    /// Whether filtering is on: `[focus] filtering`.
     pub on: bool,
-    /// What filtering does now, in a sentence, under the switch.
     pub state: String,
-    /// The Filtered section's heading.
     pub filtered: String,
-    /// "186 filtered today", or nothing while off or before it is counted.
     pub today: Option<String>,
-    /// "Open Filtered": a click is `invoke("go_to_filtered")`.
     pub open: String,
-    /// Its key, as `[keys]` spells it.
     pub open_key: Option<String>,
-    /// What filtering keeps, under the count.
     pub kept: String,
-    /// The keys Filtered answers that the page teaches.
     pub keys: Vec<KeyHintFfi>,
-    /// The never-filtered section's heading.
     pub never_heading: String,
-    /// What is never filtered whatever its headers say.
     pub guards: String,
-    /// `[focus.filter] never`, one entry each.
     pub never: Vec<FilteringEntryFfi>,
-    /// What the never list says with nobody in it.
     pub never_empty: String,
-    /// The turned-off markers' heading.
     pub stopped_heading: String,
-    /// `[focus.filter] stop_markers`, one entry each.
     pub stopped: Vec<FilteringEntryFfi>,
-    /// What the stopped list says with nothing in it.
     pub stopped_empty: String,
 }
 
-/// One entry of a `[focus.filter]` list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteringEntryFfi {
-    /// The line.
     pub says: String,
-    /// Whether the entry does what it was written to do; one that does not
-    /// says why in `says`.
     pub acts: bool,
-    /// The control that takes it back: "Filter again", "Turn back on".
     pub undo_label: String,
-    /// What taking it back writes: hand it to `settings_take_back_filter`.
     pub undo: FilteringUndoFfi,
 }
 
-/// What taking a `[focus.filter]` entry back removes.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum FilteringUndoFfi {
-    /// This entry of `never`: the sender is filtered again.
-    Never {
-        /// The entry, as written.
-        entry: String,
-    },
-    /// This `{ sender, kind }` of `stop_markers`: the marker comes back.
-    Marker {
-        /// Its sender, as written.
-        sender: String,
-        /// Its kind, as written.
-        kind: String,
-    },
+    Never { entry: String },
+    Marker { sender: String, kind: String },
 }
 
 impl From<postio_ui::filtering::Listed> for FilteringEntryFfi {
@@ -781,20 +554,15 @@ impl From<postio_ui::filtering::Listed> for FilteringEntryFfi {
     }
 }
 
-/// What the Filtering pane needs of the store: the people who decided, and a
-/// way to take one of their decisions back. Installed by a session; the pane
-/// reads a file, and a person's pin is no longer in it (ADR 0048).
+/// Installed by a session: a person's pin is no longer in the file (ADR 0048).
 pub(crate) struct ContactFilters {
-    /// Everyone who decided, as the engine reads them.
     pub(crate) rules: Box<dyn Fn() -> Vec<postio_config::ContactRule> + Send + Sync>,
-    /// Takes a person's decision back; whether it did.
     pub(crate) take_back: Box<dyn Fn(&postio_ui::filtering::Undo) -> bool + Send + Sync>,
 }
 
 static CONTACT_FILTERS: std::sync::Mutex<Option<std::sync::Arc<ContactFilters>>> =
     std::sync::Mutex::new(None);
 
-/// Let the Filtering pane read, and take back, what people decided.
 pub(crate) fn follow_contacts(filters: ContactFilters) {
     *CONTACT_FILTERS.lock().expect("never poisoned") = Some(std::sync::Arc::new(filters));
 }
@@ -803,10 +571,6 @@ fn contact_filters() -> Option<std::sync::Arc<ContactFilters>> {
     CONTACT_FILTERS.lock().expect("never poisoned").clone()
 }
 
-/// The Filtering pane's values for `text`, with `filtered_today` messages
-/// filed away so far today (`focus_counts().filtered_today`; `None` before
-/// it is known), or `None` when the file will not parse -- for the reason
-/// [`settings_appearance`] gives.
 #[uniffi::export]
 pub fn settings_filtering(text: String, filtered_today: Option<u32>) -> Option<FilteringPageFfi> {
     use postio_ui::filtering as words;
@@ -846,15 +610,11 @@ pub fn settings_filtering(text: String, filtered_today: Option<u32>) -> Option<F
     })
 }
 
-/// Turn `[focus] filtering` on or off in `text`, the rest verbatim: what
-/// the pane's switch writes (FR-162), through the same edit GTK's makes.
 #[uniffi::export]
 pub fn settings_patch_filtering(text: String, on: bool) -> Result<String, SettingsError> {
     written(postio_config::focus_edit::set_filtering(&text, on), text)
 }
 
-/// Take a `[focus.filter]` entry back in `text`, the rest verbatim: the
-/// control beside each entry of the pane's two lists.
 #[uniffi::export]
 pub fn settings_take_back_filter(
     text: String,
@@ -901,8 +661,6 @@ pub fn settings_take_back_filter(
     written(edit, text)
 }
 
-/// A `focus_edit` answer as the file to save: the edit, or the file as it
-/// was when there was nothing to change.
 fn written(
     edit: postio_config::Result<Option<String>>,
     text: String,
@@ -916,25 +674,12 @@ fn written(
     }
 }
 
-/// Why a settings write could not be made.
-///
-/// Shared with the saved-search verbs in [`crate::saved_search`], which are
-/// writes to the same file for the same reasons — one error type for
-/// `config.toml`, rather than a second one a frontend would have to handle
-/// identically.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SettingsError {
-    /// The write did not happen, and the file is as it was.
-    ///
-    /// Usually because it does not parse, so there is no table to patch;
-    /// also a file that could not be read or replaced. One variant because
-    /// there is one thing to do about any of them — show the message and
-    /// leave what is on screen alone.
+    /// The write did not happen and the file is as it was. One variant: a frontend shows the
+    /// message and leaves the screen alone.
     #[error("{message}")]
-    Invalid {
-        /// What the parser or the filesystem said, for the footer.
-        message: String,
-    },
+    Invalid { message: String },
 }
 
 impl From<Density> for DensityFfi {
@@ -977,13 +722,7 @@ impl From<ThemeFfi> for Theme {
     }
 }
 
-/// Where `config.toml` lives on this platform.
-///
-/// `postio_config::paths` already resolves this, per platform and per
-/// `$XDG_CONFIG_HOME`, and a frontend that guessed would edit a file nothing
-/// loads.
-///
-/// In a demo, the demo's own throwaway file (`demo::config_file`).
+/// Resolved by `postio_config::paths`; a frontend that guessed would edit a file nothing loads.
 #[uniffi::export]
 pub fn settings_path() -> Result<String, SettingsError> {
     config_path()
@@ -993,10 +732,7 @@ pub fn settings_path() -> Result<String, SettingsError> {
         })
 }
 
-/// The `config.toml` this process reads: the installed one, or in a demo
-/// the demo's own. Every path this crate hands out or opens goes through
-/// here, so a demo cannot reach the installed file by a route nobody
-/// thought of.
+/// Every path this crate hands out goes through here, so a demo cannot reach the installed file.
 pub(crate) fn config_path() -> postio_config::Result<std::path::PathBuf> {
     match crate::demo::config_file() {
         Some(file) => Ok(file),
@@ -1004,20 +740,13 @@ pub(crate) fn config_path() -> postio_config::Result<std::path::PathBuf> {
     }
 }
 
-/// The file at `path`, or an empty document when it is not there yet.
-///
-/// A first run has no `config.toml`, and that is not an error: the pane shows
-/// defaults over an empty document and the file is created on the first save.
+/// A missing file is an empty document, not an error: the first save creates it.
 #[uniffi::export]
 pub fn settings_load(path: String) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
-/// Save `text` to `path`, the way an editor saves.
-///
-/// Through `postio_config::save`, so the running application learns about the
-/// change the same way it learns about an `$EDITOR` one — see that module for
-/// why an in-place write would be invisible to the watcher.
+/// Through `postio_config::save`, so the running app sees the change as it sees an `$EDITOR` one.
 #[uniffi::export]
 pub fn settings_save(path: String, text: String) -> Result<(), SettingsError> {
     postio_config::save::write_atomically(std::path::Path::new(&path), &text).map_err(|err| {
@@ -1027,30 +756,17 @@ pub fn settings_save(path: String, text: String) -> Result<(), SettingsError> {
     })
 }
 
-/// Canvas 1b's row geometry for one density, in logical pixels.
-///
-/// The numbers are `postio_ui::row::Metrics`, which GTK draws by. Crossing
-/// them rather than restating them in Swift is the difference between one
-/// setting and two settings with one name in the file: a row that is 26px on
-/// one platform and 34 on the other is not "compact" in both.
+/// From `postio_ui::row::Metrics`, in logical pixels, so both platforms share one geometry.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct RowMetricsFfi {
-    /// Space above and below the row's content.
     pub pad_y: f32,
-    /// How far in the content starts, accent edge included.
     pub inset: f32,
-    /// The avatar chip, square.
     pub avatar: f32,
-    /// Between the avatar and the text column.
     pub gap: f32,
-    /// Between the sender line and the subject.
     pub subject_gap: f32,
-    /// Whether the snippet line is drawn at all — `false` at the tightest
-    /// density, which is the whole of what makes it the tightest.
     pub snippet: bool,
 }
 
-/// The geometry `density` asks for.
 #[uniffi::export]
 pub fn row_metrics(density: DensityFfi) -> RowMetricsFfi {
     let metrics = postio_ui::row::Metrics::for_density(density.into());
@@ -1064,44 +780,27 @@ pub fn row_metrics(density: DensityFfi) -> RowMetricsFfi {
     }
 }
 
-/// The timestamp column for a row received at `received_at` (epoch seconds).
-///
-/// Takes the instant rather than answering once at row-build time, because
-/// "today" moves: a list left open across midnight would otherwise keep
-/// drawing `09:14` for a message that is now yesterday's. `postio_ui::row`
-/// owns the rule — clock today, weekday this week, date beyond, year past it.
+/// Takes the instant, not a string built at row-build time: "today" moves, so a list open across
+/// midnight must not keep `09:14`.
 #[uniffi::export]
 pub fn row_timestamp(received_at: i64) -> String {
     let received = chrono::DateTime::from_timestamp(received_at, 0).unwrap_or_default();
     postio_ui::row::timestamp(received, chrono::Local::now())
 }
 
-/// One key hint: the key, and what it does -- the search bar's footer.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct KeyHintFfi {
-    /// The key as the user would press it, from their own bindings.
     pub key: String,
-    /// The verb, in the canvas' words — "open", "refine".
     pub label: String,
 }
 
-/// One verb a row offers the mouse.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RowActionFfi {
-    /// The registry command it runs — `archive`, `flag`, `delete`.
-    ///
-    /// A command id, never a local implementation: a hover action that did
-    /// its own thing would be a fourth way to archive that undo did not know
-    /// about.
+    /// A command id, never a local implementation, so undo knows about every action.
     pub command: String,
-    /// What a screen reader calls it, and what the context menu says.
     pub title: String,
 }
 
-/// The three verbs triage is made of, left to right.
-///
-/// The same three the keyboard runs with `a`, `s` and `d`, and the same three
-/// the bulk bar carries: one row or twenty, the mouse says the same thing.
 #[uniffi::export]
 pub fn row_actions() -> Vec<RowActionFfi> {
     postio_ui::row::RowAction::ALL

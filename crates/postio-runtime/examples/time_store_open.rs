@@ -1,38 +1,3 @@
-//! How long opening a store takes, and how much of that is the WAL (#1175).
-//!
-//! The startup budget is under 500 ms (`docs/PERFORMANCE.md`) and the live
-//! install takes about five seconds to show a window. `Phase::Store` is the
-//! one blocking-I/O phase before the main loop starts, and the store it opens
-//! has a 676 MB write-ahead log beside an 868 MB database. This measures
-//! whether those two facts are the same fact.
-//!
-//! It opens the database the way the application does — `Store::open`,
-//! read-write, the same pragmas — because a read-only open does not recover
-//! a WAL and so cannot answer the question.
-//!
-//! # Point it at a copy, never at the live store
-//!
-//! Opening read-write checkpoints, which would destroy the very state being
-//! measured and take the answer with it. On btrfs a copy is free and
-//! instant:
-//!
-//! ```sh
-//! mkdir -p ~/src/postio-wal-probe && cd ~/.local/share/postio
-//! cp --reflink=always postio.db postio.db-wal postio.db-shm ~/src/postio-wal-probe/
-//! cargo run -p postio-runtime --example time_store_open -- ~/src/postio-wal-probe/postio.db
-//! ```
-//!
-//! It refuses to run against the default store path for that reason.
-//!
-//! # What it prints
-//!
-//! Three opens. The first pays whatever the WAL costs; then the WAL is
-//! checkpointed with `TRUNCATE`, and the next two show what an open costs
-//! without one. If the first is slow and the rest are fast, the WAL is the
-//! startup cost and bounding it is the fix. If all three are the same, the
-//! five seconds are somewhere else and this issue is looking in the wrong
-//! place.
-
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -62,10 +27,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    // The other half of `Phase::Store`, which its own doc comment calls out:
-    // "a D-Bus round trip to the keyring and SQLCipher's key derivation, both
-    // before the main loop starts". Timed separately because only one of the
-    // two is the database.
     let keyring_started = Instant::now();
     let stored = runtime.block_on(secrets.retrieve(&AccountKey::new(STORE_KEY_ENTRY)))?;
     let keyring = keyring_started.elapsed().as_secs_f64() * 1000.0;
@@ -78,17 +39,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("store: {}", path.display());
     report_sizes(&path);
 
-    // ── the open the application pays for ────────────────────────────────
     let first = time_open(&path, &key).await?;
     println!("\nopen #1 (as found):        {first:>8.0} ms");
     report_sizes(&path);
 
-    // ── take the WAL out of the picture ──────────────────────────────────
     {
         let database =
             Store::open(&path, &key.derive(postio_storage::key::Purpose::Database)).await?;
-        // `truncate_log`, not the pragma by hand: the pragma answers with a
-        // row, and the engine refuses a statement whose rows nobody reads.
+        // `truncate_log`, not the pragma: the engine refuses a statement whose rows nobody reads.
         database.truncate_log().await?;
     }
     println!("\nafter wal_checkpoint(TRUNCATE):");
@@ -115,8 +73,7 @@ async fn time_open(path: &Path, key: &StoreKey) -> Result<f64, Box<dyn std::erro
     let subkey = key.derive(postio_storage::key::Purpose::Database);
     let started = Instant::now();
     let database = Store::open(path, &subkey).await?;
-    // One real read, because an open that has not touched a page has not
-    // paid for the WAL index the way the application's first query does.
+    // One real read: an open that touched no page has not paid for the WAL index.
     let connection = database.connect().await?;
     let _ = postio_storage::sql::scalar(&connection, "SELECT count(*) FROM mailboxes", ()).await?;
     let elapsed = started.elapsed().as_secs_f64() * 1000.0;

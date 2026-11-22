@@ -1,11 +1,7 @@
-//! The key map (screen 20; contracts/focus-surface.md, "The key map"): an
-//! `AdwDialog`, 1100×760, generated from the registry and the groups table.
-//!
-//! Nothing here names a key. Every row is `postio_ui::keymap_sheet::key_map`
-//! under the keymap in force, so a `[keys]` rebind shows here the moment it
-//! reaches the keyboard, and a command registered for Focus appears with no
-//! code of Focus's (US7 scenario 2). `?` or `Escape` closes it; the window's
-//! keyboard sends both here while it is open.
+//! The key map: an `AdwDialog`, 1100x760, generated from the registry. Nothing here names a key:
+//! every row is
+//! `postio_ui::keymap_sheet::key_map` under the keymap in force. `?` or `Escape` closes it; the
+//! window's keyboard sends both here.
 
 use gtk::prelude::*;
 use postio_core::Keymap;
@@ -14,11 +10,9 @@ use postio_ui::keymap_sheet::{self, KeyMapRow};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3, S4, S6};
 
-/// The dialog's size, as screen 20 draws it.
 const WIDTH: i32 = 1100;
 const HEIGHT: i32 = 760;
 
-/// Build the key map for `keymap`.
 pub fn build(keymap: &Keymap) -> adw::Dialog {
     let title = gtk::Label::new(Some(keymap_sheet::TITLE));
     title.add_css_class("focus-keymap-heading");
@@ -52,8 +46,8 @@ pub fn build(keymap: &Keymap) -> adw::Dialog {
     x.set_valign(gtk::Align::Center);
     header.append(&x);
 
-    // Less what the registry keeps off Linux, so the sheet never teaches a
-    // key this app does not answer (the Mac's search keys, spec 010 D25).
+    // Less what the registry keeps off Linux, so the sheet never teaches a key this app does not
+    // answer.
     let map = keymap_sheet::key_map_on(
         keymap,
         postio_core::Frontend::Focus,
@@ -109,7 +103,6 @@ pub fn build(keymap: &Keymap) -> adw::Dialog {
     dialog
 }
 
-/// One group: its heading and its rows.
 fn group_box(title: &str, rows: &[KeyMapRow]) -> gtk::Box {
     let group = gtk::Box::new(gtk::Orientation::Vertical, 0);
     group.add_css_class("focus-keymap-group");

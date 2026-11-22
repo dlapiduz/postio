@@ -1,21 +1,9 @@
-//! Writing and replying at the boundary (specs/009-focus-macos T073, for
-//! the Mac's T079).
-//!
-//! The rules are the controller's (`postio-focus`'s `tests/compose.rs`);
-//! these assert the Mac hears them through the session over a real store:
-//! the writing verbs open the composer as `FocusComposer`, the driver
-//! honours the controller's autosave timer so a burst of edits is one
-//! `FocusSaveDraft`, Esc saves at once and the toast says so once the save
-//! has landed, a send verb on mail that is no draft says so, and with no
-//! account `c` offers to add one.
-
 use std::time::Duration;
 
 use postio_ffi::{ComposerKindFfi, Session, SessionOptions, SurfaceKindFfi, UiEvent};
 
 use crate::focus::{cursor_on_the_first_row, heard, heard_within, inbox_of};
 
-/// The composer the controller opened, as the Mac hears it.
 async fn composer_opened(session: &Session) -> Option<(ComposerKindFfi, Option<i64>)> {
     let mut opened = None;
     heard(session, 5, |event| match event {
@@ -62,7 +50,6 @@ async fn a_burst_of_edits_is_one_save_once_the_quiet_period_has_passed() {
         session.focus_composer_edited();
     }
     let mut saves = Vec::new();
-    // Past the quiet period, with room for a slow machine.
     let _ = heard(&session, 5, |event| {
         if let UiEvent::FocusSaveDraft { composition } = event {
             saves.push(*composition);
@@ -97,8 +84,8 @@ async fn esc_saves_at_once_and_the_toast_says_the_draft_was_kept() {
         .await,
         "Esc closes the composer"
     );
-    // Inside a second, unscaled: the autosave's quiet period is a second
-    // and a half, so a longer wait could not tell "now" from "after it".
+    // Unscaled: the autosave quiet period is 1.5 s, so a longer wait could not tell "now" from
+    // "after it".
     assert!(
         heard_within(&session, Duration::from_secs(1), |event| matches!(
             event,

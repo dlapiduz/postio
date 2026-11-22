@@ -1,7 +1,3 @@
-//! US1 scenario 3's second half: the toast says what happened, and one
-//! Ctrl+Z returns all three -- including after the toast has gone, because
-//! the toast going is not the undo window closing (FR-041).
-
 use crate::support::{self, Fixture};
 
 pub fn one_ctrl_z_returns_all_three_after_the_toast_has_gone() {
@@ -26,8 +22,6 @@ pub fn one_ctrl_z_returns_all_three_after_the_toast_has_gone() {
             window.toast_showing()
         );
 
-        // The toast goes -- it would on its own after eight seconds -- and
-        // the undo does not go with it.
         window.dismiss_toast();
         crate::settle();
         assert_eq!(window.toast_showing(), None);
@@ -46,7 +40,6 @@ pub fn one_ctrl_z_returns_all_three_after_the_toast_has_gone() {
     });
 }
 
-/// What the toast on screen says and whether it still offers Undo.
 fn toast_of(window: &postio_gtk::window::FocusWindow) -> (Option<String>, bool) {
     let toast = window.toast();
     (
@@ -55,11 +48,6 @@ fn toast_of(window: &postio_gtk::window::FocusWindow) -> (Option<String>, bool) 
     )
 }
 
-/// The toast counts what the person archived -- rows, not the messages
-/// inside them -- and an undo says it was an undo, not that the mail was
-/// archived. Frame by frame (2026-10 review): a thread of three archived with
-/// `e` said "Archived 3 messages" for the one row the person chose, and the
-/// toast after `z` repeated "Archived …" with its button gone.
 pub fn the_toast_counts_the_row_and_says_when_it_was_undone() {
     crate::gtk_case(async {
         if !support::display() {

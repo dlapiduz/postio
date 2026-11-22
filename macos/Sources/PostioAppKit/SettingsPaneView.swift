@@ -2,81 +2,37 @@ import PostioFFI
 import SwiftUI
 import PostioKit
 
-/// The settings window: a fixed sidebar, exactly one pane, and a footer
-/// naming the table that pane writes.
-///
-/// The frame does not move; only the sidebar's selection and the pane body do.
-/// That is the whole navigation model, and it is the GTK window's — the eight
-/// sections, their order, their two headings and their labels all come from
-/// `postio_ui::settings` rather than from a list kept beside this view, so the
-/// two frontends cannot drift into being two different applications.
-///
-/// # The controls are decided, not chosen
-///
-/// ADR 0029: segmented for a closed set of three or four, a checkbox for a
-/// value in a form, a switch only for something that *acts* when flipped, a
-/// dropdown only for an open list. SwiftUI's `Picker` defaults to a dropdown
-/// on macOS, which is why every one here is `.segmented` explicitly — Theme
-/// and Row density are closed sets of three, and a popup for three options is
-/// the idiom that ADR exists to stop.
+/// Sections, order, headings and labels come from `postio_ui::settings`, so the two frontends
+/// cannot drift.
+/// Every Picker is `.segmented` explicitly: SwiftUI defaults to a dropdown on macOS, and ADR 0029
+/// wants segmented for closed sets.
 public struct SettingsPaneView: View {
     @Bindable private var store: SettingsStore
-    /// The configured accounts, from the session rather than from
-    /// `config.toml`: the store is the truth about which accounts exist.
     private let accounts: [AccountFfi]
 
-    /// Every folder, so an account row can say how much mail it has without
-    /// asking the store to count it again.
     private let mailboxes: [MailboxFfi]
 
-    /// The session, for the things the accounts pane can actually *do* —
-    /// adding one, mostly. `nil` when the store never opened, in which case
-    /// the pane still draws: settings are a file, and being unable to read
-    /// mail is not being unable to configure it.
+    /// `nil` when the store never opened; the pane still draws, since settings are a file.
     private let session: PostioSession?
 
-    /// Settings > Contacts: the pane's model. `nil` with no session.
     private let contacts: ContactsSettingsModel?
-    /// A command's request to open on one section (`v y`).
     private let section: SettingsSectionRequest
 
-    /// Which account's form is open, if any.
-    /// Which account row is open, held outside this view.
-    ///
-    /// The seven verbs in `Context::Accounts` all act on it, and a command
-    /// cannot reach an `@State` — see `SettingsAccounts`, which is also why
-    /// every one of them used to resolve to nothing while the buttons here
-    /// worked.
+    /// Held outside this view: the seven verbs in `Context::Accounts` act on it, and a command
+    /// cannot reach an `@State` (`SettingsAccounts`).
     private let accountCursor: SettingsAccounts
-    /// Putting a broken account back in service. See `AccountRepair`.
     private let repair: AccountRepair
-    /// Re-read the accounts after one of them changed. Set by the
-    /// application, which owns the list: a pane that edited its own copy
-    /// would draw what it believes rather than what was written.
+    /// A pane that edited its own copy would draw what it believes rather than what was written.
     private let reloadAccounts: (() -> Void)?
-    /// Run a registry command in the main window: Filtering's Open Filtered
-    /// is `go_to_filtered`. `nil` with no session, which disables it.
     private let run: ((String) -> Void)?
-    /// The add-account sheet, while it is up.
     @State private var adding: AddAccountModel?
-    /// The account being signed in again, if one is.
-    /// Test, re-index and remove, and what the last one said.
-    ///
-    /// Owned by the application rather than by this view: a re-index reports
-    /// through the event stream, and a window that owned it would have to be
-    /// open at the moment each report landed.
+    /// Owned by the application: a re-index reports through the event stream, and a window that
+    /// owned it would have to be open when each report landed.
     private let actions: AccountActions
-    /// What the display-name field currently holds.
     @State private var renamedTo = ""
-    /// The remote-image grants, read when the Privacy pane appears.
     @State private var grants: [GrantFfi] = []
-    /// Every unsubscribe Postio has recorded, newest first. Read when the
-    /// Privacy pane appears, like the grants above it.
     @State private var activations: [UnsubscribeActivationFfi] = []
-    /// What agents have done lately, read when the Agents pane appears and
-    /// after a revoke. `nil` until the first read lands.
     @State private var agentActivity: AgentActivityFfi?
-    /// The new filter being typed, if one is.
     @State private var newFilterKey = ""
     @State private var newFilterQuery = ""
 
@@ -108,11 +64,9 @@ public struct SettingsPaneView: View {
 
     public var body: some View {
         content
-            // By token, not by value: adding two accounts in a row is two
-            // sheets, and `onChange` on the wish alone would open only the
-            // first.
+            // By token, not value: two accounts added in a row are two sheets, and `onChange` on
+            // the wish alone would open only the first.
             .onChange(of: accountCursor.wishToken) { _, _ in grant(accountCursor.take()) }
-            // A command that opened this window asked before the pane existed.
             .onAppear {
                 grant(accountCursor.take())
                 if let key = section.take() { store.selected = key }
@@ -120,8 +74,7 @@ public struct SettingsPaneView: View {
             .onChange(of: section.token) { _, _ in
                 if let key = section.take() { store.selected = key }
             }
-            // Never pre-filled, and never with the old one: the old one is
-            // what stopped working, and Postio does not have it to offer.
+            // Never pre-filled: the old password is what stopped working.
             .alert(
                 "New password",
                 isPresented: Binding(
@@ -164,8 +117,6 @@ public struct SettingsPaneView: View {
         .frame(minWidth: 720, minHeight: 460)
     }
 
-    // MARK: - Sidebar
-
     private var sidebar: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -185,10 +136,7 @@ public struct SettingsPaneView: View {
             }
             .padding(.vertical, 16)
         }
-        // The GTK window's fixed 214px sidebar. Fixed rather than resizable
-        // because the pane is the thing that varies, and a settings window
-        // whose nav can be dragged to nothing is a settings window with a bug
-        // report waiting in it.
+        // Fixed rather than resizable: a nav dragged to nothing is a bug report waiting.
         .frame(width: 214)
         .background(.quaternary.opacity(0.35))
     }
@@ -205,9 +153,6 @@ public struct SettingsPaneView: View {
                 Text(section.label)
                     .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                 Spacer(minLength: 0)
-                // How many there are, where the design puts it. Only for
-                // Accounts, and only when there are some: a "0" beside a
-                // section is a fact nobody needed.
                 if section.key == "accounts", !accounts.isEmpty {
                     Text("\(accounts.count)")
                         .font(.system(.caption, design: .monospaced))
@@ -219,9 +164,8 @@ public struct SettingsPaneView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear))
             .clipShape(RoundedRectangle(cornerRadius: 6))
-            // The whole row is the target. A plain button hit-tests only
-            // what it draws, and an unselected row draws a clear background
-            // -- so a click beside the label, on the row, did nothing.
+            // The whole row is the target: a plain button hit-tests only what it draws, and an
+            // unselected row draws a clear background.
             .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
@@ -229,11 +173,7 @@ public struct SettingsPaneView: View {
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
-    /// The macOS half of what the classic app's settings icon lookup answered for GTK.
-    ///
-    /// Beside the view rather than behind the boundary for the reason that
-    /// function records: a symbolic icon name is not an SF Symbol, and the
-    /// shared crate should carry neither.
+    /// A symbolic icon name is not an SF Symbol, and the shared crate should carry neither.
     private func symbol(for key: String) -> String {
         switch key {
         case "accounts": return "person.crop.circle"
@@ -248,8 +188,6 @@ public struct SettingsPaneView: View {
         default: return "doc.plaintext"
         }
     }
-
-    // MARK: - Detail
 
     @ViewBuilder private var detail: some View {
         if let section = store.current {
@@ -268,7 +206,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// Settings > Contacts: every word and every switch is Rust's.
     @ViewBuilder private var contactsPane: some View {
         if let contacts {
             ContactsSettingsView(model: contacts)
@@ -293,9 +230,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// The accounts list. No form and no Add button yet — #1206 ships the
-    /// list first, because a pane that cannot even show what is configured is
-    /// the part that makes the rest unverifiable.
     @ViewBuilder private var accountsPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             if accounts.isEmpty {
@@ -316,9 +250,6 @@ public struct SettingsPaneView: View {
                 }
             }
             Divider()
-            // Under the list, not in the sidebar: the buttons act on *this*
-            // list, and a `+` in the section nav would read as "add a section"
-            // (canvas 27).
             HStack(spacing: 6) {
                 Button {
                     adding = AddAccountModel()
@@ -342,8 +273,6 @@ public struct SettingsPaneView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
-        // Removing takes the account's mail with it, so it is asked about
-        // and the question names what goes.
         .alert(
             "Remove this account?",
             isPresented: Binding(
@@ -361,49 +290,36 @@ public struct SettingsPaneView: View {
         }
         .sheet(item: $adding) { model in
             AddAccountSheet(session: session, model: model) { added in
-                // Only when the sheet actually wrote one: cancelling must not
-                // announce an account that is not there. Without this the row
-                // exists and nothing syncs it until the next launch, which
-                // reads as an account that did not save (#1299).
+                // Only when the sheet wrote an account: cancelling must not announce one, and
+                // skipping this on a real add leaves the row unsynced until relaunch (#1299).
                 if added { actions.added() }
                 adding = nil
             }
         }
     }
 
-    /// What the re-index button says, including how far it has got.
     private var reindexTitle: String {
         guard actions.running == .reindexing else { return "Re-index store" }
         guard let progress = actions.progressLabel else { return "Re-indexing…" }
         return "Re-indexing… \(progress)"
     }
 
-    /// Sign in to `account` again, in the browser.
-    ///
-    /// Say what a settings verb refused, where the person who pressed it is
-    /// looking. The pane already has a place for an outcome; this is the
-    /// same place, so a switch that would not flip says so beside itself.
+    /// Says what a settings verb refused beside the control, where the person who pressed it is
+    /// looking.
     private func complain(_ said: String?) {
         guard let said else { return }
         actions.said(said, failed: true)
     }
 
-    /// Grant whatever a command asked for.
-    ///
-    /// Two of the seven need a surface, and a command has no view to present
-    /// one with. The other five are calls the engine makes itself.
     private func grant(_ wish: SettingsAccounts.Wish?) {
-        // Both wishes are about accounts, so that is the pane to be on --
-        // `⇧⌘N` raised the window on whatever pane it last showed.
+        // Both wishes are about accounts, so that is the pane to be on.
         if wish != nil { store.selected = "accounts" }
         switch wish {
         case .add:
             adding = AddAccountModel()
         case let .updateCredential(id):
-            // The same route the row's own button takes, which is the whole
-            // reason it goes through `AccountRepair`: a command and a button
-            // that repaired an account two different ways would be two
-            // answers to what is wrong with it.
+            // The row's own button takes the same route (`AccountRepair`), so a command and a
+            // button cannot repair an account two ways.
             guard let account = accounts.first(where: { $0.id == id }) else { return }
             Task { await repair.begin(account, through: session) }
         case nil:
@@ -411,7 +327,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// One account, and its form when it is the selected one.
     @ViewBuilder private func accountRow(_ account: AccountFfi) -> some View {
         let open = accountCursor.cursor == account.id
         VStack(alignment: .leading, spacing: 0) {
@@ -451,16 +366,10 @@ public struct SettingsPaneView: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    // Inline, beside the account it is about: a credential
-                    // that stopped working is a thing to fix here rather
-                    // than a banner somewhere else.
-                    //
-                    // **Which repair is the boundary's answer**, not a guess
-                    // from the provider's name: asking for a password where
-                    // consent is wanted asks for something no provider would
-                    // accept, and sending somebody to a browser to replace an
-                    // app password sends them somewhere with no field to type
-                    // it in.
+                    // Inline, beside the account. Which repair is the boundary's answer, not a
+                    // guess from the provider's
+                    // name: a password where consent is wanted, or a browser for an app password,
+                    // sends the person somewhere with no field to use.
                     if let offer = repairOffer(account), let label = offer.button {
                         Button(label) {
                             Task { await repair.begin(account, through: session) }
@@ -476,8 +385,6 @@ public struct SettingsPaneView: View {
                     }
                 }
                 .padding(.vertical, 10)
-                // After the padding, so the row's full height takes the
-                // click -- not just its text, as the section list above.
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -489,8 +396,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// What is wrong with `account`'s credential, and what to press.
-    /// See `AccountRepair.offer`.
     private func repairOffer(_ account: AccountFfi) -> AccountRepair.Offer? {
         AccountRepair.offer(
             for: account,
@@ -499,7 +404,6 @@ public struct SettingsPaneView: View {
         )
     }
 
-    /// What selecting an account reveals.
     private func accountForm(_ account: AccountFfi) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             field("DISPLAY NAME") {
@@ -514,9 +418,6 @@ public struct SettingsPaneView: View {
                 }
             }
             field("SYNCING") {
-                // A switch rather than a button: it is a state, it can be
-                // read at a glance, and it is the one setting here that
-                // stops mail arriving. `Return` presses it.
                 Toggle(
                     "Check this account for new mail",
                     isOn: Binding(
@@ -531,11 +432,8 @@ public struct SettingsPaneView: View {
                 .disabled(actions.isBusy)
             }
             field("DEFAULT ACCOUNT") {
-                // "Default", never "primary" and never "main" (#960): the
-                // other words invite the reading the decision rules out —
-                // that this account is more the user's than the other one.
-                // There is no way to clear it, because the reversal of
-                // marking an account is marking another.
+                // "Default", never "primary" or "main" (#960): they imply this account is more the
+                // user's than another. It cannot be cleared; marking another reverses it.
                 if account.isDefault {
                     Text("New messages come from this account.")
                         .foregroundStyle(.secondary)
@@ -563,16 +461,10 @@ public struct SettingsPaneView: View {
             }
             .disabled(actions.isBusy)
             if let offer = repairOffer(account) {
-                // What is wrong, beside the account it is about: an expired
-                // grant, a password the server refused, or none in the
-                // Keychain at all (the *Partial* state). The button that
-                // fixes it is on the row above, for all three.
                 Label(offer.reason, systemImage: "key.slash")
                     .font(.callout)
             }
             if let outcome = actions.outcome {
-                // What happened, where it was asked for. A connection test
-                // whose answer appears somewhere else is a test nobody reads.
                 Label(outcome, systemImage: actions.failed ? "xmark.circle" : "checkmark.circle")
                     .font(.callout)
                     .foregroundStyle(actions.failed ? Color.primary : Color.secondary)
@@ -580,9 +472,8 @@ public struct SettingsPaneView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let outcome = repair.outcome {
-                // A repair that reported nothing is one you press again,
-                // because the row's warning does not clear until the next
-                // sync proves the credential works.
+                // A repair that reported nothing is pressed again: the row's warning does not clear
+                // until the next sync proves the credential.
                 Label(outcome, systemImage: repair.failed ? "xmark.circle" : "checkmark.circle")
                     .font(.callout)
                     .foregroundStyle(repair.failed ? Color.primary : Color.secondary)
@@ -594,20 +485,13 @@ public struct SettingsPaneView: View {
         .padding(.bottom, 14)
     }
 
-    // -- Filtering (specs/009-focus-macos T131) -----------------------------
-
-    /// Focus's Filtering pane, as GTK's draws it: the switch and what it
-    /// does now, today's count with Open Filtered, the keys Filtered
-    /// answers, and the two `[focus.filter]` lists, each line with the
-    /// control that takes it back. Every word is `postio_ui::filtering`'s,
-    /// through `settings_filtering`; the switch and the take-backs write
-    /// through `focus_edit`, so the rest of the file stays as it was.
+    /// Every word is `postio_ui::filtering`'s through `settings_filtering`; the switch and
+    /// take-backs write through `focus_edit`, so the rest of the file stays as it was.
     @ViewBuilder private var filteringPane: some View {
         if let page = store.filtering {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: PostioTokens.space1) {
-                        // A switch, because it acts when flipped (ADR 0029).
                         Toggle(
                             page.switch,
                             isOn: Binding(
@@ -684,9 +568,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// "After you unsubscribe" (#1952): the one action the notice offers for
-    /// the mail a list already sent. The words and the choices are the
-    /// boundary's, so GTK says the same ones.
     @ViewBuilder private func afterUnsubscribeControl(_ control: AfterUnsubscribeFfi) -> some View {
         field(control.heading.uppercased()) {
             VStack(alignment: .leading, spacing: PostioTokens.space2) {
@@ -712,9 +593,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// One `[focus.filter]` list: a line per entry with its take-back, or
-    /// the list's empty sentence. An entry that does not act is drawn in
-    /// the tertiary colour; its line already says why.
     @ViewBuilder private func filteringList(
         _ entries: [FilteringEntryFfi], empty: String, name: String
     ) -> some View {
@@ -738,14 +616,8 @@ public struct SettingsPaneView: View {
         }
     }
 
-    // -- Filters (#1156) ----------------------------------------------------
-
-    /// The saved searches, and what each one runs.
-    ///
-    /// The key is the identity (#292) and is deliberately not editable here:
-    /// renaming writes `name`, so a filter cannot be orphaned by being moved
-    /// to a new key. What the row shows is the name; what it edits is the
-    /// query, the label, and whether the sidebar carries it.
+    /// The key is the identity (#292) and not editable here: renaming writes `name`, so a filter
+    /// cannot be orphaned by moving to a new key.
     @ViewBuilder private var filters: some View {
         if let current = store.filters {
             VStack(alignment: .leading, spacing: 0) {
@@ -753,9 +625,8 @@ public struct SettingsPaneView: View {
                     ContentUnavailableView {
                         Label("No saved searches", systemImage: "line.3.horizontal.decrease.circle")
                     } description: {
-                        // One literal, so the table name is set as code: a
-                        // concatenation is a plain String, and it showed
-                        // its backticks.
+                        // One literal so the table name is set as code: a concatenation is a plain
+                        // String and showed its backticks.
                         Text("Add one below, or write `[saved_searches.<name>]` in the config file.")
                     }
                     .frame(maxHeight: .infinity)
@@ -841,19 +712,9 @@ public struct SettingsPaneView: View {
         .padding(.vertical, PostioTokens.space3)
     }
 
-    // -- Privacy (#1156) ----------------------------------------------------
-
-    /// What Postio will not do without being asked, and what it has been
-    /// asked.
-    ///
-    /// The promises are stated rather than configurable, because they are not
-    /// settings: remote images blocked, read receipts never sent
-    /// automatically, no telemetry, JavaScript and network off in the reader.
-    /// A switch for any of them would be a switch for turning the product's
+    /// The promises are stated, not configurable: a switch for any of them would turn the product's
     /// own claims off.
-    ///
-    /// What *is* here is the list of grants, because a permission the user
-    /// cannot see is one they cannot withdraw.
+    /// The grants are listed because a permission the user cannot see is one they cannot withdraw.
     @ViewBuilder private var privacy: some View {
         VStack(alignment: .leading, spacing: PostioTokens.space6) {
             field("POSTIO WILL NOT") {
@@ -877,9 +738,6 @@ public struct SettingsPaneView: View {
                             HStack {
                                 Text(grant.subject)
                                 if grant.wholeDomain {
-                                    // Two very different amounts of trust; a
-                                    // list that drew them alike would
-                                    // understate one of them.
                                     Text("everyone at this domain")
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
@@ -900,14 +758,8 @@ public struct SettingsPaneView: View {
             }
             Divider()
             field("UNSUBSCRIBED FROM") {
-                // The same argument the grants above make: an action the
-                // user cannot see afterwards is one they cannot audit, and
-                // "only on deliberate activation" only means something if
-                // the deliberate ones are reviewable.
-                //
-                // No Revoke beside these, and that is not an omission: the
-                // request has left. What is here is a record of what Postio
-                // did on your behalf, not a switch.
+                // No Revoke beside these: the request has left. This is a record of what Postio did
+                // on your behalf, so "only on deliberate activation" is reviewable.
                 if activations.isEmpty {
                     Text("Nothing yet. Unsubscribing only ever happens when you ask for it.")
                         .font(.callout)
@@ -938,7 +790,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// The promises, as `docs/PRODUCT.md` states them.
     private static let promises = [
         "Load remote images until you allow the sender",
         "Send a read receipt automatically",
@@ -946,16 +797,10 @@ public struct SettingsPaneView: View {
         "Fetch anything speculatively, or send any telemetry",
     ]
 
-    // -- Agents (#1832) -----------------------------------------------------
-
-    /// Which accounts an AI agent may read through `postio-mcp`, what it has
-    /// done, and the way to take it back.
-    ///
-    /// Every word is `postio_ui::agent_access`'s, and every edit goes through
-    /// the boundary's patchers: this draws, and decides nothing. Revoking
-    /// removes the account's `[mcp]` table and nothing else, so it bites on
-    /// the agent's next call; the note beside the buttons says a call already
-    /// running finishes, so a revoke is not read as a promise about it.
+    /// Every word is `postio_ui::agent_access`'s and every edit goes through the boundary's
+    /// patchers. Revoking removes the
+    /// account's `[mcp]` table only, so it bites on the agent's next call; the note says a running
+    /// call finishes.
     @ViewBuilder private var agents: some View {
         let words = settingsAgentWords()
         ScrollView {
@@ -1037,7 +882,6 @@ public struct SettingsPaneView: View {
         .onAppear { refreshAgentActivity() }
     }
 
-    /// Read the access log off the main actor and publish the answer.
     private func refreshAgentActivity() {
         guard let session else { return }
         Task {
@@ -1046,19 +890,10 @@ public struct SettingsPaneView: View {
         }
     }
 
-    // -- Keyboard (#1156) ---------------------------------------------------
-
-    /// Every command and the key in force for it, grouped as the menus are.
-    ///
-    /// Read-only for now, and honestly so: rebinding is `[keys]`, the pane
-    /// says where, and the Config file pane is one click away. A picker that
-    /// *looked* editable and wrote nothing would be worse than a table that
-    /// admits what it is — canvas 3d's rule that a state names its reason.
-    ///
-    /// The bindings come from the session rather than from `defaultBinding`,
-    /// so a rebound key shows the key the user actually has. With no session
-    /// the defaults stand in, because settings are a file and being unable to
-    /// read mail is not being unable to read your own keyboard.
+    /// Read-only: rebinding is `[keys]` and the pane says where; a picker that looked editable and
+    /// wrote nothing would be worse.
+    /// Bindings come from the session so a rebound key shows; with no session the defaults stand
+    /// in.
     @ViewBuilder private var keyboard: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PostioTokens.space6) {
@@ -1085,12 +920,9 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// What each command is bound to now.
     private func bindingsInForce(_ command: String) -> [String] {
         session?.bindings(for: command) ?? []
     }
-
-    // -- Sync & storage (#1156) ---------------------------------------------
 
     @ViewBuilder private var syncing: some View {
         if let current = store.syncing {
@@ -1106,9 +938,6 @@ public struct SettingsPaneView: View {
                             .pickerStyle(.segmented)
                             .labelsHidden()
                             .equalSegments(3, each: 80)
-                            // What the choice costs, in the unit being chosen
-                            // between — the sentence is the boundary's, so
-                            // GTK says the same one.
                             Text(
                                 current.checkForMail == .poll
                                     ? "Every \(settingsHumanizeInterval(seconds: current.pollIntervalSecs))"
@@ -1165,8 +994,6 @@ public struct SettingsPaneView: View {
                     .toggleStyle(.checkbox)
                 }
                 Divider()
-                // Empty Junk and Trash (#1932): the choices and the sentence
-                // are the boundary's, so GTK says the same ones.
                 let words = settingsAutoEmptyWords()
                 field(words[0].uppercased()) {
                     VStack(alignment: .leading, spacing: PostioTokens.space2) {
@@ -1190,7 +1017,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// The Empty Junk and Trash choices as a segmented control.
     private func autoEmptyPicker(_ days: Binding<UInt32>) -> some View {
         let choices = settingsAutoEmptyChoices()
         return Picker("", selection: days) {
@@ -1213,23 +1039,11 @@ public struct SettingsPaneView: View {
         )
     }
 
-    // -- Config file: the whole thing, as text (#1156) ----------------------
-
-    /// The raw editor, and the escape hatch every unbuilt pane depends on.
-    ///
-    /// Canvas 3f: *"Settings is still the config file — no second store, no
-    /// OK/Cancel"*. So there is no Save here either. What there is instead is
-    /// the footer, which already says whether the file parses and where it
-    /// stopped — the only thing that could tell you a keystroke went wrong.
-    ///
-    /// Monospaced and not proportional, because it is TOML and alignment
-    /// carries meaning in it -- a point under the panes' 12pt text, because
-    /// a monospaced face reads a size larger than a proportional one at the
-    /// same size, and the file should not look louder than the fields that
-    /// edit it (canvas 3f's editor is drawn the sidebar's size).
-    /// `autocorrection` and the smart-quote substitutions are off for the
-    /// reason every code editor turns them off: a curly quote in a TOML string is a parse error somebody did not
-    /// type.
+    /// No Save: settings are the config file, with no second store. The footer says whether it
+    /// parses. Monospaced because
+    /// alignment carries meaning in TOML, a point under the panes' text since monospaced reads
+    /// larger; autocorrection and
+    /// smart quotes are off because a curly quote in a TOML string is a parse error.
     @ViewBuilder private var configFile: some View {
         TextEditor(text: configBinding)
             .font(.system(.subheadline, design: .monospaced))
@@ -1237,7 +1051,6 @@ public struct SettingsPaneView: View {
             .autocorrectionDisabled()
             .textEditorStyle(.plain)
             .scrollContentBackground(.hidden)
-            // Off the border, as any editor sets its text.
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(Color(nsColor: .textBackgroundColor))
@@ -1249,20 +1062,15 @@ public struct SettingsPaneView: View {
             .accessibilityLabel("The configuration file")
     }
 
-    /// Writes on every keystroke, like every other control in this window.
-    ///
-    /// Invalid TOML is written too: this is a text editor over a file
-    /// somebody is part-way through fixing, and refusing to save until it
-    /// parses would make it useless for its one job. The footer says what is
-    /// wrong, and a running Postio keeps the last good configuration.
+    /// Invalid TOML is written too: refusing to save until it parses would make the editor useless
+    /// for fixing it.
+    /// The footer says what is wrong and a running Postio keeps the last good configuration.
     private var configBinding: Binding<String> {
         Binding(
             get: { store.text },
             set: { store.write(text: $0) }
         )
     }
-
-    // -- Composing (#1288) --------------------------------------------------
 
     @ViewBuilder private var composing: some View {
         if let current = store.composing {
@@ -1291,9 +1099,6 @@ public struct SettingsPaneView: View {
                 Divider()
                 field("EDIT ELSEWHERE") {
                     VStack(alignment: .leading, spacing: 8) {
-                        // A text field rather than a picker: the list of
-                        // applications that can edit text is open, which is
-                        // exactly the case ADR 0029 reserves a free field for.
                         TextField("", text: editorBinding(current))
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 260)
@@ -1310,11 +1115,6 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// What to say under the editor field: which application will open the
-    /// draft, or why the one named cannot.
-    ///
-    /// The judgement is the boundary's, not this view's — `postio_ui::handoff`
-    /// decides, so GTK says the same thing about the same name.
     private func editorAdvice(_ configured: String) -> String {
         switch settingsHandoffTarget(
             configured: configured,
@@ -1353,12 +1153,8 @@ public struct SettingsPaneView: View {
         }
     }
 
-    /// For a section this build does not know.
-    ///
-    /// All eight of canvas 3f's panes are drawn now, so nothing reaches this
-    /// from the shipped nav. It stays because the nav is `postio_ui`'s and a
-    /// newer core can name a section this build has never heard of — which
-    /// should say so rather than draw an empty pane.
+    /// A newer core can name a section this build has never heard of; say so rather than draw an
+    /// empty pane.
     private var unbuilt: some View {
         ContentUnavailableView {
             Label("Not in this build", systemImage: "gearshape")
@@ -1388,12 +1184,8 @@ public struct SettingsPaneView: View {
         .padding(.vertical, 10)
     }
 
-    /// A binding that patches `[compose]` on change.
-    ///
-    /// There is no Save in this window because canvas 3f decided there is no
-    /// second store to save *from* — which is exactly what the footer says.
-    /// One field, applied to whatever the file says at the moment of the
-    /// click -- never to the copy this view was drawn from.
+    /// Applied to whatever the file says at the moment of the click, never to the copy this view
+    /// was drawn from.
     private func composeBinding<T>(
         _ current: ComposingFfi,
         _ field: WritableKeyPath<ComposingFfi, T>
@@ -1404,8 +1196,6 @@ public struct SettingsPaneView: View {
         )
     }
 
-    /// The editor field, which writes on every keystroke like every other
-    /// control here — there is no Save in this window (canvas 3f).
     private func editorBinding(_ current: ComposingFfi) -> Binding<String> {
         Binding(
             get: { current.editor },
@@ -1415,14 +1205,8 @@ public struct SettingsPaneView: View {
 }
 
 extension View {
-    /// A segmented picker of `count` segments, each `each` wide.
-    ///
-    /// `.fixedSize()` gives every segment its own label's width, so "Push"
-    /// sat beside a wider "Manual" and "Never" beside "Ahead of time": the
-    /// row read as uneven rather than as one control. Canvas 3f's segments
-    /// share the control's width equally, and one width per picker, wide
-    /// enough for its longest label, is how a fixed frame gets that from
-    /// AppKit's control underneath.
+    /// `.fixedSize()` gave every segment its own label's width, so the row read as uneven; one
+    /// width per picker, wide enough for its longest label, gives equal segments.
     fileprivate func equalSegments(_ count: Int, each: CGFloat) -> some View {
         frame(width: CGFloat(count) * each)
     }

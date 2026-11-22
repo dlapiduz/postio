@@ -1,83 +1,43 @@
-//! Assembling the document a message renders as — **the** document, one
-//! implementation for every frontend (#567, ADR 0019 Q6).
-//!
-//! The highest risk in a second frontend is that the privacy invariants
-//! silently fork: two readers, two content security policies, two link
-//! policies, drifting invisibly until somebody's mail phones home. The
-//! structural answer is here — the classic app's WebKitGTK view and a macOS
-//! `WKWebView` do not *agree* on the CSP, they **call the same function**.
-//! What stays behind in each frontend is toolkit glue: how to hand this
-//! string to a web view, nothing about what the string says.
+//! Assembling the document a message renders as: one implementation for every frontend (#567, ADR
+//! 0019 Q6),
+//! so the CSP and link policy cannot fork. Frontends keep only the glue that hands the string to a
+//! web view.
 
 use std::sync::OnceLock;
 
 use postio_body::quote;
 use postio_body::reader_view;
 use postio_body::sanitize;
-/// Whether a message may load remote images -- what [`prepare`] and the
-/// renderers are asked under, re-exported so a caller preparing ahead needs
-/// no second path to it.
 pub use postio_body::sanitize::RemoteImages;
 use postio_body::treatment::{self, TREATMENT_ATTRIBUTE, Treatment, Trigger};
 use postio_model::message::MessageBody;
 
-/// Why the reading pane has no body to draw.
-///
-/// Issue #70, Cause A: all four of these used to render as a blank pane, so
-/// a mailbox mid-backfill was indistinguishable from a broken application.
-/// They are separate because the right response differs — three are worth
-/// waiting for and one is finished, and only two are worth retrying.
-///
-/// This is the reader's half of the "partial" state every Postio surface
-/// owes: headers synced, body not yet, which is the *ordinary* condition of
-/// a mailbox that has just been added rather than a fault.
+/// Why the reading pane has no body to draw (#70). Separate because the response differs: three are
+/// worth waiting for, one is finished, only two are worth retrying.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Absent {
-    /// Headers are synced and the backfill has not reached the body yet.
-    ///
-    /// The overwhelmingly common one, and not an error: `request_body`
-    /// queues a fetch and returns, so every message is in this state until
-    /// the queue drains.
+    /// The ordinary condition of a mailbox just added, not an error: `request_body` queues a fetch
+    /// and returns.
     Partial,
-    /// Not downloaded, and nothing is downloading — the engine is offline.
     Offline,
-    /// A body was recorded but its bytes are not in the blob store.
-    ///
-    /// Rare, and a real fault: the database and the blob directory disagree.
     Missing,
-    /// Downloaded, and the message genuinely has no text or HTML part.
     Empty,
-    /// `\Draft`, but written by another client: there is no local composer
-    /// buffer behind the row, so there is nothing here to resume editing.
-    ///
-    /// Not a retryable wait like [`Absent::Partial`] or [`Absent::Offline`] --
-    /// downloading its body would only ever produce something to read, never
-    /// something to edit, so promising a retry would be a promise the reader
-    /// cannot keep. See #175.
+    /// Written by another client: nothing to resume editing, and a body download would only give
+    /// something to read, so no retry is promised (#175).
     ForeignDraft,
-    /// The server would not give this message's body up, and has not been
-    /// asked again since (#1918).
-    ///
-    /// Finished rather than a wait: the headers above are all there is until
-    /// the message changes or the person opens it once more, and a plate
-    /// that said "downloading" would be a spinner with nothing behind it.
+    /// Finished rather than a wait: a "downloading" plate would be a spinner with nothing behind
+    /// it.
     Failed,
 }
 
-/// Whether a request for a body can run on an account in this state.
-///
-/// `None` is an account nothing has been said about yet: treated as
-/// reachable, so a pane never claims offline on no evidence (#1988). Only
-/// [`postio_core::ConnectionState::Online`] reaches the server; a backoff, a missing
-/// network and a signed-out account all leave a queued request waiting (#1986).
+/// `None` is an account nothing has been said about: reachable, so a pane never claims offline on
+/// no evidence (#1988). Only `Online` reaches the server (#1986).
 pub fn reaches_server(link: Option<postio_core::ConnectionState>) -> bool {
     matches!(link, None | Some(postio_core::ConnectionState::Online))
 }
 
-/// The plate for a message whose body is not on this machine: the one rule
-/// every frontend draws from (#1986). A server's refusal outranks the
-/// link, which is the moment; the link outranks "downloading", which would
-/// promise a fetch that cannot start.
+/// A server's refusal outranks the link; the link outranks "downloading", which would promise a
+/// fetch that cannot start (#1986).
 pub fn unfetched(failed: bool, unreachable: bool) -> Absent {
     if failed {
         Absent::Failed
@@ -88,17 +48,8 @@ pub fn unfetched(failed: bool, unreachable: bool) -> Absent {
     }
 }
 
-/// What the pane says for each [`Absent`], as the document's body.
-///
-/// A free function returning a string so the words and the key are testable
-/// without a display — the assertions that matter here are "these four do
-/// not say the same thing" and "the retryable ones name the retry key",
-/// neither of which needs a web view to have painted anything.
 pub fn absent_html(state: Absent) -> String {
-    // Refresh's own key, from the registry: it is also the retry for the
-    // list's empty and error plates, one retry key for the whole application
-    // and not one per surface. (`R` was its second key until the one keymap
-    // gave it to restoring from Filtered, and this line went on saying it.)
+    // Refresh's own key from the registry: one retry key for the whole application.
     let retry = format!(
         "Press <kbd>{}</kbd> to check for new mail now.",
         crate::hints::short(
@@ -147,15 +98,8 @@ pub fn absent_html(state: Absent) -> String {
                 .to_owned(),
         ),
     };
-    // `role="status"` with a polite live region, because this is the one
-    // state change a screen reader has no other way to notice: the reader's
-    // content is *replaced* rather than focused, so nothing moves and there
-    // is nothing to announce unless the plate asks to be announced. Polite
-    // rather than assertive -- "the body has not arrived yet" is worth
-    // saying and not worth interrupting a sentence for.
-    //
-    // Both frontends render this string, so the announcement is one
-    // implementation rather than two that agree (ADR 0019 Q6).
+    // `role="status"`, polite: the content is replaced rather than focused, so nothing else
+    // announces this state change.
     format!(
         "<div class=\"postio-absent\" role=\"status\" aria-live=\"polite\">\
          <p class=\"postio-absent-heading\">{heading}</p>\
@@ -164,63 +108,25 @@ pub fn absent_html(state: Absent) -> String {
     )
 }
 
-/// What the reader says above a body that did not fully decode (#901).
-///
-/// One line, and deliberately short of the reason. The three degradations
-/// behind it are different — base64 outside its alphabet, an unknown
-/// `Content-Transfer-Encoding`, a charset that lost octets to U+FFFD — and
-/// naming which one happened would be a sentence about MIME in the middle of
-/// somebody's mail. What a reader needs is the one fact that changes what
-/// they do with it: the words below may not be the words that were sent.
-///
-/// Here rather than in a frontend because it is the same claim on both. The
-/// GTK reader draws it in a `DecodeNotice` and the macOS reader in its own
-/// strip; what the claim *is* is not either toolkit's to decide, and a
-/// second copy is how a caveat comes to say two different things — or, as
-/// on macOS until now, nothing at all.
+/// One line, deliberately short of the reason: what a reader needs is that the words below may not
+/// be the words sent (#901).
 pub const DECODE_CAVEAT: &str = "Parts of this message could not be decoded";
 
-/// [`DECODE_CAVEAT`] when the stored body carries `encoding_problems`, and
-/// nothing when it does not.
-///
-/// A function rather than the bare flag so that "is there a caveat" and
-/// "what does it say" are one question with one answer. A notice with
-/// nothing to report must not be on screen: it teaches people to dismiss the
-/// one that matters.
+/// A notice with nothing to report must not be on screen: it teaches people to dismiss the one that
+/// matters.
 pub fn decode_caveat(encoding_problems: bool) -> Option<&'static str> {
     encoding_problems.then_some(DECODE_CAVEAT)
 }
 
-/// How many invisible scroll markers [`scroll_markers`] lays down.
-///
-/// Bounds how far `page_down` can walk a message, not how long a message can
-/// be: past the last marker further presses are a no-op, same as reaching
-/// the end of any scrollable view. 60 markers at [`SCROLL_MARKER_STEP_VH`]
-/// apart is generous enough that reaching it means an extraordinarily long
-/// message, not an ordinary one.
+/// Bounds how far `page_down` can walk a message; past the last marker further presses are a no-op.
 pub const SCROLL_MARKERS: u32 = 60;
 
-/// How far apart the markers sit, in viewport heights.
-///
-/// Short of 100 so consecutive pages keep a sliver of what was on screen —
-/// paging with nothing carried over from the last screen is disorienting,
-/// the same reason a paged reader or terminal pager rarely pages by exactly
-/// one screen either.
+/// Short of 100 so consecutive pages keep a sliver of what was on screen.
 pub const SCROLL_MARKER_STEP_VH: u32 = 90;
 
-/// Where a page turn lands, given where the reader is now.
-///
-/// The markers are the only scroll primitive a hardened web view leaves —
-/// JavaScript is off, so a same-document fragment navigation is all there
-/// is — and which one to jump to is arithmetic that both frontends were
-/// doing separately. GTK had it; macOS had no paging at all, so `space` and
-/// `Page_Down` were swallowed by the key monitor and did nothing, on the key
-/// a mail client is read with.
-///
-/// Clamped at both ends rather than wrapping. Past the last marker further
-/// presses are a no-op, the same as reaching the end of any scrollable view;
-/// a `space` that jumped back to the top would lose somebody's place in a
-/// long message with no way to tell it had happened.
+/// The markers are the only scroll primitive a hardened web view leaves (JavaScript is off).
+/// Clamped at both
+/// ends rather than wrapping: a `space` that jumped to the top would lose the reader's place.
 pub fn page_after(current: u32, forward: bool) -> u32 {
     if forward {
         (current + 1).min(SCROLL_MARKERS - 1)
@@ -229,35 +135,16 @@ pub fn page_after(current: u32, forward: bool) -> u32 {
     }
 }
 
-/// The fragment for marker `page`, as a frontend navigates to it.
-///
-/// One spelling, so the anchors the document lays down and the fragments the
-/// frontends ask for cannot drift apart — which would be a page key that
-/// silently does nothing, and nothing anywhere to say why.
+/// One spelling, so the anchors laid down and the fragments asked for cannot drift apart.
 pub fn page_fragment(page: u32) -> String {
     format!("pos-{page}")
 }
 
-/// Invisible anchors spaced down the document, `#pos-0`, `#pos-1`, … — the
-/// frontends' `page_down`/`page_up` jump between them.
-///
-/// This exists because a hardened web view leaves no other way to move the
-/// scroll position: JavaScript is off on purpose, and neither WebKitGTK nor
-/// WKWebView exposes a scroll-by-amount call to the host with it off. A
-/// same-document fragment navigation is the one scroll primitive still open
-/// with both closed — it is what every browser already implements `#anchor`
-/// links with, and a frontend's link policy only intercepts a *user's*
-/// click, so an app-issued navigation passes straight through.
-///
-/// Placed at `top: Nvh`, not a pixel offset: `vh` is resolved against
-/// whatever the real viewport height is when the engine lays the document
-/// out, so the markers land a consistent fraction of a screen apart on any
-/// window size without this code ever learning what that size is. Confirmed
-/// these contribute nothing to the document's scrollable height even when
-/// they land far past the real content -- `scrollHeight` measured identical
-/// with and without 50 such markers spanning 4500vh over one short
-/// paragraph -- so a short message cannot grow a phantom scrollbar from
-/// markers it never reaches.
+/// Invisible anchors `#pos-0`, `#pos-1`, ... for `page_down`/`page_up`: with JavaScript off, a
+/// same-document
+/// fragment navigation is the one scroll primitive left. Placed in `vh` so they land a fixed
+/// fraction of a screen
+/// apart on any window; they add nothing to the scrollable height.
 pub fn scroll_markers() -> String {
     let mut markers = String::with_capacity(SCROLL_MARKERS as usize * 48);
     for position in 0..SCROLL_MARKERS {
@@ -269,15 +156,9 @@ pub fn scroll_markers() -> String {
     markers
 }
 
-/// Wrap sanitized body markup in the document a web view is handed: Postio's
-/// own stylesheet, and a `Content-Security-Policy` that closes off anything
-/// the sanitizer missed.
-///
-/// The stylesheet is literal CSS, not the GTK `--postio-*` variables `tokens
-/// .css` defines — a web view's CSS engine has no notion of the GTK style
-/// context those live on. `reader-tokens.css` is generated from the same
-/// design tokens as a literal `--r-*` palette (#296); `reader.css` is
-/// structure only, referencing those variables.
+/// The stylesheet is literal CSS, not the GTK `--postio-*` variables: a web view has no GTK style
+/// context.
+/// `reader-tokens.css` is generated from the design tokens (#296); `reader.css` is structure only.
 pub fn wrap_document(content: &str, remote: RemoteImages, sheet: Sheet) -> String {
     let mut css = reader_css();
     let csp = content_security_policy(remote);
@@ -295,28 +176,15 @@ pub fn wrap_document(content: &str, remote: RemoteImages, sheet: Sheet) -> Strin
          <style>{css}</style>\n\
          </head><body>{content}</body></html>"
     );
-    // Counted here, where every document ends -- the single message's and
-    // the thread's alike -- rather than in `document_for`, because "did
-    // this document carry bulk" is answered where the document is built and
-    // is the same answer for every frontend and every path. The thread
-    // document went uncounted while the count lived one caller up (the
-    // 2026-09-08 note recorded the gap). See `crate::reader::cost`.
+    // Counted here, where every document ends, so a thread's document is counted like any other.
     crate::reader::cost::note_document(document.len());
     document
 }
 
-/// The rules that turn the sender's box into their own page.
-///
-/// Scoped to `.postio-body` and not to `:root`, which is the whole design:
-/// `body` keeps painting `var(--r-ground)` from the theme, so the chrome
-/// around the sheet stays dark and the sheet has an edge to be inset from.
-/// Custom properties inherit, so every rule inside the box — the link
-/// colour, the quote ground, the hairlines — resolves against the light
-/// palette without `reader.css` knowing this mode exists.
-///
-/// The values are read out of the generated palette rather than restated,
-/// the same rule and the same reason as [`reader_ground`]: #296 says a
-/// colour has one source, and a second copy is one that can drift.
+/// Scoped to `.postio-body`, not `:root`: `body` keeps painting `var(--r-ground)` so the chrome
+/// stays dark.
+/// Custom properties inherit, so rules inside resolve against the light palette. Read from the
+/// generated palette (#296).
 pub(crate) fn senders_sheet_css() -> String {
     format!(
         "\n.{SENDERS_SHEET_CLASS} .postio-body {{{}\n  background: var(--r-ground);\n  \
@@ -325,17 +193,10 @@ pub(crate) fn senders_sheet_css() -> String {
     )
 }
 
-/// The generated reader palette: the light scheme, then its dark block.
 pub(crate) const PALETTE: &str = include_str!("../../data/reader-tokens.css");
 
-/// Where [`PALETTE`]'s dark scheme begins.
 pub(crate) const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
 
-/// The light half of the generated palette, as declarations.
-///
-/// A sibling of [`reader_ground`], split out of the same file the same way:
-/// everything before the dark block is the light scheme, and the `:root`
-/// body of it is the set of values a sender's page should be drawn with.
 pub(crate) fn light_tokens() -> &'static str {
     let (light, _) = PALETTE
         .split_once(DARK_BLOCK)
@@ -347,11 +208,7 @@ pub(crate) fn light_tokens() -> &'static str {
         .expect("the generated palette always opens with a light :root block")
 }
 
-/// The stylesheet [`wrap_document`] inlines: the generated token palette,
-/// the structural rules, and the embedded font faces.
-///
-/// `include_str!` from this crate's own data directory — compiled in, so a
-/// frontend cannot render with a stale or missing stylesheet.
+/// `include_str!` so a frontend cannot render with a stale or missing stylesheet.
 fn reader_css() -> String {
     let mut css = embedded_font_faces().to_owned();
     css.push_str(include_str!("../../data/reader-tokens.css"));
@@ -361,11 +218,8 @@ fn reader_css() -> String {
     css
 }
 
-/// The paper sheet's palette: the light scheme, whatever the reader's, so
-/// anything of Postio's drawn on the sheet -- a quote fold's summary, a
-/// search match -- reads on white the way it does in light mode (T212). Read
-/// out of the generated palette, like [`senders_sheet_css`], so the colour
-/// has one source.
+/// The light scheme whatever the reader's, so anything of Postio's drawn on the sheet reads on
+/// white.
 fn paper_palette_css() -> String {
     format!(
         "\n.{}[{TREATMENT_ATTRIBUTE}=\"{}\"] {{{}\n}}\n",
@@ -375,20 +229,10 @@ fn paper_palette_css() -> String {
     )
 }
 
-/// The reader's ground colour for the given scheme, as the generated palette
-/// spells it (`#rrggbb`).
-///
-/// A frontend needs this outside the document as well as inside it. The
-/// document paints `--r-ground` on `body`, but only once it has *parsed* —
-/// and a web view between one document and the next has no document to take
-/// a colour from, so it paints whatever its widget background is. Left
-/// unset, that is the engine default, which under the GTK4 GL path shows as
-/// a black frame on every message change (#749).
-///
-/// Read out of the same generated CSS the document inlines, rather than
-/// restated as a literal here: #296's rule is that a colour has one source,
-/// and a second copy would be one that could silently drift from the design
-/// system the first is regenerated from.
+/// Needed outside the document: between documents a web view has no colour to take, and the engine
+/// default
+/// shows as a black frame on every message change under the GTK4 GL path (#749). Read from the
+/// generated CSS (#296).
 pub fn reader_ground(dark: bool) -> &'static str {
     let (light, dark_block) = PALETTE
         .split_once(DARK_BLOCK)
@@ -401,31 +245,17 @@ pub fn reader_ground(dark: bool) -> &'static str {
         .expect("the generated palette always defines --r-ground in both schemes")
 }
 
-/// The scheme the reader's web view fetches Postio's own typefaces over
-/// (ADR 0023).
-///
-/// A sibling of [`sanitize::CID_SCHEME`], and answered the same way: from
-/// compiled-in bytes, in-process, never from a path and never from the
-/// network. It exists because a web view's content process cannot see the
-/// fonts the host application registered with its toolkit — so the faces
-/// have to reach the engine somehow, and *serving* them is what keeps the
-/// document proportional to the message.
+/// Answered like `sanitize::CID_SCHEME`: from compiled-in bytes, in-process, never a path or the
+/// network.
+/// The web view's content process cannot see fonts the host registered (ADR 0023).
 pub const FONT_SCHEME: &str = "postio-font";
 
-/// One vendored typeface, as the reader refers to it and as the handler
-/// serves it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Face {
-    /// The name a `postio-font:` URL carries, and the only thing a request
-    /// may name — see [`font_bytes`].
     pub name: &'static str,
-    /// The CSS family this face belongs to.
     pub family: &'static str,
-    /// Its weight, as `font-weight`.
     pub weight: u16,
-    /// `normal` or `italic`.
     pub style: &'static str,
-    /// The face itself, compiled in.
     pub bytes: &'static [u8],
 }
 
@@ -511,12 +341,8 @@ pub static FACES: &[Face] = &[
     },
 ];
 
-/// The face `name` refers to, or `None`.
-///
-/// What a frontend's `postio-font:` handler answers requests from. A name
-/// that is not in [`FACES`] resolves to nothing — the same "not found" a
-/// `cid:` with no matching part gets, and for the same reason: a scheme that
-/// falls through to somewhere is a scheme that can be aimed.
+/// A name not in `FACES` resolves to nothing, like a `cid:` with no matching part: a scheme that
+/// falls through somewhere can be aimed.
 pub fn font_bytes(name: &str) -> Option<&'static [u8]> {
     FACES
         .iter()
@@ -524,33 +350,13 @@ pub fn font_bytes(name: &str) -> Option<&'static [u8]> {
         .map(|face| face.bytes)
 }
 
-/// The MIME type every served face carries.
 pub const FONT_MIME: &str = "font/ttf";
 
-/// `@font-face` rules pointing at [`FONT_SCHEME`] URLs.
-///
-/// A web view's rendering happens in its own web process, which never sees
-/// the fonts the host application registered — referencing the family name
-/// by itself would fall back to whatever generic sans the sandbox happens
-/// to have. Naming the faces here is what makes "rendered text inherits
-/// Postio typography" true regardless of what the web process can see.
-///
-/// These used to carry the bytes, as ~1.21 MB of base64 inlined into every
-/// document — an empty pane and every absent plate included (#768, ADR
-/// 0023). Now the document names the faces and the engine fetches only the
-/// ones the page actually draws with: two for a state plate, one for a
-/// plain-text body, rather than eight for everything.
-///
-/// `font-display: block` because the fetch is asynchronous where a `data:`
-/// URI was immediate. Without it there is a window where body text paints in
-/// a fallback face and then reflows — a flash of wrong font in the one pane
-/// whose whole job is rendering text stably. `block` paints nothing briefly
-/// and then swaps, which for bytes compiled into the process and served from
-/// memory is imperceptible; `optional` would let one hiccup leave the reader
-/// in system sans for good, which is the outcome this whole mechanism exists
-/// to prevent.
-///
-/// Computed once: the rules are static for the process' life.
+/// `font-display: block` because the fetch is asynchronous: otherwise text paints in a fallback
+/// face and reflows,
+/// and `optional` could leave the reader in system sans for good. The document names the faces so
+/// the engine
+/// fetches only those drawn with (#768, ADR 0023). Computed once.
 fn embedded_font_faces() -> &'static str {
     static RULES: OnceLock<String> = OnceLock::new();
     RULES.get_or_init(build_font_faces)
@@ -575,32 +381,15 @@ fn build_font_faces() -> String {
     out
 }
 
-/// What a render is holding back, split by kind.
-///
-/// Two numbers rather than one because the parts panel says them separately
-/// ("3 remote images and 1 likely tracker"), and a single total could not.
-/// The split comes from [`postio_body::sanitize::Sanitized`]; see its
-/// `trackers` field for what the heuristic claims, which is less than the
-/// name suggests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HeldBack {
-    /// Ordinary remote pictures that were stripped.
     pub remote_images: u32,
-    /// Stripped references whose declared size makes them likely beacons.
     pub trackers: u32,
 }
 
 impl HeldBack {
-    /// What the notice says: `14 remote images and 1 tracker blocked`.
-    ///
-    /// Both numbers, because they are different claims: a picture the sender
-    /// wanted you to see and a beacon that wanted to see you are not the same
-    /// thing to a person deciding whether to load them. Trackers alone still
-    /// say "tracker" rather than folding into a picture count — the whole
-    /// reason #174 taught the parts panel to tell them apart.
-    ///
-    /// Empty when nothing was held back: a notice with nothing to report
-    /// should not be on screen at all.
+    /// Empty when nothing was held back. Both numbers, since a picture the sender wanted seen and a
+    /// beacon are different claims (#174).
     pub fn summary(self) -> String {
         let images = self.remote_images;
         let trackers = self.trackers;
@@ -626,66 +415,35 @@ impl HeldBack {
         }
     }
 
-    /// Everything held back, whatever kind it was.
-    ///
-    /// What the banner asks: whether it has anything at all to offer.
     pub fn total(self) -> u32 {
         self.remote_images + self.trackers
     }
 }
 
-/// Which of the two ways a message can be drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Rendering {
-    /// The sender's own markup, sanitized and quote-folded. What ordinary
-    /// correspondence gets, and what `View original` goes back to.
     #[default]
     Original,
-    /// Reduced to what carries meaning — [`postio_body::reader_view`]. The
-    /// default for bulk mail.
     Reader,
 }
 
-/// Which paper a message is drawn on.
-///
-/// Turn 7, screen 20 of the canvas: "When you do open the original, it
-/// renders on its own paper-white sheet inset from the dark chrome — sender
-/// CSS never fights the app theme, and link colors stay the sender's."
+/// The original renders on its own paper-white sheet inset from the dark chrome, so sender CSS
+/// never fights the app theme.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Sheet {
-    /// Postio's own ground, following the reader's colour scheme.
-    ///
-    /// What correspondence gets. A reply drawn on a white sheet inside a
-    /// dark window would be worse than what the theme already does, so this
-    /// stays the default and the sender's sheet is the exception.
+    /// The default: a reply on a white sheet in a dark window would be worse than the theme.
     #[default]
     Theme,
-    /// The sender's own paper: the light palette whatever the scheme, so
-    /// their white-background logo, their mid-grey body text and their links
-    /// land on the page they were designed for.
-    ///
-    /// Only the sender's *box* changes. The chrome around it keeps the
-    /// theme's ground, which is what makes the sheet read as a sheet.
+    /// The light palette whatever the scheme; only the sender's box changes, so the chrome around
+    /// it keeps the theme's ground.
     Senders,
 }
 
-/// The class [`Sheet::Senders`] puts on the document root.
-///
-/// Namespaced like every other class Postio injects, because the sanitizer
-/// leaves a sender's own `class` attributes alone.
 pub const SENDERS_SHEET_CLASS: &str = "postio-senders-sheet";
 
-/// Which paper this rendering belongs on.
-///
-/// Exactly one situation earns the sender's sheet: the person left reader
-/// view to see the original of something reader view had offered to reduce.
-/// That is a deliberate "show me what they actually sent", and it is the
-/// only time Postio's palette is the wrong one to draw it in.
-///
-/// `suits_reader_view` is passed rather than recomputed from the body:
-/// [`suits_reader_view`] parses the markup, both frontends already call it
-/// to choose the rendering, and asking twice per render would put an
-/// html5ever pass on the path every ordinary message takes.
+/// Only leaving reader view to see the original of something it offered to reduce earns the
+/// sender's sheet.
+/// `suits_reader_view` is passed in because computing it parses the markup.
 pub fn sheet_for(rendering: Rendering, suits_reader_view: bool) -> Sheet {
     match (rendering, suits_reader_view) {
         (Rendering::Original, true) => Sheet::Senders,
@@ -693,74 +451,35 @@ pub fn sheet_for(rendering: Rendering, suits_reader_view: bool) -> Sheet {
     }
 }
 
-/// How every message opens (spec 006 FR-031): as its sender built it.
-///
-/// Reader view is a command away, never the default. Whether a message reads
-/// as bulk ([`suits_reader_view`]) is still asked -- it picks the sheet the
-/// original is drawn on ([`sheet_for`]) and offers unsubscribe -- but it no
-/// longer decides the rendering. It did, and newsletters opened flattened:
-/// the maintainer's summary was that Postio "over indexed in privacy and
-/// removing layout".
-///
-/// The GTK reading pane's rule, and [`prepare`]'s. The terminal frontend
-/// draws markup as text, where reader view *is* the readable presentation of
-/// bulk mail, and keeps its own rule (spec 005); the macOS frontend is out of
-/// spec 006's scope and keeps its own too.
+/// Reader view is a command away, never the default: it flattened newsletters.
 pub fn opening_rendering() -> Rendering {
     Rendering::Original
 }
 
-/// A body, drawn, and everything a surface needs to say about how.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rendered {
-    /// The markup, ready for [`contain_body`].
     pub html: String,
-    /// The sender's own stylesheets, already scoped to this message
-    /// (`postio_body::styles`). Empty for the great majority of mail.
-    ///
-    /// Carried beside the markup all the way to the document because the
-    /// sender's `<style>` element does not survive sanitizing -- Postio emits
-    /// CSS it parsed itself, and a reader that forgets this field renders a
-    /// message unstyled while every test about the CSS still passes.
+    /// Carried beside the markup to the document because the sender's `<style>` does not survive
+    /// sanitizing; Postio emits CSS it parsed itself.
     pub styles: String,
-    /// What the remote-image policy held back.
     pub held_back: HeldBack,
-    /// Which way it was drawn — what the notice reports, and what decides
-    /// whether `View original` has anything to offer.
     pub rendering: Rendering,
-    /// Links that survived reduction. Zero in [`Rendering::Original`], where
-    /// nothing is dropped and the count would be a claim about nothing.
+    /// Zero in `Original`, where nothing is dropped.
     pub links_kept: usize,
-    /// Links reduction collapsed. The canvas draws the pair as
-    /// `1 link kept of 23`.
     pub links_dropped: usize,
-    /// The input cap the HTML body exceeded, if any: then `html` is the
-    /// plain-text alternative, and the reader says why (spec 006 R6).
     pub over_cap: Option<postio_body::Cap>,
-    /// Which treatment it was drawn in, when it was drawn under one
-    /// ([`body_html_treated`]); `None` for the classic reader, which has no
-    /// treatments.
     pub treated: Option<Treated>,
 }
 
-/// How a body was treated (specs/007-postio-focus T210-T213): what the
-/// render-mode line says, and what `⇧O` switches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Treated {
-    /// The treatment it is drawn in.
     pub shown: Treatment,
-    /// What the rule chose for it, before any choice the person made.
     pub classified: Treatment,
-    /// Why the rule chose paper, when it did.
     pub trigger: Option<Trigger>,
-    /// Whether the body is HTML: plain text has no other treatment to
-    /// offer, so no line names one.
     pub html: bool,
 }
 
 impl Treated {
-    /// Plain text, or HTML too large to draw: app colours, with nothing to
-    /// switch to.
     pub const TEXT: Treated = Treated {
         shown: Treatment::AppColours,
         classified: Treatment::AppColours,
@@ -769,44 +488,23 @@ impl Treated {
     };
 }
 
-/// What a column that flows the body adds to its document (Focus's open
-/// message): the body takes the column's ground, `--flow-ground`, which the
-/// column defines, and no padding of its own. The same rule as
-/// `postio-widgets`' flowing reader.
 pub const FLOW_CSS: &str = "\nbody { background: var(--flow-ground); padding: 0; }\n";
 
-/// What a flowing column adds for correspondence, which has no page of its
-/// own: the body loses its frame and the padding inside it, so its lines
-/// share both edges with the blocks above them (T207). A page of its own
-/// (paper, a sender's canvas) keeps its sheet.
+/// Correspondence has no page of its own: the body loses its frame and padding so its lines share
+/// both edges with the blocks above.
 pub const FLOW_FLAT_CSS: &str =
     ".postio-body { padding: 0; border: 0; border-radius: 0; min-height: 0; }\n";
 
-/// The render-mode line's button that keeps the treatment shown for every
-/// message from this sender (T213), while [`RenderModeWords::offer_always`].
 pub const ALWAYS_FOR_SENDER: &str = "Always for this sender";
 
-/// What the render-mode line above an HTML body says (T213; the handoff's
-/// screens 03, 11-13): the treatment, why, and the way to the other one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RenderModeWords {
-    /// The treatment, named: "App colours", "Original layout, on paper".
     pub title: &'static str,
-    /// Why, quietly: "sender colours and fonts removed".
     pub detail: &'static str,
-    /// The switch to the other treatment, beside its key.
     pub action: &'static str,
-    /// Whether to offer "Always for this sender": the person chose something
-    /// other than what is remembered for this sender.
     pub offer_always: bool,
 }
 
-/// What the line says about a body drawn as `treated`, for a sender whose
-/// remembered choice is `remembered`; `None` for plain text, which has no
-/// other treatment and gets no line.
-///
-/// Words only, so the wording is proven without a display; the reader's
-/// line draws them.
 pub fn render_mode_words(
     treated: Treated,
     remembered: Option<Treatment>,
@@ -852,23 +550,14 @@ pub fn render_mode_words(
 }
 
 impl Rendered {
-    /// Every link the message had. Zero unless it was reduced.
     pub fn links_total(&self) -> usize {
         self.links_kept + self.links_dropped
     }
 }
 
-/// Whether this body is one reader view should open on.
-///
-/// **Bulk mail only.** A person's correspondence opening reduced is the one
-/// failure that would make the feature hated, so the question is not "could
-/// this be reduced" — anything can — but "was this laid out by a template".
-/// [`postio_body::reader_view::reads_as_bulk`] answers it from the
-/// arrangement.
-///
-/// A message with no HTML part at all is never a candidate: there is no
-/// markup to reduce, and plain text is already what reader view is trying to
-/// get back to.
+/// Bulk mail only: correspondence opening reduced would be the failure that makes the feature
+/// hated, so the question
+/// is "was this laid out by a template". No HTML part is never a candidate.
 pub fn suits_reader_view(body: &MessageBody) -> bool {
     body.html
         .as_deref()
@@ -879,18 +568,9 @@ pub fn suits_reader_view(body: &MessageBody) -> bool {
         })
 }
 
-/// The class the facts block is drawn with.
-///
-/// Public because it is the seam a frontend test asserts on: the block is
-/// markup inside the sender's document, so "did it reach the reading pane"
-/// is a question about this string.
+/// Public because it is the seam a frontend test asserts on.
 pub const FACTS_CLASS: &str = "postio-facts";
 
-/// The facts block as markup, or nothing when there were none.
-///
-/// A description list, because that is what it is: labels and the values
-/// they name. The two columns the canvas draws are a CSS grid over it, so
-/// the markup stays meaningful to a screen reader reading it in order.
 fn facts_html(rows: &[reader_view::Fact]) -> String {
     if rows.is_empty() {
         return String::new();
@@ -907,11 +587,6 @@ fn facts_html(rows: &[reader_view::Fact]) -> String {
     out
 }
 
-/// Text into markup, with the four characters that would otherwise be it.
-///
-/// Written out rather than reached for from a crate, the same reason
-/// `reader_view` writes its own: this is the output side of markup Postio
-/// composes itself, and the escaping is four characters.
 fn escape_into(out: &mut String, text: &str) {
     for character in text.chars() {
         match character {
@@ -924,33 +599,15 @@ fn escape_into(out: &mut String, text: &str) {
     }
 }
 
-/// The body markup: sanitized and quote-folded, but not yet wrapped in the
-/// document template [`wrap_document`] adds, plus what was held back to
-/// produce it — see [`sanitize::Sanitized`].
-///
-/// # Reader view prefers the plain part
-///
-/// A `multipart/alternative` carries the sender's own plain-text version,
-/// which is the thing reduction is trying to reconstruct — so when there is
-/// one, reader view uses it rather than reducing the HTML alongside it.
-/// Reduction is the fallback for HTML-only bulk mail, not the first
-/// resort.
-///
-/// Note what this does *not* do: it never reaches for the plain part in
-/// [`Rendering::Original`]. The existing preference order there — HTML
-/// first, text as a fallback — is what makes ordinary mail look like the
-/// sender wrote it.
+/// Reader view prefers the sender's plain part over reducing the HTML; reduction is the fallback
+/// for HTML-only bulk
+/// mail. It never uses the plain part in `Rendering::Original`.
 pub fn body_html(body: &MessageBody, remote: RemoteImages, rendering: Rendering) -> Rendered {
     body_html_in(body, remote, rendering, None)
 }
 
-/// [`body_html`], naming the message the body belongs to.
-///
-/// `scope` reaches [`sanitize::sanitize_body_in`], so every `cid:` reference
-/// in the result names its own message. Required for ADR 0032's conversation
-/// document, where one document holds a whole thread and an unscoped
-/// reference would resolve against whichever message the handler happened to
-/// have. `None` is the single-message reader and is exactly [`body_html`].
+/// `scope` makes every `cid:` reference name its own message, required for a conversation document
+/// (ADR 0032); `None` is exactly `body_html`.
 pub fn body_html_in(
     body: &MessageBody,
     remote: RemoteImages,
@@ -962,18 +619,11 @@ pub fn body_html_in(
     let text = body.text.as_deref().filter(|text| !text.trim().is_empty());
 
     if rendering == Rendering::Reader {
-        // The plain part is preferred because reader view assumes it is the
-        // clean alternative the sender already reduced. When it is instead
-        // their markup flattened, that assumption is wrong in the most
-        // visible way possible -- the converter's markdown ends up on screen
-        // as syntax -- and the HTML beside it is the better source, which is
-        // what `reduce` below is for. See `reads_as_flattened_markup`.
+        // The plain part is preferred as the sender's own reduction; when it is their markup
+        // flattened, the HTML is the better source (`reads_as_flattened_markup`).
         let text =
             text.filter(|text| html.is_none() || !reader_view::reads_as_flattened_markup(text));
         if let Some(text) = text {
-            // The facts first, then what is left of the prose. `lift` takes
-            // the rows out of the copy, so the block is a summary rather than
-            // the same three lines printed twice.
             let lifted = reader_view::lift(text);
             let mut html = facts_html(&lifted.rows);
             html.push_str(&quote::text_to_html(&lifted.body));
@@ -985,10 +635,7 @@ pub fn body_html_in(
             };
         }
         if let Some(html) = html {
-            // Sanitized first, always. Reduction is a readability pass over
-            // markup that has already been made safe, and running it on raw
-            // sender HTML would be relying on it for a promise it does not
-            // make.
+            // Sanitized first, always: reduction is a readability pass, not a safety one.
             let sanitized = sanitize::sanitize_body_in(html, remote, scope);
             if let Some(cap) = sanitized.over_cap {
                 return over_cap(body, cap);
@@ -996,13 +643,8 @@ pub fn body_html_in(
             let reduced = reader_view::reduce(&sanitized.html);
             return Rendered {
                 html: reduced.html,
-                // Not `sanitized.styles`. Reduction strips `style`,
-                // `bgcolor`, `width` and `class` from the markup because
-                // reader view *is* the simplified presentation; handing the
-                // same message a stylesheet would put the layout back, and
-                // back halfway at that -- class selectors matching nothing
-                // while `p` and `a` still applied. `View original` is the way
-                // back to what the sender built, and it carries them.
+                // Not `sanitized.styles`: reduction strips `style`, `class` and the rest, so a
+                // stylesheet would put the layout back halfway. `View original` carries them.
                 styles: String::new(),
                 held_back: HeldBack {
                     remote_images: sanitized.remote_blocked,
@@ -1048,11 +690,8 @@ pub fn body_html_in(
     Rendered::default()
 }
 
-/// A message's plain text as the body a plain-text fallback draws: what
-/// [`body_html`] makes of a body with no HTML part, without counting as a
-/// body sanitised -- there is no sanitiser here, and the fallback is built
-/// for every load on the interface thread, so it must not read as the
-/// preparation T223 keeps off it.
+/// Not a body sanitised: there is no sanitiser here, and the fallback is built on every load on the
+/// interface thread.
 pub fn plain_text_body_html(text: &str) -> String {
     if text.trim().is_empty() {
         String::new()
@@ -1061,8 +700,6 @@ pub fn plain_text_body_html(text: &str) -> String {
     }
 }
 
-/// A message whose HTML is over an input cap: its plain-text alternative,
-/// or a line saying there is nothing else to show. Never blank.
 fn over_cap(body: &MessageBody, cap: postio_body::Cap) -> Rendered {
     let html = match body.text.as_deref().filter(|text| !text.trim().is_empty()) {
         Some(text) => quote::text_to_html(text),
@@ -1075,25 +712,16 @@ fn over_cap(body: &MessageBody, cap: postio_body::Cap) -> Rendered {
     }
 }
 
-/// The class an HTML body drawn in app colours is wrapped in: Postio's own
-/// typography applies inside it, where [`ORIGINAL_CLASS`] reverts it.
 pub const APP_COLOURS_CLASS: &str = "postio-app-colours";
 
-/// The class a body is wrapped in when it goes on paper by the person's
-/// choice rather than the rule's: correspondence, which has no page margins
-/// of its own, so the sheet gives it some (`treatment.css`). Mail the rule
-/// put on paper is drawn edge to edge, its own margins its own business.
+/// Paper by the person's choice rather than the rule's: correspondence has no page margins, so the
+/// sheet gives some.
 pub const LETTER_CLASS: &str = "postio-letter";
 
-/// The class a body the rule put on paper is wrapped in when its sender
-/// said nothing about the page's margins: a browser draws a page 8px in from
-/// its edge by default, so a sheet drawn "as sent" does too
-/// (`treatment.css`). A sender who set their own -- `margin: 0` on a
-/// newsletter's `<body>` -- gets exactly those.
+/// A sheet drawn "as sent" gets a browser's default 8px page margin unless the sender set their
+/// own.
 pub const PAGE_MARGIN_CLASS: &str = "postio-page-margin";
 
-/// Whether the page's own style, as the sanitiser lifted it off `<html>`
-/// and `<body>`, sets a margin or padding.
 fn sets_page_margin(canvas: &sanitize::Canvas) -> bool {
     canvas.style.split(';').any(|declaration| {
         declaration.split_once(':').is_some_and(|(property, _)| {
@@ -1103,16 +731,9 @@ fn sets_page_margin(canvas: &sanitize::Canvas) -> bool {
     })
 }
 
-/// The body markup under a treatment (specs/007-postio-focus T210-T212):
-/// sanitised, classified, and drawn in app colours or as sent, on paper.
-///
-/// `chosen` is the person's choice -- `⇧O` on this message, or "Always for
-/// this sender" -- and wins over the rule; `None` lets the rule decide
-/// ([`treatment::classify`]). Plain text is always app colours and has no
-/// other to switch to.
-///
-/// Always [`Rendering::Original`]: reader view is the classic reader's
-/// answer to bulk mail, and paper is this one's.
+/// `chosen` is the person's choice (`⇧O`, or "Always for this sender") and wins over the rule;
+/// `None` lets
+/// `treatment::classify` decide. Plain text is always app colours. Always `Rendering::Original`.
 pub fn body_html_treated(
     body: &MessageBody,
     remote: RemoteImages,
@@ -1136,10 +757,6 @@ pub fn body_html_treated(
     treat_sanitized(&sanitized, chosen)
 }
 
-/// What a sanitised HTML body looks like under a treatment: classified, then
-/// drawn in app colours or on paper. The half of [`body_html_treated`] that
-/// is not the sanitiser, split off so [`prepare_treated`] can run the
-/// sanitiser once and treat both ways.
 fn treat_sanitized(sanitized: &sanitize::Sanitized, chosen: Option<Treatment>) -> Rendered {
     crate::reader::cost::bump(&crate::reader::cost::BODIES_TREATED, 1);
     let trigger = treatment::paper_trigger(sanitized);
@@ -1195,22 +812,13 @@ fn treat_sanitized(sanitized: &sanitize::Sanitized, chosen: Option<Treatment>) -
     }
 }
 
-/// The class original HTML is wrapped in, so the reader's own typography
-/// can be reverted under it (spec 006 FR-019, `reader.css`).
-///
-/// Postio-owned and in the reserved namespace: a sender cannot wear it
-/// (`postio_body::sanitize`), and plain text and reader view are never
-/// wrapped in it, because Postio's type is what they are.
+/// Postio-owned and in the reserved namespace, so a sender cannot wear it; plain text and reader
+/// view are never wrapped in it.
 pub const ORIGINAL_CLASS: &str = "postio-original";
 
-/// The sender's content on the page they styled (spec 006 FR-006).
-///
-/// The sanitizer's output is a fragment, so what `<html>` and `<body>` said
-/// about the page arrives beside it as a [`sanitize::Canvas`], and this puts
-/// it back: a Postio-owned `.postio-canvas` that fills the message's
-/// container (`reader.css`), carrying the page's colours and style and the
-/// `color-scheme` the sender declared, for the engine and the theme rule to
-/// read. A sender who styled no page gets no wrapper at all.
+/// The sanitizer's output is a fragment, so what `<html>` and `<body>` said about the page arrives
+/// as a `Canvas`
+/// and is put back as `.postio-canvas`. A sender who styled no page gets no wrapper.
 pub fn on_canvas(content: &str, sanitized: &sanitize::Sanitized) -> String {
     let canvas = &sanitized.canvas;
     if canvas.style.is_empty() && sanitized.color_scheme.is_none() {
@@ -1233,27 +841,15 @@ pub fn on_canvas(content: &str, sanitized: &sanitize::Sanitized) -> String {
     out
 }
 
-/// Give a sender's content a bounded surface of its own (#323): a visible
-/// edge between what Postio wrote and what arrived in the message, so a
-/// sender styling their markup to imitate application chrome has a harder
-/// time — the boundary is a security affordance as much as a visual one.
-///
-/// Only ever wraps a real body. A frontend's own absent/empty states bypass
-/// this and call [`wrap_document`] directly, so Postio's own words — the
-/// "downloading" placeholder among them — stay outside the container, same
-/// as chrome that is native toolkit widgets stacked around the rendering
-/// surface rather than markup inside its document.
+/// A visible edge between what Postio wrote and what arrived, so markup imitating application
+/// chrome is harder to pass off (#323).
+/// Postio's own absent/empty states bypass this and call `wrap_document` directly.
 pub fn contain_body(content: &str) -> String {
     contain_body_in(content, None)
 }
 
-/// [`contain_body`], naming the message the content belongs to.
-///
-/// The name is what [`sanitize::message_selector`] matches, and it is the
-/// only reason a sender's `<style>` block can be admitted at all: without the
-/// attribute the scoped selector names nothing, and the message renders
-/// unstyled. The two are asserted to agree in this module's tests, because
-/// this is the joint where they would drift apart in silence.
+/// The name is what `sanitize::message_selector` matches; without it the scoped selector names
+/// nothing and the message renders unstyled.
 pub fn contain_body_in(content: &str, scope: Option<&str>) -> String {
     let class = sanitize::BODY_CLASS;
     match scope {
@@ -1270,21 +866,10 @@ pub fn contain_body_in(content: &str, scope: Option<&str>) -> String {
     }
 }
 
-/// The whole document for sender content that has already been sanitized.
-///
-/// The three steps a reader must not get wrong, in one place: bound the
-/// sender's markup in `.postio-body`, append the scroll markers, and wrap the
-/// result in the hardened template.
-///
-/// It exists because those three were a `format!` at the call site, and a
-/// second frontend composing its own would be free to forget one. Forgetting
-/// [`contain_body`] in particular loses a **security affordance** rather than
-/// a style: #323 gave the sender's content a visible edge so that markup
-/// imitating application chrome has a harder time, and a reader missing it
-/// would look completely fine.
-///
-/// It also gives the message's quote folds their ids, as a conversation's
-/// are given theirs, so the renderer can open one (spec 007 FR-034).
+/// Bounds the sender's markup in `.postio-body`, appends the scroll markers and wraps in the
+/// hardened template, in one
+/// place so no frontend forgets a step: forgetting `contain_body` loses a security affordance
+/// (#323). Quote folds get their ids.
 pub fn document_for(content: &str, styles: &str, remote: RemoteImages, sheet: Sheet) -> String {
     wrap_document(
         &format!(
@@ -1298,15 +883,10 @@ pub fn document_for(content: &str, styles: &str, remote: RemoteImages, sheet: Sh
     )
 }
 
-/// The opening tag `postio-body` folds quoted text with. A sender cannot
-/// write it: the sanitizer strips every `postio-` class.
 const QUOTE_FOLD: &str = "<details class=\"postio-quote\"";
 
-/// Give every quote fold in `content` its id, `<prefix>q<n>`, numbered in
-/// document order: what the renderer opens and closes a fold by
-/// ([`FOLD_ATTRIBUTE`](super::thread::FOLD_ATTRIBUTE), spec 006 R15). In a
-/// conversation the prefix is the message's anchor and a dash, so no two
-/// messages' quotes share one; a single message needs none.
+/// Numbered `<prefix>q<n>` in document order: what the renderer opens a fold by. In a conversation
+/// the prefix is the message's anchor, so no two messages share one.
 pub(crate) fn number_quote_folds(content: &str, prefix: &str) -> String {
     let fold = super::thread::FOLD_ATTRIBUTE;
     let mut parts = content.split(QUOTE_FOLD);
@@ -1319,10 +899,6 @@ pub(crate) fn number_quote_folds(content: &str, prefix: &str) -> String {
     out
 }
 
-/// [`document_for`], for a body drawn under `treatment`: its container
-/// carries [`TREATMENT_ATTRIBUTE`], which is what `treatment.css` styles and
-/// what the renderer reads to leave paper alone and hold app colours to the
-/// contrast guard.
 pub fn document_for_treated(
     content: &str,
     styles: &str,
@@ -1341,7 +917,6 @@ pub fn document_for_treated(
     )
 }
 
-/// [`contain_body`], naming the treatment the body is drawn in.
 pub fn contain_body_treated(content: &str, treatment: Treatment) -> String {
     format!(
         r#"<div class="{}" {TREATMENT_ATTRIBUTE}="{}">{content}</div>"#,
@@ -1350,36 +925,21 @@ pub fn contain_body_treated(content: &str, treatment: Treatment) -> String {
     )
 }
 
-/// A sender's scoped CSS, in Postio's own `<style>` element.
-///
-/// After Postio's sheet, not before: a message renders as its sender built it
-/// (FR-019), and where the two genuinely collide the sender's rule is the one
-/// describing the message.
+/// After Postio's sheet, not before: a message renders as its sender built it, so the sender's rule
+/// wins a genuine collision.
 pub fn senders_stylesheet(styles: &str) -> String {
     if styles.trim().is_empty() {
         return String::new();
     }
-    // `</style` is the one sequence that ends the element, and CSS the
-    // sanitizer emitted cannot contain it -- `postio_body::styles` writes
-    // selectors and declarations it parsed, never raw sender text. Refusing
-    // it here anyway costs nothing and means a future change to that module
-    // cannot turn a stylesheet into markup: the element would close early and
-    // whatever followed would be parsed as HTML.
+    // `</style` is the one sequence that ends the element; refused anyway so a future change to
+    // `postio_body::styles` cannot turn a stylesheet into markup.
     let safe = styles.replace("</style", "");
     format!("<style>\n{safe}</style>")
 }
 
-/// What the sanitizer already enforces at the DOM level, restated as policy
-/// the rendering engine itself refuses to violate — so a sanitizer bug
-/// degrades to broken markup, not a live request.
-///
-/// **`style-src` names no host, and since #1326 that is load-bearing.** While
-/// `<style>` blocks were deleted unread, a sender had no route to a CSS-borne
-/// fetch at all and this was an unexercised second layer. Postio now serves
-/// stylesheets it parsed, `postio_body::styles` drops `@import` and
-/// `@font-face`, and this is what stands behind that if it ever fails to.
-/// `'unsafe-inline'` is Postio's own sheet and a sender's rewritten one; it
-/// permits no *fetch*, which is the whole distinction.
+/// A sanitizer bug degrades to broken markup, not a live request. `style-src` names no host, which
+/// is load-bearing since #1326:
+/// `'unsafe-inline'` permits no fetch.
 pub fn content_security_policy(remote: RemoteImages) -> String {
     let cid = sanitize::CID_SCHEME;
     let img_src = match remote {
@@ -1393,11 +953,6 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
     )
 }
 
-/// One message rendered ahead of being shown, off the main thread.
-///
-/// What [`prepare`] makes and [`RenderCache::offer`] takes: the reader-view
-/// verdict and the sanitised document for a message the reader is likely to
-/// open next, so opening it asks the main thread for neither parse.
 #[derive(Clone, Debug)]
 pub struct Prepared {
     scope: String,
@@ -1406,33 +961,22 @@ pub struct Prepared {
     verdict: bool,
     rendering: Rendering,
     rendered: Rendered,
-    /// The body drawn each way, when prepared for a reader that treats
-    /// ([`prepare_treated`]): the person's `O` is then a choice between two
-    /// finished documents, not work.
     treated: Option<Box<[Rendered; 2]>>,
 }
 
 impl Prepared {
-    /// Whether this was prepared from exactly `body`, under exactly these
-    /// two decisions -- the only case in which it may stand in for
-    /// sanitising `body` now.
     pub fn serves(&self, body: &MessageBody, remote: RemoteImages, rendering: Rendering) -> bool {
         self.remote == remote && self.rendering == rendering && self.body == *body
     }
 
-    /// The reader-view verdict for `body`, if this was prepared from it.
     pub fn verdict_for(&self, body: &MessageBody) -> Option<bool> {
         (self.body == *body).then_some(self.verdict)
     }
 
-    /// What the sanitiser made of it.
     pub fn rendered(&self) -> &Rendered {
         &self.rendered
     }
 
-    /// The body as [`body_html_treated`] would draw it under `chosen` (`None`
-    /// is the rule's), if this was prepared by [`prepare_treated`] from
-    /// exactly `body`, under exactly `remote`.
     pub fn treated_for(
         &self,
         body: &MessageBody,
@@ -1453,13 +997,9 @@ impl Prepared {
     }
 }
 
-/// Render `body` for a reader that draws treatments (Focus), ahead of time:
-/// sanitised once, classified, and drawn both in app colours and on paper,
-/// so opening the message and switching its treatment are both free of the
-/// work (specs/007-postio-focus T223).
-///
-/// For a worker. No reader-view verdict is judged: a treating reader has no
-/// reader view, and the verdict is another html5ever parse.
+/// Sanitised once, classified and drawn both ways, so opening a message and switching its treatment
+/// are free of the work.
+/// For a worker; no reader-view verdict, since a treating reader has none.
 pub fn prepare_treated(body: &MessageBody, remote: RemoteImages) -> Prepared {
     let both = match body.html.as_deref().filter(|html| !html.trim().is_empty()) {
         None => {
@@ -1495,12 +1035,6 @@ pub fn prepare_treated(body: &MessageBody, remote: RemoteImages) -> Prepared {
     }
 }
 
-/// Render `body` for the message `scope` ahead of time, as a conversation
-/// would draw it by default ([`opening_rendering`]), under `remote`.
-///
-/// Pure, and for a worker thread -- the parses it saves the main thread are
-/// the point. A message drawn any other way when it is shown (its sender
-/// allowed since, `⌃O` on it) is simply rendered then, as before.
 pub fn prepare(scope: &str, body: &MessageBody, remote: RemoteImages) -> Prepared {
     let verdict = suits_reader_view(body);
     let rendering = opening_rendering();
@@ -1515,29 +1049,18 @@ pub fn prepare(scope: &str, body: &MessageBody, remote: RemoteImages) -> Prepare
     }
 }
 
-/// What the sanitiser made of each message of a thread, kept while the
-/// thread is on screen, so a redraw re-sanitises only what changed (#1605).
-///
-/// A conversation redraws whenever anything queues one -- a body arriving, a
-/// thread reopening, a read-mark -- and each redraw put every body in the
-/// thread through the sanitiser again, several html5ever parses each, on the
-/// main thread. What the sanitiser returns depends on the body, the image
-/// policy and the rendering and nothing else, so those are the key; the body
-/// is compared by value, which is a memory comparison against the parse it
-/// saves.
+/// A conversation redraws whenever anything queues one, and each redraw put every body through the
+/// sanitiser again on the main thread (#1605).
+/// The key is the body, image policy and rendering; the body is compared by value.
 #[derive(Debug, Default)]
 pub struct RenderCache {
     held: std::collections::HashMap<String, Held>,
-    /// Each message's reader-view verdict, and the body it was reached for.
     judged: std::collections::HashMap<String, (MessageBody, bool)>,
-    /// Messages rendered ahead of being shown -- see [`RenderCache::offer`].
-    /// Apart from `held` so that trimming to the thread on screen does not
-    /// throw away the thread about to be.
+    /// Apart from `held` so trimming to the thread on screen does not throw away the thread about
+    /// to be.
     offered: std::collections::HashMap<String, Prepared>,
 }
 
-/// How many messages rendered ahead [`RenderCache::offer`] holds before it
-/// forgets the ones nobody drew: a long thread's worth, several times over.
 const OFFERED_LIMIT: usize = 512;
 
 #[derive(Debug)]
@@ -1549,8 +1072,6 @@ struct Held {
 }
 
 impl RenderCache {
-    /// [`body_html_in`] for the message `scope`, from the cache when the
-    /// body and both decisions are what they were last time.
     pub fn render(
         &mut self,
         scope: &str,
@@ -1584,14 +1105,8 @@ impl RenderCache {
         rendered
     }
 
-    /// Take messages rendered ahead of being shown, beside whatever was
-    /// offered before.
-    ///
-    /// Added to rather than replacing: a thread's bodies are prepared as
-    /// they are read, one at a time, and each offer must not throw away the
-    /// ones before it that have not been drawn yet. A drawn one is taken out
-    /// as it is used; what is never drawn -- the cursor moved on first -- is
-    /// dropped wholesale once more than [`OFFERED_LIMIT`] have gathered.
+    /// Added to, not replaced: a thread's bodies are offered one at a time. A drawn one is taken
+    /// out; the rest are dropped wholesale past `OFFERED_LIMIT`.
     pub fn offer(&mut self, prepared: Vec<Prepared>) {
         if self.offered.len() + prepared.len() > OFFERED_LIMIT {
             self.offered.clear();
@@ -1603,11 +1118,8 @@ impl RenderCache {
         );
     }
 
-    /// [`suits_reader_view`] for the message `scope`.
-    ///
-    /// The same parse the sanitiser's cache spares, asked before it: whether
-    /// a message is bulk decides how it renders, so a redraw asked it of
-    /// every message in the thread before the cache could answer anything.
+    /// The parse the sanitiser's cache spares, asked first: whether a message is bulk decides how
+    /// it renders.
     pub fn suits_reader_view(&mut self, scope: &str, body: &MessageBody) -> bool {
         if let Some((judged, verdict)) = self.judged.get(scope)
             && judged == body
@@ -1623,20 +1135,16 @@ impl RenderCache {
         verdict
     }
 
-    /// Forget every message but these: the thread on screen is what the
-    /// cache is for, and a message that left it is not drawn again.
     pub fn keep_only<'a>(&mut self, scopes: impl IntoIterator<Item = &'a str>) {
         let keep: std::collections::HashSet<&str> = scopes.into_iter().collect();
         self.held.retain(|scope, _| keep.contains(scope.as_str()));
         self.judged.retain(|scope, _| keep.contains(scope.as_str()));
     }
 
-    /// How many messages the cache holds.
     pub fn len(&self) -> usize {
         self.held.len()
     }
 
-    /// Whether the cache holds nothing.
     pub fn is_empty(&self) -> bool {
         self.held.is_empty()
     }
@@ -1655,16 +1163,12 @@ mod render_cache_tests {
 
     #[test]
     fn a_message_prepared_ahead_is_shown_without_parsing_it_again() {
-        // `j` into the next conversation parsed every body in it twice on the
-        // main thread -- once to judge it, once to sanitise it -- in front of
-        // the first frame of it. Prepared on a worker, it costs neither.
         let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
         let prepared = prepare("9", &newsletter, RemoteImages::Blocked);
         let expected = prepared.rendered.clone();
         let rendering = prepared.rendering;
 
         let mut cache = RenderCache::default();
-        // The thread on screen trims the cache; what was offered survives it.
         cache.offer(vec![prepared]);
         cache.keep_only(["1"]);
 
@@ -1687,7 +1191,6 @@ mod render_cache_tests {
             "sanitised again"
         );
 
-        // A different body under the same scope is not the prepared one.
         cache.offer(vec![prepare("9", &newsletter, RemoteImages::Blocked)]);
         let reply = body("<p>A reply.</p>");
         let sanitised = crate::test_support::bodies_sanitised();
@@ -1697,9 +1200,6 @@ mod render_cache_tests {
 
     #[test]
     fn bodies_offered_one_at_a_time_are_all_kept_until_drawn() {
-        // A thread's bodies are prepared as they are read and offered one
-        // by one; replacing on each offer kept only the last, and the rest
-        // were sanitised again on the main thread when the thread was drawn.
         let first = body("<p>One.</p>");
         let second = body("<p>Two.</p>");
         let mut cache = RenderCache::default();
@@ -1718,10 +1218,6 @@ mod render_cache_tests {
 
     #[test]
     fn a_message_is_judged_for_reader_view_once_until_its_body_changes() {
-        // A conversation redraw asked of every message whether it is bulk
-        // mail -- an html5ever parse of the whole body -- on the main thread,
-        // each time anything queued a redraw, outside the cache that already
-        // spared the sanitiser the same repeat.
         let mut cache = RenderCache::default();
         let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
         let before = crate::test_support::bulk_judged();
@@ -1745,10 +1241,6 @@ mod render_cache_tests {
 
     #[test]
     fn a_message_is_sanitised_once_until_something_about_it_changes() {
-        // #1605: a conversation redraw re-sanitised every body in the thread,
-        // on the main thread, each time anything queued a redraw -- a body
-        // arriving, a thread reopening, a timer. The cache hands back what
-        // the sanitiser made for the same body under the same decisions.
         let mut cache = RenderCache::default();
         let before = crate::test_support::bodies_sanitised();
         let first = cache.render(
@@ -1819,7 +1311,6 @@ mod render_cache_tests {
 mod tests {
     use super::*;
 
-    /// #1986: the words follow the account's link, not a hard-coded false.
     #[test]
     fn the_plate_for_an_unfetched_body_follows_the_link() {
         use postio_core::{ConnectionState, FailureReason};
@@ -1854,11 +1345,6 @@ mod tests {
         );
     }
 
-    /// A body that lost a part says so, and a clean one stays silent.
-    ///
-    /// `encoding_problems` was computed and read by nothing for a long time
-    /// (#901), which is the failure this is against: "nothing rendered" and
-    /// "nothing was there" are opposite facts that look identical in a pane.
     #[test]
     fn a_body_that_did_not_decode_is_caveated_and_a_clean_one_is_not() {
         assert_eq!(decode_caveat(true), Some(DECODE_CAVEAT));
@@ -1869,13 +1355,8 @@ mod tests {
         );
     }
 
-    /// The container carries what the stylesheet's selector matches (#1326).
-    ///
-    /// Two constants, one written into HTML and one into CSS, and nothing but
-    /// this test between them. Rename the attribute on one side and every
-    /// test about scoping still passes -- against a selector that now names
-    /// nothing, so every styled message renders bare and no assertion
-    /// anywhere notices.
+    /// Two constants, one written into HTML and one into CSS; renaming one leaves every scoping
+    /// test passing against a selector that names nothing (#1326).
     #[test]
     fn the_container_carries_what_the_stylesheet_selector_matches() {
         let container = contain_body_in("<p>hi</p>", Some("7"));
@@ -1901,13 +1382,6 @@ mod tests {
         );
     }
 
-    /// A sender's stylesheet reaches the document it was sent in (#1326).
-    ///
-    /// `postio_body::styles` scopes it and has its own tests; this asserts
-    /// the thing they cannot, that it is **carried** -- through `Rendered`,
-    /// through `document_for`, into the markup an engine is handed. Drop
-    /// either step and every test in `styles.rs` still passes while every
-    /// styled message renders bare.
     #[test]
     fn a_senders_stylesheet_reaches_the_document() {
         let body = postio_model::message::MessageBody {
@@ -1937,15 +1411,8 @@ mod tests {
         );
     }
 
-    /// Reader view drops the sender's stylesheet with the rest of their
-    /// styling (#1326).
-    ///
-    /// `reader_view::reduce` strips `style`, `bgcolor`, `width` and `class`
-    /// from the markup, which is the whole of what reader view is: the
-    /// simplified presentation, with `View original` as the way back to what
-    /// the sender built (T065). Handing that same message a `<style>` block
-    /// would put the layout straight back — and worse, halfway: `class`
-    /// selectors would match nothing while `p` and `a` still applied.
+    /// Reader view drops the sender's stylesheet (#1326): a `<style>` would put the layout back
+    /// halfway.
     #[test]
     fn reader_view_keeps_no_stylesheet_of_the_senders() {
         let html = "<style>p { color: rgb(1, 2, 3) }</style><p>hi</p>";
@@ -1963,8 +1430,6 @@ mod tests {
             reduced.styles
         );
 
-        // The control: `View original` is the way back, and it must still be
-        // a way back to something.
         let original = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, Some("7"));
         assert!(
             original.styles.contains("rgb(1, 2, 3)"),
@@ -1974,7 +1439,6 @@ mod tests {
         );
     }
 
-    /// A sender cannot end their `<style>` and start writing markup (#1326).
     #[test]
     fn a_stylesheet_cannot_close_its_own_element() {
         let body = postio_model::message::MessageBody {
@@ -1994,26 +1458,13 @@ mod tests {
         );
     }
 
-    /// A message's quotes fold, on the path that actually draws one (#1406).
-    ///
-    /// `postio_body::quote::fold_html_quotes` does the folding and has its own
-    /// tests. This asserts something they cannot: that it is **called**. Drop
-    /// either call in `body_html_in` and every test in `quote.rs` still
-    /// passes — the function keeps working perfectly, unused. That is
-    /// `postio-bl2`, and the shape this repository's characteristic bug takes.
-    ///
-    /// FR-017 is what it costs when it breaks: a six-message thread prints the
-    /// same reply history six times, which in one document is also the bulk
-    /// FR-059 says a document must not carry.
+    /// `fold_html_quotes` has its own tests; this asserts it is called from `body_html_in`.
     #[test]
     fn a_quote_reaches_the_document_folded() {
         let body = postio_model::message::MessageBody {
             text: None,
             html: Some("<p>my reply</p><blockquote><p>what they wrote</p></blockquote>".to_owned()),
         };
-        // `Original`, because that is correspondence's rendering and quoting is
-        // a correspondence problem — reader view reduces bulk mail, where
-        // there is rarely a quote to fold.
         let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, None);
 
         assert!(
@@ -2022,8 +1473,6 @@ mod tests {
              reached from the path that draws a message: {}",
             rendered.html
         );
-        // The other half, and the reason folding is worth anything: what is
-        // *not* quoted stays where the reader can see it.
         let before_fold = rendered
             .html
             .split("<details")
@@ -2035,7 +1484,6 @@ mod tests {
             "the prose folded away with the quote: {}",
             rendered.html
         );
-        // ADR 0003: the disclosure is HTML's own, not a script's.
         assert!(
             !rendered.html.contains("<script"),
             "folding must not need script: {}",
@@ -2043,10 +1491,6 @@ mod tests {
         );
     }
 
-    /// Spec 007 T067 (FR-034): a single message's quote folds carry ids, as
-    /// a conversation's do, so the renderer can open one by activation; and
-    /// each says how many lines it hides. The classic single-message reader
-    /// and Focus's open-email dialog both draw this document.
     #[test]
     fn a_single_messages_quote_folds_carry_ids_and_line_counts() {
         let document_of = |body: MessageBody| {
@@ -2080,30 +1524,10 @@ mod tests {
         assert!(plain.contains(fold), "{fold} is not in {plain}");
     }
 
-    /// `style-src` must never name a host (#1383, spec FR-022).
-    ///
-    /// CSS fetches. `@import url(https://tracker/…)` is a request to another
-    /// machine, made when the stylesheet parses, carrying the referer and the
-    /// reader's IP — an open-rate beacon with no `<img>` anywhere in the
-    /// message. Nothing aimed at images would stop it: the sanitizer's
-    /// `contain_declarations` reads declarations, and `img-src` is about
-    /// images. What refuses it is `style-src` having nowhere to fetch from.
-    ///
-    /// # This is a lock, not a discovery
-    ///
-    /// A sender cannot do this **today**, because the sanitizer drops `<style>`
-    /// elements whole and `@import` is only valid inside a stylesheet — the
-    /// admitted route is the inline `style` attribute, which cannot carry one.
-    /// So this asserts a property that is currently unreachable, which is
-    /// exactly why it is worth writing down: #1326 is about admitting `<style>`
-    /// blocks, and on the day that lands this is the difference between a
-    /// scoped stylesheet and a tracking pixel that needs no pixel.
-    ///
-    /// It is also the shape of change that looks like a fix. A sender's
-    /// stylesheet failing to load is a bug report, and `style-src` gaining
-    /// `https:` is its one-line answer; every other test in this workspace
-    /// would stay green. This one does not: it was watched failing against
-    /// exactly that edit.
+    /// `style-src` must never name a host (#1383): `@import url(https://tracker/…)` is a request
+    /// made when the stylesheet
+    /// parses, an open-rate beacon with no `<img>`. Unreachable today; this locks it for when
+    /// `<style>` blocks are admitted.
     #[test]
     fn a_stylesheet_has_nowhere_to_fetch_from() {
         for remote in [RemoteImages::Blocked, RemoteImages::Allowed] {
@@ -2121,8 +1545,6 @@ mod tests {
         }
     }
 
-    /// The other two directives that decide what leaves the machine keep
-    /// working, so the assertion above cannot be satisfied by breaking them.
     #[test]
     fn images_and_fonts_still_have_their_sources() {
         let blocked = content_security_policy(RemoteImages::Blocked);
@@ -2141,31 +1563,15 @@ mod tests {
         );
     }
 
-    /// A document must not carry bulk that is identical for every message
-    /// (#1341, spec FR-059).
-    ///
-    /// This is #749's largest single measured cost. Every document once
-    /// carried eight `@font-face` faces as base64 data URIs — 909 KB of TTF
-    /// becoming ~1.21 MB of document, re-decoded by the engine on **every**
-    /// message switch, which its report called "the difference between an
-    /// imperceptible gap and a visible one". ADR 0023 moved the bytes behind
-    /// `postio-font:` and nothing has asserted they stayed there.
-    ///
-    /// Re-inlining is a one-line change that looks like a simplification: a
-    /// reader of `reader_css` sees a scheme handler, a custom URI and a CSP
-    /// narrowing, and the obvious tidy-up is to put the bytes back and delete
-    /// all three. Every other test would stay green — the fonts would render
-    /// and the words would be right. The pane would just be slower, which is
-    /// the one property this codebase has decided it cannot measure with a
-    /// stopwatch.
+    /// A document must not carry identical bulk (#1341): ~1.21 MB of base64 fonts were re-decoded
+    /// on every switch (#749)
+    /// until ADR 0023 moved them behind `postio-font:`. Re-inlining looks like a tidy-up and keeps
+    /// every other test green.
     #[test]
     fn a_document_carries_font_references_and_not_font_bytes() {
         let before = crate::test_support::largest_document();
         let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Theme);
 
-        // The faces are still named. Without this, deleting the fonts
-        // altogether would satisfy every assertion below while making the
-        // reader fall back to whatever the sandbox happens to have.
         assert!(
             document.contains("@font-face"),
             "the document no longer names any face, so rendered text will not \
@@ -2176,7 +1582,6 @@ mod tests {
             "the faces are named but not served over {FONT_SCHEME}:"
         );
 
-        // And it does not carry them.
         assert!(
             !document.contains("data:font"),
             "a font is inlined as a data URI again — this is #768 returning"
@@ -2187,12 +1592,8 @@ mod tests {
              shape of the 1.21 MB #749 measured"
         );
 
-        // A bound rather than an exact size, because the stylesheet and the
-        // markers legitimately change. Measured: a one-paragraph document is
-        // ~16 KB today, and the regression this guards against was ~1.21 MB.
-        // 128 KB sits eight times above the first and seventy-five times
-        // below the second, so ordinary growth cannot trip it and re-inlining
-        // the faces cannot survive it.
+        // A bound, not an exact size: a one-paragraph document is ~16 KB and the regression was
+        // ~1.21 MB.
         const CEILING: usize = 128 * 1024;
         assert!(
             document.len() < CEILING,
@@ -2212,11 +1613,6 @@ mod tests {
 
     use postio_model::message::MessageBody;
 
-    /// The sender's sheet is for one gesture only: leaving reader view.
-    ///
-    /// Correspondence is `Original` too, and is the case that must *not*
-    /// change — a reply on a white page inside a dark window is the failure
-    /// this rule exists to avoid.
     #[test]
     fn only_the_original_of_something_reader_view_offered_gets_the_senders_sheet() {
         assert_eq!(sheet_for(Rendering::Original, true), Sheet::Senders);
@@ -2234,11 +1630,6 @@ mod tests {
         );
     }
 
-    /// The light values land **inside** the sender's box and nowhere else.
-    ///
-    /// Scoped to `:root` they would repaint `body` too, and the sheet would
-    /// have no dark chrome to be inset from — which is the whole picture the
-    /// canvas asks for, not a detail of it.
     #[test]
     fn the_senders_sheet_lights_the_body_box_and_leaves_the_chrome_alone() {
         let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Senders);
@@ -2256,9 +1647,6 @@ mod tests {
         );
     }
 
-    /// The sheet's colours are the palette's light ones, read from the same
-    /// place `reader_ground` reads them — not a second copy that can drift
-    /// away from the design system (#296).
     #[test]
     fn the_senders_sheet_is_the_generated_light_palette_and_not_a_second_copy() {
         let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Senders);
@@ -2281,17 +1669,12 @@ mod tests {
             !sheet.contains(dark),
             "no dark value belongs on the sender's page: {sheet}"
         );
-        // The link colour is what the acceptance names, and it rides the
-        // same variable `reader.css` already resolves `a { color: ... }`
-        // against -- so proving the accent is overridden proves the links.
         assert!(
             sheet.contains("--r-accent:"),
             "the accent is what `a` resolves against: {sheet}"
         );
     }
 
-    /// A body drawn the ordinary way — what every one of these asserted on
-    /// before reader view existed.
     fn drawn(body: &MessageBody) -> Rendered {
         body_html(body, RemoteImages::Blocked, Rendering::Original)
     }
@@ -2330,9 +1713,6 @@ mod tests {
             text: None,
             html: Some(r#"<img src="https://tracker.example.org/o.gif">"#.to_owned()),
         };
-        // No declared size, so the size heuristic reads it as an ordinary
-        // picture whatever the host is called -- nothing here is domain-based
-        // (#174). Blocked identically either way.
         assert_eq!(
             drawn(&body).held_back,
             HeldBack {
@@ -2342,9 +1722,6 @@ mod tests {
         );
     }
 
-    // -- reader view (#1009) ----------------------------------------------
-
-    /// A campaign: nested layout tables, and more links than a person writes.
     fn campaign() -> String {
         let mut html = String::from("<table><tr><td><table><tr><td>");
         html.push_str(r#"<p><a href="https://example.com/track">Track delivery</a></p>"#);
@@ -2359,9 +1736,6 @@ mod tests {
 
     #[test]
     fn reader_view_prefers_the_senders_own_plain_part() {
-        // The `multipart/alternative` case, and the whole reason reduction is
-        // a fallback rather than the first resort: the sender already wrote
-        // the version reduction is trying to reconstruct.
         let body = MessageBody {
             text: Some("Your package is out for delivery.".to_owned()),
             html: Some(campaign()),
@@ -2399,8 +1773,6 @@ mod tests {
 
     #[test]
     fn the_original_rendering_never_reaches_for_the_plain_part() {
-        // The preference order that makes ordinary mail look like the sender
-        // wrote it. Reader view inverts it; `View original` must not.
         let body = MessageBody {
             text: Some("plain fallback".to_owned()),
             html: Some(campaign()),
@@ -2415,8 +1787,6 @@ mod tests {
 
     #[test]
     fn only_bulk_mail_is_offered_reader_view() {
-        // The failure that would make the feature hated: correspondence
-        // opening reduced.
         let reply = MessageBody {
             text: None,
             html: Some("<p>Hi Ada,</p><p>Friday works.</p>".to_owned()),
@@ -2429,8 +1799,6 @@ mod tests {
         };
         assert!(suits_reader_view(&bulk));
 
-        // Nothing to reduce is not a candidate either: plain text is already
-        // where reader view is trying to get to.
         let plain = MessageBody {
             text: Some("hello".to_owned()),
             html: None,
@@ -2438,7 +1806,6 @@ mod tests {
         assert!(!suits_reader_view(&plain));
     }
 
-    /// The plain part of a shipping notice: the facts, then the prose.
     fn shipping_notice() -> String {
         "Your order has shipped.\n\
          \n\
@@ -2484,8 +1851,6 @@ mod tests {
             );
         }
 
-        // Once each. A block that summarises lines still printed underneath
-        // it reads as a rendering bug, not a summary.
         assert_eq!(
             rendered.html.matches("EXTEST0042199317").count(),
             1,
@@ -2520,10 +1885,6 @@ mod tests {
 
     #[test]
     fn nothing_is_lifted_out_of_html() {
-        // The same three facts, laid out as a table by the sender rather than
-        // written as lines. Reader view reduces that markup like any other —
-        // a sender's layout is exactly what it declines to trust — so no
-        // facts block appears.
         let body = MessageBody {
             text: None,
             html: Some(
@@ -2545,8 +1906,6 @@ mod tests {
 
     #[test]
     fn the_original_rendering_has_no_facts_block() {
-        // `View original` is the escape hatch: it shows what arrived. Postio
-        // adding a table of its own to that would defeat the point.
         let body = MessageBody {
             text: Some(shipping_notice()),
             html: None,
@@ -2557,9 +1916,6 @@ mod tests {
 
     #[test]
     fn a_blocked_image_is_still_reported_when_the_markup_is_reduced() {
-        // Reduction runs after sanitizing, so the counts have to survive it —
-        // a notice that went quiet in reader view would be the privacy
-        // invariant silently weakening in one of two modes.
         let mut html = campaign();
         html.push_str(r#"<img src="https://tracker.example.org/o.gif">"#);
         let body = MessageBody {
@@ -2570,10 +1926,6 @@ mod tests {
         assert_eq!(rendered.held_back.total(), 1);
     }
 
-    /// #323: a sender's content sits inside a bounded container, distinct
-    /// from Postio's own words — this is the seam `render_open` uses, so
-    /// proving it here proves the container actually reaches what a real
-    /// render produces, not just that the CSS rule exists unused.
     #[test]
     fn a_rendered_body_sits_inside_its_own_container() {
         let document = wrap_document(
@@ -2589,8 +1941,6 @@ mod tests {
 
     #[test]
     fn the_csp_is_byte_for_byte_what_the_adr_promises() {
-        // ADR 0019 Q6: this exact string is the invariant both frontends
-        // share. A frontend does not agree with it — it calls this.
         assert_eq!(
             content_security_policy(RemoteImages::Blocked),
             "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; \
@@ -2618,10 +1968,6 @@ mod tests {
         );
     }
 
-    /// The colour a frontend paints behind the document has to be the one the
-    /// document paints on itself, or the seam shows on every message change
-    /// (#749). Both are read from the generated palette, so this asserts they
-    /// are the same string rather than restating either.
     #[test]
     fn the_ground_a_frontend_paints_is_the_one_the_document_paints() {
         for dark in [false, true] {
@@ -2646,10 +1992,6 @@ mod tests {
 
     #[test]
     fn every_vendored_face_is_referenced_and_resolvable() {
-        // ADR 0023 replaced "embedded as a data URI" with this, and it is
-        // the same guarantee: a face that silently goes missing takes the
-        // reader to system sans, whether it went missing from a base64 blob
-        // or from the table the handler serves.
         let faces = embedded_font_faces();
         for family in ["Barlow", "Barlow Condensed", "IBM Plex Mono"] {
             assert!(
@@ -2663,9 +2005,6 @@ mod tests {
             "eight faces, each referenced"
         );
 
-        // Referenced *and* resolvable: a rule naming a face the handler
-        // cannot serve is a font that never arrives, which is exactly the
-        // failure a count of rules alone would miss.
         assert_eq!(FACES.len(), 8, "eight vendored faces");
         for face in FACES {
             assert!(
@@ -2681,8 +2020,6 @@ mod tests {
             );
         }
 
-        // And nothing else resolves. The table is the whole of what a font
-        // URL may reach — no paths, so no traversal to get wrong.
         for name in [
             "",
             "Barlow-Regular",
@@ -2693,9 +2030,6 @@ mod tests {
         }
     }
 
-    /// #768: the document is what a message change costs. It used to carry
-    /// ~1.21 MB of base64 whatever the message was — an empty pane and every
-    /// absent plate included.
     #[test]
     fn the_document_is_proportional_to_the_message_not_to_the_font_catalogue() {
         let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Theme);
@@ -2708,8 +2042,6 @@ mod tests {
             "a one-line message renders a {} byte document",
             document.len()
         );
-        // Still Postio's type: the rules are there, naming faces the handler
-        // serves. What left is the payload, not the typography.
         assert!(document.contains(&format!("src:url({FONT_SCHEME}:")));
         assert!(document.contains("--r-"), "the palette is still inlined");
     }
@@ -2730,13 +2062,9 @@ mod tests {
                 assert_ne!(text, other);
             }
         }
-        // The retryable ones name the retry key; the others must not
-        // promise a retry they cannot deliver.
         assert!(absent_html(Absent::Offline).contains("<kbd>F5</kbd>"));
         assert!(absent_html(Absent::Missing).contains("<kbd>F5</kbd>"));
         assert!(!absent_html(Absent::ForeignDraft).contains("<kbd>"));
-        // A body the server would not give up says so, and does not promise
-        // that waiting will help (#1918).
         let failed = absent_html(Absent::Failed);
         assert!(failed.contains("could not be downloaded"), "{failed}");
         assert!(!failed.contains("Downloading"), "{failed}");
@@ -2744,16 +2072,6 @@ mod tests {
 
     #[test]
     fn an_absence_plate_announces_itself() {
-        // `PRODUCT.md` §20 makes accessibility first-class, and a state plate
-        // is exactly the thing that goes unannounced: the reader's content is
-        // *replaced* rather than focused, so nothing moves and a screen reader
-        // has no reason to say anything. `role="status"` with a polite live
-        // region is what turns "the pane changed" into a sentence.
-        //
-        // Here rather than in either frontend, because it is the same
-        // document on both -- the GTK reader and the macOS one render this
-        // string, and an announcement added to one would be missing from the
-        // other (ADR 0019 Q6).
         for state in [
             Absent::Partial,
             Absent::Offline,
@@ -2785,8 +2103,6 @@ mod tests {
 
     #[test]
     fn the_notice_counts_pictures_and_beacons_separately() {
-        // A picture the sender wanted you to see and a beacon that wanted to
-        // see you are different claims (#174).
         assert_eq!(
             HeldBack {
                 remote_images: 14,
@@ -2829,7 +2145,6 @@ mod tests {
 
     #[test]
     fn nothing_held_back_says_nothing() {
-        // A notice with nothing to report should not be on screen at all.
         assert_eq!(HeldBack::default().summary(), "");
     }
 }
@@ -2839,13 +2154,6 @@ mod reader_view_prefers_markup_over_its_own_flattening {
     use super::*;
     use postio_model::message::MessageBody;
 
-    /// A bulk message whose plain part is markdown renders as markup.
-    ///
-    /// The end of the chain rather than the predicate alone: what reached a
-    /// real reading pane was `Assignment.[Bridges Practice #1](https://...)`,
-    /// link syntax and all, because reader view took the plain part on the
-    /// assumption that it was prose the sender had already reduced. It was
-    /// their HTML run through a converter.
     #[test]
     fn markdown_in_the_plain_part_does_not_reach_the_document() {
         let body = MessageBody {
@@ -2882,13 +2190,6 @@ mod reader_view_prefers_markup_over_its_own_flattening {
         );
     }
 
-    /// Prose still takes the plain part.
-    ///
-    /// The half that keeps the facts block alive: `lift` only runs on the
-    /// plain path, so a message whose plain part is genuine prose has to keep
-    /// taking it. `gtk_reader`'s shipping-notice assertion (#1030) is the
-    /// end-to-end form of this; here the two parts are made to differ so the
-    /// choice itself is what is measured.
     #[test]
     fn prose_still_takes_the_plain_part() {
         let body = MessageBody {
@@ -2912,8 +2213,6 @@ mod reader_view_prefers_markup_over_its_own_flattening {
     }
     #[test]
     fn paging_stops_at_both_ends_rather_than_wrapping() {
-        // A `space` that jumped back to the top would lose somebody's place
-        // in a long message with nothing to say it had happened.
         assert_eq!(page_after(0, false), 0);
         assert_eq!(page_after(SCROLL_MARKERS - 1, true), SCROLL_MARKERS - 1);
     }
@@ -2927,7 +2226,6 @@ mod reader_view_prefers_markup_over_its_own_flattening {
 
     #[test]
     fn the_fragment_names_the_anchor_the_document_laid_down() {
-        // The two have to agree or the key does nothing and says nothing.
         let markers = scroll_markers();
         assert!(markers.contains(&format!("id=\"{}\"", page_fragment(0))));
         assert!(markers.contains(&format!("id=\"{}\"", page_fragment(SCROLL_MARKERS - 1))));
@@ -2938,9 +2236,6 @@ mod reader_view_prefers_markup_over_its_own_flattening {
 mod warming_tests {
     use super::*;
 
-    /// Spec 006 FR-006: the sender's page reaches the reader as the
-    /// message's canvas, filling its container, with any declared colour
-    /// scheme beside it for the engine to read.
     #[test]
     fn the_senders_canvas_is_emitted_around_their_content() {
         let body = MessageBody {
@@ -2986,10 +2281,6 @@ mod warming_tests {
         );
     }
 
-    /// Spec 006 FR-031: every message opens as its sender built it. A
-    /// newsletter is still recognised as bulk -- that picks the sheet it is
-    /// drawn on and offers unsubscribe -- but it no longer decides the
-    /// rendering. Reader view is a command away, not the default.
     #[test]
     fn bulk_mail_opens_in_its_original_layout() {
         let newsletter = postio_model::test_corpus::load("html-newsletter")
@@ -3006,13 +2297,6 @@ mod warming_tests {
         assert_eq!(opening_rendering(), Rendering::Original);
     }
 
-    /// Spec 006 FR-019 / 001 FR-019: the sender's layout is the sender's.
-    /// The reader's own typography -- the body's size and line height, the
-    /// paragraph margins, `border-box` everywhere, link and blockquote
-    /// styling -- was reaching into sender markup and overriding the browser
-    /// defaults every sender designs against. Original HTML is wrapped in a
-    /// Postio-owned element the stylesheet reverts those under; plain text
-    /// and reader view keep Postio's type, which is what they are.
     #[test]
     fn original_markup_is_set_apart_from_postios_typography() {
         let html = MessageBody {
@@ -3060,8 +2344,6 @@ mod over_cap_tests {
         format!("{}x{}", "<div>".repeat(2_000), "</div>".repeat(2_000))
     }
 
-    /// A body over an input cap is never handed on, so the reader shows
-    /// the plain-text alternative, and says why (spec 006 R6, FR-023).
     #[test]
     fn an_over_cap_body_shows_its_plain_text_alternative() {
         let body = MessageBody {
@@ -3075,8 +2357,6 @@ mod over_cap_tests {
                 "{rendering:?} showed {:?}",
                 rendered.html
             );
-            // Reader view prefers the plain part and never sanitizes the
-            // HTML beside it, so only Original meets the cap.
             if rendering == Rendering::Original {
                 assert_eq!(rendered.over_cap, Some(postio_body::Cap::Depth));
             }
@@ -3097,8 +2377,6 @@ mod over_cap_tests {
 
 #[cfg(test)]
 mod no_webkit_tests {
-    /// The reader no longer runs in WebKit (spec 006): a `-webkit-` rule in
-    /// its stylesheets is dead weight that reads as though it mattered.
     #[test]
     fn the_reader_stylesheets_name_no_webkit_extension() {
         for (name, css) in [
@@ -3115,9 +2393,6 @@ mod no_webkit_tests {
 
 #[cfg(test)]
 mod treatment_tests {
-    //! The document a treated body is drawn from (specs/007-postio-focus
-    //! T210-T212): which wrapper, which stylesheet, and the attribute the
-    //! renderer and `treatment.css` both read.
 
     use super::*;
 
@@ -3193,8 +2468,6 @@ mod treatment_tests {
         .expect("a line");
         assert_eq!(remembered.detail, "always for this sender");
         assert!(!remembered.offer_always, "already remembered");
-        // Back to the rule's choice, against a remembered one: offered again,
-        // so the sender's mail can be put back.
         let back = render_mode_words(
             treated(Treatment::AppColours, Treatment::AppColours, None),
             Some(Treatment::Paper),
@@ -3219,9 +2492,6 @@ mod treatment_tests {
         assert_eq!(render_mode_words(Treated::TEXT, None), None);
     }
 
-    /// Prepared ahead, every choice reads back exactly what drawing it now
-    /// would have produced -- the rule's, either of the person's, and the
-    /// two bodies with only one treatment to give (T223).
     #[test]
     fn a_prepared_body_answers_every_choice_as_drawing_it_would() {
         let text = MessageBody {

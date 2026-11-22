@@ -1,12 +1,3 @@
-//! The results view, from the controller's side (spec 010 step 3, US2,
-//! FR-020 to FR-024, D17, D18, design §3 and screens 06 and 07).
-//!
-//! ⌘↩ turns the main window into a search's results: a mode the
-//! controller holds, which asks the engine for its pages and their
-//! passages, groups them into Top hits and months, edits its query term by
-//! term, and gives way to the inbox on Esc's last rung. The Mac draws what
-//! it is told, and so does GTK since it adopted it (#1825).
-
 use crate::search_support::*;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
@@ -74,8 +65,6 @@ fn show_all_enters_the_results_with_the_query() {
     assert_eq!(query.hint, "/ to edit");
     assert!(focus.in_results());
     assert_eq!(focus.key_context(), KeyContext::Results);
-    // Best match, the default with words: its Top hits, and the first page
-    // of the month groups, asked together.
     assert_eq!(
         results_reads(&effects),
         [
@@ -131,8 +120,6 @@ fn best_match_gives_top_hits_then_month_groups() {
         (top.title.as_str(), top.first, top.rows),
         ("Top hits", 0, 3)
     );
-    // Screen 06: "Top hits  why each one ranked is under the sender", no
-    // count drawn; a screen reader still hears how many.
     assert_eq!(top.count, "");
     assert_eq!(
         top.note.as_deref(),
@@ -141,8 +128,6 @@ fn best_match_gives_top_hits_then_month_groups() {
     let september = &view.groups[1];
     assert_eq!(september.title, "September 2026");
     assert_eq!(september.first, 3);
-    // Every conversation sits in the month of its newest match (D4): the
-    // 26th back to the 2nd, every other day.
     assert_eq!(september.rows, 13);
     assert_eq!(september.count, "13");
     assert_eq!(september.note.as_deref(), Some("newest first"));
@@ -153,7 +138,6 @@ fn best_match_gives_top_hits_then_month_groups() {
     assert_eq!(view.rows, 3 + CONVERSATIONS as u64);
     assert_eq!(focus.result_count(), view.rows);
 
-    // The Top hits say why they ranked; the flagged one says flagged (D19).
     let first = focus.result_row(0).expect("a top hit");
     assert!(first.top_hit);
     assert_eq!(first.message, MessageId::new(1007));
@@ -164,7 +148,6 @@ fn best_match_gives_top_hits_then_month_groups() {
         focus.result_row(2).and_then(|row| row.reason).as_deref(),
         Some("frequent sender · file name")
     );
-    // Then the newest, in September's group.
     let newest = focus.result_row(3).expect("the newest");
     assert_eq!(newest.message, MessageId::new(1000));
     assert!(!newest.top_hit);
@@ -212,15 +195,13 @@ fn newest_has_only_month_groups() {
         Some(MessageId::new(1000))
     );
 
-    // And the order chosen from the Sort menu.
     let effects = focus.handle_on(Input::ResultsOrder(ConversationOrder::BestMatch), &rows);
     let effects = settle(&mut focus, effects, &rows);
     assert!(results_view(&effects).expect("again").groups[0].top_hits);
 }
 
-/// A page that lands before the top hits, its passages with it, keeps
-/// those passages (#2089): until the top hits land the rows have no place
-/// yet, but what was read for them is theirs all the same.
+/// A page that lands before the top hits keeps its passages (#2089): the rows have no place
+/// until the top hits land, but what was read for them is theirs.
 #[test]
 fn passages_that_land_before_the_top_hits_are_kept() {
     let rows = List::of(3);
@@ -236,7 +217,6 @@ fn passages_that_land_before_the_top_hits_are_kept() {
         )
     });
     assert!(!top.is_empty() && !months.is_empty(), "{effects:?}");
-    // The months first, and their passages, before any top hit.
     let mut early = Vec::new();
     for (ticket, request) in months {
         let reply = reply_to(&request).expect("a page");
@@ -254,8 +234,6 @@ fn passages_that_land_before_the_top_hits_are_kept() {
         late.extend(focus.handle_on(Input::Reply(ticket, reply), &rows));
     }
     let _ = settle(&mut focus, late, &rows);
-    // Every month row read, the top hits' own aside (their passages were
-    // asked again with them), has its passage.
     let top_len = 3;
     let tops: Vec<MessageId> = (0..top_len)
         .filter_map(|at| focus.result_row(at).map(|row| row.message))
@@ -278,7 +256,6 @@ fn rows_page_through_a_window() {
     let rows = List::of(3);
     let mut focus = mac();
     let _ = search(&mut focus, "atlas budget", &rows);
-    // The first page is fifty of the month groups' rows, after Top hits.
     assert!(focus.result_row(52).is_some());
     assert!(focus.result_row(53).is_none(), "not read yet");
 
@@ -311,7 +288,6 @@ fn passages_are_asked_for_a_page_after_it_lands_and_fill_it() {
     let rows = List::of(3);
     let mut focus = mac();
     let effects = show_all(&mut focus, "atlas budget", &rows);
-    // Answer the pages, not yet their passages.
     let mut landed = Vec::new();
     for (ticket, request) in asks(&effects) {
         if matches!(request, Request::ResultsPage { .. }) {
@@ -349,7 +325,6 @@ fn passages_are_asked_for_a_page_after_it_lands_and_fill_it() {
         "{}",
         after.accessible
     );
-    // A match in the quoted history says so (US2 scenario 2).
     let quoted = focus.result_row(7).expect("conversation 4");
     assert_eq!(quoted.message, MessageId::new(1004));
     assert_eq!(quoted.source_tag, "quoted text");
@@ -410,8 +385,6 @@ fn a_filter_button_edits_the_query_and_asks_again() {
             .all(|query| query == "atlas budget has:attachment")
     );
 
-    // A person added: the button reads as who, once the answer has the
-    // names; Ada's conversations are half of them.
     let effects = focus.handle_on(
         Input::SearchEdit(TermEdit::Add {
             field: "from".to_owned(),
@@ -429,7 +402,6 @@ fn a_filter_button_edits_the_query_and_asks_again() {
         "60 threads"
     );
 
-    // ✕ on a chip takes it out.
     let has = query
         .chips
         .iter()
@@ -464,7 +436,6 @@ fn j_and_k_move_the_focus_ring_and_return_opens_the_result() {
         "{:?}",
         shown(&effects)
     );
-    // j in the message walks the results, and the ring follows.
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     assert!(shown(&effects).iter().any(|intent| matches!(
         intent,
@@ -488,7 +459,6 @@ fn esc_closes_the_dropdown_then_clears_the_selection_then_leaves_for_the_inbox()
     assert_eq!(results_view(&effects).expect("redrawn").selected, 1);
     assert_eq!(focus.result_row(0).map(|row| row.checked), Some(true));
 
-    // `/` over the results: the dropdown, on the results' query.
     let effects = run(&mut focus, CommandId::Search, &rows);
     assert!(shown(&effects).iter().any(|intent| matches!(
         intent,
@@ -496,20 +466,17 @@ fn esc_closes_the_dropdown_then_clears_the_selection_then_leaves_for_the_inbox()
     )));
     assert_eq!(focus.key_context(), KeyContext::Search);
 
-    // Esc: the dropdown, and only it.
     let effects = run(&mut focus, CommandId::Back, &rows);
     assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Bar)));
     assert!(focus.in_results());
     assert_eq!(focus.key_context(), KeyContext::Results);
     assert_eq!(focus.result_row(0).map(|row| row.checked), Some(true));
 
-    // Esc: the selection.
     let effects = run(&mut focus, CommandId::Back, &rows);
     assert!(focus.in_results());
     assert_eq!(results_view(&effects).expect("redrawn").selected, 0);
     assert_eq!(focus.result_row(0).map(|row| row.checked), Some(false));
 
-    // Esc: the inbox, as it was.
     let effects = run(&mut focus, CommandId::Back, &rows);
     assert!(!focus.in_results());
     assert_eq!(focus.key_context(), KeyContext::List);
@@ -550,8 +517,6 @@ fn an_answer_for_a_query_since_edited_is_dropped() {
     );
 }
 
-/// #1825: Linux runs the same search, so GTK enters the results as the
-/// Mac does.
 #[test]
 fn linux_enters_the_results_as_the_mac_does() {
     let rows = List::of(3);
@@ -561,8 +526,6 @@ fn linux_enters_the_results_as_the_mac_does() {
     assert!(focus.in_results());
     assert!(focus.answers(CommandId::HistoryBack));
 }
-
-// Step 4: the filter popovers (US3, FR-027, design §3.6, screens 08 and 09).
 
 fn open_popover(focus: &mut FocusController, kind: FilterKind, rows: &List) -> PopoverView {
     let effects = focus.handle_on(Input::SearchPopover(kind), rows);
@@ -614,8 +577,6 @@ fn from_lists_the_people_in_the_results_with_their_counts() {
     );
 }
 
-/// Each filter popover opens from the keyboard (#2090), and its button
-/// shows the key that opens it, as Sort and Save search show theirs.
 #[test]
 fn the_filter_popovers_open_by_their_keys() {
     let rows = List::of(3);
@@ -647,8 +608,6 @@ fn the_filter_popovers_open_by_their_keys() {
 
 #[test]
 fn from_lists_you_only_when_the_query_already_asks_for_you() {
-    // Not someone to narrow to (screen 08), but a `from:` you typed is
-    // there to uncheck.
     let rows = List::of(3);
     let mut focus = mac();
     let _ = search(&mut focus, "atlas budget from:you@example.com", &rows);
@@ -703,7 +662,6 @@ fn checking_a_person_previews_live_and_esc_restores_the_query_exactly() {
     assert!(button(&query, FilterKind::From).applied);
     assert!(button(&query, FilterKind::From).open);
     let effects = settle(&mut focus, effects, &rows);
-    // The list, the counts and the timeline follow while it is open.
     let view = results_view(&effects).expect("the preview");
     assert_eq!(view.count_line, "60 threads");
     assert_eq!(
@@ -721,7 +679,6 @@ fn checking_a_person_previews_live_and_esc_restores_the_query_exactly() {
         "the people it listed stay, with the counts it opened with"
     );
 
-    // Esc: the query it opened on, exactly, and the results again.
     let effects = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
     assert_eq!(popover_view(&effects), Some(None), "the popover closes");
     let query = query_view(&effects).expect("the field restored");
@@ -763,8 +720,6 @@ fn return_keeps_the_previewed_query() {
     assert!(button(&query, FilterKind::From).applied);
     assert!(!button(&query, FilterKind::From).open);
     let view = results_view(&effects).expect("the frame, no longer a preview");
-    // Screen 11's "from Ada since July · 9 files": the filter in words,
-    // then the files; a person is the filter, so no people.
     assert_eq!(view.sub_line, "from Ada \u{b7} 12 files");
     assert_eq!(view.count_line, "60 threads");
 }
@@ -801,7 +756,6 @@ fn alt_click_excludes_and_again_takes_it_out() {
     let row = &popover_view(&effects).flatten().expect("redrawn").rows[0];
     assert!(row.excluded && !row.checked);
 
-    // A check on an excluded person includes them instead.
     let effects = focus.handle_on(
         Input::PopoverToggle {
             token: ada,
@@ -813,7 +767,6 @@ fn alt_click_excludes_and_again_takes_it_out() {
         queries_asked(&effects).first().map(String::as_str),
         Some("atlas budget from:ada@example.com")
     );
-    // And ⌥-click on an included one excludes them in place.
     let effects = focus.handle_on(
         Input::PopoverToggle {
             token: ada,
@@ -848,8 +801,6 @@ fn chips(query: &postio_focus::QueryView) -> Vec<(String, String, bool)> {
 
 #[test]
 fn checking_a_second_person_is_either_of_them() {
-    // D26: two people checked in one popover is mail from either, written
-    // as one set in the query and drawn as one chip.
     let rows = List::of(3);
     let mut focus = mac();
     let _ = search(&mut focus, "atlas budget", &rows);
@@ -894,7 +845,6 @@ fn checking_a_second_person_is_either_of_them() {
         "both are checked"
     );
 
-    // Unchecking one leaves the other, as a plain clause.
     let effects = check(&mut focus, ada);
     assert_eq!(
         queries_asked(&effects).first().map(String::as_str),
@@ -904,7 +854,6 @@ fn checking_a_second_person_is_either_of_them() {
     let popover = popover_view(&effects).flatten().expect("redrawn");
     assert!(!popover.rows[0].checked && popover.rows[1].checked);
 
-    // Esc: the query it opened on, exactly.
     let effects = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
     assert_eq!(popover_view(&effects), Some(None));
     assert!(
@@ -915,7 +864,6 @@ fn checking_a_second_person_is_either_of_them() {
     assert!(query_view(&effects).expect("restored").chips.is_empty());
 }
 
-/// The facets reads among `effects`: the query each asks for.
 fn facets_asked(effects: &[Effect]) -> Vec<(postio_focus::Ticket, String)> {
     asks(effects)
         .into_iter()
@@ -928,13 +876,10 @@ fn facets_asked(effects: &[Effect]) -> Vec<(postio_focus::Ticket, String)> {
 
 #[test]
 fn a_popover_lists_without_its_own_fields_terms() {
-    // D27: with `from:ada` applied the From popover still lists everyone
-    // the rest of the query finds, so a second person can be checked.
     let rows = List::of(3);
     let mut focus = mac();
     let _ = search(&mut focus, "atlas budget from:ada@example.com", &rows);
 
-    // Another field's popover has its facets already: no read.
     let effects = focus.handle_on(Input::SearchPopover(FilterKind::To), &rows);
     assert!(facets_asked(&effects).is_empty(), "To is not applied");
     let _ = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
@@ -952,7 +897,6 @@ fn a_popover_lists_without_its_own_fields_terms() {
     let view = popover_view(&effects).flatten().expect("open at once");
     assert!(view.rows.is_empty(), "nothing is listed until it is read");
 
-    // The read lands: everyone, counted without the from:, Ada checked.
     let reply = reply_to(&request).expect("answered");
     let effects = focus.handle_on(Input::Reply(ticket, reply), &rows);
     let view = popover_view(&effects).flatten().expect("redrawn");
@@ -966,7 +910,6 @@ fn a_popover_lists_without_its_own_fields_terms() {
     );
     assert!(view.rows[0].checked && !view.rows[1].checked);
 
-    // Checking Tomás makes it either, and the list holds still.
     let effects = focus.handle_on(
         Input::PopoverToggle {
             token: view.rows[1].token,
@@ -983,7 +926,6 @@ fn a_popover_lists_without_its_own_fields_terms() {
     assert!(view.rows[0].checked && view.rows[1].checked);
     assert_eq!(view.rows.len(), 2);
 
-    // Esc: exactly the query it opened on.
     let effects = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
     assert_eq!(popover_view(&effects), Some(None));
     assert!(
@@ -1048,7 +990,6 @@ fn alt_click_on_a_second_person_excludes_both() {
     let effects = settle(&mut focus, effects, &rows);
     let popover = popover_view(&effects).flatten().expect("redrawn");
     assert!(popover.rows.iter().all(|row| row.excluded && !row.checked));
-    // ⌥-click again takes one back out.
     let effects = exclude(&mut focus, ada);
     assert_eq!(
         queries_asked(&effects).first().map(String::as_str),
@@ -1070,7 +1011,6 @@ fn the_popovers_own_filter_narrows_its_rows_without_asking() {
     let view = popover_view(&effects).flatten().expect("redrawn");
     assert_eq!(view.filter, "TOM");
     assert_eq!(titles(&view), [("Tom\u{e1}s Reyes".to_owned(), 24)]);
-    // By address too, and its token is still the one it opened with.
     let effects = focus.handle_on(Input::PopoverFilter("ada@".to_owned()), &rows);
     let view = popover_view(&effects).flatten().expect("redrawn");
     assert_eq!(titles(&view), [("Ada Moreno".to_owned(), 24)]);
@@ -1161,13 +1101,9 @@ fn esc_closes_an_open_popover_before_anything_else() {
             .iter()
             .all(|query| query == "atlas budget")
     );
-    // A toggle button is not a popover.
     let effects = focus.handle_on(Input::SearchPopover(FilterKind::Unread), &rows);
     assert_eq!(popover_view(&effects), None);
 }
-
-// Step 4: the timeline's months, ⌥←/⌥→ and the Date popover (US3
-// scenario 4, FR-023, FR-027, screen 09).
 
 fn selected_months(view: &postio_focus::ResultsView) -> Vec<usize> {
     view.months
@@ -1191,8 +1127,6 @@ fn months_set_after_and_before_and_come_back_marked() {
     );
     assert_eq!(view.timeline_step, None);
 
-    // Bars 3 to 5 of the twelve ending with September 2026: January to
-    // March. `after:` their first day, `before:` the day after the last.
     let effects = focus.handle_on(
         Input::SearchEdit(TermEdit::SetMonths { first: 5, last: 3 }),
         &rows,
@@ -1209,8 +1143,6 @@ fn months_set_after_and_before_and_come_back_marked() {
     let effects = settle(&mut focus, effects, &rows);
     let view = results_view(&effects).expect("narrowed");
     assert_eq!(selected_months(&view), [3, 4, 5]);
-    // The bars outside the range still say what is there, so the range
-    // can be dragged wider: the months of the query without its dates.
     assert_eq!(view.months[11].conversations, 13);
     assert!(view.months[11].height > 0.0);
     assert_eq!(
@@ -1233,7 +1165,6 @@ fn alt_arrows_step_the_range_by_a_month() {
     let _ = search(&mut focus, "atlas budget", &rows);
     assert_eq!(focus.key_context(), KeyContext::Results);
 
-    // No range: ⌥→ has nowhere to go, ⌥← takes this month.
     let effects = run(&mut focus, CommandId::StepRangeForward, &rows);
     assert!(queries_asked(&effects).is_empty());
     let effects = run(&mut focus, CommandId::StepRangeBack, &rows);
@@ -1246,7 +1177,6 @@ fn alt_arrows_step_the_range_by_a_month() {
         selected_months(&results_view(&effects).expect("this month")),
         [11]
     );
-    // Not past this month.
     let effects = run(&mut focus, CommandId::StepRangeForward, &rows);
     assert!(queries_asked(&effects).is_empty());
 
@@ -1274,7 +1204,6 @@ fn alt_arrows_step_the_range_by_a_month() {
         [2, 3, 4]
     );
 
-    // An open-ended `since` steps as the range it shows: up to this month.
     let effects = focus.handle_on(Input::SearchEdit(TermEdit::ClearFilters), &rows);
     let _ = settle(&mut focus, effects, &rows);
     let effects = focus.handle_on(
@@ -1325,7 +1254,6 @@ fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
     assert!(view.rows.is_empty());
     assert_eq!(view.parsed, None);
 
-    // Plain words: the operator they became, and the preview.
     let effects = focus.handle_on(Input::DateWords("since july".to_owned()), &rows);
     assert_eq!(
         queries_asked(&effects).first().map(String::as_str),
@@ -1336,7 +1264,6 @@ fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
     assert_eq!(popover.parsed.as_deref(), Some("\u{2192} after:2026-07-01"));
     let effects = settle(&mut focus, effects, &rows);
     let popover = popover_view(&effects).flatten().expect("again, counted");
-    // This quarter starts on the same day, so it is the one ringed.
     assert_eq!(
         popover
             .presets
@@ -1346,7 +1273,6 @@ fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
             .collect::<Vec<_>>(),
         ["This quarter"]
     );
-    // From the 1st of July to the 26th of September, one every two days.
     assert_eq!(popover.result.as_deref(), Some("44 of 120"));
     assert_eq!(popover.range.as_deref(), Some("Jul \u{2013} Sep 2026"));
     let selected: Vec<usize> = popover
@@ -1365,8 +1291,6 @@ fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
         "previewing Jul \u{2013} Sep \u{b7} \u{21a9} applies"
     );
 
-    // Words that are no date change nothing; none at all put back the
-    // dates it opened on.
     let effects = focus.handle_on(Input::DateWords("budget".to_owned()), &rows);
     assert!(queries_asked(&effects).is_empty());
     assert_eq!(
@@ -1379,8 +1303,6 @@ fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
         Some("atlas budget")
     );
 
-    // A preset is its `after:`; Any time takes the dates out; Custom… asks
-    // nothing (the field is where a custom date goes).
     let effects = focus.handle_on(Input::DatePreset(1), &rows);
     assert_eq!(
         queries_asked(&effects).first().map(String::as_str),
@@ -1394,7 +1316,6 @@ fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
     let effects = focus.handle_on(Input::DatePreset(5), &rows);
     assert!(queries_asked(&effects).is_empty());
 
-    // Return keeps it: the button says it.
     let _ = focus.handle_on(Input::DateWords("since july".to_owned()), &rows);
     let effects = focus.handle_on(Input::PopoverDone { apply: true }, &rows);
     let query = query_view(&effects).expect("the field");
@@ -1417,9 +1338,6 @@ fn leaving_the_results_takes_an_open_popover_down() {
     );
 }
 
-/// A person's chip reads as the person (screen 10: "from: Ada Moreno"),
-/// named from the answer's people; the query keeps the address, and a
-/// value nobody is named by stays as typed.
 #[test]
 fn a_persons_chip_reads_as_their_name_and_the_query_keeps_the_address() {
     let rows = List::of(3);
@@ -1469,10 +1387,6 @@ fn a_persons_chip_reads_as_their_name_and_the_query_keeps_the_address() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Quick Look (spec 010 step 5, US4, FR-028, design §3.7, screen 10)
-// ---------------------------------------------------------------------------
-
 fn looked(effects: &[Effect]) -> postio_focus::QuickLookView {
     quick_look_view(effects)
         .flatten()
@@ -1496,16 +1410,12 @@ fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
     let _ = search(&mut focus, "atlas budget", &rows);
     let effects = run(&mut focus, CommandId::QuickLook, &rows);
 
-    // At once, from what the row knows; its conversation's matches asked.
     let view = looked(&effects);
     assert_eq!(view.title, "Quick Look");
-    // Each conversation counted once, as the reader counts: the top hits
-    // are not counted again under their months.
     assert_eq!(view.position, "1 of 120");
     assert_eq!(text(&view.subject), "Atlas budget, part 7");
     assert_eq!(lit(&view.subject), ["Atlas", "budget"]);
     assert!(text(&view.sender).starts_with("Tom\u{e1}s Reyes tomas@example.com"));
-    // When it was sent, in this machine's zone.
     assert!(
         text(&view.sender).contains(" \u{b7} Sat 12 Sep, "),
         "{}",
@@ -1537,8 +1447,6 @@ fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
         "the results keep the keys"
     );
 
-    // Its matches landed: one card each, oldest first, the row's message
-    // ringed.
     let effects = settle(&mut focus, effects, &rows);
     let view = looked(&effects);
     assert_eq!(view.matches_line, "3 matches in this thread");
@@ -1561,7 +1469,6 @@ fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
     );
     assert_eq!(lit(&view.cards[1].passage), ["Atlas", "budget"]);
     assert_eq!(view.current, Some(1), "the result's own message");
-    // Read with them: who the row's message went to (screen 10).
     assert!(
         text(&view.sender).starts_with(
             "Tom\u{e1}s Reyes tomas@example.com \u{b7} to you, Finance team \u{b7} Sat 12 Sep, "
@@ -1596,8 +1503,6 @@ fn j_and_k_move_the_results_and_quick_look_follows_in_place() {
     let effects = run(&mut focus, CommandId::PrevMessage, &rows);
     assert_eq!(looked(&effects).position, "1 of 120");
 
-    // Past the top hits, under the months: each a number the top hits
-    // did not take, or the top hit's own when it is drawn again.
     let mut said = Vec::new();
     for _ in 0..6 {
         let effects = run(&mut focus, CommandId::NextMessage, &rows);
@@ -1653,9 +1558,6 @@ fn brackets_move_the_ring_between_the_cards_while_it_is_open() {
 
 #[test]
 fn a_ring_moved_before_the_matches_land_stays_on_its_card() {
-    // #2132. Quick Look draws the row's own matches at once and asks for
-    // its conversation's; a ] pressed before they landed moved the ring,
-    // and the answer put it back on the row's message.
     let rows = List::of(3);
     let mut focus = mac();
     let _ = search(&mut focus, "atlas budget", &rows);
@@ -1726,12 +1628,10 @@ fn archive_moves_quick_look_to_the_next_result_and_closes_after_the_last() {
     assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
     assert_eq!(looked(&effects).position, "2 of 120");
 
-    // ⌘Z takes it back, as it does anywhere; Quick Look stays.
     let effects = run(&mut focus, CommandId::Undo, &rows);
     assert_eq!(asked(&effects), [Request::Post(postio_core::Command::Undo)]);
     assert_eq!(quick_look_view(&effects), None, "nothing closed");
 
-    // The last result archived: none is left to look at.
     let _ = run(&mut focus, CommandId::QuickLook, &rows);
     let _ = run(&mut focus, CommandId::LastMessage, &rows);
     let last = focus.result_count() - 1;
@@ -1806,7 +1706,6 @@ fn an_answer_for_a_result_since_left_is_dropped() {
     let _ = search(&mut focus, "atlas budget", &rows);
     let first = run(&mut focus, CommandId::QuickLook, &rows);
     let second = run(&mut focus, CommandId::NextMessage, &rows);
-    // The first result's matches land after j moved on.
     let mut late = Vec::new();
     for (ticket, request) in asks(&first) {
         if let Some(reply) = reply_to(&request) {
@@ -1817,10 +1716,6 @@ fn an_answer_for_a_result_since_left_is_dropped() {
     let effects = settle(&mut focus, second, &rows);
     assert_eq!(text(&looked(&effects).subject), "Atlas budget, part 2");
 }
-
-// ---------------------------------------------------------------------------
-// Step 6: selection, the bulk bar, and Save search (US5, FR-026, FR-029)
-// ---------------------------------------------------------------------------
 
 fn labels(hints: &[postio_ui::hints::Hint]) -> Vec<&str> {
     hints.iter().map(|hint| hint.label.as_str()).collect()
@@ -1875,8 +1770,6 @@ fn capital_x_checks_every_conversation_the_query_matches() {
     assert_eq!(focus.result_row(0).map(|row| row.checked), Some(true));
     assert_eq!(focus.result_row(40).map(|row| row.checked), Some(true));
 
-    // x takes the focused one back out of the whole -- and its Top hit and
-    // month rows are one conversation.
     let effects = run(&mut focus, CommandId::ToggleSelection, &rows);
     let view = results_view(&effects).expect("redrawn");
     assert_eq!(view.selected, 119);
@@ -2017,8 +1910,6 @@ fn the_results_are_asked_again_once_a_message_is_read_under_them() {
     let rows = List::of(3);
     let mut focus = mac();
     let _ = search(&mut focus, "atlas budget", &rows);
-    // A message opened from a result was open for its dwell: the rows
-    // behind it must not go on saying it is unread.
     let effects = focus.handle_on(
         Input::Event(postio_core::Event::MessagesChanged {
             account: postio_model::AccountId::new(1),
@@ -2053,8 +1944,6 @@ fn a_burst_of_changes_reads_the_results_again_once_more_not_once_each() {
         2,
         "the first change reads them again"
     );
-    // A sync files a batch: more changes while that read is out ask for
-    // nothing of their own...
     for message in [6, 7] {
         let more = focus.handle_on(changed(message), &rows);
         assert_eq!(
@@ -2063,8 +1952,6 @@ fn a_burst_of_changes_reads_the_results_again_once_more_not_once_each() {
             "a change while a read is out waits for it"
         );
     }
-    // ...and once it lands, the results are read once more, for what
-    // changed after it was asked.
     let landed = settle(&mut focus, first, &rows);
     assert_eq!(
         results_reads(&landed),
@@ -2079,7 +1966,6 @@ fn a_burst_of_changes_reads_the_results_again_once_more_not_once_each() {
     assert_eq!(focus.result_count(), 123, "and the results are all there");
 }
 
-/// "atlas budget", then From: Ada and Since 1 July, as screen 12's query.
 fn screen_twelve(focus: &mut FocusController, rows: &List) {
     let _ = search(focus, "atlas budget", rows);
     for (field, value) in [("from", "ada@example.com"), ("after", "2026-07-01")] {
@@ -2209,14 +2095,8 @@ fn saving_from_the_popover_writes_what_it_says_and_a_notify_search_starts_seen()
     );
 }
 
-// ---------------------------------------------------------------------------
-// No results (spec 010 step 7, US6, FR-030, D24, design §3.10, screen 13)
-// ---------------------------------------------------------------------------
-
-/// Screen 13's search: four filters, and nothing is called "v4".
 const NOTHING: &str = "from:ada@example.com has:attachment before:2026-03-01 subject:\"budget v4\"";
 
-/// The ways-out read among `effects`: its ticket, query and stamp.
 fn ways_out_asked(effects: &[Effect]) -> Option<(postio_focus::Ticket, String, u64)> {
     asks(effects)
         .into_iter()
@@ -2233,9 +2113,6 @@ fn ways_out_asked(effects: &[Effect]) -> Option<(postio_focus::Ticket, String, u
         })
 }
 
-/// The engine's answer to the ways out of `query`: each relaxation it
-/// offers, in its order, with the count given, zeros and all, every one
-/// counted to the end.
 fn ways_out(query: &str, counts: &[u64]) -> Vec<(postio_search::relax::Relaxation, Counted)> {
     let exact: Vec<Counted> = counts
         .iter()
@@ -2247,7 +2124,6 @@ fn ways_out(query: &str, counts: &[u64]) -> Vec<(postio_search::relax::Relaxatio
     ways_out_counted(query, &exact)
 }
 
-/// As [`ways_out`], each count as given, floors and all.
 fn ways_out_counted(
     query: &str,
     counts: &[Counted],
@@ -2258,8 +2134,6 @@ fn ways_out_counted(
     offered.into_iter().zip(counts.iter().copied()).collect()
 }
 
-/// `query` searched, every results read answered, and its ways out
-/// answered with `counts`.
 fn nothing_found(
     focus: &mut FocusController,
     query: &str,
@@ -2276,7 +2150,6 @@ fn nothing_found(
     nothing_found_counted(focus, query, &exact, rows)
 }
 
-/// As [`nothing_found`], each count as given, floors and all.
 fn nothing_found_counted(
     focus: &mut FocusController,
     query: &str,
@@ -2297,8 +2170,6 @@ fn nothing_found_counted(
     )
 }
 
-/// A way out counted past its cap says so (D30): "10,000+ threads",
-/// never a bare number that is not the total.
 #[test]
 fn a_way_out_counted_past_its_cap_is_drawn_as_a_floor() {
     let rows = List::of(3);
@@ -2356,8 +2227,6 @@ fn nothing_found_shows_the_page_at_once_and_asks_for_the_ways_out() {
     let field = query_view(&effects).expect("the field");
     assert_eq!(field.hint, "clears filters", "D24");
     assert_eq!(field.hint_key.as_deref(), Some("cmd+BackSpace"));
-    // Screen 13: the whole field carries the accent ring while the page
-    // is up, whether or not a key is bound to say in its hint.
     assert!(field.ringed);
     assert!(focus.answers(CommandId::BackToWords));
 }
@@ -2368,7 +2237,6 @@ fn the_ways_out_are_most_first_none_empty_and_at_most_four() {
     let mut focus = mac();
     let query =
         "from:ada@example.com has:attachment before:2026-03-01 subject:\"budget v4\" atlas plan";
-    // from, has, before, subject (dropped), subject (anywhere), atlas, plan.
     let effects = nothing_found(&mut focus, query, &[4, 1, 6, 0, 2, 3, 5], &rows);
 
     let page = no_results_view(&effects).expect("drawn").expect("up");
@@ -2426,7 +2294,6 @@ fn the_ways_out_are_most_first_none_empty_and_at_most_four() {
     assert_eq!(labels(&view.hints), ["loosen a filter", "clear filters"]);
     assert_eq!(view.hints[0].key, "1\u{2013}4");
 
-    // The chip the focused way out drops is ringed.
     let field = query_view(&effects).expect("the field");
     let ringed: Vec<&str> = field
         .chips
@@ -2436,7 +2303,6 @@ fn the_ways_out_are_most_first_none_empty_and_at_most_four() {
         .collect();
     assert_eq!(ringed, ["before:"]);
 
-    // j moves the focus down the list; a word has no chip to ring.
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     let page = no_results_view(&effects).expect("drawn").expect("up");
     assert!(page.relaxations[1].focused && !page.relaxations[0].focused);
@@ -2457,7 +2323,6 @@ fn the_ways_out_are_most_first_none_empty_and_at_most_four() {
 fn a_number_runs_its_way_out_and_return_runs_the_focused_one() {
     let rows = List::of(3);
     let mut focus = mac();
-    // from, has, before, subject (dropped), subject (anywhere).
     nothing_found(&mut focus, NOTHING, &[0, 0, 0, 7, 3], &rows);
 
     assert!(
@@ -2504,7 +2369,6 @@ fn cmd_backspace_with_nothing_found_clears_the_filters_and_keeps_the_words() {
     );
     assert_eq!(no_results_view(&effects), Some(None));
 
-    // With results, the key is not the results' to answer.
     let effects = settle(&mut focus, effects, &rows);
     assert!(results_view(&effects).is_some_and(|view| view.rows > 0));
     assert!(!focus.answers(CommandId::BackToWords));
@@ -2516,7 +2380,6 @@ fn ways_out_for_a_search_since_changed_are_dropped() {
     let mut focus = mac();
     let effects = search(&mut focus, NOTHING, &rows);
     let (ticket, _, stamp) = ways_out_asked(&effects).expect("asked");
-    // The query changes before the counts land.
     let cleared = focus.handle_on(Input::SearchEdit(TermEdit::ClearFilters), &rows);
     let _ = settle(&mut focus, cleared, &rows);
     let effects = focus.handle_on(
@@ -2576,10 +2439,6 @@ fn the_ways_out_are_a_lane_of_their_own() {
     assert_eq!(request.lane(), Some(postio_focus::Lane::Relaxations));
 }
 
-// ---------------------------------------------------------------------------
-// The Files tab (spec 010 step 9, US8, FR-031, design §3.8, screen 11)
-// ---------------------------------------------------------------------------
-
 fn files_asked(effects: &[Effect]) -> usize {
     asked(effects)
         .iter()
@@ -2623,7 +2482,6 @@ fn removed(effects: &[Effect]) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// "atlas budget", then ⌘2: the Files tab, its cards read.
 fn on_the_files_tab(focus: &mut FocusController, rows: &List) -> Vec<Effect> {
     let _ = search(focus, "atlas budget", rows);
     let effects = run(focus, CommandId::ResultsFiles, rows);
@@ -2644,14 +2502,10 @@ fn the_files_tab_reads_its_cards_and_draws_them() {
     assert_eq!(view.rows, 3);
     assert_eq!(view.cursor, Some(0), "the first card ringed");
     assert!(view.groups.is_empty(), "a grid, not month groups");
-    // Screen 11's "Sort Newest": the cards come newest first, whatever
-    // the conversations' order, and a file has no rank to sort by.
     assert_eq!(view.order, ConversationOrder::Newest);
     assert!(!view.sortable);
     assert_eq!(view.tabs[1].count, "3", "the tab counts the cards");
     assert!(view.tabs[1].selected);
-    // #2183: the heading and the footer count what the tab shows, the
-    // cards, not the search's threads.
     assert_eq!(view.count_line, "3 files");
     assert_eq!(view.footer, "3 files \u{b7} local index \u{b7} 41 ms");
     let header = view.files.as_ref().expect("the Files tab's header");
@@ -2703,9 +2557,6 @@ fn the_files_tab_reads_its_cards_and_draws_them() {
     assert_eq!(focus.result_file(3), None);
 }
 
-/// #2183: Space on a card hands a copy to the system. The Mac's is Quick
-/// Look; GTK's opens it in the desktop's app for its type, and its key
-/// says so.
 #[test]
 fn space_on_a_card_says_what_the_platform_does_with_it() {
     let rows = List::of(3);
@@ -2720,7 +2571,6 @@ fn space_on_a_card_says_what_the_platform_does_with_it() {
         .map(|hint| hint.label.as_str())
         .collect();
     assert_eq!(space, ["open the file"]);
-    // The Threads tab's Space is Postio's own Quick Look, on every platform.
     let effects = run(&mut linux, CommandId::ResultsConversations, &rows);
     let view = results_view(&effects).expect("the threads");
     assert!(
@@ -2739,13 +2589,11 @@ fn the_keys_move_the_ring_over_the_cards() {
     let _ = on_the_files_tab(&mut focus, &rows);
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
-    // The grid's arrows say where the ring goes (four across).
     let effects = focus.handle_on(Input::ResultsPoint(2), &rows);
     assert!(shown(&effects).contains(&Intent::ResultsCursor(2)));
     assert!(focus.result_file(2).is_some_and(|card| card.focused));
     let effects = run(&mut focus, CommandId::PrevMessage, &rows);
     assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
-    // And back on Conversations, its own ring where it was.
     let effects = run(&mut focus, CommandId::ResultsConversations, &rows);
     assert_eq!(results_view(&effects).and_then(|view| view.cursor), Some(0));
 }
@@ -2778,12 +2626,10 @@ fn space_hands_a_copy_of_the_file_to_quick_look_and_removes_it_after() {
         })]
     );
 
-    // Space again closes it, and the copy goes (FR-053).
     let effects = run(&mut focus, CommandId::QuickLook, &rows);
     assert_eq!(copies_shown(&effects), [None]);
     assert_eq!(removed(&effects), std::slice::from_ref(&copy));
 
-    // Closed by the panel itself: the same.
     let asked_for = run(&mut focus, CommandId::QuickLook, &rows);
     let effects = settle(&mut focus, asked_for, &rows);
     assert_eq!(copies_shown(&effects).len(), 1);
@@ -2816,7 +2662,6 @@ fn command_down_saves_the_file_and_return_opens_its_message() {
             ..
         })]
     ));
-    // The save panel copied it, or was cancelled: the copy goes.
     let effects = focus.handle_on(Input::FileCopyDone, &rows);
     assert_eq!(removed(&effects).len(), 1);
 
@@ -2894,10 +2739,6 @@ fn a_new_query_reads_the_cards_again_and_leaving_removes_a_copy() {
     assert_eq!(removed(&effects).len(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// The People tab (spec 010 step 10, US9, FR-032, design §3.11)
-// ---------------------------------------------------------------------------
-
 fn people_asked(effects: &[Effect]) -> Vec<Request> {
     asked(effects)
         .into_iter()
@@ -2905,7 +2746,6 @@ fn people_asked(effects: &[Effect]) -> Vec<Request> {
         .collect()
 }
 
-/// "atlas", then ⌘3: the People tab, its rows read.
 fn on_the_people_tab(focus: &mut FocusController, rows: &List) -> Vec<Effect> {
     let _ = search(focus, "atlas", rows);
     let effects = run(focus, CommandId::ResultsPeople, rows);
@@ -2987,7 +2827,6 @@ fn return_on_a_person_searches_their_mail_on_the_conversations_tab() {
     let query = query_view(&effects).expect("the field");
     assert_eq!(query.chips.len(), 1, "the query is the person alone");
 
-    // ⌘[ goes back to the People tab of what was searched before.
     let effects = run(&mut focus, CommandId::HistoryBack, &rows);
     assert_eq!(
         queries_asked(&effects).first().map(String::as_str),
@@ -3013,9 +2852,6 @@ fn a_new_query_reads_the_people_again() {
     assert_eq!(people_asked(&effects).len(), 1, "the tab shown reads again");
 }
 
-/// Every results read among `effects` answered as `settle` answers it, but
-/// past the walk's cap (D30): 5,000 threads and more, every count a
-/// floor.
 fn settle_capped(focus: &mut FocusController, effects: Vec<Effect>, rows: &List) -> Vec<Effect> {
     use postio_focus::Reply;
     let cap = postio_search::results::CONVERSATION_WALK_CAP;
@@ -3126,9 +2962,6 @@ fn i_in_the_results_asks_about_the_focused_results_sender_and_a_click_on_a_name_
     );
 }
 
-/// Spec 007 US10 scenario 7 and #1825: a result says where it is -- where
-/// a digest holds it, in place of its folder -- and, with several accounts,
-/// which one it is in.
 #[test]
 fn a_result_says_where_a_digest_holds_it_and_its_account() {
     use postio_focus::{Input, PlacesRead, Reply};
@@ -3195,8 +3028,6 @@ fn a_result_says_where_a_digest_holds_it_and_its_account() {
     );
 }
 
-/// #1825 (files-tab on GTK): back from the Files tab and into a new
-/// search's results, nothing says the new results found nothing.
 #[test]
 fn a_new_search_after_history_back_from_files_is_not_found_nothing() {
     let rows = List::of(3);
@@ -3221,9 +3052,6 @@ fn a_new_search_after_history_back_from_files_is_not_found_nothing() {
     );
 }
 
-/// #1825 (the reviewer's "Result 1 of 7" over four conversations): a
-/// result opened from the results walks each conversation once, though
-/// Top hits draws its own again under their months.
 #[test]
 fn a_result_walks_each_conversation_once() {
     let rows = List::of(3);

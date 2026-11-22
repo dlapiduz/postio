@@ -1,25 +1,3 @@
-//! The editing profile, proven closed: #336, ADR 0003 hardening
-//! requirements 1 and 3 as assertions.
-//!
-//! The composer's `WebView` is the one place JavaScript runs, and this file
-//! is what keeps that from quietly meaning more than it says. It builds the
-//! real profile from [`postio_widgets::composer::editor`] and proves, against a live
-//! WebKit:
-//!
-//! * the host's script runs (the profile script set the paragraph
-//!   separator; `evaluate_javascript` answers);
-//! * **markup-borne script does not** — a `<script>` seeded into the edited
-//!   content leaves no trace, which is the mechanical form of "message
-//!   content never executes";
-//! * **nothing reaches the network** — a loopback listener this process owns
-//!   sees no connection while content laden with remote references loads
-//!   and is edited;
-//! * `postio-cid:` images resolve from the local blob source, the one
-//!   fetch-shaped thing the profile permits;
-//! * a click on a link edits rather than navigates.
-//!
-//! One test function: GTK is single-threaded and initialised once.
-
 use crate::support_compose::settle_until as settle;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -35,7 +13,6 @@ use postio_widgets::composer::editor;
 use postio_widgets::reader::BlobSource;
 use webkit6::prelude::*;
 
-/// A blob source holding exactly what the test hands it.
 struct Blobs(HashMap<String, (Vec<u8>, String)>);
 
 impl BlobSource for Blobs {
@@ -67,7 +44,6 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
         return;
     }
 
-    // ── the tripwire: a socket nothing may touch ──────────────────────────
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback listener");
     let port = listener.local_addr().unwrap().port();
     let (hit_tx, hit_rx) = mpsc::channel::<()>();
@@ -86,11 +62,8 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
     });
 
     let mut blobs = HashMap::new();
-    // A real 1x1 PNG, so a resolved cid image has dimensions to assert on.
-    // Encoded here rather than written out as bytes: a hand-copied constant
-    // had a bad IDAT, which WebKit gave a size from its header and failed
-    // only when it painted, so the case failed whenever a paint came first
-    // (#2157).
+    // Encoded here, not hand-copied: a constant with a bad IDAT got a size from its header and
+    // failed only when it painted (#2157).
     let pixels = glib::Bytes::from_owned(vec![255u8; 4]);
     let png = gdk::MemoryTexture::new(1, 1, gdk::MemoryFormat::R8g8b8a8, &pixels, 4)
         .save_to_png_bytes()
@@ -113,10 +86,6 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
         }
     });
 
-    // Seed content that tries everything the profile forbids at once:
-    // markup script (with a network side effect that doubles as its
-    // tripwire), a remote image aimed at the listener, and one legitimate
-    // cid image.
     editor::seed(
         &view,
         &format!(
@@ -128,7 +97,6 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
     );
     settle("the editing shell to load", || *loaded.borrow());
 
-    // ── the host's script runs, and the profile script already did ────────
     assert_eq!(
         eval(
             &view,
@@ -138,19 +106,13 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
         "the profile script did not run before the first gesture could"
     );
 
-    // ── markup script is inert markup ─────────────────────────────────────
-    // Two layers hold this — the markup-JS setting and the shell CSP — and
-    // the red-proof for the assertion requires breaking both, which is the
-    // point: neither layer alone is the defence.
+    // Two layers hold this, the markup-JS setting and the shell CSP; neither alone is the defence.
     assert_ne!(
         eval(&view, "document.title"),
         "pwned",
         "a script tag in edited content executed"
     );
 
-    // With enable_javascript_markup off the seeded <script> must not have
-    // executed. Its network fetch is caught by the listener below; here the
-    // DOM-side proof: editing still works and no script side effect exists.
     let dialect = eval(
         &view,
         "(() => { \
@@ -165,7 +127,6 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
     );
     assert_eq!(dialect, "hello edited", "the surface is not editable");
 
-    // ── the cid image resolved locally ────────────────────────────────────
     let what = "the cid image to decode from the blob source";
     settle(what, || {
         let state = eval(
@@ -183,7 +144,6 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
         "the cid image decoded at the wrong size"
     );
 
-    // ── a link click edits rather than navigates ──────────────────────────
     editor::seed(
         &view,
         &format!("<p><a href=\"http://127.0.0.1:{port}/away\">a link</a></p>"),

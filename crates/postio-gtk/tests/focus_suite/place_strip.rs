@@ -1,15 +1,12 @@
-//! A place that is not the inbox describes itself: the strip beside its name
-//! counts what it lists (the inbox's "59 · 21 unread" described a place the
-//! person had left), the has-action toggle goes with the inbox it narrows,
-//! and a place with nothing in it says why and the way out instead of a
-//! blank page (ux-architect: nothing is a dead end).
+//! A place that is not the inbox describes itself: its strip counts what it lists, the has-action
+//! toggle goes with the inbox it narrows,
+//! and an empty place says why and the way out instead of a blank page.
 
 use gtk::prelude::*;
 use postio_core::CommandId;
 
 use crate::support::{self, Fixture, only, texts, with_class};
 
-/// What the empty page says, when it is the page showing.
 fn empty_says(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     with_class(window, "focus-empty")
         .into_iter()

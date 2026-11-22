@@ -1,11 +1,5 @@
-//! An expanded thread as a splice over the windowed rows.
-//!
-//! The list is paged, and the controller never holds its rows. Putting a
-//! thread's children into the paged query would shift every page's offsets
-//! and put a thread read into the hot list query, so the children are only
-//! a splice: after the anchor row, `children` display positions that are not
-//! rows. The cursor, `j`/`k`, scope and the footer all ask the splice, so
-//! one set of tests covers both frontends (spec 013, R7).
+//! An expanded thread as a splice over the windowed rows: the paged query never holds children, so
+//! cursor, scope and footer ask the splice (spec 013 R7).
 
 use chrono::{DateTime, Local};
 use postio_core::{CommandId, Keymap};
@@ -14,35 +8,21 @@ use postio_model::thread_view::{Line, ThreadView};
 
 use crate::{focus_row, hints, row};
 
-/// What a display position holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
-    /// The list's own row at this position.
     Row(u32),
-    /// The `index`th child (from zero, oldest first) of the anchor `row`.
-    Child {
-        /// The anchor row's position among the rows.
-        row: u32,
-        /// Which child it is.
-        index: u32,
-    },
+    Child { row: u32, index: u32 },
 }
 
-/// One expanded thread: its children sit right after the anchor row.
-///
-/// At most one per list, so a list holds an `Option<Splice>`; `None` is the
-/// identity, and the free functions [`slot`], [`display`] and [`len`] say so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Splice {
-    /// The expanded row's position among the rows.
     pub anchor: u32,
-    /// How many children follow it.
     pub children: u32,
 }
 
 impl Splice {
-    /// What `display` holds. A position past the end is the row it would be
-    /// after the splice, so an anchor beyond the landed rows is harmless.
+    /// A position past the end is the row it would be after the splice, so an anchor beyond the
+    /// landed rows is harmless.
     pub fn slot(self, display: u32) -> Slot {
         let first = self.anchor.saturating_add(1);
         if display < first {
@@ -57,7 +37,6 @@ impl Splice {
         }
     }
 
-    /// Where `slot` is drawn.
     pub fn display(self, slot: Slot) -> u32 {
         match slot {
             Slot::Row(row) if row <= self.anchor => row,
@@ -68,8 +47,6 @@ impl Splice {
         }
     }
 
-    /// How many positions `rows` rows draw: the children, once the anchor is
-    /// among them.
     pub fn len(self, rows: u32) -> u32 {
         if self.anchor < rows {
             rows + self.children
@@ -79,12 +56,10 @@ impl Splice {
     }
 }
 
-/// What `display` holds in a list with `splice`, or none.
 pub fn slot(splice: Option<Splice>, display: u32) -> Slot {
     splice.map_or(Slot::Row(display), |splice| splice.slot(display))
 }
 
-/// Where `slot` is drawn in a list with `splice`, or none.
 pub fn display(splice: Option<Splice>, slot: Slot) -> u32 {
     match (splice, slot) {
         (Some(splice), slot) => splice.display(slot),
@@ -93,61 +68,37 @@ pub fn display(splice: Option<Splice>, slot: Slot) -> u32 {
     }
 }
 
-/// How many positions `rows` rows draw in a list with `splice`, or none.
 pub fn len(splice: Option<Splice>, rows: u32) -> u32 {
     splice.map_or(rows, |splice| splice.len(rows))
 }
 
-/// What a focused child row offers on its right: the keys that act on this
-/// one message, "e f this one" (Design: focus-macos-threads §2).
-///
-/// Thread-row verbs act on the latest message (D2); a child narrows them to
-/// itself, and this is how the row says so.
+/// Thread-row verbs act on the latest message (D2); a child narrows them to itself, and this is how
+/// the row says so.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChildHint {
-    /// The keycaps, as the live keymap spells them: reply, then forward. A
-    /// command with no key is left out rather than drawn as a blank cap.
+    /// A command with no key is left out rather than drawn as a blank cap.
     pub keys: Vec<String>,
-    /// What they act on.
     pub label: String,
 }
 
-/// Everything a child row says, composed once so the Mac and GTK draw the
-/// same words (contracts/frontend-threads.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChildRowView {
-    /// The avatar's letters.
     pub initials: String,
-    /// "Ben Ortiz", "You", or "Draft · you".
     pub sender: String,
-    /// Drawn bold, with an accent dot: the message is unread.
     pub bold: bool,
-    /// "\u{21b3} to Ana" for a reply to an older message; "not sent" on a
-    /// draft.
     pub tag: Option<String>,
-    /// The message's own words, never the quoted part.
     pub line: String,
-    /// The line is a stand-in ("Quoted reply only", or nothing to show), so
-    /// it is drawn quiet.
     pub placeholder: bool,
-    /// A paperclip.
     pub attachment: bool,
-    /// The message's time, as every row says it.
     pub time: String,
-    /// An unsent reply: drawn in italics.
     pub draft: bool,
-    /// The keys shown while this row is focused; none on a draft.
     pub focused_hint: Option<ChildHint>,
 }
 
-/// What a child row says when a message has no words to show.
 pub const NO_PREVIEW: &str = "No preview";
-/// What a child row says of a message that is all quote.
 pub const QUOTED_ONLY: &str = "Quoted reply only";
 
 impl ChildRowView {
-    /// The row for the `index`th member of `view`, as seen by an account
-    /// whose identities are `me`.
     pub fn member(
         view: &ThreadView,
         index: usize,
@@ -187,8 +138,6 @@ impl ChildRowView {
         })
     }
 
-    /// The row for `view`'s unsent reply, if it has one: "Draft · you", its
-    /// first words, and "not sent". It acts on nothing a hint could name.
     pub fn draft(view: &ThreadView, now: DateTime<Local>) -> Option<Self> {
         let draft = view.draft.as_ref()?;
         let (line, placeholder) = if draft.first_words.trim().is_empty() {
@@ -211,8 +160,6 @@ impl ChildRowView {
     }
 }
 
-/// The keys a focused child shows: reply and forward from the live keymap,
-/// then "this one".
 pub fn focused_hint(keymap: &Keymap) -> ChildHint {
     ChildHint {
         keys: [CommandId::Reply, CommandId::Forward]
@@ -231,8 +178,6 @@ mod tests {
         Splice { anchor, children }
     }
 
-    /// Every row and child round-trips through its display position, and
-    /// the positions are exactly `0..len` in order.
     fn round_trips(splice: Splice, rows: u32) {
         let mut expected = Vec::new();
         for row in 0..rows {
@@ -282,7 +227,6 @@ mod tests {
             assert_eq!(splice.slot(position), Slot::Row(position));
             assert_eq!(splice.display(Slot::Row(position)), position);
         }
-        // Once the anchor lands, the children appear after it.
         assert_eq!(splice.len(10), 13);
     }
 

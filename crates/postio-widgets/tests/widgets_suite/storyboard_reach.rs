@@ -1,7 +1,3 @@
-//! `reachable` answers the class of defect delivery exists for (spec 008,
-//! research R3): the keyboard is on a widget a person could not use. It is
-//! observed on every step, whatever the delivery mode.
-
 use adw::prelude::*;
 use postio_widgets::storyboard::reach::reachable;
 
@@ -76,7 +72,6 @@ pub fn no_focus_widget_is_not_reachable() {
     window.set_content(Some(&gtk::Label::new(Some("nothing focusable"))));
     window.set_default_size(300, 200);
     show(window.upcast_ref());
-    // A freshly shown window may give focus to something; take it back.
     GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
 
     assert!(!reachable(window.upcast_ref()));

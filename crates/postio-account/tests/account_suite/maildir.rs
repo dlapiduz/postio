@@ -1,11 +1,3 @@
-//! A maildir on this machine, through the seam every other backend uses.
-//!
-//! The acceptance criteria of #1278 are all here: a `~/mail` tree opens with
-//! no server, a second pass over it does not import the mail again, and a
-//! directory that is not a maildir says so instead of appearing as an empty
-//! account. The rest is the seam's own contract — that this backend answers
-//! the same questions the IMAP one does, in the same shapes.
-
 use std::path::{Path, PathBuf};
 
 use postio_account::backend::{
@@ -17,7 +9,6 @@ use postio_account::maildir::MaildirBackend;
 use postio_model::{Flag, FlagSet, RemoteId, Uid};
 use tempfile::TempDir;
 
-/// A tree with an inbox and an archive, and three messages in the inbox.
 fn tree() -> TempDir {
     let tree = tempfile::tempdir().expect("a temporary directory");
     make_maildir(tree.path());
@@ -95,7 +86,6 @@ async fn opened(root: &Path) -> MaildirBackend {
     backend
 }
 
-/// Every message in `mailbox`, newest number last.
 async fn all_of(
     backend: &MaildirBackend,
     mailbox: &str,
@@ -193,7 +183,6 @@ async fn opening_the_same_tree_again_finds_the_same_mail_not_more_of_it() {
         .await
         .expect("select");
 
-    // A whole new backend over the same directory — a second run of the app.
     let second = opened(tree.path()).await;
     let after = all_of(&second, "INBOX").await;
     let after_status = second
@@ -285,7 +274,6 @@ async fn marking_a_message_read_renames_its_file_and_the_next_listing_sees_it() 
         "what is reported is read back off the filename, not what was asked for"
     );
 
-    // The filename is the record, so another client sharing this tree sees it.
     let names = filenames(&tree.path().join("cur"));
     assert!(
         names
@@ -376,7 +364,6 @@ async fn an_expunge_removes_what_was_named_and_refuses_to_widen() {
     let doomed = messages[0].remote_id.clone();
     let bystander = messages[1].remote_id.clone();
 
-    // Another client marked one deleted; Postio was handed the other.
     backend
         .store_flags(
             "INBOX",
@@ -508,10 +495,8 @@ fn filenames(directory: &Path) -> Vec<String> {
 
 #[tokio::test]
 async fn a_role_with_no_folder_gets_one_made_and_listed() {
-    // Discovery calls `create_mailbox` for a reserved role that resolves to
-    // nothing — `\Sent` on a tree somebody rsynced without one. A maildir has
-    // no server to ask, so the folder is three directories, and the proof it
-    // worked is that the next `LIST` names it.
+    // Discovery calls `create_mailbox` for a reserved role that resolves to nothing; the proof is
+    // that the next `LIST` names it.
     let tree = tree();
     let backend = opened(tree.path()).await;
 
@@ -536,9 +521,7 @@ async fn a_role_with_no_folder_gets_one_made_and_listed() {
 
 #[tokio::test]
 async fn making_a_folder_that_is_already_there_is_success_not_a_clash() {
-    // The trait's contract: the caller wants the folder to *exist*, not to
-    // have been the one that made it. Two passes must not turn the second
-    // into an error, and must not disturb what is in the folder already.
+    // The caller wants the folder to exist, not to have made it: a second pass is not an error.
     let tree = tree();
     let backend = opened(tree.path()).await;
 
@@ -558,9 +541,8 @@ async fn making_a_folder_that_is_already_there_is_success_not_a_clash() {
 
 #[tokio::test]
 async fn a_nested_role_is_made_at_the_depth_it_names() {
-    // `INBOX/Sent` on an fs-layout tree is a directory inside a directory.
-    // The separator this backend advertises is `/`, so a caller that asks for
-    // a child must get one rather than a folder with a slash in its name.
+    // The advertised separator is `/`, so a child must be a nested directory, not a name with a
+    // slash.
     let tree = tree();
     let backend = opened(tree.path()).await;
 
@@ -576,7 +558,6 @@ async fn a_nested_role_is_made_at_the_depth_it_names() {
     assert!(tree.path().join("Lists").join("rust").join("cur").is_dir());
 }
 
-/// Every folder path the backend lists.
 async fn listed(backend: &MaildirBackend) -> Vec<String> {
     backend
         .list_mailboxes(&MailboxFilter::all())

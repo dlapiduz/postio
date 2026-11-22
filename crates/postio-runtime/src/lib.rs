@@ -1,39 +1,6 @@
-//! The half of Postio's runtime that owns a database and a connection.
-//!
-//! # Why this is not in `postio-core`
-//!
-//! `postio-core` is the UI-agnostic contract: commands in, events out, the
-//! command registry, the keymap, the app state. the view layer depends on it,
-//! and so would any other frontend — that is what makes a second one
-//! possible.
-//!
-//! Which means `postio-core` must have no path to `rusqlite` or `io-imap`,
-//! and *no path* is stronger than it sounds. Putting them behind an
-//! off-by-default feature is not enough: Cargo resolves features as a union
-//! across everything being built, so the moment one crate in the workspace
-//! turns that feature on, every crate depending on `postio-core` has SQLite
-//! in its graph — including the view layer, which
-//! `scripts/checks/check-crate-boundaries.py` refuses outright. That is not a
-//! checker being fussy. In a workspace build the view layer really would
-//! link the SQL.
-//!
-//! So the database half lives in a crate of its own. `postio-core` has no
-//! optional dependencies at all, and no feature of it can put storage in
-//! anybody's graph.
-//!
-//! # What is here
-//!
-//! * [`store`] — reading the local store off the calling thread, behind a
-//!   trait so a frontend can be written against it and a test can answer from
-//!   a table.
-//! * [`engine`] — the loop that drains the operation queue, backfills message
-//!   bodies, and keeps the connection up.
-//! * [`network`] — what NetworkManager says about the link, so a reconnect
-//!   after a lid opens is prompt rather than a backoff measured against a
-//!   network that is gone.
-//!
-//! Both are joined to a frontend by the app's composition root, which is the
-//! only crate that knows both halves exist.
+//! The half of the runtime that owns a database and a connection, kept out of `postio-core` so no
+//! feature
+//! union can put SQLite in the view layer's graph (`scripts/checks/check-crate-boundaries.py`).
 
 pub mod engine;
 pub mod network;
@@ -44,12 +11,8 @@ pub use engine::{
     Clock, DrainSummary, Engine, EngineError, EngineParts, FilingSlot, Link, NetworkSource,
     NetworkState, POLL_INTERVAL, SyncSummary, SystemClock, retain, retire, stop,
 };
-// The two policies `EngineParts` is built with. Re-exported rather than left
-// to be reached for through `postio-sync`, because the composition root that
-// fills `EngineParts` in has no other reason to depend on that crate — and a
-// part that cannot be named from where the struct is constructed is a part
-// that stays `Default::default()`, which is what `body_fetch` did for the
-// whole life of this project.
+// Re-exported so the composition root that builds `EngineParts` can name them without depending on
+// `postio-sync`.
 pub use postio_sync::{AttachmentPolicy, BackfillPolicy};
 pub use store::{
     ListScope, LocalStore, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,

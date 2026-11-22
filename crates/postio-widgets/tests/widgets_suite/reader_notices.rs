@@ -1,18 +1,3 @@
-//! The reader's notices never move the message under them.
-//!
-//! A message can carry several notices -- remote images held back, reader
-//! view, a decode caveat, the list it came from -- and each was a bar of its
-//! own stacked above the body. Moving from a message with two of them to one
-//! with none moved the body's first line up by two bars, and back down on
-//! the next: the pane jumping on most cursor moves through a folder of
-//! newsletters. And the waiting plate kept whatever notices the previous
-//! message had, over a message they said nothing about.
-//!
-//! Asserted on geometry and on what is on screen, which is what a person
-//! sees; nothing here asks what the reader was told.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
@@ -43,7 +28,6 @@ fn reader_in_a_window() -> Option<(gtk::Window, Reader, tempfile::TempDir)> {
     Some((window, reader, dir))
 }
 
-/// Let the window lay itself out: a size is only allocated on a frame.
 fn lay_out() {
     let until = std::time::Instant::now()
         + postio_test_support::scaled(std::time::Duration::from_millis(250));
@@ -53,7 +37,6 @@ fn lay_out() {
     }
 }
 
-/// Where the body's top edge is, in the reader's own coordinates.
 fn body_top(reader: &Reader) -> f32 {
     reader
         .view()
@@ -85,20 +68,17 @@ pub fn the_body_starts_at_the_same_place_whatever_the_notices() {
     };
     let mut tops = Vec::new();
 
-    // Nothing to say about it.
     header(&reader);
     reader.render(&plain("a plain message"), Some("ada@example.com"));
     lay_out();
     tops.push(("no notice", body_top(&reader)));
 
-    // The list it came from.
     header(&reader);
     reader.render(&plain("a list message"), Some("ada@example.com"));
     reader.set_unsubscribe(Some("list.example.com"));
     lay_out();
     tops.push(("one notice", body_top(&reader)));
 
-    // Images held back, a decode caveat, and the list: three at once.
     header(&reader);
     reader.render(
         &MessageBody {
@@ -118,7 +98,6 @@ pub fn the_body_starts_at_the_same_place_whatever_the_notices() {
     );
     tops.push(("three notices", body_top(&reader)));
 
-    // And a message still waiting for its body.
     header(&reader);
     reader.show_absent(Absent::Partial);
     lay_out();
@@ -138,7 +117,6 @@ pub fn a_waiting_plate_carries_no_notice_from_the_message_before() {
         return;
     };
 
-    // A newsletter: reader view, a decode caveat and the list, all raised.
     let newsletter = test_corpus::load("html-newsletter");
     let parsed = postio_model::mime::parse(newsletter.bytes());
     reader.render(&parsed.body, Some("weekly@news.example.org"));
@@ -152,7 +130,6 @@ pub fn a_waiting_plate_carries_no_notice_from_the_message_before() {
         "the newsletter raised no notice, so the plate below proves nothing"
     );
 
-    // The next message has no body yet. None of that was about it.
     reader.show_absent(Absent::Partial);
     lay_out();
     let left = [
@@ -204,7 +181,6 @@ pub fn a_sender_warning_is_one_line_and_does_not_outlast_its_message() {
         "the warning took no room above the body"
     );
 
-    // The next message is a different sender's.
     header(&reader);
     lay_out();
     assert_eq!(reader.sender_warning_label(), None);
@@ -242,7 +218,6 @@ pub fn the_body_starts_at_the_same_place_whoever_the_message_went_to() {
     window.close();
 }
 
-/// Every widget under `root` wearing `class`.
 fn with_class(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if root.has_css_class(class) {
@@ -256,7 +231,6 @@ fn with_class(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     found
 }
 
-/// The cap `notice`'s action button draws, or `None` when it draws none.
 fn action_cap(reader: &Reader, notice: &str) -> Option<String> {
     let caps = with_class(&reader.widget(), &format!("{notice}-action-hint"));
     let cap = caps
@@ -270,11 +244,6 @@ fn action_cap(reader: &Reader, notice: &str) -> Option<String> {
     })
 }
 
-/// A notice's action is a button like every other, so it carries its key
-/// inside it (T219): `U` on Unsubscribe and `alt+i` on Show images, from the
-/// keymap, so a rebind reaches the cap the moment it reaches the keyboard.
-/// Both frontends' readers are this one, so the open message and the pane
-/// draw the same cap.
 pub fn every_notice_action_carries_its_key() {
     let Some((window, reader, _dir)) = reader_in_a_window() else {
         return;

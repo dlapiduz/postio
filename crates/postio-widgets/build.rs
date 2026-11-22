@@ -1,21 +1,6 @@
-//! Build step for `postio-widgets`.
-//!
-//! Two jobs, in this order:
-//!
-//! 1. Read the Industry design system's `:root` token block and generate,
-//!    through `postio_ui::tokens`, the data every desktop app shares:
-//!    `data/metrics.css` (spacing, radii, chip and type sizes, which
-//!    `widgets.css` imports), the spacing ramp as Rust in `data/space.rs`
-//!    (included by `postio_widgets::widgets::space`), and the reader's
-//!    palette, `reader-tokens.css`, written into `postio-ui`'s data
-//!    directory because the reader's data lives with the reader (#799). The
-//!    generated files are checked in, so a build outside the repository (or
-//!    without the `Design/` tree) still works, and `postio-ui`'s drift tests
-//!    fail if a checked-in copy has drifted from the source.
-//! 2. Compile `data/widgets.gresource.xml` into the GResource bundle that
-//!    carries the shared stylesheet and the app icon, so every app resolves
-//!    both from the binary, with nothing read from disk at run time and
-//!    nothing fetched.
+//! Generates the shared metrics, spacing and reader-token files from the design system's `:root`
+//! tokens
+//! (checked in, so a build without `Design/` works), then compiles `data/widgets.gresource.xml`.
 
 use std::path::{Path, PathBuf};
 
@@ -67,9 +52,6 @@ fn main() {
         }
     }
 
-    // The app icon lives here, laid out as an icon theme expects
-    // (`<size>/<context>/<name>`): the bundle and the packaging read the
-    // same files.
     let icons_dir = data_dir.join("icons");
     for name in [
         "apps/dev.postio.Postio.svg",
@@ -94,8 +76,6 @@ fn main() {
     );
 }
 
-/// `Design/_ds/industry-<uuid>/styles.css`, or whatever `POSTIO_DESIGN_SYSTEM`
-/// points at.
 fn design_system_path(manifest_dir: &Path) -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("POSTIO_DESIGN_SYSTEM") {
         let path = PathBuf::from(explicit);
@@ -124,8 +104,7 @@ fn parse_source(source: &Path) -> tokens::Tokens {
         .unwrap_or_else(|e| panic!("cannot read the design tokens in {}: {e}", source.display()))
 }
 
-/// Write only on a real change: rewriting would bump the mtime on every
-/// build and make `rerun-if-changed=data/` loop.
+/// Writes only on a real change: a rewrite bumps the mtime and makes `rerun-if-changed=data/` loop.
 fn write_if_changed(out: &Path, generated: &str) {
     let current = std::fs::read_to_string(out).unwrap_or_default();
     if current != generated {
@@ -137,8 +116,6 @@ fn write_if_changed(out: &Path, generated: &str) {
     }
 }
 
-/// `Design/_ds/industry-…/styles.css` — the tail of the path from the
-/// repository root, so the generated banner is checkout-independent.
 fn relative_label(source: &Path) -> String {
     let parts: Vec<String> = source
         .components()

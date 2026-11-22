@@ -1,19 +1,9 @@
-//! `[keys]` reloaded and the key map, at the boundary (specs/009-focus-macos
-//! T103, for the Mac's T104-T106).
-//!
-//! The controller decides (`postio-focus`'s `tests/keymap.rs`); these assert
-//! the Mac gets it through the session: `?` opens the key map as
-//! `FocusOpenKeyMap`, carrying the sheet `postio_ui::keymap_sheet` groups for
-//! the Mac, and closes it again; a key rebound in `config.toml` is in
-//! the sheet, the menu's bindings and the keyboard at once.
-
 use postio_core::{CommandId, Frontend, Keymap};
 use postio_ffi::{KeyMapSheetFfi, Session, SessionOptions, SurfaceKindFfi, UiEvent};
 use postio_ui::keymap_sheet;
 
 use crate::focus::heard;
 
-/// The keys a sheet shows for `command`.
 fn keys_of(sheet: &KeyMapSheetFfi, command: CommandId) -> Vec<String> {
     sheet
         .groups
@@ -125,15 +115,10 @@ async fn a_rebound_key_is_in_the_key_map_and_the_menu_at_once() {
     session.shutdown();
 }
 
-// A Mac's bindings, which the session resolves on every host
-// (`postio_ffi::PLATFORM`), so the Linux gate asks it too.
 #[test]
 fn command_w_does_not_quit_on_the_mac() {
-    // `quit`'s alternate `mod+w` is GTK's (spec 007 T216: one window, so
-    // closing it is quitting). On the Mac ⌘W closes the window in front --
-    // the message window over the list most of all -- through Window ›
-    // Close, and the key monitor runs before the menu: resolved to Quit,
-    // ⌘W in the message window ended the app.
+    // `quit`'s alternate `mod+w` is GTK's; on the Mac ⌘W closes the front window, and resolving it
+    // to Quit ended the app.
     let session = Session::open(SessionOptions::in_memory()).expect("a session");
     let command = postio_ffi::ModifiersFfi {
         control: false,

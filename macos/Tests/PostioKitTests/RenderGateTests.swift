@@ -2,8 +2,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The guard that keeps one message's body from being drawn under another's
-/// header.
 struct RenderGateTests {
     @Test func theLatestRenderIsTheCurrentOne() {
         let gate = RenderGate()
@@ -12,9 +10,8 @@ struct RenderGateTests {
     }
 
     @Test func aSupersededRenderIsStale() {
-        // The cursor moved while a body was being built. The older result must
-        // not be drawn: it belongs to a message the user has already left, and
-        // drawing it puts one message's text under another's header (#70).
+        // The older result belongs to a message the user already left; drawing it puts one
+        // message's text under another's header (#70).
         let gate = RenderGate()
         let first = gate.begin()
         let second = gate.begin()
@@ -24,9 +21,8 @@ struct RenderGateTests {
     }
 
     @Test func movingAwayAndBackStillSupersedes() {
-        // Why a counter rather than comparing message ids: away and straight
-        // back gives the same id twice, and the first render is still stale —
-        // it was built against a store state the second one may not share.
+        // A counter, not message ids: away and straight back gives the same id twice and the first
+        // render is still stale.
         let gate = RenderGate()
         let toA = gate.begin()
         _ = gate.begin()  // to B

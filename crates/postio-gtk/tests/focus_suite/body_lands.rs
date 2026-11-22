@@ -1,8 +1,3 @@
-//! A message opened before its words were downloaded (#1788): the reader
-//! draws "Downloading this message", and when the body lands it draws the
-//! words in place -- same message, same list row, same focus -- without
-//! being opened again.
-
 use gtk::prelude::*;
 use postio_core::Event;
 
@@ -14,7 +9,6 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
             return;
         }
         let fixture = Fixture::empty().await;
-        // Headers only, as sync leaves a message before the backfill.
         let (message, _) = fixture
             .file(("Ada Moreno", "ada@example.com"), "Tide gate", "", 5)
             .await;
@@ -41,10 +35,8 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
             "the plate never drew, so this proves nothing: {:?}",
             reading.body_text()
         );
-        // The dialog hands the keyboard to its content when it maps, a
-        // turn or more after the plate draws; a baseline read before that
-        // is "nothing", and the move into the dialog would pass for the body
-        // landing moving it.
+        // The dialog hands the keyboard to its content when it maps, a turn after the plate draws;
+        // a baseline read before then is "nothing".
         assert!(
             crate::settle_until(async || gtk::prelude::GtkWindowExt::focus(&window).is_some())
                 .await,
@@ -54,13 +46,11 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
         let cursor = window.cursor_row().map(|row| row.id());
         let focus = support::focus_path(&window);
 
-        // Another message's body lands: nothing on screen is about it.
         sink.emit(Event::BodyLoaded {
             account: fixture.account.id,
             message: postio_model::MessageId::new(message.get() + 1),
             sections: postio_core::event::Sections::Text,
         });
-        // This one's lands, as the engine says it.
         fixture
             .write_body(message, "The tide gate opens at nine.")
             .await;
@@ -123,7 +113,6 @@ pub fn a_body_the_server_refuses_stops_saying_it_is_downloading() {
             reading.body_text()
         );
 
-        // The engine records the refusal and says so (#1918).
         fixture.refuse_body(message).await;
         assert!(sink.emit(Event::BodyFailed {
             account: fixture.account.id,

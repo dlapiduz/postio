@@ -1,13 +1,3 @@
-//! A scripted key reaches the window the way a person's would (spec 008,
-//! research R3): through the controllers on the real focus chain, in GTK's
-//! phase order, and not through the window's handler directly.
-//!
-//! Three things a direct call cannot see:
-//!   * the key reaching the window's capture phase from inside a list;
-//!   * a dialog over the window keeping the key from it;
-//!   * the keyboard sitting on a widget that has left the window, where it
-//!     is dropped rather than delivered.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -20,10 +10,7 @@ fn chord(text: &str) -> postio_ui::keymap::Chord {
     text.parse().expect("a chord")
 }
 
-/// A window whose capture-phase controller counts `j`, over a list.
-///
-/// An `adw::Window`, because a dialog is hosted by one: over a bare
-/// `gtk::Window` it has nowhere to sit and becomes a window of its own.
+/// An `adw::Window`, because a dialog is hosted by one.
 fn window_with_list() -> (gtk::Window, gtk::ListBox, Rc<Cell<u32>>) {
     let window = adw::Window::new();
     let list = gtk::ListBox::new();
@@ -85,8 +72,6 @@ pub fn a_dialog_over_the_window_keeps_the_key_from_it() {
     });
     dialog.add_controller(controller);
     dialog.present(Some(&window));
-    // A dialog's content is not on screen until its opening animation has
-    // started, and a key cannot reach what is not.
     assert!(until(|| entry.is_mapped()), "the dialog never opened");
     entry.grab_focus();
     assert!(until(|| adw::prelude::AdwDialogExt::focus(&dialog)
@@ -112,8 +97,6 @@ pub fn a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered() {
     let row = list.row_at_index(1).expect("a row");
     row.grab_focus();
     assert!(until(|| GtkWindowExt::focus(&window).is_some()));
-    // Hiding the focused row, then removing it, leaves GTK's focus on a
-    // widget that is no longer shown: a person's keyboard is on nothing.
     row.set_visible(false);
     list.remove(&row);
     let stranded = GtkWindowExt::focus(&window).expect("GTK kept the focus on the row");
@@ -125,13 +108,6 @@ pub fn a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered() {
     assert_eq!(seen.get(), 0, "the window saw a key aimed at nothing");
 }
 
-/// `Return` in a text field activates it, as GTK's own binding does.
-///
-/// That binding is a class shortcut on `GtkText`, not a key controller on
-/// the chain, so walking controllers alone never reaches it -- and `Return`
-/// in the search field is how every search is run. The mirror is exact and
-/// only that: the field's `activate`, once, when nothing on the chain
-/// claimed the key first.
 pub fn return_in_a_text_field_activates_it() {
     if !display() {
         return;
@@ -156,7 +132,6 @@ pub fn return_in_a_text_field_activates_it() {
     );
     assert_eq!(activated.get(), 1, "the field was activated once");
 
-    // A letter is not Return: it is not mirrored into an activation.
     let _ = press(&window, &chord("j")).expect("a key");
     assert_eq!(activated.get(), 1, "only Return activates");
 }

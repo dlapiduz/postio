@@ -1,14 +1,3 @@
-//! The account detail view (#880): activating an account row opens a
-//! structured, editable form over its real settings.
-//!
-//! ADR 0005 Q6b retired `[accounts]` from `config.toml` -- an account is
-//! database state, not preference -- so this is not a `[table]` pane like
-//! `[ui]`/`[sync]`/`[saved_searches]`: there is no buffer to patch. The panel only
-//! reports what changed (`connect_account_edited`); the settings presenter
-//! is what writes it, the same split `connect_account_enabled_changed` and
-//! `connect_account_action` already use.
-//! Skips without a display. Nothing here touches the network.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -69,9 +58,6 @@ pub fn the_form_appears_under_the_list_rather_than_in_place_of_it() {
     rows(&panel)[0].emit_activate();
     pump();
     assert!(detail_visible(&panel), "selecting a row reveals its form");
-    // The drill-in is gone (#1179, Design/screens/21): the account being
-    // edited stays on screen with the others, which is what makes moving
-    // between two accounts one click rather than back-then-in.
     assert!(
         list.is_visible(),
         "the list must not be replaced by the form it reveals"
@@ -81,8 +67,6 @@ pub fn the_form_appears_under_the_list_rather_than_in_place_of_it() {
         "and the row it belongs to stays marked"
     );
 
-    // Clearing the selection is what closes it — there is nothing to come
-    // back from, so there is no back button to press.
     list.unselect_all();
     pump();
     assert!(!detail_visible(&panel));
@@ -161,7 +145,6 @@ pub fn opening_a_second_account_populates_its_own_settings_not_the_firsts() {
     window.destroy();
 }
 
-/// An account with two named signatures, one of them already the default.
 fn an_account_with_signatures(id: i64) -> Account {
     let mut account = an_account(id, "Ada", "ada@example.com");
     let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
@@ -173,11 +156,6 @@ fn an_account_with_signatures(id: i64) -> Account {
     account
 }
 
-/// #979: the row lists the account's signatures and starts on its default.
-///
-/// A dropdown over what the account has, not a path field: `Account` carries
-/// `signatures: Vec<Signature>` and `default_signature_id`, and there has
-/// never been a filesystem path for #880's mockup to have meant.
 pub fn the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default() {
     let Some((window, panel)) = new_panel() else {
         return;
@@ -215,7 +193,6 @@ pub fn the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default(
     drop(window);
 }
 
-/// T259: no default means the picker says "None", not the first signature.
 pub fn an_account_with_signatures_and_no_default_opens_on_none() {
     let Some((window, panel)) = new_panel() else {
         return;
@@ -256,15 +233,6 @@ pub fn an_account_with_signatures_and_no_default_opens_on_none() {
     drop(window);
 }
 
-/// The empty state, decided by the precedent this codebase already set.
-///
-/// `composer.rs::set_signatures` hides its picker when the account has none
-/// — *"a picker with one entry is a control that can only ever say what is
-/// already true"* — and `set_accounts` cites that rule for hiding an empty
-/// section. The same answer applies here for a sharper reason: **nothing in
-/// Postio creates a signature yet.** `Signature::new` has no caller outside
-/// seeds and tests, so a row prompting "add one" would point at a flow that
-/// does not exist, which is the failure `/issue` §4 is about.
 pub fn an_account_with_no_signatures_gets_no_picker_at_all() {
     let Some((window, panel)) = panel_with_account() else {
         return;
@@ -280,9 +248,6 @@ pub fn an_account_with_no_signatures_gets_no_picker_at_all() {
     drop(window);
 }
 
-/// Choosing one reports the account and the signature, the same way every
-/// other field in this view does — the panel never writes, because an
-/// account is database state and `settings_accounts.rs` owns the write.
 pub fn choosing_a_signature_reports_the_account_and_the_choice() {
     let Some((window, panel)) = new_panel() else {
         return;
@@ -296,7 +261,6 @@ pub fn choosing_a_signature_reports_the_account_and_the_choice() {
     let recorder = std::rc::Rc::clone(&seen);
     panel.connect_account_edited(move |id, edit| recorder.borrow_mut().push((id, edit)));
 
-    // The third entry: "Brief" (after "None" and "Work"), not the current default.
     signature_picker(&panel).set_selected(2);
     pump();
 
@@ -311,23 +275,14 @@ pub fn choosing_a_signature_reports_the_account_and_the_choice() {
     drop(window);
 }
 
-/// Opening an account must not look like editing it.
-///
-/// Filling the picker moves its selection, and a `DropDown` cannot tell a
-/// programmatic move from a person's — so without
-/// `account_detail_loading`, merely *viewing* an account would report a
-/// `DefaultSignature` edit and rewrite what it was showing. The panel has
-/// that guard already; this is the first test that holds a control to it,
-/// because every other one connects its handler after opening and so could
-/// not see the edit if it happened.
+/// Filling the picker moves its selection and a `DropDown` cannot tell that from a person's, so
+/// without `account_detail_loading` merely viewing an account would report an edit.
 pub fn opening_an_account_reports_no_edit_of_its_own() {
     let Some((window, panel)) = new_panel() else {
         return;
     };
-    // The default is the *second* signature on purpose. With the first,
-    // populating sets the selection to an index it already holds, GTK emits
-    // no notification, and this test passes whether or not the guard is
-    // there — which is a test that cannot fail.
+    // The default is the second signature on purpose: with the first, populating sets an index it
+    // already holds, GTK emits nothing, and the test passes without the guard.
     let mut account = an_account_with_signatures(1);
     account.default_signature_id = Some(account.signatures[1].id);
     panel.set_accounts(vec![account]);
@@ -438,8 +393,6 @@ fn imap_host_entry(panel: &SettingsPanel) -> gtk::Entry {
     .expect("the detail view has an IMAP host entry")
 }
 
-/// A port is typed, not stepped through 65,535 values (#1179, ADR 0029 Q3),
-/// so this is an `Entry` — there is no spin button left in this window.
 fn imap_port_field(panel: &SettingsPanel) -> gtk::Entry {
     collect(
         panel.upcast_ref::<gtk::Widget>(),
@@ -460,8 +413,6 @@ fn smtp_host_entry(panel: &SettingsPanel) -> gtk::Entry {
     .expect("the detail view has an SMTP host entry")
 }
 
-/// A port is typed, not stepped through 65,535 values (#1179, ADR 0029 Q3),
-/// so this is an `Entry` — there is no spin button left in this window.
 fn smtp_port_field(panel: &SettingsPanel) -> gtk::Entry {
     collect(
         panel.upcast_ref::<gtk::Widget>(),
@@ -472,9 +423,6 @@ fn smtp_port_field(panel: &SettingsPanel) -> gtk::Entry {
     .expect("the detail view has an SMTP port field")
 }
 
-/// Every widget in the tree carrying `class` (or, when `class` is empty,
-/// every widget). Copied from `gtk_settings_accounts.rs` rather than shared,
-/// matching that file's own reason: no dependency between the two.
 fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if class.is_empty() || widget.has_css_class(class) {
@@ -488,16 +436,7 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     found
 }
 
-// ---------------------------------------------------------------------------
-// Test connection (#980)
-// ---------------------------------------------------------------------------
-
 pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
-    // The three states the acceptance names, and the one it forbids: a
-    // spinner that stops silently. The panel does not connect to anything --
-    // the app runs the probe, exactly as it
-    // does for every other edit here -- so this drives the button and then
-    // hands the panel each answer by hand.
     let Some((window, panel)) = panel_with_account() else {
         return;
     };
@@ -510,7 +449,6 @@ pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
     panel.open_account_detail(AccountId::new(1));
     pump();
 
-    // ── pressing it asks, naming the account the view is open on ─────────
     assert!(
         panel.test_press_test_connection(),
         "the detail view has no test-connection control to press"
@@ -523,7 +461,6 @@ pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
          at a time and the handler writes to the store"
     );
 
-    // ── while it runs, it says so ────────────────────────────────────────
     panel.set_connection_status(ConnectionStatus::Testing);
     pump();
     let running = panel.test_connection_status_text();
@@ -533,7 +470,6 @@ pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
          #980 is about"
     );
 
-    // ── and then what happened, per server, in the server's own words ────
     panel.set_connection_status(ConnectionStatus::Answered {
         incoming: Ok(()),
         outgoing: Err("smtp.example.com is not listening on 587".to_owned()),
@@ -550,7 +486,6 @@ pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
         "the result has to replace the running state, not sit under it"
     );
 
-    // ── success says so plainly, and clears the failure ──────────────────
     panel.set_connection_status(ConnectionStatus::Answered {
         incoming: Ok(()),
         outgoing: Ok(()),
@@ -567,9 +502,6 @@ pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
     window.destroy();
 }
 
-// ── The Mailboxes group (ADR 0035, #966) ────────────────────────────────
-
-/// What one account's folders and role map look like coming in.
 fn folders() -> AccountMailboxes {
     AccountMailboxes {
         folders: vec![
@@ -629,16 +561,7 @@ pub fn the_mailboxes_group_offers_automatic_first_and_names_what_it_resolved_to(
     window.destroy();
 }
 
-// ---------------------------------------------------------------------------
-// Signatures (#1086)
-// ---------------------------------------------------------------------------
-
 pub fn signatures_can_be_added_edited_and_deleted_from_the_detail_view() {
-    // Everything downstream of a signature already worked -- the model, the
-    // store, the composer's picker, #979's default row -- and nothing could
-    // make one. This is the way in, so what it has to prove is that each
-    // gesture *reports* the right thing: the panel writes nothing itself,
-    // exactly as it writes no account edit itself.
     let Some((window, panel)) = panel_with_account() else {
         return;
     };
@@ -656,7 +579,6 @@ pub fn signatures_can_be_added_edited_and_deleted_from_the_detail_view() {
     panel.open_account_detail(AccountId::new(1));
     pump();
 
-    // ── an account with none offers a way to make one ────────────────────
     assert!(
         panel.test_press_add_signature(),
         "an account with no signatures has no way to get one, which is the \
@@ -677,11 +599,8 @@ pub fn signatures_can_be_added_edited_and_deleted_from_the_detail_view() {
     assert_eq!(draft.name, "Work");
     assert!(draft.text.contains("Analytical Engines"));
 
-    // ── a name already taken says so, and keeps what was typed ───────────
-    //
-    // `idx_signatures_name` refuses it, and a raw SQLite error is not an
-    // answer anybody can act on. The app reports the conflict; the editor
-    // has to stay open on the words that caused it.
+    // `idx_signatures_name` refuses a duplicate; the editor must stay open on the words that caused
+    // it.
     panel.set_signature_error(Some("A signature called “Work” already exists".to_owned()));
     pump();
     assert!(
@@ -695,7 +614,6 @@ pub fn signatures_can_be_added_edited_and_deleted_from_the_detail_view() {
         "the editor threw away what was typed, so the fix means retyping it"
     );
 
-    // ── an existing one opens for editing, and reports its id ────────────
     let mut account_with_one = an_account(1, "Ada", "ada@example.com");
     let mut work = postio_model::Signature::new("Work", "— Ada");
     work.id = SignatureId::new(7);
@@ -726,7 +644,6 @@ pub fn signatures_can_be_added_edited_and_deleted_from_the_detail_view() {
     );
     assert_eq!(draft.name, "Work weekly");
 
-    // ── and it can be deleted ────────────────────────────────────────────
     panel.open_account_detail(AccountId::new(1));
     pump();
     assert!(panel.test_open_signature(SignatureId::new(7)));
@@ -759,8 +676,6 @@ pub fn picking_a_folder_for_a_role_reports_the_account_and_the_path() {
         move |id, edit| seen.borrow_mut().push((id, edit))
     });
 
-    // "Sent Messages" is the last of the three folders, so the third entry
-    // after Automatic.
     role_dropdown(&panel, MailboxRole::Sent).set_selected(3);
     pump();
 
@@ -828,12 +743,8 @@ pub fn an_account_with_no_folders_yet_says_so_instead_of_offering_nothing() {
 }
 
 pub fn a_role_the_server_refused_to_create_says_so_and_says_why() {
-    // FR-031. "Automatic (no folder)" is true and useless: it does not say
-    // whether the folder is missing because nobody has synced yet, or because
-    // the server refused and will refuse again. The second is a thing the user
-    // can act on -- it is usually a permission -- so the server's own words
-    // belong on the row, where they are read next to the account they are
-    // about rather than in a log.
+    // The server's own words belong on the row: "Automatic (no folder)" does not say whether sync
+    // is pending or the server refused, which is usually a permission the user can act on.
     let Some((window, panel)) = panel_with_account() else {
         return;
     };
@@ -850,7 +761,6 @@ pub fn a_role_the_server_refused_to_create_says_so_and_says_why() {
         "the server's reason is what tells somebody what to fix: {automatic:?}"
     );
 
-    // And a role that simply has not resolved yet must not borrow that reason.
     let archive = entries(&role_dropdown(&panel, MailboxRole::Archive));
     let automatic = archive.first().expect("the automatic entry comes first");
     assert!(

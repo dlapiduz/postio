@@ -1,22 +1,8 @@
-//! `[keys]` — command id to key binding.
-//!
-//! The file holds *overrides only*, and so does [`KeyBindings`]: the built-in
-//! defaults live in `postio-core`'s command registry, which is the single
-//! source of truth for them. Keeping the file override-only means a round trip
-//! never rewrites bindings the user did not set.
-//!
-//! This module used to carry a `DEFAULT_BINDINGS` table of its own and claim
-//! the registry read from it. The registry never did — it carries its own
-//! literals — and the two drifted to 23 entries against 79, so everything that
-//! asked *this* crate what key a command had got `None` for 56 commands whose
-//! keys worked fine (#1227). The dependency runs core → config, for
-//! [`expand_mod`], so this crate cannot read the registry; the answer is that
-//! it must not try. Ask `postio_core::config::Keymap`, which is defaults and
-//! overrides together and knows every command.
-//!
-//! Binding syntax is deliberately untyped at this layer — the keymap resolver
-//! in a frontend parses `"a"`, `"A"`, `"ctrl+k"`, `"g s"` — so a binding for a
-//! command this version does not know is preserved rather than dropped.
+//! The file holds overrides only, as does `KeyBindings`: the defaults live in `postio-core`'s
+//! command
+//! registry, which this crate cannot read (core depends on config), so ask
+//! `postio_core::config::Keymap`
+//! (#1227). Binding syntax is untyped here, so a binding for an unknown command is preserved.
 
 use std::collections::BTreeMap;
 
@@ -25,18 +11,12 @@ use serde::{Deserialize, Serialize};
 use crate::Result;
 use crate::paths::Platform;
 
-/// Modifiers a binding may combine with a key.
-///
-/// GTK spells the last two `Super`/`Meta`; both are accepted so a binding
-/// copied out of another application's docs still works.
+/// GTK spells the last two `Super`/`Meta`; both are accepted.
 pub const MODIFIERS: &[&str] = &[
     "mod", "ctrl", "control", "cmd", "command", "alt", "shift", "super", "meta",
 ];
 
-/// Multi-character key names Postio understands, beyond single characters.
-///
-/// These are GDK key names, which is what the keymap resolver in a frontend
-/// looks up, spelled case-insensitively here because people type `escape`.
+/// GDK key names, spelled case-insensitively here because people type `escape`.
 pub const KEY_NAMES: &[&str] = &[
     "return",
     "enter",
@@ -58,7 +38,6 @@ pub const KEY_NAMES: &[&str] = &[
     "left",
     "right",
     "menu",
-    // The keypad's own keys, for zoom (spec 006): GDK's names.
     "kp_add",
     "kp_subtract",
     "kp_0",
@@ -133,9 +112,8 @@ fn chord_problem(chord: &str) -> Option<String> {
             return Some(format!("`{chord}` has an empty modifier"));
         }
         if !MODIFIERS.contains(&modifier.to_ascii_lowercase().as_str()) {
-            // Listed from `MODIFIERS` rather than typed out, because the
-            // typed-out version was already wrong: it never mentioned `cmd`,
-            // which is the spelling `expand_mod` itself writes on Apple.
+            // Listed from `MODIFIERS`: a typed-out list was already wrong (it never mentioned
+            // `cmd`).
             return Some(format!(
                 "`{modifier}` is not a modifier; use {}",
                 MODIFIERS.join(", ")
@@ -151,76 +129,38 @@ fn chord_problem(chord: &str) -> Option<String> {
     Some(format!("`{key}` is not a key name"))
 }
 
-/// The `[keys]` section: user overrides on top of the registry's built-in
-/// defaults, which live in `postio-core` (see this module's own doc, #1227).
-///
-/// ```toml
-/// [keys]
-/// archive = "a"
-/// archive = "A"
-/// undo = "u"
-/// reply = "e"
-/// thread = "t"
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct KeyBindings {
     overrides: BTreeMap<String, String>,
 }
 
-/// The primary accelerator, spelled for a platform.
-///
-/// `mod` is Postio's platform-neutral modifier: Control on freedesktop,
-/// Command on macOS. It exists because the command vocabulary is one table
-/// across both frontends (#586) while the *accelerator* genuinely differs —
-/// every `ctrl+…` default would be wrong on a Mac, where Control is a
-/// different key that means something else.
-///
-/// The two answers this replaces both fail. **Forking the table per platform**
-/// gives two vocabularies that drift, and breaks `[keys]` portability: a
-/// `config.toml` synced between a desktop and a laptop would mean different
-/// things. **Translating at render time** would draw ⌘K while the resolver
-/// still matched Control — the menu saying one thing and the keyboard doing
-/// another.
-///
-/// So it is resolved once, when the bindings are read, and everything
-/// downstream sees a concrete accelerator.
-///
-/// The same holds for the one key whose name differs: `Delete` is the Mac's
-/// "delete" key, which is BackSpace, on Apple, so a delete bound once is
-/// pressed where each platform's keyboard says delete.
-///
-/// `ctrl` stays literal on both. Somebody who writes it means Control, macOS
-/// genuinely uses it, and quietly turning their binding into Command would be
-/// Postio overriding a stated choice.
+/// `mod` is Postio's platform-neutral modifier: Control on freedesktop, Command on macOS. Resolved
+/// once,
+/// when bindings are read, so a synced `config.toml` means the same on both and menu and resolver
+/// agree (#586).
+/// `Delete` becomes BackSpace on Apple, the key a Mac labels delete. `ctrl` stays literal: whoever
+/// writes it means Control.
 pub fn expand_mod(binding: &str, platform: Platform) -> String {
     let primary = match platform {
         Platform::Apple => "cmd",
         Platform::Freedesktop => "ctrl",
     };
-    // Chord by chord: a sequence like `g mod+k` has to expand in place.
     binding
         .split(' ')
         .map(|chord| {
             chord
                 .split('+')
-                // Case-insensitive, like every other modifier in this
-                // syntax: `chord_problem` lowercases before checking
-                // `MODIFIERS` and the resolver lowercases before matching, so
-                // `Ctrl+k` already validates and resolves. Matching `mod`
-                // exactly made it the one spelling that passed validation and
-                // then failed to work.
-                //
-                // The *key* half is untouched, and must be: shift is written
-                // into the character, so lowercasing the whole chord would
-                // turn `mod+K` into a different binding.
+                // Case-insensitive like every other modifier: `chord_problem` lowercases before
+                // checking, so
+                // `Ctrl+k` already works and `Mod` must too. The key half is untouched: shift is
+                // written into the
+                // character, so lowercasing the chord would turn `mod+K` into another binding.
                 .map(|part| {
                     if part.eq_ignore_ascii_case("mod") {
                         primary
                     } else if part == "Delete" && platform == Platform::Apple {
-                        // The key every Mac labels "delete" is BackSpace;
-                        // forward delete needs fn. So the portable `Delete`
-                        // is that key there (specs/009-focus-macos M6).
+                        // The key every Mac labels "delete" is BackSpace; forward delete needs fn.
                         "BackSpace"
                     } else {
                         part
@@ -234,45 +174,30 @@ pub fn expand_mod(binding: &str, platform: Platform) -> String {
 }
 
 impl KeyBindings {
-    /// What the file set for a command, or `None` if it set nothing.
-    ///
-    /// **Not the key the command answers to.** A command with no `[keys]` entry
-    /// still has its registry default, and this cannot see it — see the module
-    /// docs. For the binding in force, ask `postio_core::config::Keymap`.
+    /// Not the key the command answers to: a command with no `[keys]` entry still has its registry
+    /// default. Ask `postio_core::config::Keymap`.
     pub fn binding(&self, command: &str) -> Option<&str> {
         self.overrides.get(command).map(String::as_str)
     }
 
-    /// Only what the config file set, in file order-independent key order.
     pub fn overrides(&self) -> &BTreeMap<String, String> {
         &self.overrides
     }
 
-    /// Mutable access, for the settings panel.
     pub fn overrides_mut(&mut self) -> &mut BTreeMap<String, String> {
         &mut self.overrides
     }
 
-    /// Whether the file set anything at all.
     pub fn is_empty(&self) -> bool {
         self.overrides.is_empty()
     }
 }
 
-/// Rewrites just `[keys]` in `text` to hold exactly `overrides`, leaving
-/// everything else in the file untouched — the settings pane's write path
-/// (#881), the same shape [`crate::patch_filters`] already established:
-/// `toml_edit`'s format-preserving document model, touching only the one
-/// table this pane owns, so a comment anywhere else survives verbatim.
-///
-/// `KeyBindings` is `#[serde(transparent)]`, so `[keys]`'s own shape is
-/// already just `command = "binding"` pairs with no wrapper table the way
-/// `[saved_searches.<key>]` needs one — but `toml_edit`'s fragment splice still
-/// needs *some* struct to serialize from, hence [`KeysOnly`].
+/// The settings pane's write path (#881): only the `[keys]` table is touched, so comments elsewhere
+/// survive.
 pub fn patch_keys(text: &str, overrides: &BTreeMap<String, String>) -> Result<String> {
-    // An empty map still serializes as a bare header (`toml` has no other
-    // spelling for a table with no keys), the dangling header this exists
-    // to avoid -- so the empty case only removes the section.
+    // An empty map serializes as a bare dangling header, so the empty case only removes the
+    // section.
     if overrides.is_empty() {
         let mut doc = crate::splice::parse(text)?;
         doc.as_table_mut().remove("keys");
@@ -281,10 +206,6 @@ pub fn patch_keys(text: &str, overrides: &BTreeMap<String, String>) -> Result<St
     crate::splice::replace_section(text, "keys", &KeysOnly { keys: overrides })
 }
 
-/// Serializes as just `[keys]`, with no other section — [`patch_keys`]'s
-/// bridge from `toml`'s serde-derived output to a fragment `toml_edit` can
-/// splice in, the same role `filters.rs`'s own `FiltersOnly` plays for
-/// `[saved_searches]`.
 #[derive(Serialize)]
 struct KeysOnly<'a> {
     keys: &'a BTreeMap<String, String>,
@@ -335,8 +256,6 @@ mod tests {
     fn unknown_commands_have_no_binding() {
         assert_eq!(KeyBindings::default().binding("teleport"), None);
     }
-
-    // -- Acceptance: the settings panel patches [keys] only (#881) ---------
 
     #[test]
     fn patch_keys_rewrites_only_the_keys_table_leaving_everything_else_verbatim() {
@@ -398,9 +317,6 @@ mod mod_token_tests {
 
     #[test]
     fn mod_is_control_on_freedesktop_and_command_on_apple() {
-        // The whole point. `mod` is "the primary accelerator", which is a
-        // different physical key on each platform — and Control on macOS is
-        // not it, it means something else there.
         assert_eq!(
             expand_mod("mod+k", Platform::Freedesktop),
             "ctrl+k".to_string()
@@ -410,9 +326,6 @@ mod mod_token_tests {
 
     #[test]
     fn delete_is_the_key_a_mac_calls_delete() {
-        // A Mac keyboard's "delete" key is BackSpace; forward delete needs
-        // fn. So the portable `Delete` means that key on Apple, and Linux
-        // keeps its own Delete key (specs/009-focus-macos M6).
         assert_eq!(expand_mod("Delete", Platform::Apple), "BackSpace");
         assert_eq!(expand_mod("Delete", Platform::Freedesktop), "Delete");
         assert_eq!(expand_mod("mod+Delete", Platform::Apple), "cmd+BackSpace");
@@ -430,12 +343,6 @@ mod mod_token_tests {
 
     #[test]
     fn the_token_is_recognised_however_it_is_capitalised() {
-        // Every other modifier in this syntax already is. `chord_problem`
-        // lowercases before checking `MODIFIERS`, and the resolver lowercases
-        // before matching, so `Ctrl+k` validates *and* resolves. Leaving `mod`
-        // exact made it the one spelling that passes validation and then fails
-        // to work -- and a user has no way to predict that `Ctrl` is fine and
-        // `Mod` is not.
         for spelling in ["mod+k", "Mod+k", "MOD+k", "mOd+k"] {
             assert_eq!(
                 expand_mod(spelling, Platform::Freedesktop),
@@ -447,10 +354,6 @@ mod mod_token_tests {
 
     #[test]
     fn only_the_modifier_is_case_insensitive_never_the_key() {
-        // Shift is written into the character (`A` is what holding shift
-        // gives), so the key half is case-*sensitive* by design. Lowercasing
-        // the whole chord to fix the modifier would silently turn `mod+K` into
-        // a different binding.
         assert_eq!(
             expand_mod("Mod+K", Platform::Freedesktop),
             "ctrl+K".to_string()
@@ -463,9 +366,6 @@ mod mod_token_tests {
 
     #[test]
     fn a_word_merely_containing_mod_is_not_the_token() {
-        // Matching on the whole `+`-separated part rather than a substring.
-        // `KEY_NAMES` has no `model` in it today, but a key or a future
-        // modifier that starts with these three letters must not be rewritten.
         assert_eq!(
             expand_mod("ctrl+model", Platform::Freedesktop),
             "ctrl+model".to_string()
@@ -474,9 +374,6 @@ mod mod_token_tests {
 
     #[test]
     fn ctrl_stays_literal_on_both() {
-        // A user who writes `ctrl` means Control. macOS genuinely uses it, and
-        // silently turning their binding into Command would be Postio
-        // overriding a stated choice.
         assert_eq!(expand_mod("ctrl+b", Platform::Apple), "ctrl+b".to_string());
         assert_eq!(
             expand_mod("ctrl+b", Platform::Freedesktop),
@@ -505,15 +402,6 @@ mod mod_token_tests {
 
     #[test]
     fn an_override_is_expanded_too() {
-        // A `config.toml` synced between a Linux desktop and a Mac has to mean
-        // the same thing on both, which is why `mod` is a *config* token
-        // rather than a rendering trick.
-        //
-        // Through `expand_mod` directly, since `KeyBindings::binding_on` has
-        // gone: with the defaults in the registry it could only restate what
-        // the file said, and nothing wanted that (#1227). `Keymap::resolve_on`
-        // is what expands a binding on the way to a surface, and it calls
-        // this.
         let written = "mod+shift+a";
         assert_eq!(expand_mod(written, Platform::Apple), "cmd+shift+a");
         assert_eq!(expand_mod(written, Platform::Freedesktop), "ctrl+shift+a");
@@ -521,8 +409,8 @@ mod mod_token_tests {
 
     #[test]
     fn the_file_keeps_what_the_user_wrote() {
-        // Round-tripping must not rewrite `mod+` into whichever platform saved
-        // it, or syncing the file between machines would fight itself.
+        // Round-tripping must not rewrite `mod+` into the saving platform's key, or syncing between
+        // machines would fight itself.
         let mut bindings = KeyBindings::default();
         bindings
             .overrides_mut()

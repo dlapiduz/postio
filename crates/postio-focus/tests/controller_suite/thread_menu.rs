@@ -1,8 +1,3 @@
-//! Thread ▾'s menu, the outline, mute and split (spec 013 US5, FR-019).
-//!
-//! Driven as a frontend would: a fake list, the keys the registry binds,
-//! and the replies a client would give.
-
 use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -18,7 +13,6 @@ use postio_ui::focus_list::{FocusRow, lone};
 use postio_ui::thread_outline::{OutlineView, ThreadMenuView};
 
 struct List {
-    /// Row `n` is message `100 + n` of thread `500 + n`, six messages.
     muted: Vec<Option<u32>>,
 }
 
@@ -66,8 +60,6 @@ fn member_id(thread: ThreadId, index: usize) -> MessageId {
     MessageId::new(thread.get() * 100 + index as i64)
 }
 
-/// Six messages, Ana's at even places and Ben's at odd ones, the last two
-/// unread.
 fn view(thread: ThreadId) -> ThreadView {
     let at = Utc.with_ymd_and_hms(2026, 9, 21, 9, 0, 0).unwrap();
     ThreadView {
@@ -119,8 +111,6 @@ fn read_asked(effects: &[Effect]) -> Option<(Ticket, ThreadId)> {
         })
 }
 
-/// Harbor (row 0) opened with Return: the window is on message 5 (index 4),
-/// the first unread, and its thread is walked.
 fn window() -> (FocusController, List) {
     let rows = list();
     let mut focus = focus();
@@ -472,10 +462,6 @@ fn move_just_this_message_opens_the_folder_picker() {
     );
 }
 
-// ---------------------------------------------------------------------
-// Spec 013 edge case: the message on screen leaves its thread.
-// ---------------------------------------------------------------------
-
 fn change(focus: &mut FocusController, rows: &List, thread: ThreadId) -> Ticket {
     let effects = focus.handle_on(
         Input::Event(postio_core::Event::ThreadChanged {
@@ -490,7 +476,6 @@ fn change(focus: &mut FocusController, rows: &List, thread: ThreadId) -> Ticket 
         .0
 }
 
-/// The thread without `gone`.
 fn without(thread: ThreadId, gone: &[i64]) -> ThreadView {
     let mut left = view(thread);
     left.members
@@ -517,8 +502,6 @@ fn read_back(
     )
 }
 
-/// A re-read that lacks the message shown, and the store saying it no longer
-/// exists: the window's answer to both together.
 fn read_back_deleted(
     focus: &mut FocusController,
     ticket: Ticket,
@@ -578,7 +561,6 @@ fn deleting_just_this_message_shows_the_next_newer_one_and_says_so() {
         read_asked(&effects).is_some(),
         "the thread is read again: {effects:?}"
     );
-    // The store's answer agrees: nothing more moves.
     let (ticket, _) = read_asked(&effects).unwrap();
     let effects = read_back(
         &mut focus,
@@ -641,7 +623,6 @@ fn the_window_closes_when_no_message_of_the_thread_is_left() {
     let ticket = change(&mut focus, &rows, thread);
     let effects = read_back_deleted(&mut focus, ticket, thread, None, &rows);
     assert!(closed(&effects, SurfaceKind::Message), "{effects:?}");
-    // An empty read says the same.
     let (mut focus, rows) = window();
     let ticket = change(&mut focus, &rows, thread);
     let gone: Vec<i64> = (0..6).map(|i| member_id(thread, i).get()).collect();
@@ -668,16 +649,10 @@ fn a_change_that_leaves_the_message_shown_keeps_it_as_a_move_does() {
     assert!(!closed(&effects, SurfaceKind::Message));
 }
 
-// ---------------------------------------------------------------------
-// Spec 013 US5: a split follows the message into its new thread.
-// ---------------------------------------------------------------------
-
-/// The new thread a split of message 5 (and the newer one after it) made.
 fn split_thread() -> ThreadId {
     ThreadId::new(600)
 }
 
-/// `view(thread)` cut to the given members, as a split thread reads.
 fn only(thread: ThreadId, from: ThreadId, keep: &[usize]) -> ThreadView {
     let mut cut = view(from);
     cut.thread = thread;
@@ -723,7 +698,6 @@ fn splitting_the_shown_message_follows_it_into_its_new_thread_and_undo_follows_i
     let shown_message = member_id(old, 4);
     let _ = focus.handle_on(Input::ThreadMenuPick(CommandId::SplitThread), &rows);
 
-    // The split lands: the old thread no longer holds the message.
     let ticket = change(&mut focus, &rows, old);
     let effects = read_back(
         &mut focus,
@@ -755,7 +729,6 @@ fn splitting_the_shown_message_follows_it_into_its_new_thread_and_undo_follows_i
         "{effects:?}"
     );
 
-    // Undo rejoins it: the new thread is gone, the old one holds it again.
     let ticket = change(&mut focus, &rows, new);
     let effects = read_back(&mut focus, ticket, new, None, &rows);
     assert!(!closed(&effects, SurfaceKind::Message), "{effects:?}");

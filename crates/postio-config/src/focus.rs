@@ -1,30 +1,3 @@
-//! `[focus]` -- Focus's own settings (spec 007 FR-160, contracts/config.md).
-//!
-//! ```toml
-//! [focus]
-//! filtering = true        # FR-119: file spam and updates away as they arrive
-//! after_unsubscribe = "archive"  # what the notice after M offers: archive | delete
-//!
-//! [focus.filter]
-//! never = ["ada@example.org", "@example.net"]   # never filtered (FR-111, FR-116)
-//!
-//! [[focus.digests]]
-//! name    = "Newsletters"
-//! match   = ["from:news@localfirst.example", "from:editor@ledger.example"]
-//! cadence = "weekly"      # daily | weekly | monthly
-//! day     = "saturday"    # weekly: a weekday; monthly: 1-28; daily: none
-//! at      = "16:00"       # local time
-//! ```
-//!
-//! The file's order is the order rules are listed and matched in, and the
-//! first rule that matches holds the message (ADR 0008 Q4). A rule's fields
-//! are read as written -- a cadence as a string, a day as whatever TOML value
-//! it is -- so a wrong value is a semantic problem [`crate::validate`]
-//! reports, and the rule is left out ([`FocusConfig::applicable_digests`]),
-//! rather than a schema error that would stop the whole file loading (ADR
-//! 0008 Q6). A rule's queries stay text: the query language parses them,
-//! not this crate.
-
 use std::fmt;
 
 use chrono::{NaiveTime, Weekday};
@@ -33,55 +6,39 @@ use serde::{Deserialize, Serialize};
 
 use crate::Extras;
 
-/// The `[focus]` section.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FocusConfig {
-    /// Whether Focus files spam and automated updates away as they arrive
-    /// (FR-119). On when Focus first opens. `false` stops filing new mail
-    /// into Filtered; what is already there stays where it is.
+    /// `false` stops filing new mail into Filtered; what is already there stays.
     #[serde(default = "crate::yes")]
     pub filtering: bool,
-    /// Where `Return` opens a message (T232): over the list, or beside it.
     #[serde(default)]
     pub reading: Reading,
-    /// What the notice after unsubscribing offers to do with the mail the
-    /// list already sent (#1952): archive it, the default, or delete it.
     #[serde(default)]
     pub after_unsubscribe: AfterUnsubscribe,
-    /// `[focus.filter]`: the user's own word on filtering.
     #[serde(default, skip_serializing_if = "FocusFilter::is_empty")]
     pub filter: FocusFilter,
-    /// `[[focus.digests]]`, in the file's order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub digests: Vec<DigestRule>,
-    /// `[focus.model]`: the person's own model, off unless present (FR-166).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<crate::model::FocusModel>,
-    /// `[focus.vault]`: the Obsidian vault Focus captures into (FR-180).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault: Option<FocusVault>,
-    /// What correspondents decided, which [`FocusConfig::with_contacts`]
-    /// added to the lists above. Never read from or written to the file.
+    /// Never read from or written to the file.
     #[serde(skip)]
     pub contacts: Vec<crate::contact_rules::ContactRule>,
-    /// Keys in `[focus]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
 }
 
-/// `[focus] reading`: where an open message is drawn (spec 007 T232).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Reading {
-    /// The message dialog, over the list. Focus's default.
     #[default]
     Dialog,
-    /// A pane beside the list, where the window is wide enough for one.
     Pane,
 }
 
 impl Reading {
-    /// The word the file spells it with.
     pub fn as_str(self) -> &'static str {
         match self {
             Reading::Dialog => "dialog",
@@ -90,21 +47,16 @@ impl Reading {
     }
 }
 
-/// `[focus] after_unsubscribe`: the one thing the notice after leaving a
-/// list offers to do with what the list already sent (#1952). Either is one
-/// undoable command; neither happens unless the notice's button is pressed.
+/// Neither happens unless the notice's button is pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AfterUnsubscribe {
-    /// Archive it. The default: nothing is lost, and it leaves the inbox.
     #[default]
     Archive,
-    /// Delete it, to the Trash.
     Delete,
 }
 
 impl AfterUnsubscribe {
-    /// The word the file spells it with.
     pub fn as_str(self) -> &'static str {
         match self {
             AfterUnsubscribe::Archive => "archive",
@@ -129,38 +81,22 @@ impl Default for FocusConfig {
     }
 }
 
-/// `[focus.vault]`: the Obsidian vault Focus captures tasks and notes into
-/// (spec 007 FR-180, FR-181, contracts/config.md).
-///
-/// ```toml
-/// [focus.vault]
-/// path       = "~/Notes"          # the vault's folder, on this computer
-/// tasks_note = "Tasks.md"         # where a task goes with no project
-/// projects   = "Projects"         # a folder of project notes
-/// ```
-///
-/// The notes are relative to the vault and stay inside it. What reads and
-/// writes the vault is `postio-vault`, handed [`FocusVault::root`] and the
-/// two notes; this crate only reads the section.
+/// The notes are relative to the vault and stay inside it. `postio-vault` reads and writes the
+/// vault;
+/// this crate only reads the section.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct FocusVault {
-    /// The vault's folder: absolute, or under `~/`.
     #[serde(default)]
     pub path: String,
-    /// Where tasks go when no project is chosen, relative to the vault.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tasks_note: Option<String>,
-    /// A folder of project notes, relative to the vault, in addition to
-    /// notes with `type: project` frontmatter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projects: Option<String>,
-    /// Keys in `[focus.vault]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
 }
 
 impl FocusVault {
-    /// The vault's folder, with a leading `~/` read as the home folder:
     /// `None` when the section names no absolute folder.
     pub fn root(&self) -> Option<std::path::PathBuf> {
         let path = self.path.trim();
@@ -171,7 +107,6 @@ impl FocusVault {
         root.is_absolute().then_some(root)
     }
 
-    /// The tasks note, relative to the vault: `Tasks.md` unless given.
     pub fn tasks_note(&self) -> std::path::PathBuf {
         self.tasks_note
             .as_deref()
@@ -181,7 +116,6 @@ impl FocusVault {
             .into()
     }
 
-    /// The projects folder, relative to the vault, when one is given.
     pub fn projects(&self) -> Option<std::path::PathBuf> {
         self.projects
             .as_deref()
@@ -191,50 +125,36 @@ impl FocusVault {
     }
 }
 
-/// Whether `path` stays inside the folder it is relative to.
 pub(crate) fn stays_inside(path: &std::path::Path) -> bool {
     use std::path::Component;
     path.components()
         .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
-/// `[focus.filter]`: what the user has told Focus about filtering.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct FocusFilter {
-    /// Senders Focus never files away: pinned (FR-111), or restored from
-    /// Filtered with `R` (FR-116). Each entry is an address
-    /// (`ada@example.org`) or a whole domain (`@example.org`); one that is
-    /// neither is reported by validation and pins nobody.
+    /// Each entry is an address or a whole domain (`@example.org`); one that is neither is reported
+    /// by
+    /// validation and pins nobody.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub never: Vec<String>,
-    /// Marker kinds the person stopped for a sender, by dismissing them
-    /// again and again (FR-108): the detector does not mark that kind in
-    /// that sender's mail any more.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_markers: Vec<StopMarker>,
-    /// Keys in `[focus.filter]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
 }
 
-/// One `[focus.filter] stop_markers` entry: a marker kind stopped for one
-/// sender (contracts/config.md). Read as written, so an entry with a field
-/// missing or wrong is validation's to report and stops nothing, rather
-/// than an error that would stop the whole file loading.
+/// Read as written, so an entry with a field missing or wrong is validation's to report and stops
+/// nothing, rather than an error that would stop the whole file loading.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StopMarker {
-    /// The sender's address.
     #[serde(default)]
     pub sender: String,
-    /// `question` or `todo`.
     #[serde(default)]
     pub kind: String,
 }
 
 impl StopMarker {
-    /// Whether the entry names a sender -- an address, or a whole domain as
-    /// `never` does -- and a kind of marker that can be dismissed: what
-    /// validation asks of it.
     pub fn is_well_formed(&self) -> bool {
         never_entry(&self.sender).is_some()
             && matches!(
@@ -243,7 +163,6 @@ impl StopMarker {
             )
     }
 
-    /// Whether it stops `kind` markers in mail from `sender`.
     fn covers(&self, sender: &EmailAddress, kind: &str) -> bool {
         if !self.kind.trim().eq_ignore_ascii_case(kind) {
             return false;
@@ -260,22 +179,17 @@ impl StopMarker {
 }
 
 impl FocusFilter {
-    /// Nothing in the section: it is not written back.
     pub fn is_empty(&self) -> bool {
         self.never.is_empty() && self.stop_markers.is_empty() && self.extras.is_empty()
     }
 
-    /// Whether the person stopped `kind` markers -- `question` or `todo` --
-    /// for mail from `sender`, in any case.
     pub fn stops(&self, sender: &EmailAddress, kind: &str) -> bool {
         self.stop_markers
             .iter()
             .any(|stop| stop.is_well_formed() && stop.covers(sender, kind))
     }
 
-    /// Whether `address` is a sender Focus never files away: named by an
-    /// entry, in any case, or at a domain an entry names whole -- that
-    /// domain only, not the ones under it.
+    /// A domain entry covers that domain only, not the ones under it.
     pub fn never_filters(&self, address: &EmailAddress) -> bool {
         let Some((_, domain)) = address.address.rsplit_once('@') else {
             return false;
@@ -288,18 +202,12 @@ impl FocusFilter {
     }
 }
 
-/// What a `[focus.filter] never` entry names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NeverEntry<'a> {
-    /// One address.
     Address(&'a str),
-    /// Every address at a domain.
     Domain(&'a str),
 }
 
-/// What `entry` names, or `None` when it is neither an address nor a whole
-/// domain: an `@` with something on each side of it, or one at the start
-/// with a domain after it, and no space or second `@` anywhere.
 pub fn never_entry(entry: &str) -> Option<NeverEntry<'_>> {
     let entry = entry.trim();
     if entry.chars().any(char::is_whitespace) || entry.matches('@').count() != 1 {
@@ -316,71 +224,37 @@ pub fn never_entry(entry: &str) -> Option<NeverEntry<'_>> {
     })
 }
 
-/// One `[[focus.digests]]` rule, as written: a digest by sender, and later
-/// by list or search (spec 007 FR-127).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct DigestRule {
-    /// What the digest is called: its row, and the rules list, name it.
     /// Unique among the rules.
     #[serde(default)]
     pub name: String,
-    /// Queries in the one query language; the rule holds a message when any
-    /// of them matches it. A list, because the language has no `OR`.
+    /// A list, because the language has no `OR`.
     #[serde(rename = "match", default)]
     pub queries: Vec<String>,
-    /// `daily`, `weekly` or `monthly`.
     #[serde(default)]
     pub cadence: String,
-    /// A weekday, or a day of the month.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub day: Option<toml::Value>,
-    /// `HH:MM`, local time.
     #[serde(default)]
     pub at: String,
-    /// Keys in the rule this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
 }
 
-/// When a digest comes due, as [`DigestRule::due`] reads it: a cadence, the
-/// day it names, and a local time. `postio_ui::schedule::next_due` turns it
-/// into the next instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Due {
-    /// Every day.
-    Daily {
-        /// The local time.
-        at: NaiveTime,
-    },
-    /// Every week.
-    Weekly {
-        /// The weekday.
-        day: Weekday,
-        /// The local time.
-        at: NaiveTime,
-    },
-    /// Every month.
-    Monthly {
-        /// The day of the month, from 1 to 28, so every month has one.
-        day: u32,
-        /// The local time.
-        at: NaiveTime,
-    },
+    Daily { at: NaiveTime },
+    Weekly { day: Weekday, at: NaiveTime },
+    Monthly { day: u32, at: NaiveTime },
 }
 
-/// Why a rule's cadence, day and time name no time. Each says what to
-/// write instead, for the validity line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DueError {
-    /// `cadence` is not `daily`, `weekly` or `monthly`.
     UnknownCadence(String),
-    /// A daily rule was given a `day`.
     DayForDaily,
-    /// A weekly rule's `day` is missing, or is not a weekday.
     NotAWeekday,
-    /// A monthly rule's `day` is missing, or is not a day from 1 to 28.
     NotADayOfTheMonth,
-    /// `at` is not a time of day.
     NotATime,
 }
 
@@ -406,9 +280,6 @@ impl fmt::Display for DueError {
 }
 
 impl DigestRule {
-    /// A rule called `name`, holding what any of `queries` matches, coming
-    /// `due`: what the rule dialog writes (spec 007 FR-120), spelled as a
-    /// person would write it by hand.
     pub fn from_due(name: impl Into<String>, queries: Vec<String>, due: Due) -> Self {
         let (cadence, day, at) = match due {
             Due::Daily { at } => ("daily", None, at),
@@ -429,9 +300,6 @@ impl DigestRule {
         }
     }
 
-    /// When this rule comes due, read from its cadence, day and time: the
-    /// one reading of them, which validation reports on and the due timer
-    /// computes from (`postio_ui::schedule::next_due`).
     pub fn due(&self) -> Result<Due, DueError> {
         let cadence = self.cadence.trim().to_ascii_lowercase();
         if !matches!(cadence.as_str(), "daily" | "weekly" | "monthly") {
@@ -463,9 +331,7 @@ impl DigestRule {
 }
 
 impl FocusConfig {
-    /// The model to ask for `feature`, and its endpoint: `None` unless
-    /// `[focus.model]` is present, usable, and has `feature`'s switch on.
-    /// Reading it connects to nothing and looks nothing up (FR-166).
+    /// Reading it connects to nothing and looks nothing up.
     pub fn model_for(
         &self,
         feature: crate::model::ModelFeature,
@@ -477,14 +343,9 @@ impl FocusConfig {
         model.usable().ok()
     }
 
-    /// The rules that apply, in the file's order, with when each comes due.
-    ///
-    /// A rule validation reports is left out and the others still apply
-    /// (ADR 0008 Q6): one with no name or no query, a blank query, a
-    /// cadence, day or time that names no time, or a name an earlier rule
-    /// already has. Whether each query reads in full in the one query
-    /// language is for the parser to say (`postio_ui::digest`), since this
-    /// crate keeps queries as text.
+    /// A rule validation reports is left out and the others still apply (ADR 0008 Q6). Whether each
+    /// query reads in full is for the parser to say (`postio_ui::digest`), since this crate keeps
+    /// queries as text.
     pub fn applicable_digests(&self) -> Vec<(&DigestRule, Due)> {
         let mut named: Vec<&str> = Vec::new();
         self.digests
@@ -506,7 +367,6 @@ impl FocusConfig {
     }
 }
 
-/// `HH:MM` on the 24-hour clock, the hour in one digit or two.
 fn time_of_day(text: &str) -> Option<NaiveTime> {
     let (hour, minute) = text.trim().split_once(':')?;
     let digits = |part: &str, widths: std::ops::RangeInclusive<usize>| {
@@ -517,7 +377,6 @@ fn time_of_day(text: &str) -> Option<NaiveTime> {
     NaiveTime::from_hms_opt(digits(hour, 1..=2)?, digits(minute, 2..=2)?, 0)
 }
 
-/// A weekday's name, as a rule spells it.
 fn weekday_name(day: Weekday) -> &'static str {
     match day {
         Weekday::Mon => "monday",
@@ -530,7 +389,6 @@ fn weekday_name(day: Weekday) -> &'static str {
     }
 }
 
-/// A weekday by its name, or its first three letters, in any case.
 fn weekday(name: &str) -> Option<Weekday> {
     let name = name.trim().to_ascii_lowercase();
     [

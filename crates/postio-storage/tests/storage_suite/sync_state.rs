@@ -1,6 +1,3 @@
-//! Per-mailbox sync state: round-trip, atomicity with the writes it describes,
-//! and what a crash mid-sync leaves behind.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
 use postio_storage::sql::bind;
@@ -14,8 +11,6 @@ fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()
 }
 
-/// Inserts a message straight into the table: this test is about the state
-/// beside the messages, not about the message repository.
 async fn insert_message(connection: &Connection, mailbox: MailboxId, uid: u32) {
     connection
         .execute(
@@ -37,10 +32,6 @@ async fn message_count(connection: &Connection, mailbox: MailboxId) -> i64 {
     .await
     .expect("count messages")
 }
-
-// ---------------------------------------------------------------------------
-// Round trip
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn sync_state_round_trips_through_the_database() {
@@ -150,10 +141,6 @@ async fn an_accounts_state_reads_in_one_query() {
         .expect("the archive");
     assert!(!archive_state.has_synced());
 }
-
-// ---------------------------------------------------------------------------
-// Observing and completing
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn observing_persists_what_the_server_reported() {
@@ -288,10 +275,6 @@ async fn resetting_takes_a_mailbox_back_to_never_synced() {
     assert_eq!(states.get(inbox).await.expect("get"), Some(reset));
 }
 
-// ---------------------------------------------------------------------------
-// Atomicity: the acceptance criteria of postio-gug
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn state_and_the_messages_it_describes_commit_together() {
     let database = test_support::memory().await;
@@ -328,8 +311,6 @@ async fn a_crash_mid_sync_leaves_resumable_state_rather_than_a_lie() {
     let mut connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // A sync that got as far as writing some messages and advancing the
-    // counters, then died before it could commit.
     let transaction = connection.transaction().await.expect("begin");
     insert_message(&transaction, inbox, 4_410).await;
     let status = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(90_210));
@@ -341,7 +322,6 @@ async fn a_crash_mid_sync_leaves_resumable_state_rather_than_a_lie() {
         .complete_full_sync(inbox, at(9))
         .await
         .expect("complete");
-    // The crash: the process goes, and its connection with it.
     drop(transaction);
     drop(connection);
     let connection = database.connect().await.expect("checkout");
@@ -367,7 +347,6 @@ async fn state_never_advances_past_a_half_written_batch() {
     let mut connection = database.connect().await.expect("checkout");
     let (_, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // First batch commits.
     let first = connection.transaction().await.expect("begin");
     insert_message(&first, inbox, 4_410).await;
     let status = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(100));
@@ -381,7 +360,6 @@ async fn state_never_advances_past_a_half_written_batch() {
         .expect("complete");
     first.commit().await.expect("commit");
 
-    // Second batch dies partway.
     let second = connection.transaction().await.expect("begin");
     insert_message(&second, inbox, 4_411).await;
     let moved_on = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(140));
@@ -389,7 +367,6 @@ async fn state_never_advances_past_a_half_written_batch() {
         .observe(inbox, &moved_on, at(10))
         .await
         .expect("observe");
-    // Dying partway takes the connection with it.
     drop(second);
     drop(connection);
     let connection = database.connect().await.expect("checkout");

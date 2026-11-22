@@ -1,39 +1,28 @@
-//! Importing and exporting contacts across the boundary (specs/011-focus-contacts
-//! S11). The Mac presents the open and save panels (the file is the user's,
-//! through a panel they used); parse, apply, write-out and every word are
-//! Rust's. An import has no undo, and never merges people behind the
-//! user's back.
+//! Importing and exporting contacts: the Mac presents the open and save panels; parsing, applying,
+//! writing and every
+//! word are Rust's. An import has no undo and never merges people.
 
 use postio_ui::contacts_io::IoSheetView;
 
 use crate::Session;
 use crate::focus_contact_edit::EditButtonFfi;
 
-/// What the panels say.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactsPanelWordsFfi {
-    /// The open panel's title.
     pub import_title: String,
-    /// Under it.
     pub import_message: String,
-    /// The save panel's title.
     pub export_title: String,
-    /// Under it.
     pub export_message: String,
-    /// The name it suggests.
     pub export_name: String,
 }
 
-/// The sheet after an import or an export.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactsIoSheetFfi {
     /// "Imported 3 contacts".
     pub title: String,
-    /// What happened.
     pub lines: Vec<String>,
     /// Review, when the import left people to look at.
     pub review: Option<EditButtonFfi>,
-    /// Done.
     pub done: EditButtonFfi,
 }
 
@@ -55,7 +44,6 @@ impl From<IoSheetView> for ContactsIoSheetFfi {
 /// An import's answer: the sheet to show, or why there is none.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactsImportResultFfi {
-    /// What was done.
     pub sheet: Option<ContactsIoSheetFfi>,
     /// Why not, in words for the screen.
     pub error: Option<String>,
@@ -65,17 +53,13 @@ pub struct ContactsImportResultFfi {
 /// sheet to show once it is written.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactsExportResultFfi {
-    /// The `.vcf`.
     pub text: Option<String>,
-    /// The sheet.
     pub sheet: Option<ContactsIoSheetFfi>,
-    /// Why not.
     pub error: Option<String>,
 }
 
 #[uniffi::export]
 impl Session {
-    /// What the open and save panels say.
     pub fn contacts_panel_words(&self) -> ContactsPanelWordsFfi {
         let words = postio_ui::contacts_io::panel_words();
         ContactsPanelWordsFfi {
@@ -98,8 +82,7 @@ impl Session {
         };
         match crate::session::blocking(client.import_contacts(bytes)) {
             Ok(summary) => {
-                // The cursor goes to the first new person, and the review
-                // looks at what the import found before anything else.
+                // The cursor goes to the first new person.
                 self.focus_driver()
                     .input(postio_focus::Input::ContactsImported {
                         made: summary.made.clone(),
@@ -119,8 +102,6 @@ impl Session {
         }
     }
 
-    /// One `.vcf` of the people the Contacts list holds, to write where the
-    /// user chose in a save panel.
     pub fn contacts_export(&self) -> ContactsExportResultFfi {
         let Some(client) = self.client() else {
             return ContactsExportResultFfi {

@@ -1,26 +1,3 @@
-//! The event hub: N producers in, N subscribers out (ADR 0013).
-//!
-//! Before this existed there was one `EventStream` per channel and exactly one
-//! reader of it, so a tracked caller and the window could not both listen —
-//! ADR 0002 ended on that constraint and ADR 0010 then decided MCP is a second
-//! frontend beside the running window, which is the configuration the
-//! constraint forbids.
-//!
-//! What these tests hold to, in ADR 0013's own terms:
-//!
-//! - **Delivery is total per subscriber** (Q2). `async_channel`'s receiver is
-//!   work-stealing, so the wrong shape here does not drop events visibly — it
-//!   splits them between subscribers, and each one holds state that is
-//!   silently wrong. Every fan-out test therefore asserts on *both* streams,
-//!   never on one and a count.
-//! - **A late subscriber starts at now** (Q4). The hub keeps no history.
-//! - **The hub filters nothing** (Q3); correlation stays a per-subscriber
-//!   question, answered with `is_from`.
-//! - **Unbounded, with a watermark that warns by label** (Q2).
-//!
-//! Not `#[tokio::test]`, for the reason `bridge.rs` gives: the frontend drives
-//! this from a plain thread that owns no runtime.
-
 use std::time::{Duration, Instant};
 
 use postio_core::bridge::{Bridge, EventHub, EventSink, EventStream, handler_fn};
@@ -28,9 +5,6 @@ use postio_core::dispatch::Dispatcher;
 use postio_core::invocation::InvocationOutcome;
 use postio_core::{Command, CommandId, Event, MessageTarget};
 
-/// A bus whose `Archive` reports itself, so a tracked send has something to
-/// be correlated with. `InvocationFinished` is the [`Dispatcher`]'s doing,
-/// not a bare handler's — which is why this is not `echo()`.
 fn archiving_bus() -> Dispatcher {
     Dispatcher::builder()
         .on(CommandId::Archive, |invocation| async move {
@@ -73,7 +47,6 @@ fn completed(description: &str) -> Event {
     }
 }
 
-/// Drain everything queued right now, as the window's loop would.
 fn drained(events: &EventStream) -> Vec<String> {
     let mut seen = Vec::new();
     while let Some(event) = events.try_next() {
@@ -92,8 +65,8 @@ fn every_subscriber_receives_every_event() {
     sink.emit(completed("archive"));
     sink.emit(completed("undo"));
 
-    // Both, in full. A work-stealing receiver would split these two events
-    // one each and every assertion on a single stream would still pass.
+    // Both in full: a work-stealing receiver would split the events and any single-stream assertion
+    // would still pass.
     assert_eq!(drained(&window), ["archive", "undo"]);
     assert_eq!(drained(&mcp), ["archive", "undo"]);
 }
@@ -104,7 +77,6 @@ fn several_producers_all_reach_every_subscriber() {
     let window = hub.subscribe("window");
     let mcp = hub.subscribe("mcp");
 
-    // The application's two: the bus's handlers and the sync engine.
     let bus = hub.sink();
     let engine = hub.sink();
 
@@ -143,9 +115,6 @@ fn a_late_subscriber_starts_at_now() {
     let late = hub.subscribe("late");
     sink.emit(completed("after"));
 
-    // ADR 0013 Q4: the hub keeps no history, so the store is where the past
-    // lives. A replay buffer here would be a second unbounded copy of recent
-    // mailbox activity that no consumer asked for.
     assert_eq!(drained(&early), ["before", "after"]);
     assert_eq!(drained(&late), ["after"]);
 }
@@ -159,14 +128,9 @@ fn a_dropped_subscription_stops_costing_anything() {
 
     drop(dropped);
     sink.emit(completed("archive"));
-    // Pruning happens under the write lock a subscribe already takes, so the
-    // dead queue is gone by the time a third consumer joins.
     let _third = hub.subscribe("third");
 
     assert_eq!(hub.subscribers(), 2, "{hub:?}");
-    // The count alone would pass on a table that still holds the dead queue,
-    // because it filters. `Debug` is the table itself -- labels and depths,
-    // which is also the audit hook ADR 0013 Q3 asks the label to be.
     assert!(
         !format!("{hub:?}").contains("dropped"),
         "the dead queue is still on the emit path: {hub:?}"
@@ -200,7 +164,6 @@ fn origin_tagging_survives_the_hub() {
 
     let invocation = postio_core::invocation::InvocationId::next();
     let tagged = hub.sink().with_origin(invocation);
-    // A spawned task's sink, kept long after the handler returned.
     let inherited = tagged.clone();
     hub.sink().emit(completed("untagged"));
     inherited.emit(completed("tagged"));
@@ -216,7 +179,6 @@ fn origin_tagging_survives_the_hub() {
     }
 }
 
-/// A writer every `tracing` line lands in, so a test can read them back.
 use postio_test_support::logs::Captured;
 
 #[test]
@@ -228,8 +190,6 @@ fn a_subscriber_that_never_drains_becomes_a_line_in_the_log() {
         .with_ansi(false)
         .finish();
 
-    // Thread-local: every emit below happens on this thread, so nothing needs
-    // the global default, and two test binaries cannot race over it.
     tracing::subscriber::with_default(subscriber, || {
         let hub = EventHub::new();
         let draining = hub.subscribe("window");
@@ -238,9 +198,6 @@ fn a_subscriber_that_never_drains_becomes_a_line_in_the_log() {
 
         for n in 0..(postio_core::bridge::SUBSCRIBER_DEPTH_WATERMARK + 8) {
             sink.emit(completed(&n.to_string()));
-            // The one that is doing its job stays shallow, and must not be
-            // named: a warning that fires for a healthy subscriber is a
-            // warning nobody reads.
             let _ = draining.try_next();
         }
     });
@@ -259,8 +216,7 @@ fn a_subscriber_that_never_drains_becomes_a_line_in_the_log() {
         1,
         "the watermark warned more than once for one crossing: {log:?}"
     );
-    // Never content, at any level -- the same rule the rest of the tree lives
-    // by. Only a label and counts may appear.
+    // Never content, at any level: only a label and counts may appear.
     assert!(
         !log.contains("archive") && !log.contains("ActionCompleted"),
         "the warning carried event content: {log:?}"
@@ -278,8 +234,6 @@ fn a_bridge_can_be_built_on_a_hub_the_caller_owns() {
         .build_with_events(archiving_bus(), hub.sink())
         .expect("the runtime starts");
 
-    // The engine's half of the application: not a command handler, so it
-    // holds a sink of its own rather than being handed one.
     let engine: EventSink = hub.sink();
     engine.emit(completed("mailbox-changed"));
 
@@ -291,8 +245,6 @@ fn a_bridge_can_be_built_on_a_hub_the_caller_owns() {
         .expect("running");
     bridge.shutdown();
 
-    // Acceptance: a tracked send's InvocationFinished reaches *every*
-    // subscriber, and each one can filter on its own.
     for events in [&window, &caller] {
         let mut finished = None;
         let mut saw_engine = false;
@@ -307,8 +259,6 @@ fn a_bridge_can_be_built_on_a_hub_the_caller_owns() {
                     finished = Some(outcome.clone());
                 }
                 Event::ActionCompleted { description, .. } if description == "mailbox-changed" => {
-                    // The engine's event carries no origin, so a caller
-                    // filtering on its own invocation correctly ignores it.
                     assert!(!envelope.is_from(invocation));
                     saw_engine = true;
                 }
@@ -325,9 +275,6 @@ fn a_bridge_can_be_built_on_a_hub_the_caller_owns() {
 
 #[test]
 fn bridge_new_still_hands_back_one_working_stream() {
-    // The whole compatibility claim of ADR 0013 in one test: `Bridge::new`
-    // keeps its signature and its behaviour, hub or no hub, so the classic app and
-    // every existing test compile and pass unchanged.
     let (bridge, events) = Bridge::new(echo()).expect("the runtime starts");
     bridge.commands().send(Command::Refresh).expect("running");
     bridge.shutdown();

@@ -1,24 +1,8 @@
-//! Configuration, as the runtime consumes it.
+//! Configuration as the runtime consumes it: `config.toml` is the settings, and core resolves
+//! `[keys]` into the `Keymap`.
 //!
-//! `config.toml` *is* the settings — there is no second store, the settings
-//! panel edits the same file, and the design promises *applied live · nothing
-//! to save*. Core owns the live handle, resolves `[keys]` onto the command
-//! registry to build the [`Keymap`] every surface reads, and re-emits what
-//! changed as events.
-//!
-//! # A broken file is not a broken application
-//!
-//! `postio-config` validates off the watcher thread and keeps the last good
-//! configuration in force when the file will not load. Core inherits that: a
-//! rejected reload leaves the keymap exactly as it was and reports the problem
-//! as an [`Event::Error`], so the user still has working keys to fix the file
-//! with — including `Ctrl+E`.
-//!
-//! # Only what changed
-//!
-//! Reapplying everything on every keystroke would be visibly slow, so a reload
-//! reports a [`ConfigChange`] naming the sections that actually moved, and a
-//! save that changes nothing anybody is waiting on emits nothing at all.
+//! A rejected reload keeps the last good keymap and reports an `Event::Error`, so the user can
+//! still fix the file.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -35,93 +19,45 @@ use postio_config::{Config, ConfigError, KeyBindings, keys};
 use crate::bridge::EventSink;
 use crate::{ActionId, Context, ContextSet, Event, registry};
 
-/// Which sections of the configuration moved.
-///
-/// The diff itself lives in `postio_config::change` — pure comparison logic
-/// belongs with the schema it compares, not with the runtime that reacts to
-/// it. This alias keeps the name `postio_core` consumers already use.
 pub type ConfigChange = ConfigChanged;
 
-/// How many keymaps this process has resolved from the registry.
-///
-/// Read through [`crate::test_support::keymap_resolutions`], which is where the
-/// reason for counting rather than timing is written down.
 pub(crate) static RESOLUTIONS: AtomicU64 = AtomicU64::new(0);
 
-/// The bindings in force: the registry's defaults with `[keys]` applied.
-///
-/// The keymap resolver, the `Ctrl+K` palette, the `?` cheat sheet and the key
-/// hints on the focused row all read this, so a rebind reaches every surface at
-/// once. Bindings stay untyped strings here — parsing `"ctrl+k"` into a GDK
-/// accelerator is the frontend's job, and core must not learn about GDK.
+/// Bindings stay untyped strings: parsing them into GDK accelerators is the frontend's job.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Keymap {
     bindings: BTreeMap<ActionId, Vec<String>>,
     problems: Vec<String>,
-    /// The platform this was resolved for, so [`offers`](Self::offers) can
-    /// answer for it. `None` for an empty keymap, which offers everything.
+    /// `None` for an empty keymap, which offers everything.
     platform: Option<Platform>,
 }
 
 impl Keymap {
-    /// The platform this was resolved for; `None` for an empty keymap.
     pub fn platform(&self) -> Option<Platform> {
         self.platform
     }
 
-    /// Resolve `[keys]` onto the command registry.
-    ///
-    /// An override that cannot be used — an unusable binding, a command this
-    /// build does not know, a key already taken in the same context — is a
-    /// warning and never a failure: the command keeps its default binding, or
-    /// loses its key and stays reachable from the palette.
+    /// An unusable override is a warning, never a failure: the command keeps its default or stays
+    /// reachable from the palette.
     pub fn resolve(overrides: &KeyBindings) -> Self {
         Self::resolve_on(overrides, Platform::host())
     }
 
-    /// [`resolve`](Self::resolve) for an app that reads keys from a
-    /// terminal.
-    ///
-    /// A terminal delivers Ctrl and never ⌘, whatever it runs on, so `mod`
-    /// is Ctrl there on a Mac as on Linux. Resolving for the host instead
-    /// bound the terminal's `mod` keys to ⌘ on a Mac, where no key press
-    /// could reach them.
+    /// A terminal delivers Ctrl, never Cmd, so `mod` is Ctrl there even on a Mac.
     pub fn for_terminal(overrides: &KeyBindings) -> Self {
         Self::resolve_on(overrides, Platform::Freedesktop)
     }
 
-    /// The registry's own bindings, resolved once for the whole process.
-    ///
-    /// This is what a widget wants when it has no config yet and still has to
-    /// draw a correct key hint on its first frame. Resolution is quadratic in
-    /// the number of commands — every claim asks every binding already made
-    /// whether the key is taken, and each of those questions goes back to the
-    /// registry for the holder's contexts — so paying for it per widget is
-    /// only invisible while the widget is rare. `MessageRowView` is not: GTK
-    /// builds one per row it realises, and that was most of the second a
-    /// folder switch spent rebuilding the list (#1216).
-    ///
-    /// Cacheable because both inputs are fixed for the life of the process:
-    /// the registry is static and `Platform::host()` cannot change. Anything
-    /// reading `[keys]` must still go through [`resolve`](Self::resolve) —
-    /// this is the *unconfigured* answer, not the live one.
+    /// Cached because resolution is quadratic in the number of commands and `MessageRowView` needs
+    /// it per realised row (#1216). The unconfigured answer: anything reading `[keys]` uses
+    /// `resolve`.
     pub fn defaults() -> &'static Self {
         static DEFAULTS: OnceLock<Keymap> = OnceLock::new();
         DEFAULTS.get_or_init(|| Self::resolve(&KeyBindings::default()))
     }
 
-    /// [`resolve`](Self::resolve) for a named platform.
-    ///
-    /// `mod` is expanded here, once, so everything downstream — the resolver,
-    /// the conflict check, the cheat sheet, the key hints — sees a concrete
-    /// accelerator and no layer below needs to know the word. Conflict
-    /// detection in particular depends on it: `mod+k` and `ctrl+k` are the
-    /// same key on Linux, and comparing the unexpanded strings would let both
-    /// be claimed.
-    ///
-    /// Taking the platform as a parameter rather than reading a `cfg` is what
-    /// lets either host assert both answers, the same discipline the path
-    /// resolution uses.
+    /// `mod` is expanded here so lower layers see a concrete accelerator; `mod+k` and `ctrl+k` must
+    /// conflict on Linux.
     pub fn resolve_on(overrides: &KeyBindings, platform: Platform) -> Self {
         RESOLUTIONS.fetch_add(1, Ordering::Relaxed);
         let mut keymap = Keymap {
@@ -131,32 +67,22 @@ impl Keymap {
         for spec in registry::every_action() {
             keymap.bindings.insert(spec.id, Vec::new());
         }
-        // Every id `[keys]` names that parses, whether or not a command exists
-        // for it yet. This is what makes a binding written before its
-        // extension loads survive: the id is bound now and starts reaching a
-        // command the moment one registers. See the `ActionId` module note.
+        // Bind every parseable id even before its command exists, so a binding written before its
+        // extension loads survives.
         for command in overrides.overrides().keys() {
             if let Ok(action) = command.parse::<ActionId>() {
                 keymap.bindings.entry(action).or_default();
             }
         }
 
-        // Two passes, because an explicit `[keys]` entry outranks a built-in
-        // default. One pass would give a contested key to whichever command
-        // the registry happens to list first, so adding a command with a
-        // popular default could quietly take a key the user had already asked
-        // for — and which of the two won would depend on the order of a table
-        // they have never seen. A default is a suggestion; an override is not.
-        //
-        // Within each pass, registry order decides, so the result is
-        // deterministic rather than dependent on map iteration order.
+        // Two passes: an explicit `[keys]` entry outranks a built-in default, else registry order
+        // would decide a contested key. Within each pass, registry order decides.
         for spec in keymap.known_actions() {
             let Some(binding) = overrides.overrides().get(spec.as_str()).cloned() else {
                 continue;
             };
             if !registry::offered_on(spec, platform) {
-                // Said rather than dropped: a `[keys]` line that does nothing
-                // on this platform is one the user will press and be ignored by.
+                // Said, not dropped: the user would press the key and be ignored.
                 keymap.problems.push(format!(
                     "`{spec}` is not offered on this platform, so `{binding}` does nothing here"
                 ));
@@ -182,15 +108,14 @@ impl Keymap {
         }
 
         for spec in registry::every_action() {
-            // A command this platform does not offer gets no key on it: `g a`
-            // bound to an account strip that is not there would still claim
-            // the key, and hold `g` open as a prefix for nothing.
+            // No key for a command this platform does not offer: it would claim the key and hold
+            // `g`
+            // open as a prefix.
             if keymap.binding(spec.id).is_some() || !registry::offered_on(spec.id, platform) {
                 continue;
             }
-            // Nor does a default the platform keeps for another command:
-            // Linux's `alt+BackSpace` is the terminal's back to words, not
-            // the Mac's forget-recent (`registry::binding_offered_on`).
+            // Nor for a default the platform keeps for another command
+            // (`registry::binding_offered_on`).
             let Some(default) = spec
                 .default_binding
                 .filter(|binding| registry::binding_offered_on(spec.id, binding, platform))
@@ -199,9 +124,8 @@ impl Keymap {
                 continue;
             };
             if let Some(taken) = keymap.holder_of(&default, spec.contexts) {
-                // Palette-only rather than shadowing someone else's key. Said
-                // out loud, because a command that quietly lost its key is a
-                // command the user will press and be ignored by.
+                // Palette-only rather than shadowing another key; said out loud so the loss is
+                // visible.
                 keymap.problems.push(format!(
                     "`{default}` is already bound to `{taken}`, so `{}` has no key \
                      and stays reachable from the palette",
@@ -212,10 +136,8 @@ impl Keymap {
             keymap.claim(spec.id, default);
         }
 
-        // Alternates last, and only where nothing else wanted them: a second
-        // way to reach a command must never cost another command its first.
-        // A command the platform does not offer gets no alternate either, for
-        // the reason it gets no default above.
+        // Alternates last, only where nothing else wanted them: a second way must not cost another
+        // command its first.
         for spec in registry::every_action() {
             if !registry::offered_on(spec.id, platform) {
                 continue;
@@ -232,10 +154,8 @@ impl Keymap {
         }
 
         for command in overrides.overrides().keys() {
-            // An id that does not parse at all is worth reporting. An
-            // extension id that parses but has not registered yet is not: it
-            // is the expected state at startup, and warning about it would
-            // train the user to ignore the validity line.
+            // An id that does not parse is reported; an unregistered extension id is the expected
+            // startup state.
             if command.parse::<ActionId>().is_err() {
                 // Not fatal on purpose: a binding written by a newer Postio
                 // survives a downgrade and an upgrade round trip.
@@ -248,34 +168,20 @@ impl Keymap {
         keymap
     }
 
-    /// Every action the keymap holds a row for, in resolution order.
-    ///
-    /// Registered commands first in registry order, then any id `[keys]`
-    /// named that nothing has registered — the latter cannot be ordered by a
-    /// registry that has never seen them.
+    /// Registered commands first in registry order, then ids `[keys]` named that nothing
+    /// registered.
     fn known_actions(&self) -> Vec<ActionId> {
         self.bindings.keys().copied().collect()
     }
 
-    /// The contexts an action applies in.
-    ///
-    /// [`ContextSet::ANY`] for an extension id nothing has registered yet.
-    /// Conservative on purpose and in the user's favour: an explicit `[keys]`
-    /// entry outranks a built-in default (see the two-pass note above), so an
-    /// id whose contexts are not yet known must be assumed to overlap rather
-    /// than assumed harmless — otherwise a built-in would quietly claim the
-    /// same key and the user's binding would be the one that lost.
+    /// `ContextSet::ANY` for an unregistered extension id: assume overlap, so a built-in cannot
+    /// claim the key a user binding asked for.
     fn contexts_of(&self, action: ActionId) -> ContextSet {
         registry::spec(action)
             .map(|spec| spec.contexts)
             .unwrap_or(ContextSet::ANY)
     }
 
-    /// The primary binding for a command, if it has one.
-    ///
-    /// Takes anything that names an action, so the many call sites that pass a
-    /// built-in `CommandId` read exactly as they did before the vocabulary
-    /// widened.
     pub fn binding(&self, command: impl Into<ActionId>) -> Option<&str> {
         self.bindings
             .get(&command.into())
@@ -283,7 +189,6 @@ impl Keymap {
             .map(String::as_str)
     }
 
-    /// Every binding for a command, the primary first.
     pub fn bindings(&self, command: impl Into<ActionId>) -> &[String] {
         self.bindings
             .get(&command.into())
@@ -291,7 +196,6 @@ impl Keymap {
             .unwrap_or_default()
     }
 
-    /// The command a key reaches in a context, if any.
     pub fn command_for(&self, context: Context, binding: &str) -> Option<ActionId> {
         registry::reachable(context)
             .find(|spec| {
@@ -302,23 +206,17 @@ impl Keymap {
             .map(|spec| spec.id)
     }
 
-    /// Whether the platform this was resolved for offers `action` at all.
-    ///
-    /// What the palette and the cheat sheet filter on, so a command with no
-    /// surface on this platform is not listed there either -- see
-    /// [`registry::offered_on`].
+    /// What the palette and cheat sheet filter on.
     pub fn offers(&self, action: impl Into<ActionId>) -> bool {
         let action = action.into();
         self.platform
             .is_none_or(|platform| registry::offered_on(action, platform))
     }
 
-    /// What could not be honoured, phrased for the settings validity line.
     pub fn problems(&self) -> &[String] {
         &self.problems
     }
 
-    /// Give `command` a binding, after the caller has checked it is free.
     fn claim(&mut self, command: ActionId, binding: String) {
         self.bindings.entry(command).or_default().push(binding);
     }
@@ -332,26 +230,19 @@ impl Keymap {
     }
 }
 
-/// What a reload did, and what the UI should be told about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigUpdate {
-    /// Whether the file was applied, identical or rejected.
     pub reload: Reload,
-    /// The sections that moved. Empty when nothing was applied.
     pub changed: ConfigChange,
-    /// The events to emit — a reload naming the change, or an error.
     pub events: Vec<Event>,
 }
 
 impl ConfigUpdate {
-    /// Whether a new configuration took effect.
     pub fn applied(&self) -> bool {
         self.reload == Reload::Applied
     }
 }
 
-/// The configuration handle core owns: the file in force, plus the keymap
-/// derived from it.
 #[derive(Debug, Clone)]
 pub struct ConfigService {
     live: LiveConfig,
@@ -359,50 +250,41 @@ pub struct ConfigService {
 }
 
 impl ConfigService {
-    /// Start from defaults without touching the disk.
     pub fn new(path: &Path) -> Self {
         let live = LiveConfig::new(path);
         let keymap = Keymap::resolve(&live.config().keys);
         ConfigService { live, keymap }
     }
 
-    /// Load `path`. A missing or broken file yields working defaults — first
-    /// run needs nothing on disk, and a broken file still leaves an app to fix
-    /// it in.
+    /// A missing or broken file yields working defaults.
     pub fn load(path: &Path) -> Self {
         let live = LiveConfig::load(path);
         let keymap = Keymap::resolve(&live.config().keys);
         ConfigService { live, keymap }
     }
 
-    /// The configuration in force.
     pub fn config(&self) -> &Config {
         self.live.config()
     }
 
-    /// The bindings in force.
     pub fn keymap(&self) -> &Keymap {
         &self.keymap
     }
 
-    /// The status of the file as last read — what the validity line shows.
     pub fn status(&self) -> &Validation {
         self.live.status()
     }
 
-    /// The file being watched.
     pub fn path(&self) -> &Path {
         self.live.path()
     }
 
-    /// Re-read the file from disk. Prefer [`apply`](Self::apply) with a
-    /// [`Checked`] from the watcher: parsing belongs off the UI thread.
+    /// Prefer `apply` with the watcher's `Checked`: parsing belongs off the UI thread.
     pub fn reload(&mut self) -> ConfigUpdate {
         let checked = postio_config::validate::check_path(self.live.path());
         self.apply(checked)
     }
 
-    /// Adopt a configuration the watcher has already parsed and validated.
     pub fn apply(&mut self, checked: Checked) -> ConfigUpdate {
         let before = self.live.config().clone();
         let reload = self.live.apply(checked);
@@ -415,8 +297,6 @@ impl ConfigService {
 
         match reload {
             Reload::Rejected => {
-                // The last good configuration — and so the last good keymap —
-                // stays exactly as it is.
                 let message = self
                     .live
                     .status()
@@ -454,35 +334,27 @@ impl ConfigService {
     }
 }
 
-/// The configuration as the runtime shares it: one owner, many readers.
-///
-/// The watcher parses on its own thread and applies through this handle, so the
-/// only work the UI thread does is repaint from the events that come back.
+/// The watcher parses on its own thread and applies through this handle.
 #[derive(Debug, Clone)]
 pub struct SharedConfig(Arc<Mutex<ConfigService>>);
 
 impl SharedConfig {
-    /// Share a handle.
     pub fn new(service: ConfigService) -> Self {
         SharedConfig(Arc::new(Mutex::new(service)))
     }
 
-    /// Load `path` and share the result.
     pub fn load(path: &Path) -> Self {
         SharedConfig::new(ConfigService::load(path))
     }
 
-    /// Read something out of the configuration in force.
     pub fn read<R>(&self, with: impl FnOnce(&ConfigService) -> R) -> R {
         with(&self.lock())
     }
 
-    /// A copy of the bindings, for a consumer that must not hold the lock.
     pub fn keymap(&self) -> Keymap {
         self.lock().keymap.clone()
     }
 
-    /// Apply a parsed configuration and emit what the UI needs to know.
     pub fn apply(&self, checked: Checked, events: &EventSink) -> ConfigUpdate {
         let update = self.lock().apply(checked);
         for event in &update.events {
@@ -491,17 +363,11 @@ impl SharedConfig {
         update
     }
 
-    /// Watch the file and apply saves as they land.
-    ///
-    /// The watch covers the containing directory, so it survives the
-    /// write-to-temp-and-rename dance every careful editor does; parsing and
-    /// validating happen on the watcher's thread. Dropping the returned
-    /// watcher stops it.
+    /// Watches the containing directory so it survives an editor's write-to-temp-and-rename.
     pub fn watch(&self, events: EventSink) -> Result<ConfigWatcher, ConfigError> {
         self.watch_with(WatchOptions::default(), events)
     }
 
-    /// Watch the file, choosing the debounce.
     pub fn watch_with(
         &self,
         options: WatchOptions,
@@ -545,9 +411,6 @@ mod tests {
 
     #[test]
     fn a_command_the_platform_does_not_offer_has_no_key_there() {
-        // `g a` cycles an account strip the Mac's sidebar does not have. Left
-        // bound, it would still claim the key -- and hold `g` open as a prefix
-        // for a command nothing answers.
         for platform in [Platform::Freedesktop, Platform::Apple] {
             let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
             let offered = registry::offered_on(ActionId::Builtin(CommandId::NextScope), platform);
@@ -590,13 +453,8 @@ mod tests {
         let keymap = Keymap::resolve(&KeyBindings::default());
         for spec in registry::all() {
             if !registry::offered_on(ActionId::Builtin(spec.id), Platform::host()) {
-                // Not offered here, so deliberately unbound; see
-                // `a_command_the_platform_does_not_offer_has_no_key_there`.
                 continue;
             }
-            // The first key the platform lets it take: its default, but for
-            // a default kept for another command there
-            // (`registry::binding_offered_on`).
             let first = spec
                 .bindings()
                 .find(|binding| {

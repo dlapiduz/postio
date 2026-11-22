@@ -1,5 +1,3 @@
-//! The sender's layout, as they built it (spec 006 US2).
-
 use crate::support::{LIGHT, render, request, request_for};
 use postio_render::Rgb;
 
@@ -8,8 +6,6 @@ fn x_of(doc: &postio_render::RenderedDocument, text: &str) -> f64 {
     doc.text.rects(range)[0].x0
 }
 
-/// FR-008: `@media` queries see the pane's width. At 500px the two columns
-/// stack; at 800px they sit side by side.
 #[test]
 fn media_queries_see_the_pane_width() {
     let at = |width: f64| {
@@ -29,7 +25,6 @@ fn media_queries_see_the_pane_width() {
     );
 }
 
-/// FR-010: nothing in `<head>` is content.
 #[test]
 fn the_head_is_not_content() {
     let doc = render(&request_for(
@@ -47,8 +42,6 @@ fn the_head_is_not_content() {
     assert!(doc.text.text.contains("Hello."));
 }
 
-/// #1545: a sender's classes reach the page. The `.cta` rule's background
-/// is painted behind the link it styles.
 #[test]
 fn a_senders_class_rule_is_painted() {
     let doc = render(&request("html-class-styled", LIGHT).expect("a body"));
@@ -67,9 +60,7 @@ fn a_senders_class_rule_is_painted() {
     );
 }
 
-/// FR-026: an image arriving moves nothing. The same message with its
-/// remote images missing and then present has the same message box and
-/// the same place for every line of text.
+/// An image arriving moves nothing: the message box and every line's place stay the same.
 #[test]
 fn remote_images_arriving_move_nothing() {
     use postio_body::RemoteImages;

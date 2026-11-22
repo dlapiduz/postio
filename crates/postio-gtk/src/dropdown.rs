@@ -1,22 +1,9 @@
-//! The search dropdown (spec 010 step 2, screens 01-05): the bar's search
-//! half on a frontend with a results view.
-//!
-//! It draws [`DropdownView`] and decides nothing: every word is the
-//! controller's, every keycap the keymap's, as on the Mac
-//! (`macos/Sources/PostioKit/DropdownView.swift`). Sections have a bold
-//! secondary title and a tertiary note; rows sit 38 tall, inset from the
-//! panel's edge; the saved searches and "Narrow to" are pills; the cheat
-//! sheet is a grid with one example lowered live; a footer of keys carries
-//! the count on its right.
-//!
-//! The arrows' highlight is the toolkit's selection, kept by token: a
-//! redraw (the passages landing) leaves it where a person moved it, a
-//! run's `select` moves it, and otherwise the view's default `highlight`
-//! takes it. Where it rests is said back through
-//! [`Dropdown::connect_highlighted`], so the controller's forget and
-//! exclude keys act on the row a person sees.
-//!
-//! Matched words get the find highlight (FR-005), never the accent.
+//! The search dropdown: draws `DropdownView` and decides nothing; every word is the controller's,
+//! every keycap the keymap's.
+//! The arrows' highlight is the toolkit's selection, kept by token: a redraw leaves it where a
+//! person moved it, a run's `select` moves it,
+//! otherwise the view's default `highlight` takes it. Matched words get the find highlight, never
+//! the accent.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -32,43 +19,33 @@ use postio_ui::search_view as words;
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
-/// The find highlight (FR-005), light and dark: the design's yellow.
 pub(crate) const FIND_LIGHT: (&str, &str) = ("#ffcc00", "38%");
 pub(crate) const FIND_DARK: (&str, &str) = ("#ffd60a", "28%");
 
-/// Columns of the cheat sheet (design §2).
 const SHEET_COLUMNS: i32 = 4;
-/// The folder column's width, and the right column's.
 const FOLDER_WIDTH: i32 = 100;
 const RIGHT_WIDTH: i32 = 110;
 
 type TokenHandler = Rc<dyn Fn(u64)>;
 
-/// The dropdown.
 pub struct Dropdown {
     root: gtk::Box,
     understood: gtk::Box,
     list: gtk::ListBox,
     hints: gtk::Box,
     count: gtk::Label,
-    /// The token of each row of `list`; `None` for a row that runs nothing.
     tokens: RefCell<Vec<Option<u64>>>,
-    /// The view drawn now.
     view: RefCell<Option<DropdownView>>,
-    /// Set while a redraw moves the selection, so it is not said back.
     quiet: Cell<bool>,
-    /// The highlight is where a person or a run put it, not the view's
-    /// default: a redraw keeps it there. A default is taken again from
-    /// each view, as rows arrive above it.
+    /// A redraw keeps a highlight a person or a run placed; a default is taken again from each
+    /// view, as rows arrive above it.
     placed: Cell<bool>,
     run: RefCell<Option<TokenHandler>>,
     highlighted: RefCell<Option<TokenHandler>>,
-    /// This dropdown, weakly: what a pill's click comes back to.
     me: RefCell<std::rc::Weak<Dropdown>>,
 }
 
 impl Dropdown {
-    /// An empty dropdown.
     pub fn new() -> Rc<Self> {
         let understood = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         understood.add_css_class("focus-dropdown-understood");
@@ -141,23 +118,18 @@ impl Dropdown {
         dropdown
     }
 
-    /// What the bar lays out.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Return on a row, or a click on a row or a pill: its token.
     pub fn connect_run(&self, run: impl Fn(u64) + 'static) {
         self.run.replace(Some(Rc::new(run)));
     }
 
-    /// The arrows came to rest on a row: its token.
     pub fn connect_highlighted(&self, highlighted: impl Fn(u64) + 'static) {
         self.highlighted.replace(Some(Rc::new(highlighted)));
     }
 
-    /// Draw `view`, whole: the controller's
-    /// [`postio_focus::Intent::Dropdown`].
     pub fn show(&self, view: &DropdownView) {
         let kept = self.highlighted();
         self.show_understood(&view.understood);
@@ -188,8 +160,6 @@ impl Dropdown {
         self.quiet.set(false);
     }
 
-    /// Forget what was drawn and where the arrows rested: the next
-    /// opening starts on its view's default.
     pub fn clear(&self) {
         self.placed.set(false);
         self.quiet.set(true);
@@ -202,15 +172,12 @@ impl Dropdown {
         self.view.replace(None);
     }
 
-    /// The token of the row the arrows rest on.
     pub fn highlighted(&self) -> Option<u64> {
         self.list
             .selected_row()
             .and_then(|row| self.token_at(row.index()))
     }
 
-    /// Move the highlight `by` rows that run something, staying in the
-    /// list at either end.
     pub fn step(&self, by: i32) {
         let tokens = self.tokens.borrow();
         let runnable: Vec<usize> = (0..tokens.len()).filter(|i| tokens[*i].is_some()).collect();
@@ -234,7 +201,6 @@ impl Dropdown {
         }
     }
 
-    /// Run the highlighted row, as Return does; whether there was one.
     pub fn run_highlighted(&self) -> bool {
         match self.highlighted() {
             Some(token) => {
@@ -245,8 +211,6 @@ impl Dropdown {
         }
     }
 
-    /// The subjects of the conversations listed, top to bottom: each
-    /// hit's title after its sender.
     pub fn hit_subjects(&self) -> Vec<String> {
         self.rows()
             .filter(|row| row.kind == DropdownRowKind::Hit)
@@ -260,7 +224,6 @@ impl Dropdown {
             .collect()
     }
 
-    /// The row the arrows rest on: what it is, and its words as drawn.
     pub fn highlighted_row(&self) -> Option<(DropdownRowKind, String)> {
         let token = self.highlighted()?;
         let row = self.rows().find(|row| row.token == token)?;
@@ -272,7 +235,6 @@ impl Dropdown {
         Some((row.kind, said))
     }
 
-    /// Every row of the view drawn now, top to bottom.
     fn rows(&self) -> impl Iterator<Item = DropdownRow> {
         let view = self.view.borrow();
         view.iter()
@@ -282,7 +244,6 @@ impl Dropdown {
             .into_iter()
     }
 
-    /// Every word drawn, top to bottom, a row or pill to an entry.
     pub fn texts(&self) -> Vec<String> {
         let mut texts = Vec::new();
         let mut child = self.list.first_child();
@@ -293,13 +254,10 @@ impl Dropdown {
         texts
     }
 
-    /// The section titles, in order.
     pub fn titles(&self) -> Vec<String> {
         collect(&self.list, "focus-dropdown-title")
     }
 
-    /// The words drawn with the find highlight, read from each label's
-    /// markup.
     pub fn found(&self) -> Vec<String> {
         let mut found = Vec::new();
         for label in labels(&self.list) {
@@ -324,7 +282,6 @@ impl Dropdown {
         found
     }
 
-    /// The pills' words: `from: Ada 12`, `Receipts 3`.
     pub fn pills(&self) -> Vec<String> {
         let mut pills = Vec::new();
         for button in descendants(&self.list) {
@@ -335,7 +292,6 @@ impl Dropdown {
         pills
     }
 
-    /// Click the pill whose words start with `text`, as a person does.
     pub fn click_pill(&self, text: &str) -> bool {
         for widget in descendants(&self.list) {
             if widget.has_css_class("focus-dropdown-pill")
@@ -349,7 +305,6 @@ impl Dropdown {
         false
     }
 
-    /// The footer: its keys' words, and the count on its right.
     pub fn footer(&self) -> (Vec<String>, String) {
         let mut hints = Vec::new();
         let mut child = self.hints.first_child();
@@ -360,7 +315,6 @@ impl Dropdown {
         (hints, self.count.text().to_string())
     }
 
-    /// The "Understood as" tiles' words.
     pub fn understood(&self) -> Vec<String> {
         let mut tiles = Vec::new();
         let mut child = self.understood.first_child();
@@ -433,7 +387,6 @@ impl Dropdown {
     fn show_section(&self, section: &DropdownSection, tokens: &mut Vec<Option<u64>>) {
         let narrow = section.pills.iter().any(|pill| pill.op.is_some());
         if narrow {
-            // Narrow to: its title and its pills on one line.
             let line = gtk::Box::new(gtk::Orientation::Horizontal, S2);
             line.add_css_class("focus-dropdown-narrow");
             line.append(&title_label(&section.title));
@@ -493,7 +446,6 @@ impl Dropdown {
         }
     }
 
-    /// A row that runs nothing: a header, the pills, the sheet.
     fn append_fixed(&self, child: &impl IsA<gtk::Widget>, tokens: &mut Vec<Option<u64>>) {
         let row = gtk::ListBoxRow::new();
         row.add_css_class("focus-dropdown-fixed");
@@ -576,7 +528,6 @@ impl Dropdown {
             self.hints.remove(&child);
         }
         for hint in &view.hints {
-            // The cap, then what it does, on one line, as the Mac's footer.
             let line = gtk::Box::new(gtk::Orientation::Horizontal, S1);
             line.add_css_class("focus-dropdown-hint");
             line.append(&keyhint::cap(&hint.key));
@@ -591,8 +542,7 @@ impl Dropdown {
     }
 }
 
-/// Scroll `list` so `row` is wholly in view, no further: the keyboard
-/// stays in the bar's entry, so the list never follows its selection.
+/// The keyboard stays in the bar's entry, so the list never follows its selection.
 fn reveal(list: &gtk::ListBox, row: &gtk::ListBoxRow) {
     let Some(scroller) = list
         .ancestor(gtk::ScrolledWindow::static_type())
@@ -616,7 +566,6 @@ fn reveal(list: &gtk::ListBox, row: &gtk::ListBoxRow) {
     }
 }
 
-/// A section's bold secondary title.
 fn title_label(title: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(title));
     label.add_css_class("focus-dropdown-title");
@@ -625,7 +574,6 @@ fn title_label(title: &str) -> gtk::Label {
     label
 }
 
-/// One row: what it is, its words, the folder, the right column, its key.
 fn row_line(row: &DropdownRow) -> gtk::Box {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
     line.append(&leading(row));
@@ -666,15 +614,13 @@ fn row_line(row: &DropdownRow) -> gtk::Box {
     let said = gtk::Label::new(row.right.as_deref());
     said.add_css_class("focus-dropdown-right");
     said.add_css_class("dim-label");
-    // Fills the column, which does not expand: the column refuses to hand
-    // the expansion up to the row, where it would split the spare width
-    // with the words and pull the folder column off its place.
+    // Fills the column, which does not expand: the column refuses to hand the expansion up, where
+    // it would split the spare width with the words.
     said.set_hexpand(true);
     said.set_xalign(1.0);
     right.append(&said);
     if let Some(hint) = &row.highlighted {
-        // "↩ adds" while the arrows rest here (screen 04); CSS shows it
-        // on the selected row only, in place of the date.
+        // CSS shows it on the selected row only, in place of the date.
         let adds = gtk::Label::new(Some(&format!("{} {}", hint.key, hint.label)));
         adds.add_css_class("focus-dropdown-adds");
         right.append(&adds);
@@ -686,13 +632,11 @@ fn row_line(row: &DropdownRow) -> gtk::Box {
     line
 }
 
-/// The row's kind, drawn: an avatar, a tile, or a quiet icon.
 fn leading(row: &DropdownRow) -> gtk::Widget {
     match row.kind {
         DropdownRowKind::Person => {
             let initials = gtk::Label::new(Some(row.initials.as_deref().unwrap_or("?")));
             initials.add_css_class("focus-dropdown-avatar");
-            // A circle, not the row's height.
             initials.set_valign(gtk::Align::Center);
             initials.set_accessible_role(gtk::AccessibleRole::Presentation);
             initials.upcast()
@@ -703,9 +647,8 @@ fn leading(row: &DropdownRow) -> gtk::Widget {
             tile.set_accessible_role(gtk::AccessibleRole::Presentation);
             tile.upcast()
         }
-        // The theme has no plain envelope, only the read and unread
-        // marks, which would say something about the hit it does not
-        // mean: a hit keeps the column, empty, so the words align.
+        // The theme has no plain envelope, only read and unread marks, which would say something a
+        // hit does not mean: a hit keeps the column, empty, so the words align.
         DropdownRowKind::Hit => {
             let room = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             room.add_css_class("focus-dropdown-icon");
@@ -720,7 +663,6 @@ fn leading(row: &DropdownRow) -> gtk::Widget {
     }
 }
 
-/// The symbolic icon for a row of `kind`.
 fn icon(kind: DropdownRowKind) -> &'static str {
     match kind {
         DropdownRowKind::Recent => "document-open-recent-symbolic",
@@ -733,7 +675,6 @@ fn icon(kind: DropdownRowKind) -> &'static str {
     }
 }
 
-/// The cheat sheet: an operator and what it is for, four to a line.
 fn cheat_sheet(rows: &[&DropdownRow]) -> gtk::Grid {
     let grid = gtk::Grid::new();
     grid.add_css_class("focus-dropdown-sheet");
@@ -749,8 +690,7 @@ fn cheat_sheet(rows: &[&DropdownRow]) -> gtk::Grid {
     grid
 }
 
-/// `runs` in one label: bold, mono and the find highlight by attributes,
-/// so the words wrap and ellipsize as one line.
+/// Bold, mono and the find highlight by attributes, so the words wrap and ellipsize as one line.
 pub(crate) fn runs_label(runs: &[Run], secondary: bool) -> gtk::Label {
     let (colour, alpha) = if adw::StyleManager::default().is_dark() {
         FIND_DARK
@@ -786,12 +726,10 @@ pub(crate) fn runs_label(runs: &[Run], secondary: bool) -> gtk::Label {
     label
 }
 
-/// `runs`' words, without their styling.
 fn plain(runs: &[Run]) -> String {
     runs.iter().map(|run| run.text.as_str()).collect()
 }
 
-/// Every label under `root`, depth first.
 fn labels(root: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
     descendants(root)
         .into_iter()
@@ -799,7 +737,6 @@ fn labels(root: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
         .collect()
 }
 
-/// The words of the labels under `root` carrying `class`.
 fn collect(root: &impl IsA<gtk::Widget>, class: &str) -> Vec<String> {
     labels(root)
         .into_iter()
@@ -822,8 +759,6 @@ fn descendants(root: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
     found
 }
 
-/// The words a widget shows, its labels' texts joined by spaces.
-/// What `runs` say, styles left out.
 fn runs_text(runs: &[Run]) -> String {
     runs.iter().map(|run| run.text.as_str()).collect()
 }
@@ -838,8 +773,6 @@ fn said(widget: &impl IsA<gtk::Widget>) -> String {
         .join(" ")
 }
 
-/// The find highlight's yellow as the scheme has it, `#rrggbb`: what a mark
-/// that says "a search matched here" is drawn in.
 pub(crate) fn find_yellow() -> &'static str {
     if adw::StyleManager::default().is_dark() {
         FIND_DARK.0

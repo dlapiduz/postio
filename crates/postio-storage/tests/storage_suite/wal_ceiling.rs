@@ -1,32 +1,11 @@
-//! The write-ahead log does not grow without bound (#1175).
-//!
-//! The live install reached a **676 MB** WAL against an 868 MB database, and
-//! every launch paid for it: the WAL index is rebuilt before the first row
-//! can be read, and `Phase::Store` sits in front of the first frame.
-//!
-//! # The mechanism changed, the requirement did not
-//!
-//! #1175 set `PRAGMA journal_size_limit`, a ceiling the engine enforced for
-//! itself at every checkpoint. This engine has no such pragma -- checked, in
-//! `the_engine_has_no_journal_size_limit` below, so the day it grows one this
-//! file says so.
-//!
-//! What it has is `wal_checkpoint`, so the ceiling becomes a sweep:
-//! [`Store::truncate_log`], called by the application's housekeeping worker.
-//!
-//! **That is weaker than what it replaces**, and the difference is worth
-//! stating: a limit the engine enforces applies to every checkpoint of every
-//! session, and a sweep applies when something calls it. A session that never
-//! reaches housekeeping never truncates. The failure mode is the one #1175
-//! was about, so it is written down here rather than assumed away.
+//! This engine has no `journal_size_limit` (#1175), so the WAL ceiling is a sweep,
+//! `Store::truncate_log`
+//! from housekeeping: weaker, since a session that never reaches housekeeping never truncates.
 
 use postio_storage::test_support;
 
-/// Enough writes to make a WAL worth measuring.
 const ROWS: usize = 2_000;
 
-/// The value each row carries. Large enough that `ROWS` of them is megabytes
-/// rather than kilobytes, so the assertion is not reading noise.
 const PADDING: usize = 400;
 
 #[tokio::test]
@@ -68,9 +47,7 @@ async fn truncating_the_log_returns_the_file_to_nothing() {
 
 #[tokio::test]
 async fn the_store_still_reads_after_its_log_is_truncated() {
-    // The obvious way to get a small WAL is to lose the writes in it. This is
-    // what says the checkpoint moved them into the database rather than
-    // dropping them.
+    // Asserts the checkpoint moved the writes into the database rather than dropping them.
     let store = test_support::temp().await;
     let connection = store.connect().await.expect("a connection");
     connection
@@ -102,10 +79,7 @@ async fn the_store_still_reads_after_its_log_is_truncated() {
 
 #[tokio::test]
 async fn the_engine_has_no_journal_size_limit() {
-    // #1175's own mechanism, asked for directly. When this starts answering,
-    // the sweep above can go back to being a setting -- which is the stronger
-    // of the two, because the engine applies it to every checkpoint rather
-    // than only to the ones housekeeping reaches.
+    // When the engine grows `journal_size_limit`, the sweep can go back to being a setting.
     let store = test_support::memory().await;
     let connection = store.connect().await.expect("a connection");
 

@@ -1,7 +1,3 @@
-//! Focus's corrections reach the engine (the commands lane's verbs):
-//! dismissing a sender's question three times turns that marker off for the
-//! sender, kept on the person they are (ADR 0048).
-
 use postio_core::{Command, MessageTarget};
 
 use crate::support::{self, Fixture};
@@ -46,8 +42,6 @@ pub fn three_dismissals_write_a_stop_marker_to_focus_s_config() {
                 .await
                 .expect("the host takes it");
         }
-        // The correction is the person's (ADR 0048): the engine reads it, and
-        // the file is not written.
         let ada = postio_model::EmailAddress::new(None::<String>, "ada@example.com");
         let stopped = || {
             session

@@ -1,13 +1,8 @@
-//! The Filtered view (US9, T124; screen 21): `g f` lists what filing
-//! archived, newest first, each with its reason; `1`-`7` narrow it to a
-//! reason; `R` restores the focused row, and `Ctrl+Z` takes that back.
-
 use gtk::gdk;
 use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// Four filtered messages and one conversation in the inbox.
 async fn fixture() -> Fixture {
     let fixture = Fixture::empty().await;
     fixture
@@ -40,7 +35,6 @@ async fn fixture() -> Fixture {
             None,
             30,
         ),
-        // Forty days ago: Filtered never deletes (scenario 7).
         (
             ("Forge", "noreply@forge.test"),
             "Build 1182 passed",
@@ -56,7 +50,6 @@ async fn fixture() -> Fixture {
     fixture
 }
 
-/// The Filtered view's row subjects, top to bottom.
 fn listed(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     window
         .filtered()
@@ -64,9 +57,6 @@ fn listed(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// US9 scenarios 5 and 7: every filtered message, newest first, the old
-/// one included; the Notifications tab's number lists only notifications,
-/// one request to the store.
 pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -74,8 +64,6 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
         }
         let fixture = fixture().await;
         let (window, client) = fixture.open().await;
-        // Measured once it is drawn -- the toggle painted, the first day
-        // heading laid out -- since Filtered takes its place.
         assert!(
             crate::settle_until(async || {
                 pixels_of(&one(window.upcast_ref(), "focus-has-action")).is_some()
@@ -101,15 +89,12 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
             listed(&window)
         );
         let view = window.filtered().expect("the view");
-        // The tabs' counts are read apart from the rows and can land a pass
-        // after them.
+        // The tabs' counts are read apart from the rows and can land a pass after them.
         let _ = crate::settle_until(async || {
             let said = view.texts();
             said.iter().any(|line| line == "4") && said.iter().any(|line| line == "2")
         })
         .await;
-        // In the type of the strip it was opened from, once the tabs are
-        // drawn with their counts.
         assert!(
             crate::settle_until(async || {
                 support::with_class(view.widget(), "focus-filtered-tab")
@@ -163,7 +148,6 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
             "Escape went back to the inbox"
         );
 
-        // Screen 21's footer: j walks the rows, g i goes to the inbox.
         support::keys(&window, &["g", "f"]);
         let view = window.filtered().expect("Filtered again");
         assert!(crate::settle_until(async || listed(&window).len() == 4).await);
@@ -187,8 +171,6 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
     });
 }
 
-/// US9 scenario 4, in the view: `R` restores the focused row -- it leaves
-/// Filtered for the inbox -- and one `Ctrl+Z` takes it back.
 pub fn r_restores_the_focused_row_and_ctrl_z_takes_it_back() {
     crate::gtk_case(async {
         if !support::display() {
@@ -233,9 +215,6 @@ pub fn r_restores_the_focused_row_and_ctrl_z_takes_it_back() {
     });
 }
 
-/// Selecting in Filtered as the list does: `x` and `J` take rows in, the bar
-/// counts them, Escape clears before it leaves, a tab drops the selection,
-/// and `R` restores every selected row as one step one `Ctrl+Z` takes back.
 pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
     crate::gtk_case(async {
         if !support::display() {
@@ -243,7 +222,6 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
         }
         let fixture = fixture().await;
         let (window, _client) = fixture.open().await;
-        // The inbox's bar is built hidden; its buttons are already dressed.
         let inbox_mark_read = mark_read_in(&support::with_class(&window, "focus-bulk-bar"))
             .expect("the inbox's bar has Mark read");
         support::keys(&window, &["g", "f"]);
@@ -260,7 +238,6 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
 
         support::press(&window, "x", gdk::ModifierType::empty());
         assert!(said("1 selected").await, "x: {:?}", view.texts());
-        // The bar is the inbox's: Mark read wears its button, label and keycap.
         let mark_read = mark_read_in(&support::with_class(view.widget(), "focus-bulk-bar"))
             .expect("the Filtered bar has Mark read");
         assert!(mark_read.is_mapped(), "the Filtered bar is not on screen");
@@ -273,7 +250,6 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
         assert!(said("2 selected").await, "J: {:?}", view.texts());
         assert_eq!(view.selected().len(), 2);
 
-        // The first Escape clears and stays; the second leaves.
         support::press(&window, "Escape", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || !view.has_selection()).await,
@@ -281,7 +257,6 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
         );
         assert!(window.filtered().is_some(), "the first Escape only clears");
 
-        // A tab is another place: its selection is gone.
         support::press(&window, "x", gdk::ModifierType::empty());
         assert!(said("1 selected").await);
         support::press(&window, "2", gdk::ModifierType::empty());
@@ -327,8 +302,6 @@ pub fn selecting_in_filtered_restores_every_selected_row_as_one_undo() {
     });
 }
 
-/// The inbox strip's type, read before leaving it: its place, its counts,
-/// its has-action toggle and that toggle's words.
 struct StripType {
     height: i32,
     place: (i32, gtk::pango::Weight),
@@ -361,12 +334,8 @@ fn strip_type(window: &postio_gtk::window::FocusWindow) -> StripType {
     }
 }
 
-/// Filtered's header and tabs are set in the inbox strip's type: its title
-/// as the strip's place, its words as the strip's counts, its sweep as the
-/// has-action toggle, each control the strip's kind of button, and the tab
-/// on screen still bold in its outline. The tabs sit in a row of the strip's
-/// height, each the toggle's size and shape, so the list does not move when
-/// a person goes between the inbox and Filtered.
+/// The list must not move between the inbox and Filtered: the tabs sit in a row of the strip's
+/// height, each the toggle's size and shape.
 fn assert_header_in_strip_type(view: &gtk::Widget, strip: &StripType) {
     assert_eq!(
         font(&one(view, "focus-filtered-title")),
@@ -448,7 +417,6 @@ fn assert_header_in_strip_type(view: &gtk::Widget, strip: &StripType) {
     }
 }
 
-/// The first label under `root`.
 fn label_in(root: &gtk::Widget) -> gtk::Widget {
     support::descendants(root)
         .into_iter()
@@ -456,29 +424,23 @@ fn label_in(root: &gtk::Widget) -> gtk::Widget {
         .expect("a label")
 }
 
-/// The size and weight a label is drawn in.
 fn font(label: &gtk::Widget) -> (i32, gtk::pango::Weight) {
     let font = label.pango_context().font_description().expect("a font");
     (font.size(), font.weight())
 }
 
-/// The inbox's first day heading, once the list has made one.
 fn inbox_day_heading(window: &postio_gtk::window::FocusWindow) -> Option<gtk::Widget> {
     support::descendants(window.upcast_ref::<gtk::Widget>())
         .into_iter()
         .find(|widget| widget.css_name() == "focusdayheading")
 }
 
-/// The colour of a widget's top border, as drawn.
 fn outline(widget: &gtk::Widget) -> String {
     let (pixels, width, _) = pixels_of(widget).expect("drawn");
-    // The middle of the top edge.
     let at = usize::try_from(width / 2 * 4).expect("a column");
     format!("{:?}", &pixels[at..at + 4])
 }
 
-/// Whether a widget's left edge is drawn a quarter of the way down: true of
-/// a chip with small corners, false of a pill, whose edge curves away.
 fn corner_drawn(widget: &gtk::Widget) -> bool {
     let (pixels, width, height) = pixels_of(widget).expect("drawn");
     let row = usize::try_from(height / 4).expect("a row");
@@ -486,8 +448,6 @@ fn corner_drawn(widget: &gtk::Widget) -> bool {
     pixels[row * stride + 3] > 0
 }
 
-/// A widget drawn on its own: its pixels, its width and its height; none
-/// until it has something to draw (it is mapped and allocated).
 fn pixels_of(widget: &gtk::Widget) -> Option<(Vec<u8>, i32, i32)> {
     let paintable = gtk::WidgetPaintable::new(Some(widget));
     let snapshot = gtk::Snapshot::new();
@@ -510,7 +470,6 @@ fn pixels_of(widget: &gtk::Widget) -> Option<(Vec<u8>, i32, i32)> {
     Some((pixels, texture_width, texture_height))
 }
 
-/// The shared button kind and size a button is dressed as.
 fn kind(button: &gtk::Widget) -> Vec<String> {
     let mut classes: Vec<String> = button
         .css_classes()
@@ -522,7 +481,6 @@ fn kind(button: &gtk::Widget) -> Vec<String> {
     classes
 }
 
-/// The button reading "Mark read" under any of `bars`.
 fn mark_read_in(bars: &[gtk::Widget]) -> Option<gtk::Widget> {
     bars.iter().flat_map(support::descendants).find(|widget| {
         widget.is::<gtk::Button>()
@@ -534,7 +492,6 @@ fn mark_read_in(bars: &[gtk::Widget]) -> Option<gtk::Widget> {
     })
 }
 
-/// What a button is drawn from: each widget's type and classes, in order.
 fn dress(button: &gtk::Widget) -> Vec<(String, Vec<String>)> {
     support::descendants(button)
         .iter()
@@ -550,9 +507,6 @@ fn dress(button: &gtk::Widget) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// T126: the header strip says how many were filtered since local
-/// midnight, with `g f`, and pressing it opens Filtered; the folders
-/// popover lists Filtered with the same count.
 pub fn the_strip_counts_what_was_filtered_today() {
     crate::gtk_case(async {
         if !support::display() {
@@ -567,8 +521,6 @@ pub fn the_strip_counts_what_was_filtered_today() {
                 5,
             )
             .await;
-        // Filed a minute and two ago, by the real clock: today. And one
-        // forty days ago, which is not.
         let ago = |minutes: i64| (support::now() - chrono::Utc::now()).num_minutes() + minutes;
         fixture
             .filtered(
@@ -645,9 +597,6 @@ pub fn the_strip_counts_what_was_filtered_today() {
     });
 }
 
-/// FR-153 (T129): Focus notifies about new mail in its inbox as the
-/// classic app would, and never about mail it filtered or held -- even
-/// when an arrival names them.
 pub fn focus_never_notifies_for_mail_it_filtered_or_held() {
     crate::gtk_case(async {
         if !support::display() {
@@ -703,7 +652,6 @@ pub fn focus_never_notifies_for_mail_it_filtered_or_held() {
             let told = std::rc::Rc::clone(&told);
             move |notification| told.borrow_mut().push(notification.body.clone())
         });
-        // Looking at Filtered, not the inbox: an arrival there is news.
         support::keys(&window, &["g", "f"]);
 
         assert!(sink.emit(postio_core::Event::NewMail {
@@ -735,10 +683,6 @@ pub fn focus_never_notifies_for_mail_it_filtered_or_held() {
     });
 }
 
-/// FR-118 (T128's surface): `F` says first how much of the inbox the
-/// filtering rules would file away, and moves it only when the person
-/// says so; one `Ctrl+Z` takes the sweep back. The main menu offers the
-/// same.
 pub fn f_says_what_a_sweep_would_move_then_moves_it_as_one_undo() {
     crate::gtk_case(async {
         if !support::display() {
@@ -789,8 +733,6 @@ pub fn f_says_what_a_sweep_would_move_then_moves_it_as_one_undo() {
         crate::settle_for(std::time::Duration::from_millis(200)).await;
         assert_eq!(support::subjects(&window).len(), 3, "nothing moved yet");
 
-        // What a click on the button does: the response, and the dialog
-        // closes.
         let sweep = support::button_labelled(&dialog, &postio_ui::filtered::sweep_action(2));
         support::click(&window, &sweep, 1);
         assert!(

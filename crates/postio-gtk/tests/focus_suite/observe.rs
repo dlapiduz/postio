@@ -1,12 +1,5 @@
-//! Where everything is, as Focus reports it to a storyboard.
-//!
-//! `FocusWindow::observe` is what a storyboard's checks read after every
-//! step (specs/008-storyboards contracts/observation.md § Focus). Every
-//! field must come from what is on screen -- the widget that holds the
-//! keyboard, the cursor's row, the toast that is up -- because a field read
-//! from what a layer was *told* cannot fail when the wiring between them
-//! breaks. So this presses keys along the real focus chain and asks the
-//! window after each one.
+//! Every field `FocusWindow::observe` reports must come from what is on screen: a field read from
+//! what a layer was told cannot fail when the wiring breaks.
 
 use gtk::prelude::*;
 use postio_ui::keymap::Chord;
@@ -33,13 +26,10 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
 
-        // A freshly presented window has the keyboard on the window itself,
-        // whose controller is where Focus's list keys are handled.
         let seen = window.observe();
         assert_eq!(seen.keyboard.region, Region::List, "{seen:#?}");
         assert!(seen.keyboard.reachable, "{seen:#?}");
 
-        // `j`: the list has the keyboard, and the cursor moved one row on.
         let before = window.observe().cursor.index;
         press(&window, "j");
         let seen = window.observe();
@@ -56,24 +46,20 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert!(seen.app.contains_key("focus.bulk"), "{:?}", seen.app.keys());
         assert_eq!(seen.selection.count, 0);
 
-        // `/`: the command bar is up and has the keyboard, and takes text.
         press(&window, "/");
         let seen = window.observe();
         assert_eq!(seen.overlay.kind, Overlay::Finder, "{seen:#?}");
         assert_eq!(seen.keyboard.region, Region::Search);
         assert!(seen.keyboard.typing, "the bar's field takes text");
-        // What the bar lists is the bar's own, one app key per value.
         assert_eq!(seen.app["focus.bar.typed"], "", "{:?}", seen.app);
         assert_eq!(seen.app["focus.bar.messages"], 0, "{:?}", seen.app);
 
-        // `Escape`: back to the list, the cursor where it was.
         press(&window, "Escape");
         let seen = window.observe();
         assert_eq!(seen.keyboard.region, Region::List, "{seen:#?}");
         assert_eq!(seen.overlay.kind, Overlay::None);
         assert_eq!(seen.cursor, cursor);
 
-        // `x` picks the row: the bulk bar says so.
         press(&window, "x");
         let seen = window.observe();
         assert_eq!(seen.selection.count, 1, "{seen:#?}");
@@ -85,7 +71,6 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert_eq!(seen.selection.count, 0);
         assert_eq!(seen.app["focus.bulk"]["shown"], false);
 
-        // `Return`: the message opens in its dialog, which has the keyboard.
         press(&window, "Return");
         let seen = window.observe();
         assert_eq!(seen.view, View::Reader, "{seen:#?}");
@@ -93,16 +78,14 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert_eq!(seen.reading.id, cursor.id, "the dialog names its message");
         assert!(seen.reading.scroll.is_some(), "{seen:#?}");
 
-        // `Escape` closes it: the list again, the cursor unmoved. The
-        // keyboard starts on the message, which a key can reach once the
-        // dialog has drawn its first frame.
+        // The keyboard starts on the message, which a key can reach once the dialog has drawn its
+        // first frame.
         let reading = window.reading().expect("open");
         assert!(
             crate::settle_until(async || reading.reader().view().is_mapped()).await,
             "the dialog never drew"
         );
         press(&window, "Escape");
-        // The dialog is drawn out over its closing frames.
         assert!(
             crate::settle_until(async || window.observe().keyboard.region == Region::List).await,
             "the dialog never closed"
@@ -113,7 +96,6 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert_eq!(seen.cursor, cursor);
         assert_eq!(seen.reading.id, None);
 
-        // `e`: the row goes, and the toast offers to take it back.
         press(&window, "e");
         assert!(
             crate::settle_until(async || window.observe().notice.text.is_some()).await,
@@ -123,7 +105,6 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert!(seen.notice.undo, "{seen:#?}");
         assert_eq!(seen.notice.tone, Some(Tone::Info));
 
-        // `r`: a reply, with the keyboard in its body.
         press(&window, "r");
         assert!(
             crate::settle_until(async || window.observe().composer.open).await,

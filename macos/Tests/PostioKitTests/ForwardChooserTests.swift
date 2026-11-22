@@ -4,9 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The composer's thread half (spec 013 US7, T083): the forward chooser's
-/// number keys, the older-reply bar's two actions, the forwarded messages
-/// as rows, and the draft the controller asks for and then replaces.
 @MainActor
 @Suite struct ForwardChooserTests {
     static func draft(body: String = "", id: Int64 = 0) -> DraftFfi {
@@ -44,8 +41,6 @@ import Testing
             return ids.map { NewerMessageFfi(id: $0, who: "Lena Park", when: "Tue 22 Sep", text: "Six.") }
         }
     }
-
-    // -- the chooser's keys ----------------------------------------------------
 
     @Test func eachCardIsItsNumberKeysCommandAndBack() {
         let forms: [ForwardFormFfi] = [.this, .thread, .attachments]
@@ -94,8 +89,6 @@ import Testing
         #expect(Self.bar.actions.count == OlderReplyActions.commands.count)
     }
 
-    // -- the forwarded messages as rows ------------------------------------------
-
     static let forwarded = """
         Ben, here is the thread.
 
@@ -122,8 +115,6 @@ import Testing
         ])
         #expect(ForwardedRows.fold("Just words.") == nil)
     }
-
-    // -- the composer ------------------------------------------------------------
 
     @Test func theControllersViewsLandOnTheOpenComposer() {
         let window = ComposerWindow(engine: Engine())

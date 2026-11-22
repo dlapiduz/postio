@@ -1,12 +1,3 @@
-//! The known-sender popover, from the controller's side
-//! (specs/011-focus-contacts S6, handoff screen 04).
-//!
-//! `i` on a row, or a click on a sender's name, asks the host for the person
-//! at a glance and draws what it answers; the arrow keys change where their
-//! mail arrives, at once; Return is all their mail, `c` writes to them, and
-//! Escape puts it away. What is drawn is `postio_ui::contact_popover`'s, so
-//! these assert the keys and the asks, and a few words a person would read.
-
 use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -23,7 +14,6 @@ use postio_ui::contact_popover::PopoverView;
 use postio_ui::focus_list::FocusRow;
 use postio_ui::keymap::KeyContext;
 
-/// One conversation from Ada.
 struct List;
 
 impl Rows for List {
@@ -125,7 +115,6 @@ fn ada(arrival: Option<ContactArrival>) -> ContactGlance {
     }
 }
 
-/// `i`, answered with Ada: the popover as it is drawn.
 fn open(focus: &mut FocusController, arrival: Option<ContactArrival>) -> PopoverView {
     let effects = run(focus, CommandId::ContactPopover);
     let [(ticket, Request::ContactGlance { stamp, .. })] = asks(&effects)[..] else {
@@ -213,7 +202,6 @@ fn the_arrows_change_where_mail_arrives_at_once_and_stop_at_the_ends() {
 
     let effects = run(&mut focus, CommandId::ContactArrivalNext);
     assert_eq!(on(&drawn(&effects).unwrap()), ["Filtered out"]);
-    // The end of the line: nothing changes, nothing is sent.
     let effects = run(&mut focus, CommandId::ContactArrivalNext);
     assert!(asks(&effects).is_empty(), "{effects:?}");
 
@@ -407,7 +395,6 @@ fn open_card_is_enabled_and_opens_the_contacts_view_on_the_person() {
     );
 }
 
-/// Jonas, a sender not yet saved, whose signature said what it said.
 fn jonas() -> ContactGlance {
     let mut glance = ada(None);
     glance.person.saved_at = None;
@@ -509,9 +496,8 @@ fn add_contact_on_a_saved_person_does_nothing() {
 
 #[test]
 fn a_change_to_the_people_while_it_is_up_asks_about_the_sender_again() {
-    // An undo of the arrival just chosen reaches the people as a change; the
-    // popover must say what is true now (screen 04, "drawn in the popover if
-    // it is still up").
+    // An undo of the arrival just chosen reaches the people as a change; the popover must say what
+    // is true now.
     let mut focus = ready();
     let _ = open(&mut focus, None);
     let effects = focus.handle(Input::Event(postio_core::Event::ContactsChanged {

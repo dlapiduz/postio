@@ -1,15 +1,6 @@
-//! A write the sync path repeats compiles nothing the second time.
-//!
-//! Compiling a statement is most of what a small one costs this engine. A
-//! first sync of three thousand messages, sampled with `eu-stack`, spent
-//! more than half of its busy samples inside `Connection::prepare` -- for
-//! `set_body`, for `update` and the address lookups under it -- compiling
-//! SQL it had compiled for the previous message. The engine keeps a
-//! per-connection cache of compiled programs; this is what holds the storage
-//! layer to using it.
-//!
-//! Counted, not timed, for the reason
-//! [`postio_storage::test_support::counting`] gives.
+//! Compiling is most of what a small statement costs this engine; counted, not timed, this holds
+//! the
+//! storage layer to the per-connection statement cache.
 
 use chrono::{TimeZone, Utc};
 use postio_model::{BodyState, EmailAddress, Message};
@@ -17,8 +8,6 @@ use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::test_support;
 use postio_storage::test_support::counting::counted_async;
 
-/// Files a message with an author and a recipient, updates it, and gives it
-/// a body: the header and body writes a first sync makes for each message.
 async fn write_one(repository: &MessageRepository<'_>, message: &mut Message) {
     repository
         .create(message)
@@ -55,7 +44,6 @@ async fn a_repeated_message_write_compiles_nothing() {
         message
     };
 
-    // The first message compiles what it needs; that is the cache filling.
     write_one(&repository, &mut message_numbered(1)).await;
 
     let counts = counted_async(|| async {

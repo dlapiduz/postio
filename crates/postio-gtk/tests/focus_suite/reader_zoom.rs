@@ -1,8 +1,3 @@
-//! Zoom in the open message (T242, row 28; spec 006 FR-021): `mod+plus`,
-//! `mod+minus` and `mod+0` in the dialog and in the pane, kept in
-//! `[reader] zoom` and applied to the next message. The classic app's
-//! `zoom_persists`, ported.
-
 use gtk::gdk::ModifierType;
 
 use crate::support::{self, Fixture};
@@ -46,7 +41,6 @@ pub fn the_zoom_keys_work_in_the_dialog_and_the_pane_and_the_level_is_kept() {
                 "mod+plus: {} (pane: {pane})",
                 zoom()
             );
-            // A zoom a person chose is written to the file, and only it.
             assert!(
                 crate::settle_until(async || std::fs::read_to_string(&path)
                     .is_ok_and(|text| text.contains("zoom = 110")))
@@ -54,7 +48,6 @@ pub fn the_zoom_keys_work_in_the_dialog_and_the_pane_and_the_level_is_kept() {
                 "zooming in was never written to config.toml: {:?} (pane: {pane})",
                 std::fs::read_to_string(&path)
             );
-            // ... and is the next message's too.
             support::keys(&window, &["j"]);
             assert!(
                 crate::settle_until(async || reading.title() == "Second").await,

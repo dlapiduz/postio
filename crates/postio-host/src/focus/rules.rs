@@ -1,9 +1,5 @@
-//! Digest rules, as the rule dialog and the `g d` list change them (spec 007
-//! FR-120, FR-126, FR-127): a rule's preview through the executor, a rule
-//! written to `config.toml`, and a rule removed with what it held released.
-//!
-//! A rule is the person's decision, so it lives in `config.toml` and is
-//! written as an editor saves it (`postio_session::focus::FocusSettings`).
+//! Digest rules as the rule dialog changes them: preview, write to `config.toml`, remove and
+//! release.
 //! Nothing here logs a query or a name: they are the person's words.
 
 use chrono::{DateTime, Local, Timelike as _, Utc};
@@ -18,22 +14,12 @@ use postio_storage::repository::{DigestRepository, ThreadRepository};
 
 use crate::Inner;
 
-/// How many of a preview's messages the dialog lists: "then the first four".
 const FIRST: usize = 4;
 
-/// How many messages a query of a several-query rule is asked for, to count
-/// them once each: ninety days of one sender's mail is far fewer.
 const DISTINCT_BOUND: u32 = 10_000;
 
-/// What a rule matching `queries` would have caught since `since`: each
-/// query run through the executor as search runs it, over every account's
-/// mail, newest first -- its count, and the newest four rows (FR-127: a
-/// rule means what the same query means in search).
-///
-/// A message two of the rule's queries both match counts once: a rule of
-/// one query is the executor's own count, and a rule of several counts
-/// the distinct messages among what each query finds, up to
-/// [`DISTINCT_BOUND`] a query.
+/// A message two queries both match counts once: a several-query rule counts distinct messages, up
+/// to [`DISTINCT_BOUND`] a query.
 pub(crate) async fn preview(
     inner: &Inner,
     queries: &[String],
@@ -91,9 +77,7 @@ pub(crate) async fn preview(
     })
 }
 
-/// Write `draft` to `config.toml`'s `[[focus.digests]]`: a new rule, or the
-/// rule called `replacing` rewritten where it stands. Refused, with a
-/// sentence for the dialog, when the rule would not apply.
+/// Refused, with a sentence for the dialog, when the rule would not apply.
 pub(crate) async fn save(
     inner: &Inner,
     replacing: Option<String>,
@@ -115,10 +99,8 @@ pub(crate) async fn save(
             "Postio cannot read one of that rule's queries",
         ));
     }
-    // A rule holds mail as it is filed, before its body is here, so it can
-    // only ask what is known then (FR-171). A query beyond that would be
-    // saved and hold nothing -- the classifier leaves such a rule out -- so
-    // it is refused, saying what a rule can use.
+    // A rule holds mail as it is filed, before its body is here, so a query beyond what is known
+    // then would hold nothing: refuse it.
     if rule.queries.iter().any(|query| {
         postio_search::matcher::Matcher::new(&postio_search::parse(query, today)).is_err()
     }) {
@@ -146,10 +128,7 @@ pub(crate) async fn save(
         .map_err(StoreError::new)
 }
 
-/// Take the rule called `name` out of `config.toml` and release what it held
-/// and had not delivered into the inbox (FR-126); answers how many messages
-/// it released. What a delivery already holds stays in that digest, on
-/// screen.
+/// What a delivery already holds stays in that digest.
 pub(crate) async fn delete(inner: &Inner, name: String) -> Result<u32, StoreError> {
     inner
         .wiring
@@ -162,7 +141,6 @@ pub(crate) async fn delete(inner: &Inner, name: String) -> Result<u32, StoreErro
         .release_rule(name.trim())
         .await?;
     if released > 0 {
-        // What was held rejoins Focus's inbox, which is every inbox.
         let inboxes = ThreadRepository::new(&connection).unified_inboxes().await?;
         for (account, mailbox) in inboxes {
             inner
@@ -173,7 +151,6 @@ pub(crate) async fn delete(inner: &Inner, name: String) -> Result<u32, StoreErro
     Ok(u32::try_from(released).unwrap_or(u32::MAX))
 }
 
-/// When `draft` says it comes: its cadence, day and time.
 fn due_of(draft: &DigestRuleDraft) -> Result<Due, StoreError> {
     let at = draft
         .at
@@ -198,19 +175,10 @@ fn due_of(draft: &DigestRuleDraft) -> Result<Due, StoreError> {
     })
 }
 
-/// How many of a candidate's recent messages the model is shown.
 const SAMPLE: u32 = 6;
 
-/// "Digest mail like this" for `message` (FR-171): the rule the person's
-/// model picks, with its preview, or `None` when there is no model with
-/// `like_this` on, or it picked none.
-///
-/// Postio builds the candidates -- the message's list, its sender, its
-/// sender's domain -- each a query a rule can hold by as mail is filed, and
-/// shows the model a sample of what each would have caught in the last 90
-/// days. The model answers with a number, so the rule is Postio's query,
-/// never text it wrote. Reads: the message and its body, then one search
-/// and one read of rows per candidate, and the chosen one's preview.
+/// The model picks a candidate by number, so the rule is always Postio's query, never text it
+/// wrote.
 pub(crate) async fn like_this(
     inner: &Inner,
     message: MessageId,
@@ -319,8 +287,6 @@ pub(crate) async fn like_this(
     }))
 }
 
-/// The rules "like this" could be: `message`'s list, its sender, and its
-/// sender's domain, each a query a rule holds by as mail is filed.
 fn candidates(message: &postio_model::Message) -> Vec<String> {
     let quoted = |value: &str| {
         if value.chars().any(char::is_whitespace) {
@@ -349,8 +315,6 @@ fn candidates(message: &postio_model::Message) -> Vec<String> {
     queries
 }
 
-/// `query` through the executor over every account's mail since `since`:
-/// how many it matches, and the newest `limit`.
 async fn recent(
     inner: &Inner,
     query: &str,

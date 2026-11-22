@@ -1,26 +1,7 @@
-//! One binary for `postio-ffi`'s integration tests.
-//!
-//! Each file in `tests/` gets its own executable from cargo, and each links
-//! this workspace's dependency stack whether it uses it or not. That is where
-//! the test time goes: 125 integration targets across 18 crates (#1128).
-//! The app suites were consolidated first; this is the same
-//! pass over the leaves.
-//!
-//! Nothing here needs a display, so unlike a GTK suite this
-//! keeps libtest's ordinary harness and its thread pool. The cases already ran
-//! in parallel within each old binary and now do so across all of them, which
-//! is the same guarantee and one link.
-//!
-//! **A case that needs its own process does not belong here.** None of these
-//! set a process-global -- no `set_var`, no crate attributes -- and that was
-//! checked rather than assumed. A test that grows one has to move back out, or
-//! it will change what its neighbours see.
-//!
-//! A case that only *reads* something the process shares -- a count every
-//! thread adds to, a slot the last session to open filled, a log callsite --
-//! is no setter, and still sees its neighbours under `cargo test`. It starts
-//! with `postio_test_support::alone!`, which gives it a process of its own
-//! wherever it does not already have one (#1976).
+//! One binary for `postio-ffi`'s integration tests, so the dependency stack links once (#1128).
+//! A case that sets a process-global must move out. One that only reads shared state (a count, a
+//! slot, a log callsite)
+//! starts with `postio_test_support::alone!` (#1976).
 
 mod account_repair;
 mod account_switches;

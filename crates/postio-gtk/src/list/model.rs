@@ -1,10 +1,5 @@
-//! Focus's list model: `postio_widgets::list_model`'s window over the paged
-//! store, holding [`FocusRow`]s.
-//!
-//! The windowing, the page cache, the fill-in-place and the refresh are the
-//! shared model's (T021, ADR 0043). What is here is the two `GObject`s a
-//! `GtkListView` needs -- the item for one position, and the list -- in the
-//! two-line shape `WindowedModel` asks for.
+//! Focus's list model: `postio_widgets::list_model`'s window over the paged store. This holds the
+//! two `GObject`s a `GtkListView` needs: the item for one position, and the list.
 
 use std::cell::RefCell;
 
@@ -26,12 +21,8 @@ mod imp {
     #[derive(Default)]
     pub struct RowObject {
         pub item: RefCell<Option<FocusRow>>,
-        /// What this position says when it is a child of the expanded
-        /// thread rather than a row of the list (spec 013).
         pub child: RefCell<Option<ChildRowView>>,
-        /// This child is the last of its thread: its line ends at its dot.
         pub last: std::cell::Cell<bool>,
-        /// This row is the one whose children are drawn under it.
         pub expanded: std::cell::Cell<bool>,
     }
 
@@ -45,8 +36,8 @@ mod imp {
         fn signals() -> &'static [glib::subclass::Signal] {
             static SIGNALS: std::sync::OnceLock<Vec<glib::subclass::Signal>> =
                 std::sync::OnceLock::new();
-            // What the row says has changed while it stayed where it is: a
-            // bound row widget redraws, and the model stays quiet (#1216).
+            // The row's words changed while it stayed where it is: a bound widget redraws and the
+            // model stays quiet (#1216).
             SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("changed").build()])
         }
     }
@@ -54,8 +45,6 @@ mod imp {
     #[derive(Default)]
     pub struct FocusList {
         pub core: Windowed<super::RowObject>,
-        /// One heading over the whole list instead of a day's, while a
-        /// filter is on: "Has action · 7" (screen 03).
         pub single: RefCell<Option<String>>,
     }
 
@@ -96,14 +85,10 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// One position of Focus's list: a loaded [`FocusRow`], or a
-    /// placeholder until its page arrives.
     pub struct RowObject(ObjectSubclass<imp::RowObject>);
 }
 
 glib::wrapper! {
-    /// Focus's list: a window over the paged store, never the mailbox. Its
-    /// sections are days, for the day headings (FR-010).
     pub struct FocusList(ObjectSubclass<imp::FocusList>)
         @implements gio::ListModel, gtk::SectionModel;
 }
@@ -115,13 +100,10 @@ impl Default for FocusList {
 }
 
 impl RowObject {
-    /// What the row stands for, once its page has arrived.
     pub fn item(&self) -> Option<FocusRow> {
         self.imp().item.borrow().clone()
     }
 
-    /// A position that is a child of the expanded thread: its words, and
-    /// whether it is the last of them.
     pub fn child(view: ChildRowView, last: bool) -> Self {
         let object: Self = glib::Object::new();
         object.imp().child.replace(Some(view));
@@ -129,18 +111,15 @@ impl RowObject {
         object
     }
 
-    /// What the position says when it is a child of the expanded thread.
     pub fn child_view(&self) -> Option<ChildRowView> {
         self.imp().child.borrow().clone()
     }
 
-    /// Whether a child is the last of its thread.
     pub fn is_last_child(&self) -> bool {
         self.imp().last.get()
     }
 
-    /// Replace what a child says, keeping the object, and tell a bound
-    /// widget -- quietly when nothing changed.
+    /// Quiet when nothing changed.
     pub fn set_child(&self, view: ChildRowView, last: bool) {
         {
             let mut held = self.imp().child.borrow_mut();
@@ -153,25 +132,21 @@ impl RowObject {
         self.emit_by_name::<()>("changed", &[]);
     }
 
-    /// Whether this is the row whose thread is open under it.
     pub fn is_expanded(&self) -> bool {
         self.imp().expanded.get()
     }
 
-    /// The row's thread is opened or folded: redraw its chevron.
     pub fn set_expanded(&self, expanded: bool) {
         if self.imp().expanded.replace(expanded) != expanded {
             self.emit_by_name::<()>("changed", &[]);
         }
     }
 
-    /// The local day the row's mail arrived on, once its page has.
     pub fn day(&self) -> Option<chrono::NaiveDate> {
         self.imp().item.borrow().as_ref().map(day_of)
     }
 
-    /// Replace what the row says, keeping the object, and tell a bound
-    /// widget -- quietly when nothing changed.
+    /// Quiet when nothing changed.
     pub fn set_item(&self, item: FocusRow) {
         {
             let mut held = self.imp().item.borrow_mut();
@@ -183,8 +158,7 @@ impl RowObject {
         self.emit_by_name::<()>("changed", &[]);
     }
 
-    /// Call `on_change` whenever what the row says is replaced. The handler
-    /// is the caller's to disconnect: a row widget is recycled across rows.
+    /// The handler is the caller's to disconnect: a row widget is recycled across rows.
     pub fn connect_changed(&self, on_change: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
         self.connect_local("changed", false, move |values| {
             if let Some(row) = values.first().and_then(|value| value.get::<Self>().ok()) {
@@ -243,11 +217,8 @@ impl ModelRow for RowObject {
 }
 
 impl FocusList {
-    /// The run of positions around `position` that share its day: one day
-    /// heading's section. Read from the rows already here and nothing else:
-    /// a run whose page has not landed is its own section, bounded by its
-    /// page, until it does -- and a landed page says so
-    /// ([`Self::days_moved`]).
+    /// Read from the rows already here and nothing else: a run whose page has not landed is its own
+    /// section, bounded by its page, until it does.
     pub fn day_section(&self, position: u32) -> (u32, u32) {
         let total = self.n_items();
         if position >= total {
@@ -263,7 +234,6 @@ impl FocusList {
         let (low, high) = match day {
             // A day can run across pages: only what is here bounds it.
             Some(_) => (0, total),
-            // Nothing here: the unloaded run, no wider than its page.
             None => (
                 position / page * page,
                 ((position / page + 1) * page).min(total),
@@ -280,20 +250,15 @@ impl FocusList {
         (start, end)
     }
 
-    /// Put one heading over the whole list -- a filter's, "Has action · 7"
-    /// -- or, with `None`, go back to a heading a day.
     pub fn set_single_heading(&self, heading: Option<String>) {
         self.imp().single.replace(heading);
         self.days_moved();
     }
 
-    /// The one heading over the whole list, while there is one.
     pub fn single_heading(&self) -> Option<String> {
         self.imp().single.borrow().clone()
     }
 
-    /// Rows have landed or moved: the day headings may have moved with
-    /// them, so the view asks the sections again.
     pub fn days_moved(&self) {
         let total = self.n_items();
         if total > 0 {
@@ -302,9 +267,6 @@ impl FocusList {
     }
 }
 
-/// The list as the controller asks about it (ADR 0045): the row at a
-/// position once its page is here -- the controller never makes the list
-/// fetch one -- and where a message sits.
 impl postio_focus::Rows for FocusList {
     fn len(&self) -> u32 {
         self.n_items()

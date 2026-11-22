@@ -1,17 +1,3 @@
-//! The first-run screen when nothing authoritative answered.
-//!
-//! `postio-69`: a domain that publishes no autoconfig — every custom domain,
-//! which is exactly the person least able to answer — got five empty boxes.
-//! The app now runs the probe with `guess_common_names` on, so the
-//! report carries an `imap.<domain>` / `smtp.<domain>` suggestion. This is
-//! the other end of that: the suggestion has to *arrive in the form*, and it
-//! has to arrive as a starting point rather than as a discovery.
-//!
-//! Its own file with one test function: GTK is initialised once, per process,
-//! from one thread. Two `#[test]`s in a file race `adw::init()` and the loser
-//! takes the no-display branch and passes without asserting anything — see
-//! the note in `gtk_onboarding.rs`.
-
 use postio_widgets::onboarding::{Onboarding, Server, Settings, Status};
 
 pub fn a_guess_fills_the_manual_form_and_opens_it() {
@@ -20,9 +6,8 @@ pub fn a_guess_fills_the_manual_form_and_opens_it() {
         return;
     }
 
-    // What `guess_common_names` produces: convention, not a lookup. Note
-    // `source` — the card heading reads from it, and "entered by hand" would
-    // be a lie about where these came from.
+    // What `guess_common_names` produces: convention, not a lookup, so `source` must not read
+    // "entered by hand".
     let guess = Settings {
         imap: Server {
             host: "imap.example.com".to_owned(),
@@ -45,8 +30,6 @@ pub fn a_guess_fills_the_manual_form_and_opens_it() {
         suggestion: Some(guess),
     });
 
-    // The boxes are no longer empty. This is the whole of #69: without it the
-    // user is asked for five values they have no way to know.
     let settings = screen.settings();
     assert_eq!(settings.imap.host, "imap.example.com");
     assert_eq!(settings.imap.port, 993);
@@ -54,11 +37,8 @@ pub fn a_guess_fills_the_manual_form_and_opens_it() {
     assert_eq!(settings.smtp.port, 465);
     assert_eq!(settings.login, "lena@example.com");
 
-    // Open, not merely filled: a prefilled form the user cannot see is a form
-    // they cannot correct, and a guess is exactly the thing that needs
-    // correcting. `Status::Manual` is what makes this honest — the heading
-    // says nothing was published, so the fields read as a starting point
-    // rather than as something Postio looked up.
+    // Open, not merely filled: a guess is what needs correcting, and `Status::Manual` makes the
+    // heading say nothing was published.
     assert!(
         screen.manual_shown(),
         "the guess filled the server fields and left them hidden"

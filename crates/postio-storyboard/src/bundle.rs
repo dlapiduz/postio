@@ -1,11 +1,6 @@
-//! The review bundle: everything an independent reviewer reads, gathered in
-//! one directory (`contracts/review.md` § The bundle).
-//!
-//! The bundle is a manifest, the acceptance, the canvas screens the
-//! storyboards name, and symlinks to the run trees, so every frame the
-//! manifest cites reads `runs/<app>/<storyboard>/<variant>/NN.outlined.png`.
-//! Which runs need a verdict is a question for the comparison; this module
-//! takes it as a function, and the default -- no base -- calls every run new.
+//! The review bundle: everything an independent reviewer reads, in one directory
+//! (`contracts/review.md`). Which runs need a verdict is a function the caller supplies; the
+//! default, with no base, calls every run new.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -18,36 +13,25 @@ use crate::format::{self, Storyboard};
 use crate::page::{self, Filmstrip};
 use crate::run::variant_key;
 
-/// The most outlined frames one reviewer is asked to read.
 pub const MAX_FRAMES_PER_BATCH: usize = 60;
 
-/// The one directory design screens must never come from: it is untracked
-/// and its images carry a real first name.
+/// Untracked, and its images carry a real first name.
 pub const FORBIDDEN_DESIGN_DIR: &str = "postio-focus-design";
 
-/// What the comparison made of one run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Class {
-    /// Nothing the review looks at changed. Counted, never listed.
     Unchanged,
-    /// The base had it and the branch differs.
     Changed,
-    /// The base did not have it.
     New,
 }
 
-/// A run's class, and which of its steps changed (`None` is all of them).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Classification {
-    /// The class.
     pub class: Class,
-    /// The step indices that need a verdict, or all of them.
     pub changed_steps: Option<BTreeSet<usize>>,
 }
 
-/// With no base to compare against, every run is new and every step needs a
-/// verdict.
 pub fn all_new(_: &Filmstrip) -> Classification {
     Classification {
         class: Class::New,
@@ -55,101 +39,63 @@ pub fn all_new(_: &Filmstrip) -> Classification {
     }
 }
 
-/// `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
-    /// The review key of the tree the runs came from.
     pub tree_key: String,
-    /// The base the runs were compared with, when there was one.
     pub base: Option<String>,
-    /// What to review, in groups of one app and one surface.
     pub batches: Vec<Batch>,
-    /// How many runs were unchanged and so are not listed.
     pub unchanged: usize,
-    /// Canvas screens copied into `design/`, by name.
     pub design: Vec<String>,
-    /// Screens a storyboard names that no design directory holds.
     pub design_missing: Vec<String>,
 }
 
-/// One reviewer's work: one app, one surface, a bounded number of frames.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Batch {
-    /// The app.
     pub app: App,
-    /// The storyboard's directory under the catalogue, such as `list`.
     pub surface: String,
-    /// The storyboards in it, by name.
     pub storyboards: Vec<String>,
-    /// The canvas screens they name, as `design/<name>.png`.
     pub design: Vec<String>,
-    /// The runs, changed or new.
     pub runs: Vec<BatchRun>,
-    /// Every step that needs a verdict.
     pub steps: Vec<NeedStep>,
 }
 
-/// A changed or new run in a batch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BatchRun {
-    /// The storyboard.
     pub storyboard: String,
-    /// The variant directory name.
     pub variant: String,
-    /// Changed or new.
     pub class: Class,
-    /// The run's directory in the bundle, `runs/<app>/<storyboard>/<variant>`.
     pub dir: String,
 }
 
-/// A step that needs a verdict, with the citation to give it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NeedStep {
-    /// The storyboard.
     pub storyboard: String,
-    /// The step's id, or its index when it has none.
     pub step: String,
-    /// The app.
     pub app: App,
-    /// The variant directory name.
     pub variant: String,
-    /// The outlined frame, relative to the bundle.
     pub frame: String,
 }
 
-/// Why a bundle could not be built.
 #[derive(Debug, thiserror::Error)]
 pub enum BundleError {
-    /// A file or directory could not be read or written.
     #[error("{0}: {1}")]
     Io(PathBuf, io::Error),
-    /// A design directory is the forbidden one.
     #[error("{0}: design screens never come from `{FORBIDDEN_DESIGN_DIR}`")]
     ForbiddenDesign(PathBuf),
-    /// There are no runs to review.
     #[error("{0}: no runs found")]
     NoRuns(PathBuf),
 }
 
-/// What `bundle` is given.
 pub struct Inputs<'a> {
-    /// The branch's run tree.
     pub runs: &'a Path,
-    /// The base's run tree, when there is one.
     pub base: Option<&'a Path>,
-    /// The base's commit, for the manifest.
     pub base_sha: Option<String>,
-    /// The acceptance text: the issue's, or the spec's scenarios.
     pub acceptance: &'a Path,
-    /// The storyboards directory.
     pub catalogue: &'a Path,
-    /// Committed reference directories the screens come from.
     pub design_dirs: &'a [PathBuf],
-    /// The bundle directory to write.
     pub out: &'a Path,
 }
 
-/// The step's label in a citation: its id, or its index.
 pub fn step_label(step: &crate::run::StepRun) -> String {
     step.id.clone().unwrap_or_else(|| step.step.to_string())
 }
@@ -158,7 +104,6 @@ fn io_error(path: &Path) -> impl FnOnce(io::Error) -> BundleError + '_ {
     move |error| BundleError::Io(path.to_owned(), error)
 }
 
-/// Refuses a design directory that is, or resolves to, the forbidden one.
 fn refuse_forbidden(dir: &Path) -> Result<(), BundleError> {
     let named = |path: &Path| path.to_string_lossy().contains(FORBIDDEN_DESIGN_DIR);
     let resolved = std::fs::canonicalize(dir).ok();
@@ -168,10 +113,6 @@ fn refuse_forbidden(dir: &Path) -> Result<(), BundleError> {
     Ok(())
 }
 
-/// Every storyboard in the catalogue, by name, with its surface: the
-/// directory it sits in, relative to the catalogue. Files that are not
-/// storyboards (gap lists, the README) are skipped; `lint` is what reports
-/// those.
 fn catalogue(root: &Path) -> BTreeMap<String, (Storyboard, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -204,7 +145,6 @@ fn catalogue(root: &Path) -> BTreeMap<String, (Storyboard, String)> {
     boards
 }
 
-/// The canvas screens a storyboard names: its own and each step's.
 fn screens(board: &Storyboard) -> BTreeSet<String> {
     board
         .design
@@ -222,10 +162,8 @@ fn link(target: &Path, at: &Path) -> Result<(), BundleError> {
     std::os::unix::fs::symlink(&target, at).map_err(io_error(at))
 }
 
-/// A step that needs a verdict, with the run it is in and that run's class.
 type Needed<'a> = (&'a Filmstrip, Class, NeedStep);
 
-/// Builds the bundle and returns its manifest.
 pub fn build(
     inputs: &Inputs<'_>,
     classify: &dyn Fn(&Filmstrip) -> Classification,
@@ -240,7 +178,6 @@ pub fn build(
     let boards = catalogue(inputs.catalogue);
 
     let mut unchanged = 0;
-    // (app, surface) -> the steps that need a verdict, with their run.
     let mut groups: BTreeMap<(App, String), Vec<Needed<'_>>> = BTreeMap::new();
     for strip in &strips {
         let classification = classify(strip);
@@ -309,8 +246,6 @@ pub fn build(
         }
     }
 
-    // Design screens: only those a listed storyboard names, only from the
-    // directories the caller gave.
     let wanted: BTreeSet<&String> = batches.iter().flat_map(|b| &b.design).collect();
     let design_out = inputs.out.join("design");
     std::fs::create_dir_all(inputs.out).map_err(io_error(inputs.out))?;
@@ -371,8 +306,6 @@ mod tests {
         }
     }
 
-    /// Runs for Focus and the terminal across two surfaces, a catalogue naming
-    /// canvas screens, and a committed design directory holding them.
     fn tree() -> Tree {
         let tree = Tree {
             dir: tempfile::tempdir().expect("temp"),

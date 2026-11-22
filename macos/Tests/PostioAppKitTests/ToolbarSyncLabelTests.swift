@@ -5,9 +5,6 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// The toolbar's sync label sits in the glass capsule it shares with the
-/// search field (macOS 26), whose rounded end cut into its symbol while
-/// the label was only as wide as its symbol and words.
 @MainActor
 @Suite struct ToolbarSyncLabelTests {
     @Test func theLabelKeepsRoomBeforeItsSymbolAndAfterItsWords() {

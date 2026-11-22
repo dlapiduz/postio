@@ -28,8 +28,6 @@ struct DemoModeTests {
     }
 
     @Test func keysAreReplayedOnlyInADemo() {
-        // A picture of `!` with three rows marked needs the keys pressed;
-        // a real store never replays anything.
         let keys = ["POSTIO_DEMO_KEYS": "! x j x"]
         #expect(DemoMode.keys(in: keys).isEmpty)
         #expect(DemoMode.keys(in: keys.merging(["POSTIO_DEMO": "small"]) { $1 }).map(\.character)
@@ -44,9 +42,6 @@ struct DemoModeTests {
     }
 
     @Test func returnAndEscapeAreReplayedAsTheNamedKeys() {
-        // Screen 04 is the message window, which Return opens and Escape
-        // closes: keys with names, not characters, as `KeyEvent.reduce`
-        // reports them from a real press.
         let keys = DemoMode.keys(in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_KEYS": "j ⏎ O ⎋"])
         #expect(keys.map(\.name) == [nil, "return", nil, "escape"])
         #expect(keys.map(\.character) == ["j", nil, "O", nil])
@@ -54,10 +49,6 @@ struct DemoModeTests {
     }
 
     @Test func theBarsKeysAreReplayedWithTheirModifiersAndNames() {
-        // Screens 07 to 10 are the command bar and the folders popover:
-        // ⌘K opens one, the arrows walk it, Tab steps into the chips, ⌘⌫
-        // goes back to the words, and `␣` types the space a word list
-        // cannot hold.
         let keys = DemoMode.keys(
             in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_KEYS": "⌘k ↓ ↑ ⇥ ⌘⌫ ⌥1 ␣ from:ada"])
         #expect(keys.map(\.character) == ["k", nil, nil, nil, nil, "1", " ", "from:ada"])
@@ -68,8 +59,6 @@ struct DemoModeTests {
     }
 
     @Test func aStateIsSaidOnlyInADemo() {
-        // Screens 17 to 19 need sync to have said something, and a demo
-        // never syncs: `POSTIO_DEMO_STATE` says it for the demo's account.
         #expect(DemoMode.state(in: ["POSTIO_DEMO_STATE": "offline"]) == nil)
         #expect(DemoMode.state(in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_STATE": "offline"]) == "offline")
         #expect(DemoMode.state(in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_STATE": ""]) == nil)

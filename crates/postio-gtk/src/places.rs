@@ -1,16 +1,7 @@
-//! The folders popover (screen 10; contracts/focus-surface.md, "The folders
-//! popover"): `g l`, or a click on "Inbox ▾", lists the places to go --
-//! mailboxes with their direct keys, the person's folders, and labels --
-//! with their counts. Typing filters them, and `Enter` goes to the first.
-//!
-//! Focus has no folder sidebar: this, and `in:` in the command bar, are how
-//! a person gets anywhere but the inbox.
-//!
-//! Which places there are, what each counts and where each goes are the
-//! controller's (spec 009 slice 8): the popover asks it for the places a
-//! filter matches ([`Places::connect_source`]) and hands back the one chosen
-//! ([`Places::connect_go`]). The window redraws it when the controller says
-//! the places changed.
+//! The folders popover: `g l`, or a click on "Inbox ▾", lists places with counts; typing filters
+//! and `Enter` goes to the first.
+//! Focus has no folder sidebar. Which places there are, their counts and where each goes are the
+//! controller's.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -24,42 +15,29 @@ use postio_ui::places as rules;
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::S2;
 
-/// The popover's width.
 const WIDTH: i32 = 400;
 
-/// The box a label's dot sits in: an icon's width, so names line up.
 const DOT_BOX: i32 = 16;
 
-/// A label's dot's radius.
 const DOT_RADIUS: f64 = 4.0;
 
 use postio_ui::places::{Entry, Mark};
 pub use postio_ui::places::{OUTBOX, go_to, place_name};
 
-/// The places a filter matches, each with the token that goes there.
 type Source = Rc<dyn Fn(&str) -> Vec<(u64, Entry)>>;
 
-/// Going to the place with a token.
 type Handler = Rc<dyn Fn(u64)>;
 
-/// The popover.
 pub struct Places {
     popover: gtk::Popover,
     entry: gtk::SearchEntry,
     list: gtk::ListBox,
-    /// The line under the places, which says what the highlighted row does.
     footer: gtk::Label,
-    /// Where the places come from.
     source: RefCell<Option<Source>>,
-    /// The places listed now, in order.
     shown: RefCell<Vec<Entry>>,
-    /// Each listed place's token, in `shown`'s order.
     tokens: RefCell<Vec<u64>>,
-    /// What each row of the list is: a section's heading, or the place at
-    /// that index of `shown`.
     rows: RefCell<Vec<Option<usize>>>,
-    /// Each place's count label, by its index in `shown`: a count that
-    /// moves is written here rather than redrawn.
+    /// A count that moves is written here rather than redrawn.
     counts: RefCell<Vec<gtk::Label>>,
     keymap: RefCell<Keymap>,
     handler: RefCell<Option<Handler>>,
@@ -67,13 +45,10 @@ pub struct Places {
 }
 
 impl Places {
-    /// The commands the popover has a row for: going to each mailbox that
-    /// has a key of its own.
     pub fn controls() -> Vec<CommandId> {
         rules::direct_commands()
     }
 
-    /// A closed popover, anchored to `anchor`.
     pub fn new(keymap: &Keymap, anchor: &impl IsA<gtk::Widget>) -> Rc<Self> {
         let entry = gtk::SearchEntry::new();
         entry.set_placeholder_text(Some(rules::FILTER_PLACEHOLDER));
@@ -100,8 +75,6 @@ impl Places {
             .child(&content)
             .has_arrow(false)
             .position(gtk::PositionType::Bottom)
-            // Hung from the left edge of "Inbox", as screen 10 draws it,
-            // rather than centred on it and out over the window's edge.
             .halign(gtk::Align::Start)
             .build();
         popover.set_parent(anchor);
@@ -148,7 +121,6 @@ impl Places {
                 }
             }
         });
-        // The arrows walk the places while the keyboard stays in the filter.
         let keys = gtk::EventControllerKey::new();
         keys.connect_key_pressed({
             let weak = weak.clone();
@@ -186,24 +158,20 @@ impl Places {
         places
     }
 
-    /// Ask `source` for the places a filter matches.
     pub fn connect_source(&self, source: impl Fn(&str) -> Vec<(u64, Entry)> + 'static) {
         self.source.replace(Some(Rc::new(source)));
     }
 
-    /// Run `handler` with the token of the place a person chooses.
     pub fn connect_go(&self, handler: impl Fn(u64) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// The places changed: draw them again, if the popover is up.
     pub fn redraw(&self) {
         if self.is_open() {
             self.show();
         }
     }
 
-    /// Read every key the popover shows from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         // The keys are drawn on the rows but are not part of what is listed,
@@ -211,8 +179,6 @@ impl Places {
         self.draw(true);
     }
 
-    /// Open the popover, unfiltered, on the places as last read: the
-    /// controller asks for them again as it opens, and says when they land.
     pub fn open(&self) {
         self.entry.set_text("");
         self.show();
@@ -221,33 +187,27 @@ impl Places {
         self.entry.grab_focus();
     }
 
-    /// Run `handler` each time the popover closes, however it did.
     pub fn connect_closed(&self, handler: impl Fn() + 'static) {
         self.popover.connect_closed(move |_| handler());
     }
 
-    /// Close the popover without going anywhere.
     pub fn close(&self) {
         self.popover.popdown();
     }
 
-    /// Whether the popover is up.
     pub fn is_open(&self) -> bool {
         self.popover.is_visible()
     }
 
-    /// Filter the places by `text`, as typing does.
     pub fn set_filter(&self, text: &str) {
         self.entry.set_text(text);
         self.show();
     }
 
-    /// The line under the places, as a person reads it.
     pub fn footer(&self) -> String {
         self.footer.text().to_string()
     }
 
-    /// Move the highlight `by` places, skipping the headings.
     fn step(&self, by: i32) {
         let mut at = self.list.selected_row().map_or(-1, |row| row.index());
         loop {
@@ -262,7 +222,6 @@ impl Places {
         }
     }
 
-    /// Say what Return does on `row`, the one now highlighted.
     fn say_footer(&self, row: Option<&gtk::ListBoxRow>) {
         let shown = self.shown.borrow();
         let entry = row
@@ -271,8 +230,6 @@ impl Places {
         self.footer.set_text(&rules::footer(entry));
     }
 
-    /// Each place drawn with a warning, top to bottom: its name, and what
-    /// the warning's tooltip says.
     pub fn warnings(&self) -> Vec<(String, String)> {
         let mut warnings = Vec::new();
         let mut at = 0;
@@ -297,7 +254,6 @@ impl Places {
         warnings
     }
 
-    /// The names listed now, top to bottom.
     pub fn names(&self) -> Vec<String> {
         self.shown
             .borrow()
@@ -306,19 +262,16 @@ impl Places {
             .collect()
     }
 
-    /// Go to the chosen place, or the first listed: what `Enter` does.
     pub fn activate(&self) {
         let selected = self.list.selected_row().and_then(|row| self.place_at(&row));
         self.go(selected.unwrap_or(0));
     }
 
-    /// The index in `shown` of the place `row` lists; `None` for a heading.
     fn place_at(&self, row: &gtk::ListBoxRow) -> Option<usize> {
         let index = usize::try_from(row.index()).ok()?;
         self.rows.borrow().get(index).copied().flatten()
     }
 
-    /// Go to the `index`th place listed.
     fn go(&self, index: usize) {
         let Some(token) = self.tokens.borrow().get(index).copied() else {
             return;
@@ -330,12 +283,10 @@ impl Places {
         }
     }
 
-    /// List the places the filter matches, in their sections.
     fn show(&self) {
         self.draw(false);
     }
 
-    /// Put the highlight on the first place listed.
     fn highlight_first(&self) {
         let mut at = 0;
         while let Some(row) = self.list.row_at_index(at) {
@@ -347,14 +298,10 @@ impl Places {
         }
     }
 
-    /// Draw the places the filter matches -- unless they are what is drawn
-    /// already and nothing else asks for it (`force`).
-    ///
-    /// Drawing tears every row down, and a click landing across that is a
-    /// click on a row that no longer exists: it goes nowhere. The rows are
-    /// redrawn from many places -- the entry's delayed `search-changed`, a
-    /// read landing, the filtered count moving -- so the guard is here, on
-    /// the one thing they all call, rather than on each of them.
+    /// Drawing tears every row down, and a click landing across that is a click on a row that no
+    /// longer exists. The guard is here,
+    /// on the one thing every redraw calls (the entry's delayed `search-changed`, a read landing,
+    /// the filtered count moving).
     fn draw(&self, force: bool) {
         let source = self.source.borrow().clone();
         let (tokens, shown): (Vec<u64>, Vec<Entry>) = source
@@ -367,8 +314,6 @@ impl Places {
             if *self.shown.borrow() == shown {
                 return;
             }
-            // The same places with other counts -- a read landing with them
-            // -- are the same rows: only what they say on the right moves.
             if same_but_counts(&self.shown.borrow(), &shown) {
                 for (label, entry) in self.counts.borrow().iter().zip(&shown) {
                     label.set_text(entry.count.as_deref().unwrap_or_default());
@@ -408,9 +353,8 @@ impl Places {
             name.set_xalign(0.0);
             name.set_hexpand(true);
             row.append(&name);
-            // A folder whose last pass failed (#1731): the warning says why
-            // to the pointer and to a screen reader. The row still opens
-            // the folder; its stored mail is still here.
+            // A folder whose last pass failed (#1731): the warning says why to the pointer and to a
+            // screen reader; the row still opens the folder.
             if let Some(failure) = &entry.failure {
                 let warning = gtk::Image::from_icon_name(FAILED_ICON);
                 warning.add_css_class("warning");
@@ -448,23 +392,18 @@ impl Places {
     }
 }
 
-/// The mark of a folder that can't sync, as the sync label wears it.
 const FAILED_ICON: &str = "dialog-warning-symbolic";
 
-/// The flag: the mark of flagged mail, wherever it is named.
 pub const FLAG_ICON: &str = "emoji-flags-symbolic";
 
-/// The mark of the strip's "Has action" toggle -- mail waiting on a task,
-/// which is not flagging, so it does not wear the flag.
+/// "Has action" is mail waiting on a task, not flagging, so it does not wear the flag.
 pub const HAS_ACTION_ICON: &str = "task-due-symbolic";
 
-/// The icon a mailbox of `role` is marked with.
 fn icon(role: MailboxRole) -> &'static str {
     match role {
         MailboxRole::Inbox => "mail-read-symbolic",
         MailboxRole::Drafts => "document-edit-symbolic",
         MailboxRole::Sent => "mail-send-symbolic",
-        // What is on its way out, not what went: an arrow leaving a box.
         MailboxRole::Outbox => "send-to-symbolic",
         MailboxRole::Snoozed => "alarm-symbolic",
         MailboxRole::Flagged => FLAG_ICON,
@@ -474,7 +413,6 @@ fn icon(role: MailboxRole) -> &'static str {
     }
 }
 
-/// The widget `mark` makes before a place called `name`.
 fn mark(mark: &Mark, name: &str, accent_hue: f64) -> gtk::Widget {
     match mark {
         Mark::Role(role) => {
@@ -492,8 +430,6 @@ fn mark(mark: &Mark, name: &str, accent_hue: f64) -> gtk::Widget {
     }
 }
 
-/// A dot in `colour`: what a label is marked with, in the places list and
-/// on a label's pill.
 pub(crate) fn colour_dot(colour: Rgb) -> gtk::DrawingArea {
     let dot = gtk::DrawingArea::new();
     dot.set_content_width(DOT_BOX);
@@ -515,7 +451,6 @@ pub(crate) fn colour_dot(colour: Rgb) -> gtk::DrawingArea {
     dot
 }
 
-/// A label's colour: its own, or the one its name gets from the wheel.
 pub(crate) fn label_rgb(label: &postio_model::Label) -> Rgb {
     label_colour(
         &label.name,
@@ -524,7 +459,6 @@ pub(crate) fn label_rgb(label: &postio_model::Label) -> Rgb {
     )
 }
 
-/// A label's colour, as its pill and its dot draw it.
 pub(crate) fn label_rgba(label: &postio_model::Label) -> gtk::gdk::RGBA {
     let colour = label_rgb(label);
     gtk::gdk::RGBA::new(
@@ -535,7 +469,6 @@ pub(crate) fn label_rgba(label: &postio_model::Label) -> gtk::gdk::RGBA {
     )
 }
 
-/// The hue labels without a colour of their own are spread around.
 fn accent_hue() -> f64 {
     let manager = adw::StyleManager::default();
     let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
@@ -548,8 +481,6 @@ fn accent_hue() -> f64 {
     .hue()
 }
 
-/// Whether `now` lists the places `was` does, in the same order, differing
-/// at most in their counts.
 fn same_but_counts(was: &[Entry], now: &[Entry]) -> bool {
     was.len() == now.len()
         && was.iter().zip(now).all(|(was, now)| {
@@ -567,8 +498,6 @@ fn same_but_counts(was: &[Entry], now: &[Entry]) -> bool {
 mod tests {
     use super::*;
 
-    /// The flag is the mailbox of flagged mail, and nothing else wears it:
-    /// the strip's "Has action" toggle has a mark of its own.
     #[test]
     fn the_flag_is_flagged_and_has_action_wears_another_mark() {
         assert_eq!(icon(MailboxRole::Flagged), FLAG_ICON);
@@ -578,7 +507,6 @@ mod tests {
         }
     }
 
-    /// Two places that mean different things do not wear the same mark.
     #[test]
     fn no_two_roles_share_an_icon_but_the_folders() {
         use MailboxRole::*;
@@ -587,7 +515,6 @@ mod tests {
         ];
         for (at, one) in marked.iter().enumerate() {
             for other in &marked[at + 1..] {
-                // Archive is a folder like any other the person made.
                 assert_ne!(icon(*one), icon(*other), "{one:?} and {other:?}");
             }
         }

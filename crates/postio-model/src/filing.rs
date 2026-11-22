@@ -1,18 +1,7 @@
-//! A message as filing knows it (spec 007, `contracts/engine.md`, "The
-//! filing pass").
-//!
-//! Two crates meet over it: `postio-sync`, whose incremental passes hand
-//! every arrival to a filing pass inside the transaction that stored it, and
-//! `postio-classify`, which decides what Focus does with each one. They
-//! used to have a type each, with the same name and different fields, and a
-//! copy between them is where a field goes missing -- the conversation did,
-//! and a message with no conversation is never filtered. So this is the one
-//! type, and it lives in the leaf both already depend on.
-//!
-//! Only what is known when a message is filed: the envelope, `References`
-//! and `List-Id`, the flags (`$Junk` among them), what the promoted headers
-//! said (research R8), the structure, the folder's role, and the thread. No
-//! body: filing happens before one is fetched.
+//! One type for what filing knows, shared by `postio-sync` and `postio-classify`: separate copies
+//! lost the
+//! conversation field, and a message with no conversation is never filtered. Only what is known at
+//! filing; no body.
 
 use crate::promoted::PromotedHeaders;
 use crate::{MailboxRole, Message, ThreadId};
@@ -20,35 +9,23 @@ use crate::{MailboxRole, Message, ThreadId};
 /// One message as it was filed.
 #[derive(Debug, Clone, Copy)]
 pub struct FiledMessage<'a> {
-    /// The message as the store holds it, with its id.
-    ///
-    /// Its own `thread_id` is not the conversation to read: sync threads a
-    /// message after it stores it, so the row it hands over may not carry
-    /// one yet. [`FiledMessage::thread`] does.
+    /// Its own `thread_id` may be unset: sync threads a message after storing it. Use `thread`.
     pub message: &'a Message,
     /// The conversation threading put it in, or `None` when nothing has
     /// placed it -- which the guards read as a reason to leave it alone.
     pub thread: Option<ThreadId>,
-    /// The role of the folder it was filed into.
     pub role: MailboxRole,
 }
 
 impl<'a> FiledMessage<'a> {
-    /// Whether it carries a `List-Unsubscribe` (`messages.unsubscribe_offered`),
-    /// or `None` while that is not known.
     pub fn unsubscribe_offered(&self) -> Option<bool> {
         self.promoted().map(|said| said.unsubscribe_offered)
     }
 
-    /// What its `Precedence` and `Auto-Submitted` say, as
-    /// `messages.automation`'s bits ([`crate::promoted`]), or `None` while
-    /// that is not known.
     pub fn automation(&self) -> Option<u8> {
         self.promoted().map(|said| said.automation)
     }
 
-    /// Whether its structure holds a `text/calendar` part: an invitation, or
-    /// an answer to one.
     pub fn has_calendar(&self) -> bool {
         self.message
             .attachments

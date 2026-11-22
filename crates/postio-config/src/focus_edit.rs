@@ -1,36 +1,21 @@
-//! Postio Focus's own writes to `config.toml` (spec 007, contracts/config.md):
-//! filtering turned on or off, a sender restored from Filtered, a marker
-//! kind stopped by repeated dismissal, a digest rule made, edited, narrowed
-//! or removed.
-//!
-//! Each is a function from the file's text to its new text, touching only
-//! the entry it is about, through `toml_edit`'s format-preserving document
-//! model: every other line -- other sections, comments, layout -- survives,
-//! as the settings panel's own writes promise ([`crate::patch_filters`]).
-//! The caller writes the result with [`crate::save::write_atomically`], so
-//! the change reaches every running surface through the watcher exactly as
-//! `$EDITOR`'s would.
-//!
-//! Each answers `None` when the file already says what was asked, so a
-//! caller writes nothing and records nothing to take back.
+//! Each is a function from the file's text to its new text through `toml_edit`, so every other line
+//! survives. Each answers `None` when the file already says what was asked, so a caller writes
+//! nothing
+//! and records nothing to take back.
 
 use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value};
 
 use crate::focus::DigestRule;
 use crate::{ConfigError, Result};
 
-/// `text` as a document, or the parse error with any secret redacted.
 fn document(text: &str) -> Result<DocumentMut> {
     text.parse::<DocumentMut>()
         .map_err(|err| ConfigError::parse(None, &err))
 }
 
-/// `doc` as text, for a file that said `text` before the edit.
-///
-/// A file of nothing but comments holds them as the document's trailing
-/// text, which `toml_edit` writes after every table -- so a table added to
-/// it would land above what the person wrote. Such a file keeps its text on
-/// top, and the edit follows it.
+/// A file of only comments holds them as trailing text, which `toml_edit` writes after every table;
+/// such
+/// a file keeps its text on top and the edit follows it.
 fn render(text: &str, mut doc: DocumentMut) -> String {
     let had_nothing = text
         .parse::<DocumentMut>()
@@ -46,9 +31,9 @@ fn render(text: &str, mut doc: DocumentMut) -> String {
     format!("{lead}{doc}")
 }
 
-/// `[focus.filter]`, made when it is not there. `[focus]` is made implicit
-/// when it has to be made at all, so a file that says nothing else of Focus
-/// gains a `[focus.filter]` header and not an empty `[focus]` above it.
+/// `[focus]` is made implicit when it has to be made, so a file that says nothing else of Focus
+/// gains
+/// `[focus.filter]` and not an empty `[focus]`.
 fn filter_table(doc: &mut DocumentMut) -> Result<&mut Table> {
     let focus = doc
         .as_table_mut()
@@ -67,14 +52,12 @@ fn filter_table(doc: &mut DocumentMut) -> Result<&mut Table> {
         .ok_or_else(|| shape("[focus.filter] is not a table"))
 }
 
-/// The file says something in a shape Focus cannot edit around.
 fn shape(what: &str) -> ConfigError {
     ConfigError::Serialize(format!(
         "{what}, so Postio will not write to it; fix that line and try again"
     ))
 }
 
-/// `key` of `table` as an array, made when it is not there.
 fn array_at<'a>(table: &'a mut Table, key: &str) -> Result<&'a mut Array> {
     table
         .entry(key)
@@ -83,10 +66,8 @@ fn array_at<'a>(table: &'a mut Table, key: &str) -> Result<&'a mut Array> {
         .ok_or_else(|| shape(&format!("`{key}` is not a list")))
 }
 
-/// `[focus.filter] never` with `entry` in it, or without it: a sender
-/// restored from Filtered, pinned so it is never filtered again (FR-116),
-/// or that pin taken back. An entry is matched as the validator reads one,
-/// ignoring case. `None` when the file already says so.
+/// An entry is matched as the validator reads one, ignoring case. `None` when the file already says
+/// so.
 pub fn set_never(text: &str, entry: &str, present: bool) -> Result<Option<String>> {
     let mut doc = document(text)?;
     let filter = filter_table(&mut doc)?;
@@ -106,9 +87,7 @@ pub fn set_never(text: &str, entry: &str, present: bool) -> Result<Option<String
     Ok(Some(render(text, doc)))
 }
 
-/// `[focus] reading` set to `reading`: where `Return` opens a message, as
-/// `toggle_reading_pane` chose it (T232). `None` when the file already says
-/// so -- and a file that says nothing says `dialog`, the default.
+/// `None` when the file already says so; a file that says nothing says `dialog`.
 pub fn set_reading(text: &str, reading: crate::Reading) -> Result<Option<String>> {
     let mut doc = document(text)?;
     let written = doc
@@ -135,10 +114,7 @@ pub fn set_reading(text: &str, reading: crate::Reading) -> Result<Option<String>
     Ok(Some(render(text, doc)))
 }
 
-/// `[focus] after_unsubscribe` set to `action`: what the notice after
-/// leaving a list offers to do with its mail (#1952), as Settings' Filtering
-/// page chooses it. `None` when the file already says so -- and a file that
-/// says nothing says `archive`, the default.
+/// `None` when the file already says so; a file that says nothing says `archive`.
 pub fn set_after_unsubscribe(
     text: &str,
     action: crate::AfterUnsubscribe,
@@ -166,10 +142,7 @@ pub fn set_after_unsubscribe(
     Ok(Some(render(text, doc)))
 }
 
-/// `[focus] filtering` set to `on`: whether Focus files spam and automated
-/// updates away as they arrive (FR-119), as Settings' Filtering page turns
-/// it. `None` when the file already says so -- and a file that says nothing
-/// filters, the default.
+/// `None` when the file already says so; a file that says nothing filters.
 pub fn set_filtering(text: &str, on: bool) -> Result<Option<String>> {
     let mut doc = document(text)?;
     let says = doc
@@ -193,10 +166,7 @@ pub fn set_filtering(text: &str, on: bool) -> Result<Option<String>> {
     Ok(Some(render(text, doc)))
 }
 
-/// `[focus.filter] stop_markers` with `{ sender, kind }` in it, or without
-/// it: a marker kind the person stopped for a sender by dismissing it
-/// again and again (FR-108), or that correction taken back. `None` when the
-/// file already says so.
+/// `None` when the file already says so.
 pub fn set_stop_marker(
     text: &str,
     sender: &str,
@@ -232,7 +202,6 @@ pub fn set_stop_marker(
     Ok(Some(render(text, doc)))
 }
 
-/// `[[focus.digests]]`, made when it is not there.
 fn digests(doc: &mut DocumentMut) -> Result<&mut ArrayOfTables> {
     let focus = doc
         .as_table_mut()
@@ -251,7 +220,6 @@ fn digests(doc: &mut DocumentMut) -> Result<&mut ArrayOfTables> {
         .ok_or_else(|| shape("`focus.digests` is not a list of `[[focus.digests]]` rules"))
 }
 
-/// Where the rule called `name` is in the file, by its name as written.
 fn position_of(rules: &ArrayOfTables, name: &str) -> Option<usize> {
     rules.iter().position(|rule| {
         rule.get("name")
@@ -260,13 +228,11 @@ fn position_of(rules: &ArrayOfTables, name: &str) -> Option<usize> {
     })
 }
 
-/// `rule` as the table `[[focus.digests]]` holds.
 fn rule_table(rule: &DigestRule) -> Result<Table> {
     let text = toml::to_string(rule).map_err(|err| ConfigError::Serialize(err.to_string()))?;
     Ok(document(&text)?.as_table().clone())
 }
 
-/// The rule the file holds called `name`, and where, if it holds one.
 pub fn digest_rule(text: &str, name: &str) -> Result<Option<(usize, DigestRule)>> {
     let doc = document(text)?;
     let Some(rules) = doc
@@ -285,11 +251,10 @@ pub fn digest_rule(text: &str, name: &str) -> Result<Option<(usize, DigestRule)>
     Ok(Some((at, rule)))
 }
 
-/// `[[focus.digests]]` with `rule` in it: a new rule at the end, or, with
-/// `replacing`, the rule of that name rewritten where it stands -- or put
-/// at `at` when there is none of that name, as undo puts back a rule it
-/// took away. The file's order is the order rules are matched in, so a
-/// rule keeps its place.
+/// With `replacing`, the rule of that name is rewritten where it stands, or put at `at` when there
+/// is
+/// none (as undo puts back a removed rule). The file's order is the match order, so a rule keeps
+/// its place.
 pub fn put_digest_rule(
     text: &str,
     replacing: Option<&str>,
@@ -307,8 +272,7 @@ pub fn put_digest_rule(
                 .expect("the position is in the list") = table;
         }
         None => match at.filter(|at| *at < rules.len()) {
-            // `ArrayOfTables` has no insert, so the list is rebuilt around
-            // the rule; the other rules' own text comes across unchanged.
+            // `ArrayOfTables` has no insert, so the list is rebuilt around the rule.
             Some(at) => {
                 let mut rebuilt = ArrayOfTables::new();
                 for (index, existing) in rules.iter().enumerate() {
@@ -325,9 +289,7 @@ pub fn put_digest_rule(
     Ok(render(text, doc))
 }
 
-/// `[[focus.digests]]` without the rule called `name`, and the rule as it
-/// stood and where: what removing it at `g d` takes away (FR-126), and what
-/// undo would need to put it back. `None` when there is no such rule.
+/// `None` when there is no such rule.
 pub fn remove_digest_rule(text: &str, name: &str) -> Result<Option<(String, usize, DigestRule)>> {
     let Some((at, rule)) = digest_rule(text, name)? else {
         return Ok(None);
@@ -429,7 +391,6 @@ at = \"16:00\"
                 .reading,
             Reading::Dialog
         );
-        // A file that says nothing already says the dialog.
         assert_eq!(set_reading("", Reading::Dialog).expect("an edit"), None);
         assert_eq!(
             set_reading("", Reading::Pane).expect("an edit").as_deref(),
@@ -482,7 +443,6 @@ at = \"16:00\"
                 .after_unsubscribe,
             AfterUnsubscribe::Archive
         );
-        // A file that says nothing already says archive.
         assert_eq!(
             set_after_unsubscribe("", AfterUnsubscribe::Archive).expect("an edit"),
             None
@@ -513,13 +473,11 @@ at = \"16:00\"
                 .filtering
         );
 
-        // A file that says nothing already filters.
         assert_eq!(set_filtering("", true).expect("an edit"), None);
         assert_eq!(
             set_filtering("", false).expect("an edit").as_deref(),
             Some("[focus]\nfiltering = false\n")
         );
-        // A section made implicit by `[focus.filter]` is written out.
         let pinned = "[focus.filter]\nnever = [\"@example.net\"]\n";
         let written = set_filtering(pinned, false)
             .expect("an edit")

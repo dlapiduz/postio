@@ -1,5 +1,3 @@
-//! Configuration, as the frontend reads it.
-
 use postio_ffi::{Session, SessionOptions};
 
 fn session() -> std::sync::Arc<Session> {
@@ -8,9 +6,8 @@ fn session() -> std::sync::Arc<Session> {
 
 #[test]
 fn a_command_with_no_override_answers_its_built_in_binding() {
-    // What a menu draws when the user has changed nothing. The registry's
-    // default binding is already on `commands()`, but a menu must not use it
-    // directly — it has to ask, or a rebound key shows the wrong accelerator.
+    // A menu must ask for the binding, not use the registry default, or a rebound key shows the
+    // wrong accelerator.
     let session = session();
     let binding = session
         .binding_for("archive".to_string())
@@ -21,9 +18,6 @@ fn a_command_with_no_override_answers_its_built_in_binding() {
 
 #[test]
 fn an_override_wins_over_the_built_in() {
-    // The whole reason this crosses. A menu drawing the registry default for a
-    // command the user rebound is confidently wrong, which is worse for a menu
-    // item than showing no key at all.
     let session = Session::open(
         SessionOptions::in_memory().with_config_for_test("[keys]\narchive = \"ctrl+shift+a\"\n"),
     )
@@ -38,9 +32,7 @@ fn an_override_wins_over_the_built_in() {
 
 #[test]
 fn an_unreadable_config_does_not_stop_the_session() {
-    // A config that will not parse is a reason to use the defaults, not a
-    // reason the application cannot open. The store and the mail are not
-    // downstream of `[keys]`.
+    // A config that will not parse means defaults, not an application that cannot open.
     let session =
         Session::open(SessionOptions::in_memory().with_config_for_test("this is not toml {{{"))
             .expect("a broken config still opens a session");
@@ -50,9 +42,8 @@ fn an_unreadable_config_does_not_stop_the_session() {
 
 #[test]
 fn the_token_never_crosses_to_swift() {
-    // Swift has no way to know which key `mod` means, and deciding that is the
-    // core's job -- it owns the binding table. A `KeyboardShortcut` built from
-    // the literal token would render a menu item reading "mod+K".
+    // The core owns the binding table; a `KeyboardShortcut` built from the literal token would read
+    // "mod+K".
     let session = session();
     for command in ["command_palette", "settings", "bold", "archive", "reply"] {
         if let Some(binding) = session.binding_for(command.to_string()) {
@@ -67,10 +58,8 @@ fn the_token_never_crosses_to_swift() {
 
 #[test]
 fn a_non_default_sync_section_actually_reaches_the_engine_this_session_starts() {
-    // #1014: `Session::open` used to build every `Wiring` with
-    // `BackfillPolicy::default()`/`WatchPolicy::default()` regardless of what
-    // `[sync]` said, so this has to prove the engine was actually handed a
-    // *different* policy -- not merely that the session opened.
+    // `Session::open` ignored `[sync]` (#1014), so prove the engine was handed a different policy,
+    // not merely that the session opened.
     let text = "[sync]\n\
                 check_for_mail = \"manual\"\n\
                 poll_interval_secs = 42\n\
@@ -102,9 +91,6 @@ fn a_file_that_says_nothing_leaves_the_built_in_sync_defaults_standing() {
 
 #[test]
 fn a_mod_override_reaches_swift_as_this_platforms_accelerator() {
-    // A `config.toml` written on Linux and synced to a Mac. The file says
-    // `mod+shift+a` on both machines; the Mac's menu says Command, whatever
-    // host the boundary was built on (`postio_ffi::PLATFORM`).
     let session = Session::open(
         SessionOptions::in_memory().with_config_for_test("[keys]\narchive = \"mod+shift+a\"\n"),
     )
@@ -119,18 +105,14 @@ fn a_mod_override_reaches_swift_as_this_platforms_accelerator() {
 
 #[test]
 fn every_command_with_a_default_key_reports_it() {
-    // #1227: `KeyBindings::binding_on` reads `postio-config`'s own short
-    // table, which knows 24 commands; the registry declares defaults for
-    // about eighty. So the menu asked what key `delete` had, was told none,
-    // and drew no accelerator for a key that works.
+    // `binding_on` reads a 24-command table while the registry declares about eighty, so the menu
+    // drew no accelerator for a working key (#1227).
     let session =
         Session::open(SessionOptions::in_memory().with_config_for_test("")).expect("a session");
 
     let silent: Vec<String> = postio_ffi::commands()
         .into_iter()
         .filter(|spec| !spec.default_binding.is_empty())
-        // A command the Mac does not offer has no key on it by design
-        // (`postio_core::registry::offered_on`); that is not a lost key.
         .filter(|spec| {
             spec.id
                 .parse::<postio_core::ActionId>()
@@ -148,19 +130,11 @@ fn every_command_with_a_default_key_reports_it() {
     session.shutdown();
 }
 
-// --- the starter file, on this platform too (#1156) -------------------------
-
 #[test]
 fn starting_the_log_seeds_a_config_file_when_there_is_none() {
-    // The classic app had seeded one since it had a settings surface; macOS
-    // never did, so the Config file pane opened on a blank buffer — which is
-    // precisely what `docs/config.md` promises does not happen. Found by
-    // clicking on it.
-    //
-    // Asserted against the seeder rather than `start_logging`, which installs
-    // a process-global subscriber and cannot run twice in one binary. What is
-    // under test is that a fresh installation ends up with a file: the call
-    // site is one line, and its absence was the bug.
+    // macOS never seeded a config, so the Config file pane opened blank. Asserted on the seeder
+    // because `start_logging`
+    // installs a process-global subscriber and cannot run twice in one binary.
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("config.toml");
 

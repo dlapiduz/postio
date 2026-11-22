@@ -1,15 +1,8 @@
-//! A thread opens in place (specs/013-focus-threads US1; issue #2099): `Right`
-//! splices its messages in under its row, `j` walks into them, `Left` folds
-//! them, and `Return` on one opens that message. Real keys in the real
-//! window; what is asserted is what a person sees -- the rows drawn and the
-//! observation's account of where the cursor is.
-
 use crate::support::{self, Fixture};
 use adw::prelude::AdwDialogExt as _;
 use gtk::prelude::*;
 use postio_model::MessageId;
 
-/// "Harbor plan", a thread of four, above "Solo", a single message.
 async fn harbor() -> (
     Fixture,
     postio_gtk::window::FocusWindow,
@@ -33,7 +26,6 @@ fn said(window: &postio_gtk::window::FocusWindow, key: &str) -> Option<serde_jso
     window.observe().app.get(key).cloned()
 }
 
-/// Every text the rows on screen drew, flattened.
 fn drawn(pane: &postio_gtk::list::ListPane) -> Vec<String> {
     pane.rows_on_screen()
         .iter()
@@ -169,7 +161,6 @@ pub fn return_on_a_child_opens_that_message() {
     });
 }
 
-/// The first row's drawn words, once it is drawn.
 async fn first_row(pane: &postio_gtk::list::ListPane) -> Vec<String> {
     assert!(
         crate::settle_until(async || {
@@ -223,7 +214,6 @@ pub fn clicking_the_chevron_opens_and_folds_a_thread() {
         let (_fixture, window, _ids, pane) = harbor().await;
         let click = |window: &postio_gtk::window::FocusWindow| {
             let row = pane.rows_on_screen()[0].clone();
-            // The chevron sits in the gutter between the unread dot and the names.
             let x = 46.0;
             support::click_in(window, &row, x, row.height() as f32 / 2.0, 1);
         };
@@ -253,7 +243,6 @@ pub fn clicking_the_chevron_opens_and_folds_a_thread() {
     });
 }
 
-/// The child rows Filtered draws, top to bottom.
 fn filtered_children(
     view: &postio_gtk::filtered::FilteredView,
 ) -> Vec<postio_gtk::list::row::RowWidget> {
@@ -500,8 +489,6 @@ pub fn the_window_walks_its_thread() {
     });
 }
 
-/// Open the first row's message in a window over `fixture`, with the sink
-/// its events can be told through.
 async fn opened_telling(
     fixture: &Fixture,
 ) -> (
@@ -547,7 +534,6 @@ pub fn a_reply_while_reading_changes_nothing_on_screen_until_read_it() {
             .await
         );
         let shown = window.observe().reading.id;
-        // Where the body is drawn, in the window: a reply must not move it.
         let body_y = |window: &postio_gtk::window::FocusWindow| {
             let reading = window.reading().expect("open");
             let dialog = reading.dialog().child().expect("the dialog's content");
@@ -557,8 +543,8 @@ pub fn a_reply_while_reading_changes_nothing_on_screen_until_read_it() {
                 .compute_bounds(&dialog)
                 .map(|bounds| bounds.y())
         };
-        // The message is whole on screen before it is measured: a body
-        // that lands later is its own layout, not the reply's.
+        // The message is whole on screen before it is measured: a body that lands later is its own
+        // layout, not the reply's.
         let reading = window.reading().expect("open");
         assert!(
             crate::settle_until(async || reading.reader().view().document().is_some()
@@ -657,9 +643,8 @@ pub fn the_thread_menu_mutes_the_thread_and_its_row_says_so() {
                         .any(|text| text == "Mute thread")
             })
             .expect("a Mute entry");
-        // A menu's entries are choices, drawn in the window's ink: not the
-        // grey a ghost button wears in the chrome, which made the menu read
-        // as disabled.
+        // A menu's entries are choices, drawn in the window's ink, not the grey a ghost button
+        // wears, which made the menu read as disabled.
         let subject = support::descendants(window.upcast_ref::<gtk::Widget>())
             .into_iter()
             .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
@@ -718,9 +703,7 @@ pub fn the_outline_filters_by_name_and_return_shows_that_message() {
             Some(serde_json::json!(2))
         );
         let reading = window.reading().expect("open");
-        // The outline is the width the design gives it, whole inside the
-        // window, and in the interface's face (a popover is its own surface
-        // and does not inherit the window's font).
+        // A popover is its own surface and does not inherit the window's font.
         let outline = support::descendants(&thread_button(&reading))
             .into_iter()
             .find_map(|widget| {
@@ -788,7 +771,6 @@ pub fn the_outline_filters_by_name_and_return_shows_that_message() {
     });
 }
 
-/// The Thread button in the message window's bar.
 fn thread_button(reading: &postio_gtk::open::OpenMessage) -> gtk::Widget {
     support::only(&reading.dialog(), "focus-thread-bar-menu")
 }
@@ -882,8 +864,6 @@ pub fn a_window_opened_from_a_search_walks_the_matches_and_escape_returns_to_the
     });
 }
 
-/// Ordinary find in a window opened from the list still wraps: only a window
-/// a search opened stops at the ends and goes on to the next matched message.
 pub fn find_in_a_window_opened_from_the_list_still_wraps() {
     crate::gtk_case(async {
         if !support::display() {
@@ -980,9 +960,8 @@ pub fn a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed() {
             crate::settle_until(async || composer.is_open()).await,
             "the reply opened"
         );
-        // Typing into an editor whose document is still loading is lost:
-        // wait until it holds the quote. (Where the keyboard lands is the
-        // reply-older storyboard's question, asked of the real window.)
+        // Typing into an editor whose document is still loading is lost: wait until it holds the
+        // quote.
         assert!(
             crate::settle_until(async || composer
                 .test_body_eval("document.body.innerText.includes('wrote')")
@@ -991,7 +970,6 @@ pub fn a_reply_to_an_older_message_says_so_and_alt_e_keeps_what_was_typed() {
             "the reply's body never loaded with its quote: {:?}",
             composer.test_body_eval("document.body.innerText")
         );
-        // Typed at the caret, above the quote, as a person does.
         composer.test_body_eval("document.execCommand('insertText', false, 'Agreed on exports.')");
         assert!(
             crate::settle_until(async || composer
@@ -1060,8 +1038,6 @@ pub fn forwarding_the_whole_thread_says_so_in_the_subject() {
     });
 }
 
-/// An unsent reply is a child of its thread with no message of its own;
-/// `Return` on it opens that draft in the composer, with its words.
 pub fn return_on_the_draft_child_opens_the_draft_in_the_composer() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1076,7 +1052,6 @@ pub fn return_on_the_draft_child_opens_the_draft_in_the_composer() {
         let pane = window.pane().expect("the inbox");
         assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
         support::keys(&window, &["Right"]);
-        // The row, three messages, and the draft.
         assert!(crate::settle_until(async || pane.cursor().n_items() == 5).await);
         support::keys(&window, &["j", "j", "j", "j"]);
         assert_eq!(pane.cursor().selected(), 4, "on the draft child");
@@ -1104,7 +1079,6 @@ pub fn return_on_the_draft_child_opens_the_draft_in_the_composer() {
     });
 }
 
-/// The chips drawn in the message window's thread bar, left to right.
 fn chips_of(reading: &postio_gtk::open::OpenMessage) -> Vec<gtk::Widget> {
     support::with_class(&reading.dialog(), "focus-thread-chip")
         .into_iter()
@@ -1112,9 +1086,8 @@ fn chips_of(reading: &postio_gtk::open::OpenMessage) -> Vec<gtk::Widget> {
         .collect()
 }
 
-/// Click the `at`th chip wearing `class` once a click there reaches it:
-/// the dialog is still opening for a moment, and the bar redraws its chips
-/// when it is told how many fit, so the chip is found again on every try.
+/// The dialog is still opening for a moment, and the bar redraws its chips when told how many fit,
+/// so the chip is found again on every try.
 async fn click_chip(
     window: &postio_gtk::window::FocusWindow,
     reading: &postio_gtk::open::OpenMessage,
@@ -1219,8 +1192,6 @@ pub fn clicking_the_more_chip_opens_the_outline() {
     });
 }
 
-/// A search result's child row says who wrote the matching message, with
-/// their initials and the time, from what the controller sent with the row.
 pub fn a_search_childs_row_says_who_wrote_it_and_when() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1280,8 +1251,6 @@ pub fn a_search_childs_row_says_who_wrote_it_and_when() {
     });
 }
 
-/// The chooser takes the keyboard when it opens, so `1` `2` `3` are its own
-/// there; Tab moves to To, where they are digits in an address again.
 pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboard() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1318,11 +1287,9 @@ pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboar
             .await,
             "2 chose Whole thread"
         );
-        // A Tab is GTK's own traversal, which the harness's key delivery
-        // cannot run, and imitating it with `child_focus` started from the
-        // dialog's top on a loaded CI runner (PR #2124). This case asks what
-        // the number keys do once To has the keyboard, so it puts the
-        // keyboard there, as the Tab does.
+        // A Tab is GTK's own traversal, which the harness cannot run; imitating it with
+        // `child_focus` started from the dialog's top on a loaded runner (#2124).
+        // This case asks what the number keys do once To has the keyboard.
         assert!(composer.test_focus_field(postio_widgets::composer::Field::To));
         assert!(
             crate::settle_until(
@@ -1332,8 +1299,6 @@ pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboar
             "Tab left the chooser: {}",
             support::focus_path(&window)
         );
-        // The field learns it has the keyboard from its own focus signal,
-        // which a loaded machine delivers a beat after the chooser's.
         assert!(
             crate::settle_until(
                 async || composer.focused_field() == Some(postio_widgets::composer::Field::To)
@@ -1351,9 +1316,6 @@ pub fn the_forward_chooser_answers_its_number_keys_only_while_it_has_the_keyboar
     });
 }
 
-/// A forwarded thread sits under what is typed as one row a message, and
-/// `mod+shift+q` opens them into the body and folds them again; what is
-/// sent is the same either way.
 pub fn mod_shift_q_folds_and_unfolds_the_forwarded_messages() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1381,9 +1343,6 @@ pub fn mod_shift_q_folds_and_unfolds_the_forwarded_messages() {
             "six messages fold to six rows: {:?}",
             compose_said(&window, "forwarded.rows")
         );
-        // The rows are the text being forwarded: they sit in the composer
-        // under what is typed, not below its attachments list like more
-        // attachments.
         let dialog = window.compose_dialog().expect("the compose dialog");
         let rows = support::only(&dialog, "focus-forwarded");
         assert!(
@@ -1437,9 +1396,6 @@ pub fn mod_shift_q_folds_and_unfolds_the_forwarded_messages() {
     });
 }
 
-/// Splitting the message on screen off its thread leaves it on screen, now
-/// the first of its own thread, and the toast that offers Undo stays up
-/// rather than giving way to a "that message is gone" notice.
 pub fn splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1493,8 +1449,6 @@ pub fn splitting_the_shown_message_keeps_it_on_screen_in_its_new_thread() {
     });
 }
 
-/// `alt+t` on a thread opened in place shows its outline from the list,
-/// with no message window to hang it from (specs/013-focus-threads US5).
 pub fn the_outline_opens_from_the_list_over_an_expanded_thread() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1519,8 +1473,6 @@ pub fn the_outline_opens_from_the_list_over_an_expanded_thread() {
     });
 }
 
-/// `alt+v` on a child row draws the move picker for that message alone, and
-/// choosing a folder moves it and leaves the rest of its thread.
 pub fn alt_v_on_a_child_moves_that_message_alone() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1569,7 +1521,6 @@ pub fn alt_v_on_a_child_moves_that_message_alone() {
     });
 }
 
-/// How many times each child's line is drawn, in the order the rows are.
 fn children_drawn(pane: &postio_gtk::list::ListPane) -> Vec<String> {
     drawn(pane)
         .into_iter()
@@ -1577,10 +1528,8 @@ fn children_drawn(pane: &postio_gtk::list::ListPane) -> Vec<String> {
         .collect()
 }
 
-/// New mail landing above an open thread moves its row down, and its
-/// children go with it: each is drawn once, under the thread's row, and
-/// `Left` folds all of them away (a sync while a thread was open left two
-/// children behind on screen, 2026-11-16).
+/// A sync while a thread was open left two children behind on screen: each child is drawn once,
+/// under its row, and `Left` folds all of them away.
 pub fn new_mail_above_an_open_thread_moves_its_children_with_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1615,8 +1564,6 @@ pub fn new_mail_above_an_open_thread_moves_its_children_with_it() {
             "the new mail landed at the top: {:?}",
             support::subjects(&window)
         );
-        // The rows the splice moved are laid out a frame or two after the
-        // count changes: wait for them to be drawn, then hold them to it.
         let children = ["Message 1", "Message 2", "Message 3"];
         assert!(
             crate::settle_until(async || children_drawn(&pane) == children).await,
@@ -1650,16 +1597,12 @@ pub fn new_mail_above_an_open_thread_moves_its_children_with_it() {
     });
 }
 
-/// The cursor's row's thread and what its row draws, once drawn.
 fn cursor_thread(window: &postio_gtk::window::FocusWindow) -> Option<postio_model::ThreadId> {
     window.cursor_row().and_then(|row| row.thread())
 }
 
-/// A reply to the thread under the cursor, while its message is open in a
-/// window: the cursor behind the window stays on the thread's row, which
-/// now names who replied first and says their line, and Escape comes back
-/// to it (#2107; the cursor slid to the row below, and the row kept the
-/// sender and line it had).
+/// The cursor slid to the row below and the row kept the sender and line it had (#2107): it stays
+/// on the thread's row, which names who replied first.
 pub fn a_reply_keeps_the_cursor_on_its_thread_and_the_row_says_the_reply() {
     crate::gtk_case(async {
         if !support::display() {
@@ -1738,9 +1681,6 @@ pub fn a_reply_keeps_the_cursor_on_its_thread_and_the_row_says_the_reply() {
     });
 }
 
-/// A reply to the thread under the cursor further down the list moves its
-/// row to the top, newest first, and the cursor goes with it (#2107): it
-/// does not stay on the row that slid into the thread's old place.
 pub fn a_reply_moves_its_thread_to_the_top_and_the_cursor_with_it() {
     crate::gtk_case(async {
         if !support::display() {

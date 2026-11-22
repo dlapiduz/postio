@@ -1,15 +1,5 @@
-//! What backfilling the bodies of one folder costs in round trips and wall
-//! clock when every command takes a round trip (#1941).
-//!
-//! The mock charges its latency once per command, a batched `UID FETCH`
-//! included, so `calls()` is the number of round trips the engine paid and
-//! the stopwatch is what they cost at 50 ms each. Messages are mixed: plain
-//! notes, text-and-HTML alternatives, and a few large newsletters, so the
-//! batches are not all the same shape.
-//!
-//! ```text
-//! cargo nextest run -p postio-runtime --test body_backfill_cost --profile nightly --no-capture
-//! ```
+//! Round trips and wall clock for backfilling one folder's bodies when every command takes a round
+//! trip (#1941).
 //!
 //! POSTIO-MEASUREMENT: its output is numbers a person reads and compares
 //! across changes to the backfill, and at 50 ms a command it takes a minute.
@@ -25,7 +15,6 @@ use postio_storage::{BlobStore, test_support};
 const MESSAGES: u32 = 300;
 const ROUND_TRIP: Duration = Duration::from_millis(50);
 
-/// `POSTIO_MEASURE_RTT_MS` overrides [`ROUND_TRIP`]; zero is the local floor.
 fn round_trip() -> Duration {
     std::env::var("POSTIO_MEASURE_RTT_MS")
         .ok()
@@ -33,7 +22,6 @@ fn round_trip() -> Duration {
         .map_or(ROUND_TRIP, Duration::from_millis)
 }
 
-/// `POSTIO_MEASURE_MESSAGES` overrides [`MESSAGES`] for a quicker look.
 fn messages() -> u32 {
     std::env::var("POSTIO_MEASURE_MESSAGES")
         .ok()
@@ -45,10 +33,8 @@ fn sentence(words: usize) -> String {
     "The tide gate interlock report for this week, with the readings. ".repeat(words / 10 + 1)
 }
 
-/// Five shapes in rotation: a line, a note, a long note, an alternative, and
-/// a large newsletter. Each carries the structure and sections a server
-/// reports, because without a `BODYSTRUCTURE` the backfill fetches the whole
-/// message and never batches.
+/// Each carries the structure a server reports: without a `BODYSTRUCTURE` the backfill fetches the
+/// whole message and never batches.
 fn message(n: u32) -> MockMessage {
     let head = format!(
         "From: Ada Lovelace <ada@example.com>\r\n\

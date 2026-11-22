@@ -1,28 +1,14 @@
 import PostioFFI
 import SwiftUI
 
-/// The results' filter bar (specs/010-focus-search T068; design §3.2,
-/// screens 06 and 07): 46 tall on the window background with a hairline
-/// below -- the tabs as a segmented control with their counts, a divider,
-/// the eight filter buttons, and Sort on the right.
-///
-/// The buttons are the query's (`SearchQueryModel`): an applied one is
-/// solid -- label colour fill, inverted words, its value as its label --
-/// and the one whose popover is open carries the accent ring. The tabs
-/// and the order are the results' frame (`FocusResults`). A click is
-/// handed down; nothing here changes until the controller answers.
 public struct FilterBarView: View {
     let query: SearchQueryModel
     let tabs: [TabFfi]
     let order: ConversationOrderFfi
-    /// Whether Sort is a menu: the Files tab's cards have one order.
     let sortable: Bool
     let words: SearchWordsFfi
     let pickTab: (ResultsTabFfi) -> Void
     let pickOrder: (ConversationOrderFfi) -> Void
-    /// What a button's popover hangs from, laid behind it: the AppKit
-    /// presenter's anchor (`FilterPopoverAnchor`), which this target cannot
-    /// name.
     let anchor: (FilterKindFfi) -> AnyView
 
     public init(
@@ -41,18 +27,13 @@ public struct FilterBarView: View {
         self.anchor = anchor
     }
 
-    /// The bar's height (§3.2).
     public static let height: CGFloat = 46
-    /// The fade over the filters' trailing edge, which is also the room
-    /// kept after the last one so it is never under the fade at rest.
     static let fade: CGFloat = 32
 
     public var body: some View {
         HStack(spacing: 6) {
-            // The tabs and Sort keep their size: at 1024 wide the bar is
-            // too narrow for everything, and squeezing the tabs made
-            // "Threads" "Thre…". The filters give way instead,
-            // scrolling sideways under a fade at their trailing edge.
+            // The tabs and Sort keep their size (squeezing made "Threads" "Thre…"); the filters
+            // give way, scrolling sideways under a fade.
             tabStrip.fixedSize()
             Rectangle().fill(.separator).frame(width: 1, height: 18).padding(.horizontal, 6)
             ScrollView(.horizontal) {
@@ -84,8 +65,6 @@ public struct FilterBarView: View {
         .overlay(alignment: .bottom) { Rectangle().fill(.separator).frame(height: 1) }
     }
 
-    // MARK: tabs
-
     private var tabStrip: some View {
         HStack(spacing: 2) {
             ForEach(tabs, id: \.tab) { tab in
@@ -113,8 +92,6 @@ public struct FilterBarView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary))
     }
 
-    // MARK: sort
-
     private var sortMenu: some View {
         let label = order == .bestMatch ? words.bestMatch : words.newest
         return Group {
@@ -127,8 +104,6 @@ public struct FilterBarView: View {
                 }
                 .menuStyle(.borderlessButton)
             } else {
-                // The Files tab: its cards are newest first, the one order a
-                // file has, so Sort says it and offers nothing to pick.
                 Text(label)
                     .font(.system(size: 12.5, weight: .semibold))
                     .padding(.trailing, 4)
@@ -139,9 +114,6 @@ public struct FilterBarView: View {
     }
 }
 
-/// One filter button: a 28-tall pill with a 1 pt outline, solid once
-/// applied, ringed in the accent while its popover is open, a ▾ when it
-/// opens one.
 struct FilterButton: View {
     let button: SearchQueryModel.Button
     let action: () -> Void
@@ -154,7 +126,6 @@ struct FilterButton: View {
                 if !button.isToggle {
                     Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .semibold))
                 }
-                // The key that opens it, taught on the button (#2090).
                 if let cap = button.cap {
                     KeyCap(cap)
                 }

@@ -1,61 +1,35 @@
-//! `[ui]` — appearance and interaction preferences.
-
 use serde::{Deserialize, Serialize};
 
 use crate::{Extras, Result};
 
-/// Message-list row height in the macOS app. Airy is 40px rows; the other two
-/// tighten the same row anatomy rather than changing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Density {
-    /// 40px rows — the default.
     #[default]
     Airy,
-    /// Middle setting.
     Comfortable,
-    /// Tightest rows, most messages on screen.
     Compact,
 }
 
-/// Light/dark preference. `System` follows the desktop's color scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
-    /// Follow the GNOME light/dark setting.
     #[default]
     System,
-    /// Always light.
     Light,
-    /// Always dark.
     Dark,
 }
 
-/// The `[ui]` section: the macOS app's appearance. The desktop app and the
-/// terminal read none of it.
-///
-/// ```toml
-/// [ui]
-/// density = "airy"          # airy | comfortable | compact
-/// theme = "system"          # system | light | dark
-/// show_hover_actions = true # mouse parity: reveal row actions on hover
-/// sender_avatars = true     # initials chip per row
-/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiConfig {
-    /// Message-list row height.
     #[serde(default)]
     pub density: Density,
-    /// Light/dark preference.
     #[serde(default)]
     pub theme: Theme,
-    /// Show per-row actions when the pointer is over a row.
     #[serde(default = "crate::yes")]
     pub show_hover_actions: bool,
-    /// Show each row's sender-initials chip.
     #[serde(default = "crate::yes")]
     pub sender_avatars: bool,
-    /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
 }
@@ -72,28 +46,13 @@ impl Default for UiConfig {
     }
 }
 
-/// Rewrites `text`'s `[ui]` table to match `ui`, leaving every *other*
-/// section — and any comment attached to one — untouched. The structured
-/// Appearance pane's write path (#873): the same `patch_filters` (#869)
-/// already established for exactly this reason — `Config::to_toml_string`
-/// reserializes the whole file and would drop a hand-written comment
-/// anywhere in it, not only in `[ui]`.
-///
-/// `[ui]` itself is regenerated whole on every call, the same tradeoff
-/// `patch_filters` makes for a changed entry: a comment attached directly to
-/// `[ui]` — its own header, or one of its own keys — does not survive,
-/// because there is no per-field diff here, only "this table, freshly
-/// written". Six settings a person picks from a dropdown or flips a switch
-/// on are not the kind of TOML anyone hand-annotates the way a whole section
-/// might be, so that is the deliberate half of the promise, not an
-/// oversight.
+/// The Appearance pane's write path (#873). `[ui]` is regenerated whole, so a comment on its header
+/// or
+/// keys does not survive; `Config::to_toml_string` would drop comments anywhere.
 pub fn patch_ui(text: &str, ui: &UiConfig) -> Result<String> {
     crate::splice::replace_section(text, "ui", &UiOnly { ui })
 }
 
-/// Serializes as just a `[ui]` table, with no other section — [`patch_ui`]'s
-/// bridge from `toml`'s serde-derived output to a fragment `toml_edit` can
-/// splice in.
 #[derive(Serialize)]
 struct UiOnly<'a> {
     ui: &'a UiConfig,
@@ -121,14 +80,9 @@ mod tests {
 
     #[test]
     fn sender_avatars_defaults_to_true_when_absent_from_an_existing_file() {
-        // Back-compat: a config.toml written before this field existed has
-        // no `sender_avatars` key at all, and must still parse as "on" --
-        // the same default a brand new file gets.
         let config = Config::from_toml_str("[ui]\ntheme = \"dark\"\n").expect("parses");
         assert!(config.ui.sender_avatars);
     }
-
-    // -- Acceptance: the Appearance pane patches [ui] only (#873) -----------
 
     #[test]
     fn patch_ui_rewrites_only_the_ui_table_leaving_everything_else_verbatim() {

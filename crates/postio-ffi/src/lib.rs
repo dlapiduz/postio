@@ -1,39 +1,6 @@
-//! The boundary the macOS frontend talks to.
-//!
-//! Postio's engine is toolkit-free by construction — `postio-session` is the
-//! composition root with no GTK in it, and `postio-core` is the
-//! commands-down/events-up contract over it (ADR 0010, `ARCHITECTURE.md` §9).
-//! This crate is what lets something that is not Rust hold the other end of
-//! that contract: a UniFFI surface over `postio-session`, consumed by the
-//! native Swift application (ADR 0019).
-//!
-//! # What this is not
-//!
-//! **It is private to the macOS app, and it promises no stability.** It exists
-//! to serve one frontend and is shaped by that frontend's needs. It is not an
-//! embedding API, and a caller outside this repository has no contract here.
-//!
-//! That sentence is load-bearing rather than defensive. Ghostty — the design
-//! this seam is modelled on — says the same of `include/ghostty.h`, and its
-//! genuinely public library ended up a separate artifact with separate
-//! documentation. A frontend seam that accretes general-purpose obligations
-//! stops being able to change, and this one has a lot of changing left to do.
-//!
-//! # Why it builds on Linux
-//!
-//! There is deliberately no macOS-specific code here, so `cargo test -p
-//! postio-ffi` runs anywhere. That is the mechanism which keeps a Linux
-//! session from breaking the macOS seam without noticing: the shim for the
-//! expensive platform is compiled on the cheap one, in the ordinary gate.
-//!
-//! # The shape it is growing into
-//!
-//! Two tiers, after Ghostty's `apprt`. A small **required floor** — open a
-//! session, drain events, invoke a command, page the list, render a reader
-//! document — where a missing piece is a compile error. And a large
-//! **optional surface** of one-way events, each ignorable, so a frontend that
-//! handles none of them still runs. Today the floor is one function; the
-//! scaffolding around it is the part that had to be proven first.
+//! The boundary the macOS frontend talks to: a UniFFI surface over `postio-session`, private to the
+//! macOS app with no stability promise (ADR 0019).
+//! It has no macOS-specific code, so `cargo test -p postio-ffi` runs on Linux.
 
 mod account;
 mod agent_access;
@@ -218,27 +185,16 @@ pub use settings::{
 };
 pub use unsubscribe::{ListMailOfferFfi, UnsubscribeActivationFfi, UnsubscribeOfferFfi};
 
-/// Every command the registry knows, in cheat-sheet order.
-///
-/// A free function because the registry is a `const` table: it is not session
-/// state, and requiring a session to read it would be an accident of where the
-/// method happens to live.
-///
-/// That matters more on macOS than it looks. Opening a session reads the
-/// store's key from the OS keyring (ADR 0014), and an unsigned build has a new
-/// code identity on every rebuild — so anything that needed a session to show
-/// a command list would raise a Keychain prompt to draw a menu. The frontend
-/// builds its palette, cheat sheet and menu bar from this, before it has a
-/// store or a single secret.
+/// Every command the registry knows, in cheat-sheet order. A free function so the palette and menu
+/// bar are built before a
+/// session opens: opening one reads the keyring and can raise a Keychain prompt (ADR 0014).
 #[uniffi::export]
 pub fn commands() -> Vec<CommandSpecFfi> {
     registry::commands()
 }
 
-/// The ids `PostioKit.Intercepted` must hold, as the boundary knows them.
-///
-/// Crosses so the Swift copy can be checked against it rather than trusted.
-/// See [`registry::INTERCEPTED`] for why there are two copies at all.
+/// The ids `PostioKit.Intercepted` must hold, so the Swift copy can be checked against it (see
+/// `registry::INTERCEPTED`).
 #[uniffi::export]
 pub fn intercepted_commands() -> Vec<String> {
     registry::INTERCEPTED
@@ -247,29 +203,19 @@ pub fn intercepted_commands() -> Vec<String> {
         .collect()
 }
 
-/// Which of Postio's interfaces the Mac app is, to the registry: Focus
-/// (specs/009-focus-macos FR-001, ADR 0043). What it is offered -- keys,
-/// palette rows, menu items, settings sections -- is Focus's, less what
-/// `postio_core::registry::offered_on` keeps off the Mac.
+/// Which of Postio's interfaces the Mac app is, to the registry: Focus (ADR 0043).
 pub const FRONTEND: postio_core::Frontend = postio_core::Frontend::Focus;
 
-/// Which platform's design the boundary serves: Apple's, whatever host it
-/// was built on. Every platform question this crate asks -- what the
-/// registry offers, what `mod` means, the menu bar, Focus's
-/// [`postio_focus::Policy`] -- is asked about this and never about
-/// `Platform::host()`, so the Linux gate (ADR 0019 Q7) runs the composition
-/// the Mac runs. Asking the host there ran spec 010's results view with
-/// none of its keys, a combination nothing ships.
+/// Which platform's design the boundary serves: Apple's, whatever host it was built on, so the
+/// Linux gate (ADR 0019 Q7)
+/// runs the composition the Mac runs. Never ask `Platform::host()`.
 pub const PLATFORM: postio_config::paths::Platform = postio_config::paths::Platform::Apple;
 
 uniffi::setup_scaffolding!();
 
-/// Set aside the store at `store_path` (or the usual path) and start a fresh
-/// one there, carrying its accounts across: what "Start over" does when
-/// [`Session::open_at`] answers [`SessionError::StoreFromAnotherBuild`] or
-/// [`SessionError::StoreUnderAnotherKey`]
-/// (specs/009-focus-macos T098). The store key is the keyring's. Blocks, as
-/// opening a session does: call it off the main actor, then open again.
+/// Set aside the store at `store_path` (or the usual path) and start a fresh one there, carrying
+/// its accounts across.
+/// Blocks: call it off the main actor, then open again.
 #[uniffi::export]
 pub fn start_over(store_path: Option<String>) -> Result<StartedOverFfi, SessionError> {
     start_over_with(match store_path {
@@ -278,26 +224,16 @@ pub fn start_over(store_path: Option<String>) -> Result<StartedOverFfi, SessionE
     })
 }
 
-/// The words of the page a store that will not open shows
-/// (specs/009-focus-macos T100), `postio_ui::focus_state`'s, as GTK's
-/// window says them.
+/// The words of the page a store that will not open shows, `postio_ui::focus_state`'s.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct StoreRefusalWordsFfi {
-    /// The heading when trying again can help.
     pub cant_open: String,
-    /// Its button.
     pub try_again: String,
-    /// The heading for [`SessionError::StoreFromAnotherBuild`].
     pub from_another_build: String,
-    /// What that page says: why, what a fresh store keeps, what stays.
     pub start_over_sentence: String,
-    /// The heading for [`SessionError::StoreUnderAnotherKey`].
     pub under_another_key: String,
-    /// What that page says: why, what a fresh store costs, what stays.
     pub start_over_under_another_key_sentence: String,
-    /// Its button, which runs [`start_over`].
     pub start_over: String,
-    /// The button while [`start_over`] runs.
     pub starting_over: String,
 }
 
@@ -317,21 +253,13 @@ pub fn store_refusal_words() -> StoreRefusalWordsFfi {
     }
 }
 
-/// What is said once [`start_over`] has set the old store aside at
-/// `set_aside` and the fresh one has opened.
 #[uniffi::export]
 pub fn started_over_words(set_aside: String) -> String {
     postio_ui::focus_state::started_over(&set_aside)
 }
 
-/// Answers with the name of this application.
-///
-/// A deliberate placeholder: the boundary needs one real export before it has
-/// any exports at all, and every guarantee this crate makes — that the
-/// scaffolding compiles under the workspace's `forbid(unsafe_code)`, that
-/// `uniffi-bindgen` can read the cdylib's metadata, that the generated Swift
-/// declares what Rust exported — is proven against it. It is replaced by the
-/// real floor, not extended.
+/// A placeholder export proving the scaffolding compiles under `forbid(unsafe_code)` and
+/// `uniffi-bindgen` can read the metadata.
 #[uniffi::export]
 pub fn probe() -> String {
     "postio".to_string()
@@ -343,10 +271,8 @@ mod tests {
 
     #[test]
     fn the_export_is_callable_as_ordinary_rust() {
-        // The scaffolding must not change what the function is from Rust's
-        // side: `#[uniffi::export]` adds a C-ABI shim beside it, and a version
-        // that wrapped or moved the original would break every in-process
-        // caller and every test in this workspace.
+        // `#[uniffi::export]` adds a C-ABI shim beside the function; wrapping or moving it would
+        // break in-process callers.
         assert_eq!(probe(), "postio");
     }
 }

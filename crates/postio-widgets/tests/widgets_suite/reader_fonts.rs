@@ -1,19 +1,3 @@
-//! The reader's typefaces reach the renderer, and the document does not
-//! carry them (#768, ADR 0023).
-//!
-//! Every document used to inline ~1.21 MB of base64 `@font-face` data, on
-//! every render. The faces are Postio's own `FontSet` now, registered once
-//! per process and handed to every render (spec 006 research R3); the
-//! document names them and never carries them.
-//!
-//! What WebKit made worth a display -- that the engine *fetched* a face
-//! over `postio-font:`, and that a warmed web process fetched none for the
-//! first message -- has no equivalent: nothing is fetched. What replaces
-//! it is the font set answering for Postio's families here, and the
-//! renderer shaping with them in `postio-render`'s `fonts` suite.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use crate::support_reader::pump;
 use std::rc::Rc;
 use std::time::Instant;
@@ -32,9 +16,6 @@ pub fn the_faces_are_the_readers_own_and_not_carried_by_the_document() {
     reader.render(&body("<p>The tide gate interlock is fixed.</p>"), None);
     wait_for_text(&reader, "tide gate");
 
-    // The families the reader's sheet names resolve in the set every render
-    // is given; a name nothing answers is a silent fall back to whatever
-    // sans the machine has.
     let fonts = postio_widgets::body_view::font_set();
     for family in ["Barlow", "Barlow Condensed", "IBM Plex Mono"] {
         assert!(
@@ -44,8 +25,6 @@ pub fn the_faces_are_the_readers_own_and_not_carried_by_the_document() {
     }
     assert_eq!(fonts.generic("sans-serif").as_deref(), Some("Barlow"));
 
-    // The whole of #768: what a message change costs is the message, not
-    // the typeface catalogue.
     let document = postio_ui::reader::document::document_for(
         "<p>The tide gate interlock is fixed.</p>",
         "",
@@ -64,12 +43,8 @@ pub fn the_faces_are_the_readers_own_and_not_carried_by_the_document() {
     window.close();
 }
 
-/// The first message is drawn, not the deadline's plain-text fallback.
-///
-/// Font discovery reads every installed face's tables, which is the one
-/// slow thing a first render could wait on; warming the reader starts it
-/// on the application's first idle turn, so the first message a person
-/// opens is rendered in full.
+/// Font discovery is the one slow thing a first render could wait on; warming starts it on the
+/// first idle turn.
 pub fn a_warmed_reader_draws_its_first_message_in_full() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

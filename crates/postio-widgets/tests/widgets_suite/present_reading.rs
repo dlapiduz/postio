@@ -1,15 +1,8 @@
-//! The reader's remote images, fetched through the shared glue (spec 006
-//! FR-025; specs/007-postio-focus T022): the reader asks by the document's
-//! own spelling, the app's fetcher answers by parsed URL on its runtime, and
-//! what arrives is handed back on the main loop under the spelling it was
-//! asked by. A failed image is absent, not an empty picture.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::support::until;
 
-/// What came back to the main loop, once it has.
 type Arrived = Rc<RefCell<Option<Vec<(String, Vec<u8>)>>>>;
 
 pub fn fetched_images_come_back_under_the_documents_spelling() {

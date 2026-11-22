@@ -1,9 +1,4 @@
-//! What one position of Focus's list stands for, and how the pages the store
-//! returns become those rows, with no toolkit in it.
-//!
-//! The desktop's list and the terminal's both read pages through the client
-//! and hand them here: the label merge, the surfaced splice and the day a
-//! row sits under are one policy, not one per frontend.
+//! What one position of Focus's list stands for and how store pages become rows, with no toolkit.
 
 use chrono::{DateTime, Utc};
 use postio_model::ids::{DeliveryId, MessageId, ReminderId, ThreadId};
@@ -15,60 +10,34 @@ use postio_model::{EmailAddress, Label};
 
 use crate::surfaced::Slot;
 
-/// One row of Focus's list.
-///
-/// A conversation, or a surfaced row spliced among them at its place
-/// (research R3, data-model `FocusRow`): a fired reminder, or a digest
-/// delivery.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FocusRow {
-    /// A conversation, drawn from its newest message in the inbox.
     Conversation(Conversation),
-    /// A reminder that found no reply by its time (T095): its
-    /// conversation, drawn as one, marked "No reply since …" and sitting
-    /// where it came due rather than where its mail did.
     Reminder {
-        /// Which reminder.
         reminder: ReminderId,
-        /// The conversation it stands for, with its marker.
         row: Conversation,
     },
-    /// A digest delivered and not archived (T136): one row for everything
-    /// it holds.
     Digest(Digest),
 }
 
-/// A digest row: what a delivery holds, and when it came due.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Digest {
-    /// Which delivery.
     pub delivery: DeliveryId,
-    /// The rule's name: "Newsletters".
     pub rule: String,
-    /// How often it comes, while the rule is in `config.toml`.
     pub cadence: Option<Cadence>,
-    /// How many messages it holds.
     pub count: u32,
-    /// Who sent them, most messages first.
     pub senders: Vec<EmailAddress>,
-    /// The opening of its summary, once one is written (milestone 2).
     pub summary_line: Option<String>,
-    /// When it came due.
     pub at: DateTime<Utc>,
 }
 
-/// A conversation's row: the list's summary of it, and its labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conversation {
-    /// What the list read: the newest message, the counts, the marker.
     pub summary: ThreadSummary,
-    /// Its labels, in the order they were made: the first two are its
-    /// pills (`crate::focus_row::MAX_PILLS`).
     pub labels: Vec<Label>,
 }
 
 impl FocusRow {
-    /// A conversation's row, before its labels have been read.
     pub fn conversation(summary: ThreadSummary) -> Self {
         FocusRow::Conversation(Conversation {
             summary,
@@ -76,9 +45,6 @@ impl FocusRow {
         })
     }
 
-    /// A surfaced row, when it is one this list draws: a fired reminder.
-    /// Its conversation is drawn from its latest message, as of when it
-    /// fired, with the "No reply" marker naming the day it was set.
     pub fn surfaced(surfaced: &Surfaced) -> Option<Self> {
         if let Surfaced::Digest {
             delivery,
@@ -141,8 +107,6 @@ impl FocusRow {
         })
     }
 
-    /// The conversation the row draws, whatever brought it here; `None`
-    /// for a digest, which stands for many.
     pub fn as_conversation(&self) -> Option<&Conversation> {
         match self {
             FocusRow::Conversation(row) | FocusRow::Reminder { row, .. } => Some(row),
@@ -150,10 +114,8 @@ impl FocusRow {
         }
     }
 
-    /// The message the row stands for: the one opening it opens, and the
-    /// one the selection names it by. A digest stands for no one message;
-    /// its row is named by its delivery, negated, which no message's id
-    /// can be.
+    /// A digest stands for no one message; its row is named by its delivery, negated, which no
+    /// message id can be.
     pub fn id(&self) -> MessageId {
         match self {
             FocusRow::Digest(digest) => MessageId::new(-digest.delivery.get()),
@@ -163,10 +125,8 @@ impl FocusRow {
         }
     }
 
-    /// Which row this is across re-reads ([`crate::list::ListRow::key`]):
-    /// a conversation's is its thread, whichever message it is drawn from
-    /// now; a fired reminder's and a digest's are their own, so neither is
-    /// taken for its conversation's row.
+    /// Identity across re-reads: a conversation's is its thread; a reminder's and a digest's are
+    /// their own.
     pub fn key(&self) -> crate::list::RowKey {
         use crate::list::RowKey;
         match self {
@@ -179,13 +139,10 @@ impl FocusRow {
         }
     }
 
-    /// The conversation, when the row stands for one.
     pub fn thread(&self) -> Option<ThreadId> {
         self.as_conversation().and_then(|row| row.summary.id)
     }
 
-    /// Every conversation an action on this row must reach: its own and the
-    /// copies folded into it from the person's other accounts (T161).
     pub fn threads(&self) -> Vec<ThreadId> {
         let Some(row) = self.as_conversation() else {
             return Vec::new();
@@ -197,15 +154,12 @@ impl FocusRow {
             .collect()
     }
 
-    /// Whether the row draws a second line: a conversation with a marker.
-    /// Its kind decides its height, never its content (FR-013).
+    /// Its kind decides its height, never its content.
     pub fn two_lines(&self) -> bool {
         self.as_conversation()
             .is_some_and(|row| row.summary.marker.is_some())
     }
 
-    /// When the row's mail arrived -- or, for a surfaced row, when it came
-    /// due -- for its day heading and its time.
     pub fn at(&self) -> DateTime<Utc> {
         match self {
             FocusRow::Digest(digest) => digest.at,
@@ -214,17 +168,12 @@ impl FocusRow {
     }
 }
 
-/// The local day a row's mail arrived on: what its heading names.
 pub fn day_of(row: &FocusRow) -> chrono::NaiveDate {
     row.at().with_timezone(&chrono::Local).date_naive()
 }
 
-/// A page of conversations as rows: each summary with its labels, read in
-/// one round trip for the whole page (`labelled` is every `(thread, label)`
-/// pair the page's threads hold, copies included).
-///
-/// A row holds each label once, in the order they were read, whichever of
-/// its folded copies carried it.
+/// `labelled` is every `(thread, label)` pair for the page, copies included; a row holds each label
+/// once.
 pub fn conversations(
     summaries: Vec<ThreadSummary>,
     mut labelled: Vec<(ThreadId, Label)>,
@@ -252,8 +201,6 @@ pub fn conversations(
         .collect()
 }
 
-/// The threads a page of summaries needs labels for: each one's own and
-/// its folded copies'.
 pub fn label_threads(summaries: &[ThreadSummary]) -> Vec<ThreadId> {
     summaries
         .iter()
@@ -261,8 +208,6 @@ pub fn label_threads(summaries: &[ThreadSummary]) -> Vec<ThreadId> {
         .collect()
 }
 
-/// A message listed on its own -- a draft -- as the one-message
-/// conversation a row draws.
 pub fn lone(message: MessageSummary) -> ThreadSummary {
     ThreadSummary {
         id: message.thread,
@@ -280,9 +225,7 @@ pub fn lone(message: MessageSummary) -> ThreadSummary {
     }
 }
 
-/// A page's rows in order: each slot of a spliced page filled from the
-/// surfaced rows or the stored conversations it names. A slot naming a row
-/// that is not there is skipped.
+/// A slot naming a row that is not there is skipped.
 pub fn place(slots: &[Slot], surfaced: &[FocusRow], stored: &[FocusRow]) -> Vec<FocusRow> {
     slots
         .iter()

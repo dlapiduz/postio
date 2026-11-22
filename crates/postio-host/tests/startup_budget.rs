@@ -1,26 +1,7 @@
-//! What a frontend's first usable frame waits on, against the constitution's
-//! 500 ms (docs/archive/specs/005-tui-frontend SC-003, T094).
-//!
-//! POSTIO-MEASUREMENT: it builds a store of five thousand messages, and its
-//! output is numbers a person reads, so it runs nightly (`.config/nextest.toml`
-//! excludes it from the default profile). Run it by hand with
-//! `cargo nextest run -p postio-host --profile nightly --test startup_budget --no-capture`.
-//!
-//! An app draws its first usable frame once it has opened the store in its
-//! own process -- the file, with the schema and search-index checks
-//! `open_store_at` makes -- started the host over it, connected its client,
-//! switched Focus mode on before anything could sync (the terminal is
-//! Focus, FR-186), connected its client, and read through that client the
-//! accounts, Focus's inbox -- its count, the rows Focus surfaces, its first
-//! page and that page's labels -- and the strip's counts: what
-//! `postio-tui`'s `run` and `first_scope` and its first `Open` do, and what
-//! the desktop app's `open_the_store` does before its list reads.
-//!
-//! Two waits are deliberately in neither number. The keyring round trip is a
-//! D-Bus call to a Secret Service this measurement cannot assume is there; the
-//! desktop's startup timeline measures it where it happens. Drawing the frame
-//! is `postio-tui`'s pure code over rows already in hand, microseconds beside
-//! these.
+//! POSTIO-MEASUREMENT: builds a five-thousand-message store and prints timings a person reads, so
+//! it runs nightly.
+//! Run by hand: `cargo nextest run -p postio-host --profile nightly --test startup_budget
+//! --no-capture`.
 
 use std::time::{Duration, Instant};
 
@@ -29,19 +10,12 @@ use postio_host::{FocusSetup, Host};
 use postio_model::ListScope;
 use postio_model::listing::{MailStore, PageRequest};
 
-/// SC-003: the first usable frame within this.
 const BUDGET: Duration = Duration::from_millis(500);
 
-/// A mailbox big enough that a read which scaled with it would show.
 const MESSAGES: usize = 5_000;
 
-/// The first page a terminal of ordinary height asks for.
 const FIRST_PAGE: u32 = 60;
 
-/// What the first frame reads, over `client`, as `postio-tui`'s `run` does
-/// for Focus's inbox: the accounts, the first account's folders, how many
-/// conversations the inbox holds, what Focus surfaces among them, its first
-/// page with that page's labels, and the strip's counts.
 async fn first_frame(client: &postio_client::Client) -> usize {
     let accounts = client.accounts().await.expect("the accounts");
     assert!(
@@ -90,8 +64,6 @@ fn an_app_reaches_its_first_usable_frame_within_the_budget() {
             .expect("the store opens")
     };
 
-    // The mailbox, written once and closed, so the open below reads a store
-    // that exists rather than creating one.
     {
         let (database, _blobs) = open();
         tokio::runtime::Builder::new_current_thread()
@@ -104,8 +76,6 @@ fn an_app_reaches_its_first_usable_frame_within_the_budget() {
     let start = Instant::now();
     let (database, blobs) = open();
     let host = Host::start(database, blobs, |wiring| wiring).expect("a host");
-    // As `run` does, before the first sync and with `[focus]` as the file
-    // says it.
     let focus = host.enable_focus(FocusSetup::from_config(Default::default(), None));
     let client = host.connect(ClientKind::Tui);
     let rt = tokio::runtime::Builder::new_current_thread()

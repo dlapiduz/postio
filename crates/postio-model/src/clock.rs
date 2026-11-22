@@ -1,14 +1,8 @@
-//! The wall clock Postio reads, which a storyboard can stop.
-//!
-//! A row's "09:14" or "yesterday" is a function of the message and of *now*,
-//! and so is the date a new draft or a queued send is stamped with. Filmed
-//! twice, a storyboard would differ by whatever the clock did in between.
-//! Code that stamps or draws a time asks [`now`] instead of `Local::now()`,
-//! and a harness [`freeze`]s it so every frame is the same frame. It lives
-//! here, at the bottom of the graph, so the model's stamps can read it too;
-//! `postio_ui::clock` re-exports it. Unfrozen it is
-//! the system clock. The freeze is process-wide, because the readers are
-//! spread across widgets that share no handle.
+//! The wall clock Postio reads, which a harness can `freeze` so storyboard frames are identical.
+//! Code that
+//! stamps or draws a time asks `now`, not `Local::now()`. Process-wide, because readers share no
+//! handle.
+//! Lives at the bottom of the graph so model stamps can read it; `postio_ui::clock` re-exports it.
 
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -20,7 +14,6 @@ fn slot() -> &'static Mutex<Option<DateTime<Local>>> {
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
-/// The current instant: the frozen one if there is one, else the system's.
 pub fn now() -> DateTime<Local> {
     slot()
         .lock()
@@ -28,15 +21,12 @@ pub fn now() -> DateTime<Local> {
         .unwrap_or_else(Local::now)
 }
 
-/// Stop the clock at `at`, for every thread, until [`thaw`].
 pub fn freeze(at: DateTime<Local>) {
     *slot().lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
     *monotonic().lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
 }
 
-/// The monotonic clock, which an age on screen ("last sync 12s") is measured
-/// on so it never jumps with the wall clock. Frozen with [`now`]: stopped at
-/// the instant [`freeze`] was called, so an age reads the same in every frame.
+/// Monotonic clock for on-screen ages, so they never jump with the wall clock; frozen with `now`.
 pub fn instant() -> Instant {
     monotonic()
         .lock()
@@ -49,12 +39,10 @@ fn monotonic() -> &'static Mutex<Option<Instant>> {
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
-/// The freeze is process-wide, so tests that use it, in this crate or
-/// beside a type that reads it, take turns.
+/// The freeze is process-wide, so tests that use it take turns.
 #[cfg(test)]
 pub(crate) static TURN: Mutex<()> = Mutex::new(());
 
-/// Let the clock run again.
 pub fn thaw() {
     *slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
     *monotonic().lock().unwrap_or_else(|e| e.into_inner()) = None;

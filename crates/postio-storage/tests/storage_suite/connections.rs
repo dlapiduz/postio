@@ -1,12 +1,3 @@
-//! One store, several connections: which page cache each carries, and how
-//! many a run of reads opens (#1602).
-//!
-//! The engine keeps no pool: every `connect` is a fresh pager with an empty
-//! page cache, capped by the `cache_size` pragma the store sets on it. So
-//! the number of connections a surface opens is the number of caches it
-//! fills from a cold file, and the cap on a connection that only writes
-//! through is memory nobody reads.
-
 use postio_storage::test_support::{self, counting};
 use postio_storage::{Connection, sql};
 
@@ -20,9 +11,8 @@ async fn cache_size(connection: &Connection) -> i64 {
 
 #[tokio::test]
 async fn a_background_connection_carries_a_small_cache() {
-    // Lanes, body fetches and the indexer write across the whole file, so
-    // their caches saturate at the cap and hold clean pages nothing reads
-    // again; five of them at 64 MiB was ~300 MB of a first sync's heap.
+    // Lanes, body fetches and the indexer write across the whole file, so their caches saturate at
+    // the cap with pages nothing rereads.
     let store = test_support::memory().await;
     let interactive = store.connect().await.expect("a connection");
     let background = store
@@ -39,9 +29,6 @@ async fn reads_take_turns_on_a_few_long_lived_connections() {
     if postio_test_support::alone!("reads_take_turns_on_a_few_long_lived_connections") {
         return;
     }
-    // A read that opens its own connection pays a new pager, an empty cache
-    // and the pragmas every time; a list page paid it twice per page. Reads
-    // taken in turn share one warm connection.
     let store = test_support::memory().await;
     let before = counting::checkouts();
     for _ in 0..5 {

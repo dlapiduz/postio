@@ -1,23 +1,12 @@
-//! Compose and reply in Focus (US3, screens 05 and 06): the classic app's
-//! composer, in a dialog over the list.
-//!
-//! What is asserted is what the dialog shows -- the heading, the fields as
-//! their entries read, the Labels row, the quote in the body -- never what
-//! the composer was handed.
-
 use adw::prelude::*;
 use postio_model::{EmailAddress, Message, MessageId};
 use postio_storage::repository::{MessageRepository, StoredBody, ThreadingRepository};
 
 use crate::support::{self, Fixture};
 
-/// The user's own address in the fixture's account: `reply_all` leaves it
-/// out of the recipients.
 pub const ME: &str = "test@example.com";
 
 impl Fixture {
-    /// File Lena's "Harbor API draft v3" into the inbox, to the user and
-    /// Ben, copying Grace and the Harbor list, with a body to quote.
     pub async fn harbor_thread(&self) -> MessageId {
         let connection = self.database.connect().await.expect("a connection");
         let mut message = Message::new(
@@ -64,9 +53,6 @@ impl Fixture {
     }
 }
 
-/// What the composer field labelled `name` ("To", "Cc", "Subject") shows:
-/// each recipient chip as "Name <address>" (T079), then what its entry
-/// holds, joined as a list is written.
 pub fn field(root: &impl IsA<gtk::Widget>, name: &str) -> Option<String> {
     let row = support::with_class(root, "postio-compose-row")
         .into_iter()
@@ -112,10 +98,6 @@ pub fn field(root: &impl IsA<gtk::Widget>, name: &str) -> Option<String> {
     Some(shown.join(", "))
 }
 
-/// US3 scenario 1 (T078): `a` on a conversation opens the composer, in its
-/// dialog over the list, with every recipient from the thread, a "Re:"
-/// subject, the thread's labels marked as its, and the quote folded; `Esc`
-/// returns to where the person was.
 pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() {
     crate::gtk_case(async {
         if !support::display() {
@@ -135,7 +117,6 @@ pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() 
             "a opened no composer over the list"
         );
         let dialog = window.compose_dialog().expect("the compose dialog");
-        // The message dialog's size rule, from the window (T221).
         assert_eq!(
             (dialog.content_width(), dialog.content_height()),
             (
@@ -194,7 +175,6 @@ pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() 
                  return fold.open ? 'open' : 'folded'; })()",
             )
         };
-        // The editing surface loads the reply on its own time.
         assert!(
             crate::settle_until(async || quote() == "folded").await,
             "the quote is folded under the draft: {}",
@@ -214,9 +194,6 @@ pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() 
     });
 }
 
-/// US3 scenario 1 from the open message (T078's dialog half, screen 04's
-/// toolbar): `a` in the message dialog answers the message on screen, and
-/// `Esc` returns to that message, still open.
 pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -233,8 +210,6 @@ pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
             crate::settle_until(async || support::subjects(&window).len() == 2).await,
             "the inbox never reached the screen"
         );
-        // The cursor on Budget, then the Harbor thread opened: what is on
-        // screen is what a reply answers.
         support::keys(&window, &["j", "j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Enter opened the message");
@@ -271,8 +246,6 @@ pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
     });
 }
 
-/// #1752: a send says it was queued, offers Undo, and Undo takes it
-/// off the queue and puts the draft back in the composer.
 pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {
     crate::gtk_case(async {
         if !support::display() {
@@ -320,8 +293,6 @@ pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {
     });
 }
 
-/// What the row holding the keyboard says: the first line of the focused list
-/// item, as the list draws it.
 fn focused_row_subject(window: &postio_gtk::window::FocusWindow) -> Option<String> {
     let focus = gtk::prelude::GtkWindowExt::focus(window)?;
     let row = focus
@@ -333,8 +304,6 @@ fn focused_row_subject(window: &postio_gtk::window::FocusWindow) -> Option<Strin
         .and_then(|row| row.summary.representative.subject.clone())
 }
 
-/// Leaving the composer in the reading pane returns the keyboard to the row
-/// the cursor is on, not to the list's first row.
 pub fn escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row() {
     crate::gtk_case(async {
         if !support::display() {
@@ -370,8 +339,6 @@ pub fn escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row() {
     });
 }
 
-/// A reply to a message whose body has not arrived says so in the composer
-/// instead of leaving an attribution with nothing under it.
 pub fn a_reply_to_a_message_still_downloading_says_it_is_not_quoted() {
     crate::gtk_case(async {
         if !support::display() {
@@ -405,7 +372,6 @@ pub fn a_reply_to_a_message_still_downloading_says_it_is_not_quoted() {
     });
 }
 
-/// The composer's Heading toggle, as a person sees it: lit or not.
 fn heading_toggle(composer: &postio_widgets::composer::Composer) -> gtk::ToggleButton {
     support::with_class(composer, "postio-toolbar-heading")
         .into_iter()
@@ -414,8 +380,6 @@ fn heading_toggle(composer: &postio_widgets::composer::Composer) -> gtk::ToggleB
         .expect("the toolbar carries a Heading toggle")
 }
 
-/// What the body's `nth` block is drawn as: its tag, and whether its text is
-/// set larger than the body's own.
 fn block_drawn(composer: &postio_widgets::composer::Composer, nth: usize) -> String {
     composer.test_body_eval(&format!(
         "(() => {{ const block = document.body.children[{nth}]; \
@@ -426,10 +390,6 @@ fn block_drawn(composer: &postio_widgets::composer::Composer, nth: usize) -> Str
     ))
 }
 
-/// #1485: `ctrl+alt+1` makes the line a heading and takes it back off, and
-/// `# ` at the start of a line does the same. Each is drawn as a heading in
-/// the body and lights the toolbar's Heading toggle, which goes out again on
-/// a line that is not one.
 pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
     crate::gtk_case(async {
         if !support::display() {
@@ -451,7 +411,6 @@ pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
             "a paragraph is not a heading"
         );
 
-        // ── the key, on and off ──────────────────────────────────────────
         let heading = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK;
         support::press(&window, "1", heading);
         assert!(
@@ -459,7 +418,6 @@ pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
             "ctrl+alt+1 made no heading of the line: {}",
             block_drawn(&composer, 0)
         );
-        // Heading alone: the heading's own weight is not the Bold toggle's.
         assert!(
             crate::settle_until(async || composer.marks_lit() == ["heading_1"]).await,
             "the toolbar shows {:?} over a heading",
@@ -477,7 +435,6 @@ pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
             composer.marks_lit()
         );
 
-        // ── `# `, typed at the start of the next line ────────────────────
         composer.test_body_eval(
             "(() => { const sel = window.getSelection(); \
                sel.selectAllChildren(document.body); sel.collapseToEnd(); \

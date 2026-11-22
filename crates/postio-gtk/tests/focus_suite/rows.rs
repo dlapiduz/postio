@@ -1,14 +1,8 @@
-//! The one-line row (T043; contracts/focus-surface.md, "Rows"): what it
-//! draws, read back from what its last snapshot laid out -- what a person
-//! sees, not what the row was handed.
-
 use gtk::prelude::*;
 use postio_ui::label_colour::{ACCENT_BAND, Rgb, hue_distance};
 
 use crate::support::{self, Fixture, with_class};
 
-/// US1 scenario 2: the row shows the subject and the first line exactly as
-/// they arrived -- nothing rewritten, summarised or scored (FR-011).
 pub fn a_row_shows_the_subject_and_first_line_exactly_as_they_arrived() {
     crate::gtk_case(async {
         if !support::display() {
@@ -45,8 +39,6 @@ pub fn a_row_shows_the_subject_and_first_line_exactly_as_they_arrived() {
     });
 }
 
-/// US1 scenario 8: three labels draw two pills, and neither is in the
-/// accent's hue (FR-012, FR-091).
 pub fn a_third_label_draws_no_third_pill_and_none_is_the_accent() {
     crate::gtk_case(async {
         if !support::display() {
@@ -95,8 +87,6 @@ pub fn a_third_label_draws_no_third_pill_and_none_is_the_accent() {
     });
 }
 
-/// Rows sit under their day's heading: "Today · Saturday 26 September", or
-/// the day it was (FR-010).
 pub fn rows_sit_under_their_day_s_heading() {
     crate::gtk_case(async {
         if !support::display() {
@@ -132,19 +122,15 @@ pub fn rows_sit_under_their_day_s_heading() {
     });
 }
 
-/// The inbox opens at its top, the first day's heading on screen above the
-/// first row, not scrolled one heading's height past it: GTK brings a
-/// section's first row into view without its header, and a list that opens
-/// with its heading hidden says nothing about what day it is (FR-010).
+/// GTK brings a section's first row into view without its header, and a list that opens with its
+/// heading hidden says nothing about what day it is.
 pub fn the_inbox_opens_with_its_first_heading_on_screen() {
     crate::gtk_case(async {
         if !support::display() {
             return;
         }
-        // More than a screen, over several days, every third row marked:
-        // the shape of a real inbox. The rows arrive as one-line
-        // placeholders and grow when their page lands, and GTK lays the
-        // list out again then -- the second place it hid the heading.
+        // More than a screen, over several days, every third row marked: rows arrive as one-line
+        // placeholders and grow when their page lands, and GTK lays the list out again then.
         let fixture = Fixture::empty().await;
         for step in 0..120_i64 {
             let (message, _) = fixture
@@ -159,7 +145,6 @@ pub fn the_inbox_opens_with_its_first_heading_on_screen() {
                 fixture.ask(message, "Can you approve it?").await;
             }
         }
-        // A window the size a person's is, not the list's natural height.
         let window = postio_gtk::window::FocusWindow::new(None);
         window.set_default_size(1000, 640);
         window.present();
@@ -173,7 +158,6 @@ pub fn the_inbox_opens_with_its_first_heading_on_screen() {
             "the inbox never reached the screen"
         );
         let pane = window.pane().expect("the inbox");
-        // Long enough for anything that follows the landing to have moved it.
         crate::settle();
         assert_eq!(
             pane.widget().vadjustment().value(),
@@ -195,8 +179,6 @@ pub fn the_inbox_opens_with_its_first_heading_on_screen() {
     });
 }
 
-/// Every colour node in `node`'s tree that covers the whole `width` by
-/// `height`: the ground a selected row is painted on.
 fn grounds(node: &gtk::gsk::RenderNode, width: f32, height: f32, found: &mut u32) {
     use gtk::gsk::{ClipNode, ColorNode, ContainerNode, TransformNode};
     if let Some(color) = node.downcast_ref::<ColorNode>() {
@@ -219,7 +201,6 @@ fn grounds(node: &gtk::gsk::RenderNode, width: f32, height: f32, found: &mut u32
     }
 }
 
-/// How many full-row grounds `row` paints.
 fn ground_of(row: &postio_gtk::list::RowWidget) -> u32 {
     let paintable = gtk::WidgetPaintable::new(Some(row));
     let snapshot = gtk::Snapshot::new();
@@ -231,10 +212,8 @@ fn ground_of(row: &postio_gtk::list::RowWidget) -> u32 {
     found
 }
 
-/// A row the selection reaches looks selected whatever it stands for: the
-/// digest row `J` extends onto was counted in the bar ("2 selected") and
-/// drawn exactly like an unselected row with the cursor on it, so a person
-/// could not tell which two rows an Archive would hit.
+/// The digest row `J` extends onto was counted in the bar but drawn like an unselected row, so a
+/// person could not tell which rows an Archive would hit.
 pub fn a_selected_digest_row_is_drawn_selected() {
     use postio_gtk::list::{RowObject, RowWidget};
     use postio_ui::focus_list::{Digest, FocusRow};
@@ -268,7 +247,6 @@ pub fn a_selected_digest_row_is_drawn_selected() {
         assert_eq!(ground_of(&row), 0, "an unselected digest row has no ground");
 
         picked.toggle(digest.id());
-        // The window redraws its rows when the selection moves.
         row.queue_draw();
         assert!(
             crate::settle_until(async || row.drawn().picked).await,

@@ -1,167 +1,103 @@
 import Foundation
 import PostioFFI
 
-/// A recipient field, for completion.
 public enum RecipientField: Equatable, Sendable {
     case to, cc, bcc
 }
 
-/// One message being written (#1272, canvas screen 26).
-///
-/// Holds the draft the boundary handed over and whatever has been typed
-/// since. It decides almost nothing: who a reply is addressed to, what its
-/// subject became and what the quote says are `postio_model::reply`'s
-/// answers, and what will leave the machine is `postio_ui::compose`'s
-/// sentence. What is local is the unsaved state — which is exactly the part
-/// that must not be lost, so it is autosaved rather than held.
+/// Decides almost nothing: reply addressing, subject and quote are `postio_model::reply`'s, and
+/// what leaves the machine is
+/// `postio_ui::compose`'s sentence. What is local is the unsaved state, which must not be lost, so
+/// it is autosaved.
 @MainActor
 @Observable
 public final class ComposeModel: Identifiable {
-    /// This window's own id, so several compose windows can be open at once
-    /// and the Window menu can tell them apart.
     public let id: Int64
 
-    /// The draft, as last agreed with the store.
     public private(set) var draft: DraftFfi
 
-    /// What has been typed since. Separate from `draft` so a save can tell
-    /// what it is saving.
     public var to: String
     public var cc: String
-    /// The blind copies.
-    ///
-    /// **It was not here at all**, and `edited` copied the draft wholesale
-    /// and overwrote only the fields that were — so a `bcc` that arrived on
-    /// the draft (a `mailto:?bcc=…`, or anything that built it before the
-    /// window opened) rode through to the send with nothing on screen showing
-    /// it and no way to take it off.
+    /// `edited` copied the draft wholesale, so a `bcc` that arrived on the draft (`mailto:?bcc=`)
+    /// rode through to the send with nothing on screen showing it.
     public var bcc: String
     public var subject: String
     public var body: String
 
-    /// The body as marked-up text, when this draft is rich (#1271).
-    ///
-    /// Held beside `body` rather than instead of it, because the switch does
-    /// not throw the other one away: a draft can be plain and still be
-    /// holding the marks it had a moment ago, and turning Rich back on
-    /// should cost nothing.
-    ///
-    /// What the editing surface reports on every keystroke, and what the
-    /// boundary narrows to the dialect on the way into the store -- so this
-    /// is a working copy and never the record (ADR 0004 Q3).
+    /// Held beside `body`: the switch does not throw the other away. The editing surface reports it
+    /// on every keystroke and
+    /// the boundary narrows it on the way into the store, so this is a working copy, never the
+    /// record (ADR 0004 Q3).
     public var bodyHtml: String?
 
-    /// Whether this is being written as rich text.
-    ///
-    /// The switch is on the document, not on the window: turning it off does
-    /// not throw the words away, it changes what will be built out of them.
+    /// The switch is on the document: turning it off changes what is built from the words, not the
+    /// words.
     public var rich: Bool
 
-    /// Anything the composer has to say — a refusal to send, mostly.
     public private(set) var status: String?
 
-    /// Whether the window may close without asking.
     public private(set) var sent = false
 
-    /// When what is written was last saved: the title's "Draft saved
-    /// locally 16:12".
     public internal(set) var savedAt: Date?
 
-    /// It has gone to the Outbox, or been thrown away: nothing left to save.
     func markSent() { sent = true }
 
-    // MARK: the frame (T079; screens 05 and 06)
-
-    /// What the title says this is: "New message", "Reply to all".
     public var heading: String { composerTitle(kind: draft.kind) }
 
-    /// "Draft saved locally 16:12", once a save has landed; nothing before.
     public var savedWords: String? {
         savedAt.map { draftSavedWords(at: Int64($0.timeIntervalSince1970 * 1000)) }
     }
 
-    /// What will be sent, counted: "Plain text · 58 words".
     public var summary: String { draftSummary(draft: edited) }
 
-    /// "Remind if no reply": when, in epoch milliseconds, or `nil` for none.
-    /// Saved and sent with the draft.
     public var remindAt: Int64?
 
-    /// The footer's verb: "Remind if no reply", and its day once one is
-    /// chosen ("Remind if no reply · Tue 29 Sep").
     public var remindWords: String { remindMeaning(at: remindAt) }
 
-    /// The labels sending applies to the conversation (screens 05 and 06):
-    /// a reply starts with its thread's. Saved and sent with the draft.
     public private(set) var labels: [DraftLabelFfi]
 
-    /// Whether the labels are a fresh reply's thread's, untouched: the
-    /// Labels row says "from the thread" (screen 06).
     public private(set) var labelsFromThread: Bool
 
-    /// Take a label off what sending applies.
     public func removeLabel(_ id: Int64) {
         labels.removeAll { $0.id == id }
         labelsFromThread = false
     }
 
-    /// The quote a reply opened with, folded under what is written (screen
-    /// 06): `body` holds only what is written above it, and `edited` puts
-    /// it back, so what is saved and sent still quotes. `nil` once shown,
-    /// and for a draft that ends in no quote.
+    /// `body` holds only what is written above the quote and `edited` puts it back, so what is
+    /// saved and sent still quotes.
     public private(set) var quoteFold: QuoteFoldFfi?
 
-    /// Unfold the quote into the body, where it can be edited.
     public func showQuote() {
         guard let fold = quoteFold else { return }
         body += fold.quote
         quoteFold = nil
     }
 
-    // MARK: threads (spec 013 US7, T083)
-
-    /// The *What to forward* chooser, while a thread of two or more is
-    /// forwarded: the controller sends it again with the chosen card ringed.
     public var chooser: ChooserFfi? {
         didSet {
-            // It takes the keyboard when it appears, not each time it is
-            // redrawn with another card ringed (T085 j).
+            // Takes the keyboard when it appears, not on each redraw with another card ringed.
             if chooser == nil { chooserHasKeyboard = false } else if oldValue == nil { chooserHasKeyboard = true }
         }
     }
 
-    /// Whether the chooser holds the keyboard: `1` `2` `3` choose a card
-    /// until a field takes it (Tab moves to To). The rule is the
-    /// controller's contract, not a count of what is typed.
     public private(set) var chooserHasKeyboard = false
 
-    /// A field took the keyboard: the number keys are text again.
     public func releaseChooser() { chooserHasKeyboard = false }
 
-    /// The older-reply bar, while the reply is not to the latest message.
     public var olderReply: OlderReplyFfi?
 
-    /// The messages newer than the one answered, read-only, while shown.
     public var newer: [NewerMessageFfi]?
 
-    /// Whether the quoted or forwarded messages are expanded into the body
-    /// (`mod+shift+q`) rather than folded to rows.
     public private(set) var quotedExpanded = false
 
-    /// The collapsed rows of a forwarded thread, one per message, when the
-    /// fold is one.
     public var forwardedRows: [ForwardedRow] {
         quoteFold.map { ForwardedRows.rows(in: $0.quote) } ?? []
     }
 
-    /// Fold what the body ends in, if it ends in something to fold: a
-    /// forwarded thread, or a reply's quote.
     static func fold(_ body: String) -> QuoteFoldFfi? {
         ForwardedRows.fold(body) ?? foldQuote(body: body)
     }
 
-    /// The controller's `mod+shift+q`: the folded messages into the body,
-    /// or back to rows.
     public func setQuotedExpanded(_ expanded: Bool) {
         quotedExpanded = expanded
         if expanded {
@@ -172,11 +108,8 @@ public final class ComposeModel: Identifiable {
         }
     }
 
-    /// The engine changed the draft (a forward's form, a reply's target):
-    /// take its words in place of this one's, and keep what is the
-    /// window's own -- where it is written from, where it lives, the
-    /// label names. The body is replaced only when it differs, so the
-    /// caret stays where a switch of the quote left what is written.
+    /// Replace the body only when it differs, so the caret stays where a switch of the quote left
+    /// what is written.
     public func adopt(_ new: DraftFfi) {
         var next = new
         next.from = draft.from
@@ -207,29 +140,19 @@ public final class ComposeModel: Identifiable {
         textAtSwitch = plainText
     }
 
-    /// The account it is written from, and its address as the From line
-    /// says it.
     public private(set) var account: Int64
     public private(set) var from: String
 
-    /// The From picker: write from `account` instead.
     public func choose(account: AccountFfi) {
         self.account = account.id
         from = account.displayName.isEmpty
             ? account.address : "\(account.displayName) <\(account.address)>"
     }
 
-    // MARK: recipient completion
-
-    /// What completes the words in `suggesting`, best first; empty until a
-    /// recipient is typed (screen 06: no contact list until then).
     public private(set) var suggestions: [RecipientSuggestionFfi] = []
-    /// The recipient field the list hangs under.
     public private(set) var suggesting: RecipientField?
-    /// The row ↑↓ are on.
     public private(set) var highlighted = 0
 
-    /// The text of `field` now.
     public func text(of field: RecipientField) -> String {
         switch field {
         case .to: return to
@@ -246,8 +169,6 @@ public final class ComposeModel: Identifiable {
         }
     }
 
-    /// The engine's answer for `text` in `field`: shown while the field
-    /// still holds those words, dropped otherwise.
     public func suggest(_ answer: [RecipientSuggestionFfi], in field: RecipientField, for text: String) {
         guard self.text(of: field) == text else { return }
         suggestions = answer
@@ -255,14 +176,11 @@ public final class ComposeModel: Identifiable {
         highlighted = 0
     }
 
-    /// ↑ or ↓ in the list.
     public func moveSuggestion(by step: Int) {
         guard !suggestions.isEmpty else { return }
         highlighted = min(max(highlighted + step, 0), suggestions.count - 1)
     }
 
-    /// Return or Tab: the highlighted suggestion becomes the field's whole
-    /// text, as the engine wrote it. `false` with nothing to accept.
     @discardableResult
     public func acceptSuggestion() -> Bool {
         guard let field = suggesting, suggestions.indices.contains(highlighted) else { return false }
@@ -271,7 +189,6 @@ public final class ComposeModel: Identifiable {
         return true
     }
 
-    /// Esc, or the field left: the list goes, the words stay.
     public func dismissSuggestions() {
         suggestions = []
         suggesting = nil
@@ -284,11 +201,8 @@ public final class ComposeModel: Identifiable {
         to = draft.to
         cc = draft.cc
         bcc = draft.bcc
-        // Shown from the start when they hold somebody. A recipient that is
-        // not on screen is a recipient the writer cannot remove, and
-        // `reply_all` puts every other original recipient in `cc` — so `E`
-        // opened a window showing one address and silently addressing
-        // everyone else.
+        // Shown from the start when they hold somebody: `reply_all` puts every other original
+        // recipient in `cc`, and a hidden one cannot be removed.
         showsCopyFields = !draft.cc.isEmpty || !draft.bcc.isEmpty
         subject = draft.subject
         bodyHtml = draft.bodyHtml
@@ -299,9 +213,8 @@ public final class ComposeModel: Identifiable {
         labels = draft.labels
         labelsFromThread =
             draft.id == 0 && !draft.labels.isEmpty && (draft.kind == .reply || draft.kind == .replyAll)
-        // A plain reply's quote folds under what is written (screen 06). A
-        // rich draft keeps its document whole: the editing surface is the
-        // one `editor.js` shared with GTK, and is not cut here.
+        // A rich draft keeps its document whole: the editing surface is the one `editor.js` shared
+        // with GTK.
         if !draft.rich, let fold = Self.fold(draft.body) {
             body = fold.written
             quoteFold = fold
@@ -312,175 +225,84 @@ public final class ComposeModel: Identifiable {
         textAtSwitch = plainText
     }
 
-    /// The window's title: the subject, or what an unnamed draft is called.
-    ///
-    /// The canvas puts the subject in the title bar, which is what makes two
-    /// compose windows tellable apart in the Window menu — the one place a
-    /// window's title is load-bearing on this platform.
+    /// The subject is in the title bar so compose windows can be told apart in the Window menu.
     public var title: String {
         let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "New message" : trimmed
     }
 
-    /// The footer: where the draft lives, and what will be sent.
-    ///
-    /// Both halves are claims Postio should be willing to make on screen, so
-    /// both have to be *true*. The path is abbreviated the way a person
-    /// writes it — `~/Library/…` — because a footer is read at a glance and
-    /// `/Users/diego` is a prefix that tells them nothing they do not know.
-    ///
-    /// The MIME shape is the boundary's wording and follows what will
-    /// actually leave, which is why `rich` is not simply the switch: rich
-    /// composition is not built (#1271), so a message sent from here is
-    /// plain however the switch is drawn.
+    /// The path is abbreviated the way a person writes it (`~/Library/…`).
     public var footer: String {
         "draft in \(PostioPath.abbreviated(draft.path)) · \(outgoingShape(rich: sendsRich))"
     }
 
-    /// How many recipients this message has, and on which field.
-    ///
-    /// `nil` until there is more than one person on it: a banner that is
-    /// always there is a banner nobody reads.
-    ///
-    /// The counting is the boundary's, so both composers say the same thing.
-    /// FR-023 exists because **a reply-to-all to a large list looks exactly
-    /// like a reply until it is sent** — and on this platform it looked even
-    /// more like one, because until the Cc and Bcc fields arrived there was
-    /// nothing on screen naming the crowd at all.
+    /// `nil` until there is more than one person on it. A reply-to-all to a large list looks
+    /// exactly like a reply until it is sent.
     public var recipientSummary: String? { PostioFFI.recipientSummary(draft: edited) }
 
-    /// Whether this draft will actually leave as rich mail.
-    ///
-    /// It *is* the switch now (#1271). It was hardcoded `false` while the
-    /// body was a text field, because the footer is a claim about what goes
-    /// on the wire and there was no rich document to put there. There is
-    /// one, so the claim can follow the control again.
     public var sendsRich: Bool { rich }
 
-    /// Whether the format bar's marks do anything.
-    ///
-    /// The marks were drawn permanently disabled, which made the whole bar
-    /// decoration. What decides now is the switch -- and being handed off to
-    /// another editor, which is the one case where nothing in this window
-    /// may write to the body at all.
     public var marksApply: Bool { rich && !isHandedOff }
 
-    /// The marks in force where the caret sits, as registry command ids.
-    ///
-    /// Reported by the editing bridge on selection changes and edits, so a
-    /// toolbar toggle can reflect the document rather than guess at it. The
-    /// ids are the registry's, which is what lets the bar be built from
-    /// `ComposeFormat.marks` and still light up correctly.
+    /// Reported by the editing bridge on selection changes and edits, so a toolbar toggle reflects
+    /// the document rather than guessing.
     public var caretMarks: Set<String> = []
 
-    /// Whether the caret is inside `command`'s mark.
     public func isMarkActive(_ command: String) -> Bool { caretMarks.contains(command) }
 
-    /// One press of a format button, waiting for the surface to apply it.
-    ///
-    /// The button lives in SwiftUI and the document lives in an
-    /// `NSViewRepresentable`, so the press has to be left somewhere the
-    /// surface will see on its next update rather than called straight
-    /// through.
+    /// The button lives in SwiftUI and the document in an `NSViewRepresentable`, so the press is
+    /// left for the surface's next update.
     public struct MarkRequest: Equatable, Sendable {
-        /// The registry command — `bold`, `quote_block`.
         public let command: String
-        /// Which press this is.
-        ///
-        /// Bold is a toggle, so pressing it twice has to reach the document
-        /// twice. A request keyed only on the command would look unchanged
-        /// the second time and the second press would be swallowed.
+        /// Bold is a toggle: a request keyed only on the command would look unchanged the second
+        /// time and the second press would be swallowed.
         public let serial: Int
-        /// For `insert_link`: where it points. `nil` for every other mark.
         public let href: String?
     }
 
-    /// The most recent press, or `nil` before there has been one.
     public private(set) var markRequest: MarkRequest?
     private var marksAsked = 0
 
-    /// Whether a link is being asked for.
-    ///
-    /// A request rather than a call: the address comes from a sheet, and a
-    /// command cannot put one up. The view watches this, asks, and calls
-    /// `applyMark("insert_link", href:)` with the answer.
+    /// A request, not a call: the address comes from a sheet, which a command cannot put up.
     public var wantsLink = false
 
-    /// Whether the person has asked to throw this draft away.
-    ///
-    /// `Recovery::Confirm` in the registry, so the *view* has a dialog to
-    /// show — a command that discarded on the spot would be a destructive
-    /// verb with no way back, which is precisely what the registry says this
-    /// one is not.
+    /// `Recovery::Confirm` in the registry: a command that discarded on the spot would be a
+    /// destructive verb with no way back.
     public var wantsDiscard = false
 
-    /// Whether an attachment is being asked for.
-    ///
-    /// Same shape as `wantsLink`: the file comes from an open panel, which a
-    /// command cannot present.
+    /// The file comes from an open panel, which a command cannot present.
     public var wantsAttachment = false
 
-    /// Whether a picture for the body is being asked for (#1571).
-    ///
-    /// Same shape as `wantsAttachment`: the file comes from an open panel,
-    /// which a command cannot present. Set through `askForImage`, which is
-    /// where a draft that cannot take one says so instead.
     public var wantsImage = false
 
-    /// A picture the boundary has stored, waiting for the surface to draw it.
-    ///
-    /// The part is already in the store and on the draft by the time this
-    /// exists; what is left is running `script` in the document, once.
+    /// The part is already in the store and on the draft; what is left is running `script` in the
+    /// document, once.
     public struct ImageRequest: Equatable, Sendable {
-        /// `postio_ui::compose::image_script` over the part just minted.
         public let script: String
-        /// Which insertion this is, so the same picture twice is two.
         public let serial: Int
     }
 
-    /// The most recent picture, or `nil` before there has been one.
     public private(set) var imageRequest: ImageRequest?
     private var imagesAsked = 0
 
-    /// Whether the reminder's times are being asked for (⌘H): a command
-    /// cannot put a list up, so the view does.
     public var wantsRemind = false
 
-    /// Whether the schedule-send picker is being asked for.
-    ///
-    /// The four times it offers are the boundary's — `schedulePresets()` —
-    /// so a Mac and a Linux desktop mean the same thing by "tomorrow
-    /// morning".
     public var wantsSchedule = false
 
-    /// Ask the surface to apply `command` to the selection.
-    ///
-    /// Ignored on a plain draft: the bar is disabled there, but the keyboard
-    /// reaches this too, and `⌘B` over a document that cannot carry marks
-    /// has nothing to apply to.
+    /// Ignored on a plain draft: the keyboard reaches this too, and ⌘B over a document that cannot
+    /// carry marks has nothing to apply to.
     public func applyMark(_ command: String, href: String? = nil) {
         guard marksApply else { return }
         marksAsked += 1
         markRequest = MarkRequest(command: command, serial: marksAsked, href: href)
     }
 
-    /// The Rich/Plain switch has gone to Plain; `text` is what the document
-    /// reads as.
-    ///
-    /// The composer's rule is "whichever surface is active is
-    /// authoritative", and it has nothing to say about the moment of the
-    /// switch — which is exactly when the field about to become
-    /// authoritative is the stale one. Everything typed in Rich went into
-    /// the document, so `body` was never touched; without this, switching to
-    /// Plain and sending queued an empty message (#1293).
-    ///
-    /// The marks are kept, because the switch is on the document: turning it
-    /// back on must cost nothing.
-    ///
-    /// Words already in the plain field are not overwritten while the
-    /// document is as Rich found it: somebody who wrote plain, tried Rich
-    /// and came back has text there that is theirs. Once the document has
-    /// been written in, it is the newer of the two and `text` replaces them.
+    /// "Whichever surface is active is authoritative" says nothing about the moment of the switch,
+    /// when the field about to
+    /// become authoritative is stale: everything typed in Rich went into the document, so without
+    /// this Plain then send queued an empty message (#1293).
+    /// Words already in the plain field are kept while the document is as Rich found it; once
+    /// written in, the document is newer and `text` replaces them.
     public func switchedToPlain(text: String) {
         rich = false
         if body.isEmpty || bodyHtml != htmlAtSwitch {
@@ -490,17 +312,9 @@ public final class ComposeModel: Identifiable {
         textAtSwitch = plainText
     }
 
-    /// The Rich/Plain switch has gone to Rich; `html` is what the plain
-    /// text reads as as a document.
-    ///
-    /// The same moment as ``switchedToPlain(text:)`` from the other side. New
-    /// drafts open plain, so a document of nothing was what most people met
-    /// on turning Rich on: their words gone from the window, and the empty
-    /// document the record from the first keystroke.
-    ///
-    /// The marks are kept while the plain text is as it was when Rich was
-    /// left, so the round trip still costs nothing; words written in Plain
-    /// since are newer, and replace them.
+    /// New drafts open plain, so turning Rich on met an empty document with the person's words
+    /// gone. Marks are kept while
+    /// the plain text is as it was; words written in Plain since are newer and replace them.
     public func switchedToRich(html: String) {
         rich = true
         if (bodyHtml ?? "").isEmpty || plainText != textAtSwitch {
@@ -509,22 +323,13 @@ public final class ComposeModel: Identifiable {
         htmlAtSwitch = bodyHtml
     }
 
-    /// Everything the plain field holds, its folded quote included.
     public var plainText: String { body + (quoteFold?.quote ?? "") }
 
-    /// The document as it stood when the switch last went to Rich, and the
-    /// plain text as it stood when it last went to Plain: what tells
-    /// whether either was written in since.
     private var htmlAtSwitch: String?
     private var textAtSwitch: String?
 
-    /// Ask for a picture to put in the body, or say why this draft cannot
-    /// take one.
-    ///
-    /// A plain draft has no document to hold a picture, and a handed-off one
-    /// may not be written from this window at all. Both are said rather than
-    /// swallowed: `insert_image` doing nothing is indistinguishable from
-    /// `insert_image` being broken.
+    /// A plain draft has no document to hold a picture, and a handed-off one may not be written
+    /// from this window. Both are said, since doing nothing is indistinguishable from broken.
     public func askForImage() {
         guard marksApply else {
             status = isHandedOff
@@ -535,10 +340,6 @@ public final class ComposeModel: Identifiable {
         wantsImage = true
     }
 
-    /// Put `bytes` in the body as a picture.
-    ///
-    /// The boundary stores the part and saves the draft before answering, so
-    /// the picture survives the window closing the way an attachment does.
     public func insertImage(_ bytes: Data, mimeType: String, through session: PostioSession?) {
         guard let session, marksApply else { return }
         do {
@@ -548,26 +349,19 @@ public final class ComposeModel: Identifiable {
         }
     }
 
-    /// Put the picture in `file` in the body.
-    ///
-    /// Its type is read from its bytes, and falls back to its name only when
-    /// the bytes say nothing — in which case the boundary refuses it in its
-    /// own words, pointing at Attach file.
     public func insertImage(from file: URL, through session: PostioSession?) {
         let bytes: Data
         do {
             bytes = try Data(contentsOf: file)
         } catch {
-            // The name is not in the sentence: it is the user's, and a status
-            // line is a thing people screenshot.
+            // The name is not in the sentence: it is the user's, and a status line is
+            // screenshotted.
             status = "That picture could not be read."
             return
         }
         insertImage(bytes, mimeType: MimeType.ofImage(bytes) ?? MimeType.of(file), through: session)
     }
 
-    /// Take a picture the boundary stored: the draft with its part on it, and
-    /// the script that draws it at the caret.
     public func took(_ inserted: InlineImageFfi) {
         draft = inserted.draft
         syncFromDraft()
@@ -576,31 +370,19 @@ public final class ComposeModel: Identifiable {
         status = nil
     }
 
-    /// Say why a link was refused, or clear the last complaint.
-    ///
-    /// A refused scheme is something to say rather than a link that is
-    /// created, looks right, and vanishes at the next parse.
     public func refuseLink(_ href: String) {
         status = "A message can only link to http, https or mailto — not \(href)."
     }
 
-    /// Take what a paste became, and say what it cost.
-    ///
-    /// The sentence is `postio_body::Lost::summary`'s, arriving through the
-    /// boundary, so both composers say the same thing about the same paste.
-    /// `nil` says nothing at all, which is the right answer when nothing was
-    /// lost: a composer that announced every paste would train people to
-    /// ignore the one that mattered.
+    /// `nil` says nothing, the right answer when nothing was lost: announcing every paste would
+    /// train people to ignore the one that mattered.
     public func tookPaste(_ pasted: PastedFfi) {
-        // Only the sentence. The paste is inserted *at the caret* by the
-        // surface, and the bridge reports the resulting document back on the
-        // `input` event it raises -- so writing the body here would replace
-        // everything already typed with whatever was on the clipboard.
+        // Only the sentence: the surface inserts the paste at the caret and the bridge reports the
+        // document back on `input`, so writing the body here would replace everything typed.
         status = pasted.dropped
     }
 
 
-    /// The draft as the store should have it.
     public var edited: DraftFfi {
         var edited = draft
         edited.to = to
@@ -617,31 +399,17 @@ public final class ComposeModel: Identifiable {
         return edited
     }
 
-    /// Whether the Cc and Bcc rows are on screen.
-    ///
-    /// Hidden by default, because most mail has neither and two empty rows
-    /// above every message is two rows of furniture. Shown the moment either
-    /// holds an address, and — see [`toggleCopyFields`](Self.toggleCopyFields)
-    /// — they will not hide again while one does.
     public private(set) var showsCopyFields: Bool = false
 
-    /// Ask for the copy fields, or put them away.
-    ///
-    /// **They refuse to hide while they hold addresses.** That is GTK's rule
-    /// and it is the whole safeguard: hiding a field that holds somebody is
-    /// how a recipient becomes invisible, which is the state this pair of
-    /// fields exists to end.
+    /// They refuse to hide while they hold addresses (GTK's rule): hiding a field that holds
+    /// somebody makes a recipient invisible.
     public func toggleCopyFields() {
         if showsCopyFields && (!cc.isEmpty || !bcc.isEmpty) { return }
         showsCopyFields.toggle()
     }
 
-    /// Throw this draft away.
-    ///
-    /// `sent` rather than a state of its own: both mean the window has
-    /// nothing left to write and must not autosave on its way out — which
-    /// `onDisappear` would otherwise do, putting the discarded draft straight
-    /// back.
+    /// `sent`, not a state of its own: the window must not autosave on its way out, which
+    /// `onDisappear` would otherwise do, putting the discarded draft back.
     public func discard(through session: PostioSession) {
         if id != 0 || draft.id != 0 {
             session.discardDraft(draft.id)
@@ -650,34 +418,25 @@ public final class ComposeModel: Identifiable {
         status = nil
     }
 
-    /// Whether anything has been typed that the store does not have.
     public var isDirty: Bool { edited != draft }
 
-    /// Write what has been typed, and remember the id the store assigned.
-    ///
-    /// The id matters more than it looks: `save` is idempotent on it, and a
-    /// composer that forgot it would insert a new row on every autosave and
-    /// fill the Drafts folder with one half-written message.
+    /// `save` is idempotent on the id: a composer that forgot it would insert a new row on every
+    /// autosave.
     public func save(through session: PostioSession) {
         _ = save { session.saveDraft($0) }
     }
 
-    /// What the status line, and the toast, say when a save failed.
     public static let notSaved = "This draft could not be saved."
 
-    /// Write what has been typed through `write`, and keep the id it
-    /// answers with; `false` when it could not be written.
     @discardableResult
     public func save(with write: (DraftFfi) -> DraftFfi?) -> Bool {
         guard let saved = write(edited) else {
             status = Self.notSaved
             return false
         }
-        // Only what the store owns: what is being typed stays as typed.
         draft.id = saved.id
         draft.attachments = saved.attachments
         draft.path = saved.path
-        // Everything else is what was just written.
         draft.to = saved.to
         draft.cc = saved.cc
         draft.bcc = saved.bcc
@@ -693,15 +452,9 @@ public final class ComposeModel: Identifiable {
         return true
     }
 
-    /// Attach files chosen in an open panel.
-    ///
-    /// Each is stored as it is taken, and the draft is saved on the way — so
-    /// an attachment survives the window closing, which is the whole reason
-    /// the bytes go to the store rather than a path being remembered.
-    ///
-    /// A file that will not attach stops that file and not the others: three
-    /// dragged in with one unreadable should leave two attached and say which
-    /// one did not.
+    /// Each is stored as it is taken and the draft saved, so an attachment survives the window
+    /// closing.
+    /// A file that will not attach stops that file only, and says which.
     public func attach(_ files: [URL], through session: PostioSession?) {
         guard let session, !files.isEmpty else { return }
         var refused: [String] = []
@@ -716,13 +469,8 @@ public final class ComposeModel: Identifiable {
         status = refused.isEmpty ? nil : refused.joined(separator: "\n")
     }
 
-    /// Queue this draft to leave at `when` — *Schedule send…*.
-    ///
-    /// The same shape as [`send`](Self::send): the window closes on the
-    /// keystroke and the queue does the rest. Every refusal `send` makes is
-    /// made here too, by the boundary, because being refused at 8am tomorrow
-    /// — when nobody is watching this window — is strictly worse than being
-    /// refused now.
+    /// Every refusal `send` makes is made here too, by the boundary: being refused at 8am tomorrow,
+    /// when nobody is watching, is worse than now.
     public func send(at when: Int64, through session: PostioSession?) {
         guard let session else { return }
         if let complaint = session.sendDraftLater(edited, at: when) {
@@ -733,7 +481,6 @@ public final class ComposeModel: Identifiable {
         sent = true
     }
 
-    /// Take an attachment off again.
     public func detach(_ attachment: AttachmentFfi, through session: PostioSession?) {
         guard let session else { return }
         do {
@@ -745,53 +492,28 @@ public final class ComposeModel: Identifiable {
         }
     }
 
-    /// What is attached, for the window to list.
     public var attachments: [AttachmentFfi] { draft.attachments }
 
-    /// Take the fields back off the draft the store just answered with.
-    ///
-    /// Only the ones the store owns: the id it assigned and what is attached.
-    /// Anything being typed stays as typed — a save that overwrote the
-    /// subject somebody was halfway through is a save nobody would forgive.
+    /// Only what the store owns (the id and attachments): a save that overwrote the subject
+    /// somebody was halfway through is unforgivable.
     private func syncFromDraft() {}
 
-    /// Where this draft is while another editor has it, or `nil`.
     public private(set) var handedOffTo: String?
 
-    /// Whether the window should be read-only: another editor holds the
-    /// draft, and two writers would each silently undo the other.
+    /// Another editor holds the draft; two writers would each silently undo the other.
     public var isHandedOff: Bool { handedOffTo != nil }
 
-    /// Which editor the hand-off will use — `[compose] editor` (#1288).
-    ///
-    /// Empty means the platform's own default. Held here rather than read on
-    /// every render because the button is labelled from it; refreshed when
-    /// the window appears, which is when it can have changed.
     public var editor = ""
 
-    /// Re-read the configured editor. The compose window does this on appear.
     public func refreshEditor() {
         editor = ComposeHandoff.configuredEditor()
     }
 
-    /// Hand the draft to another editor.
-    ///
-    /// The draft is saved first — an editor opened on a body Postio has not
-    /// written down is one crash away from having been the only copy — and
-    /// the window goes read-only until it comes back.
-    ///
-    /// It opens in the editor named by `[compose] editor`, or — with nothing
-    /// chosen — in whatever this Mac opens a text file with. **Not
-    /// `$EDITOR`**: an application launched from Finder has no shell
-    /// environment, so `$EDITOR` is usually simply absent, and a button that
-    /// silently did nothing for most people would be worse than one that is
-    /// honest about which editor it means (#1288).
-    ///
-    /// `open` answers `nil` when the draft went somewhere and a sentence when
-    /// it did not — including the case worth having a setting for at all, an
-    /// editor that wants a terminal. A refusal takes the draft straight back,
-    /// so the window is never left read-only waiting for an editor that never
-    /// opened.
+    /// The draft is saved first, since an editor on a body Postio has not written down is one crash
+    /// from being the only copy.
+    /// Not `$EDITOR`: a Finder-launched app has no shell environment (#1288). A refusal takes the
+    /// draft straight back,
+    /// so the window is never left read-only waiting for an editor that never opened.
     public func handOff(
         through session: PostioSession?,
         open: (URL) async -> String?
@@ -815,15 +537,10 @@ public final class ComposeModel: Identifiable {
         }
     }
 
-    /// Take the draft back from the other editor.
-    ///
-    /// Called when the window returns to the front, which is the moment a
-    /// person means by "I am done there".
     public func takeBack(through session: PostioSession?) {
         guard let session, let path = handedOffTo else { return }
         do {
             draft = try session.endHandoff(of: edited, at: path)
-            // The other editor had the whole body, quote and all.
             body = draft.body
             quoteFold = nil
             handedOffTo = nil
@@ -835,12 +552,8 @@ public final class ComposeModel: Identifiable {
         }
     }
 
-    /// Queue it for sending. `true` when the window may close.
-    ///
-    /// Nothing here waits for a server: the send is a local write that
-    /// `postio-sync` drains when there is a network. A refusal — no
-    /// recipients, already queued — is the one case where the window must
-    /// stay open, because the words are in it.
+    /// A local write that `postio-sync` drains when there is a network. A refusal is the one case
+    /// the window must stay open, because the words are in it.
     public func send(through session: PostioSession) -> Bool {
         if let complaint = session.sendDraft(edited) {
             status = complaint

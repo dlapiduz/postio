@@ -1,6 +1,3 @@
-//! Typed text goes where the keyboard is (spec 008, research R3), and a
-//! keyboard on nothing that takes text is a failure, not a silent no-op.
-
 use gtk::prelude::*;
 use postio_widgets::storyboard::deliver::{TypeOutcome, type_text};
 

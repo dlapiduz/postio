@@ -1,21 +1,7 @@
-//! The one-shot move of address-keyed entries from `config.toml` onto the
-//! correspondents they name (specs/011-focus-contacts S3, plan 4.3, ADR 0048).
-//!
-//! The first time Focus mode starts on a store that has `contact_settings`,
-//! what `config.toml` holds that a correspondent can hold -- a pinned
-//! address, a marker turned off for an address, a `[[focus.digests]]` rule
-//! that is one `from:` query for one address -- is given to that
-//! correspondent and taken out of the file, which is saved as an editor
-//! saves it. The file as it was is kept beside it, once, as
-//! `config.toml.pre-contacts`, so the person can see what moved.
-//!
-//! Everything a correspondent cannot hold stays: a domain, a `list:` or
-//! `subject:` rule, a rule over several senders, anything validation
-//! reports. And so does an entry that would collide with what its
-//! correspondent already has: a digest for a pinned address (one arrival
-//! cannot be both), or a second digest for one person. The engine reads both
-//! homes, so nothing that stays changes what happens to any message.
-//!
+//! One-shot move of address-keyed entries from `config.toml` onto the correspondents they name (ADR
+//! 0048).
+//! What a correspondent cannot hold (domains, `list:`/`subject:` rules, anything that collides)
+//! stays; the old file is kept once as `config.toml.pre-contacts`.
 //! The log carries counts, never an address.
 
 use std::path::{Path, PathBuf};
@@ -25,36 +11,27 @@ use postio_model::{ContactArrival, EmailAddress};
 use postio_storage::Store;
 use postio_storage::repository::{ContactRepository, ContactSettingsRepository};
 
-/// What a move did, as counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Moved {
-    /// Addresses pinned on their correspondent.
     pub pins: usize,
-    /// Marker kinds turned off on a correspondent.
     pub stops: usize,
-    /// Digest rules given to a correspondent.
     pub digests: usize,
-    /// Entries that could be held and were left in the file.
     pub left: usize,
 }
 
 impl Moved {
-    /// Whether the file changed.
     pub fn any(&self) -> bool {
         self.pins + self.stops + self.digests > 0
     }
 }
 
-/// Where the file as it was is kept: `config.toml.pre-contacts`.
 pub fn pre_contacts_path(config: &Path) -> PathBuf {
     let mut name = config.file_name().unwrap_or_default().to_os_string();
     name.push(".pre-contacts");
     config.with_file_name(name)
 }
 
-/// Give the correspondents what they can hold of the file at `path`.
-/// Answers what moved and `[focus]` as the file now reads, or `None` when
-/// nothing moved.
+/// `None` when nothing moved.
 pub async fn run(database: &Store, path: &Path) -> Result<Option<(Moved, FocusConfig)>, String> {
     let failed = |reason: &str| reason.to_owned();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -79,7 +56,7 @@ pub async fn run(database: &Store, path: &Path) -> Result<Option<(Moved, FocusCo
     let mut moved = Moved::default();
     let mut edited = text.clone();
 
-    // Stops first: they never collide with anything.
+    // Stops first: they never collide.
     for (address, kind) in &movable.stops {
         let Ok(person) = people
             .person_for_email(&EmailAddress::new(None::<String>, address.clone()))
@@ -168,11 +145,8 @@ pub async fn run(database: &Store, path: &Path) -> Result<Option<(Moved, FocusCo
     Ok(Some((moved, reread.focus)))
 }
 
-/// Give the senders the treatments the remote-image list at `path` holds
-/// under `[Treatment]`, and take the section out of it, keeping the list as
-/// it was once as `<path>.pre-contacts`. The grants -- who may load remote
-/// images -- are a privacy rule and stay exactly where they are. Answers how
-/// many treatments moved.
+/// The grants (who may load remote images) are a privacy rule and stay where they are.
+/// The old list is kept once as `<path>.pre-contacts`.
 pub async fn run_treatments(database: &Store, path: &Path) -> Result<usize, String> {
     let mut list = postio_ui::allowlist::RemoteImageAllowList::load_from(path);
     let held: Vec<(String, postio_body::treatment::Treatment)> = list
@@ -260,8 +234,6 @@ at = "17:00"
             .unwrap()
             .expect("something moved");
 
-        // The ledger address is pinned, so its digest stays in the file: one
-        // arrival cannot be both.
         assert_eq!(
             moved,
             Moved {
@@ -324,7 +296,6 @@ at = "17:00"
         run(&database, &path).await.unwrap();
         let after_first = std::fs::read_to_string(&path).unwrap();
 
-        // What stayed because it collided stays; nothing else is touched.
         assert_eq!(run(&database, &path).await.unwrap(), None);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), after_first);
         assert_eq!(

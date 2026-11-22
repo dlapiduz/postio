@@ -1,5 +1,3 @@
-//! Find in the message on screen (spec 006 FR-018).
-
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::{BodyView, find::FindBar};
@@ -11,7 +9,6 @@ pub fn find_highlights_steps_and_survives_a_re_render() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
-    // Light to start, so going dark later is a change.
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     let view = BodyView::new(crate::support_reader::reader_deadline());
     let bar = FindBar::new(&view);
@@ -33,8 +30,8 @@ pub fn find_highlights_steps_and_survives_a_re_render() {
     let doc = view.document().expect("a snapshot");
 
     bar.open();
-    // Focus within the window, which a headless compositor may never make
-    // active; a search entry puts it on its own text child.
+    // A headless compositor may never make the window active; a search entry puts focus on its text
+    // child.
     let entry: gtk::Widget = bar.entry().clone().upcast();
     assert!(
         until(|| gtk::prelude::GtkWindowExt::focus(&window)
@@ -50,7 +47,6 @@ pub fn find_highlights_steps_and_survives_a_re_render() {
         view.find_rects().len()
     );
 
-    // Next makes the next match current and brings it into view.
     let first = view.current_match().expect("a current match");
     view.find_step(true);
     let second = view.current_match().expect("still a current match");
@@ -64,7 +60,6 @@ pub fn find_highlights_steps_and_survives_a_re_render() {
     view.find_step(false);
     assert_eq!(view.current_match(), Some(first));
 
-    // A re-render keeps the highlights.
     let style = adw::StyleManager::default();
     let generation = doc.generation;
     style.set_color_scheme(adw::ColorScheme::ForceDark);
@@ -78,7 +73,6 @@ pub fn find_highlights_steps_and_survives_a_re_render() {
     );
     style.set_color_scheme(adw::ColorScheme::Default);
 
-    // Escape closes the bar and clears them.
     bar.close();
     assert!(view.find_rects().is_empty(), "closing find left highlights");
     window.destroy();

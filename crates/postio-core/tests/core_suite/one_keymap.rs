@@ -1,20 +1,3 @@
-//! One keymap for every app (specs/007-postio-focus SC-015,
-//! contracts/keymap.md).
-//!
-//! The maintainer's answer was that one table of keys is the default for
-//! every Postio app. The registry stays its one source, and four apps read
-//! it: the classic desktop app, the terminal, Focus and macOS. Enumerated
-//! across them, for every app:
-//!
-//! - every command it offers has a default key;
-//! - no key is bound to two commands in one context;
-//! - a command's key is the same wherever it is offered.
-//!
-//! And the contract's rows are the registry's: each command has the key the
-//! contract gives it, and is offered by exactly the apps the contract names.
-//! A Focus row is reachable in Focus alone -- its key is reserved in the
-//! others, not reused.
-
 use std::collections::BTreeMap;
 
 use postio_config::KeyBindings;
@@ -24,23 +7,16 @@ use postio_core::config::Keymap;
 use postio_core::{Availability, CommandId, Context, Frontend, Scope, registry};
 use postio_model::AccountId;
 
-/// Every app that reads the registry, with the platform whose `mod` it
-/// means: the terminal and Postio on Linux, and Postio on the Mac, which
-/// registers as Focus on `Platform::Apple` (specs/009-focus-macos R5).
 const APPS: [(Frontend, Platform); 3] = [
     (Frontend::Terminal, Platform::Freedesktop),
     (Frontend::Focus, Platform::Freedesktop),
     (Frontend::Focus, Platform::Apple),
 ];
 
-/// Who offers a row, in the contract's words.
 #[derive(Debug, Clone, Copy)]
 enum Offered {
-    /// Every app that has the surface.
     All,
-    /// Every app that draws a message as pixels: all but the terminal.
     Graphical,
-    /// `Requirement::Focus`: Focus, in either toolkit (the terminal is Focus, C29).
     Focus,
 }
 
@@ -54,18 +30,11 @@ impl Offered {
     }
 }
 
-/// One row of contracts/keymap.md.
 struct Row {
-    /// The command id, as `[keys]` names it.
     id: &'static str,
-    /// The default key, as the registry spells it (`mod+` unexpanded).
     key: &'static str,
-    /// Its alternates, in order.
     alternates: &'static [&'static str],
-    /// Who offers it.
     offered: Offered,
-    /// The contexts the contract names for it. Each has to be one the
-    /// command is reachable in; empty where the contract names none.
     contexts: &'static [Context],
 }
 
@@ -97,15 +66,11 @@ const fn with(
 
 use Offered::{All, Focus, Graphical};
 
-/// contracts/keymap.md, table by table.
 const CONTRACT: &[Row] = &[
-    // -- Message surfaces: List, Conversation, Reader --------------------
     with("next_message", "j", &["Down"], All, &[]),
     with("prev_message", "k", &["Up"], All, &[]),
     row("first_message", "g g", All),
     row("last_message", "G", All),
-    // Gmail's `o` beside `Return`. The `l` alternate is dropped: `l` is the
-    // label key.
     with("open_message", "Return", &["o"], All, &[]),
     row("toggle_selection", "x", All),
     with(
@@ -149,16 +114,13 @@ const CONTRACT: &[Row] = &[
         All,
         &[Context::Conversation, Context::Reader],
     ),
-    // The second layer's chords (#1306): alternates, in every app.
     with("reply", "r", &["mod+r"], All, &[]),
     with("reply_all", "a", &["mod+shift+r"], All, &[]),
     with("forward", "f", &["mod+shift+f"], All, &[]),
-    // In a digest it archives the whole digest (`archive_thread`'s old job).
     with("archive", "e", &["mod+shift+a"], All, &[Context::Digest]),
     with("delete", "#", &["Delete"], All, &[]),
     row("snooze", "b", All),
     row("unsnooze", "B", All),
-    // `mod+h` is the composer's key, where `h` types.
     with(
         "remind_if_no_reply",
         "h",
@@ -192,7 +154,6 @@ const CONTRACT: &[Row] = &[
     row("cheat_sheet", "?", All),
     row("flag", "s", All),
     row("prev_view", "u", All),
-    // -- Threads in Focus (specs/013-focus-threads D1, research R10) ------
     with(
         "expand_thread",
         "Right",
@@ -302,7 +263,6 @@ const CONTRACT: &[Row] = &[
         &[Context::Composer],
     ),
     row("darken_message", "alt+d", Graphical),
-    // -- Going places: Global, and the surfaces that go ------------------
     with("search", "/", &["alt+mod+f"], All, &[]),
     row("command_palette", "mod+k", All),
     row("go_to_inbox", "g i", All),
@@ -322,10 +282,7 @@ const CONTRACT: &[Row] = &[
     row("saved_search_3", "alt+3", All),
     row("saved_search_4", "alt+4", All),
     row("toggle_has_action", "!", Focus),
-    // -- Search ---------------------------------------------------------
     with("save_search", "mod+s", &[], All, &[Context::Search]),
-    // Spec 010 D24: in the results' no-results state the same key clears
-    // the filters.
     with(
         "back_to_words",
         "mod+BackSpace",
@@ -334,8 +291,6 @@ const CONTRACT: &[Row] = &[
         &[Context::Search, Context::Results],
     ),
     with("toggle_result_order", "alt+o", &[], All, &[Context::Search]),
-    // Spec 010: the search dropdown. `mod+Return` sends in the composer;
-    // here it opens the results.
     with(
         "show_all_results",
         "mod+Return",
@@ -343,7 +298,6 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Search],
     ),
-    // Spec 010 step 8: the dropdown's exclusion (US7).
     with(
         "exclude_suggestion",
         "alt+Return",
@@ -351,8 +305,6 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Search],
     ),
-    // The Mac's Option-Delete (D23); Linux's Alt+Delete, since its
-    // `alt+BackSpace` is the terminal's back-to-words (#1825).
     with(
         "forget_recent",
         "alt+BackSpace",
@@ -360,8 +312,6 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Search],
     ),
-    // Spec 010 step 3: the results view (R10). History and the tabs are
-    // its own.
     with(
         "history_back",
         "mod+bracketleft",
@@ -397,13 +347,9 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Results],
     ),
-    // Spec 010 step 5: Space looks inside a result; ]/[ walk its matches
-    // while it is open (FR-028).
     with("quick_look", "space", &[], Graphical, &[Context::Results]),
     with("next_match", "]", &[], Graphical, &[Context::Results]),
     with("prev_match", "[", &[], Graphical, &[Context::Results]),
-    // Spec 010 step 7: a search that found nothing offers looser ones,
-    // numbered (FR-030).
     with(
         "pick_relaxation_1",
         "1",
@@ -432,9 +378,7 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Results],
     ),
-    // Spec 010 step 9: ⌘↓ saves the file under the ring (FR-031).
     with("save_file", "mod+Down", &[], Graphical, &[Context::Results]),
-    // Spec 010 step 4: ⌥←/⌥→ step the timeline's range a month (FR-023).
     with(
         "step_range_back",
         "alt+Left",
@@ -449,7 +393,6 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Results],
     ),
-    // -- Pickers --------------------------------------------------------
     with("picker_choose_1", "1", &[], Focus, &[Context::Picker]),
     with("picker_choose_2", "2", &[], Focus, &[Context::Picker]),
     with("picker_choose_3", "3", &[], Focus, &[Context::Picker]),
@@ -457,9 +400,6 @@ const CONTRACT: &[Row] = &[
     with("picker_type_date", "tab", &[], Focus, &[Context::Picker]),
     with("picker_toggle", "space", &[], Focus, &[Context::Picker]),
     with("picker_confirm", "Return", &[], Focus, &[Context::Picker]),
-    // -- Obsidian: the capture sheet (milestone 3, T158) ------------------
-    // `T` and `N` open it from a message, and switch it between a task and
-    // a note while it is up, as its toggles' keycaps say (screen 25).
     with(
         "capture_task",
         "T",
@@ -495,7 +435,6 @@ const CONTRACT: &[Row] = &[
         Focus,
         &[Context::Capture],
     ),
-    // -- Digests and Filtered -------------------------------------------
     with(
         "stop_digesting_sender",
         "D",
@@ -520,14 +459,10 @@ const CONTRACT: &[Row] = &[
         Focus,
         &[Context::Digest],
     ),
-    // -- The account list's verbs, from Settings' Accounts section (T258) --
     with("remove_account", "Delete", &[], All, &[Context::Accounts]),
-    // `R` is Filtered's now; refresh keeps F5.
     row("refresh", "F5", All),
 ];
 
-/// What `app` is, with mail open in one account: the state in which it
-/// offers the most.
 fn open_in(app: Frontend) -> Availability {
     Availability {
         frontend: app,
@@ -586,10 +521,7 @@ fn the_registry_holds_the_contracts_keys() {
 
 #[test]
 fn a_renamed_command_keeps_no_old_name() {
-    // No backwards compatibility: a `[keys]` entry naming the old id is
-    // reported as unknown, the same as any other (contracts/config.md).
-    // The three-pane app's own commands went with it (specs/009-focus-macos
-    // R5): Focus has no sidebar, no panes to cycle and no parts panel.
+    // A `[keys]` entry naming a retired id is reported as unknown (contracts/config.md).
     for retired in [
         "mark_unread",
         "focus_sidebar",
@@ -612,7 +544,6 @@ fn a_renamed_command_keeps_no_old_name() {
         "save_all_parts",
         "open_part_externally",
         "render_part_once",
-        // Archive acts on the thread now (specs/013-focus-threads FR-006).
         "archive_thread",
     ] {
         assert!(
@@ -627,8 +558,6 @@ fn every_command_an_app_offers_has_a_key() {
     for (app, platform) in APPS {
         let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
         for spec in registry::all() {
-            // Not offered, and so unbound, where the platform has no
-            // surface for it (`registry::offered_on`).
             if !spec.requires.met_by(open_in(app))
                 || !registry::offered_on(spec.id.into(), platform)
             {
@@ -671,9 +600,6 @@ fn no_key_means_two_commands_in_one_context_in_any_app() {
 
 #[test]
 fn a_command_has_the_same_key_in_every_app_that_offers_it() {
-    // The same key, spelled for each platform: `mod` is Ctrl on Linux and
-    // Command on macOS, `Delete` is the Mac's BackSpace, and nothing else may
-    // differ.
     for spec in registry::all() {
         let mut keys: Vec<((Frontend, Platform), Vec<String>)> = Vec::new();
         for (app, platform) in APPS {
@@ -683,8 +609,6 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
                 continue;
             }
             let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
-            // Less a key the platform keeps for itself: ⌘W closes the window
-            // in front on the Mac (`binding_offered_on`).
             let expected: Vec<String> = spec
                 .bindings()
                 .filter(|binding| registry::binding_offered_on(spec.id.into(), binding, platform))
@@ -696,12 +620,6 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
                 "{app:?} on {platform:?} does not give `{}` the registry's key",
                 spec.id
             );
-            // Back to one spelling: Command is Control, and the Mac's lone
-            // BackSpace is the `Delete` it was written as (specs/009-focus-macos
-            // M6). No registry default is a lone BackSpace, so that is
-            // unambiguous; `mod+BackSpace` keeps its modifier and its key.
-            // Compared as the registry writes them, less a key some
-            // platform keeps for itself.
             let reserved: Vec<String> = spec
                 .bindings()
                 .filter(|binding| {
@@ -736,11 +654,6 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
     }
 }
 
-/// Spec 010 D23 and #1825: the search bar's keys on both platforms, and
-/// the one `alt+BackSpace` that means a different command on each -- the
-/// terminal's alternate for `back_to_words` on Linux, the forgetting of a
-/// recent search on the Mac. Linux forgets on Alt+Delete, which holds Alt
-/// as a key pressed in the field must.
 #[test]
 fn the_search_bar_s_keys_resolve_on_both_platforms() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
@@ -770,8 +683,6 @@ fn the_search_bar_s_keys_resolve_on_both_platforms() {
     }
 }
 
-/// Spec 010 step 3 (R10) and #1825: the results view's own keys, on both
-/// platforms, and the list's verbs reach a result as they reach a row.
 #[test]
 fn the_results_views_keys_resolve_on_both_platforms() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
@@ -794,8 +705,6 @@ fn the_results_views_keys_resolve_on_both_platforms() {
         assert!(linux.offers(id), "{id} is not offered on Linux");
     }
 
-    // The list's verbs, by the key the Mac spells them with: a result is a
-    // row to them (design §3.5's footer and bulk bar).
     for (id, key) in [
         (CommandId::NextMessage, "j"),
         (CommandId::PrevMessage, "k"),
@@ -811,7 +720,6 @@ fn the_results_views_keys_resolve_on_both_platforms() {
         (CommandId::Delete, "BackSpace"),
         (CommandId::OpenMessage, "Return"),
         (CommandId::ToggleHasAction, "!"),
-        // ⌘Z after archiving results takes them back (US5).
         (CommandId::Undo, "z"),
         (CommandId::Undo, "cmd+z"),
         (CommandId::SaveSearch, "cmd+s"),
@@ -830,8 +738,6 @@ fn the_results_views_keys_resolve_on_both_platforms() {
     }
 }
 
-/// Spec 010 step 4 (FR-023) and #1825: ⌥←/⌥→ step the timeline's range by
-/// a month in the results, on both platforms.
 #[test]
 fn the_timeline_steps_on_alt_arrows_on_both_platforms() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
@@ -846,8 +752,6 @@ fn the_timeline_steps_on_alt_arrows_on_both_platforms() {
     }
 }
 
-/// Spec 010 step 5 (FR-028) and #1825: Space opens Quick Look on a result
-/// and ]/[ walk its matches, in the results, on both platforms.
 #[test]
 fn quick_look_is_space_and_its_matches_are_brackets() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
@@ -874,8 +778,6 @@ fn quick_look_is_space_and_its_matches_are_brackets() {
     }
 }
 
-/// Spec 010 step 7 (FR-030, D24) and #1825: 1-4 pick a looser search and
-/// ⌘⌫ (Ctrl+BackSpace on Linux) clears the filters, in the results.
 #[test]
 fn relaxations_are_numbers_and_back_to_words_reaches_the_results() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
@@ -906,8 +808,6 @@ fn relaxations_are_numbers_and_back_to_words_reaches_the_results() {
     );
 }
 
-/// Spec 010 step 8 (US7) and #1825: ⌥↩ (Alt+Return) excludes the
-/// dropdown's focused person, label or folder.
 #[test]
 fn exclude_suggestion_is_option_return() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
@@ -923,8 +823,6 @@ fn exclude_suggestion_is_option_return() {
     );
 }
 
-/// Spec 010 step 9 (FR-031) and #1825: ⌘↓ (Ctrl+Down on Linux) saves the
-/// file on the Files tab.
 #[test]
 fn saving_a_file_is_command_down() {
     let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);

@@ -1,18 +1,9 @@
-//! Getting an attachment's bytes out of a message.
-//!
-//! The part of #1572 that survives the three-pane shell: `part_bytes` is
-//! how the reader hands a named part to whatever asked for it. The parts
-//! panel -- listing, saving, exporting -- went with that shell, and Focus's
-//! reader brings its own surface (specs/009-focus-macos).
-
 use chrono::Utc;
 use postio_ffi::{Session, SessionOptions};
 use postio_model::{Attachment, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// How a part is described to the seeder: its MIME path, type, size, the name
-/// the sender gave it, and the bytes -- when the bytes are on this machine.
 struct Seed<'a> {
     part_id: &'a str,
     mime: &'a str,
@@ -41,12 +32,6 @@ impl<'a> Seed<'a> {
     }
 }
 
-/// A session over a store holding one message made of `seeds`.
-///
-/// `content_type` is the message's own — what the tree hangs off. Every part
-/// that names bytes has them written into the blob store first, so
-/// "downloaded" in these tests means the same thing it means in the
-/// application: the bytes are here, and reading them reaches no network.
 async fn with_parts(content_type: &str, seeds: &[Seed<'_>]) -> (std::sync::Arc<Session>, i64) {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
@@ -85,8 +70,6 @@ async fn with_parts(content_type: &str, seeds: &[Seed<'_>]) -> (std::sync::Arc<S
     (session, id.into())
 }
 
-// -- bytes -------------------------------------------------------------------
-
 #[tokio::test(flavor = "multi_thread")]
 async fn a_downloaded_parts_bytes_cross_exactly() {
     let (session, message) = with_parts(
@@ -110,9 +93,7 @@ async fn a_downloaded_parts_bytes_cross_exactly() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_part_that_is_not_on_this_machine_and_cannot_be_fetched_says_so() {
-    // No engine — nothing is syncing this store — so there is no route to the
-    // bytes at all. A sentence rather than an empty file: a zero-byte
-    // attachment on disk looks like a saved file and is not one.
+    // No engine, so no route to the bytes: a sentence, not a zero-byte file that looks saved.
     let (session, message) = with_parts(
         "multipart/mixed",
         &[Seed::new("1", "application/zip").named("archive.zip")],
@@ -134,9 +115,6 @@ async fn a_part_that_is_not_on_this_machine_and_cannot_be_fetched_says_so() {
     session.shutdown();
 }
 
-// -- opening ------------------------------------------------------------------
-
-/// What `A` offers for `message` over a document with no links.
 fn offered(session: &Session, message: i64) -> postio_ffi::OpenChoicesFfi {
     session.open_choices(message, String::new())
 }
@@ -301,8 +279,6 @@ async fn a_message_with_only_links_has_something_to_open() {
     session.shutdown();
 }
 
-// -- saving -------------------------------------------------------------------
-
 #[tokio::test(flavor = "multi_thread")]
 async fn saving_a_part_writes_it_where_the_person_said_and_says_so() {
     let (session, message) = with_parts(
@@ -420,10 +396,6 @@ async fn save_all_saves_what_it_can_and_counts_what_it_could_not() {
     session.shutdown();
 }
 
-// -- two accounts -------------------------------------------------------------
-
-/// A server holding one inbox message with a PDF attachment whose bytes are
-/// `payload`, so which server answered is readable from the bytes.
 fn server_with_report(payload: &str) -> postio_account::backend::MockBackend {
     use postio_account::backend::{BodyStructure, MockBackend, MockMailbox, MockMessage, PartNode};
     let text = format!("See attached: {payload}");
@@ -456,11 +428,8 @@ fn server_with_report(payload: &str) -> postio_account::backend::MockBackend {
         .build()
 }
 
-/// A session with two syncing accounts, each over its own server. Returns the
-/// session, and the id and attachment of the message that lives on the
-/// second account's server; the first account's server holds a message of its
-/// own, so that an engine asked for the wrong message has something to
-/// answer with.
+/// The first account's server holds a message of its own, so an engine asked for the wrong message
+/// has something to answer with.
 async fn two_accounts() -> (std::sync::Arc<Session>, i64, i64) {
     use postio_model::{Account, EmailAddress};
     use postio_storage::repository::AccountRepository;
@@ -496,7 +465,6 @@ async fn two_accounts() -> (std::sync::Arc<Session>, i64, i64) {
         accounts[1],
         std::sync::Arc::new(server_with_report("%PDF second account")),
     );
-    // Wait for the second account's sync to bring its message in.
     let deadline = std::time::Instant::now() + postio_test_support::patience();
     let message = loop {
         let connection = database.read().await.expect("a read connection");

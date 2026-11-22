@@ -1,68 +1,37 @@
-//! What a verb reaches from where the focus is: one function, one table.
-//!
-//! A thread in Focus is a row that opens into its messages, so "reply" on the
-//! row and "reply" on message 4 of 6 cannot mean the same thing. Spec 013's
-//! D2 settles it by the design's table, and this module is the only place
-//! the table lives: the list, the message window and the thread menu all ask
-//! [`target`], so a cell cannot be right in one frontend and wrong in
-//! another.
-//!
-//! | Focus | Reply, reply all, forward, flag | Archive, snooze, label, move, remind, mute, delete | Read / unread | Move or delete only this |
-//! |---|---|---|---|---|
-//! | Collapsed row | latest message | thread | thread | not offered |
-//! | Child row, window | this message | thread | this message | this message |
+//! What a verb reaches from where the focus is: one table, so no frontend can disagree (spec 013
+//! D2).
 
 use crate::hints;
 use postio_core::{CommandId, Keymap};
 use postio_model::ids::{MessageId, ThreadId};
 
-/// Where the focus is, as far as scope cares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeFocus {
-    /// A collapsed thread row; `latest` is the message the row shows.
     Row {
-        /// The conversation the row stands for.
         thread: ThreadId,
-        /// Its latest message.
         latest: MessageId,
-        /// Its children are showing: Left folds it, Right has nothing
-        /// to do.
         expanded: bool,
     },
-    /// A child row of the expanded thread.
     Child {
-        /// The conversation it belongs to.
         thread: ThreadId,
-        /// The child's message.
         message: MessageId,
     },
-    /// The message window, showing one message of a thread.
     Window {
-        /// The conversation it belongs to.
         thread: ThreadId,
-        /// The message shown.
         message: MessageId,
     },
 }
 
-/// What a verb reaches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
-    /// Every message of the thread.
     Thread(ThreadId),
-    /// This one message.
     Message(MessageId),
     /// The verb does not apply here: not offered, and a key does nothing.
     Unavailable,
 }
 
-/// What `action` reaches from `focus`, by spec 013's D2.
-///
-/// A command outside the table is thread-wide, as every verb was before
-/// threads had children: that keeps the verbs the table does not name (a
-/// dismissed marker, an unsnooze) aimed as they always were, rather than
-/// dropping them as [`Scope::Unavailable`], which means "not offered here"
-/// and is only for the two "this message alone" verbs on a row.
+/// A command outside the table is thread-wide; `Unavailable` is only for the two "this message
+/// alone" verbs on a row.
 pub fn target(focus: ScopeFocus, action: CommandId) -> Scope {
     let (thread, row_message, child_message) = match focus {
         ScopeFocus::Row { thread, latest, .. } => (thread, Some(latest), None),
@@ -72,62 +41,37 @@ pub fn target(focus: ScopeFocus, action: CommandId) -> Scope {
     };
     let here = row_message.or(child_message);
     match action {
-        // A message's own: the row's latest, or this message. A flag is a
-        // message's, like a reply.
         CommandId::Reply | CommandId::ReplyAll | CommandId::Forward | CommandId::Flag => {
             here.map_or(Scope::Unavailable, Scope::Message)
         }
-        // Read state is the thread's on a row, the message's below it.
         CommandId::ToggleRead => child_message.map_or(Scope::Thread(thread), Scope::Message),
-        // Move or delete only this: this message on a child or in the
-        // window, not offered on a row, which stands for the whole thread.
         CommandId::MoveThisMessage | CommandId::DeleteThisMessage => {
             child_message.map_or(Scope::Unavailable, Scope::Message)
         }
-        // T023: `ReplyToLatest` is the row's latest on a row, and the
-        // thread's latest from a child or the window, not this message.
-        // T023: `MuteThread` is thread-wide and falls to the default arm.
-        // T023: forwarding the whole thread is `Scope::Thread` and the same.
-        //
-        // Archive, snooze, label, move, remind and delete are the thread's
-        // everywhere; so is everything the table does not name.
+        // `ReplyToLatest` is the row's latest on a row and the thread's latest from a child or the
+        // window.
         _ => Scope::Thread(thread),
     }
 }
 
-/// What the footer under the list says (spec 013 US2): the scope in words,
-/// the keys that matter there, and one sentence on what acts on what.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FooterView {
-    /// The scope: "Harbor API draft v3 \u{b7} 6 messages", "Message 4 of 6 \u{b7} Ben Adeyemi".
     pub title: String,
-    /// Keycap and label pairs, in the order they are drawn.
     pub keys: Vec<(String, String)>,
-    /// The right-hand sentence; none on a row that stands for one message.
     pub note: Option<String>,
 }
 
-/// What the footer is about: the thread's subject and size, and the
-/// message the focus is on when it is on one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FooterAbout<'a> {
-    /// The thread's subject.
     pub subject: &'a str,
-    /// How many messages it holds.
     pub count: usize,
-    /// The focused message, from zero, oldest first.
     pub index: usize,
-    /// Who sent it: "You" for the person's own.
     pub sender: &'a str,
 }
 
-/// The footer under the list, by spec 013's D2: its title says the scope,
-/// its keys say what reply, forward and archive reach from here, and the
-/// note under a child says which keys act on the thread.
-///
-/// A row that stands for one message has no thread to speak of: its title
-/// is the subject, its keys are plain "reply", "forward" and "archive", and
-/// there is no note. Every keycap is the keymap's, so a rebinding shows.
+/// A row standing for one message has no thread: its title is the subject, its keys are plain, and
+/// there is no note.
+/// Every keycap is the keymap's, so a rebinding shows.
 pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> FooterView {
     let (title, reply, forward, archive, walk, note) = match focus {
         ScopeFocus::Row { .. } if about.count <= 1 => (
@@ -194,8 +138,6 @@ pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> Fo
     FooterView { title, keys, note }
 }
 
-/// The footer of a window on a message that is no thread to walk: its
-/// subject, and plain reply, forward and archive, which reach only it.
 pub fn lone(subject: &str, keymap: &Keymap) -> FooterView {
     let keys = [
         (CommandId::Reply, "reply"),
@@ -213,10 +155,7 @@ pub fn lone(subject: &str, keymap: &Keymap) -> FooterView {
     }
 }
 
-/// The footer on a digest's row: the digest's rule and size, and only the
-/// keys that act on a digest -- move, open (the digest window) and archive
-/// (its delivery). A digest is no message, so there is nothing to reply to
-/// or forward, and no other row's keys may stay up over it (#2203).
+/// A digest is no message, so no other row's keys may stay up over it (#2203).
 pub fn digest_footer(rule: &str, count: usize, keymap: &Keymap) -> FooterView {
     let size = if count == 1 {
         "1 message".to_owned()
@@ -244,9 +183,7 @@ pub fn digest_footer(rule: &str, count: usize, keymap: &Keymap) -> FooterView {
     }
 }
 
-/// [`footer`] for a window opened over the search results: Escape goes back
-/// to them, as the match banner says, and the footer says so too, where the
-/// results' own footer said "back to inbox" (#2193).
+/// Escape goes back to the results, so the footer says so rather than "back to inbox" (#2193).
 pub fn over_results(mut view: FooterView, keymap: &Keymap) -> FooterView {
     if let Some(hint) = hints::hint(keymap, CommandId::Back, "back to results") {
         view.keys.push((hints::short(&hint.key), hint.label));
@@ -254,10 +191,6 @@ pub fn over_results(mut view: FooterView, keymap: &Keymap) -> FooterView {
     view
 }
 
-/// "e, b, l, v act on the thread", with the keys the keymap binds to
-/// archive, snooze, label and move. That reply and forward act on this
-/// message is said by their own labels ("reply to this"); the note is only
-/// what does not fit in a label, and short enough to share the line.
 fn thread_note(keymap: &Keymap) -> String {
     let keys: Vec<&str> = [
         CommandId::Archive,

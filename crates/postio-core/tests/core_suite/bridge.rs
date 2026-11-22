@@ -1,12 +1,3 @@
-//! The tokio↔glib bridge, exercised the way the GTK thread uses it: from an
-//! ordinary synchronous thread that owns no runtime of its own.
-//!
-//! These tests are deliberately *not* `#[tokio::test]`. The frontend calls
-//! `send` from the GTK main loop and drains events there; if the bridge only
-//! worked from inside a tokio context it would not be a bridge at all. Nothing
-//! here touches the network, and every wait is bounded so a regression fails
-//! the suite instead of hanging it.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -14,12 +5,6 @@ use std::time::{Duration, Instant};
 use postio_core::bridge::{Bridge, EventStream, handler_fn};
 use postio_core::{Command, Event, MessageTarget};
 
-/// Wait for the next event, or fail the test rather than hang the suite.
-///
-/// The deadline and the backoff come from `postio_test_support`, so
-/// `POSTIO_TEST_PATIENCE` reaches this the way it reaches every other wait in
-/// the workspace. It used to be a `PATIENCE` constant defined here, which is
-/// how the suite ended up with 171 of them.
 fn next_event(events: &EventStream) -> Event {
     let mut taken = None;
     postio_test_support::wait_until("an event to arrive on the bridge", || {
@@ -29,7 +14,6 @@ fn next_event(events: &EventStream) -> Event {
     taken.expect("the wait only returns once an event was taken")
 }
 
-/// An echo handler: every command becomes one `ActionCompleted` event naming it.
 fn echo() -> impl postio_core::bridge::CommandHandler {
     handler_fn(|command: Command, events| async move {
         events.emit(Event::ActionCompleted {
@@ -57,7 +41,6 @@ fn a_command_reaches_the_handler_and_its_event_comes_back() {
 
 #[test]
 fn commands_are_handled_in_the_order_they_were_sent() {
-    // Archive-then-undo must not race: the bus is a queue, not a thread pool.
     let (bridge, events) = Bridge::new(echo()).expect("the runtime starts");
     let commands = bridge.commands();
 
@@ -83,8 +66,6 @@ fn commands_are_handled_in_the_order_they_were_sent() {
 
 #[test]
 fn sending_never_blocks_the_calling_thread() {
-    // The UI thread must never await the backend. A handler that takes a
-    // quarter of a second must not cost the caller a quarter of a second.
     let (bridge, events) = Bridge::new(handler_fn(|command: Command, events| async move {
         tokio::time::sleep(Duration::from_millis(250)).await;
         events.emit(Event::ActionCompleted {
@@ -98,32 +79,19 @@ fn sending_never_blocks_the_calling_thread() {
         bridge.commands().send(Command::Refresh).expect("running");
     }
 
-    // Asserted as ordering rather than as a stopwatch reading (#1068).
-    //
-    // The claim is that the loop finished before any handler could, and that
-    // is a statement about *sequence*: each handler sleeps 250ms before
-    // emitting, so a `send` that waited for one would have let its event
-    // through before the next send ran. Zero events here is exactly "the
-    // caller did not wait", on every machine, with no number to pick.
-    //
-    // It used to be `elapsed < 50ms`. That measures the machine as much as
-    // the code — this repository routinely has three sessions compiling at
-    // once and `.cargo/config.toml` pins `jobs = 2` because of it — and it
-    // is the class of assertion #100 and #917 removed everywhere else.
+    // Asserted as ordering, not a stopwatch (#1068): each handler sleeps 250ms, so a `send` that
+    // waited would let an event through before the next send.
     assert!(
         events.try_next().is_none(),
         "a handler ran to completion while the caller was still sending, so \
          `send` is waiting for the backend the UI thread must never await"
     );
 
-    // And the work really did happen, off the caller's thread.
     assert_eq!(description(&next_event(&events)), "refresh");
 }
 
 #[test]
 fn work_offloaded_onto_the_runtime_does_not_delay_the_next_command() {
-    // Handlers are local-first and quick; anything slow is spawned. This is
-    // what keeps sequential dispatch from becoming a head-of-line stall.
     let finished = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&finished);
     let (bridge, events) = Bridge::new(handler_fn(move |command: Command, events| {
@@ -165,7 +133,6 @@ fn work_offloaded_onto_the_runtime_does_not_delay_the_next_command() {
 
 #[test]
 fn commands_may_be_sent_from_many_threads_at_once() {
-    // Senders cross threads; nothing in the bridge may be thread-affine.
     let handled = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&handled);
     let (bridge, _events) = Bridge::new(handler_fn(move |_command: Command, _events| {
@@ -197,7 +164,6 @@ fn commands_may_be_sent_from_many_threads_at_once() {
 
 #[test]
 fn shutdown_finishes_the_queued_work_and_joins() {
-    // Quitting must not silently drop the archive the user just asked for.
     let handled = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&handled);
     let (bridge, _events) = Bridge::new(handler_fn(move |_command: Command, _events| {
@@ -219,12 +185,9 @@ fn shutdown_finishes_the_queued_work_and_joins() {
 
 #[test]
 fn a_handler_slower_than_the_shutdown_timeout_does_not_panic_the_caller() {
-    // #817: a handler that is merely slow -- not stuck -- must not turn an
-    // ordinary scheduling delay into a torn-down caller. `shutdown_timeout`
-    // governs how long `stop` waits for the pump to drain, but missing that
-    // window once is not proof of a hang: `Runtime::shutdown_timeout`, called
-    // right after, gives the still-running pump a second, equal-length
-    // chance regardless of what the first wait concluded.
+    // #817: a merely slow handler must not turn a scheduling delay into a torn-down caller; the
+    // second
+    // `shutdown_timeout` window gives the pump another chance.
     let (bridge, _events) = Bridge::builder()
         .worker_threads(1)
         .shutdown_timeout(Duration::from_millis(20))
@@ -239,7 +202,6 @@ fn a_handler_slower_than_the_shutdown_timeout_does_not_panic_the_caller() {
 
 #[test]
 fn shutdown_does_not_wait_for_detached_background_work() {
-    // A stuck sync task must not hold the application open at quit.
     let (bridge, _events) = Bridge::new(handler_fn(|_command: Command, _events| async move {
         // POSTIO-NOT-A-WAIT: the stuck task is the subject; the test returns without it.
         tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
@@ -249,9 +211,6 @@ fn shutdown_does_not_wait_for_detached_background_work() {
     bridge.commands().send(Command::Refresh).expect("running");
     let start = Instant::now();
     bridge.shutdown();
-    // An upper bound, not a wait: shutdown has already returned, and the
-    // question is whether it returned promptly. Shares the workspace deadline
-    // so a slow machine raises this too.
     assert!(
         start.elapsed() < postio_test_support::patience(),
         "shutdown hung on a detached task"
@@ -266,7 +225,6 @@ fn events_emitted_before_shutdown_are_still_readable_after_it() {
     bridge.shutdown();
 
     assert_eq!(description(&next_event(&events)), "refresh");
-    // Drained, and the producer is gone: the UI loop can exit.
     assert!(events.try_next().is_none());
     postio_test_support::wait_until("the event stream to close after shutdown", || {
         events.is_closed()
@@ -287,8 +245,6 @@ fn sending_after_shutdown_is_an_error_not_a_panic() {
 
 #[test]
 fn emitting_to_a_frontend_that_went_away_does_not_panic() {
-    // The window can close while a handler is mid-flight; that is a no-op,
-    // not a crash.
     let observed = Arc::new(AtomicUsize::new(0));
     let delivered = Arc::clone(&observed);
     let (bridge, events) = Bridge::new(handler_fn(move |command: Command, events| {
@@ -326,28 +282,8 @@ fn dropping_the_bridge_shuts_it_down() {
     assert!(commands.send(Command::Refresh).is_err());
 }
 
-/// The runtime the bridge builds can do IO.
-///
-/// It could not, until `dev.postio.Postio 0.1.0` panicked on first launch the
-/// moment onboarding tried to reach a server:
-///
-/// ```text
-/// thread 'postio-core' panicked at tokio/src/net/tcp/stream.rs:164:
-/// A Tokio 1.x context was found, but IO is disabled.
-/// Call `enable_io` on the runtime builder to enable IO.
-/// ```
-///
-/// `BridgeBuilder::build` called `enable_time()` and nothing else, so every
-/// socket opened on this runtime panicked — which is every socket the
-/// application opens, since this is the runtime the sync engine runs on.
-///
-/// Nothing in the default suite had ever opened one. The no-network rule means
-/// the handlers under test talk to `MockBackend`, so `enable_io` was exercised
-/// by exactly nothing and the gap was invisible to a green suite.
-///
-/// This binds a listener on loopback and connects to it. That is not network
-/// access — no name is resolved and no packet leaves the machine — and it is
-/// the smallest thing that proves the reactor is running.
+/// Regression for 0.1.0, which enabled only the timer: any socket opened on this runtime panicked
+/// "IO is disabled". Binds loopback only, so no network is touched.
 #[test]
 fn the_bridge_runtime_can_open_a_socket() {
     let handler = handler_fn(|_command: Command, events| async move {

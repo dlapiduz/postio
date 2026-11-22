@@ -1,19 +1,6 @@
 //! `Engine::stop()` keeps its promise while a backfill is pumping (#759).
 //!
 //! POSTIO-OWN-BINARY: it installs the global tracing subscriber.
-//!
-//! Closing the job channel is the engine's only stop signal, and for a long
-//! time three of the loop's phases could not hear it: the body-backfill
-//! drains gated on `inbox.is_empty()` — and a **closed** channel is also
-//! empty — while the sync wave's post-completion drain checked nothing at
-//! all. Quitting mid-backfill then meant `stop()` burned the whole
-//! [`SHUTDOWN_GRACE`], warned, and detached a thread that was still writing
-//! SQLCipher pages while `exit()` tore libcrypto down underneath it — the
-//! coredump `docs/archive/engineering-notes.md` documents under #610/#300.
-//!
-//! One test, in a binary of its own: it asserts over every warning the
-//! engine logs, and a global subscriber cannot be shared with tests that log
-//! for other reasons.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,15 +11,10 @@ use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-/// A writer every `tracing` line lands in, so the test can read them back.
 use postio_test_support::logs::Captured;
 
-/// A server holding one large mailbox of small messages, every call slowed.
-///
-/// The latency is what makes the backfill long: at 150 ms a call, draining
-/// this INBOX takes tens of seconds — far past the grace — so a `stop()`
-/// that waits for the drain instead of interrupting it is caught red-handed
-/// rather than racing the queue to empty.
+/// 150 ms a call makes draining take tens of seconds, far past the grace, so a `stop()` that waits
+/// for the drain is caught.
 fn server(messages: u32) -> MockBackend {
     let message = |n: u32| {
         format!(
@@ -58,15 +40,9 @@ fn server(messages: u32) -> MockBackend {
 #[tokio::test]
 async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     let captured = Captured::default();
-    // Globally, not per-thread: the engine works on a thread of its own, and
-    // `set_default` would leave that thread — the one whose warning this
-    // test exists to catch — with no subscriber at all.
-    //
-    // Warnings only. At `DEBUG` this captured every crate's debug lines,
-    // the store's among them: Turso traces each statement it prepares,
-    // trigger by trigger, in hundreds of lines. On a loaded runner the
-    // engine then spent the grace writing those lines into this buffer
-    // while it wound down, and the stop it was measuring ran out (#2167).
+    // Global, not per-thread: the engine's thread would have no subscriber. Warnings only: at DEBUG
+    // the
+    // store's per-statement traces slowed the stop being measured (#2167).
     let subscriber = tracing_subscriber::fmt()
         .with_writer(captured.clone())
         .with_max_level(tracing::Level::WARN)
@@ -91,7 +67,6 @@ async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
         database: database.clone(),
         blobs,
         backend: backend.clone(),
-        // Never dialled: nothing here queues a send.
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
         tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
             postio_account::secret::MemorySecretStore::default(),
@@ -107,8 +82,6 @@ async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     })
     .expect("the engine starts");
 
-    // Let the backfill genuinely start pumping bodies, so the stop below
-    // lands mid-drain rather than before the queue was ever seeded.
     let waited = Instant::now();
     while backend.body_fetches().len() < 3 {
         assert!(
@@ -124,13 +97,8 @@ async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     let took = stopping.elapsed();
     let fetched_after = backend.body_fetches().len() - fetched_before;
 
-    // The loop notices the closed channel between bodies, so nothing new
-    // starts after the stop: at most the calls already on the wire land
-    // (the mock logs a body once its latency is paid, and the backfill
-    // overlaps its fetches). A loop deaf to the close keeps starting them,
-    // a round every 150 ms, until the grace runs out. Counted in calls, not
-    // seconds: a loaded runner stretched a correct stop past a 2 s bound
-    // (2.25 s, green alone), while the calls a deaf loop makes cannot hide.
+    // Nothing new starts after the stop; counted in calls, not seconds, since a loaded runner
+    // stretched a correct stop past a 2 s bound.
     let on_the_wire = backend.peak_in_flight();
     assert!(
         fetched_after <= on_the_wire,
@@ -148,9 +116,6 @@ async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
         "the engine warned about its own shutdown:\n{log}"
     );
 
-    // Nothing was lost with the queue: whatever was still unfetched — the
-    // interrupted body included — is re-derivable from `body_state`, so the
-    // next session's seed offers it again.
     let connection = database.connect().await.expect("a connection");
     let mailboxes = MailboxRepository::new(&connection)
         .list_for_account(report.account.id)

@@ -1,11 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// The Contacts view in the main window's place (handoff screens 01 to 03,
-/// `g c`): the strip with its kind tabs, the filter and New contact; the
-/// "Worth a look" line; the list in letter groups beside the card; and the
-/// footer. Every word is the controller's (`ContactsViewFfi`, the rows and
-/// the card), and the keys reach it through the key monitor.
 public struct ContactsScreen: View {
     let model: ContactsModel
     @FocusState private var filtering: Bool
@@ -14,7 +9,6 @@ public struct ContactsScreen: View {
         self.model = model
     }
 
-    /// The list's width, and a row's height, from the spec.
     public static let listWidth: CGFloat = 440
     public static let rowHeight: CGFloat = 52
     public static let letterHeight: CGFloat = 26
@@ -55,8 +49,6 @@ public struct ContactsScreen: View {
             .onChange(of: model.filterRequest) { _, _ in filtering = true }
         }
     }
-
-    // MARK: the strip
 
     private func strip(_ strip: ContactsStripFfi) -> some View {
         HStack(spacing: 10) {
@@ -154,8 +146,6 @@ public struct ContactsScreen: View {
         }
     }
 
-    // MARK: the list
-
     private func list(_ view: ContactsViewFfi) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -176,11 +166,8 @@ public struct ContactsScreen: View {
         .accessibilityLabel("Contacts")
     }
 
-    // MARK: the footer
-
     private func footer(_ footer: ContactsFooterFfi) -> some View {
         HStack(spacing: 14) {
-            // Over the form, the footer teaches the form's keys.
             FocusHintRow(
                 model.edit.map { form in
                     form.hints.map { FocusHintRow.Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
@@ -195,9 +182,6 @@ public struct ContactsScreen: View {
     }
 }
 
-/// One row of the list: the 32 avatar, the name with its tag, the address in
-/// the monospaced face, and on the right when and what the mail adds up to.
-/// A letter heading sits over the first row of a letter.
 struct ContactRowView: View {
     let row: ContactRowViewFfi?
     let selected: Bool
@@ -265,8 +249,6 @@ struct ContactRowView: View {
     }
 }
 
-/// An avatar: the engine's initials or glyph on its colour, a circle for a
-/// person and a rounded square for the rest.
 struct ContactAvatarView: View {
     let avatar: AvatarFfi
     let size: CGFloat

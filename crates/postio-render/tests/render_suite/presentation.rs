@@ -1,5 +1,3 @@
-//! How each message is presented in each theme (spec FR-013, research R10).
-
 use crate::support::{self, DARK, LIGHT, render, request, request_for};
 use postio_render::Presentation;
 
@@ -28,8 +26,6 @@ fn each_fixture_is_presented_as_the_rule_says() {
     }
 }
 
-/// FR-013's line: a page at or above relative luminance 0.9 is a client's
-/// default white, below it a design.
 #[test]
 fn the_near_white_boundary() {
     let page = |grey: &str| {
@@ -43,7 +39,6 @@ fn the_near_white_boundary() {
         );
         render(&request_for(html, DARK)).messages[0].presentation
     };
-    // #f5f5f5 is 0.913; #f2f2f2 is 0.888.
     assert_eq!(page("#f5f5f5"), Presentation::Adapted);
     assert_eq!(page("#f2f2f2"), Presentation::Paper);
 }
@@ -57,7 +52,6 @@ fn luminance(raster: &postio_render::Raster, x: f64, y: f64) -> f64 {
     ))
 }
 
-/// Designed mail in dark mode is a sheet of paper on the reader's ground.
 #[test]
 fn paper_is_a_light_card_on_the_dark_ground() {
     let doc = render(&request("html-newsletter", DARK).expect("a body"));
@@ -75,8 +69,6 @@ fn paper_is_a_light_card_on_the_dark_ground() {
     );
 }
 
-/// FR-013a: darkened paper keeps its hues at the dark end, every run still
-/// meets the floor, and undarkening gives back the paper exactly.
 #[test]
 fn darken_remaps_the_grounds_and_round_trips() {
     use postio_render::theme::{contrast, to_oklch};
@@ -116,9 +108,8 @@ fn darken_remaps_the_grounds_and_round_trips() {
     );
 }
 
-/// FR-015: an image keeps its intended canvas behind it. The transparent
-/// logo is found in the raster only as it looks over the sender's white:
-/// over the dark ground its transparent pixels would not match.
+/// The transparent logo matches the raster only over the sender's white: over the dark ground its
+/// transparent pixels would not.
 #[test]
 fn a_transparent_logo_keeps_its_canvas() {
     let parsed =
@@ -165,8 +156,6 @@ fn a_transparent_logo_keeps_its_canvas() {
     );
     assert!(found(adapted), "Adapted: the logo is not over its canvas");
 
-    // In the app's colours too (T211), where the canvas is the treatment's
-    // stylesheet's to give rather than a second layout's (T218).
     let body = parsed.body.clone();
     let treated = postio_ui::reader::document::body_html_treated(
         &body,
@@ -191,9 +180,8 @@ fn a_transparent_logo_keeps_its_canvas() {
     assert!(found(app), "App colours: the logo is not over its canvas");
 }
 
-/// FR-015's canvas is for an image that paints. A held-back picture has no
-/// source and is the reader's placeholder, so a page drawn into dark gives
-/// it the dark ground, never a white box with its alt text unreadable on it.
+/// A held-back picture is the reader's placeholder: it gets the dark ground, never a white box with
+/// unreadable alt text.
 #[test]
 fn a_held_back_picture_gets_no_canvas_in_dark() {
     let eml = "From: news@example.com\r\nTo: ada@example.com\r\nSubject: Notes\r\n\

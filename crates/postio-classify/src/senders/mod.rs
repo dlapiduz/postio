@@ -1,9 +1,6 @@
-//! The automated-senders table (T105, research R8): who sends mail that no
-//! person wrote, as data rather than code (FR-114, constitution VII).
-//!
-//! Postio ships `data/senders.toml`, embedded at compile time and parsed
-//! once, as `postio-account` ships its provider presets. It holds generic
-//! forms only, never a provider's domain.
+//! The automated-senders table: who sends mail no person wrote, as data (constitution VII).
+//! Embedded
+//! `data/senders.toml`, generic forms only, never a provider's domain.
 
 mod table;
 
@@ -14,23 +11,18 @@ use postio_model::EmailAddress;
 
 use crate::outcome::{ReasonKind, SourceName};
 
-/// The table Postio ships. `build.rs` parsed and validated this same file
-/// with the same module before the crate compiled, so the `expect` cannot
-/// fire in a build that succeeded.
+/// `build.rs` validated this same file with the same module, so the `expect` cannot fire in a build
+/// that succeeded.
 static SHIPPED: LazyLock<Senders> = LazyLock::new(|| {
     Senders::parse(include_str!("../../data/senders.toml"))
         .expect("build.rs validated data/senders.toml")
 });
 
-/// A table of automated senders: each entry a set of patterns on an
-/// address, and the reason mail from it is filtered with. An empty table
-/// knows no sender.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Senders {
     entries: Vec<Sender>,
 }
 
-/// One entry of the table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sender {
     name: String,
@@ -40,7 +32,6 @@ pub struct Sender {
     source: Option<SourceName>,
 }
 
-/// Why a table does not load, naming the entry to blame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendersError(table::TableError);
 
@@ -53,12 +44,10 @@ impl fmt::Display for SendersError {
 impl std::error::Error for SendersError {}
 
 impl Senders {
-    /// The table Postio ships, parsed on first use.
     pub fn shipped() -> &'static Senders {
         &SHIPPED
     }
 
-    /// A table from its TOML: `data/senders.toml`'s format.
     pub fn parse(text: &str) -> Result<Senders, SendersError> {
         let rows = table::parse(text).map_err(SendersError)?;
         let entries = rows
@@ -74,7 +63,6 @@ impl Senders {
         Ok(Senders { entries })
     }
 
-    /// The first entry whose patterns match `address`.
     pub fn find(&self, address: &EmailAddress) -> Option<&Sender> {
         let (local, domain) = address.address.rsplit_once('@')?;
         let words: Vec<String> = local
@@ -82,7 +70,6 @@ impl Senders {
             .map(str::to_ascii_lowercase)
             .collect();
         let labels: Vec<String> = domain.split('.').map(str::to_ascii_lowercase).collect();
-        // The labels in front of the registrable name: the subdomains.
         let subdomains = &labels[..labels.len().saturating_sub(2)];
         self.entries.iter().find(|sender| {
             sender.local.iter().any(|pattern| {
@@ -94,8 +81,6 @@ impl Senders {
     }
 }
 
-/// A reason the table spelled, as the crate's type. `table::parse` accepts
-/// only [`table::REASONS`], and a test holds those to these.
 fn reason(spelled: &str) -> ReasonKind {
     ReasonKind::ALL
         .into_iter()
@@ -104,18 +89,14 @@ fn reason(spelled: &str) -> ReasonKind {
 }
 
 impl Sender {
-    /// The entry's name in the table.
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// The reason mail from this sender is filtered with (FR-113).
     pub fn reason(&self) -> ReasonKind {
         self.reason
     }
 
-    /// The name a filtered row shows after its reason, when the table gives
-    /// one.
     pub fn source(&self) -> Option<&SourceName> {
         self.source.as_ref()
     }
@@ -132,8 +113,6 @@ mod tests {
             .find(&EmailAddress::new(None::<&str>, address))
             .map(Sender::name)
     }
-
-    // --- The shipped table --------------------------------------------------
 
     #[test]
     fn the_shipped_patterns_match_their_fixtures() {
@@ -216,9 +195,6 @@ mod tests {
         assert_eq!(sender.source().map(SourceName::as_str), Some("Offers"));
     }
 
-    // --- A table that does not load -------------------------------------------
-
-    /// What `text` fails to load with, as a person would read it.
     fn load_error(text: &str) -> String {
         Senders::parse(text)
             .expect_err("the table does not load")
@@ -298,8 +274,6 @@ mod tests {
         assert_eq!(table::REASONS, ReasonKind::ALL.map(ReasonKind::as_str));
     }
 
-    // --- The classifier's source holds no provider (FR-114) ---------------------
-
     #[test]
     fn a_provider_in_code_would_be_found() {
         let patterns = vec!["noreply".to_owned()];
@@ -326,9 +300,8 @@ mod tests {
 
     #[test]
     fn the_classifier_s_source_holds_no_provider_constant() {
-        // Every domain and address pattern the classifier matches comes
-        // from data/senders.toml. Its source spells none: no address, no
-        // domain, and none of the table's own patterns (constitution VII).
+        // Every pattern the classifier matches comes from data/senders.toml; its source spells none
+        // (constitution VII).
         let patterns: Vec<String> = Senders::shipped()
             .entries
             .iter()
@@ -354,12 +327,9 @@ mod tests {
         }
 
         assert!(found.is_empty(), "{}", found.join("\n"));
-        // Not a scan that read nothing: the detector's word lists alone are
-        // hundreds of literals.
         assert!(read > 300, "the scan read only {read} literals");
     }
 
-    /// Every `.rs` file under `root`.
     fn sources(root: &Path) -> Vec<PathBuf> {
         let mut out = Vec::new();
         for entry in std::fs::read_dir(root).expect("a directory") {
@@ -373,11 +343,9 @@ mod tests {
         out
     }
 
-    /// The string literals in `source`'s code, outside its test module,
-    /// that spell an address, a domain, or one of `patterns`: each as "line
-    /// N: literal". Comments are prose, `include_str!`'s path is a file,
-    /// and the reasons' spellings are the store's vocabulary, which two of
-    /// the table's patterns happen to share.
+    /// Comments are prose, `include_str!`'s path is a file, and the reasons' spellings are the
+    /// store's
+    /// vocabulary, which two of the table's patterns happen to share.
     fn provider_constants(source: &str, patterns: &[String]) -> Vec<String> {
         literals(&code_of(source))
             .into_iter()
@@ -392,7 +360,6 @@ mod tests {
             .collect()
     }
 
-    /// `source` up to its test module: the code that ships.
     fn code_of(source: &str) -> String {
         let mut code = String::new();
         let mut lines = source.lines().peekable();
@@ -410,8 +377,6 @@ mod tests {
         code
     }
 
-    /// Every string literal in `code`: its line, its text, and whether it is
-    /// the path an `include_str!` or `include_bytes!` reads.
     fn literals(code: &str) -> Vec<(usize, String, bool)> {
         let chars: Vec<char> = code.chars().collect();
         let mut out = Vec::new();
@@ -433,7 +398,6 @@ mod tests {
                     }
                     at += 1;
                 }
-                // A char literal, its escapes included, or a lifetime.
                 '\'' if chars.get(at + 1) == Some(&'\\') => {
                     let mut escaped = at + 2;
                     if chars.get(escaped) == Some(&'u') {
@@ -481,16 +445,12 @@ mod tests {
         out
     }
 
-    /// Whether the code before a literal opens an `include_str!` or an
-    /// `include_bytes!`.
     fn included(before: &[char]) -> bool {
         let before: String = before.iter().collect();
         let before = before.trim_end();
         before.ends_with("include_str!(") || before.ends_with("include_bytes!(")
     }
 
-    /// Whether `literal` holds a host name: labels and dots ending in a
-    /// label of letters that is not one of the crate's own file kinds.
     fn hostname(literal: &str) -> bool {
         literal
             .split(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))

@@ -1,15 +1,3 @@
-//! What the engine can actually do, established by asking it.
-//!
-//! Two of these are the Phase 0 experiments from `docs/archive/specs/004-turso-store`
-//! (**R1** and **R2**), and they are tests rather than a scratch program for
-//! one reason: their answers are written into `research.md` and three later
-//! tasks branch on them, so the answer has to stay true. A capability that was
-//! probed once in a terminal is a memory; a capability with a test is a fact
-//! that fails loudly when the pre-1.0 engine under it changes its mind.
-//!
-//! The rest prove the properties `spec.md` makes acceptance criteria: that the
-//! store opens, that it is encrypted, and that another key is refused.
-
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
 use postio_storage::Store;
@@ -27,14 +15,9 @@ fn a_key() -> postio_storage::key::Subkey {
     StoreKey::generate().derive(Purpose::Database)
 }
 
-/// Read a single-row, single-column count, and let go of the connection.
-///
-/// The `drop` is not tidiness. A `Rows` holds its connection's operation gate
-/// until it is dropped or drained, and the next statement on that connection
-/// fails with `Misuse("connection is busy with another operation")` -- at
-/// runtime, with no borrow to stop it at compile time the way `rusqlite`'s
-/// `Statement` did. It cost an afternoon of reading a contaminated experiment
-/// to find, so it is written down here and in research.md Q2.
+/// The `drop` matters: a `Rows` holds its connection until dropped, and the next statement fails
+/// with
+/// "connection is busy with another operation".
 async fn count(connection: &postio_storage::Connection, sql: &str) -> i64 {
     let mut rows = connection.query(sql, ()).await.expect("query");
     let row = rows.next().await.expect("row").expect("a count row");
@@ -47,7 +30,6 @@ async fn count(connection: &postio_storage::Connection, sql: &str) -> i64 {
     value
 }
 
-/// T007: a fresh path yields a store whose schema is at head.
 #[tokio::test]
 async fn opening_a_fresh_path_puts_the_schema_at_head() {
     let (_dir, path) = temp("fresh.db");
@@ -74,9 +56,6 @@ async fn opening_a_fresh_path_puts_the_schema_at_head() {
     }
     found.sort();
 
-    // The tables the application cannot start without, not the whole list:
-    // `schema.rs`'s own test is what proves nothing was lost. This one proves
-    // the constant reached the engine.
     for expected in [
         "accounts",
         "mailboxes",
@@ -96,14 +75,12 @@ async fn opening_a_fresh_path_puts_the_schema_at_head() {
     );
 }
 
-/// SC-002: the file on disk is not readable as plaintext.
 #[tokio::test]
 async fn the_store_keeps_no_plaintext_on_disk() {
     let (_dir, path) = temp("secret.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
     let connection = store.connect().await.expect("connect");
 
-    // A string that cannot plausibly occur in schema text or engine padding.
     const NEEDLE: &str = "asparagus-turntable-9417-zzyzx";
     connection
         .execute(
@@ -138,7 +115,6 @@ async fn the_store_keeps_no_plaintext_on_disk() {
     }
 }
 
-/// SC-003: a store will not open under a key that is not its own.
 #[tokio::test]
 async fn another_key_is_refused() {
     let (_dir, path) = temp("keyed.db");
@@ -153,15 +129,8 @@ async fn another_key_is_refused() {
     );
 }
 
-/// **R1** — can an fts index be built over a generated column?
-///
-/// The question T033 and T034 branch on. The mechanical answer is **yes**:
-/// the engine builds the index and matches through it. That is not the end of
-/// it, and the second half is why `body_search` is an ordinary column anyway
-/// -- see `fold_cannot_be_expressed_in_sql` below.
-///
-/// `STORED` is refused ("Stored generated columns are not supported"); only
-/// `VIRTUAL` works.
+/// R1: the engine builds an fts index over a `VIRTUAL` generated column (`STORED` is refused), yet
+/// `body_search` is an ordinary column; see `fold_cannot_be_expressed_in_sql`.
 #[tokio::test]
 async fn r1_an_fts_index_can_be_built_over_a_generated_column() {
     let (_dir, path) = temp("r1.db");
@@ -201,18 +170,9 @@ async fn r1_an_fts_index_can_be_built_over_a_generated_column() {
     );
 }
 
-/// Why R1 being "yes" does not make the fold free.
-///
-/// A generated column can only be an SQL expression, and the fold this needs
-/// -- NFD, then drop the combining marks -- has no SQL spelling here. The
-/// engine's string functions are SQLite's, and `unicode()` returns a
-/// codepoint while `unistr()` decodes escapes; neither normalises. So
-/// `body_search` is written by the application on the way in, and
-/// `postio_index::fold` is the one place that knows how.
-///
-/// Recorded as a test because it is the load-bearing half of the decision: if
-/// a normalising function ever appears, this fails and the column can become
-/// generated.
+/// The fold (NFD, then drop combining marks) has no SQL spelling here, so `body_search` is written
+/// by
+/// the application via `postio_index::fold`. If a normalising function appears this fails.
 #[tokio::test]
 async fn fold_cannot_be_expressed_in_sql() {
     let (_dir, path) = temp("fold.db");
@@ -237,12 +197,9 @@ async fn fold_cannot_be_expressed_in_sql() {
     }
 }
 
-/// Case *is* folded; diacritics are not.
-///
-/// The precise shape of what the application has to make up for. The analyzer
-/// behind `USING fts` is tantivy's `SimpleTokenizer` + `LowerCaser`, so `CAFÉ`
-/// finds `café` and `cafe` does not -- which is the whole of FR-012 and the
-/// reason `fold` exists.
+/// The analyzer behind `USING fts` is tantivy's `SimpleTokenizer` + `LowerCaser`: `CAFÉ` finds
+/// `café`
+/// and `cafe` does not, which is why `fold` exists.
 #[tokio::test]
 async fn the_engine_folds_case_but_not_diacritics() {
     let (_dir, path) = temp("accents.db");
@@ -286,17 +243,9 @@ async fn the_engine_folds_case_but_not_diacritics() {
     assert_eq!(hits("tres").await, 0, "same, for a grave accent");
 }
 
-/// **R2** — can a background writer starve an interactive one?
-///
-/// The question T014 branches on: whether `WritePriority` has to be enforced
-/// by an application-level gate, as it was under the old engine, or whether
-/// the engine's own writer scheduling already bounds how long a short write
-/// waits behind a long one.
-///
-/// Deliberately not a timing assertion — a shared runner cannot defend a
-/// millisecond figure, which is the same reason `bench.yml` times nothing.
-/// What it asserts is *completion*: the short write finishes while the long
-/// one is still going, or it does not.
+/// R2: whether a long write blocks a short one, i.e. whether `WritePriority` needs the application
+/// gate.
+/// Asserts completion, not timing: a shared runner cannot defend a millisecond figure.
 #[tokio::test]
 async fn r2_whether_a_long_write_blocks_a_short_one() {
     let (_dir, path) = temp("r2.db");
@@ -316,8 +265,6 @@ async fn r2_whether_a_long_write_blocks_a_short_one() {
     .await
     .expect("write inside the transaction");
 
-    // The interactive write, with a bound on how long we are willing to call
-    // "waiting" rather than "starved".
     let attempt = tokio::time::timeout(
         std::time::Duration::from_millis(250),
         short.execute(
@@ -337,48 +284,29 @@ async fn r2_whether_a_long_write_blocks_a_short_one() {
              it cannot, and the write gate exists because of it.",
         ),
         Ok(Err(error)) => {
-            // Refused rather than queued: the engine reports the busy writer
-            // instead of waiting for it. Either way the interactive write did
-            // not go through, which is what the gate is for.
+            // Refused rather than queued: either way the interactive write did not go through.
             let said = error.to_string().to_lowercase();
             assert!(
                 said.contains("busy") || said.contains("lock") || said.contains("write"),
                 "the second write failed for an unexpected reason: {error}",
             );
         }
-        Err(_elapsed) => {
-            // Queued behind the long write and still waiting. This is the
-            // starvation R2 is about.
-        }
+        Err(_elapsed) => {}
     }
 }
 
-/// The cipher the store is opened under is the one this crate documents.
-///
-/// Cheap, and it catches a rename in a pre-1.0 dependency that would
-/// otherwise fall back to *no* encryption without anything failing.
+/// Catches a rename in a pre-1.0 dependency that would otherwise fall back to no encryption
+/// silently.
 #[tokio::test]
 async fn the_documented_cipher_is_one_the_engine_accepts() {
     let (_dir, path) = temp("cipher.db");
-    // If CIPHER were not a name the engine knows, opening would fail here.
     Store::open(&path, &a_key()).await.expect("open");
     assert_eq!(CIPHER, "aes256gcm");
 }
 
-/// The planner will not read through a partial index.
-///
-/// It *enforces* one correctly -- a duplicate inside the predicate is refused
-/// and a row outside it is allowed -- so this is a performance limit, not a
-/// correctness one. But it is a sharp one: a query that matches a partial
-/// index exactly still gets a full scan, and this schema had twenty-two
-/// partial indexes when the engine changed.
-///
-/// What was done about it is in `schema.rs`: the sixteen non-unique ones
-/// dropped their predicates, which costs index size and nothing else, and the
-/// six unique ones kept theirs and gained a non-unique read companion.
-///
-/// **When this test starts failing, that work can be undone.** That is what it
-/// is for.
+/// The planner will not read through a partial index (it enforces one correctly), so `schema.rs`
+/// dropped
+/// the non-unique predicates. When this starts failing, that work can be undone.
 #[tokio::test]
 async fn the_planner_does_not_use_a_partial_index() {
     let (_dir, path) = temp("partial.db");
@@ -410,8 +338,6 @@ async fn the_planner_does_not_use_a_partial_index() {
         }
     };
 
-    // "USING INDEX" or "USING COVERING INDEX", whichever the planner picks --
-    // the claim is that it reaches an index at all.
     let plain = plan("plain").await;
     assert!(
         plain.contains("INDEX"),
@@ -427,7 +353,6 @@ async fn the_planner_does_not_use_a_partial_index() {
     );
 }
 
-/// ...but it does enforce one, which is why the unique ones stayed partial.
 #[tokio::test]
 async fn a_partial_unique_index_is_still_enforced() {
     let (_dir, path) = temp("partial-unique.db");
@@ -464,13 +389,8 @@ async fn a_partial_unique_index_is_still_enforced() {
         .expect("...twice, which is the whole point of the predicate");
 }
 
-/// A corpus that scores unambiguously: one document saturated with the term,
-/// one that mentions it once, and enough noise that the term is worth
-/// something at all.
-///
-/// Twenty noise rows because BM25's IDF goes to zero when every document in
-/// the corpus matches, and a two-document corpus would leave every score
-/// equal for reasons that have nothing to do with what is being measured.
+/// A corpus that scores unambiguously; twenty noise rows because BM25's IDF goes to zero when every
+/// document matches.
 async fn a_scored_corpus() -> (tempfile::TempDir, postio_storage::Checkout) {
     let (dir, path) = temp("scores.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
@@ -505,13 +425,10 @@ async fn a_scored_corpus() -> (tempfile::TempDir, postio_storage::Checkout) {
         )
         .await
         .expect("the glancing match");
-    // The store is kept alive by the directory the caller holds; the
-    // connection outlives it only in the sense that the file does.
     std::mem::forget(store);
     (dir, connection)
 }
 
-/// Every score the corpus produces for `term`, by id, in id order.
 async fn scores(connection: &postio_storage::Connection, sql: &str) -> Vec<(i64, f64)> {
     let mut rows = connection
         .query(sql, (turso::Value::Text("report".to_owned()),))
@@ -529,16 +446,10 @@ async fn scores(connection: &postio_storage::Connection, sql: &str) -> Vec<(i64,
     out
 }
 
-/// `fts_score` answers `0.0` unless the call is the whole select expression.
-///
-/// The trap this pins is that nothing fails: the same rows come back, in the
-/// same set, and only the ranking silently flattens. Postio's search executor
-/// wrote `-fts_score(...)` to put the score on `bm25`'s negative-is-better
-/// scale, and every candidate scored zero — so relevance order was recency
-/// order for every query, and only one test in the workspace could see it.
-///
-/// If this ever starts passing with the wrapped form, `HITS_JOIN` can project
-/// the negation again and drop the one in its outer `SELECT`.
+/// `fts_score` answers `0.0` unless the call is the whole select expression: the same rows come
+/// back
+/// and only ranking flattens. If this passes with the wrapped form, `HITS_JOIN` can project the
+/// negation again.
 #[tokio::test]
 async fn the_score_is_lost_to_any_arithmetic_around_it() {
     let (_dir, connection) = a_scored_corpus().await;
@@ -568,8 +479,6 @@ async fn the_score_is_lost_to_any_arithmetic_around_it() {
         );
     }
 
-    // And the shape Postio actually uses: bare inside a subquery, negated
-    // outside, where the alias is an ordinary column.
     let outside = scores(
         &connection,
         "SELECT h.id, -h.s FROM (SELECT id, fts_score(subject, ?1) AS s
@@ -582,14 +491,10 @@ async fn the_score_is_lost_to_any_arithmetic_around_it() {
     );
 }
 
-/// `fts_score` answers `0.0` unless its term is the *same expression* as the
-/// `fts_match` that selected the row.
-///
-/// Not the same value — two parameters bound to the same string are two
-/// expressions, and the score is lost. This is why [`HITS_JOIN`] writes `?1`
-/// and `?2` explicitly and uses each twice, rather than four bare `?`s.
-///
-/// [`HITS_JOIN`]: postio_index::executor
+/// `fts_score` answers `0.0` unless its term is the same expression as the `fts_match` that
+/// selected the
+/// row: two parameters bound to one string are two expressions, so `HITS_JOIN` writes `?1` and `?2`
+/// twice.
 #[tokio::test]
 async fn the_score_needs_the_same_parameter_as_the_match() {
     let (_dir, connection) = a_scored_corpus().await;
@@ -631,9 +536,6 @@ async fn the_score_needs_the_same_parameter_as_the_match() {
     );
 }
 
-/// A store with an fts index over `d.subject` and [`MATCHING`] rows that
-/// say "report" among noise: enough that a read over the match has rows
-/// left when it is abandoned.
 async fn a_matching_store() -> (tempfile::TempDir, Store) {
     let (dir, path) = temp("abandoned.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
@@ -660,12 +562,10 @@ async fn a_matching_store() -> (tempfile::TempDir, Store) {
     (dir, store)
 }
 
-/// How many rows say "report" in [`a_matching_store`].
 const MATCHING: i64 = 40;
 
 const OVER_THE_MATCH: &str = "SELECT id FROM d WHERE fts_match(subject, ?1)";
 
-/// Every id the match yields on `connection`, read to the end.
 async fn the_whole_match(connection: &postio_storage::Connection) -> Vec<i64> {
     let mut rows = connection
         .query(OVER_THE_MATCH, (turso::Value::Text("report".to_owned()),))
@@ -679,15 +579,10 @@ async fn the_whole_match(connection: &postio_storage::Connection) -> Vec<i64> {
     ids
 }
 
-/// Research R8 (spec 010 D9): a search whose caller has gone is dropped at
-/// its next await, mid-read. That is only safe if a read over an fts match,
-/// dropped with rows still to come, gives its connection back clean: not
-/// still busy (`Misuse("connection is busy with another operation")`), and
-/// not handing the next read the abandoned statement's leftovers.
-///
-/// Asked through the readers' pool, which is how the host reads: the
-/// abandoned future holds a [`postio_storage::Reader`], and the next read
-/// gets the same connection back from the pool.
+/// R8: a search whose caller has gone is dropped at its next await, mid-read; that is safe only if
+/// a read
+/// over an fts match, dropped with rows to come, gives its connection back clean (not busy, no
+/// leftovers).
 #[tokio::test]
 async fn r8_a_read_dropped_mid_match_leaves_its_connection_usable() {
     let (_dir, store) = a_matching_store().await;
@@ -701,15 +596,12 @@ async fn r8_a_read_dropped_mid_match_leaves_its_connection_usable() {
             .expect("the match runs");
         let row = rows.next().await.expect("a row").expect("a first row");
         let _ = first.send(*row.get_value(0).expect("id").as_integer().expect("integer"));
-        // Holding the reader and the half-read rows, as a search does
-        // between two awaits, until it is dropped.
         std::future::pending::<()>().await;
     };
     tokio::select! {
         () = abandoned => unreachable!("the read never finishes on its own"),
         id = got_first => assert!(id.is_ok(), "the first row arrived"),
     }
-    // `abandoned` is gone: its rows, and its reader back in the pool.
 
     let reader = store.read().await.expect("the turn after");
     let ids = the_whole_match(&reader).await;
@@ -725,11 +617,8 @@ async fn r8_a_read_dropped_mid_match_leaves_its_connection_usable() {
     );
 }
 
-/// The same, on one connection held throughout: what a [`Reader`] is under
-/// the pool, so the answer above is the engine's and not the pool's luck in
-/// handing out another connection.
-///
-/// [`Reader`]: postio_storage::Reader
+/// The same on one connection held throughout, so the answer is the engine's and not the pool's
+/// luck.
 #[tokio::test]
 async fn r8_the_same_connection_reads_on_after_a_match_is_dropped() {
     let (_dir, store) = a_matching_store().await;

@@ -1,12 +1,3 @@
-//! A folder that fails to sync says so (#1731): a pass that fails while the
-//! link stays up leaves a lasting mark, on the sync label and on the
-//! folder's row in the folders popover, until a pass of that folder
-//! completes.
-//!
-//! Driven through the real engine over a mock server that will not open
-//! one folder, and asserted on what the window draws -- not on what any
-//! tracker was handed.
-
 use std::sync::Arc;
 
 use postio_account::backend::{MockBackend, MockMailbox};
@@ -56,8 +47,6 @@ pub fn a_folder_the_server_will_not_open_is_marked_until_it_syncs() {
         );
         session.start_syncing();
 
-        // The wave settles with Receipts refused and the link up: the label
-        // names the folder, not "Synced", and says why under the pointer.
         assert!(
             crate::settle_until(async || window.sync_said() == "Receipts can't sync").await,
             "the label never named the folder: {:?}",
@@ -69,7 +58,6 @@ pub fn a_folder_the_server_will_not_open_is_marked_until_it_syncs() {
             "the tooltip says why: {detail:?}"
         );
 
-        // The folders popover marks the row, with the same reason.
         support::keys(&window, &["g", "l"]);
         let places = window.places().expect("g l opened the folders popover");
         assert!(
@@ -81,7 +69,6 @@ pub fn a_folder_the_server_will_not_open_is_marked_until_it_syncs() {
         assert_eq!(warnings.len(), 1, "only the refused folder: {warnings:?}");
         assert_eq!(warnings[0].0, "Receipts");
         assert!(warnings[0].1.contains("Mailbox is locked"), "{warnings:?}");
-        // The row still opens the folder: its stored mail is still here.
         places.set_filter("Receipts");
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         assert!(
@@ -90,8 +77,6 @@ pub fn a_folder_the_server_will_not_open_is_marked_until_it_syncs() {
             window.place_name()
         );
 
-        // The server opens it again, and the next pass of it -- F5 on the
-        // folder -- clears both marks.
         backend.allow_select("Receipts");
         support::press(&window, "F5", gtk::gdk::ModifierType::empty());
         assert!(

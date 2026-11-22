@@ -1,20 +1,8 @@
 import PostioFFI
 import SwiftUI
 
-/// The People tab (specs/010-focus-search T133; design §3.11, not drawn):
-/// everyone the results are from or to, you left out, most messages
-/// first, as a list in the table's place.
-///
-/// Each row keeps a result row's rhythm -- 58 tall, the hairline under
-/// it, the accent ring and tint on the focused one -- and the From
-/// popover's person: the initials avatar in its colour, the name over the
-/// address. Then how many matched messages are with them, and the newest
-/// one's date in the date column.
-///
-/// Every word is the controller's (`PersonRowFfi`). Keys go through the
-/// resolver -- j/k and the arrows move the ring, ↩ searches `from:` them
-/// -- and a click tells the controller, which moves the ring
-/// (`FocusResultsCursor`); nothing moves here on its own.
+/// Keys go through the resolver; a click tells the controller, which moves the ring
+/// (`FocusResultsCursor`). Nothing moves here on its own.
 public struct PeopleListView: View {
     let model: ResultsModel
 
@@ -22,7 +10,6 @@ public struct PeopleListView: View {
         self.model = model
     }
 
-    /// The columns: a result row's leading and trailing, its 62 date.
     public enum Columns {
         public static let avatar: CGFloat = 32
         public static let messages: CGFloat = 110
@@ -33,7 +20,6 @@ public struct PeopleListView: View {
     }
 
     public var body: some View {
-        // Read so a new frame draws the rows again.
         let _ = model.frame
         ScrollViewReader { proxy in
             ScrollView {
@@ -61,8 +47,6 @@ public struct PeopleListView: View {
     }
 }
 
-/// One person (design §3.11): the avatar, the name over the address, the
-/// count, the last date.
 public struct PersonRowView: View {
     @Environment(\.colorScheme) private var scheme
     let row: PersonRowFfi?
@@ -109,8 +93,7 @@ public struct PersonRowView: View {
         .padding(.trailing, PeopleListView.Columns.trailing)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
-            // A result row's ground: the accent's tint under the ring,
-            // never as a selection.
+            // The accent's tint under the ring, never as a selection.
             if focused { Color.accentColor.opacity(SearchRuns.focusFill(scheme)) }
         }
         .overlay(alignment: .bottom) {

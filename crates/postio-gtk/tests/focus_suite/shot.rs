@@ -1,9 +1,3 @@
-//! The shot tool (T050): a named screen over the demo store, written to a
-//! PNG, and a loud failure with no file when it cannot be.
-//!
-//! The example's own source is compiled in here, so what is tested is the
-//! function its `main` calls, on this suite's display.
-
 use gtk::prelude::*;
 
 use crate::support;
@@ -17,10 +11,8 @@ fn run(args: &[&str]) -> Result<String, String> {
     example::run(&args)
 }
 
-/// `shot <png> 01` writes screen 01, and the file is a PNG of the size asked
-/// for. Smaller than the references' 1440x900: the suite's compositor has a
-/// 1280x800 monitor, and mutter maximizes a new window that nearly fills
-/// one, so the size asked for is one it leaves alone.
+/// Smaller than the references' 1440x900: the suite's compositor has a 1280x800 monitor, and mutter
+/// maximizes a window that nearly fills one.
 pub fn screen_01_is_written_as_a_png() {
     if !support::display() {
         return;
@@ -34,8 +26,6 @@ pub fn screen_01_is_written_as_a_png() {
     assert_eq!((texture.width(), texture.height()), (960, 600));
 }
 
-/// A screen the tool does not know writes nothing, and says so in the words
-/// a session scanning for success cannot miss (#809).
 pub fn an_unknown_screen_writes_nothing_and_says_so() {
     if !support::display() {
         return;
@@ -51,9 +41,6 @@ pub fn an_unknown_screen_writes_nothing_and_says_so() {
     assert!(!path.exists(), "an unknown screen left a file behind");
 }
 
-/// The demo inbox opens at its top, the first day heading on screen: the
-/// case `rows` holds for a plain inbox, over the store the screens are
-/// compared from, where screen 01 first showed the heading hidden.
 pub fn the_demo_inbox_opens_with_its_first_heading_on_screen() {
     crate::gtk_case(async {
         if !support::display() {
@@ -77,8 +64,6 @@ pub fn the_demo_inbox_opens_with_its_first_heading_on_screen() {
         ));
         support::keep(blobs);
         let pane = window.pane().expect("the inbox");
-        // Until every row on screen is drawn: the rows grow when their
-        // pages land, and GTK lays the list out again then.
         assert!(
             crate::settle_until(async || {
                 let rows = pane.rows_on_screen();

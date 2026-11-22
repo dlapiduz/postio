@@ -1,29 +1,16 @@
-//! Writing mail, across a C ABI (#1272).
-//!
-//! What crosses is a **draft**, not an editor. Who a reply is addressed to,
-//! what its subject becomes, what a quote looks like and which of my
-//! identities it comes from are `postio_model::reply`'s answers — the same
-//! ones the GTK composer gets — and the frontend's job is to show them and
-//! take what the user types back.
-//!
-//! Addresses cross as text because that is what a person types into a `To`
-//! field: `Ada Norwood <ada@example.com>, bo@example.com`. Parsing them is
-//! `postio_model::address`'s, so the two frontends accept the same thing.
+//! Writing mail: a draft crosses, not an editor (#1272).
+//! Addresses cross as text, as typed (`Ada Norwood <ada@example.com>`); `postio_model::address`
+//! parses them.
 
 use postio_model::address;
 use postio_model::draft::{Draft, DraftKind};
 use postio_model::message::MessageBody;
 
-/// What kind of composition a draft is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum DraftKindFfi {
-    /// A message with no ancestor.
     New,
-    /// A reply to its sender.
     Reply,
-    /// A reply to everyone on it.
     ReplyAll,
-    /// A forward.
     Forward,
 }
 
@@ -49,133 +36,73 @@ impl From<DraftKindFfi> for DraftKind {
     }
 }
 
-/// A message being written.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DraftFfi {
-    /// The row this draft is, or `0` before it has been saved once.
-    ///
-    /// Carried back and forth because `save` is idempotent on it: a composer
-    /// that forgot the id would insert a second row on every autosave, and
-    /// the Drafts folder would fill with one half-written message.
+    /// The row id, or `0` before the first save; `save` is idempotent on it, so it must come back.
     pub id: i64,
-    /// The account it will be sent from.
     pub account: i64,
-    /// What kind of composition this is.
     pub kind: DraftKindFfi,
-    /// The address it comes from, rendered — `Mara Ostwald <mara@…>`.
-    ///
-    /// Read-only for now: choosing among an account's identities is its own
-    /// surface, and a `From` field that could be edited into something the
-    /// account cannot send as would be a lie the SMTP server corrects.
+    /// The address it comes from, rendered — `Mara Ostwald <mara@…>`. Read-only for now.
     pub from: String,
     /// `To`, as typed: `Ada Norwood <ada@example.com>, bo@example.com`.
     pub to: String,
-    /// `Cc`, as typed.
     pub cc: String,
-    /// `Bcc`, as typed.
     pub bcc: String,
-    /// The subject line.
     pub subject: String,
-    /// The body, as text.
-    ///
-    /// For a rich draft this is the `text/plain` alternative, derived from
-    /// the document rather than typed: **rich mail sends `text/html` and a
-    /// `text/plain` part always**, and a frontend that had to remember to
-    /// build the second one would eventually send only the first. That is
-    /// invisible to the sender and it is the whole message to a recipient
-    /// reading in a terminal or with a screen reader.
+    /// For a rich draft, the `text/plain` alternative derived from the document: rich mail always
+    /// sends both parts.
     pub body: String,
-    /// The body as marked-up text, when this draft is rich.
-    ///
-    /// Canonical, not "whatever the editing surface last had in its DOM":
-    /// what crosses inbound is a working copy, and what is kept is what
-    /// `postio_body::parse` makes of it (ADR 0004 Q3). So a `<div>` from a
-    /// browser paste comes back as a paragraph and a `<script>` cannot be
-    /// stored at all -- the type has no variant that could hold one.
-    ///
-    /// `None` for a plain draft. Not thrown away when the switch is turned
-    /// off, though: the switch is on the document, and turning it back on
-    /// should not have cost the marks.
+    /// Canonical, not the editor's DOM: what `postio_body::parse` makes of the working copy (ADR
+    /// 0004 Q3).
+    /// `None` for a plain draft; kept when the switch goes off.
     pub body_html: Option<String>,
-    /// Whether this is being written as rich text.
-    ///
-    /// It decides what leaves: `text/html` plus a `text/plain` fallback
-    /// **always**, against `text/plain` alone, wrapped and flowed. The
-    /// composer says which in its footer, because what a mail client puts on
-    /// the wire is not something a person should have to guess at.
+    /// Decides what leaves: `text/html` plus a `text/plain` fallback, or `text/plain` alone.
     pub rich: bool,
-    /// The message this answers, when it answers one.
     pub in_reply_to: Option<i64>,
-    /// The message a forward was made from (spec 013): what the forward
-    /// chooser rebuilds the draft from, so it must come back with it.
+    /// The message a forward was made from; the forward chooser rebuilds the draft from it.
     #[uniffi(default = None)]
     pub forwarded_from: Option<i64>,
-    /// Where the draft lives on this disk, for the footer.
     pub path: String,
-    /// What is attached to it.
     pub attachments: Vec<AttachmentFfi>,
-    /// "Remind if no reply": when, in epoch milliseconds, sending it
-    /// sets a reminder on its conversation; `None` for none (spec 007 US3
-    /// scenario 5).
+    /// "Remind if no reply": epoch milliseconds, `None` for none.
     #[uniffi(default = None)]
     pub remind_at: Option<i64>,
-    /// The labels sending it applies to its conversation (spec 007 US3):
-    /// a reply starts with its thread's (screen 06), and one taken off
-    /// here stays off.
+    /// The labels sending applies to its conversation; a reply starts with its thread's.
     #[uniffi(default = [])]
     pub labels: Vec<DraftLabelFfi>,
 }
 
-/// A label on a draft: its row, and its name to draw.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DraftLabelFfi {
-    /// The label's row.
     pub id: i64,
-    /// What the chip says.
     pub name: String,
 }
 
-/// One file attached to a draft.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AttachmentFfi {
-    /// Its row, so one can be taken off again.
     pub id: i64,
-    /// The name as it will arrive.
     pub filename: String,
-    /// What it says it is.
     pub mime_type: String,
     /// How big, said the way a person thinks about it — `1.8 MB`.
     pub size: String,
 }
 
-/// A picture put into a draft's body (#1571): the draft with the part on it,
-/// and the script that draws the picture at the caret.
-///
-/// Both at once because they are one edit. The part is already in the store
-/// and on the draft; the script is `postio_ui::compose::image_script` over the
-/// `Content-ID` just minted, so the frontend never sees or spells an id and
-/// the `<img>` it inserts cannot name anything but that part.
+/// A picture put into a draft's body (#1571): the draft with the part on it, and the script that
+/// draws the picture at the caret.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct InlineImageFfi {
-    /// The draft, saved, with the picture's part among its attachments.
     pub draft: DraftFfi,
-    /// What the editing surface runs to put the picture at the caret.
     pub script: String,
 }
 
-/// What will be sent, in the composer footer's words: `html + text/plain`,
-/// or `text/plain, format=flowed`.
-///
-/// A free function, not a method on the record. `#[uniffi::method]` inside a
-/// `Record`'s `impl` compiles, generates nothing, and leaves a method that
-/// works in Rust and does not exist in Swift — which is this repository's
-/// characteristic bug wearing a boundary as a disguise.
+/// What will be sent, in the composer footer's words: `html + text/plain`, or `text/plain,
+/// format=flowed`.
+/// A free function: `#[uniffi::method]` in a `Record` impl compiles but generates nothing in Swift.
 #[uniffi::export]
 pub fn outgoing_shape(rich: bool) -> String {
     postio_ui::compose::outgoing_shape(rich)
 }
 
-/// The draft as the boundary hands it over.
 pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
     DraftFfi {
         id: draft.id.get(),
@@ -187,21 +114,15 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
         bcc: render(&draft.bcc),
         subject: draft.subject.clone(),
         body: draft.body.text.clone().unwrap_or_default(),
-        // In the editing shell's form, not the wire's (#1571): a picture the
-        // store keeps as `cid:` is `postio-cid:` to the surface that edits
-        // it, because that is the scheme its handler answers. Handed over as
-        // stored, a draft reopened with a picture in it drew a broken image,
-        // and so did a reply quoting one. GTK's editor seeds from
-        // `editor_html` for the same reason; `body_of` parses either form on
-        // the way back.
+        // The editing shell's form: stored `cid:` is `postio-cid:` to the surface, whose handler
+        // answers
+        // that scheme (#1571).
         body_html: draft
             .body
             .html
             .as_deref()
             .map(|html| postio_body::parse(html).editor_html()),
-        // The stored flag, not `html.is_some()` (#1271): a plain draft that
-        // is keeping its marks in case the switch goes back on has an HTML
-        // part and is not rich.
+        // The stored flag, not `html.is_some()`: a plain draft may keep its marks (#1271).
         rich: draft.rich,
         in_reply_to: draft.in_reply_to.map(|id| id.get()),
         forwarded_from: draft.forwarded_from.map(|id| id.get()),
@@ -211,8 +132,6 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
             .iter()
             .map(|attachment| AttachmentFfi {
                 id: attachment.id.get(),
-                // A file with no name is not nothing: it still arrives, and
-                // saying so beats a blank row.
                 filename: attachment
                     .filename
                     .clone()
@@ -222,8 +141,6 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
             })
             .collect(),
         remind_at: draft.remind_at.map(|at| at.timestamp_millis()),
-        // Named by the session, which can read the store
-        // (`Session::named_labels`).
         labels: draft
             .labels
             .iter()
@@ -235,20 +152,8 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
     }
 }
 
-/// How many recipients this draft has, and on which field.
-///
-/// `None` until there is more than one person on the message: a banner that
-/// is always there is a banner nobody reads.
-///
-/// The counting is [`postio_ui::compose::recipient_summary`]'s, so both
-/// composers say the same thing — FR-023 exists because *a reply-to-all to a
-/// large list looks exactly like a reply until it is sent*, and a frontend
-/// that phrased its own reassurance would be reassuring about a different
-/// thing.
-///
-/// A free function rather than a session method: it is arithmetic over what
-/// the composer already holds, and asking a session about the window's own
-/// unsaved fields would be asking the wrong thing.
+/// `None` until more than one person is on the message.
+/// A free function: arithmetic over the composer's unsaved fields.
 #[uniffi::export]
 pub fn recipient_summary(draft: DraftFfi) -> Option<String> {
     postio_ui::compose::recipient_summary(
@@ -258,17 +163,11 @@ pub fn recipient_summary(draft: DraftFfi) -> Option<String> {
     )
 }
 
-/// The draft as the store takes it.
-///
-/// `base` is what the boundary last knew about this draft — its kind, its
-/// ancestor, the `Message-ID` reserved for it — none of which the frontend
-/// edits and all of which would be lost by rebuilding from the fields alone.
-/// The account is the one field of those the frontend may change: the From
-/// picker (specs/009-focus-macos T079).
+/// `base` carries what the frontend does not edit (kind, ancestor, reserved `Message-ID`); the
+/// account is the one field it may change.
 pub(crate) fn from_ffi(base: Draft, edited: &DraftFfi) -> Draft {
     let mut draft = base;
-    // The From picker: another account chosen moves the draft to it, and
-    // the identity it signed as goes with the account it belonged to.
+    // Another account moves the draft to it, and its identity goes with the account.
     let account = postio_model::AccountId::new(edited.account);
     if edited.account > 0 && draft.account_id != account {
         draft.account_id = account;
@@ -291,41 +190,15 @@ pub(crate) fn from_ffi(base: Draft, edited: &DraftFfi) -> Draft {
     draft
 }
 
-/// The body a draft is stored with, from what the composer sent over.
-///
-/// # Rich is not "keep the HTML the editor had"
-///
-/// The surface hands over its DOM's `innerHTML`, which is a working copy and
-/// never the record. It is narrowed to the [`Document`] dialect here, and the
-/// document is what is rendered back out -- so the stored HTML is always
-/// something `postio_body` can hold, whatever the editor or the paste
-/// produced, and the round trip is idempotent rather than accumulating
-/// whatever a web view felt like emitting.
-///
-/// # The plain alternative is derived, never trusted
-///
-/// `text` for a rich draft comes from the same document, flowed. It is not
-/// taken from `edited.body`, because that field is what a *plain* composer
-/// types into and a rich one has no reason to keep current -- and a frontend
-/// that forgot would send an empty `text/plain` to everyone reading without
-/// HTML. Deriving it means the two alternatives cannot disagree.
-///
-/// [`Document`]: postio_body::Document
+/// The body a draft is stored with. A rich body is narrowed to the `Document` dialect and rendered
+/// back out, never kept as the editor's DOM (ADR 0004 Q3); its `text/plain` is derived from the
+/// same document, never taken from `edited.body`.
 fn body_of(edited: &DraftFfi) -> MessageBody {
     let marks = edited.body_html.as_deref().unwrap_or_default();
 
     if !edited.rich {
-        // The plain field is authoritative here -- *unless* it is empty and
-        // there are marks, which is the shape the Rich/Plain switch leaves
-        // behind (#1293). Everything was typed into the rich surface, so the
-        // plain field was never touched; `send_draft` then drops the HTML
-        // part, correctly, and an empty message goes out.
-        //
-        // The frontend derives the text at the switch, which is where this
-        // belongs and where the person can see the result. This is the net
-        // under that, because the alternative to resurrecting words somebody
-        // may have cleared on purpose is sending nothing at all -- and only
-        // one of those is silent.
+        // The plain field wins unless it is empty and there are marks, which the Rich/Plain switch
+        // leaves behind (#1293); otherwise an empty message goes out.
         let text = if edited.body.is_empty() && !marks.is_empty() {
             postio_body::render(&postio_body::parse(marks)).0
         } else {
@@ -333,19 +206,14 @@ fn body_of(edited: &DraftFfi) -> MessageBody {
         };
         return MessageBody {
             text: Some(text),
-            // Kept, not cleared. The switch is on the document (#1271):
-            // turning it off changes what will be *built*, and throwing the
-            // marks away would make turning it back on a loss nobody warned
-            // about. `send_draft` is what stops them reaching the wire.
+            // Kept: the switch is on the document, and `send_draft` stops the marks reaching the
+            // wire (#1271).
             html: edited.body_html.clone(),
         };
     }
 
-    // Rich with no document yet is the other direction of the same switch:
-    // written plain, then turned Rich. The words are in the plain field, and
-    // building the document from nothing would discard them. The same
-    // document the switch shows (`Session::rich_html_of`): the field is what
-    // was typed, not flowed text, and a reply's `>` lines are its quote.
+    // Rich with no document yet: built from the plain field (`Session::rich_html_of`), or its words
+    // are lost.
     let document = if marks.is_empty() {
         postio_body::Document::from_text_quoting(&edited.body)
     } else {
@@ -367,70 +235,37 @@ fn render(addresses: &[postio_model::EmailAddress]) -> String {
         .join(", ")
 }
 
-/// What a person typed into a recipient field.
 fn parse(text: &str) -> Vec<postio_model::EmailAddress> {
     address::parse_list(text)
 }
 
-/// Why a change to a draft was refused.
-///
-/// An error rather than an `Option<String>` because these have a *result* to
-/// carry when they work — the draft as it now stands — and a frontend that
-/// got back `None` and had to re-read the draft itself would be a frontend
-/// that could disagree with the store about what is attached.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ComposeError {
-    /// It could not be done, and this is why in words for the person who
-    /// asked.
     #[error("{message}")]
-    Refused {
-        /// What went wrong.
-        message: String,
-    },
+    Refused { message: String },
 }
 
-/// What a paste became, and what it cost.
-///
-/// Both halves of the acceptance line in one answer: the markup narrowed to
-/// the dialect, and the sentence saying what the dialect could not hold. The
-/// sentence is `postio_body::Lost::summary`'s, so the two composers say the
-/// same thing about the same paste.
+/// The markup narrowed to the dialect, and the sentence (`postio_body::Lost::summary`) saying what
+/// it could not hold.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PastedFfi {
-    /// The paste as the dialect holds it, ready to put in the document.
     pub html: String,
-    /// The same content as plain text, for the `text/plain` alternative and
-    /// for a composer that is not in rich mode.
     pub text: String,
-    /// What was lost, as one sentence, or `None` when nothing was.
-    ///
-    /// `None` rather than an empty string, and silence is the right answer:
-    /// a composer that announced every paste would train people to ignore
-    /// the one that mattered.
+    /// What was lost, as one sentence; `None` when nothing was, so a paste is silent unless it cost
+    /// something.
     pub dropped: Option<String>,
 }
 
-/// One thing *Schedule send…* offers: what the row says, and when it is.
-///
-/// `when` is milliseconds since the epoch, which is what goes back into
-/// `Session::sendDraftLater`. A date type on the boundary would be a second
-/// calendar for the frontend to agree with.
+/// `when` is epoch milliseconds, which goes back into `Session::sendDraftLater`.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SchedulePresetFfi {
-    /// What the row says — "Tomorrow morning".
     pub label: String,
     /// When that is, as epoch milliseconds.
     pub when: i64,
 }
 
-/// The four times *Schedule send…* offers, computed now.
-///
-/// Recomputed every time the picker opens rather than once: "in 1 hour" on a
-/// picker opened yesterday is not "in 1 hour" today. The rule is
-/// [`postio_ui::compose::schedule_presets`]'s, because the four times *are*
-/// the feature — two frontends each deciding what "tomorrow morning" means is
-/// two products, and the one that is wrong sends somebody's mail at the wrong
-/// hour without ever saying so.
+/// Recomputed on each open so the times are never stale; the rule is
+/// `postio_ui::compose::schedule_presets`'s.
 #[uniffi::export]
 pub fn schedule_presets() -> Vec<SchedulePresetFfi> {
     postio_ui::compose::schedule_presets(chrono::Local::now())
@@ -442,21 +277,16 @@ pub fn schedule_presets() -> Vec<SchedulePresetFfi> {
         .collect()
 }
 
-/// A reply's quote, folded under what is being written (screen 06).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct QuoteFoldFfi {
-    /// Everything before the quote: what the person writes in.
     pub written: String,
-    /// The attribution and the quoted lines; `written` then this is the
-    /// body as it was.
     pub quote: String,
     /// What the fold says: "On 2026-09-26, Lena Park wrote · 18 quoted
     /// lines".
     pub summary: String,
 }
 
-/// `body` with the quote it ends in folded away, or `None` when it ends in
-/// none. See [`postio_ui::compose::fold_quote`].
+/// `None` when `body` ends in no quote.
 #[uniffi::export]
 pub fn fold_quote(body: String) -> Option<QuoteFoldFfi> {
     postio_ui::compose::fold_quote(&body).map(|fold| QuoteFoldFfi {
@@ -503,7 +333,6 @@ pub fn remind_meaning(at: Option<i64>) -> String {
     )
 }
 
-/// The remind-if-no-reply picker's four times, worked out now.
 #[uniffi::export]
 pub fn remind_presets() -> Vec<SchedulePresetFfi> {
     postio_ui::schedule::remind_presets(postio_ui::clock::now())

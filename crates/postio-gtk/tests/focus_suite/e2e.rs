@@ -1,23 +1,7 @@
-//! End to end: Focus's window, the engine, and a real IMAP server in one
-//! process.
-//!
-//! Every other case stops at one side of the network joint -- deliberately.
-//! This one is that joint, the way Focus starts: an account row whose server
-//! settings point at [`TestServer`] on an ephemeral loopback port, its
-//! password in a `MemorySecretStore`, a real `FocusWindow` adopted over a
-//! host, and then `Session::start_syncing`, which builds the real connector,
-//! the real `io-imap` pool and the real engine from that account row. Three
-//! assertions, one per direction:
-//!
-//!   1. **wire -> window**: the first sync's rows appear in the list.
-//!   2. **key -> wire**: `e` on a row ends with the message in the
-//!      *server's* Archive and out of its INBOX.
-//!   3. **server -> window**: a message delivered mid-watch is listed.
-//!
-//! Loopback only: `TransportSecurity::None` is refused for any non-loopback
-//! host by `ConnectionSettings::validate`, so this cannot be bent into
-//! talking to a real network. Waits are event-polled with liveness-only
-//! deadlines.
+//! End to end: Focus's window, the engine and a real IMAP server in one process, over loopback only
+//! (`TransportSecurity::None` is refused for any non-loopback host).
+//! Three directions: wire to window, key to wire, server to window. Waits are event-polled with
+//! liveness-only deadlines.
 
 use std::sync::Arc;
 
@@ -30,17 +14,13 @@ use postio_storage::{BlobStore, test_support};
 
 use crate::support;
 
-/// The corpus messages the server starts with.
 const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
 
-/// The `Message-ID` of the fixture phase 3 delivers, so the row it produces
-/// can be named rather than counted.
 const DELIVERED_MESSAGE_ID: &str = "<harbour-dev.20260302T081200.a1@lists.example.org>";
 
 const INBOX_PATH: &str = "INBOX";
 const ARCHIVE_PATH: &str = "Archive";
 
-/// The local row for `rfc_message_id`, if the store has one, and its subject.
 async fn local(
     database: &postio_storage::Store,
     rfc_message_id: &str,
@@ -67,7 +47,6 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         if !support::display() {
             return;
         }
-        // The server: real wire bytes on an ephemeral loopback port.
         let server = TestServer::builder()
             .account("test@example.com")
             .password("hunter2")
@@ -76,8 +55,6 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             .start()
             .await;
 
-        // The store: empty except the account row pointing at that server.
-        // Everything the window shows has to arrive over the wire.
         let database = test_support::memory().await;
         {
             let connection = database.connect().await.expect("a connection");
@@ -102,7 +79,6 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(directory.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store");
-        // The one substitution: this process has no Secret Service session.
         let host = postio_host::Host::start(database.clone(), blobs, {
             let secrets = Arc::clone(&secrets);
             move |wiring| wiring.with_secrets(secrets)
@@ -112,11 +88,8 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         let window = postio_gtk::window::FocusWindow::new(None);
         gtk::prelude::GtkWindowExt::present(&window);
         let session = postio_gtk::startup::adopt(&window, host, &postio_config::Config::default());
-        // What `app.rs` does once the stored mail is drawn: the production
-        // entry, which reads the account row and starts the engine.
         session.start_syncing();
 
-        // 1. wire -> window: the first sync fills the list.
         let listed =
             crate::settle_until(async || support::subjects(&window).iter().any(|s| !s.is_empty()))
                 .await;
@@ -128,8 +101,6 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             server.commands().first(),
             support::subjects(&window)
         );
-        // The store has all three; the list shows what Focus keeps in its
-        // inbox of them.
         assert!(
             crate::settle_until(async || {
                 let connection = database.connect().await.expect("a connection");
@@ -145,7 +116,6 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             SEEDED.len()
         );
 
-        // 2. key -> wire: `e` ends with the message in the server's Archive.
         support::keys(&window, &["j"]);
         let focused = window
             .cursor_row()
@@ -167,8 +137,8 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             "the fixture's Archive starts empty, or archiving proves nothing"
         );
         support::keys(&window, &["e"]);
-        // Local-first means the row leaves the list at once; the server's
-        // copy moving is the queue draining over the wire.
+        // Local-first: the row leaves the list at once; the server's copy moving is the queue
+        // draining.
         assert!(
             crate::settle_until(async || !server.uids(ARCHIVE_PATH).is_empty()).await,
             "the archive never landed on the server: INBOX={:?} Archive={:?}, last commands={:?}",
@@ -187,10 +157,8 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             server.uids(INBOX_PATH)
         );
 
-        // 3. server -> window: a delivery mid-watch reaches the list. It
-        // names the message rather than counting rows: the archived row's
-        // departure arrives separately, so a total moves for reasons that
-        // are not this one's.
+        // It names the message rather than counting rows: the archived row's departure arrives
+        // separately, so a total moves for reasons that are not this one's.
         assert!(
             local(&database, DELIVERED_MESSAGE_ID).await.is_none(),
             "the fixture phase 3 delivers is already in the store, so its \

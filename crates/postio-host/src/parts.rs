@@ -1,9 +1,4 @@
 //! One part of a message, fetched if it has to be, for a person who asked.
-//!
-//! Moved from the classic app (`docs/archive/specs/005-tui-frontend` T046): what a part's bytes
-//! are, and how they are waited for, is the store's owner's business, and
-//! every frontend saves and opens parts through it. The prose below is the
-//! desktop app's, and still true.
 
 use postio_core::bridge::EventSink;
 use postio_model::ids::{AttachmentId, BlobId, MessageId};
@@ -11,13 +6,9 @@ use postio_runtime::Engine;
 use postio_storage::repository::MessageRepository;
 use postio_storage::{BlobStore, Store};
 
-// The one wait for a part, and the shape its bytes arrive in, live in the
-// session reader; the host's saves and the FFI's share them.
 pub use postio_session::reading::{BODY_WAIT, PartSource, locate_part, part_bytes, wait_for_part};
 
-/// Write one part's bytes to `to`, fetching them first if they were never
-/// downloaded -- see [`part_bytes`]. Replaces rather than appends: an
-/// appended save would corrupt whatever was there.
+/// Replaces rather than appends: an appended save would corrupt whatever was there.
 pub async fn save_part(
     database: &Store,
     blobs: &BlobStore,
@@ -31,11 +22,8 @@ pub async fn save_part(
     std::fs::write(to, bytes).map_err(|error| error.to_string())
 }
 
-/// [`save_part`] for each of `parts`, and how many could not be saved.
-///
-/// A count rather than which ones: `S` can easily name a dozen parts, and one
-/// complaint per failure would be worse than the save. A failure does not
-/// abandon the batch -- the parts after it are still saved.
+/// A count rather than which ones: one complaint per failure would be worse than the save. A
+/// failure does not abandon the batch.
 pub async fn save_parts(
     database: &Store,
     blobs: &BlobStore,
@@ -64,21 +52,14 @@ pub async fn save_parts(
     failed
 }
 
-/// Wait for a queued body to land, or give up saying so.
-///
-/// Polling rather than listening: the engine announces arrivals on the event
-/// stream, but that stream has exactly one reader — the window — and a second
-/// consumer here would be a second place deciding what an event means. A save
-/// the user is waiting on can afford to look.
-///
-/// The deadline is what turns a server that never answers into a sentence
-/// rather than a spinner that never stops.
+/// Polls rather than listens: the event stream has exactly one reader, the window, and a second
+/// consumer would be a second place deciding what an event means.
+/// The deadline turns a server that never answers into a sentence.
 pub async fn wait_for_body(database: &Store, message: MessageId) -> Result<BlobId, String> {
     let deadline = std::time::Instant::now() + BODY_WAIT;
     loop {
-        // A read that fails here is usually the writer we are waiting for
-        // holding the table, so contention is a reason to look again rather
-        // than to give up. Only the deadline ends this.
+        // A failed read is usually the writer we are waiting for holding the table: look again;
+        // only the deadline ends this.
         match raw_blob(database, message).await {
             Ok(Some(raw)) => return Ok(raw),
             Ok(None) => {}
@@ -94,8 +75,6 @@ pub async fn wait_for_body(database: &Store, message: MessageId) -> Result<BlobI
     }
 }
 
-/// The MIME path of one attachment row, while the row id still means
-/// something.
 pub async fn part_path(
     database: &Store,
     message: MessageId,
@@ -109,15 +88,10 @@ pub async fn part_path(
         .and_then(|part| part.part_id.clone()))
 }
 
-/// `message`'s raw RFC 822 source, every byte as the server sent it: from the
-/// blob store when it is here, or fetched now when it is not.
-///
-/// Fetching is justified the way saving a never-downloaded part is: the
-/// person asked for these bytes by name (`view_source`, an export). Every
-/// byte, not the text axis: under ADR 0017 the background lane stores no raw
-/// source, so `request_body` would fetch the words, leave `raw_blob_id`
-/// empty, and the wait would run out its deadline for bytes nothing was
-/// fetching.
+/// The person asked for these bytes by name, which justifies fetching. Every byte, not the text
+/// axis: under ADR 0017
+/// the background lane stores no raw source, so `request_body` would leave `raw_blob_id` empty and
+/// the wait would run out its deadline.
 pub async fn raw_source(
     database: &Store,
     blobs: &BlobStore,
@@ -136,9 +110,8 @@ pub async fn raw_source(
             {
                 wait_for_body(database, message).await?
             } else {
-                // "Nothing to fetch" may be a fetch that landed between the
-                // look above and the queue's answer (#109's race, as in
-                // `part_bytes`): one re-read settles it.
+                // "Nothing to fetch" may be a fetch that landed between the look above and the
+                // queue's answer (#109): one re-read settles it.
                 raw_blob(database, message)
                     .await?
                     .ok_or("There is nothing to fetch for that message")?
@@ -148,18 +121,13 @@ pub async fn raw_source(
     blobs.get(&raw).map_err(|error| error.to_string())
 }
 
-/// Just the raw-message blob key. What the wait watches for.
 pub async fn raw_blob(database: &Store, message: MessageId) -> Result<Option<BlobId>, String> {
     Ok(read_message(database, message).await?.raw_blob_id)
 }
 
-/// A copy of `attachment`'s bytes in `dir`, when they are on this machine
-/// (spec 010 FR-050, FR-053): for the system's Quick Look, or a save from
-/// the Files tab. Never fetched -- a part whose bytes are not here is
-/// `None` -- and written only under `dir`, in a folder of the
-/// attachment's own (readable by this user alone), named as the sender
-/// named it but only by the name's last component, so a hostile name
-/// cannot climb out.
+/// Never fetched: `None` when the bytes are not here. Written only under `dir`, in a folder
+/// readable by this user alone,
+/// using only the name's last component so a hostile name cannot climb out.
 pub async fn local_copy(
     database: &Store,
     blobs: &BlobStore,
@@ -197,8 +165,7 @@ pub async fn local_copy(
     };
     let bytes = match blob {
         Some(blob) => blobs.get(&BlobId::new(blob)).ok(),
-        // Cut from a raw message on this machine, never fetched: no engine
-        // is handed over, so a part not here stays not here.
+        // No engine is handed over, so a part not here stays not here.
         None => part_bytes(database, blobs, None, None, message, attachment)
             .await
             .ok(),
@@ -231,11 +198,9 @@ pub async fn local_copy(
     }
 }
 
-/// The account a message belongs to: the one engine that can fetch its
-/// bytes. UIDs and mailbox paths are scoped to an account, so another
-/// account's engine would fetch unrelated bytes under the same identity, or
-/// leave the request waiting forever. One indexed read of the account key,
-/// never the message or its parts.
+/// UIDs and mailbox paths are scoped to an account, so another account's engine would fetch
+/// unrelated bytes under the
+/// same identity or leave the request waiting forever. One indexed read of the account key.
 pub async fn account_of(database: &Store, message: MessageId) -> Option<postio_model::AccountId> {
     let connection = database.read().await.ok()?;
     postio_storage::sql::first(
@@ -248,7 +213,6 @@ pub async fn account_of(database: &Store, message: MessageId) -> Option<postio_m
     .ok()?
 }
 
-/// A message's row, or a sentence saying it is gone.
 pub async fn read_message(
     database: &Store,
     message: MessageId,
@@ -261,10 +225,7 @@ pub async fn read_message(
         .ok_or_else(|| "That message is no longer here".into())
 }
 
-/// Where a part opened by the system is written: a directory of its own under
-/// `base`, readable by this user alone, and the file named as the sender
-/// named it -- but only the file name, so a hostile name cannot write
-/// anywhere else. Creates the directory.
+/// Only the file name is used, so a hostile name cannot write anywhere else. Creates the directory.
 pub fn private_copy_path(
     base: &std::path::Path,
     message: MessageId,

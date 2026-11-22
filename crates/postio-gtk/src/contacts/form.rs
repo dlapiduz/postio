@@ -1,13 +1,6 @@
-//! The Edit and New contact form (handoff screen 06), in the card's place:
-//! an accent-tinted bar with Cancel and Save, then the form, its labels
-//! right-aligned over fields. What it says, what may be saved and the Esc
-//! ladder are the controller's (`postio_ui::contact_edit::EditView`); this
-//! draws them and reports each change as the `EditChange` it is.
-//!
-//! The form is drawn whole on every change and the keyboard put back where it
-//! was, with its caret: the controller owns the text, so a letter typed is a
-//! change to it and the field is drawn from what it answers. Nothing here
-//! keeps a copy that could differ.
+//! The Edit and New contact form, in the card's place. The controller owns the text: the form is
+//! drawn whole on every change
+//! with the keyboard and caret put back, and nothing here keeps a copy that could differ.
 
 use std::rc::Rc;
 
@@ -21,29 +14,19 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::segmented::SegmentedControl;
 use postio_widgets::widgets::space::{S2, S3, S4};
 
-/// What a change in the form does.
 #[derive(Clone)]
 pub struct FormHooks {
-    /// A change to the form.
     pub change: Rc<dyn Fn(EditChange)>,
-    /// Save and Cancel: the commands their keys send.
     pub command: Rc<dyn Fn(CommandId)>,
 }
 
-/// One field a person can be typing in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
-    /// First name.
     Given,
-    /// Last name.
     Family,
-    /// Job title.
     Title,
-    /// Company.
     Company,
-    /// An address row.
     Address(usize),
-    /// The group name being typed.
     Group,
 }
 
@@ -57,19 +40,16 @@ impl From<FormField> for Slot {
     }
 }
 
-/// The form, built, with the fields it holds.
 pub struct Form {
     root: gtk::Box,
     fields: Vec<(Slot, gtk::Entry)>,
 }
 
 impl Form {
-    /// The form's widget.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Where the keyboard is in the form, and the caret in it.
     pub fn focus(&self) -> Option<(Slot, i32)> {
         self.fields
             .iter()
@@ -77,8 +57,6 @@ impl Form {
             .map(|(slot, entry)| (*slot, entry.position()))
     }
 
-    /// Put the keyboard in `slot`, the caret at `position` (the end when
-    /// `None`).
     pub fn put_focus(&self, slot: Slot, position: Option<i32>) {
         if let Some((_, entry)) = self.fields.iter().find(|(held, _)| *held == slot) {
             entry.grab_focus();
@@ -86,7 +64,6 @@ impl Form {
         }
     }
 
-    /// The text of the field in `slot`.
     pub fn text_of(&self, slot: Slot) -> Option<String> {
         self.fields
             .iter()
@@ -94,7 +71,6 @@ impl Form {
             .map(|(_, entry)| entry.text().to_string())
     }
 
-    /// The field in `slot`, to type into as a person would.
     pub fn entry_of(&self, slot: Slot) -> Option<gtk::Entry> {
         self.fields
             .iter()
@@ -103,7 +79,6 @@ impl Form {
     }
 }
 
-/// The form for `view`.
 pub fn build(view: &EditView, hooks: &FormHooks) -> Form {
     let mut fields = Vec::new();
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -301,7 +276,6 @@ fn segments(items: &[Segment], note: &str, pick: impl Fn(usize) + 'static) -> gt
     column
 }
 
-/// A text field whose every edit is reported.
 fn field(
     fields: &mut Vec<(Slot, gtk::Entry)>,
     slot: Slot,
@@ -325,10 +299,8 @@ fn field(
 
 fn addresses(fields: &mut Vec<(Slot, gtk::Entry)>, view: &EditView, hooks: &FormHooks) -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
-    // The primary address is one of a group, drawn as the filled circle the
-    // handoff names. GTK draws a check button as a radio only while it has a
-    // group, so even a lone address joins one, led by a button nobody sees
-    // that lives in the column as long as the form does.
+    // GTK draws a check button as a radio only while it has a group, so even a lone address joins
+    // one, led by an invisible button that lives as long as the form.
     let leader = gtk::CheckButton::new();
     leader.set_visible(false);
     leader.set_accessible_role(gtk::AccessibleRole::Presentation);
@@ -381,7 +353,6 @@ fn addresses(fields: &mut Vec<(Slot, gtk::Entry)>, view: &EditView, hooks: &Form
     column
 }
 
-/// The address's type: Work, Personal, Old or none.
 fn label_menu(index: usize, current: &str, hooks: &FormHooks) -> gtk::MenuButton {
     let menu = gtk::MenuButton::new();
     menu.add_css_class("focus-contact-type");
@@ -524,7 +495,6 @@ fn groups(fields: &mut Vec<(Slot, gtk::Entry)>, view: &EditView, hooks: &FormHoo
     column
 }
 
-/// Every text the form shows, in order: what a test reads.
 pub fn texts(form: &Form) -> Vec<String> {
     super::view::texts_of(form.widget())
 }

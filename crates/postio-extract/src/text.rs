@@ -6,7 +6,6 @@ use encoding_rs::Encoding;
 use crate::Location;
 use crate::limits::{Budget, Stop};
 
-/// How many lines pass between two looks at the clock.
 const CLOCK_EVERY: usize = 256;
 
 pub(crate) fn extract(

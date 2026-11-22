@@ -1,11 +1,3 @@
-//! The results' Files tab, Quick Look and Save file (spec 010 T173,
-//! screens 10 and 11): GTK draws the controller's cards and panel, and
-//! hands a file's copy to the desktop.
-//!
-//! What a file search finds and which card has the ring are the
-//! controller's, asserted in `postio-focus`. These cases drive the window
-//! as a person does, with spec 010's search staged on.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -13,8 +5,6 @@ use postio_core::CommandId;
 
 use crate::support::{self, Fixture};
 
-/// A window over a report with its PDF kept and one other message, and
-/// "report"'s results open.
 async fn report_results() -> (
     postio_gtk::window::FocusWindow,
     Fixture,
@@ -52,8 +42,6 @@ async fn report_results() -> (
     (window, fixture, results)
 }
 
-/// The Files tab draws the PDF's card; Save asks where, writes the file's
-/// own bytes there, and the copy made for it goes.
 pub fn the_files_tab_saves_a_file_where_the_person_says() {
     crate::gtk_case(async {
         if !support::display() {
@@ -113,8 +101,6 @@ pub fn the_files_tab_saves_a_file_where_the_person_says() {
     });
 }
 
-/// Space on a file opens it in the desktop's app for its type: a copy,
-/// handed over as a file URI.
 pub fn space_on_a_file_opens_it_in_the_desktop_app() {
     crate::gtk_case(async {
         if !support::display() {
@@ -141,8 +127,6 @@ pub fn space_on_a_file_opens_it_in_the_desktop_app() {
     });
 }
 
-/// Space on a conversation opens Quick Look over the results, its match
-/// cards with one ringed; Space again closes it.
 pub fn quick_look_shows_a_conversation_s_matches() {
     crate::gtk_case(async {
         if !support::display() {

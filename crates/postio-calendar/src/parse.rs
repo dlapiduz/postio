@@ -1,5 +1,3 @@
-//! From a `text/calendar` part to an [`Invitation`], through calcard.
-
 use std::borrow::Cow;
 
 use calcard::common::timezone::Tz;
@@ -15,43 +13,22 @@ use postio_model::EmailAddress;
 
 use crate::invitation::{Attendee, EventTime, Invitation, Method, PartStat, Zone, local_instant};
 
-/// Why a calendar part yielded no invitation.
-///
-/// Every variant names a structural absence. Nothing in the message's text
-/// is carried, so an error is safe to log (FR-151).
+/// Names a structural absence only, so an error is safe to log.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CalendarError {
-    /// The part is not an iCalendar object at all.
     #[error("the part is not an iCalendar object")]
     NotACalendar,
-    /// The calendar carries no `VEVENT`: a task, a free/busy reply, or only
-    /// time zones.
     #[error("the calendar carries no event")]
     NoEvent,
-    /// The event has no `UID`, so no update or cancellation could ever find
-    /// it again.
     #[error("the event has no UID")]
     NoUid,
-    /// The event has no usable `DTSTART`.
     #[error("the event has no start")]
     NoStart,
 }
 
-/// Parses a `text/calendar` part's decoded bytes into the invitation it
-/// carries.
-///
-/// The bytes are the part after its transfer encoding is undone, as the body
-/// backfill stores them. They are read as UTF-8, which RFC 5545 requires, and
-/// a stray invalid byte is replaced rather than costing the whole invitation.
-///
-/// When the calendar holds a series and overrides of it, the invitation is
-/// the series: the `VEVENT` without a `RECURRENCE-ID`. When it holds only
-/// overrides -- an update to one occurrence -- it is the first of them.
-///
-/// # Errors
-///
-/// [`CalendarError`] when there is no calendar, no event, or an event with
-/// no `UID` or no start.
+/// Read as UTF-8; a stray invalid byte is replaced rather than costing the invitation. A series
+/// with
+/// overrides gives the series; only overrides, the first of them.
 pub fn parse(ics: &[u8]) -> Result<Invitation, CalendarError> {
     let text = String::from_utf8_lossy(ics);
     let calendar = ICalendar::parse(text.as_ref()).map_err(|_| CalendarError::NotACalendar)?;
@@ -74,8 +51,6 @@ pub fn parse(ics: &[u8]) -> Result<Invitation, CalendarError> {
         .ok_or(CalendarError::NoUid)?
         .to_owned();
 
-    // Every VTIMEZONE the calendar carries, by TZID, falling back on the
-    // TZID as a name -- IANA, or Windows mapped to IANA -- when there is none.
     let zones = calendar.build_tz_resolver();
     let (starts_at, zone) = event
         .property(&ICalendarProperty::Dtstart)
@@ -121,14 +96,10 @@ pub fn parse(ics: &[u8]) -> Result<Invitation, CalendarError> {
     })
 }
 
-/// The most occurrences of a series the adapter walks to find its last. A
-/// weekly meeting for twenty years is under it; past it, a series is read
-/// as one with no end, whose invitation is never over.
+/// Past it a series is read as one with no end, whose invitation is never over.
 const OCCURRENCES_READ: usize = 1_024;
 
-/// When `event`'s last occurrence ends, for a recurring event whose rules
-/// all end: every `RRULE` with a `COUNT` or an `UNTIL`, and `RDATE`s, which
-/// are a list. Floating times stay floating, to be read on the user's clock.
+/// Floating times stay floating, to be read on the user's clock.
 fn series_end(calendar: &ICalendar, event: &ICalendarComponent) -> Option<EventTime> {
     if !event.is_recurrent() {
         return None;
@@ -146,9 +117,9 @@ fn series_end(calendar: &ICalendar, event: &ICalendarComponent) -> Option<EventT
         .components
         .iter()
         .position(|component| std::ptr::eq(component, event))?;
-    // calcard walks a series in its default zone unless the start names a
-    // TZID, so the default is the start's own: UTC for a `Z` time, its
-    // offset for one written with one, and floating otherwise.
+    // calcard walks a series in its default zone unless the start names a `TZID`, so the default is
+    // the
+    // start's own.
     let own_zone = event
         .property(&ICalendarProperty::Dtstart)
         .and_then(|entry| entry.values.first())
@@ -181,7 +152,6 @@ fn series_end(calendar: &ICalendar, event: &ICalendarComponent) -> Option<EventT
         })
 }
 
-/// The calendar's `METHOD`, which lives on the `VCALENDAR` itself.
 fn method(calendar: &ICalendar) -> Method {
     let method = calendar
         .components
@@ -196,8 +166,6 @@ fn method(calendar: &ICalendar) -> Method {
     }
 }
 
-/// A date or date-time property -- `DTSTART`, `DTEND`, `RECURRENCE-ID` --
-/// read with its own `TZID`, and the zone it turned out to be in.
 fn time(entry: &ICalendarEntry, zones: &TzResolver<&str>) -> Option<(EventTime, Zone)> {
     let value = entry.values.first()?.as_partial_date_time()?;
     let reading = value.to_date_time()?;
@@ -232,7 +200,6 @@ fn time(entry: &ICalendarEntry, zones: &TzResolver<&str>) -> Option<(EventTime, 
     }
 }
 
-/// A resolved zone as [`Zone`]: UTC, or its IANA name.
 fn named(zone: Tz, tzid: &str) -> Zone {
     if zone.is_utc() {
         return Zone::Utc;
@@ -240,7 +207,6 @@ fn named(zone: Tz, tzid: &str) -> Zone {
     Zone::Named(zone.name().map_or_else(|| tzid.to_owned(), Cow::into_owned))
 }
 
-/// The event's `DURATION`.
 fn duration(event: &ICalendarComponent) -> Option<Duration> {
     match event
         .property(&ICalendarProperty::Duration)?
@@ -252,7 +218,6 @@ fn duration(event: &ICalendarComponent) -> Option<Duration> {
     }
 }
 
-/// `time` moved on by `length`. A whole day moves by whole days.
 fn later(time: EventTime, length: Duration) -> EventTime {
     match time {
         EventTime::At(instant) => EventTime::At(instant + length),
@@ -261,8 +226,6 @@ fn later(time: EventTime, length: Duration) -> EventTime {
     }
 }
 
-/// RFC 5545 §3.6.1 with neither `DTEND` nor `DURATION`: a date-time event
-/// ends where it starts, and a whole-day event lasts the day.
 fn default_end(start: EventTime) -> EventTime {
     match start {
         EventTime::Day(day) => EventTime::Day(day + Duration::days(1)),
@@ -281,8 +244,7 @@ fn sequence(event: &ICalendarComponent) -> u32 {
         })
 }
 
-/// `DTSTAMP` as an instant. RFC 5545 requires it in UTC; one written without
-/// the `Z` is read as UTC anyway, since it could mean nothing else.
+/// RFC 5545 requires UTC; one written without the `Z` is read as UTC anyway.
 fn stamp(entry: &ICalendarEntry) -> Option<DateTime<Utc>> {
     let reading = entry
         .values
@@ -305,12 +267,9 @@ fn text_of(component: &ICalendarComponent, property: &ICalendarProperty) -> Opti
         .map(str::to_owned)
 }
 
-/// The person an `ORGANIZER` or `ATTENDEE` names.
-///
-/// Its value is usually a `mailto:` URI. When it is some other URI -- a
-/// `urn:uuid:`, a server's principal -- the `EMAIL` parameter (RFC 7986)
-/// gives the address. Without either there is nobody to write to, and the
-/// entry is left out. A `CN` that only repeats the address is no name.
+/// The value is a `mailto:` URI, else the `EMAIL` parameter (RFC 7986); with neither the entry is
+/// left
+/// out. A `CN` that only repeats the address is no name.
 fn address(entry: &ICalendarEntry) -> Option<EmailAddress> {
     let value = entry.values.first().and_then(ICalendarValue::as_text);
     let mailto = value.and_then(|value| {
@@ -335,7 +294,6 @@ fn address(entry: &ICalendarEntry) -> Option<EmailAddress> {
     Some(EmailAddress::new(name, address))
 }
 
-/// An attendee's `PARTSTAT`; absent means not answered (RFC 5545 §3.2.12).
 fn partstat(entry: &ICalendarEntry) -> PartStat {
     match entry.parameter(&ICalendarParameterName::Partstat) {
         None => PartStat::NeedsAction,
@@ -374,10 +332,6 @@ mod tests {
         }
     }
 
-    /// Spike S1's table, now through the adapter: every invitation in the
-    /// corpus, its start and end as instants, and the zone they were in.
-    /// The times are chosen so that a wrong zone, or the right one at the
-    /// wrong offset, gives a wrong instant.
     macro_rules! resolves {
         ($test:ident, $fixture:literal, $start:literal, $end:literal, $zone:expr) => {
             #[test]
@@ -457,8 +411,6 @@ mod tests {
         named("Europe/Stockholm")
     );
 
-    // --- Everything else an invitation says -----------------------------------
-
     #[test]
     fn a_request_carries_its_identity_people_and_place() {
         let invite = invitation("invite-windows-zone");
@@ -499,8 +451,6 @@ mod tests {
 
     #[test]
     fn an_alarm_s_attendee_is_not_a_guest_and_a_cn_that_is_the_address_is_no_name() {
-        // Google lists the organiser as an attendee, names Ada by her address,
-        // and puts a third ATTENDEE inside the VALARM.
         let invite = invitation("invite-iana-zone");
 
         assert_eq!(
@@ -596,8 +546,6 @@ mod tests {
         assert_eq!(cancel.sequence, 1);
     }
 
-    // --- Times the calendar does not anchor ------------------------------------
-
     fn event(lines: &[&str]) -> Vec<u8> {
         let mut all = vec![
             "BEGIN:VCALENDAR",
@@ -668,15 +616,12 @@ mod tests {
 
     #[test]
     fn a_time_written_with_a_numeric_offset_is_named_by_that_offset() {
-        // Not RFC 5545, but written by hand-rolled generators. The instant is
-        // exact; the zone is only the offset, half hour included.
+        // Not RFC 5545 but written by generators; the zone is only the offset.
         let invite = parse(&event(&["DTSTART:20261006T100000+0530"])).expect("parses");
 
         assert_eq!(invite.starts_at, at("2026-10-06T04:30:00Z"));
         assert_eq!(invite.zone, named("UTC+05:30"));
     }
-
-    // --- Method and status -----------------------------------------------------
 
     #[test]
     fn a_request_whose_event_says_cancelled_is_cancelled() {
@@ -717,8 +662,6 @@ mod tests {
         assert_eq!(parse(&bare).expect("parses").method, Method::Other);
     }
 
-    // --- Series and occurrences --------------------------------------------------
-
     #[test]
     fn a_series_with_an_override_is_the_series() {
         let invite = parse(&ics(&[
@@ -747,13 +690,8 @@ mod tests {
         assert_eq!(invite.recurrence_id, None);
     }
 
-    // --- When a series is over (T110) ---------------------------------------------
-
     #[test]
     fn a_series_with_an_end_is_over_when_its_last_occurrence_is() {
-        // The weekly fixture runs on Tuesdays until 22 December at 09:30 in
-        // Chicago, standard time by then, skipping two; each is a quarter of
-        // an hour. An invitation to it is past only once that last one ends.
         let weekly = invitation("invite-weekly-exdate");
 
         assert_eq!(weekly.series_ends_at, Some(at("2026-12-22T15:45:00Z")));
@@ -820,8 +758,6 @@ mod tests {
         assert_eq!(invite.starts_at, at("2026-10-13T16:00:00Z"));
     }
 
-    // --- Addresses -----------------------------------------------------------------
-
     #[test]
     fn an_attendee_named_by_a_uri_is_found_through_its_email_parameter() {
         let invite = parse(&event(&[
@@ -850,8 +786,6 @@ mod tests {
 
         assert!(invite.attendees.is_empty());
     }
-
-    // --- What yields no invitation ----------------------------------------------------
 
     #[test]
     fn text_that_is_not_a_calendar_is_refused() {

@@ -1,18 +1,8 @@
-//! Hostile mail opened the way a person opens it (spec 006 US3).
-//!
-//! `postio-render`'s hostile suite proves each fixture is contained and
-//! bounded against the renderer alone. This is the application half: each
-//! one stored, listed and opened from the message list, and after each the
-//! open message shows a drawn body or the plain-text fallback -- never a
-//! blank pane -- and the window still answers the next keystroke. The
-//! process being alive to assert anything is the third claim.
-
 use postio_model::test_corpus::{self, Category};
 use postio_storage::repository::{MessageRepository, StoredBody};
 
 use crate::support::{self, Fixture};
 
-/// The subject of the row the cursor is on.
 fn cursor_subject(window: &postio_gtk::window::FocusWindow) -> Option<String> {
     window
         .cursor_row()?
@@ -33,7 +23,6 @@ pub fn each_hostile_message_opens_and_the_app_keeps_answering() {
         assert!(fixtures.len() >= 5, "the corpus has its hostile fixtures");
         let connection = fixture.database.connect().await.expect("a connection");
         let repository = MessageRepository::new(&connection);
-        // Newest first in the list, in the corpus's order.
         for (index, hostile) in fixtures.iter().enumerate() {
             let (message, _) = fixture
                 .file(
@@ -61,9 +50,8 @@ pub fn each_hostile_message_opens_and_the_app_keeps_answering() {
         }
         drop(connection);
         let (window, _client) = fixture.open().await;
-        // The list is windowed: the rows on screen are the ones that fit the
-        // viewport, not every stored message, and the corpus outgrew one
-        // screen. Wait for a screenful; moving the cursor scrolls to the rest.
+        // The list is windowed: only a screenful of rows is on screen, and moving the cursor
+        // scrolls to the rest.
         let on_first_screen = fixtures.len().min(10);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() >= on_first_screen).await,
@@ -73,8 +61,6 @@ pub fn each_hostile_message_opens_and_the_app_keeps_answering() {
 
         for (at, hostile) in fixtures.iter().enumerate() {
             let name = hostile.name();
-            // The first row has the cursor already; the next keystroke moves
-            // it onto each of the others.
             if at > 0 {
                 let before = cursor_subject(&window);
                 support::keys(&window, &["j"]);

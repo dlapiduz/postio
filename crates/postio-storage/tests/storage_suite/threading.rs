@@ -1,9 +1,3 @@
-//! Threading against the database: broken chains, out-of-order arrival, merges,
-//! and the cost of adding one message to a large mailbox.
-//!
-//! The linkage *rule* is unit-tested in `postio-model`; what is tested here is
-//! that the index answering it is the one the schema can serve cheaply.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_storage::Connection;
 
@@ -21,7 +15,6 @@ fn id(raw: &str) -> RfcMessageId {
     RfcMessageId::new(raw)
 }
 
-/// Writes a message and files it, returning what threading decided.
 async fn file(
     connection: &Connection,
     account: AccountId,
@@ -56,10 +49,6 @@ async fn members(connection: &Connection, thread: ThreadId) -> Vec<MessageId> {
         .map(|row| row.id)
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// The ordinary cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_conversation_lands_in_one_thread() {
@@ -161,17 +150,12 @@ async fn a_new_thread_takes_the_normalized_subject() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Out of order, and merging
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_reply_that_arrives_before_its_parent_still_gathers_it() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // An initial sync walks newest first, so this is the ordinary case.
     let (reply, thread) = file(
         &connection,
         account.id,
@@ -225,7 +209,6 @@ async fn a_late_message_that_links_two_threads_merges_them() {
     .await;
     assert_ne!(first, second, "nothing links them yet");
 
-    // The message that references both turns up.
     let mut linker = Message::new(account.id, inbox, at(3).await);
     linker.rfc_message_id = Some(id("<a@example.com>"));
     linker.references = vec![id("<x@example.com>")];
@@ -316,7 +299,6 @@ async fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
         "every id both threads knew about now points at the survivor"
     );
 
-    // And a further reply to either half finds the merged thread.
     let (_, later) = file(
         &connection,
         account.id,
@@ -330,17 +312,12 @@ async fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
     assert_eq!(later, threaded.thread_id);
 }
 
-// ---------------------------------------------------------------------------
-// Broken chains
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_reply_with_no_references_falls_back_to_its_subject() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // What a list that rewrites headers leaves behind.
     let (_, first) = file(
         &connection,
         account.id,
@@ -516,12 +493,6 @@ async fn filing_the_same_message_twice_changes_nothing() {
     assert_eq!(members(&connection, first.thread_id).await.len(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// Cost — the acceptance criterion
-// ---------------------------------------------------------------------------
-
-/// Fills a mailbox with `threads` separate conversations of three messages each,
-/// then measures what it costs to file one more message into a new thread.
 async fn cost_of_one_more(threads: i64) -> usize {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -562,11 +533,6 @@ async fn cost_of_one_more(threads: i64) -> usize {
         .await
         .expect("create");
 
-    // Counted through `test_support::counting` rather than a trace hook of
-    // this file's own: there is no trace hook to install any more, and the
-    // shared instrument counts at the seam every read goes through. See its
-    // documentation for what that can and cannot see -- statements, which is
-    // exactly what this test is written in.
     postio_storage::test_support::counting::reset();
     ThreadingRepository::new(&connection, account.id)
         .thread(&message)
@@ -598,7 +564,6 @@ async fn a_long_reference_chain_costs_a_lookup_per_reference_and_no_more() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // A forty-deep conversation, which is a long one and still not a mailbox.
     let references: Vec<String> = (0..40).map(|n| format!("<r{n}@example.com>")).collect();
     let borrowed: Vec<&str> = references.iter().map(String::as_str).collect();
 
@@ -618,19 +583,12 @@ async fn a_long_reference_chain_costs_a_lookup_per_reference_and_no_more() {
         .expect("thread");
     let statements = postio_storage::test_support::counting::here().statements;
 
-    // One lookup and one claim per reference, plus the handful for the thread
-    // itself. Linear in the conversation, which is what O(thread) means.
     assert!(
         statements < 40 * 3,
         "a 40-reference message took {statements} statements"
     );
 }
 
-// ---------------------------------------------------------------------------
-// The corpus — the acceptance criterion
-// ---------------------------------------------------------------------------
-
-/// Parses a fixture and files it, returning the thread it landed in.
 async fn file_fixture(
     connection: &Connection,
     account: AccountId,
@@ -641,13 +599,9 @@ async fn file_fixture(
     file_fixture_as(connection, account, mailbox, minute, name, false).await
 }
 
-/// [`file_fixture`], optionally as if the message were not list mail.
-///
-/// Spec 013 keeps list and bulk mail out of the subject fallback (FR-002), so
-/// a list message whose references were stripped is its own thread. The
-/// rethreading cases below are about the fallback's *repair*, which needs an
-/// orphan the fallback may place: the same message, minus its `List-Id` and
-/// `Precedence`.
+/// `file_fixture`, optionally as if the message were not list mail: list mail stays out of the
+/// subject
+/// fallback, so the rethreading cases need the same message minus its `List-Id` and `Precedence`.
 async fn file_fixture_as(
     connection: &Connection,
     account: AccountId,
@@ -674,17 +628,13 @@ async fn file_fixture_as(
         .thread_id
 }
 
-/// The mailing-list thread in the corpus, in the order it was sent.
 const LIST_THREAD: &[&str] = &[
     "list-thread-01-root",
     "list-thread-02-reply",
     "list-thread-03-reply-sibling",
     "list-thread-04-reply-deep",
-    // Has `In-Reply-To` but no `References` — a client that half-remembers.
     "list-thread-05-reply-no-references",
-    // Has neither: only the subject says what it answers.
     "list-thread-06-reply-subject-only",
-    // A `(was: …)` subject change, with the chain intact.
     "list-thread-07-subject-change",
 ];
 
@@ -694,16 +644,11 @@ async fn the_corpus_mailing_list_threads_as_one_conversation() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // A loop rather than `map().collect()`: the write awaits, and a closure
-    // cannot.
     let mut threads: Vec<ThreadId> = Vec::new();
     for (index, name) in LIST_THREAD.iter().enumerate() {
         threads.push(file_fixture(&connection, account.id, inbox, index as i64, name).await);
     }
 
-    // Everything with a reference is one conversation. The one with none is
-    // list mail, which spec 013 never groups by subject (FR-002), so it is its
-    // own thread however well its subject matches.
     let first = threads[0];
     for (name, thread) in LIST_THREAD.iter().zip(&threads) {
         if *name == "list-thread-06-reply-subject-only" {
@@ -723,9 +668,6 @@ async fn the_corpus_mailing_list_threads_as_one_conversation() {
 
 #[tokio::test]
 async fn arriving_newest_first_still_gathers_everything_the_chain_names() {
-    // An initial sync walks newest-first, so this order is not the exotic one.
-    // Each message keeps its true delivery time; only the order we *file* them
-    // in is reversed, which is what a real backwards fetch looks like.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -738,8 +680,6 @@ async fn arriving_newest_first_still_gathers_everything_the_chain_names() {
         ));
     }
 
-    // Everything that carries a usable reference converges on one thread,
-    // whichever end the sync starts from.
     let by_chain: Vec<&(&str, ThreadId)> = placed
         .iter()
         .filter(|(name, _)| *name != "list-thread-06-reply-subject-only")
@@ -756,18 +696,10 @@ async fn arriving_newest_first_still_gathers_everything_the_chain_names() {
         LIST_THREAD.len() - 1
     );
 
-    // The seventh is the honest limitation of threading incrementally, and it
-    // is worth stating rather than hiding.
-    //
-    // `list-thread-06-reply-subject-only` carries no `In-Reply-To` and no
-    // `References`: its subject is the only thing that could place it. Arriving
-    // newest-first it is filed *before* the messages that share that subject,
-    // and the only thread that exists at that moment is the one started by
-    // `list-thread-07-subject-change`, whose subject is deliberately different
-    // — `Manual override wiring (was: …)`. There is nothing available to place
-    // it correctly at the moment it arrives, and re-deriving the answer later
-    // would mean rethreading the mailbox, which is the cost this design exists
-    // to avoid. See postio-tn9.2.
+    // `list-thread-06-reply-subject-only` has no references, so only its subject could place it,
+    // but
+    // newest-first it is filed before the messages sharing that subject: the honest limit of
+    // incremental threading (postio-tn9.2).
     let (_, stranded) = placed
         .iter()
         .find(|(name, _)| *name == "list-thread-06-reply-subject-only")
@@ -827,7 +759,6 @@ async fn rethreading_recovers_the_orphan_arrival_order_stranded() {
         "the whole mailing-list conversation is one thread now"
     );
 
-    // Idempotent: nothing left to reconsider, so a second pass is a no-op.
     let moved_again = ThreadingRepository::new(&connection, account.id)
         .rethread_orphans(inbox)
         .await
@@ -841,8 +772,6 @@ async fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // Two ordinary replies converge on their own thread via real references —
-    // never touching the subject fallback at all.
     let (_, root_thread) = file(
         &connection,
         account.id,
@@ -865,8 +794,6 @@ async fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others
     .await;
     assert_eq!(members(&connection, root_thread).await.len(), 2);
 
-    // A third message with no reference at all, but the same subject as the
-    // thread above -- it must not drag `root_thread`'s other member along.
     let mut orphan = Message::new(account.id, inbox, at(2).await);
     orphan.rfc_message_id = Some(id("<orphan@example.net>"));
     orphan.subject = Some("Re: Quarterly numbers".to_owned());
@@ -903,9 +830,6 @@ async fn a_message_with_broken_references_still_finds_its_conversation() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // `broken-references.eml` carries a `References` header the parser cannot
-    // make usable ids out of. It must not take the message out of the mailbox,
-    // and it must not crash the pass.
     let root = file_fixture(&connection, account.id, inbox, 0, "list-thread-01-root").await;
     let broken = file_fixture(&connection, account.id, inbox, 1, "broken-references").await;
 
@@ -922,8 +846,6 @@ async fn two_messages_claiming_one_message_id_do_not_break_the_index() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // `Message-ID` is not unique in the wild — `duplicate-message-id.eml` is in
-    // the corpus precisely because a client out there reuses one.
     let first = file_fixture(&connection, account.id, inbox, 0, "duplicate-message-id").await;
     let second = file_fixture(&connection, account.id, inbox, 1, "duplicate-message-id").await;
 
@@ -941,8 +863,6 @@ async fn every_corpus_fixture_can_be_threaded() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // Malformed headers, truncated multiparts, missing Message-IDs, mislabelled
-    // charsets: none of them may panic the pass or leave a message unfiled.
     for (index, fixture) in postio_model::test_corpus::all().iter().enumerate() {
         let thread =
             file_fixture(&connection, account.id, inbox, index as i64, fixture.name()).await;

@@ -1,14 +1,3 @@
-//! Whole-mailbox actions: the predicate that must never become a list of ids.
-//!
-//! Triage on an 81,717-message account is what these exist for. `Ctrl+A` then
-//! `a` has to reach SQLite as a query — one `UPDATE` and one `INSERT ...
-//! SELECT` — because the alternative is reading a mailbox into memory, which
-//! docs/PRODUCT.md §18 forbids and the 16 ms interaction budget would not survive.
-//!
-//! The interesting assertions here are therefore about *statement counts and
-//! shapes*, not only about outcomes: a version of this that enumerated the
-//! rows first would pass every outcome assertion and still be the bug.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
 use postio_storage::sql::bind;
@@ -25,11 +14,7 @@ fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 24, hour, 0, 0).unwrap()
 }
 
-/// `count` messages in `mailbox`, inserted straight into the table: these
-/// tests are about the bulk statements, not about message construction.
 async fn fill(connection: &Connection, mailbox: MailboxId, count: usize) -> Vec<MessageId> {
-    // A loop rather than `map().collect()`: the body awaits, and a
-    // closure cannot.
     let mut collected = Vec::new();
     for index in 0..count {
         connection
@@ -81,8 +66,6 @@ async fn world(connection: &Connection) -> World {
     }
 }
 
-// ── The write ────────────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn moving_a_whole_mailbox_is_one_statement_over_the_index() {
     let database = test_support::memory().await;
@@ -103,8 +86,6 @@ async fn moving_a_whole_mailbox_is_one_statement_over_the_index() {
 
 #[tokio::test]
 async fn the_rows_taken_back_out_of_the_selection_stay_put() {
-    // `Ctrl+A` then un-ticking two rows. The exceptions are built by clicking,
-    // so naming them is affordable in a way naming the other 81,715 is not.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -132,11 +113,8 @@ async fn the_rows_taken_back_out_of_the_selection_stay_put() {
     }
 }
 
-/// A conversation of `count` messages in `mailbox`, newest last.
-///
-/// Returns the thread's id and its message ids. `fill` above leaves
-/// `thread_id` NULL, which is the *other* case the predicate has to keep
-/// working for -- see the `IS NULL` arm in `MessageSet::predicate`.
+/// `fill` leaves `thread_id` NULL, the other case the predicate must handle (the `IS NULL` arm in
+/// `MessageSet::predicate`).
 async fn fill_thread(
     connection: &Connection,
     account: &Account,
@@ -168,19 +146,15 @@ async fn fill_thread(
 
 #[tokio::test]
 async fn deselecting_a_thread_row_excepts_the_whole_conversation() {
-    // ADR 0015 Q3, #468. A folder shows one row per conversation, so the row
-    // taken back out of a `Ctrl+A` *is* a conversation -- and its id is that
-    // conversation's newest message, because that is what makes the row
-    // openable. Excepting only the id would archive all of the conversation
-    // but its newest message, which is the worst of both readings: the user
-    // said "not this one" and got most of it anyway.
+    // The row taken back out of `Ctrl+A` is a conversation, identified by its newest message (ADR
+    // 0015
+    // Q3, #468); excepting only that id would archive all of it but the newest.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
 
     let (_, kept) = fill_thread(&connection, &world.account, world.inbox, 4).await;
     let (_, swept) = fill_thread(&connection, &world.account, world.inbox, 3).await;
-    // The row the list draws for a conversation is its newest message.
     let representative = *kept.last().expect("a conversation has messages");
 
     let moved = MessageRepository::new(&connection)
@@ -218,10 +192,8 @@ async fn deselecting_a_thread_row_excepts_the_whole_conversation() {
 
 #[tokio::test]
 async fn an_unthreaded_message_is_still_excepted_by_its_own_id() {
-    // The `IS NULL` arm. A message with no thread can only be excepted by id,
-    // and `NOT IN` against a set containing NULL is NULL -- so without the
-    // guard every unthreaded message would drop out of the set and a bulk
-    // archive over a folder of them would move nothing at all.
+    // The `IS NULL` arm: `NOT IN` against a set containing NULL is NULL, so without the guard
+    // unthreaded messages would drop out of the set and nothing would move.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -247,8 +219,7 @@ async fn an_unthreaded_message_is_still_excepted_by_its_own_id() {
 
 #[tokio::test]
 async fn a_row_hidden_pending_a_remote_delete_is_not_part_of_everything() {
-    // The set means "what the list is showing", and the list filters these
-    // out. Sweeping them along would resurrect a delete the user already made.
+    // Sweeping already-deleted rows along would resurrect a delete the user made.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -308,8 +279,6 @@ async fn a_bulk_move_clears_the_server_identity_the_way_a_single_one_does() {
 
 #[tokio::test]
 async fn counting_a_set_never_reads_its_rows() {
-    // The toast needs a number and nothing else does. `count(*)` over the
-    // mailbox index is the whole of what a bulk action is allowed to know.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -343,13 +312,10 @@ async fn counting_a_set_never_reads_its_rows() {
     );
 }
 
-// ── The queue ────────────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn a_bulk_enqueue_writes_one_row_per_message_naming_each_one() {
-    // One row per message, not one row for the mailbox: the drainer needs the
-    // UID of a *specific* message, and a row that said "everything in INBOX"
-    // would be resolved later, sweeping up mail that arrived in between.
+    // One row per message: a row saying "everything in INBOX" would be resolved later and sweep up
+    // mail that arrived in between.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -495,12 +461,8 @@ async fn a_bulk_enqueue_marks_its_messages_as_having_something_pending() {
     );
 }
 
-// ── The run as undo's handle ─────────────────────────────────────────────
-
 #[tokio::test]
 async fn a_queued_run_names_the_messages_a_bulk_action_moved_and_nothing_else() {
-    // This is what makes one `u` take back 81,717 messages without naming
-    // them: the queue already numbered them, so two integers are the set.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -526,7 +488,6 @@ async fn a_queued_run_names_the_messages_a_bulk_action_moved_and_nothing_else() 
         .await
         .expect("a bulk move");
 
-    // Now take it back, naming the rows only by the run that moved them.
     let returned = MessageRepository::new(&connection)
         .move_set(&MessageSet::Queued(range), world.inbox)
         .await
@@ -568,15 +529,6 @@ async fn an_empty_run_names_nothing() {
     );
 }
 
-// ── Flags ────────────────────────────────────────────────────────────────
-//
-// A bulk flag write is not the same statement a bulk move is. `\Seen` and
-// `\Flagged` live in a text column *and* in a denormalised boolean beside it,
-// so the write has to keep the two agreeing without reading a row — and the
-// toggle has to know whether the rows already agree, which is a count rather
-// than a scan.
-
-/// The `flags` text a row is holding, straight out of the column.
 async fn flag_text(connection: &Connection, message: MessageId) -> String {
     postio_storage::sql::one(
         connection,
@@ -599,8 +551,6 @@ async fn boolean(connection: &Connection, message: MessageId, column: &str) -> b
     .expect("the message is still there")
 }
 
-/// Puts `text` in the flags column and the booleans that shadow it, the way a
-/// repository write would have left them.
 async fn wearing(connection: &Connection, message: MessageId, text: &str) {
     let has = |flag: &str| text.split_whitespace().any(|word| word == flag);
     connection
@@ -650,9 +600,7 @@ async fn marking_a_whole_mailbox_read_is_one_statement_over_the_index() {
 
 #[tokio::test]
 async fn a_bulk_flag_write_keeps_the_text_and_its_booleans_agreeing() {
-    // The column is denormalised *from* the text — the list filters on the
-    // boolean and the sync engine sends the text, so a write that moved one
-    // and not the other would show one thing and tell the server another.
+    // The boolean is denormalised from the text: the list filters on one and sync sends the other.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -724,9 +672,9 @@ async fn a_bulk_flag_write_marks_its_rows_as_ahead_of_the_server() {
 
 #[tokio::test]
 async fn the_rows_a_flag_write_would_change_are_a_set_of_their_own() {
-    // The rows that *disagree* with the write are the ones the queue must
-    // carry, or undo would take back rows the action never touched. Asking
-    // which they are stays a count, not a read.
+    // The queue must carry the rows that disagree with the write, or undo takes back rows the
+    // action
+    // never touched; asking which they are stays a count.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -782,8 +730,6 @@ async fn a_flag_set_still_honours_the_rows_taken_back_out_of_the_selection() {
 
 #[tokio::test]
 async fn a_flag_set_composes_with_the_queued_run_undo_names() {
-    // The undo half of a bulk flag: the run of queue rows the action wrote is
-    // the set, narrowed to the rows that still carry what it put on them.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -843,9 +789,6 @@ async fn a_flag_set_composes_with_the_queued_run_undo_names() {
 
 #[tokio::test]
 async fn a_bulk_flag_write_moves_the_cached_mailbox_counts() {
-    // The sidebar reads these rather than counting rows, so a bulk write that
-    // did not move them would show an unread badge over a folder the user has
-    // just marked read.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -869,12 +812,8 @@ async fn a_bulk_flag_write_moves_the_cached_mailbox_counts() {
 
 #[test]
 fn the_flags_with_columns_are_the_five_that_sort_first() {
-    // The guard under `set_flag_on_set`. It rebuilds the flags text as "the
-    // five system flags, in column order, then the keywords", which is only
-    // the same string `FlagSet` would have produced while those five remain
-    // the five lowest-ranked persistable flags. Add a sixth system flag ahead
-    // of them in `Flag::rank` and every bulk flag write starts writing the
-    // text out of order — silently, because nothing reads it back in order.
+    // Guards `set_flag_on_set`, which writes the five system flags in column order, then keywords:
+    // equal to `FlagSet`'s text only while those stay the five lowest-ranked in `Flag::rank`.
     let everything: postio_model::FlagSet = [
         postio_model::Flag::parse("Work"),
         postio_model::Flag::NotJunk,
@@ -900,13 +839,6 @@ fn the_flags_with_columns_are_the_five_that_sort_first() {
     );
 }
 
-// ── Smart folders (#52) ──────────────────────────────────────────────────
-//
-// Flagged is a predicate, not a folder: its rows are spread across every
-// mailbox in the account. `MessageSet::Flagged` is how a bulk verb aims at
-// it without the view first having to say which rows it means.
-
-/// Flag `messages`, straight into the column.
 async fn flag(connection: &Connection, messages: &[MessageId]) {
     for message in messages {
         connection
@@ -927,7 +859,6 @@ async fn the_flagged_set_spans_every_mailbox_in_the_account() {
     let in_inbox = fill(&connection, world.inbox, 6).await;
     let in_archive = fill(&connection, world.archive, 4).await;
 
-    // Three flagged in one folder, two in another; the rest are not.
     flag(&connection, &in_inbox[..3]).await;
     flag(&connection, &in_archive[..2]).await;
 
@@ -963,9 +894,6 @@ async fn a_deselected_row_comes_out_of_the_flagged_set_too() {
 
 #[test]
 fn a_smart_folder_set_names_no_mailbox() {
-    // The same refusal `Feed::mailbox()` makes, one layer down: a caller
-    // that needs somewhere to file a message must not be handed a folder
-    // that does not exist.
     assert_eq!(
         MessageSet::flagged(postio_model::AccountId::new(1)).mailbox(),
         None
@@ -974,10 +902,8 @@ fn a_smart_folder_set_names_no_mailbox() {
 
 #[tokio::test]
 async fn narrowing_the_flagged_set_to_one_folder_keeps_it_a_predicate() {
-    // What a cross-folder move needs. The queue's `Operation::Move` payload
-    // carries a single `from`, written once for the whole run, so a move out
-    // of a smart folder has to be grouped by source mailbox -- and each group
-    // has to stay a predicate rather than becoming a list of ids.
+    // `Operation::Move` carries one `from` per run, so a move out of a smart folder is grouped by
+    // source mailbox, each group still a predicate.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;
@@ -1005,8 +931,6 @@ async fn narrowing_the_flagged_set_to_one_folder_keeps_it_a_predicate() {
 
 #[tokio::test]
 async fn the_source_mailboxes_of_a_set_are_answered_without_naming_its_rows() {
-    // One indexed `SELECT DISTINCT` over the same predicate, so grouping a
-    // cross-folder move costs the folders it spans rather than the messages.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;

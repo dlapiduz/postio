@@ -1,5 +1,3 @@
-//! Zoom the message, only the message (spec 006 FR-021 to FR-021f).
-
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::{BodyView, zoom::ZoomIndicator};
@@ -38,7 +36,6 @@ pub fn zoom_steps_keep_the_place_and_the_selection() {
     adjustment.set_value(3000.0);
     let doc = view.document().expect("a snapshot");
     let top = doc.text.char_at_top(3000.0);
-    // A selection made before zooming survives it.
     let range = doc.text.find("Line 70 of")[0].clone();
     let rect = doc.text.rects(range.clone())[0];
     let origin = adjustment.value();
@@ -69,7 +66,6 @@ pub fn zoom_steps_keep_the_place_and_the_selection() {
     assert_eq!(indicator.label(), "125%");
     assert_eq!(view.selection(), selected, "zooming lost the selection");
 
-    // Ctrl+scroll: one step per notch, anchored under the pointer.
     let doc = view.document().expect("a snapshot");
     let pointer = gtk::graphene::Point::new(100.0, 200.0);
     let under = doc
@@ -92,7 +88,6 @@ pub fn zoom_steps_keep_the_place_and_the_selection() {
         "the text under the pointer moved: {under} -> {now}"
     );
 
-    // At the top step, zooming in does nothing.
     for _ in 0..10 {
         view.zoom_in();
     }
@@ -100,15 +95,12 @@ pub fn zoom_steps_keep_the_place_and_the_selection() {
     view.zoom_in();
     assert_eq!(view.zoom(), 300);
 
-    // The indicator's reset goes back to 100 and hides it.
     indicator.reset();
     assert_eq!(view.zoom(), 100);
     assert!(!indicator.widget().is_visible());
     window.destroy();
 }
 
-/// A pinch scales what is on screen while it runs, and renders once, at the
-/// nearest step, when it ends.
 pub fn a_pinch_snaps_to_a_step_and_renders_once() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

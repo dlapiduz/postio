@@ -1,6 +1,3 @@
-//! The screen reader reads what copy copies (spec 006 FR-020): the view
-//! is a document whose accessible text is the snapshot's text index.
-
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::BodyView;
@@ -30,7 +27,6 @@ pub fn the_accessible_text_is_the_text_index() {
         Some(doc.text.text.as_str())
     );
 
-    // The caret and the selection are the view's selection.
     let range = doc.text.find("Gift wrap")[0].clone();
     let rect = doc.text.rects(range.clone())[0];
     view.drag_select(
@@ -40,7 +36,6 @@ pub fn the_accessible_text_is_the_text_index() {
     assert_eq!(view.accessible_selection(), vec![range.clone()]);
     assert_eq!(view.accessible_caret(), range.end as u32);
 
-    // Extents are the clusters' union, where the view draws them.
     let extents = view
         .accessible_extents(range.start as u32, range.end as u32)
         .expect("extents");

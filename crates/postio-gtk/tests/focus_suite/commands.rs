@@ -1,8 +1,3 @@
-//! Commands Focus offers and must answer (T236, T238, T257): the go-to keys
-//! `g t`, `g a`, `g b` and `g s`, Unsnooze on `B`, and Flag on `s`, each
-//! pressed as GTK delivers it, and each judged by what the list shows and
-//! what the store holds.
-
 use chrono::Duration;
 use gtk::gdk;
 use gtk::prelude::*;
@@ -63,8 +58,6 @@ pub async fn flag(client: &postio_client::Client, message: MessageId) {
         .expect("flagged");
 }
 
-/// `g t` and `g a` go to the Sent and Archive folders, as `g d` goes to
-/// Drafts; `g i` comes back.
 pub fn g_s_and_g_r_list_sent_and_archive() {
     crate::gtk_case(async {
         if !support::display() {
@@ -89,7 +82,6 @@ pub fn g_s_and_g_r_list_sent_and_archive() {
     });
 }
 
-/// `g b` lists what is snoozed, and `g s` what is flagged.
 pub fn g_z_lists_snoozed_and_g_star_lists_flagged() {
     crate::gtk_case(async {
         if !support::display() {
@@ -121,8 +113,6 @@ pub fn g_z_lists_snoozed_and_g_star_lists_flagged() {
     });
 }
 
-/// A fixture with "Atlas budget" snoozed and "Staffing plan" in the inbox,
-/// and the window showing the Snoozed list with the cursor on the first row.
 async fn in_snoozed() -> (Fixture, Window, MessageId) {
     let fixture = Fixture::empty().await;
     let (atlas, _) = fixture
@@ -161,9 +151,8 @@ async fn unsnoozed_back_in_the_inbox(fixture: &Fixture, window: &Window, atlas: 
     showing(window, "Inbox", &["Staffing plan", "Atlas budget"]).await;
 }
 
-/// Right-click the first row until the menu is up: the list is still
-/// settling after a change of folder, and a press that lands while it
-/// redraws is lost, as a person's would be.
+/// A press that lands while the list redraws after a change of folder is lost, as a person's would
+/// be.
 async fn right_clicked(window: &Window) -> gtk::Popover {
     let up = |window: &Window| {
         window
@@ -183,8 +172,6 @@ async fn right_clicked(window: &Window) -> gtk::Popover {
     window.row_menu().expect("the menu").widget().clone()
 }
 
-/// `B` on a snoozed conversation wakes it: it is back in the inbox, the
-/// toast offers Undo, and Undo puts it back to sleep until the same time.
 pub fn b_unsnoozes_the_row_and_undo_puts_it_back() {
     crate::gtk_case(async {
         if !support::display() {
@@ -206,8 +193,6 @@ pub fn b_unsnoozes_the_row_and_undo_puts_it_back() {
     });
 }
 
-/// The row menu on a snoozed conversation offers Unsnooze, with its key;
-/// one in the inbox does not.
 pub fn the_row_menu_unsnoozes() {
     crate::gtk_case(async {
         if !support::display() {
@@ -233,7 +218,6 @@ pub fn the_row_menu_unsnoozes() {
     });
 }
 
-/// `B` in the open message wakes it, and the dialog leaves it.
 pub fn b_in_the_open_message_unsnoozes_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -262,8 +246,6 @@ pub fn b_in_the_open_message_unsnoozes_it() {
     });
 }
 
-/// `s` flags the row; the store has it, `g s` lists it, the row carries no
-/// mark, and Undo clears it. `s` again unflags.
 pub fn star_flags_the_row_and_undo_clears_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -321,7 +303,6 @@ pub fn star_flags_the_row_and_undo_clears_it() {
             "Undo did not clear the flag"
         );
 
-        // Pressed on a flagged row, it clears the flag.
         support::keys(&window, &["j", "j", "s"]);
         assert!(
             crate::settle_until(async || stored(&fixture, atlas)
@@ -342,8 +323,6 @@ pub fn star_flags_the_row_and_undo_clears_it() {
     });
 }
 
-/// The row menu says Flag on an unflagged row and Unflag on a flagged one,
-/// and runs the same command `s` does.
 pub fn the_row_menu_flags_and_unflags() {
     crate::gtk_case(async {
         if !support::display() {
@@ -371,9 +350,8 @@ pub fn the_row_menu_flags_and_unflags() {
             "the menu's Flag did not flag it"
         );
 
-        // The menu reads the row when it opens, and the row hears of the
-        // flag from the store a moment after: a menu opened before then says
-        // Flag, so each look closes it and asks again.
+        // The menu reads the row when it opens and the row hears of the flag a moment after: each
+        // look closes it and asks again.
         assert!(
             crate::settle_until(async || {
                 let menu = right_clicked(&window).await;
@@ -399,8 +377,6 @@ pub fn the_row_menu_flags_and_unflags() {
     });
 }
 
-/// `e` on a thread row archives the row's whole conversation (spec 013: the
-/// thread row's verbs act on the thread, and `E`, Archive thread, is gone).
 pub fn e_archives_the_whole_conversation() {
     crate::gtk_case(async {
         if !support::display() {
@@ -419,8 +395,6 @@ pub fn e_archives_the_whole_conversation() {
     });
 }
 
-/// Focus is one inbox across accounts, so `g b` and `g s` list every
-/// account's snoozed and flagged mail, not the first account's.
 pub fn g_z_and_g_star_span_every_account() {
     crate::gtk_case(async {
         if !support::display() {

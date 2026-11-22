@@ -1,15 +1,3 @@
-//! Dragging mail out produces files, and produces them *late* (T245; the
-//! provider lives here).
-//!
-//! The laziness is the whole design and it is invisible from the outside: a
-//! provider that writes five hundred `.eml` files at drag start and one that
-//! writes them at the drop look identical to anyone dragging, right up until
-//! somebody picks up a large selection and puts it straight back down. So it
-//! is asserted here rather than reasoned about.
-//!
-//! Nothing here touches the network or a database -- the export callback is
-//! the seam an app fills in, and a test can fill it with anything.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -19,7 +7,6 @@ use gtk::glib;
 use gtk::prelude::*;
 use postio_widgets::drag_out::{LazyFiles, Materialise};
 
-/// A provider whose export callback counts how often it ran.
 fn provider(calls: &Rc<Cell<usize>>, files: Vec<gio::File>) -> LazyFiles {
     let calls = Rc::clone(calls);
     let materialise: Materialise = Rc::new(move |_messages| {
@@ -30,7 +17,6 @@ fn provider(calls: &Rc<Cell<usize>>, files: Vec<gio::File>) -> LazyFiles {
     LazyFiles::for_messages(vec![postio_model::MessageId::new(1)], materialise)
 }
 
-/// Drive the main context until `future` finishes, the way GTK would.
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     glib::MainContext::default().block_on(future)
 }
@@ -43,7 +29,6 @@ fn display() -> bool {
     true
 }
 
-/// The one that justifies the whole module.
 pub fn nothing_is_written_until_the_drop_asks() {
     if !display() {
         return;
@@ -59,7 +44,6 @@ pub fn nothing_is_written_until_the_drop_asks() {
     let calls = Rc::new(Cell::new(0));
     let provider = provider(&calls, vec![gio::File::for_path(&path)]);
 
-    // ── the drag has started ────────────────────────────────────────────
     assert_eq!(
         calls.get(),
         0,
@@ -67,8 +51,6 @@ pub fn nothing_is_written_until_the_drop_asks() {
          large selection would have written a file per message for nothing"
     );
 
-    // Asking what it *can* give is not asking for it. A receiver reads the
-    // formats on every drag that passes over it.
     let formats = provider.formats();
     assert!(
         formats.types().contains(&gdk::FileList::static_type()),
@@ -77,15 +59,12 @@ pub fn nothing_is_written_until_the_drop_asks() {
     );
     assert_eq!(calls.get(), 0, "reading the formats is not a drop");
 
-    // ── the drop lands ──────────────────────────────────────────────────
     let stream = gio::MemoryOutputStream::new_resizable();
     block_on(provider.write_mime_type_future("text/uri-list", &stream, glib::Priority::DEFAULT))
         .expect("the drop is served");
 
     assert_eq!(calls.get(), 1, "the drop is what materialises the files");
 
-    // `steal_as_bytes` wants the stream finished; GDK leaves it to the caller
-    // to close, exactly as a real drop does.
     stream.close(gio::Cancellable::NONE).expect("it closes");
     let written = stream.steal_as_bytes();
     let written = String::from_utf8_lossy(&written);
@@ -102,10 +81,8 @@ pub fn the_sandboxed_spelling_is_offered_too() {
     }
     let calls = Rc::new(Cell::new(0));
     let provider = provider(&calls, Vec::new());
-    // The step GDK itself takes before putting a drag on the wire: a
-    // type-only format list carries no mime types until the registered
-    // serialisers are folded in. Asserting on `formats()` alone would assert
-    // on an empty list and pass for the wrong reason.
+    // GDK folds the registered serialisers in before a drag; `formats()` alone is a type-only list,
+    // so asserting on it would pass for the wrong reason.
     let offered: Vec<String> = provider
         .formats()
         .union_serialize_mime_types()
@@ -118,24 +95,11 @@ pub fn the_sandboxed_spelling_is_offered_too() {
         offered.iter().any(|mime| mime == "text/uri-list"),
         "offered: {offered:?}"
     );
-    // The reason the provider advertises the *type* rather than naming mime
-    // types by hand: naming them would silently drop this one, and drag-out
-    // would work on the host and fail in the sandbox — which is the one
-    // combination nobody would notice until a user reported it.
-    // Asserted only where GDK could offer it. The spelling is registered by
-    // GDK when the FileTransfer portal is reachable on a session bus, so on a
-    // desktop it is there and on a bare CI runner -- no session bus at all --
-    // it never can be, and asserting it there tests the runner rather than
-    // Postio. `dbus-run-session` with xdg-desktop-portal installed does not
-    // close the gap: the daemon starts and then fails to reach the secrets
-    // service, so the name is still unowned.
-    //
-    // The skip is loud on purpose. A quiet one is how every GTK test in this
-    // workspace came to "pass" without a display (#781), and the assertion
-    // below is worth more than most: its own point is that hand-naming the
-    // mime types would work on the host and fail in the sandbox, which is the
-    // one combination nobody notices until a user reports it. #121 is where
-    // that path is proven for real, under Flatpak.
+    // The provider advertises the type, not hand-named mime types, which would drop this one and
+    // break drag-out in the sandbox only.
+    // Asserted only where GDK registers the spelling: when the FileTransfer portal is reachable on
+    // a session bus (#121 proves it under Flatpak).
+    // The skip is loud on purpose: quiet skips are how GTK tests passed without a display (#781).
     if offered
         .iter()
         .any(|mime| mime == "application/vnd.portal.filetransfer")
@@ -155,9 +119,7 @@ pub fn the_sandboxed_spelling_is_offered_too() {
     );
 }
 
-/// Whether `org.freedesktop.portal.FileTransfer` has an owner on the session
-/// bus -- which is what decides whether GDK can advertise the sandbox
-/// spelling at all.
+/// Whether GDK can advertise the sandbox spelling at all.
 fn portal_is_reachable() -> bool {
     use gtk::gio;
     use gtk::prelude::*;
@@ -182,14 +144,12 @@ fn portal_is_reachable() -> bool {
         .unwrap_or(false)
 }
 
-/// A drop that hands over nothing must not report success.
 pub fn an_export_that_produced_nothing_refuses_the_drop() {
     if !display() {
         return;
     }
-    // It also cannot be handed to GDK at all: `gdk_file_list_new_from_array`
-    // returns NULL for an empty array and gdk4-rs turns that into a panic, so
-    // this guards an abort and not only a lie.
+    // `gdk_file_list_new_from_array` returns NULL for an empty array and gdk4-rs panics, so this
+    // guards an abort too.
     let empty = LazyFiles::for_messages(
         vec![postio_model::MessageId::new(1)],
         Rc::new(|_| Box::pin(async { Ok(Vec::new()) })),
@@ -199,7 +159,6 @@ pub fn an_export_that_produced_nothing_refuses_the_drop() {
         block_on(empty.write_mime_type_future("text/uri-list", &stream, glib::Priority::DEFAULT));
     assert!(outcome.is_err(), "an empty export must refuse the drop");
 
-    // And a build that never registered the seam at all.
     let unwired = glib::Object::builder::<LazyFiles>().build();
     let stream = gio::MemoryOutputStream::new_resizable();
     let outcome =
@@ -207,7 +166,6 @@ pub fn an_export_that_produced_nothing_refuses_the_drop() {
     assert!(outcome.is_err(), "an unwired export must refuse the drop");
 }
 
-/// The message was never downloaded and could not be fetched.
 pub fn a_failed_export_fails_the_drop() {
     if !display() {
         return;

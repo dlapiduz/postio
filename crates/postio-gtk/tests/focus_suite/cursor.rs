@@ -1,7 +1,3 @@
-//! US1 scenario 4: j and k move only the cursor -- nothing opens, nothing
-//! is marked read, nothing is selected (FR-016). Selecting or moving to a
-//! row is never reading it.
-
 use crate::support::{self, Fixture};
 
 pub fn j_and_k_move_only_the_cursor() {
@@ -29,8 +25,6 @@ pub fn j_and_k_move_only_the_cursor() {
         support::keys(&window, &["k"]);
         assert_eq!(pane.cursor().selected(), 2, "k walks it back up");
 
-        // Nothing else: no command reached the host, no body was read, the
-        // selection is empty, and the rows the cursor passed are unread.
         crate::settle();
         let after = client.counts().snapshot();
         for family in ["Send", "SendTracked", "Body", "Readings", "ThreadReadings"] {
@@ -60,8 +54,6 @@ pub fn j_and_k_move_only_the_cursor() {
     });
 }
 
-/// Every list opens with the cursor on its first row, and opening it opens
-/// nothing and marks nothing read (maintainer, 2026-10-07).
 pub fn a_list_opens_with_the_cursor_on_its_first_row() {
     crate::gtk_case(async {
         if !support::display() {
@@ -72,7 +64,6 @@ pub fn a_list_opens_with_the_cursor_on_its_first_row() {
         let pane = window.pane().expect("the inbox");
         let before = client.counts().snapshot();
 
-        // At launch, before any key.
         assert!(
             crate::settle_until(async || pane.cursor().selected() == 0).await,
             "the window opened with the cursor on {}, not the first row",
@@ -83,12 +74,9 @@ pub fn a_list_opens_with_the_cursor_on_its_first_row() {
             "the cursor on the first row opened it"
         );
 
-        // `j` moves to the second row, not onto the first.
         support::keys(&window, &["j"]);
         assert_eq!(pane.cursor().selected(), 1, "j walks on from the first row");
 
-        // Going to the inbox again replaces the list's rows: the cursor
-        // is back on the first.
         support::keys(&window, &["g", "i"]);
         assert!(
             crate::settle_until(async || pane.cursor().selected() == 0).await,
@@ -96,7 +84,6 @@ pub fn a_list_opens_with_the_cursor_on_its_first_row() {
             pane.cursor().selected()
         );
 
-        // Back from a page that replaced the list.
         support::keys(&window, &["j", "j"]);
         support::keys(&window, &["g", "f"]);
         assert!(
@@ -138,9 +125,6 @@ pub fn a_list_opens_with_the_cursor_on_its_first_row() {
     });
 }
 
-/// GTK's list view moves the cursor on its own -- a click on a row, a row
-/// archived from under it -- and the controller walks on from wherever it
-/// is, not from where it last put it itself.
 pub fn the_list_view_moving_the_cursor_is_where_j_walks_on_from() {
     crate::gtk_case(async {
         if !support::display() {
@@ -168,9 +152,6 @@ pub fn the_list_view_moving_the_cursor_is_where_j_walks_on_from() {
     });
 }
 
-/// `g i` and then `j j`, faster than the store answers: the rows on screen
-/// are the ones the keys walked, and the list that lands a beat later leaves
-/// the cursor on the row it reached rather than walking it back to the top.
 pub fn keys_before_a_reopened_list_lands_are_not_walked_back() {
     crate::gtk_case(async {
         if !support::display() {
@@ -195,7 +176,6 @@ pub fn keys_before_a_reopened_list_lands_are_not_walked_back() {
         support::keys(&window, &["j", "j"]);
         assert_eq!(pane.cursor().selected(), 2, "j walks the rows on screen");
 
-        // The positive control: the page did land, after the keys.
         assert!(
             crate::settle_until(async || pane.feed().has_landed()).await,
             "the reopened inbox never landed"

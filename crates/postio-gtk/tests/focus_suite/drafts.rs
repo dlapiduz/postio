@@ -1,13 +1,3 @@
-//! Drafts, across apps (US3 scenario 3, US11 scenario 3; T080, and T064's
-//! draft half): `Esc` closes Focus's composer and keeps the draft locally,
-//! and a draft left in Focus or the terminal opens for editing in the other,
-//! over one store.
-//!
-//! The terminal's side is the client it reads and writes through --
-//! `ClientKind::Tui`, connected to the host Focus opened (`across_apps.rs`
-//! does the same). What it does with a Drafts row is what the terminal
-//! does: list the Drafts folder, and open the draft behind the row.
-
 use adw::prelude::*;
 use postio_client::Client;
 use postio_client::protocol::ClientKind;
@@ -17,7 +7,6 @@ use postio_model::{Draft, EmailAddress, ListScope, MailboxId, MailboxRole, Messa
 use crate::compose::field;
 use crate::support::{self, Fixture};
 
-/// The Drafts folder's id, as the terminal finds it.
 async fn drafts_folder(terminal: &Client, fixture: &Fixture) -> MailboxId {
     terminal
         .mailboxes(fixture.account.id)
@@ -29,8 +18,6 @@ async fn drafts_folder(terminal: &Client, fixture: &Fixture) -> MailboxId {
         .id
 }
 
-/// The rows in Drafts, as the terminal lists them: each message and its
-/// subject.
 async fn drafts_listed(terminal: &Client, drafts: MailboxId) -> Vec<(MessageId, String)> {
     match terminal
         .list_page(PageRequest {
@@ -59,8 +46,6 @@ async fn drafts_listed(terminal: &Client, drafts: MailboxId) -> Vec<(MessageId, 
     }
 }
 
-/// A fixture with a Drafts folder and one conversation, Focus open over it,
-/// and the terminal's client beside it.
 async fn both_apps() -> (Fixture, postio_gtk::window::FocusWindow, Client) {
     let fixture = Fixture::empty().await;
     {
@@ -87,7 +72,6 @@ async fn both_apps() -> (Fixture, postio_gtk::window::FocusWindow, Client) {
     (fixture, window, terminal)
 }
 
-/// US3 scenario 3, and US11 scenario 3 from Focus to the terminal.
 pub fn escape_keeps_the_draft_and_the_terminal_opens_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -112,7 +96,6 @@ pub fn escape_keeps_the_draft_and_the_terminal_opens_it() {
             "Esc did not close the composer"
         );
 
-        // Kept locally: the terminal lists it in Drafts at once.
         let listed = std::cell::RefCell::new(Vec::new());
         assert!(
             crate::settle_until(async || {
@@ -126,7 +109,6 @@ pub fn escape_keeps_the_draft_and_the_terminal_opens_it() {
         let (row, subject) = listed.borrow()[0].clone();
         assert_eq!(subject, "Q4 headcount");
 
-        // And opens it for editing, as the terminal does with the row.
         let draft = terminal
             .draft_behind(row)
             .await
@@ -140,8 +122,6 @@ pub fn escape_keeps_the_draft_and_the_terminal_opens_it() {
     });
 }
 
-/// US11 scenario 3, from the terminal to Focus: a draft the terminal
-/// kept opens in Focus's composer, and closing it keeps the one draft.
 pub fn a_draft_the_terminal_kept_opens_in_focus() {
     crate::gtk_case(async {
         if !support::display() {
@@ -150,7 +130,6 @@ pub fn a_draft_the_terminal_kept_opens_in_focus() {
         let (fixture, window, terminal) = both_apps().await;
         let drafts = drafts_folder(&terminal, &fixture).await;
 
-        // The terminal composer's autosave, through its client.
         let mut kept = Draft::new(fixture.account.id);
         kept.to = vec![EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net")];
         kept.subject = "Harbor notes".to_owned();
@@ -170,7 +149,6 @@ pub fn a_draft_the_terminal_kept_opens_in_focus() {
         );
         let (row, _) = listed.borrow()[0].clone();
 
-        // What Focus's Drafts row does when opened.
         window.open_draft(row);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
@@ -196,7 +174,6 @@ pub fn a_draft_the_terminal_kept_opens_in_focus() {
     });
 }
 
-/// A row in Drafts names who the draft is to, not the person writing it.
 pub fn a_drafts_row_names_who_it_is_to() {
     crate::gtk_case(async {
         if !support::display() {
@@ -237,8 +214,6 @@ pub fn a_drafts_row_names_who_it_is_to() {
     });
 }
 
-/// US11 scenario 3 by the keyboard (T080): `g d` lists Drafts, and `Enter`
-/// on a draft opens it in the composer rather than in the reader.
 pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
     crate::gtk_case(async {
         if !support::display() {
@@ -282,8 +257,6 @@ pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
             "the draft's subject: {:?}",
             field(&dialog, "Subject")
         );
-        // Recipient and subject are written: writing continues in the body,
-        // the caret after what is there, not in To.
         let composer = window.composer().expect("the composer");
         assert!(
             crate::settle_until(async || {

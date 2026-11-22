@@ -1,12 +1,3 @@
-//! The Sync & storage pane's controls (#1179, over #874's structured pane).
-//!
-//! The pane's dropdowns and its spin button are gone: a closed set of three
-//! is a segmented control, a boolean is a checkbox, and a number is neither
-//! (ADR 0029). What survives unchanged is where the values go — the same
-//! format-preserving `patch_sync`, into the same buffer, on the same
-//! debounced write. Skips without a display. Nothing here touches the
-//! network.
-
 use crate::support_compose::{fonts, style};
 use gtk::gdk;
 use gtk::prelude::*;
@@ -48,10 +39,8 @@ pub fn the_pane_shows_the_files_values() {
     window.destroy();
 }
 
-/// The segment labelled `label` inside Junk's control (`group` "Empty Junk")
-/// or Trash's ("Empty Trash"). Both offer the same words, so they are told
-/// apart by their place: the two controls whose segments say "90 days", in
-/// the order the pane draws them, Junk first.
+/// Both controls offer the same words, so they are told apart by place: the two with "90 days"
+/// segments, Junk first.
 fn segment_in(panel: &SettingsPanel, group: &str, label: &str) -> gtk::ToggleButton {
     let segments_of = |root: &gtk::Widget| -> Vec<gtk::ToggleButton> {
         collect(root, "postio-segment")
@@ -75,8 +64,6 @@ fn segment_in(panel: &SettingsPanel, group: &str, label: &str) -> gtk::ToggleBut
         .unwrap_or_else(|| panic!("no {label:?} segment in {group:?}"))
 }
 
-/// Emptying Junk and Trash (#1932): off until chosen, each folder its own
-/// choice, written to the two keys and nothing else.
 pub fn emptying_junk_and_trash_is_off_and_chosen_per_folder() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -108,10 +95,8 @@ pub fn the_interval_the_file_actually_holds_is_still_stated() {
         return;
     };
 
-    // The spin button is gone, so this line is the only thing left that can
-    // tell somebody their interval is 2 minutes rather than the 5 the
-    // segment's label says. Rounding it away silently would be worse than
-    // the dropdown that was here before.
+    // The spin button is gone, so this line is the only place that can say the interval is 2
+    // minutes rather than the segment's 5.
     assert!(
         stat_lines(&panel).iter().any(|line| line.contains("2 min")),
         "the real interval must be stated, not rounded to the segment's \
@@ -153,8 +138,8 @@ pub fn an_interval_somebody_set_by_hand_survives_pressing_the_segment_it_is_on()
         return;
     };
 
-    // Already on `poll` at 120 seconds. Pressing the segment it is already
-    // on is not a choice, and must not overwrite the interval with 300.
+    // Already on `poll` at 120 seconds: pressing the segment it is on is not a choice and must not
+    // overwrite the interval with 300.
     segment(&panel, "Every 5 min").set_active(true);
     pump();
 
@@ -186,11 +171,8 @@ pub fn typing_new_roles_and_pressing_enter_writes_the_new_list() {
     window.destroy();
 }
 
-/// A panel showing `text`, with Sync & storage on screen — the pane builds
-/// its controls on first display (#873), so it has to be shown first.
-/// The Local store box counts the accounts the panel was given, however
-/// late they arrive: Settings opens before the host has answered, and a box
-/// that says "0 accounts" beside a list of one contradicts the pane next to it.
+/// The Local store box counts the accounts however late they arrive: Settings opens before the host
+/// has answered.
 pub fn the_local_store_box_follows_the_accounts_and_their_weights() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -287,10 +269,6 @@ fn stat_lines(panel: &SettingsPanel) -> Vec<String> {
         .collect()
 }
 
-/// Every widget in the tree carrying `class` (or, when `class` is empty,
-/// every widget), depth first. Copied from `gtk_settings_filters.rs` rather
-/// than shared, matching that file's own reason: no dependency between the
-/// two.
 fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if class.is_empty() || widget.has_css_class(class) {

@@ -1,10 +1,8 @@
 import PostioFFI
 import SwiftUI
 
-/// The words of the footer under the list (spec 013 US2, FR-014; screen 02):
-/// the scope in bold, keycap and label pairs, and the right-hand sentence.
-/// The controller words all three after every cursor move, and keycaps come
-/// from the live keymap; this holds none of its own.
+/// The controller words all three after every cursor move and keycaps come from the live keymap;
+/// this holds none of its own.
 public struct ScopeFooterWords: Equatable {
     public let title: String
     public let hints: [FocusHintRow.Hint]
@@ -17,10 +15,7 @@ public struct ScopeFooterWords: Equatable {
     }
 }
 
-/// The footer, drawn: one line, the bold title, the hints, then the note
-/// right-aligned in secondary text. When the line is too narrow the note
-/// gives way first, then the hints; the title never does.
-/// Semantic colours only (FR-017).
+/// When the line is too narrow the note gives way first, then the hints; the title never does.
 public struct ScopeFooter: View {
     let words: ScopeFooterWords
 

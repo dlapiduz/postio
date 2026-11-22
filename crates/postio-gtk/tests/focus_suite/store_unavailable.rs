@@ -1,8 +1,3 @@
-//! The page that says why there is no mail (T215, T216): it can always be
-//! closed, and it offers the way forward that can work -- "Try again" for
-//! what can pass, a fresh store for a store no migration reaches, which the
-//! same file will refuse however often it is tried.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -15,8 +10,6 @@ use postio_storage::key::{Purpose, StoreKey};
 
 use crate::support;
 
-/// A window showing why there is no mail, as `startup::open` leaves it when
-/// another Postio has the store.
 fn refused() -> FocusWindow {
     let window = FocusWindow::new(None);
     window.present();
@@ -28,10 +21,8 @@ fn refused() -> FocusWindow {
     window
 }
 
-/// T216: the window's close button is there on the page that says why there
-/// is no mail, and a click on it -- delivered as a person's is -- closes the
-/// window. There was no top bar at all until the inbox had opened, so the
-/// one way out was the keyboard, and that did nothing either.
+/// There was no top bar until the inbox had opened, so the only way out was the keyboard, which did
+/// nothing either.
 pub fn the_close_button_closes_the_window_when_the_store_will_not_open() {
     crate::gtk_case(async {
         if !support::display() {
@@ -59,8 +50,6 @@ pub fn the_close_button_closes_the_window_when_the_store_will_not_open() {
     });
 }
 
-/// T216: `Ctrl+Q` quits from the page that says why there is no mail, as it
-/// does from the inbox: the registry's Quit, with no inbox behind it.
 pub fn ctrl_q_closes_the_window_when_the_store_will_not_open() {
     crate::gtk_case(async {
         if !support::display() {
@@ -75,8 +64,6 @@ pub fn ctrl_q_closes_the_window_when_the_store_will_not_open() {
     });
 }
 
-/// T216: `Ctrl+W` closes the window, as it does in every GNOME app; Focus has
-/// one window, so closing it is quitting.
 pub fn ctrl_w_closes_the_window_when_the_store_will_not_open() {
     crate::gtk_case(async {
         if !support::display() {
@@ -91,7 +78,6 @@ pub fn ctrl_w_closes_the_window_when_the_store_will_not_open() {
     });
 }
 
-/// A keyring holding `key` as the store key.
 fn keyring(key: &StoreKey) -> Arc<dyn SecretStore> {
     let secrets = MemorySecretStore::default();
     postio_session::blocking::now(secrets.store(
@@ -102,11 +88,6 @@ fn keyring(key: &StoreKey) -> Arc<dyn SecretStore> {
     Arc::new(secrets)
 }
 
-/// T215: a store whose schema no migration reaches is not offered "Try
-/// again", which would meet the same file every time. The page says what
-/// happened, what a fresh store keeps and what stays behind, and "Start a
-/// fresh store" sets the old one aside -- not deleted -- and opens a fresh
-/// one with the account still in it.
 pub fn a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account() {
     crate::gtk_case(async {
         if !support::display() {
@@ -115,8 +96,6 @@ pub fn a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account(
         let directory = tempfile::tempdir().expect("a scratch directory");
         let store = directory.path().join("postio.db");
         let key = StoreKey::generate();
-        // A store some build wrote whose schema this one has no record of:
-        // this build's tables, under a stamp no migration leads from.
         let address = {
             let earlier = postio_storage::Store::open(&store, &key.derive(Purpose::Database))
                 .await
@@ -203,11 +182,6 @@ pub fn a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account(
     });
 }
 
-/// #1598: a store encrypted under a key the keyring does not hold is not
-/// offered "Try again" either -- the key does not change between attempts.
-/// The page says so, and "Start a fresh store" sets the old one aside, not
-/// deleted, and opens a fresh one under the keyring's key. Nothing in the
-/// old one decrypts, so no account comes across.
 pub fn a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one() {
     crate::gtk_case(async {
         if !support::display() {

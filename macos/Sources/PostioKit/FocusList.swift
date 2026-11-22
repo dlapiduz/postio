@@ -1,30 +1,14 @@
 import Foundation
 import PostioFFI
 
-/// Where Focus's rows come from.
-///
-/// A protocol so the list can be driven by something other than a live
-/// session: nothing in a unit test can open a store, and everything this
-/// file decides -- which row starts a day, what a page arriving changes --
-/// is worth proving without one. `PostioSession` is the real one.
 public protocol FocusRowSource: AnyObject {
-    /// How many rows the list draws. A count on the other side, never the
-    /// length of anything held here.
     var focusRowCount: UInt32 { get }
-    /// The row at `position`, or `nil` while its page is on its way
-    /// (`FocusPageReady` follows). Synchronous, and no I/O.
     func focusRow(at position: UInt32) -> FocusRowFfi?
-    /// The row at `position` if its page is already here, else `nil`;
-    /// never asks for a page. Synchronous, no I/O.
     func residentFocusRow(at position: UInt32) -> FocusRowFfi?
 }
 
-/// A label's own colour, as the user gave it.
-///
-/// Data, not a literal: the FFI hands the label's colour over as `#rrggbb`,
-/// and the pill's dot is the one place a hue other than the accent is drawn
-/// (the Mac pack's "Label dots are the only other hues"). A string that is
-/// not a colour is no colour, and the dot is drawn plain rather than guessed.
+/// Data, not a literal: the FFI hands the colour over as `#rrggbb`. A string that is not a colour
+/// is no colour, and the dot is drawn plain rather than guessed.
 public struct LabelColour: Equatable, Sendable {
     public let red: Double
     public let green: Double
@@ -36,14 +20,8 @@ public struct LabelColour: Equatable, Sendable {
         self.blue = blue
     }
 
-    /// The hue of the accent label dots keep away from (FR-091), in
-    /// degrees. The system blue's until the app reads the user's accent
-    /// (`PostioAppKit`), which it does at launch and on every change.
     nonisolated(unsafe) public static var accentHue: Double = 211
 
-    /// The dot for a label named `name`: its stored colour, else one of its
-    /// own from its name, as GTK draws it (`label_dot_colour`). `nil` only
-    /// for a name the engine could not colour, which it always can.
     public static func of(name: String, stored: String?) -> LabelColour? {
         LabelColour(hex: labelDotColour(name: name, stored: stored, accentHue: accentHue))
     }
@@ -58,29 +36,17 @@ public struct LabelColour: Equatable, Sendable {
     }
 }
 
-/// A binding as the keycap that shows it.
-///
-/// The keymap's own keys (spec 007 C22): `e` and `E` are two different
-/// keys, and a cap that drew both as `E` would be teaching a different
-/// keyboard from the one the resolver reads. So a shifted letter says its
-/// Shift, as the design writes it (`⇧X`, `⇧J ⇧K`, KEYS.md), and a plain
-/// one is itself. A sequence is one cap, its presses spaced (`g o`), as
-/// screen 01 draws it. A chord is drawn with the Mac's glyphs, as the menu
-/// draws it (`⌘K`). A pair (`hints::pair`'s `j/k`) is its two keys spaced
-/// (`j k`, `] [`), and bare arrows, pair or sequence, are one run of glyphs
-/// (`↑↓`, `↑↓←→`), as the design's footers draw them.
-///
-/// **An FFI gap, said here so it is found.** C22 asks for the shared hint
-/// code (`postio_ui::hints::short`) to spell every cap, and the boundary
-/// does not export it; until it does this is the one Swift spelling, and
-/// every cap on the Mac goes through it.
+/// A shifted letter says its Shift (`⇧X`) because `e` and `E` are different keys, and a cap drawing
+/// both as `E` would teach a different
+/// keyboard from the one the resolver reads. A sequence is one cap, presses spaced (`g o`); a chord
+/// uses the Mac's glyphs; bare arrows run together.
+/// An FFI gap: C22 asks for `postio_ui::hints::short` to spell every cap and the boundary does not
+/// export it, so this is the one Swift spelling.
 public enum KeyCapSpelling {
     public static func cap(_ binding: String?) -> String? {
         guard let binding, !binding.isEmpty else { return nil }
         let presses = binding.split(separator: " ").map { press -> [String] in
             let press = String(press)
-            // A pair: each key spelled on its own.
-            // `alt+/` is one key, the slash itself, not a pair.
             let halves = press.split(separator: "/").map(String.init)
             return (halves.count > 1 ? halves : [press]).map(key)
         }
@@ -89,24 +55,17 @@ public enum KeyCapSpelling {
         return presses.map { $0.joined(separator: " ") }.joined(separator: " ")
     }
 
-    /// The arrows' glyphs, which run together when they stand alone.
     private static let arrows: Set<String> = ["↑", "↓", "←", "→"]
 
-    /// One key as its cap spells it.
     private static func key(_ press: String) -> String {
         if press.count == 1 {
-            // A folded Shift (`X` is `shift+x`) says so.
             guard let only = press.first, only.isUppercase, only.isLetter else { return press }
             return "⇧" + press
         }
-        // A popover's own keys (`popover_hints`): Space as its cap says
-        // it, a modifier held for a click as its glyph.
         switch press.lowercased() {
         case "space": return "Space"
-        // Escape and Tab are words on a cap, as every screen of the pack
-        // and KEYS.md spell them ("Esc close", "Tab into the chips"). The
-        // menu's ⎋ and ⇥ are drawn by the system at menu size; at a cap's
-        // 10 pt they are specks. A chord (`shift+Tab`) keeps the glyphs.
+        // Escape and Tab are words on a cap (as KEYS.md spells them); the menu's ⎋ and ⇥ are specks
+        // at a cap's 10 pt. A chord (`shift+Tab`) keeps the glyphs.
         case "escape", "esc": return "Esc"
         case "tab": return "Tab"
         case "alt", "option": return "⌥"
@@ -119,95 +78,60 @@ public enum KeyCapSpelling {
     }
 }
 
-/// One row of Focus's list, as the Mac lays it out.
-///
-/// Built from `FocusRowFfi`, which already carries every word the row
-/// says: the presenters GTK's row uses made them, so the two apps cannot
-/// word a row differently. What is decided here is only layout -- which
-/// of the three shapes a row takes, which pills fit, which keycap an
-/// action draws.
 public struct FocusRowModel: Equatable, Sendable {
-    /// The row's shape, which is also its height: nothing about a row is
-    /// measured, so a 10k-row inbox scrolls without laying text out twice.
+    /// The row's shape is also its height: nothing is measured, so a 10k-row inbox scrolls without
+    /// laying text out twice.
     public enum Layout: Equatable, Sendable {
-        /// Sender, subject, pills, preview, count, time.
         case oneLine
-        /// A marked row: the one line, then the marker's.
         case twoLine
-        /// A digest delivery: the stacked icon, one line.
         case digest
-        /// A thread of two or more messages: the one line, 46 tall, with
-        /// the chevron in its gutter (Design: focus-macos-threads §2).
         case thread
-        /// A message of the expanded thread, drawn under its row.
         case child
     }
 
-    /// The chevron in a thread row's gutter.
     public enum Chevron: Equatable, Sendable {
         case collapsed
         case expanded
     }
 
-    /// One child of an expanded thread, as the words say it.
     public struct Child: Equatable, Sendable {
         public let initials: String
         public let sender: String
-        /// Unread: bold, with an accent dot on the line.
         public let unread: Bool
-        /// "\u{21b3} to Ana", or "not sent" on a draft.
         public let tag: String?
         public let line: String
-        /// The line is a stand-in, drawn quiet.
         public let placeholder: Bool
         public let attachment: Bool
         public let draft: Bool
-        /// The keycaps of the focused child's hint, as the live keymap
-        /// spells them, and what they act on.
         public let hintKeys: [String]
         public let hintLabel: String?
     }
 
-    /// A label pill: its name, and the dot in the label's own colour.
     public struct Pill: Equatable, Sendable {
         public let name: String
         public let colour: LabelColour?
     }
 
-    /// One answer on the marker's line, with the key that does the same.
     public struct Action: Equatable, Sendable {
-        /// The registry command it runs.
         public let command: String
-        /// The button's words, from the FFI.
         public let label: String
-        /// The keycap, from the user's binding; `nil` when it has none.
         public let cap: String?
     }
 
-    /// A marked row's second line.
     public struct Marker: Equatable, Sendable {
-        /// "Invite", "Question", "To-do", "No reply".
         public let chip: String
-        /// "Tue 29 Sep · 10:00–10:45".
         public let date: String?
-        /// The sentence, verbatim, inside quotation marks -- as GTK's row
-        /// draws it.
         public let quoted: String?
-        /// What stands where the actions would: "Accepted", "Past".
         public let status: String?
-        /// The answers, in order.
         public let actions: [Action]
     }
 
-    /// The most pills a row draws (`postio_ui::focus_row::MAX_PILLS`).
     public static let maxPills = 2
 
     public let id: Int64
     public let thread: Int64?
     public let layout: Layout
     public let sender: String
-    /// The address of the sender the column names first: what a click on
-    /// the name asks the popover about.
     public let fromAddress: String?
     public let subject: String
     public let preview: String?
@@ -219,26 +143,16 @@ public struct FocusRowModel: Equatable, Sendable {
     public let sendState: String?
     public let pills: [Pill]
     public let marker: Marker?
-    /// "2 new": drawn as a filled pill in the label colour, never the
-    /// accent. Threads only.
     public let newBadge: String?
-    /// "muted \u{b7} 1": drawn quiet where the new pill would stand.
     public let mutedBadge: String?
-    /// The gutter's chevron; `nil` for a row that is not a thread.
     public let chevron: Chevron?
-    /// What a child row says; `nil` for every other row.
     public let child: Child?
-    /// The day heading drawn above this row, when it is the first of its
-    /// day. Set by `FocusListModel`, the only thing that knows the row
-    /// before.
     public var heading: String?
 
     public init(_ row: FocusRowFfi, heading: String? = nil, binding: (String) -> String?) {
         id = row.id
         thread = row.thread
         layout = Self.layout(of: row)
-        // A thread row names its participants and quotes its latest
-        // message; the sender's popover has nobody to ask about.
         sender = row.threadRow?.participants ?? row.sender
         fromAddress = row.threadRow == nil ? row.fromAddress : nil
         subject = row.subject
@@ -280,7 +194,6 @@ public struct FocusRowModel: Equatable, Sendable {
         self.heading = heading
     }
 
-    /// The shape a row takes, from its kind and whether it is marked.
     public static func layout(of row: FocusRowFfi) -> Layout {
         if row.kind == .digest { return .digest }
         if row.kind == .child { return .child }
@@ -288,16 +201,10 @@ public struct FocusRowModel: Equatable, Sendable {
         return row.threadRow == nil ? .oneLine : .thread
     }
 
-    /// Unread is bold (the Mac pack's global rules).
     public var bold: Bool { unread }
 
-    /// Unread also has the accent dot in the gutter. A marked row says so
-    /// on its second line; a dot there read as new mail. A digest's gutter
-    /// holds its stack.
     public var dot: Bool { unread && layout != .digest && layout != .child }
 
-    /// What VoiceOver says for the row: GTK's row says the same things in
-    /// the same order (`postio-gtk` `list/row.rs`).
     public var accessibilityLabel: String {
         if let child {
             var parts = [child.sender]
@@ -325,48 +232,30 @@ public struct FocusRowModel: Equatable, Sendable {
     }
 }
 
-/// The list's geometry, from screen 01 -- the same numbers GTK's row draws
-/// with (`postio-gtk` `list/row.rs`, `postio_ui::focus_row`).
-///
-/// **An FFI gap.** `postio_ui::focus_row::row_columns` -- where the sender's
-/// column narrows -- is a rule, and the boundary does not export it; these
-/// mirror its constants until it does.
+/// An FFI gap: `postio_ui::focus_row::row_columns` is a rule the boundary does not export, so these
+/// mirror its constants.
 public enum FocusRowMetrics {
-    /// A one-line row (and a digest's).
     public static let oneLine: Double = 40
-    /// A marked row.
     public static let twoLine: Double = 72
-    /// A thread row (Design: focus-macos-threads §2), and a child under it.
     public static let thread: Double = 46
     public static let child: Double = 38
-    /// The gutter is 34 wide: the unread dot, then the chevron.
     public static let dotCentre: Double = 15
     public static let chevronCentre: Double = 31
-    /// The child's vertical line, its width, and its avatar.
     public static let childLineX: Double = 25
     public static let childLineWidth: Double = 1.5
     public static let childAvatarX: Double = 69
     public static let childAvatar: Double = 20
-    /// The day heading's band above the first row of a day.
     public static let heading: Double = 32
-    /// The centre of the gutter's dot, box or icon.
     public static let gutterCentre: Double = 30
-    /// The centres of a two-line row's lines.
     public static let firstLine: Double = 22
     public static let secondLine: Double = 51
-    /// Where the sender's column starts, and how wide it is at most and at
-    /// least (`SENDER_X`, `SENDER_WIDTH`, `SENDER_MIN`).
     public static let senderX: Double = 56
     public static let senderWidth: Double = 222
     public static let senderMin: Double = 120
-    /// The room the subject keeps before the sender gives any up.
     public static let subjectRoom: Double = 260
-    /// The gap between things on a line, and the room the right edge keeps.
     public static let gap: Double = 12
     public static let trailing: Double = 24
 
-    /// A row's height: its layout's, plus the heading's band when it starts
-    /// a day. Fixed per shape, so nothing is ever measured.
     public static func height(_ layout: FocusRowModel.Layout, headed: Bool) -> Double {
         let body: Double
         switch layout {
@@ -378,9 +267,6 @@ public enum FocusRowMetrics {
         return headed ? body + heading : body
     }
 
-    /// Where the subject starts in a row `width` wide, and where a marked
-    /// row's second line does (under the subject, or under the sender once
-    /// the sender's column has narrowed).
     public static func columns(width: Double) -> (senderWidth: Double, subjectX: Double, markerX: Double) {
         let spare = width - senderX - gap - subjectRoom - trailing
         let sender = min(max(spare, senderMin), senderWidth)
@@ -389,78 +275,51 @@ public enum FocusRowMetrics {
     }
 }
 
-/// Focus's list, as the table reads it.
-///
-/// The count and the rows are the engine's: this holds no array of rows,
-/// only what drawing needs without asking -- each row's shape once it has
-/// been seen, so `heightOfRow` (which `NSTableView` asks for every row) is
-/// answered without a page fetch, and the day each row is on, so a row
-/// knows whether it starts one.
-///
-/// **Day headings are a band on a row, not rows of their own.** A heading
-/// is drawn over the first row of its day, so table rows stay one-to-one
-/// with the FFI's positions. Headings as separate rows would need every
-/// page's days to know how many rows the table has, and a 10k inbox would
-/// have to be read to be counted.
+/// Holds no array of rows, only what drawing needs without asking: each row's shape once seen, so
+/// `heightOfRow` is answered
+/// without a page fetch, and the day each row is on. Day headings are a band on a row, not rows of
+/// their own: separate rows
+/// would need every page's days to count the table, and a 10k inbox would have to be read to be
+/// counted.
 @MainActor
 public final class FocusListModel {
-    /// The FFI's page size: `FocusPageReady(page)` covers this many rows.
     public static let pageSize: UInt32 = 50
 
     private let source: FocusRowSource
     private let binding: (String) -> String?
 
-    /// How many rows the list draws.
     public private(set) var count = 0
 
-    /// The controller's cursor, selection and heading, as its intents left
-    /// them (`FocusIntents`). Read here; written only by the intents.
     public let focus: FocusIntents
 
-    /// Where the keyboard is: the first row when the list opens (C30), and
-    /// nothing in an empty list. The controller's (`FocusIntents`).
     public var cursor: Int? { focus.cursor }
 
-    /// The messages marked, drawn as the checked box in the gutter.
     public var selected: Set<Int64> { focus.selected }
 
-    /// Whether the row for `message` draws the checked box: marked by id,
-    /// or everything selected (C19).
     public func isPicked(_ message: Int64) -> Bool { focus.isPicked(message) }
 
-    /// What has been learned about a row: its shape, and its day.
     private struct Shape {
         let layout: FocusRowModel.Layout
         let day: String
     }
     private var shapes: [Int: Shape] = [:]
 
-    /// The thread open in place: where its row is, and how many children
-    /// sit under it. The table's positions count them (display positions),
-    /// the engine's pages do not.
     public struct Splice: Equatable, Sendable {
         public let anchor: Int
         public let children: Int
-        /// The children's positions.
         public var range: Range<Int> { (anchor + 1)..<(anchor + 1 + children) }
     }
     public private(set) var open: Splice?
 
-    /// Whether the list was re-read while a thread was open, and no thread
-    /// has been opened since. The session draws its rows by its own splice,
-    /// and it says a re-read, the fold where the thread's row was and the
-    /// splice where the row went from one landing: by the time the re-read
-    /// is drawn here, the session's rows are already the new ones while
-    /// `open` still names the old. Until a splice brings the two together
-    /// again, the rows on screen are not where `open` says, so the fold and
-    /// the splice redraw the list rather than slide rows drawn under the
-    /// other splice -- which left a row between the two anchors drawing a
-    /// child, and asked the table to remove rows it no longer had (#2134).
+    /// Whether the list was re-read while a thread was open and none has been opened since. The
+    /// session draws its rows by its own
+    /// splice, so by the time a re-read is drawn here `open` names the old thread; until a splice
+    /// reconciles them the fold and splice
+    /// redraw the list rather than slide rows (#2134).
     public private(set) var rereadWhileOpen = false
 
-    /// Keycaps by command, until the keymap changes. A binding lookup
-    /// clones the whole keymap on the other side, and the table draws a
-    /// row's actions on every redraw.
+    /// A binding lookup clones the whole keymap on the other side, and the table draws a row's
+    /// actions on every redraw.
     private var caps: [String: String?] = [:]
 
     public init(
@@ -473,18 +332,10 @@ public final class FocusListModel {
         self.binding = binding
     }
 
-    /// The list changed over, was re-read, or changed length
-    /// (`FocusListChanged`): everything learned is about a list that is
-    /// gone.
-    ///
-    /// **A re-read is not a new list.** The rows the table had measured are
-    /// measured again from whatever of them is resident, before anything is
-    /// drawn: a delete re-reads the page in place and tells the table the
-    /// count the moment it lands, and a table that forgot every shape laid
-    /// out once at one-line heights -- scrolling on that, drawing the day
-    /// headings over bare rows -- until `FocusPageReady` set it right. A
-    /// shape whose row is not resident keeps its last answer (the page
-    /// re-reads and replaces it); none is asked for, so nothing is paged.
+    /// A re-read is not a new list: measured rows are measured again from whatever is resident
+    /// before anything is drawn, since a
+    /// table that forgot every shape laid out once at one-line heights. A shape whose row is not
+    /// resident keeps its last answer; none is asked for, so nothing is paged.
     public func reset(total: UInt32) {
         count = Int(total)
         if open != nil { rereadWhileOpen = true }
@@ -498,14 +349,9 @@ public final class FocusListModel {
             }
         }
         shapes = kept
-        // A re-read keeps the keyboard where it was, inside the list; an
-        // empty list has nowhere for it to be.
         focus.listResized(count: count)
     }
 
-    /// The controller opened the thread at row `anchor`: `children` rows now
-    /// sit after it. Everything learned about the rows below moves down with
-    /// them. Answers the positions that are new. Replaces what was open.
     @discardableResult
     public func spliced(anchor: Int, children: Int) -> Range<Int> {
         _ = unspliced()
@@ -518,8 +364,6 @@ public final class FocusListModel {
         return splice.range
     }
 
-    /// The thread folded: its children are gone and the rows below move up.
-    /// Answers the positions that went, if anything was open.
     @discardableResult
     public func unspliced() -> Range<Int>? {
         guard let splice = open else { return nil }
@@ -534,26 +378,22 @@ public final class FocusListModel {
         return gone
     }
 
-    /// Where the list's `row`th row is drawn.
     private func display(row: Int) -> Int {
         guard let open, row > open.anchor else { return row }
         return row + open.children
     }
 
-    /// `[keys]` changed: every cap may spell something else now.
     public func keymapChanged() {
         caps = [:]
     }
 
-    /// The row at `index`, or `nil` while its page is on its way.
     public func row(at index: Int) -> FocusRowModel? {
         guard index >= 0, index < count, let row = source.focusRow(at: UInt32(index)) else {
             return nil
         }
         learn(row, at: index)
-        // The row before decides whether this one starts a day. On the
-        // same page it is resident; across a page boundary asking for it is
-        // what fetches that page, and `pageArrived` redraws this row then.
+        // On the same page the row before is resident; across a page boundary asking for it fetches
+        // that page, and `pageArrived` redraws this row then.
         if index > 0, shapes[index - 1] == nil,
            let before = source.focusRow(at: UInt32(index - 1))
         {
@@ -564,9 +404,6 @@ public final class FocusListModel {
         }
     }
 
-    /// The row's height, from what is known of it, without asking the
-    /// engine. A row not seen yet is drawn as a one-liner until its page
-    /// says otherwise.
     public func height(at index: Int) -> Double {
         let layout: FocusRowModel.Layout =
             open?.range.contains(index) == true ? .child : (shapes[index]?.layout ?? .oneLine)
@@ -574,19 +411,12 @@ public final class FocusListModel {
         return FocusRowMetrics.height(layout, headed: headed)
     }
 
-    /// The heading drawn over the row at `index`: `!`'s one heading over
-    /// the first row while it narrows the list (screen 03), else the day's
-    /// over the first row of each day.
     private func heading(at index: Int, day: String) -> String? {
         if let single = focus.heading { return index == 0 ? single : nil }
         return startsADay(index) == true ? day : nil
     }
 
-    /// A page landed: learn its rows, and say which rows to redraw -- the
-    /// page's own, and the next page's first, whose heading depended on
-    /// this page's last row.
     public func pageArrived(_ page: UInt32) -> IndexSet {
-        // The page counts the list's rows; the table counts the children.
         let rows = count - (open?.children ?? 0)
         let firstRow = Int(page * Self.pageSize)
         let endRow = min(firstRow + Int(Self.pageSize), rows)
@@ -601,8 +431,6 @@ public final class FocusListModel {
         return changed
     }
 
-    /// Whether the row at `index` is the first of its day: `nil` while that
-    /// cannot be known, because one of the two rows has not been seen.
     private func startsADay(_ index: Int) -> Bool? {
         if index == 0 { return true }
         guard let this = shapes[index], let before = shapes[index - 1] else { return nil }

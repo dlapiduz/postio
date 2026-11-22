@@ -3,20 +3,10 @@ import Testing
 
 @testable import PostioKit
 
-/// The first-run wizard (canvas 09): an address, a password, what was found,
-/// and `Connect`, which signs in before anything is written.
-///
-/// The boundary is stood in for by three closures, so what is asserted is
-/// the model's decisions -- when to look an address up, when `Connect` may
-/// be pressed, what a refusal does to the screen -- and not the network.
-/// That the boundary's answers are the desktop's is `postio-ffi`'s
-/// `first_run` suite.
 @MainActor
 @Suite struct FirstRunModelTests {
     private let address = "ada@ostwald.invalid"
 
-    /// A boundary that answers `card` to every lookup and `complaint` to
-    /// every connect, and remembers what it was asked.
     @MainActor
     final class Boundary {
         var card: DiscoveredFfi
@@ -87,9 +77,8 @@ import Testing
     }
 
     @Test func typingAnAddressLooksNothingUp() {
-        // Each lookup is DNS and HTTPS to the address's domain. Per keystroke
-        // that would announce every prefix of somebody's address to whoever
-        // answers for `a`, `ad`, `ada@o`...
+        // Each lookup is DNS and HTTPS to the address's domain; per keystroke it would announce
+        // every prefix of an address.
         let boundary = Boundary(card: Self.found())
         let model = boundary.model()
         for prefix in ["a", "ad", "ada@", "ada@ostwald", address] {
@@ -125,8 +114,6 @@ import Testing
     }
 
     @Test func aGuessOpensTheServersForChecking() async {
-        // postio-69: a custom domain gets the common names to start from, in
-        // an open form, never the "Found settings" card.
         let boundary = Boundary(card: Self.guessed())
         let model = boundary.model()
         model.address = address
@@ -138,8 +125,8 @@ import Testing
     }
 
     @Test func changingTheAddressTakesTheCardAway() async {
-        // A card for the old domain under a new address is a claim about
-        // the wrong servers, and Connect would dial them.
+        // A card for the old domain under a new address is a claim about the wrong servers, and
+        // Connect would dial them.
         let boundary = Boundary(card: Self.found())
         let model = boundary.model()
         model.address = address
@@ -170,8 +157,7 @@ import Testing
     }
 
     @Test func connectLooksTheAddressUpWhenNobodyLeftTheField() async {
-        // Return pressed straight from the password field: the lookup has
-        // not run, and signing in to empty servers is not the answer.
+        // Return from the password field before the lookup ran must not sign in to empty servers.
         let boundary = Boundary(card: Self.found())
         let model = boundary.model()
         model.address = address
@@ -188,9 +174,6 @@ import Testing
     }
 
     @Test func theNameTypedIsTheNameSavedAndBlankIsAllowed() async {
-        // GTK asks for it first (5639e0ff): it is the `From` header and the
-        // sidebar's label. Optional -- blank means the address -- so it does
-        // not hold Connect back.
         let boundary = Boundary(card: Self.found())
         let model = boundary.model()
         model.address = address

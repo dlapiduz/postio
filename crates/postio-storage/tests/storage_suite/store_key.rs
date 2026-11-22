@@ -1,14 +1,5 @@
-//! The store's master key and the subkeys derived from it — ADR 0014 Q3.
-//!
-//! Nothing here touches a keyring: the key *service* (fetch it, or mint one
-//! and keep it) is `postio-session`'s, because that is where the
-//! `SecretStore` seam lives. This is the material itself, and what has to be
-//! true of it whatever fetched it.
-
 use postio_storage::key::{Purpose, StoreKey};
 
-/// A key with known bytes, so a derivation can be asserted against a fixed
-/// value rather than against itself.
 fn fixed() -> StoreKey {
     StoreKey::from_bytes([7u8; 32])
 }
@@ -29,10 +20,8 @@ fn a_generated_key_is_thirty_two_bytes_and_not_the_same_twice() {
 
 #[test]
 fn a_key_round_trips_through_the_text_a_keyring_can_hold() {
-    // The Secret Service seam stores a `Password`, which is a string. Hex
-    // rather than base64 because the alphabet has no case or padding
-    // questions and a keyring browser showing it cannot mistake it for
-    // anything a person typed.
+    // Hex, not base64: no case or padding questions, and a keyring browser cannot mistake it for
+    // something typed.
     let key = StoreKey::generate();
 
     let restored = StoreKey::from_hex(&key.to_hex()).expect("its own hex parses");
@@ -42,9 +31,8 @@ fn a_key_round_trips_through_the_text_a_keyring_can_hold() {
 
 #[test]
 fn text_that_is_not_a_key_is_refused_rather_than_padded() {
-    // A truncated or corrupted keyring entry must not silently become a
-    // *different* valid key: that would open a store that decrypts to
-    // nothing and look like data loss rather than a bad key.
+    // A corrupted keyring entry must not become a different valid key: that would look like data
+    // loss.
     for wrong in [
         "",
         "07",
@@ -62,8 +50,6 @@ fn text_that_is_not_a_key_is_refused_rather_than_padded() {
 
 #[test]
 fn subkey_derivation_is_deterministic() {
-    // The database subkey has to be the same on every open or the store
-    // stops opening.
     let key = fixed();
 
     assert_eq!(
@@ -74,9 +60,6 @@ fn subkey_derivation_is_deterministic() {
 
 #[test]
 fn the_three_purposes_are_cryptographically_separated() {
-    // ADR 0014 Q3: the database, the blob contents and the blob ids are
-    // separated without three keyring entries. Sharing one subkey between
-    // them would mean a weakness in one reaching the others.
     let key = fixed();
     let derived: Vec<String> = [Purpose::Database, Purpose::BlobContent, Purpose::BlobId]
         .into_iter()
@@ -98,13 +81,9 @@ fn the_three_purposes_are_cryptographically_separated() {
 
 #[test]
 fn the_derivation_contexts_are_the_ones_the_adr_named() {
-    // Test vectors, pinned. These strings are part of the on-disk format as
-    // surely as the file layout is: change one and every existing store's
-    // database subkey changes with it, which means it stops opening.
-    //
-    // Computed here from BLAKE3's own `derive_key` rather than pasted, so
-    // the assertion is "the context string is this" and not "the output was
-    // whatever it was on the day this was written".
+    // Test vectors, pinned: these strings are part of the on-disk format, and changing one stops
+    // every
+    // existing store opening. Computed from BLAKE3's `derive_key`, not pasted.
     let key = fixed();
     for (purpose, context) in [
         (Purpose::Database, "postio db"),
@@ -126,11 +105,8 @@ fn hex(bytes: &[u8; 32]) -> String {
 
 #[test]
 fn no_key_material_survives_a_debug_print() {
-    // The rule `secret.rs` already keeps for passwords, applied to the one
-    // secret that opens everything. A `Debug` that dumps the key turns any
-    // `dbg!`, any `?err`, any panic message into a full compromise of the
-    // store — and it is the kind of thing that gets added by accident when
-    // somebody derives `Debug` on a struct that happens to hold one.
+    // A `Debug` that dumps the key turns any `dbg!` or panic message into a full compromise of the
+    // store.
     let key = fixed();
     let subkey = key.derive(Purpose::Database);
 

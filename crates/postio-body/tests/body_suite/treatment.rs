@@ -1,22 +1,12 @@
-//! The two treatments against the corpus (specs/007-postio-focus T210,
-//! T211): the mail the design handoff draws, and the hostile mail that must
-//! reach neither treatment with anything live in it.
-//!
-//! The unit tests in `src/treatment.rs` prove each trigger on markup written
-//! for it. These prove the rule on real-shaped mail, where a trigger has to
-//! be found among everything else a sender's client wrote.
-
 use postio_body::sanitize::{self, RemoteImages, Sanitized};
 use postio_body::treatment::{self, Treatment, Trigger};
 use postio_model::message::MessageBody;
 use postio_model::test_corpus;
 
-/// A fixture's body, as the reader gets it.
 fn body(name: &str) -> MessageBody {
     postio_model::mime::parse(test_corpus::load(name).bytes()).body
 }
 
-/// A fixture's HTML part, sanitised the way the reader gets it.
 fn sanitized(name: &str) -> Sanitized {
     let body = body(name);
     let html = body
@@ -26,9 +16,6 @@ fn sanitized(name: &str) -> Sanitized {
     sanitize::sanitize_body(html, RemoteImages::Blocked)
 }
 
-/// Plain text is app colours by the reader's rule, which never classifies
-/// it (`postio_ui::reader::document::body_html_treated`); the fixture is
-/// plain text only, which is what makes it the case.
 #[test]
 fn plain_text_has_no_html_to_classify() {
     let body = body("plain-text-simple");
@@ -71,7 +58,6 @@ fn a_receipt_is_paper_by_its_layout_alone() {
 
 #[test]
 fn the_corpus_rendering_fixtures_land_where_their_shape_says() {
-    // Correspondence: a white page, dark text on nothing.
     for name in ["html-white-page-reply", "html-dark-text-no-background"] {
         assert_eq!(
             treatment::classify(&sanitized(name)),
@@ -79,7 +65,6 @@ fn the_corpus_rendering_fixtures_land_where_their_shape_says() {
             "{name}"
         );
     }
-    // Designed mail: coloured cards and a dark footer in layout tables.
     for name in ["html-designed-three-column", "html-newsletter"] {
         assert_eq!(
             treatment::classify(&sanitized(name)),
@@ -122,9 +107,6 @@ fn app_colours_takes_the_office_clients_ink_and_type_and_keeps_its_red() {
     }
 }
 
-/// Neither treatment is handed anything that runs or reaches the network:
-/// both start from the sanitiser's output, and this holds it to that on the
-/// corpus's hostile mail (T210's "sanitise every HTML body").
 #[test]
 fn the_sanitiser_leaves_neither_treatment_anything_live() {
     for name in [

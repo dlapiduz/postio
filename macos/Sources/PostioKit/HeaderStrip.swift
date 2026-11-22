@@ -2,15 +2,7 @@ import Foundation
 import PostioFFI
 import SwiftUI
 
-/// What the header strip under the toolbar says (screen 01): the place
-/// and its counts, the Has action toggle, and on the right the filtered
-/// and digest counts while they say something (C10). Every keycap is the
-/// user's binding for the command the control runs.
-///
-/// The words are the engine's (`focusStrip`, composed by `postio_ui`'s
-/// strip functions as GTK's strip is): this holds none of its own.
 public struct HeaderStripWords: Equatable, Sendable {
-    /// The command each control runs: the registry's ids.
     public enum Command {
         public static let folders = "go_to_folders"
         public static let hasAction = "toggle_has_action"
@@ -20,21 +12,15 @@ public struct HeaderStripWords: Equatable, Sendable {
 
     public let place: String
     public let placeCap: String?
-    /// "312 · 41 unread", or `nil` before the counts arrive.
     public let counts: String?
-    /// "Has action · 7", or "Has action" before the counts arrive.
     public let hasAction: String
     public let hasActionCap: String?
-    /// Whether the toggle is on: the only time it is drawn in the accent.
     public let hasActionOn: Bool
-    /// "186 filtered today", only while something was.
     public let filtered: String?
     public let filteredCap: String?
-    /// "4 digest rules", only while there are some.
     public let digestRules: String?
     public let digestRulesCap: String?
 
-    /// `place` is the list's, as `FocusPlace` last named it.
     public init(
         strip: FocusStripFfi?, place: String = "Inbox", hasActionOn: Bool,
         binding: (String) -> String?
@@ -52,14 +38,9 @@ public struct HeaderStripWords: Equatable, Sendable {
     }
 }
 
-/// The header strip, drawn: SwiftUI over `HeaderStripWords` (R10).
-///
-/// Semantic colours only. The accent is the toggle's, and only while it is
-/// on (FR-017); off, it stands on the quaternary fill.
-///
-/// `placeAnchor` is drawn behind Inbox ▾: the AppKit layer puts a view
-/// there for the folders popover to hang from (`PlacesAnchor`), which this
-/// target cannot name.
+/// `placeAnchor` is drawn behind Inbox ▾: the AppKit layer puts a view there for the folders
+/// popover to hang from, which this target cannot name.
+/// Semantic colours only; the accent is the toggle's, and only while it is on.
 public struct HeaderStrip<PlaceAnchor: View>: View {
     let words: HeaderStripWords
     let run: (String) -> Void
@@ -106,7 +87,6 @@ public struct HeaderStrip<PlaceAnchor: View>: View {
                     RoundedRectangle(cornerRadius: 6).fill(
                         words.hasActionOn ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.quaternary))
                 )
-                // On, it is outlined in the accent as well (screen 03).
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(.tint, lineWidth: 1)

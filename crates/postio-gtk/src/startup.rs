@@ -1,14 +1,8 @@
-//! Opening the store behind a window, and what Focus holds once it is open.
-//!
-//! One Postio at a time has the store (ADR 0041). Focus opens it itself, on a
-//! thread, while its window is already on screen and says what it waits for;
-//! then it starts the store's host in this process, turns Focus mode on in
-//! it, connects to it as a client, and shows the inbox. Sync starts after the
-//! first frame, because the mail is already on disk and startup must never
-//! wait on a server (US1 scenario 1).
-//!
-//! If another Postio has the store, the window says so in the sentence every
-//! app uses, and "Try again" opens it once it has been closed (FR-003).
+//! Opening the store behind a window. One Postio at a time has the store (ADR 0041); Focus opens it
+//! on a thread while its window is already on screen,
+//! then starts the host and shows the inbox. Sync starts after the first frame, since startup must
+//! never wait on a server.
+//! If another Postio has the store, the window says so and "Try again" opens it once it is closed.
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -27,57 +21,42 @@ use postio_widgets::startup::{Phase, Timeline};
 
 use crate::window::FocusWindow;
 
-/// How long after the first frame the store's upkeep starts -- the body
-/// index, the header repair, the disk reclaim -- so the first pages have the
-/// runtime to themselves. The desktop app's and the terminal's delay.
+/// So the first pages have the runtime to themselves.
 const IDLE_PASSES_AFTER_FIRST_FRAME: std::time::Duration = std::time::Duration::from_millis(750);
 
-/// The store's host and Focus's hold on it, for as long as the window lives.
-///
-/// Dropping it stops the host's runtime. Stop it with [`Session::stop`] first,
-/// as the app does on its way out, so the engines finish their writes and the
-/// clean-shutdown mark is left.
+/// Dropping it stops the host's runtime. Stop it with [`Session::stop`] first, so the engines
+/// finish their writes and the clean-shutdown mark is left.
 pub struct Session {
-    /// Shared only with the config follower, which holds it weakly: the
-    /// session is still what keeps the host, and dropping it stops it.
+    /// Shared only with the config follower, which holds it weakly.
     host: std::rc::Rc<Host>,
     client: Client,
     state: SharedState,
     focus: FocusHandle,
     syncing: Cell<bool>,
-    /// The agent socket, while this window's host answers agents (ADR
-    /// 0041, amended 2026-10-14).
     agents: std::cell::RefCell<Option<postio_mcp::socket::Listener>>,
 }
 
 impl Session {
-    /// The client the window reads and writes through.
     pub fn client(&self) -> &Client {
         &self.client
     }
 
-    /// What the host aims this window's commands with: its selection.
     pub fn state(&self) -> &SharedState {
         &self.state
     }
 
-    /// Focus mode in the host: whether its tasks are running.
     pub fn focus(&self) -> &FocusHandle {
         &self.focus
     }
 
-    /// The host itself.
     pub fn host(&self) -> &Host {
         &self.host
     }
 
-    /// Whether sync has been started.
     pub fn syncing(&self) -> bool {
         self.syncing.get()
     }
 
-    /// Bring every account's connection up, and the store's upkeep a moment
-    /// later. Once: a second call does nothing.
     pub fn start_syncing(&self) {
         if self.syncing.replace(true) {
             return;
@@ -87,16 +66,8 @@ impl Session {
             .start_idle_passes_after(IDLE_PASSES_AFTER_FIRST_FRAME);
     }
 
-    /// Follow `config.toml` at `path` while the window lives (US7 scenario
-    /// 1): a saved `[keys]` reaches the keyboard, every keycap and the key
-    /// map at once; a saved `[focus]` reaches the host's Focus mode -- its
-    /// filing and its digests -- and what the empty inbox names; a saved
-    /// `[compose]` places the next signature, `[reader]` zooms the open
-    /// message, and `[storage]` brings the store under its new ceiling
-    /// (T235). A file
-    /// that does not validate changes nothing, and the last good keys stay
-    /// (`postio_widgets::present::config`). `false` when the file cannot be
-    /// watched: edits then wait for a restart.
+    /// A file that does not validate changes nothing, and the last good keys stay. `false` when the
+    /// file cannot be watched: edits then wait for a restart.
     pub fn follow_config(&self, window: &FocusWindow, path: &std::path::Path) -> bool {
         let service = postio_core::config::ConfigService::load(path);
         let window = window.downgrade();
@@ -119,7 +90,6 @@ impl Session {
                 host.enable_focus(app_setup(focus.clone(), Some(service.path())));
                 window.set_focus_config(host.wiring().focus.overlaid(&focus));
             }
-            // What used to wait for a restart (T235).
             if update.changed.compose {
                 window.set_compose_config(service.config().compose.clone());
             }
@@ -132,8 +102,7 @@ impl Session {
                     service.config().storage.max_bytes,
                 );
             }
-            // Whichever save this was -- Settings' own, or the editor's --
-            // a file that loads without error is what Settings' "Revert
+            // Whichever save this was, a file that loads without error is what Settings' "Revert
             // file" goes back to.
             if service.status().is_valid()
                 && let Ok(text) = std::fs::read_to_string(service.path())
@@ -144,17 +113,13 @@ impl Session {
         })
     }
 
-    /// Stop the engines and mark a clean end, before the host is dropped.
     pub fn stop(&self) {
         // Agents first: nothing answers them once the host has stopped.
         self.agents.borrow_mut().take();
         self.host.stop();
     }
 
-    /// Answer agents' calls on the socket beside the store at `store`, the
-    /// `[mcp]` of `config_path` deciding what they may read and do, while
-    /// this session lasts. Only the app that opened the store does: a test
-    /// or a demo window is no one's to answer for.
+    /// Only the app that opened the store does: a test or a demo window is no one's to answer for.
     pub fn answer_agents(&self, store: &std::path::Path, config_path: Option<&std::path::Path>) {
         match postio_mcp::socket::listen(
             postio_mcp::socket::path_for(store),
@@ -170,8 +135,6 @@ impl Session {
     }
 }
 
-/// Focus mode as the app sets it up: `focus`, the file it was read from, and
-/// the remote-image list the senders' treatments move out of, once.
 fn app_setup(
     focus: postio_config::FocusConfig,
     config_path: Option<&std::path::Path>,
@@ -180,12 +143,10 @@ fn app_setup(
         .with_remote_images_path(postio_ui::allowlist::RemoteImageAllowList::path())
 }
 
-/// Let every reader of the app look a sender's treatment up in the store,
-/// where the person's choice is kept, and keep a new one there.
 fn keep_treatments_in_the_store(host: &Host, client: &postio_client::Client) {
     use postio_body::treatment::Treatment;
-    // A choice for one address is the person's, so it covers their others:
-    // after keeping it, the host's list is read again and the table follows.
+    // A choice for one address covers the person's others: after keeping it, the host's list is
+    // read again and the table follows.
     let (refreshed, hear) = async_channel::unbounded::<Vec<(String, String)>>();
     let (saver, runtime) = (client.clone(), host.runtime());
     let table = std::rc::Rc::new(postio_ui::sender_treatments::Remembered::new(
@@ -203,8 +164,7 @@ fn keep_treatments_in_the_store(host: &Host, client: &postio_client::Client) {
             });
         },
     ));
-    // What the host read with the rules, as the window opened: no read of
-    // its own, which the window's opening budget would count.
+    // No read of its own, which the window's opening budget would count.
     table.replace(host.wiring().focus.treatments());
     let following = std::rc::Rc::clone(&table);
     glib::spawn_future_local(async move {
@@ -215,8 +175,6 @@ fn keep_treatments_in_the_store(host: &Host, client: &postio_client::Client) {
     postio_widgets::reader::use_store_treatments(Some(table));
 }
 
-/// Hand the window `[focus]` again whenever a verb changes what people
-/// decided, which no change to `config.toml` announces.
 fn follow_what_people_decided(host: &Host, window: &FocusWindow) {
     let (told, heard) = async_channel::unbounded::<postio_config::FocusConfig>();
     host.wiring().focus.watch(std::sync::Arc::new(move |focus| {
@@ -233,18 +191,12 @@ fn follow_what_people_decided(host: &Host, window: &FocusWindow) {
     });
 }
 
-/// Take a host over an open store and show its inbox in `window`.
-///
-/// Focus mode first, before anything could sync: the filing pass has to be
-/// in every engine before its first pass (contracts/engine.md). Then Focus
-/// connects as the client it is, and the window reads through it. Nothing
-/// here dials a server; [`Session::start_syncing`] does, after the first
-/// frame.
+/// Focus mode first, before anything could sync: the filing pass has to be in every engine before
+/// its first pass. Nothing here dials a server.
 pub fn adopt(window: &FocusWindow, host: Host, config: &postio_config::Config) -> Session {
     adopt_at(window, host, config, None)
 }
 
-/// [`adopt`], for a store opened under the `config.toml` at `config_path`.
 pub fn adopt_at(
     window: &FocusWindow,
     host: Host,
@@ -254,8 +206,6 @@ pub fn adopt_at(
     adopt_from(window, host, config, config_path, None)
 }
 
-/// [`adopt_at`], for a store read from the file at `store`, beside which
-/// `postio-mcp` keeps the access log Settings shows (#1832).
 pub fn adopt_from(
     window: &FocusWindow,
     host: Host,
@@ -267,15 +217,13 @@ pub fn adopt_from(
     if let Some(timeline) = &timeline {
         timeline.mark(Phase::Account);
     }
-    // Focus's corrections (stop markers, never-filter, digest rules) are
-    // written to this file: the host has to know where it is.
+    // The host has to know where the file is: Focus's corrections are written to it.
     let focus = host.enable_focus(app_setup(config.focus.clone(), config_path));
     let host = std::rc::Rc::new(host);
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
-    // What people decided about senders lives in the store (ADR 0048): the
-    // reader looks treatments up there, and the window follows the digests,
-    // pins and markers the file no longer holds.
+    // What people decided about senders lives in the store (ADR 0048): the reader looks treatments
+    // up there.
     keep_treatments_in_the_store(&host, &client);
     follow_what_people_decided(&host, window);
     window.set_focus_config(
@@ -289,8 +237,6 @@ pub fn adopt_from(
     window.set_reader_config(&config.reader);
     window.set_remote_runtime(host.runtime());
     window.set_config_path(config_path.map(std::path::Path::to_path_buf));
-    // What Settings' connection test and token-expiry line read, from this
-    // process (T234).
     window.set_settings_seams(crate::settings::Seams {
         runtime: host.runtime(),
         secrets: host.wiring().secrets.clone(),
@@ -332,10 +278,6 @@ pub fn adopt_from(
             },
         )
     });
-    // What a first run with no account brings up once one is saved (T171):
-    // the same `start_syncing` `Session::start_syncing` calls after the
-    // first frame, reachable from the window that just gained an account
-    // rather than through the session it does not hold.
     window.set_start_syncing({
         let host = std::rc::Rc::downgrade(&host);
         std::rc::Rc::new(move || {
@@ -349,7 +291,6 @@ pub fn adopt_from(
         state.clone(),
         postio_core::Keymap::resolve(&config.keys),
     );
-    // The inbox is fed; the frame after this is the one with mail in it.
     if let Some(timeline) = &timeline {
         timeline.mark(Phase::Feeds);
         postio_widgets::startup::report_usable(window, timeline);
@@ -364,19 +305,12 @@ pub fn adopt_from(
     }
 }
 
-/// What the opening thread says, in the order it says it: one channel, so a
-/// stage can never arrive after the answer and put the plate back over mail.
+/// One channel, so a stage can never arrive after the answer and put the plate back over mail.
 pub enum Progress {
-    /// What the store is being waited on for now.
     Stage(Waiting),
-    /// The host over the open store, or why there is none and what gets
-    /// past it.
     Done(Result<Host, Refusal>),
 }
 
-/// How Focus opens its store: under which `config.toml`, where the store
-/// is, and the keyring its key is in. Opening again and starting over are
-/// both done through it, so neither can reach a different store.
 #[derive(Clone)]
 pub struct Opener {
     config_path: Option<PathBuf>,
@@ -385,7 +319,6 @@ pub struct Opener {
 }
 
 impl Opener {
-    /// This installation's store, under the `config.toml` at `config_path`.
     pub fn new(
         config_path: Option<PathBuf>,
         secrets: Arc<dyn postio_account::secret::SecretStore>,
@@ -393,7 +326,6 @@ impl Opener {
         Opener::at(config_path, postio_session::paths::store_path(), secrets)
     }
 
-    /// The store at `store`: a suite's, one per case.
     pub fn at(
         config_path: Option<PathBuf>,
         store: PathBuf,
@@ -406,15 +338,11 @@ impl Opener {
         }
     }
 
-    /// The `config.toml` this store is opened under.
     pub fn config_path(&self) -> Option<&std::path::Path> {
         self.config_path.as_deref()
     }
 
-    /// Read the keyring and open the store on a thread of its own,
-    /// reporting as it goes. A thread, not the main loop: a keyring prompt
-    /// can hold it for half a minute, and the window has to go on drawing
-    /// meanwhile.
+    /// A thread, not the main loop: a keyring prompt can hold it for half a minute.
     pub fn open_on_a_thread(&self) -> async_channel::Receiver<Progress> {
         // Unbounded: a bounded sender would block this thread on a main loop
         // that is busy drawing.
@@ -435,10 +363,7 @@ impl Opener {
         receiver
     }
 
-    /// Set the store aside and start a fresh one in its place, carrying the
-    /// accounts across (`postio_session::start_over`), on a thread of its
-    /// own for the same reason the open is. Answers where the old one went,
-    /// or the sentence saying why it could not be done.
+    /// On a thread for the same reason the open is.
     pub fn start_over_on_a_thread(
         &self,
     ) -> async_channel::Receiver<Result<postio_session::start_over::StartedOver, String>> {
@@ -462,7 +387,6 @@ impl Opener {
     }
 }
 
-/// [`Opener::open_on_a_thread`] for this installation's store.
 pub fn open_on_a_thread(
     config_path: Option<PathBuf>,
     secrets: Arc<dyn postio_account::secret::SecretStore>,
@@ -470,15 +394,8 @@ pub fn open_on_a_thread(
     Opener::new(config_path, secrets).open_on_a_thread()
 }
 
-/// Open the store behind `window`, which is already on screen, and show the
-/// inbox once it is open -- or the sentence for why not, with the way past
-/// it: "Try again" for what can pass, starting over for a store no
-/// migration reaches.
-///
-/// `progress` is an open already under way (`Opener::open_on_a_thread`),
-/// started before GTK was; `opener` starts another, for the retry, and
-/// starts the store over. `opened` is called with the session once there
-/// is one.
+/// `progress` is an open already under way, started before GTK; `opener` starts another, for the
+/// retry.
 pub fn open(
     window: &FocusWindow,
     progress: async_channel::Receiver<Progress>,
@@ -489,9 +406,6 @@ pub fn open(
     let window = window.clone();
     glib::spawn_future_local(async move {
         let mut answer = Err(Refusal::try_again(
-            // The thread went away without answering: a bug rather than a
-            // condition, but the screen still says something a person can
-            // act on.
             "Postio stopped opening its local store before it answered.",
         ));
         while let Ok(said) = progress.recv().await {
@@ -541,8 +455,7 @@ pub fn open(
                     postio_session::Remedy::TryAgain => {
                         window.show_unavailable(&refusal.sentence, retry);
                     }
-                    // Trying again would meet the same file (T215), or
-                    // the same key (#1598).
+                    // Trying again would meet the same file or the same key (#1598).
                     postio_session::Remedy::StartOver { because, .. } => {
                         let page = window.downgrade();
                         window.show_start_over(because, move || {
@@ -557,10 +470,6 @@ pub fn open(
     });
 }
 
-/// Set the store aside and start a fresh one (`Opener::start_over_on_a_thread`),
-/// then open it as `open_fresh` does: what "Start a fresh store" runs. A start
-/// over that could not be done says why, with "Try again" -- which opens the
-/// store again and, if it is still the old one, offers this again.
 fn start_over(window: &FocusWindow, opener: &Opener, open_fresh: Rc<dyn Fn()>) {
     window.show_starting_over();
     let started = opener.start_over_on_a_thread();
@@ -588,11 +497,6 @@ fn start_over(window: &FocusWindow, opener: &Opener, open_fresh: Rc<dyn Fn()>) {
     });
 }
 
-/// Measure `window`'s start on `timeline`, against the 500 ms budget: the
-/// window exists now, and its first frame is the shell. [`open`] marks the
-/// store, [`adopt_at`] the inbox it feeds, and the frame after that closes
-/// the timeline (`postio_widgets::startup::report_usable`, which also reads
-/// `POSTIO_STARTUP_TRACE` and `POSTIO_STARTUP_EXIT`).
 pub fn time(window: &FocusWindow, timeline: Timeline) {
     timeline.mark(Phase::Window);
     let shell = timeline.clone();
@@ -600,8 +504,6 @@ pub fn time(window: &FocusWindow, timeline: Timeline) {
     window.set_timeline(timeline);
 }
 
-/// Run `then` once, after `widget`'s first frame has been drawn: "once the
-/// person can see their mail", not "when the loop is idle".
 pub fn after_first_frame(widget: &impl IsA<gtk::Widget>, then: impl FnOnce() + 'static) {
     let then = std::cell::RefCell::new(Some(then));
     let ticks = Cell::new(0u8);

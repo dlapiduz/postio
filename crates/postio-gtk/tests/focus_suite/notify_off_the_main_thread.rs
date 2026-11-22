@@ -1,12 +1,6 @@
-//! A new-mail notification reads the store on the runtime, never on the GTK
-//! main thread (#1608).
-//!
-//! Focus's notifier is the host's (`Host::focus_notification`), which spawns
-//! the decision on the host's runtime. The event drain runs on the thread
-//! that draws, so a store read inline there stalls every event queued behind
-//! a `NewMail`. Counted, not timed: the counting seam is thread-local, so
-//! what it sees here is exactly what ran on this thread, from the event
-//! being told to the notification being delivered.
+//! A new-mail notification reads the store on the runtime, never on the GTK main thread (#1608): an
+//! inline read there stalls every event queued behind a `NewMail`.
+//! Counted through the thread-local counting seam, so what it sees ran on this thread.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -46,7 +40,6 @@ pub fn a_new_mail_notification_reads_nothing_on_the_main_thread() {
             let told = Rc::clone(&told);
             move |notification| told.borrow_mut().push(notification.body.clone())
         });
-        // Looking at Filtered, not the inbox: an arrival there is news.
         support::keys(&window, &["g", "f"]);
         crate::settle();
 

@@ -1,17 +1,3 @@
-//! Every storyboard in the catalogue holds on Focus (specs/008-storyboards,
-//! research R14).
-//!
-//! POSTIO-MEASUREMENT: it plays the whole catalogue, one storyboard after
-//! another, several minutes, so it runs on the nightly timer rather than in
-//! the merge path (`.config/nextest.toml`), beside `every_command`. It is
-//! not a measurement: it is the nightly's read of the catalogue, which is
-//! what the marker schedules. `scripts/storyboards.sh run` plays the same
-//! catalogue sharded, when you want it now; run this one with
-//!
-//! ```text
-//! cargo nextest run -p postio-gtk --test focus_suite --profile nightly storyboard_catalogue
-//! ```
-
 use std::path::Path;
 
 use postio_gtk::demo::storyboard::{Options, run, variants_to_play};
@@ -21,15 +7,9 @@ use postio_storyboard::run::{Status, StepOutcome};
 
 use crate::support;
 
-/// Every storyboard in the catalogue holds on Focus -- the nightly's read
-/// of the catalogue (research R14).
-///
-/// Frames off: this is the checks, not the pictures. A storyboard whose
-/// defect is still open (`proof = "open"`) is red by design and counts as
-/// expected; one that starts passing is reported, because its issue may be
-/// fixed and the storyboard should be pinned. Not applicable, not covered
-/// and unavailable are counted, never failed: they are what the run could
-/// not check, and the page shows them.
+/// Frames off: this is the checks, not the pictures. A storyboard whose defect is open (`proof =
+/// "open"`) is red by design and counts as expected;
+/// one that starts passing is reported so it can be pinned.
 pub fn the_catalogue_holds_on_focus() {
     crate::gtk_case(async {
         if !support::display() {
@@ -53,8 +33,6 @@ pub fn the_catalogue_holds_on_focus() {
         }
         files.sort();
         assert!(!files.is_empty(), "the catalogue holds no storyboards");
-        // This runner's share when the nightly splits the catalogue
-        // (`POSTIO_STORYBOARD_SHARD`); the whole of it otherwise.
         let shard = postio_storyboard::shard::Shard::from_env();
         let files: Vec<_> = files
             .into_iter()
@@ -66,11 +44,8 @@ pub fn the_catalogue_holds_on_focus() {
         let mut problems = Vec::new();
         for file in &files {
             let board = load(file).unwrap_or_else(|error| panic!("{}: {error}", file.display()));
-            // The variant the storyboard asks for, as `scripts/storyboards.sh
-            // run` plays it: a storyboard that says `vary = { width =
-            // ["narrow"] }` is about the narrow window, and at the default
-            // size its check holds or fails by how wide a row happens to
-            // measure.
+            // The variant the storyboard asks for, as `scripts/storyboards.sh run` plays it: a
+            // `vary = { width = ["narrow"] }` board is about the narrow window.
             let (variants, ignored_axes) = variants_to_play(&board, false);
             let played = run(
                 &board,

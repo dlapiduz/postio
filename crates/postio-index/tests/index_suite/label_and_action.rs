@@ -1,10 +1,3 @@
-//! `label:` and `has:action` through the executor (spec 010, US3, S2).
-//!
-//! `label:` is resolved against `labels.name`, case-insensitively and in
-//! every account the scope covers, as `account:` and `in:` are; a name no
-//! label carries matches nothing, never everything. `has:action` is an open
-//! marker: a `markers` row that has not been dismissed.
-
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, TimeZone, Utc};
@@ -26,17 +19,11 @@ fn at(hour: u32) -> DateTime<Utc> {
 struct World {
     _database: postio_storage::Store,
     connection: postio_storage::Checkout,
-    /// Labelled `Atlas` in the first account.
     atlas_home: MessageId,
-    /// Labelled `atlas` (another case) in the second account.
     atlas_work: MessageId,
-    /// Labelled `Q3 close` and `Harbor`.
     q3: MessageId,
-    /// No label; an open question.
     open: MessageId,
-    /// No label; a question the person dismissed.
     dismissed: MessageId,
-    /// Labelled `Atlas`, with an open to-do.
     atlas_open: MessageId,
 }
 

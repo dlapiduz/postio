@@ -1,7 +1,6 @@
-//! The Edit and New contact form across the boundary (specs/011-focus-contacts
-//! S8). The form's content, rules and Esc ladder are Rust's: the frontend
-//! draws [`ContactEditViewFfi`], reports each change as an
-//! [`EditChangeFfi`], and presses Cmd-S and Escape as commands.
+//! The Edit and New contact form: its content, rules and Esc ladder are Rust's. The frontend draws
+//! `ContactEditViewFfi`,
+//! reports each `EditChangeFfi`, and presses Cmd-S and Escape as commands.
 
 use postio_focus::EditChange;
 use postio_model::{AddressLabel, ShowAs};
@@ -11,12 +10,9 @@ use crate::ContactKindFfi;
 use crate::Session;
 use crate::focus_contacts::AvatarFfi;
 
-/// How the inbox names a person.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ShowAsFfi {
-    /// First and last.
     Full,
-    /// First name.
     First,
     /// "Last, first".
     LastFirst,
@@ -32,14 +28,10 @@ impl From<ShowAsFfi> for ShowAs {
     }
 }
 
-/// What an address is called.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum AddressLabelFfi {
-    /// Work.
     Work,
-    /// Personal.
     Personal,
-    /// Old.
     Old,
 }
 
@@ -53,90 +45,58 @@ impl From<AddressLabelFfi> for AddressLabel {
     }
 }
 
-/// One change to the open form.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum EditChangeFfi {
-    /// A kind chosen.
     Kind {
-        /// Which.
         kind: ContactKindFfi,
     },
-    /// The first name as it now reads.
     Given {
-        /// The text.
         text: String,
     },
-    /// The last name as it now reads.
     Family {
-        /// The text.
         text: String,
     },
-    /// A Show as style chosen.
     ShowAs {
-        /// Which.
         style: ShowAsFfi,
     },
-    /// The job title as it now reads.
     Title {
-        /// The text.
         text: String,
     },
-    /// The company as it now reads.
     Company {
-        /// The text.
         text: String,
     },
-    /// An address row's text.
     Address {
-        /// The row.
         index: u32,
-        /// The text.
         text: String,
     },
-    /// An address row's type.
     Label {
-        /// The row.
         index: u32,
         /// The type, or none.
         label: Option<AddressLabelFfi>,
     },
-    /// The filled circle moved.
     Primary {
-        /// The row.
         index: u32,
     },
-    /// "+ Add address".
     AddAddress,
-    /// The minus on a row.
     RemoveAddress {
-        /// The row.
         index: u32,
     },
-    /// A group added.
     AddGroup {
-        /// Its name.
         name: String,
     },
-    /// The group picker opened with what is typed, or put away.
     GroupQuery {
         /// What is typed; none puts it away.
         query: Option<String>,
     },
-    /// An option of the picker chosen.
     GroupPick {
-        /// Which.
         index: u32,
     },
-    /// A "Seen in mail" row's action.
     Seen {
-        /// The row.
         index: u32,
         /// Whether it is Ignore rather than the main action.
         secondary: bool,
     },
-    /// A chip's cross.
     RemoveGroup {
-        /// The chip.
         index: u32,
     },
 }
@@ -167,34 +127,24 @@ impl From<EditChangeFfi> for EditChange {
     }
 }
 
-/// A segment of a segmented control.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EditSegmentFfi {
-    /// Its words.
     pub label: String,
-    /// Whether it is chosen.
     pub on: bool,
 }
 
-/// An address row.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EditAddressFfi {
-    /// What is typed.
     pub text: String,
-    /// The type menu's words.
     pub label: String,
-    /// Whether the filled circle is here.
     pub primary: bool,
     /// Whether a bounce named it.
     pub bounced: bool,
 }
 
-/// A detail the mail shows.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EditSeenFfi {
-    /// The detail.
     pub what: String,
-    /// Where it was seen.
     pub from: String,
     /// "Add phone", "Add website" or "Remove".
     pub action: String,
@@ -202,110 +152,67 @@ pub struct EditSeenFfi {
     pub secondary: Option<String>,
 }
 
-/// A button with its key.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EditButtonFfi {
-    /// Its words.
     pub label: String,
     /// Its key, as the registry spells it.
     pub key: Option<String>,
 }
 
-/// A footer hint.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EditHintFfi {
-    /// The key.
     pub key: String,
-    /// What it does.
     pub label: String,
 }
 
-/// Which field has the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FormFieldFfi {
-    /// First name.
     Given,
-    /// An address row.
-    Address {
-        /// Which.
-        index: u32,
-    },
-    /// The group field.
+    Address { index: u32 },
     Group,
 }
 
-/// A line of the group picker.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct GroupOptionFfi {
-    /// What it says.
     pub label: String,
-    /// Whether it makes the group.
     pub is_new: bool,
 }
 
-/// The group picker.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct GroupPickerFfi {
-    /// What is typed.
     pub query: String,
-    /// The lines.
     pub options: Vec<GroupOptionFfi>,
 }
 
-/// The form, drawn whole.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactEditViewFfi {
     /// "Editing Ada Moreno".
     pub title: String,
     /// "saved in Postio".
     pub note: String,
-    /// Cancel.
     pub cancel: EditButtonFfi,
-    /// Save.
     pub save: EditButtonFfi,
-    /// The avatar.
     pub avatar: AvatarFfi,
-    /// The photo row's note.
     pub photo_note: String,
-    /// The five kinds.
     pub kinds: Vec<EditSegmentFfi>,
-    /// The kind's note.
     pub kind_note: String,
-    /// First name.
     pub given: String,
-    /// Last name.
     pub family: String,
-    /// The three styles.
     pub show_as: Vec<EditSegmentFfi>,
-    /// The style's note.
     pub show_note: String,
-    /// Job title.
     pub work_title: String,
-    /// Company.
     pub work_company: String,
-    /// The addresses.
     pub addresses: Vec<EditAddressFfi>,
-    /// "+ Add address".
     pub add_address: String,
-    /// The addresses' note.
     pub address_note: String,
-    /// What the mail shows.
     pub seen: Vec<EditSeenFfi>,
-    /// The group chips.
     pub groups: Vec<String>,
-    /// "+ Add to group".
     pub add_group: String,
-    /// The picker, while open.
     pub group_picker: Option<GroupPickerFfi>,
-    /// The groups' note.
     pub group_note: String,
-    /// Why Save was refused.
     pub problem: Option<String>,
-    /// What Esc says while armed.
     pub armed: Option<String>,
-    /// The footer's hints.
     pub hints: Vec<EditHintFfi>,
-    /// Who has the keyboard.
     pub focus: FormFieldFfi,
 }
 
@@ -398,18 +305,15 @@ impl From<EditView> for ContactEditViewFfi {
 
 #[uniffi::export]
 impl Session {
-    /// The Edit contact form, while one is open.
     pub fn focus_contact_edit(&self) -> Option<ContactEditViewFfi> {
         self.focus_driver().contact_edit().map(Into::into)
     }
 
-    /// A change the person made to the open form.
     pub fn focus_contact_edit_change(&self, change: EditChangeFfi) {
         self.focus_driver()
             .input(postio_focus::Input::ContactEditChange(change.into()));
     }
 
-    /// A click on the card's switch at `index`.
     pub fn focus_contact_card_switch(&self, index: u32) {
         self.focus_driver()
             .input(postio_focus::Input::ContactCardSwitch(index));

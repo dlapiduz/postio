@@ -1,23 +1,14 @@
-//! The known-sender popover and the Contacts view at the boundary (specs/011-focus-contacts S6,
-//! handoff screen 04).
-//!
-//! The controller decides what it says and shapes it (`postio_ui::
-//! contact_popover`, `postio_focus`); the Mac draws `FocusContactPopover`,
-//! whole, and reports what the person did that is not a key: a click on a
-//! sender's name, a click on a segment of the arrival control. The keys
-//! (`i`, the arrows, `0`, Return, `c`, Esc) are commands `key` resolves in
-//! the popover's context and `invoke` runs.
+//! The known-sender popover and the Contacts view. The Mac draws `FocusContactPopover` whole and
+//! reports what is not a key
+//! (a click on a sender's name or an arrival segment); the keys are commands `key` resolves and
+//! `invoke` runs.
 
 use crate::session::Session;
 
-/// Where a sender's mail arrives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ContactArrivalFfi {
-    /// In the inbox, and never filtered away.
     Inbox,
-    /// Held for their digest.
     Digest,
-    /// Filed away as Filtered.
     Filtered,
 }
 
@@ -41,7 +32,6 @@ impl From<postio_model::ContactArrival> for ContactArrivalFfi {
     }
 }
 
-/// What an avatar draws.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AvatarFfi {
     /// Up to two letters, or the kind's glyph.
@@ -52,40 +42,31 @@ pub struct AvatarFfi {
     pub round: bool,
 }
 
-/// One of the three figures under the name.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PopoverTileFfi {
     /// "431", "today", "—".
     pub value: String,
-    /// "messages".
     pub caption: String,
 }
 
-/// One thing open between the user and the person.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenLineFfi {
     /// "Waiting on you", "Waiting on Ada".
     pub label: String,
-    /// What it is.
     pub text: String,
     /// Whether the move is the user's: the label is drawn in the accent.
     pub yours: bool,
-    /// The message it hangs on.
     pub message: i64,
 }
 
-/// One segment of the arrival control.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ArrivalOptionFfi {
     /// "Inbox", "Digest", "Filtered out".
     pub label: String,
-    /// What a click on it says to `focus_contact_arrival`.
     pub arrival: ContactArrivalFfi,
-    /// Whether it is the one in force.
     pub on: bool,
 }
 
-/// One of the buttons along the foot.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PopoverActionFfi {
     /// "All mail", "Write", "Open card".
@@ -96,11 +77,9 @@ pub struct PopoverActionFfi {
     pub key: Option<String>,
     /// Drawn filled: the ↩ action.
     pub primary: bool,
-    /// Whether it can be used now.
     pub enabled: bool,
 }
 
-/// How a sender not yet saved is introduced (handoff screen 05).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PopoverIntroFfi {
     /// "Sent 1 message, today 13:47".
@@ -109,32 +88,23 @@ pub struct PopoverIntroFfi {
     pub status: String,
     /// "From their signature"; none when the signature said nothing.
     pub signature_title: Option<String>,
-    /// The signature's lines.
     pub signature_lines: Vec<String>,
     /// "Read on this Mac. Added only if you save."
     pub signature_foot: Option<String>,
 }
 
-/// The known-sender popover, drawn whole.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactPopoverViewFfi {
-    /// The address it is about.
     pub address: String,
-    /// The avatar.
     pub avatar: AvatarFfi,
-    /// The name.
     pub name: String,
-    /// The address under it.
     pub subline: String,
     /// "Finance lead, Northwind Partners".
     pub role: String,
-    /// Three tiles.
     pub tiles: Vec<PopoverTileFfi>,
-    /// Up to two open lines.
     pub open: Vec<OpenLineFfi>,
     /// "Mail from Ada arrives in".
     pub arrival_title: String,
-    /// Inbox, Digest, Filtered out.
     pub arrival: Vec<ArrivalOptionFfi>,
     /// All mail, Write, Open card; or Add contact, Not now, Ignore sender.
     pub actions: Vec<PopoverActionFfi>,
@@ -210,9 +180,8 @@ impl From<postio_ui::contact_popover::PopoverView> for ContactPopoverViewFfi {
 
 #[uniffi::export]
 impl Session {
-    /// A click on a sender's name: the popover for this address, as `i`
-    /// would draw it for the row. It arrives as `FocusContactPopover` once
-    /// the host has answered, and not at all for an address nobody owns.
+    /// A click on a sender's name: the popover for this address, arriving as `FocusContactPopover`;
+    /// none for an address nobody owns.
     pub fn focus_contact_popover_at(&self, address: String) {
         self.focus_driver()
             .input(postio_focus::Input::ContactPopoverAt(address));
@@ -226,18 +195,12 @@ impl Session {
     }
 }
 
-/// A kind tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ContactTabFfi {
-    /// Everyone.
     All,
-    /// People.
     People,
-    /// Companies.
     Companies,
-    /// Lists and newsletters.
     Lists,
-    /// Automated senders.
     Automated,
 }
 
@@ -265,7 +228,6 @@ impl From<postio_model::ContactTab> for ContactTabFfi {
     }
 }
 
-/// One tab in the strip.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactTabViewFfi {
     /// Which; what a click says to `focus_contacts_tab`.
@@ -274,71 +236,49 @@ pub struct ContactTabViewFfi {
     pub title: String,
     /// "612"; `None` for All.
     pub count: Option<String>,
-    /// Whether it is chosen.
     pub on: bool,
 }
 
-/// The "Worth a look" line.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactReviewLineFfi {
-    /// "Worth a look:".
     pub lead: String,
-    /// What waits.
     pub text: String,
-    /// "Review".
     pub button: String,
-    /// Its key.
     pub key: Option<String>,
-    /// Whether it does anything yet.
     pub enabled: bool,
 }
 
-/// The strip over the list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactsStripFfi {
-    /// "Contacts".
     pub title: String,
     /// `g c`.
     pub key: Option<String>,
     /// "1,533".
     pub total: String,
-    /// The five tabs.
     pub tabs: Vec<ContactTabViewFfi>,
     /// "Filter contacts".
     pub filter_placeholder: String,
-    /// The filter's key.
     pub filter_key: Option<String>,
     /// "New contact".
     pub new_label: String,
-    /// Its key.
     pub new_key: Option<String>,
-    /// Whether it does anything yet.
     pub new_enabled: bool,
     /// The review line; hidden when `None`.
     pub review: Option<ContactReviewLineFfi>,
 }
 
-/// The footer.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactsFooterFfi {
-    /// The keys that work here.
     pub hints: Vec<crate::focus_surfaces::FocusHintFfi>,
-    /// The counts and the catch-up.
     pub status: String,
 }
 
-/// The Contacts view's frame, drawn whole.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactsViewFfi {
-    /// The strip.
     pub strip: ContactsStripFfi,
-    /// The footer.
     pub footer: ContactsFooterFfi,
-    /// How many rows the list has.
     pub total: u32,
-    /// What the filter holds.
     pub filter: String,
-    /// Whether the counts have been read.
     pub loaded: bool,
 }
 
@@ -384,26 +324,17 @@ impl From<postio_focus::ContactsView> for ContactsViewFfi {
     }
 }
 
-/// One row of the Contacts list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactRowViewFfi {
-    /// The person.
     pub id: i64,
-    /// The avatar.
     pub avatar: AvatarFfi,
-    /// The name.
     pub name: String,
-    /// The tag pill.
     pub tag: Option<String>,
     /// The address, with `+2`.
     pub address: String,
-    /// When they were last in touch.
     pub when: String,
-    /// The count line.
     pub count_line: String,
-    /// The letter heading above this row, when it starts one.
     pub letter: Option<String>,
-    /// Whether the person is marked for a merge.
     pub marked: bool,
 }
 
@@ -433,29 +364,20 @@ impl From<postio_ui::contact_popover::Avatar> for AvatarFfi {
     }
 }
 
-/// A button along the card's head.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CardButtonFfi {
     /// "Write".
     pub label: String,
-    /// The command, by its stable id.
     pub command: String,
-    /// Its key.
     pub key: Option<String>,
-    /// The filled one.
     pub primary: bool,
-    /// Whether it does anything yet.
     pub enabled: bool,
 }
 
-/// One address on the card.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CardAddressFfi {
-    /// The address.
     pub address: String,
-    /// The star.
     pub primary: bool,
-    /// Its note.
     pub note: String,
     /// "bounced 2 Sep".
     pub bounced: Option<String>,
@@ -463,20 +385,14 @@ pub struct CardAddressFfi {
     pub can_split: bool,
 }
 
-/// One switch.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CardSwitchFfi {
-    /// Its title.
     pub title: String,
-    /// The line under it.
     pub note: String,
-    /// Whether it is on.
     pub on: bool,
-    /// Whether a click turns it on or off.
     pub can_toggle: bool,
 }
 
-/// The twelve-month strip.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CardMonthsFfi {
     /// Twelve heights, oldest first, in thousandths of the tallest month
@@ -493,69 +409,44 @@ pub struct CardMonthsFfi {
 /// A line of "Open between you" or "Recent issues".
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CardLineFfi {
-    /// Its label.
     pub label: String,
-    /// What it is.
     pub text: String,
     /// "opened".
     pub state: String,
-    /// Whether the move is the user's.
     pub yours: bool,
 }
 
-/// A file chip.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CardFileFfi {
     /// `XLSX`.
     pub kind: String,
-    /// Its name.
     pub name: String,
 }
 
-/// A card, drawn whole.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactCardViewFfi {
-    /// The person.
     pub id: i64,
-    /// The avatar, at 64.
     pub avatar: AvatarFfi,
-    /// The name.
     pub name: String,
-    /// The line under it.
     pub role: String,
-    /// The head's buttons.
     pub buttons: Vec<CardButtonFfi>,
-    /// "Addresses".
     pub addresses_title: String,
-    /// The addresses.
     pub addresses: Vec<CardAddressFfi>,
     /// "Also seen as ...".
     pub also_seen: Option<String>,
     /// "How mail from Ada arrives".
     pub arrival_title: String,
-    /// Inbox, Digest, Filtered out.
     pub arrival: Vec<ArrivalOptionFfi>,
-    /// The switches.
     pub switches: Vec<CardSwitchFfi>,
-    /// "Notes".
     pub notes_title: String,
-    /// The note.
     pub notes: Option<String>,
-    /// "Kept on this Mac."
     pub notes_foot: String,
-    /// "Your mail together".
     pub stats_title: String,
-    /// Four tiles.
     pub tiles: Vec<PopoverTileFfi>,
-    /// The strip.
     pub months: CardMonthsFfi,
-    /// "Open between you".
     pub lines_title: String,
-    /// The lines.
     pub lines: Vec<CardLineFfi>,
-    /// "Recent files from Ada".
     pub files_title: Option<String>,
-    /// The chips.
     pub files: Vec<CardFileFfi>,
 }
 
@@ -659,19 +550,17 @@ impl From<postio_ui::contacts_view::CardView> for ContactCardViewFfi {
 
 #[uniffi::export]
 impl Session {
-    /// The Contacts list's row at `index`, or `None` while its page is on its
-    /// way: a miss asks for the page, and `FocusContactsRows` says when to
-    /// draw it. Synchronous; what the table calls for every visible row.
+    /// The Contacts list's row at `index`, or `None` while its page is on its way: a miss asks for
+    /// the page, and
+    /// `FocusContactsRows` says when to draw it. Synchronous.
     pub fn focus_contacts_row(&self, index: u32) -> Option<ContactRowViewFfi> {
         self.focus_driver().contacts_row(index).map(Into::into)
     }
 
-    /// How many rows the Contacts list has.
     pub fn focus_contacts_total(&self) -> u32 {
         self.focus_driver().contacts_total()
     }
 
-    /// Where the Contacts cursor is.
     pub fn focus_contacts_cursor(&self) -> Option<u32> {
         self.focus_driver().contacts_cursor()
     }
@@ -681,19 +570,16 @@ impl Session {
         self.focus_driver().contacts_card().map(Into::into)
     }
 
-    /// A click on a kind tab.
     pub fn focus_contacts_tab(&self, tab: ContactTabFfi) {
         self.focus_driver()
             .input(postio_focus::Input::ContactsTab(tab.into()));
     }
 
-    /// The filter field holds `text` now.
     pub fn focus_contacts_filter(&self, text: String) {
         self.focus_driver()
             .input(postio_focus::Input::ContactsFilterTyped(text));
     }
 
-    /// A click on the Contacts row at `index`.
     pub fn focus_contacts_point(&self, index: u32) {
         self.focus_driver()
             .input(postio_focus::Input::ContactsPoint(index));

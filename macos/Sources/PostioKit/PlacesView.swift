@@ -2,20 +2,12 @@ import Foundation
 import PostioFFI
 import SwiftUI
 
-/// The folders and labels popover's list (specs/009-focus-macos T086,
-/// screen 10): the places by section, each with its mark, its count and
-/// its direct key, and the footer saying what Return does on the
-/// highlighted one.
-///
-/// The filter field above it is AppKit's (`PlacesPopover`), which keeps the
-/// keyboard and hands the arrows and Return to `PlacesModel`; this draws the
-/// model and runs a click. Rows have fixed heights, so the popover's size
-/// is arithmetic (`PlacesView.height`).
+/// The filter field is AppKit's (`PlacesPopover`), which keeps the keyboard and hands arrows and
+/// Return to `PlacesModel`. Fixed row heights make the size arithmetic (`PlacesView.height`).
 public struct PlacesView: View {
     let model: PlacesModel
     let open: (UInt64) -> Void
 
-    /// `open` is a click on a row: go there, and close the popover.
     public init(model: PlacesModel, open: @escaping (UInt64) -> Void) {
         self.model = model
         self.open = open
@@ -27,27 +19,17 @@ public struct PlacesView: View {
         public static let row: CGFloat = 30
         public static let footer: CGFloat = 40
         public static let empty: CGFloat = 44
-        /// The filter field's band above the list.
         public static let field: CGFloat = 52
-        /// How far left of the Inbox ▾ button the popover's left edge sits
-        /// (screen 10: the button at 12, the popover at 10).
         public static let leadIn: CGFloat = 2
 
-        /// The rect the popover is shown from, in the button's own space.
-        ///
-        /// A popover is centred on the rect it hangs from. Hung from the
-        /// button itself -- at the window's left edge, and narrower than
-        /// the popover -- its left half fell outside the window, over
-        /// whatever was beside it. This rect starts at the button's left
-        /// edge and is the popover's width, so the popover hangs from there
-        /// to the right, inside the window, as screen 10 draws it.
+        /// A popover is centred on its rect, so hung from the button at the window's left edge its
+        /// left half fell outside the window. This rect starts at the button's left edge and is the
+        /// popover's width.
         public static func positioningRect(button: CGRect, width: CGFloat = width) -> CGRect {
             CGRect(x: button.minX - leadIn, y: button.minY, width: width, height: button.height)
         }
     }
 
-    /// The list and its footer's height for what `model` holds, before
-    /// the popover caps it (the list then scrolls).
     public static func height(for model: PlacesModel) -> CGFloat {
         guard !model.entries.isEmpty else { return Metrics.empty + Metrics.footer + 1 }
         let rows = model.entries.reduce(CGFloat(0)) { height, entry in
@@ -105,8 +87,6 @@ public struct PlacesView: View {
     }
 }
 
-/// One place: its mark, its name (bold where the list is now), its count
-/// and its key.
 private struct PlaceRow: View {
     let entry: PlacesModel.Entry
     let highlighted: Bool

@@ -1,17 +1,4 @@
-//! Filtered, the digest window, capture and `postio://` links at the
-//! boundary (specs/009-focus-macos T110, for the Mac's T113-T117).
-//!
-//! The rules are the controller's (`postio-focus`'s `tests/filtered.rs`,
-//! `digest.rs` and `capture.rs`); these assert the Mac hears them through
-//! the session over a real store, and that the reads Swift may make
-//! directly -- a digest's summary, the vault, a captured task -- answer as
-//! the host does.
-//!
-//! "A model stub" for the summary is the summary a model would have
-//! written, stored for its delivery: what the host reads back is resolved
-//! against each message's own text, which is the part worth proving. No
-//! test here configures `[focus.model]`, so nothing tries to reach a model,
-//! loopback included.
+//! No test here configures `[focus.model]`, so nothing tries to reach a model, loopback included.
 
 use std::sync::Arc;
 
@@ -23,14 +10,9 @@ use postio_storage::test_support;
 
 use crate::focus::heard;
 
-/// What Ledger's letter says: the passage the summary cites is in it.
 const LEDGER: &str = "The council voted 7 to 2 to fund the rail link. Work starts in March.";
-/// What Forge's says.
 const FORGE: &str = "Build 12 passed on every platform.";
 
-/// A store holding two letters held for "Newsletters" and delivered, with
-/// the summary a model wrote for the delivery; a session over it with
-/// `config`. Answers the session, the delivery, and the two messages.
 async fn a_delivered_digest(config: &str) -> (Arc<Session>, i64, [i64; 2]) {
     let database = test_support::memory().await;
     let (delivery, ids) = {
@@ -141,7 +123,6 @@ async fn with_no_vault_the_vault_read_fails_naming_where_to_configure_one() {
     session.shutdown();
 }
 
-/// `[focus.vault]` naming `vault`.
 fn vault_at(vault: &std::path::Path) -> String {
     format!("[focus.vault]\npath = {:?}\n", vault.display().to_string())
 }
@@ -245,9 +226,6 @@ async fn g_f_draws_filtered_with_its_seven_tabs() {
     session.shutdown();
 }
 
-/// Selecting in Filtered reaches the Mac: `x` boxes the focused row and
-/// brings the bar up, a Shift-click takes a range, and the bar's verb is a
-/// registry command. The rules are the controller's.
 #[tokio::test(flavor = "multi_thread")]
 async fn selecting_in_filtered_draws_the_boxes_and_the_bar() {
     let (database, _) = postio_demo::seeded(postio_demo::Seed::Small).await;
@@ -423,7 +401,6 @@ async fn a_postio_link_opens_its_message_or_says_why_not() {
     session.shutdown();
 }
 
-/// [`crate::focus::inbox_of`], with `config`.
 async fn inbox_with_config(subjects: &[&str], config: &str) -> Arc<Session> {
     let database = test_support::memory().await;
     {

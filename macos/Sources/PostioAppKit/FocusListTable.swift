@@ -3,68 +3,39 @@ import PostioFFI
 import PostioKit
 import SwiftUI
 
-/// Focus's list on the Mac: a view-based `NSTableView` over
-/// `FocusListModel` (specs/009-focus-macos T032, screens 01 and 02).
-///
-/// An `NSTableView` rather than a SwiftUI `List` for the reasons R10 gives:
-/// ten thousand rows at 60 fps, real cell reuse, and nothing measured. Every
-/// row's height is its shape's (`FocusRowMetrics`), answered from what the
-/// model already knows, so laying the table out never fetches a page.
-///
-/// **The table's own selection is off.** The cursor and Focus's selection
-/// are the controller's and arrive as intents (`FocusIntents`); a click is
-/// reported to it (`onPoint`, `onPick`) and moves nothing here. `NSTableView`'s
-/// selection would be a second opinion about both, and a blue fill the
-/// design does not draw. The cursor is an accent ring drawn by the row
-/// view, around that row only, and a selected row shows a checked box in
-/// the gutter.
+/// An `NSTableView`, not a SwiftUI `List` (R10): ten thousand rows at 60 fps with real cell reuse.
+/// Row heights come from what the model already knows, so layout never fetches a page.
+/// The table's own selection is off: the cursor and selection are the controller's and arrive as
+/// intents; `NSTableView`'s would be a second opinion and a blue fill the design does not draw.
 @MainActor
 public final class FocusListTable: NSObject {
     public let model: FocusListModel
     public let tableView: NSTableView
     public let scrollView: NSScrollView
 
-    /// Run a row's action -- a click on Reply, Accept, Snooze -- with the
-    /// row it was on.
     public var onAction: ((String, Int) -> Void)?
 
-    /// A plain click on a row: `focusPoint`. The ring moves when the
-    /// controller's `FocusCursor` comes back, never here.
+    /// The ring moves when the controller's `FocusCursor` comes back, never here.
     public var onPoint: ((Int) -> Void)?
-    /// A double-click on a row.
     public var onActivate: ((Int) -> Void)?
 
-    /// A click on a thread row's chevron: `focusChevronClicked`. The
-    /// controller opens or folds the thread and says which as a splice.
     public var onChevron: ((Int) -> Void)?
 
-    /// A modified click on a row: `focusPick`, with `range` for ⇧ and a
-    /// toggle for ⌘.
     public var onPick: ((Int, Bool) -> Void)?
 
-    /// Whether the list stands at its very top, said when that changes:
-    /// `focusAtTop`. An undo that brings rows in above keeps the list there
-    /// only if it was there.
+    /// An undo that brings rows in above keeps the list there only if it was at the top.
     public var onAtTop: ((Bool) -> Void)?
 
-    /// What was last said through `onAtTop`, so a scroll that stays on the
-    /// same side of the top says nothing.
     private var saidAtTop: Bool?
 
-    /// How many cells were made rather than reused, so reuse can be
-    /// asserted rather than eyeballed (T035).
+    /// So reuse can be asserted rather than eyeballed.
     public private(set) var cellsCreated = 0
 
-    /// Likewise the row views (the backgrounds, the heading band and the
-    /// ring): a 10k-row inbox scrolled end to end makes a screenful of
-    /// them, not ten thousand.
     public private(set) var rowViewsCreated = 0
 
     static let cellIdentifier = NSUserInterfaceItemIdentifier("postio.focus.row")
     static let rowIdentifier = NSUserInterfaceItemIdentifier("postio.focus.rowview")
 
-    /// Rows whose shape was learned while drawing and whose height the
-    /// table has not been told about yet.
     private var heightsOwed = IndexSet()
 
     public init(model: FocusListModel) {
@@ -100,13 +71,8 @@ public final class FocusListTable: NSObject {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .textBackgroundColor
 
-        // A click is the table's `action`, read with the modifiers held:
-        // its own selection is off, so this is the only thing a click does.
         tableView.target = self
         tableView.action = #selector(rowClicked)
-        // A double-click opens the row, as Return does: the second click's
-        // `action` has already pointed the cursor, and this tells the
-        // controller to open what it points at.
         tableView.doubleAction = #selector(rowDoubleClicked)
 
         scrollView.contentView.postsBoundsChangedNotifications = true
@@ -118,8 +84,6 @@ public final class FocusListTable: NSObject {
     @objc private func rowClicked() {
         let row = tableView.clickedRow
         let event = NSApp.currentEvent
-        // A plain click on the sender's name points at the row and hangs the
-        // known-sender popover from the name (specs/011-focus-contacts S6).
         if let event, event.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
             let address = model.row(at: row)?.fromAddress,
             let anchor = nameAnchor(row: row),
@@ -139,18 +103,12 @@ public final class FocusListTable: NSObject {
         clicked(row: row, modifiers: event?.modifierFlags ?? [])
     }
 
-    /// Whether a click `x` points from the row's left edge is on the
-    /// chevron: the gutter's right half, as wide as the gutter is.
     static func chevronHit(_ x: CGFloat) -> Bool {
         abs(x - CGFloat(FocusRowMetrics.chevronCentre)) <= 10
     }
 
-    /// A click landed on a sender's name: the row and its address, for the popover.
     public var onContactName: ((Int, String) -> Void)?
 
-    /// Where the sender's name is in `row`, in the table's coordinates: what
-    /// the known-sender popover hangs from, and where a click opens it.
-    /// `nil` for a row with no name to ask about.
     public func nameAnchor(row: Int) -> NSRect? {
         guard row >= 0, row < tableView.numberOfRows, let shown = model.row(at: row),
             shown.fromAddress != nil
@@ -169,7 +127,6 @@ public final class FocusListTable: NSObject {
         activated(row: tableView.clickedRow)
     }
 
-    /// A double-click on `row`: the controller points at it and opens it.
     public func activated(row: Int) {
         guard row >= 0, row < model.count else { return }
         onActivate?(row)
@@ -179,10 +136,6 @@ public final class FocusListTable: NSObject {
         scrolled()
     }
 
-    // MARK: what the engine says
-
-    /// `FocusListChanged`: the list is a different length, or a different
-    /// list. Everything is drawn again.
     public func listChanged(total: UInt32) {
         model.reset(total: total)
         heightsOwed = []
@@ -191,14 +144,10 @@ public final class FocusListTable: NSObject {
         scrolled()
     }
 
-    /// `FocusSplice`: the thread at row `anchor` opened in place, `children`
-    /// rows long. Inserted, not reloaded: nothing else on screen moves but
-    /// what is below. Under Reduce Motion they appear at once; otherwise
-    /// they fade in within the 100 ms budget (`Motion`).
-    ///
-    /// After a re-read with a thread open (`rereadWhileOpen`), the rows on
-    /// screen were drawn by the session's splice, not this one: the list is
-    /// drawn again whole, as the re-read was, rather than slid.
+    /// Inserted, not reloaded, so only what is below moves. After a re-read with a thread open the
+    /// rows on
+    /// screen were drawn by the session's splice, so the list is drawn again whole rather than
+    /// slid.
     public func splice(anchor: Int, children: Int) {
         let folded = model.open
         let reread = model.rereadWhileOpen
@@ -214,12 +163,9 @@ public final class FocusListTable: NSObject {
             }
             tableView.insertRows(at: IndexSet(integersIn: inserted), withAnimation: Self.entrance)
         }
-        // The anchor's chevron turned, and its row may be re-measured.
         redraw(rows: [anchor])
     }
 
-    /// `FocusUnsplice`: the open thread folded; its rows go.
-    /// After a re-read with a thread open, drawn again whole (see `splice`).
     public func unsplice() {
         let reread = model.rereadWhileOpen
         guard let anchor = model.open?.anchor, let gone = model.unspliced() else { return }
@@ -234,15 +180,12 @@ public final class FocusListTable: NSObject {
         redraw(rows: [anchor])
     }
 
-    /// The row animations: none under Reduce Motion, else a quick fade.
     private static var entrance: NSTableView.AnimationOptions {
         Motion.duration(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion) == 0
             ? [] : .effectFade
     }
     private static var exit: NSTableView.AnimationOptions { entrance }
 
-    /// Run `edit` as one batch of row changes lasting no more than
-    /// `Motion`'s 100 ms (or none).
     private func changing(_ edit: () -> Void) {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Motion.duration(
@@ -254,10 +197,8 @@ public final class FocusListTable: NSObject {
         }
     }
 
-    /// `FocusPageReady`: redraw that page's rows, and tell the table which of
-    /// them changed height now that their shapes are known. Never
-    /// `reloadData()`: a page landing behind the reader must not move the
-    /// list they are looking at.
+    /// Never `reloadData()`: a page landing behind the reader must not move the list they are
+    /// looking at.
     public func pageArrived(_ page: UInt32) {
         let changed = model.pageArrived(page)
         guard !changed.isEmpty else { return }
@@ -265,23 +206,13 @@ public final class FocusListTable: NSObject {
         tableView.reloadData(forRowIndexes: changed, columnIndexes: IndexSet(integer: 0))
     }
 
-    /// `KeymapChanged`: every keycap on screen may spell something else.
     public func keymapChanged() {
         model.keymapChanged()
         redrawVisible()
     }
 
-    // MARK: cursor and selection
-
-    /// The row the keyboard is on: the controller's, as its last
-    /// `FocusCursor` said (`FocusIntents`).
     public var cursor: Int? { model.cursor }
 
-    /// Where a picker at the row hangs from (specs/009-focus-macos T092,
-    /// screen 11): the row's own lines, without its day heading's band,
-    /// from the subject column across `width` -- the picker's -- so a
-    /// popover centred on it starts at the subject. In the table's
-    /// coordinates; `nil` for a row the list does not have.
     public func pickerAnchor(row: Int, width: CGFloat) -> NSRect? {
         guard row >= 0, row < tableView.numberOfRows else { return nil }
         let frame = tableView.rect(ofRow: row)
@@ -290,12 +221,8 @@ public final class FocusListTable: NSObject {
         return NSRect(x: frame.minX + subject, y: frame.minY + band, width: width, height: frame.height - band)
     }
 
-    /// The conversations marked, drawn as the checked box.
     public var selected: Set<Int64> { model.selected }
 
-    /// A click on `row` with `modifiers` held: told to the controller, which
-    /// answers with the intents that move the ring and the boxes. ⌘ toggles
-    /// the row, ⇧ takes the range from the anchor, a plain click points.
     public func clicked(row: Int, modifiers: NSEvent.ModifierFlags) {
         guard row >= 0, row < model.count else { return }
         if modifiers.contains(.shift) {
@@ -307,8 +234,6 @@ public final class FocusListTable: NSObject {
         }
     }
 
-    /// Draw what one of the controller's intents changed
-    /// (`FocusIntents.apply`): only the rows it moved, and the scroll.
     public func apply(_ change: FocusIntents.Change) {
         switch change {
         case let .cursor(previous, toTop):
@@ -321,8 +246,6 @@ public final class FocusListTable: NSObject {
         case .selection:
             redrawVisible()
         case .heading:
-            // The day headings come or go, and with them the heights of the
-            // rows that drew one.
             noteHeights(IndexSet(integersIn: 0..<tableView.numberOfRows))
             redrawVisible()
         case .listToTop:
@@ -337,9 +260,7 @@ public final class FocusListTable: NSObject {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    /// Say whether the list stands at its very top, when that changed.
     func scrolled() {
-        // Nothing is remembered as said until somebody is listening.
         guard let onAtTop else { return }
         let atTop = scrollView.contentView.bounds.origin.y <= 0
         guard atTop != saidAtTop else { return }
@@ -359,9 +280,7 @@ public final class FocusListTable: NSObject {
         redraw(rows: Array(visible.location..<(visible.location + visible.length)))
     }
 
-    /// Tell the table about heights learned while drawing, once, after the
-    /// pass that learned them: changing heights from inside `viewFor` is
-    /// re-entering the layout that asked.
+    /// Changing heights from inside `viewFor` re-enters the layout that asked.
     private func oweHeight(_ row: Int) {
         let wasEmpty = heightsOwed.isEmpty
         heightsOwed.insert(row)
@@ -375,11 +294,9 @@ public final class FocusListTable: NSObject {
         }
     }
 
-    /// Tell the table `rows` changed height, at once. `noteHeightOfRows`
-    /// animates by default, so a page landing after a delete re-read the
-    /// list slid every row it touched into place: the whole list appeared to
-    /// collapse and grow back. Transitions are 100 ms or absent; this one is
-    /// absent.
+    /// `noteHeightOfRows` animates by default, so a page landing after a delete re-read slid every
+    /// row
+    /// into place and the list appeared to collapse and grow back.
     private func noteHeights(_ rows: IndexSet) {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0
@@ -388,8 +305,6 @@ public final class FocusListTable: NSObject {
         }
     }
 
-    /// The cell to draw into: `existing` if AppKit handed one back, else a
-    /// new one.
     func cell(reusing existing: NSView?) -> FocusRowCell {
         if let reused = existing as? FocusRowCell { return reused }
         let made = FocusRowCell()
@@ -401,20 +316,18 @@ public final class FocusListTable: NSObject {
 
 extension FocusListTable: NSTableViewDataSource {
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        // The engine's count, never an array held here.
         model.count
     }
 }
 
 extension FocusListTable: NSTableViewDelegate {
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        // From the model's memory of the row's shape: never the FFI, which
-        // would fetch every page of a 10k inbox to lay the table out.
+        // From the model's memory of the row's shape, never the FFI, which would fetch every page
+        // of a 10k inbox.
         CGFloat(model.height(at: row))
     }
 
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        // The cursor and the selection are the controller's (see the type).
         false
     }
 
@@ -440,11 +353,9 @@ extension FocusListTable: NSTableViewDelegate {
             shown, picked: shown.map { model.isPicked($0.id) } ?? false,
             cursor: row == model.cursor)
         cell.onAction = { [weak self] command in self?.onAction?(command, row) }
-        // A row redrawn in place keeps its row view, which must follow.
         if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? FocusRowView {
             dress(rowView, row: row, shown: shown)
         }
-        // A shape learned just now may not be the height the table laid out.
         if CGFloat(model.height(at: row)) != tableView.rect(ofRow: row).height {
             oweHeight(row)
         }
@@ -456,8 +367,6 @@ extension FocusListTable: NSTableViewDelegate {
         dress(rowView, row: row, shown: (rowView.view(atColumn: 0) as? FocusRowCell)?.shown)
     }
 
-    /// What the row view draws behind the words: the heading's band, the
-    /// selected ground, and the cursor's ring.
     private func dress(_ rowView: FocusRowView, row: Int, shown: FocusRowModel?) {
         rowView.isCursor = row == model.cursor
         rowView.heading = shown?.heading != nil
@@ -470,28 +379,19 @@ extension FocusListTable: NSTableViewDelegate {
     }
 }
 
-// MARK: - the row view: backgrounds, the heading band, the ring
-
-/// What sits behind a row's words: the list's surface, the day heading's
-/// band, a selected row's neutral ground, the hairline under the row, and
-/// the cursor's accent ring around the row (never its heading).
 final class FocusRowView: NSTableRowView {
     var heading = false { didSet { if heading != oldValue { needsDisplay = true } } }
     var isCursor = false { didSet { if isCursor != oldValue { needsDisplay = true } } }
     var isPicked = false { didSet { if isPicked != oldValue { needsDisplay = true } } }
 
-    /// What a child row draws behind its words: the tint, and its place on
-    /// the 1.5 pt line that joins an open thread's messages.
     struct ChildMark: Equatable {
         let unread: Bool
-        /// The line stops at the dot on the last child.
         let last: Bool
     }
     var child: ChildMark? { didSet { if child != oldValue { needsDisplay = true } } }
 
     override var isFlipped: Bool { true }
 
-    /// The part of the row below its heading band.
     var body: NSRect {
         let top = heading ? CGFloat(FocusRowMetrics.heading) : 0
         return NSRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.height - top)
@@ -507,17 +407,12 @@ final class FocusRowView: NSTableRowView {
             NSRect(x: 0, y: CGFloat(FocusRowMetrics.heading) - 1, width: bounds.width, height: 1).fill()
         }
         if isPicked {
-            // A neutral ground, never the accent, which is the cursor's.
-            // `withAlphaComponent` replaces the label colour's own alpha
-            // rather than scaling it, so this is the label ink at 6%:
-            // screen 01's faint grey, which the marker's accent words stay
-            // readable on in both appearances.
+            // A neutral ground, never the accent, which is the cursor's. `withAlphaComponent`
+            // replaces the label colour's own alpha.
             NSColor.labelColor.withAlphaComponent(0.06).setFill()
             body.fill()
         }
         if let child {
-            // A slightly tinted ground: the label ink at 3%, so it follows
-            // the appearance. The line, then the dot on it.
             NSColor.labelColor.withAlphaComponent(0.03).setFill()
             bounds.fill()
             let line = CGFloat(FocusRowMetrics.childLineX)
@@ -545,7 +440,6 @@ final class FocusRowView: NSTableRowView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard isCursor else { return }
-        // The keyboard's ring, in the accent, around this row only.
         let ring = NSBezierPath(rect: body.insetBy(dx: 1, dy: 1))
         ring.lineWidth = 2
         NSColor.controlAccentColor.setStroke()
@@ -561,16 +455,6 @@ final class FocusRowView: NSTableRowView {
     }
 }
 
-// MARK: - the cell: the words, drawn
-
-/// One row's words, drawn rather than laid out by Auto Layout: the gutter,
-/// sender, subject, up to two pills, the preview, the trailing attachment,
-/// count and time, and a marked row's second line. Positions come from
-/// `FocusRowMetrics`; the only measuring is a line's own width, for the
-/// visible rows only, so the pills can follow the subject as on screen 01.
-///
-/// The actions are real controls (`FocusActionButton`), so they can be
-/// clicked and VoiceOver reaches them.
 final class FocusRowCell: NSView {
     private(set) var shown: FocusRowModel?
     private var picked = false
@@ -614,8 +498,6 @@ final class FocusRowCell: NSView {
         for (index, button) in buttons.enumerated() {
             if index < actions.count {
                 let action = actions[index]
-                // The first answer is the one the row is asking for, drawn
-                // as a button; the others are quieter (screen 01).
                 button.configure(label: action.label, cap: action.cap, outlined: index == 0)
                 button.run = { [weak self] in self?.onAction?(action.command) }
                 button.isHidden = false
@@ -631,8 +513,6 @@ final class FocusRowCell: NSView {
 
     private var top: CGFloat { shown?.heading != nil ? CGFloat(FocusRowMetrics.heading) : 0 }
 
-    /// The first line's centre: a one-line row's middle, or a marked row's
-    /// upper line.
     private var firstLine: CGFloat {
         switch shown?.layout {
         case .twoLine: return top + CGFloat(FocusRowMetrics.firstLine)
@@ -647,8 +527,6 @@ final class FocusRowCell: NSView {
     override func layout() {
         super.layout()
         let width = bounds.width
-        // The gutter: a checked box when selected, a digest's stack, or
-        // nothing (an unread row's dot is drawn, not an image).
         if let shown, shown.layout != .child, picked || shown.layout == .digest {
             gutterIcon.image = NSImage(
                 systemSymbolName: picked ? "checkmark.square.fill" : "square.stack.3d.up",
@@ -662,8 +540,7 @@ final class FocusRowCell: NSView {
             gutterIcon.isHidden = true
         }
         if let shown, let state = shown.chevron {
-            // Collapsed points right; open points down: the quarter turn,
-            // drawn as the two symbols so Reduce Motion has nothing to turn.
+            // Two symbols rather than a turn, so Reduce Motion has nothing to turn.
             chevron.image = NSImage(
                 systemSymbolName: state == .expanded ? "chevron.down" : "chevron.right",
                 accessibilityDescription: state == .expanded ? "Expanded" : "Collapsed"
@@ -681,7 +558,6 @@ final class FocusRowCell: NSView {
         } else {
             clip.isHidden = true
         }
-        // The actions, from the right edge in.
         var right = width - CGFloat(FocusRowMetrics.trailing)
         for button in buttons.reversed() where !button.isHidden {
             let size = button.intrinsicContentSize
@@ -707,7 +583,6 @@ final class FocusRowCell: NSView {
         let middle = firstLine
         let bold = row.bold || row.layout == .digest
 
-        // An unread row's dot, where no box or stack stands.
         if row.dot, !picked {
             NSColor.controlAccentColor.setFill()
             NSBezierPath(ovalIn: NSRect(
@@ -715,17 +590,13 @@ final class FocusRowCell: NSView {
             )).fill()
         }
 
-        // The trailing column first, from the right edge in, so the middle
-        // knows its room: the time, the count, the send state (the clip is
-        // an image view, placed by `layout`).
         let trailing = trailingColumn(of: row, width: width)
         Ink.draw(row.time, trailing.timeFont, colour: .labelColor, x: trailing.time, middle: middle, room: width)
         if let badge = row.countBadge, let frame = trailing.badge {
             drawCount(badge, in: frame, middle: middle)
         }
         if let new = row.newBadge, let frame = trailing.newPill {
-            // A filled pill in the label colour, never the accent (the
-            // accent is for focus and action).
+            // Label colour, never the accent (reserved for focus and action).
             NSColor.labelColor.setFill()
             NSBezierPath(roundedRect: frame, xRadius: frame.height / 2, yRadius: frame.height / 2).fill()
             Ink.draw(
@@ -740,12 +611,9 @@ final class FocusRowCell: NSView {
         }
         let end = trailing.end
 
-        // The sender, then the subject, each as it arrived.
         let columns = FocusRowMetrics.columns(width: Double(width))
         let x0 = CGFloat(FocusRowMetrics.senderX)
         if row.chevron != nil, let count = row.countBadge {
-            // A thread's count sits right after its participants, inside
-            // their column.
             let boxed = Ink.width(count, Ink.badge) + 10
             let room = min(CGFloat(columns.senderWidth), end - x0) - boxed - 6
             let drawn = Ink.draw(
@@ -763,7 +631,6 @@ final class FocusRowCell: NSView {
             row.subject, bold ? Ink.bodyBold : Ink.body, colour: .labelColor,
             x: x, middle: middle, room: end - x)
 
-        // Up to two pills, while they fit.
         for pill in row.pills {
             let name = Ink.width(pill.name, Ink.pill)
             let boxed = 7 + 6 + 5 + name + 7
@@ -780,7 +647,6 @@ final class FocusRowCell: NSView {
             x += boxed
         }
 
-        // The first line, dimmed, in whatever room is left.
         if let preview = row.preview, end - (x + CGFloat(FocusRowMetrics.gap)) >= 40 {
             x += CGFloat(FocusRowMetrics.gap)
             Ink.draw(preview, Ink.body, colour: .secondaryLabelColor, x: x, middle: middle, room: end - x)
@@ -789,7 +655,6 @@ final class FocusRowCell: NSView {
         if let marker = row.marker { drawMarker(marker, width: width, x: CGFloat(columns.markerX)) }
     }
 
-    /// A count in a small outlined box.
     private func drawCount(_ text: String, in frame: NSRect, middle: CGFloat) {
         NSColor.separatorColor.setStroke()
         let outline = NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
@@ -798,16 +663,11 @@ final class FocusRowCell: NSView {
         Ink.draw(text, Ink.badge, colour: .secondaryLabelColor, x: frame.minX + 5, middle: middle, room: frame.width)
     }
 
-    /// A child of the open thread: its avatar and sender, its tag, its own
-    /// words, a paperclip and the time; while it is the cursor's, the keys
-    /// that act on this message alone. The line and the dot on it are the
-    /// row view's.
     private func drawChild(_ row: FocusRowModel, _ child: FocusRowModel.Child, width: CGFloat) {
         let middle = firstLine
         let gap = CGFloat(FocusRowMetrics.gap)
         let bold = child.unread
 
-        // The time, from the right edge in; then the paperclip.
         let timeFont = bold ? Ink.timeBold : Ink.time
         var x = width - CGFloat(FocusRowMetrics.trailing) - Ink.width(row.time, timeFont)
         Ink.draw(row.time, timeFont, colour: child.draft ? .secondaryLabelColor : .labelColor, x: x, middle: middle, room: width)
@@ -816,7 +676,6 @@ final class FocusRowCell: NSView {
             clip.frame = NSRect(x: x, y: middle - 8, width: 16, height: 16)
             clip.isHidden = false
         }
-        // The focused child's hint: `e` `f` this one.
         if cursor, let label = child.hintLabel, !child.hintKeys.isEmpty {
             x -= gap + Ink.width(label, Ink.hint)
             Ink.draw(label, Ink.hint, colour: .secondaryLabelColor, x: x, middle: middle, room: width)
@@ -827,7 +686,6 @@ final class FocusRowCell: NSView {
         }
         let end = x - gap
 
-        // The avatar, then the sender.
         let diameter = CGFloat(FocusRowMetrics.childAvatar)
         let avatar = NSRect(x: CGFloat(FocusRowMetrics.childAvatarX), y: middle - diameter / 2, width: diameter, height: diameter)
         NSColor.tertiaryLabelColor.setFill()
@@ -842,7 +700,6 @@ final class FocusRowCell: NSView {
         let senderFont = child.draft ? Ink.bodyItalic : (bold ? Ink.bodyBold : Ink.body)
         Ink.draw(child.sender, senderFont, colour: .labelColor, x: senderX, middle: middle, room: subjectX - gap - senderX)
 
-        // The tag, then the message's own words.
         var lineX = subjectX
         if let tag = child.tag, !child.draft {
             let boxed = Ink.width(tag, Ink.pill) + 12
@@ -856,7 +713,6 @@ final class FocusRowCell: NSView {
         var font = Ink.body
         var colour = NSColor.secondaryLabelColor
         if child.draft {
-            // "\u{201c}Thanks both...\u{201d} \u{b7} not sent", in italics.
             words = "\u{201c}\(child.line)\u{201d}" + (child.tag.map { " \u{b7} \($0)" } ?? "")
             font = Ink.quote
         } else if child.placeholder {
@@ -866,9 +722,6 @@ final class FocusRowCell: NSView {
         Ink.draw(words, font, colour: colour, x: lineX, middle: middle, room: end - lineX)
     }
 
-    /// Where the first line's trailing things go, from the right edge in:
-    /// the time, the count, the send state, the attachment's clip -- and
-    /// where the middle of the line has to end.
     private func trailingColumn(of row: FocusRowModel, width: CGFloat) -> (
         timeFont: NSFont, time: CGFloat, badge: NSRect?, newPill: NSRect?, muted: CGFloat?,
         sendState: CGFloat?, clip: CGFloat?, end: CGFloat
@@ -878,7 +731,6 @@ final class FocusRowCell: NSView {
         var x = width - CGFloat(FocusRowMetrics.trailing) - Ink.width(row.time, timeFont)
         let time = x
         var badge: NSRect?
-        // A thread's count is drawn after its participants, not here.
         if let count = row.countBadge, row.chevron == nil {
             let boxed = Ink.width(count, Ink.badge) + 10
             x -= gap + boxed
@@ -908,9 +760,6 @@ final class FocusRowCell: NSView {
         return (timeFont, time, badge, newPill, muted, sendState, clip, x - gap)
     }
 
-    /// The marker's line: the chip outlined in the accent, the date bold in
-    /// the accent, the quote italic in the accent -- or the status, where
-    /// the actions would be.
     private func drawMarker(_ marker: FocusRowModel.Marker, width: CGFloat, x start: CGFloat) {
         let line = secondLine
         var right = width - CGFloat(FocusRowMetrics.trailing)
@@ -943,12 +792,6 @@ final class FocusRowCell: NSView {
     }
 }
 
-// MARK: - an action: words and their key
-
-/// One answer on a marked row: its words in bold and its keycap. The first
-/// on a row is outlined on the raised surface; the rest stand quieter, as
-/// screen 01 draws Decline beside Accept. Never the accent: that is the
-/// marker's (FR-017).
 final class FocusActionButton: NSView {
     private var label = ""
     private var cap: String?
@@ -989,8 +832,7 @@ final class FocusActionButton: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        // Taken here, so a click on an answer never reaches the table as a
-        // click on the row.
+        // Taken here so a click on an answer never reaches the table as a click on the row.
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -1004,11 +846,6 @@ final class FocusActionButton: NSView {
     }
 }
 
-// MARK: - the keycap, in AppKit
-
-/// The keycap, drawn: `KeyCapMetrics` for its geometry, the quaternary
-/// fill and separator outline, the monospaced face. The same element as
-/// SwiftUI's `KeyCap`, for the places that draw rather than lay out.
 public final class KeyCapView: NSView {
     public var text: String {
         didSet {
@@ -1036,13 +873,10 @@ public final class KeyCapView: NSView {
         Self.draw(text, x: 0, middle: bounds.midY)
     }
 
-    /// How wide a cap for `text` is.
     public static func width(of text: String) -> CGFloat {
         max(KeyCapMetrics.minWidth, Ink.width(text, Ink.keycap) + 2 * KeyCapMetrics.padding)
     }
 
-    /// Draw a cap for `text` with its left edge at `x`, centred on `middle`,
-    /// in the current (flipped) context.
     public static func draw(_ text: String, x: CGFloat, middle: CGFloat) {
         let width = width(of: text)
         let frame = NSRect(x: x, y: middle - KeyCapMetrics.height / 2, width: width, height: KeyCapMetrics.height)
@@ -1060,10 +894,6 @@ public final class KeyCapView: NSView {
     }
 }
 
-// MARK: - type
-
-/// The faces the list sets its words in: the system font for the chrome,
-/// its monospaced face for keys, counts and times (FR-018).
 @MainActor
 enum Ink {
     static let body = NSFont.systemFont(ofSize: 14)
@@ -1085,7 +915,6 @@ enum Ink {
     static let bodyItalic = NSFontManager.shared.convert(
         NSFont.systemFont(ofSize: 14), toHaveTrait: .italicFontMask)
 
-    /// One line, truncated at its tail.
     private static let truncating: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail
@@ -1096,8 +925,6 @@ enum Ink {
         ceil((text as NSString).size(withAttributes: [.font: font]).width)
     }
 
-    /// Draw `text` from `x`, centred on `middle`, in no more than `room`.
-    /// Answers how wide it drew.
     @discardableResult
     static func draw(
         _ text: String, _ font: NSFont, colour: NSColor, x: CGFloat, middle: CGFloat, room: CGFloat
@@ -1117,8 +944,6 @@ enum Ink {
     }
 }
 
-/// A label's dot: the colour the user gave the label, or the secondary
-/// label colour when it has none. The user's data, not a literal.
 @MainActor
 enum LabelDot {
     static func colour(_ colour: LabelColour?) -> NSColor {
@@ -1128,9 +953,6 @@ enum LabelDot {
     }
 }
 
-// MARK: - in SwiftUI
-
-/// `FocusListTable` as SwiftUI holds it.
 public struct FocusListView: NSViewRepresentable {
     private let table: FocusListTable
 
@@ -1143,7 +965,5 @@ public struct FocusListView: NSViewRepresentable {
     }
 
     public func updateNSView(_ scroll: NSScrollView, context: Context) {
-        // Nothing to push: the table pulls, and engine events reach it
-        // through `FocusListTable` directly.
     }
 }

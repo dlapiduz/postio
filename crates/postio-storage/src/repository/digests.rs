@@ -1,13 +1,7 @@
-//! Focus's digests (spec 007, research R13): mail a `[[focus.digests]]`
-//! rule holds back from Focus's inbox, and the deliveries that bring it
+//! Mail a `[[focus.digests]]` rule holds back from Focus's inbox, and the deliveries that bring it
 //! back as one row when the rule comes due.
-//!
-//! The rules are the person's, in `config.toml`; this is only what they
-//! have done so far, which a resync loses like a snooze. Holding is decided
-//! by the filing pass (T133), delivering by the due timer (T135), and
-//! archiving a delivery by the digest window (T137). What leaves Focus's
-//! inbox is a message with a hold whose delivery is not yet archived, and
-//! that predicate is [`super::focus_excludes`].
+//! The rules are config; this is what they have done so far. What leaves the inbox is a message
+//! with a hold whose delivery is not archived ([`super::focus_excludes`]).
 
 use chrono::{DateTime, Utc};
 use postio_model::ids::{DeliveryId, MessageId};
@@ -18,39 +12,28 @@ use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
-/// A delivery not yet archived: a digest row of Focus's inbox.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenDelivery {
-    /// Its row.
     pub id: DeliveryId,
-    /// The rule's name, as `[[focus.digests]]` had it.
     pub rule: String,
-    /// When it came due.
     pub due_at: DateTime<Utc>,
-    /// When Focus delivered it: later, if Focus was closed at the due time.
     pub delivered_at: DateTime<Utc>,
-    /// How many messages it holds.
     pub count: u32,
-    /// Its summary's statements and references, as JSON, once one is
-    /// written (spec 007 T154): the row's line comes from it.
+    /// Statements and references as JSON, once written; the row's line comes from it.
     pub summary: Option<String>,
 }
 
-/// Reads and writes digest holds and deliveries.
 #[derive(Debug)]
 pub struct DigestRepository<'a> {
     connection: &'a Connection,
 }
 
 impl<'a> DigestRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Holds `message` for `rule` from `at`, and answers whether it did: a
-    /// message is held once, by the first rule that matched it (contracts
-    /// config.md, `[[focus.digests]]`).
+    /// A message is held once, by the first rule that matched it. Answers whether it was held.
     pub async fn hold(&self, message: MessageId, rule: &str, at: DateTime<Utc>) -> Result<bool> {
         let held = sql::execute(
             self.connection,
@@ -61,8 +44,6 @@ impl<'a> DigestRepository<'a> {
         Ok(held > 0)
     }
 
-    /// Releases `message` -- its sender was stopped (`D`) -- and answers
-    /// whether it was held. It rejoins Focus's inbox.
     pub async fn release(&self, message: MessageId) -> Result<bool> {
         let released = sql::execute(
             self.connection,
@@ -73,10 +54,8 @@ impl<'a> DigestRepository<'a> {
         Ok(released > 0)
     }
 
-    /// Releases `message` if it is still waiting for its digest, and answers
-    /// whether it was: once its body shows a question or a to-do, a message
-    /// is not held (FR-122). One already delivered stays in its digest,
-    /// where the person can see it.
+    /// Once its body shows a question or a to-do a message is not held; one already delivered stays
+    /// in its digest.
     pub async fn release_waiting(&self, message: MessageId) -> Result<bool> {
         let released = sql::execute(
             self.connection,
@@ -87,11 +66,8 @@ impl<'a> DigestRepository<'a> {
         Ok(released > 0)
     }
 
-    /// Releases what `rule` holds of `sender`'s mail (an address, as
-    /// `EmailAddress::normalized` spells it) and has not delivered, as
-    /// stopping the sender does (`D`, FR-125), and answers which messages
-    /// rejoined the inbox. What a delivery already holds stays in it, where
-    /// the person can see it. Two statements, however many it releases.
+    /// As stopping the sender does: what a delivery already holds stays in it. Two statements
+    /// however many it releases.
     pub async fn release_sender(&self, rule: &str, sender: &str) -> Result<Vec<MessageId>> {
         sql::in_scope(self.connection, |scope| async move {
             let released: Vec<MessageId> =
@@ -107,7 +83,6 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::release_sender`] reads what it releases with.
     pub fn explain_held_from() -> &'static str {
         "SELECT h.message_id FROM digest_holds h
           WHERE h.rule = ?1 AND h.delivery_id IS NULL
@@ -117,7 +92,6 @@ impl<'a> DigestRepository<'a> {
           ORDER BY h.message_id"
     }
 
-    /// The SQL [`Self::release_sender`] releases with: the same holds.
     pub fn explain_release_sender() -> &'static str {
         "DELETE FROM digest_holds
           WHERE rule = ?1 AND delivery_id IS NULL
@@ -126,8 +100,6 @@ impl<'a> DigestRepository<'a> {
                            AND a.address_normalized = ?2)"
     }
 
-    /// The messages `delivery` holds, oldest first: what archiving the whole
-    /// digest (`⇧A`) archives. One statement.
     pub async fn delivery_messages(&self, delivery: DeliveryId) -> Result<Vec<MessageId>> {
         sql::all(
             self.connection,
@@ -138,13 +110,10 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::delivery_messages`] runs.
     pub fn explain_delivery_messages() -> &'static str {
         "SELECT message_id FROM digest_holds WHERE delivery_id = ?1 ORDER BY message_id"
     }
 
-    /// Takes back the archiving of `delivery`, as undo does, and answers
-    /// whether it was archived: its row is back among the inbox's.
     pub async fn reopen_delivery(&self, delivery: DeliveryId) -> Result<bool> {
         let reopened = sql::execute(
             self.connection,
@@ -156,8 +125,6 @@ impl<'a> DigestRepository<'a> {
         Ok(reopened > 0)
     }
 
-    /// Releases everything `rule` holds and has not delivered, as removing
-    /// the rule does (FR-126), and answers how many.
     pub async fn release_rule(&self, rule: &str) -> Result<usize> {
         let released = sql::execute(
             self.connection,
@@ -168,10 +135,8 @@ impl<'a> DigestRepository<'a> {
         Ok(released as usize)
     }
 
-    /// When `rule`'s oldest hold that no delivery has taken was made, or
-    /// `None` when nothing waits: its next delivery is the first due time
-    /// after that (T135), and with nothing waiting there is none (US10
-    /// scenario 6). One statement, a seek on `idx_digest_holds_rule`.
+    /// `None` when nothing waits: the next delivery is the first due time after it, and with
+    /// nothing waiting there is none. A seek on `idx_digest_holds_rule`.
     pub async fn waiting_since(&self, rule: &str) -> Result<Option<DateTime<Utc>>> {
         let since: Option<i64> = sql::first(
             self.connection,
@@ -184,19 +149,12 @@ impl<'a> DigestRepository<'a> {
         Ok(since.map(super::from_millis))
     }
 
-    /// The SQL [`Self::waiting_since`] runs.
     pub fn explain_waiting_since() -> &'static str {
         "SELECT min(held_at) FROM digest_holds WHERE rule = ?1 AND delivery_id IS NULL"
     }
 
-    /// Delivers everything `rule` holds and has not yet delivered, as one
-    /// delivery that came due at `due_at` and was made at `delivered_at`, and
-    /// answers it -- or `None`, creating nothing, when the rule holds
-    /// nothing new: an empty digest is no row (US10 scenario 6).
-    ///
-    /// Three statements in the caller's transaction, whatever the rule
-    /// holds: whether it holds anything, the delivery, and the holds joining
-    /// it, each over `idx_digest_holds_rule`.
+    /// `None`, creating nothing, when the rule holds nothing new: an empty digest is no row. Three
+    /// statements in the caller's transaction, each over `idx_digest_holds_rule`.
     pub async fn deliver(
         &self,
         rule: &str,
@@ -231,10 +189,8 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
-    /// Which of `messages` a digest holds, and for which rule: waiting for
-    /// its delivery (`false`) or delivered and not archived (`true`). What
-    /// a search result says instead of its folder (US10 scenario 7). One
-    /// statement, each message by its key.
+    /// `false` is waiting for delivery, `true` delivered and not archived. One statement, each
+    /// message by its key.
     pub async fn held(&self, messages: &[MessageId]) -> Result<Vec<(MessageId, String, bool)>> {
         if messages.is_empty() {
             return Ok(Vec::new());
@@ -257,7 +213,6 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::held`] runs over `messages` messages.
     pub fn explain_held(messages: usize) -> String {
         let placeholders = (1..=messages)
             .map(|n| format!("?{n}"))
@@ -272,11 +227,7 @@ impl<'a> DigestRepository<'a> {
         )
     }
 
-    /// How many messages each of `rules` holds now, waiting for its next
-    /// delivery, in their order: the `g d` list's "holds N".
-    ///
-    /// One statement for every rule, each count a seek on
-    /// `idx_digest_holds_rule`.
+    /// One statement for every rule, each count a seek on `idx_digest_holds_rule`.
     pub async fn waiting(&self, rules: &[&str]) -> Result<Vec<u32>> {
         if rules.is_empty() {
             return Ok(Vec::new());
@@ -302,7 +253,6 @@ impl<'a> DigestRepository<'a> {
             .collect())
     }
 
-    /// The SQL [`Self::waiting`] runs over `rules` rules.
     pub fn explain_waiting(rules: usize) -> String {
         let counts: Vec<String> = (1..=rules)
             .map(|n| {
@@ -314,9 +264,7 @@ impl<'a> DigestRepository<'a> {
         format!("SELECT {}", counts.join(", "))
     }
 
-    /// Every delivery not yet archived, newest first, each with how many
-    /// messages it holds: the digest rows of Focus's inbox. One statement,
-    /// a seek on `idx_digest_deliveries_open` and each count a seek on
+    /// One statement: a seek on `idx_digest_deliveries_open`, each count a seek on
     /// `idx_digest_holds_delivery`.
     pub async fn open_deliveries(&self) -> Result<Vec<OpenDelivery>> {
         sql::all(
@@ -337,7 +285,6 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::open_deliveries`] runs.
     pub fn explain_open_deliveries() -> &'static str {
         "SELECT d.id, d.rule, d.due_at, d.delivered_at,
                 (SELECT count(*) FROM digest_holds h WHERE h.delivery_id = d.id),
@@ -347,9 +294,7 @@ impl<'a> DigestRepository<'a> {
           ORDER BY d.due_at DESC, d.id DESC LIMIT 256"
     }
 
-    /// The open deliveries no summary has been written for, newest first, at
-    /// most `limit`: what the summariser takes next (spec 007 T154). One
-    /// statement, a seek on `idx_digest_deliveries_open`.
+    /// One statement, a seek on `idx_digest_deliveries_open`.
     pub async fn unsummarised(&self, limit: u32) -> Result<Vec<DeliveryId>> {
         sql::all(
             self.connection,
@@ -362,10 +307,8 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
-    /// Keep `summary` -- statements and references, as JSON -- with
-    /// `delivery`, written at `at`. One statement. An empty summary is
-    /// kept too: the model answered and nothing resolved, and it is not
-    /// asked again.
+    /// An empty summary is kept too: the model answered and nothing resolved, so it is not asked
+    /// again.
     pub async fn set_summary(
         &self,
         delivery: DeliveryId,
@@ -381,7 +324,6 @@ impl<'a> DigestRepository<'a> {
         Ok(written > 0)
     }
 
-    /// `delivery`'s summary, as JSON, when one is written. One statement.
     pub async fn summary(&self, delivery: DeliveryId) -> Result<Option<String>> {
         Ok(sql::first(
             self.connection,
@@ -393,9 +335,7 @@ impl<'a> DigestRepository<'a> {
         .flatten())
     }
 
-    /// Who sent the mail each of `deliveries` holds, each sender once with
-    /// how many messages they sent, most first: the digest row's line until
-    /// summaries exist (FR-124). One statement for all of them.
+    /// The digest row's line until summaries exist. One statement for all of them.
     pub async fn senders_of(
         &self,
         deliveries: &[DeliveryId],
@@ -424,7 +364,6 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::senders_of`] runs for `deliveries` deliveries.
     pub fn explain_senders_of(deliveries: usize) -> String {
         format!(
             "SELECT h.delivery_id, a.address, max(r.name), count(DISTINCT h.message_id)
@@ -439,9 +378,7 @@ impl<'a> DigestRepository<'a> {
         )
     }
 
-    /// Archives `delivery` at `at`, as `⇧A` does, and answers whether there
-    /// was one: its row leaves the inbox, and its holds keep nothing out of
-    /// it any more.
+    /// Its row leaves the inbox, and its holds keep nothing out of it.
     pub async fn archive_delivery(&self, delivery: DeliveryId, at: DateTime<Utc>) -> Result<bool> {
         let archived = sql::execute(
             self.connection,

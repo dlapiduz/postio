@@ -1,7 +1,3 @@
-//! The pickers at the row (US5; screens 11-14): `b`, `h`, `l` and `v` open
-//! a small picker anchored to the focused row, acting on the selection when
-//! there is one.
-
 use chrono::Local;
 use gtk::gdk;
 use gtk::prelude::*;
@@ -9,9 +5,6 @@ use postio_storage::repository::MessageRepository;
 
 use crate::support::{self};
 
-/// US5 scenario 1, in Focus: `b` opens the snooze picker at the row, naming
-/// the conversation; `2` snoozes it to tomorrow morning, and it leaves the
-/// inbox.
 pub fn s_then_2_snoozes_the_row_until_tomorrow_morning() {
     crate::gtk_case(async {
         if !support::display() {
@@ -52,8 +45,6 @@ pub fn s_then_2_snoozes_the_row_until_tomorrow_morning() {
     });
 }
 
-/// `h` opens the remind picker at the row; `3` sets a reminder for the end
-/// of the week on the conversation, which stays in the inbox until then.
 pub fn h_then_3_reminds_at_the_end_of_the_week() {
     crate::gtk_case(async {
         if !support::display() {
@@ -76,8 +67,8 @@ pub fn h_then_3_reminds_at_the_end_of_the_week() {
         support::press(&window, "3", gdk::ModifierType::empty());
         let connection = fixture.database.connect().await.expect("a connection");
         let reminders = postio_storage::repository::ReminderRepository::new(&connection);
-        // Wait on the stored reminder with the suite's patience, not a count
-        // of main-loop turns: under load 200 turns went by before the write.
+        // Wait on the stored reminder with the suite's patience, not a count of loop turns: under
+        // load 200 turns went by before the write.
         assert!(
             crate::settle_until(async || reminders
                 .standing(thread)
@@ -101,9 +92,6 @@ pub fn h_then_3_reminds_at_the_end_of_the_week() {
     });
 }
 
-/// US5 scenario 7: with a picker open, `Esc` closes it and nothing
-/// changes -- the conversation stays in the inbox, and the list keeps its
-/// cursor.
 pub fn escape_closes_a_picker_and_changes_nothing() {
     crate::gtk_case(async {
         if !support::display() {
@@ -143,7 +131,6 @@ pub fn escape_closes_a_picker_and_changes_nothing() {
     });
 }
 
-/// The labels on `thread`, by name.
 async fn labels_on(fixture: &support::Fixture, thread: postio_model::ThreadId) -> Vec<String> {
     let connection = fixture.database.connect().await.expect("a connection");
     let mut names: Vec<String> = postio_storage::repository::LabelRepository::new(&connection)
@@ -157,21 +144,17 @@ async fn labels_on(fixture: &support::Fixture, thread: postio_model::ThreadId) -
     names
 }
 
-/// Wait for the labels on `thread` to be `wanted`.
 async fn labels_become(
     fixture: &support::Fixture,
     thread: postio_model::ThreadId,
     wanted: &[&str],
 ) -> Vec<String> {
-    // The suite's patience, not a count of main-loop turns, which load can
-    // outrun before the write lands.
+    // The suite's patience, not a count of main-loop turns, which load can outrun before the write
+    // lands.
     crate::settle_until(async || labels_on(fixture, thread).await == wanted).await;
     labels_on(fixture, thread).await
 }
 
-/// US5 scenario 5: `l` lists the labels, each applied one marked and the
-/// rest counted; `Space` takes an applied label off; a new name typed and
-/// confirmed is created and applied; and each change is undone by `Ctrl+Z`.
 pub fn l_toggles_a_label_and_creates_a_new_one() {
     crate::gtk_case(async {
         if !support::display() {
@@ -213,7 +196,6 @@ pub fn l_toggles_a_label_and_creates_a_new_one() {
             "Harbor's count: {said:?}"
         );
 
-        // Space on the applied Atlas takes it off.
         support::press(&window, "space", gdk::ModifierType::empty());
         assert_eq!(
             labels_become(&fixture, thread, &[]).await,
@@ -222,7 +204,6 @@ pub fn l_toggles_a_label_and_creates_a_new_one() {
         );
         assert!(picker.is_open(), "toggling keeps the picker open");
 
-        // A name nobody has is offered, created and applied.
         picker.entry().set_text("Receipts");
         assert!(
             crate::settle_until(async || {
@@ -246,7 +227,6 @@ pub fn l_toggles_a_label_and_creates_a_new_one() {
             "Enter closed the picker"
         );
 
-        // Each change is undoable: the last first.
         support::press(&window, "z", gdk::ModifierType::CONTROL_MASK);
         assert_eq!(
             labels_become(&fixture, thread, &[]).await,
@@ -262,9 +242,6 @@ pub fn l_toggles_a_label_and_creates_a_new_one() {
     });
 }
 
-/// US5 scenario 6: with three rows selected, `v` opens the move picker
-/// naming all three, the last destination first under Recent with `1`; `1`
-/// moves all three out of the inbox, and one `Ctrl+Z` returns them.
 pub fn m_moves_three_to_receipts_and_ctrl_z_returns_them() {
     crate::gtk_case(async {
         if !support::display() {

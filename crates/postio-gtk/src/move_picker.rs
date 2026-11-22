@@ -1,8 +1,5 @@
-//! The move picker (screen 14; US5 scenario 6): `v` lists where mail can
-//! go -- the last few destinations under "Recent", with `1` and `2`, then
-//! every folder under "All folders", each with its count. Typing filters;
-//! `Enter` or a number moves the mail, which leaves the inbox, and `Ctrl+Z`
-//! brings it back.
+//! The move picker: `v` lists recent destinations (`1`, `2`) then every folder with its count;
+//! `Enter` or a number moves the mail, `Ctrl+Z` brings it back.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,23 +13,19 @@ use postio_model::{Mailbox, MailboxId};
 use postio_ui::pickers;
 use postio_widgets::widgets::pickers::{Field, Picked, Picker, Row};
 
-/// What moving sends: the command, aimed at what the picker opened on.
 type Sender = Rc<dyn Fn(Command)>;
 
-/// The picker. See the module.
 pub struct MovePicker {
     picker: Rc<Picker>,
     client: Client,
     folders: RefCell<Vec<Mailbox>>,
     recent: RefCell<Vec<MailboxId>>,
-    /// The folder each row moves to, in the rows' order.
     shown: RefCell<Vec<MailboxId>>,
     sender: RefCell<Option<Sender>>,
     me: RefCell<std::rc::Weak<MovePicker>>,
 }
 
 impl MovePicker {
-    /// A closed picker, reading through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
         let picker = Picker::new(
             keymap,
@@ -67,18 +60,15 @@ impl MovePicker {
         this
     }
 
-    /// The frame, for keys and tests.
     pub fn picker(&self) -> &Rc<Picker> {
         &self.picker
     }
 
-    /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.picker.set_keymap(keymap);
         self.picker.set_footnote(&pickers::move_footnote(keymap));
     }
 
-    /// Open from `parent` at `rect`, naming `target`; `send` moves.
     pub fn open(
         &self,
         parent: &impl IsA<gtk::Widget>,
@@ -93,7 +83,6 @@ impl MovePicker {
         self.read();
     }
 
-    /// Read every enabled account's folders, and Recent.
     fn read(&self) {
         let client = self.client.clone();
         let weak = self.me.borrow().clone();
@@ -123,7 +112,6 @@ impl MovePicker {
         });
     }
 
-    /// Recent, then every folder, as the filter keeps them.
     fn show(&self) {
         let filter = self.picker.entry().text().to_string();
         let rows = pickers::move_rows(&self.folders.borrow(), &self.recent.borrow(), &filter);

@@ -1,16 +1,6 @@
-//! A real window with no store behind it (#1114).
-//!
-//! Focus presents its window before it has opened anything: the keyring
-//! read, the schema migrations and the search-index rebuild all happen on a
-//! thread of their own behind a window that already exists. What the window
-//! does in that interval is decided here, driven the way `startup::open`
-//! drives it -- by what the opening thread says (`Progress::Stage`) and its
-//! answer (`Progress::Done`) -- never by a wait the case sleeps through.
-//!
-//! A key pressed before the store has opened is not a case here: Focus
-//! answers none but Quit until there is mail (`key_before_mail`), and says
-//! the same page's sentence as the wait does, so the window is the one
-//! place a person is told.
+//! The window is driven by what the opening thread says (`Progress::Stage`, `Progress::Done`),
+//! never by a wait the case sleeps through.
+//! A key before the store opens is not a case: Focus answers none but Quit until there is mail.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -22,8 +12,6 @@ use postio_ui::list_state::{OPENING_THRESHOLD, Waiting, describe_wait};
 
 use crate::support::{self, Fixture};
 
-/// A window being opened by `startup::open` over `progress`, which the case
-/// feeds.
 fn opening() -> (FocusWindow, async_channel::Sender<Progress>) {
     let window = FocusWindow::new(None);
     window.present();
@@ -41,7 +29,6 @@ fn opening() -> (FocusWindow, async_channel::Sender<Progress>) {
     (window, sender)
 }
 
-/// A start past its budget says what it is waiting on, on its own timer.
 pub fn a_start_past_its_budget_says_what_it_is_waiting_on() {
     crate::gtk_case(async {
         if !support::display() {
@@ -55,8 +42,8 @@ pub fn a_start_past_its_budget_says_what_it_is_waiting_on() {
             .await
             .expect("the window listens");
         crate::settle();
-        // On a machine so loaded that the threshold has passed before the
-        // loop turned, the plate is rightly up; there is nothing to say then.
+        // On a machine loaded past the threshold the plate is rightly up; there is nothing to say
+        // then.
         if started.elapsed() < OPENING_THRESHOLD {
             assert_eq!(
                 window.waiting_text(),
@@ -74,7 +61,6 @@ pub fn a_start_past_its_budget_says_what_it_is_waiting_on() {
             window.waiting_text()
         );
 
-        // The wait changes, and the sentence follows it.
         progress
             .send(Progress::Stage(Waiting::Indexing))
             .await
@@ -87,7 +73,6 @@ pub fn a_start_past_its_budget_says_what_it_is_waiting_on() {
             window.waiting_text()
         );
 
-        // The store opens: the plate gives way to the inbox.
         fixture
             .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
             .await;
@@ -103,10 +88,6 @@ pub fn a_start_past_its_budget_says_what_it_is_waiting_on() {
     });
 }
 
-/// An ordinary start draws nothing that is then removed (the 100 ms
-/// transition budget allows a transition *or none*): the wait is measured in
-/// tens of milliseconds, so no plate is up while it lasts, and the plate's
-/// timer, still pending when the store lands, does not put it back over mail.
 pub fn an_ordinary_start_draws_nothing_that_is_then_removed() {
     crate::gtk_case(async {
         if !support::display() {
@@ -123,8 +104,6 @@ pub fn an_ordinary_start_draws_nothing_that_is_then_removed() {
             .await
             .expect("the window listens");
         crate::settle();
-        // Only a wait that really was short is an ordinary start: on a
-        // machine loaded past the threshold the plate is rightly up.
         if started.elapsed() < OPENING_THRESHOLD {
             assert_eq!(
                 window.waiting_text(),
@@ -147,7 +126,6 @@ pub fn an_ordinary_start_draws_nothing_that_is_then_removed() {
             "the inbox never reached the screen"
         );
 
-        // Outlast the plate's timer, armed by the Stage message above.
         crate::settle_for(OPENING_THRESHOLD + std::time::Duration::from_millis(500)).await;
         assert_eq!(
             window.waiting_text(),

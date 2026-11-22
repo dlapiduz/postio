@@ -1,6 +1,6 @@
-//! Selection and copy over the snapshot (spec 006 FR-017, research R7):
-//! positions in the text index, never the engine's own selection, drawn as
-//! overlay rectangles so a selection change rasterises nothing.
+//! Selection and copy over the snapshot: positions in the text index, drawn as overlay rectangles
+//! so a
+//! selection change rasterises nothing.
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -8,10 +8,8 @@ use gtk::subclass::prelude::*;
 
 use super::BodyView;
 
-/// The selection highlight: the accent, translucent over the page.
 const HIGHLIGHT: gdk::RGBA = gdk::RGBA::new(0.36, 0.56, 0.80, 0.35);
 
-/// Wire the pointer to the selection.
 pub(super) fn install(view: &BodyView) {
     let drag = gtk::GestureDrag::new();
     drag.connect_drag_begin({
@@ -70,7 +68,6 @@ pub(super) fn install(view: &BodyView) {
     });
     view.add_controller(motion);
 
-    // Tab walks the links in document order; Return follows the focused one.
     let keys = gtk::EventControllerKey::new();
     keys.connect_key_pressed({
         let view = view.downgrade();
@@ -108,13 +105,10 @@ pub(super) fn install(view: &BodyView) {
     view.add_controller(shortcuts);
 }
 
-/// Scroll a drag that reaches the view's edge.
 fn autoscroll(view: &BodyView, y: f32) {
     let Some(adjustment) = view.scrolling() else {
         return;
     };
-    // Against the part of the view in the window, which is all of it unless
-    // the view flows inside a scroller.
     let (top, page) = view.window();
     let (y, height) = (y - top as f32, page as f32);
     let step = if y < 24.0 {
@@ -128,7 +122,6 @@ fn autoscroll(view: &BodyView, y: f32) {
 }
 
 impl BodyView {
-    /// A point in the view as a point in the document.
     pub(super) fn document_point(&self, at: gtk::graphene::Point) -> postio_render::Point {
         let imp = self.imp();
         let value = |a: &std::cell::RefCell<Option<gtk::Adjustment>>| {
@@ -140,8 +133,6 @@ impl BodyView {
         )
     }
 
-    /// Select from `from` to `to`, and offer it as the primary selection
-    /// when `settled`.
     pub(super) fn select_points(
         &self,
         from: gtk::graphene::Point,
@@ -163,10 +154,9 @@ impl BodyView {
         }
     }
 
-    /// Hold `range` as the selection. A selection takes the keyboard, as a
-    /// text view's does: Ctrl+C is the view's own shortcut, and a drag
-    /// moves no focus by itself, so the key would otherwise go to wherever
-    /// the keyboard was left and copy nothing.
+    /// Holds `range` as the selection and takes the keyboard: Ctrl+C is the view's shortcut, and a
+    /// drag
+    /// moves no focus by itself.
     pub(super) fn set_selection(&self, range: Option<std::ops::Range<usize>>) {
         if range.is_some() && !self.is_focus() {
             self.take_keyboard();
@@ -176,9 +166,9 @@ impl BodyView {
         self.queue_draw();
     }
 
-    /// Take the keyboard without moving the page. A view that flows in a
-    /// column sits in the column's viewport, which scrolls to whatever takes
-    /// focus: it would carry the words being selected away from the pointer.
+    /// Takes the keyboard without moving the page: a flowing view's column scrolls to whatever
+    /// takes focus,
+    /// which would carry the selection away from the pointer.
     fn take_keyboard(&self) {
         let viewport = self
             .ancestor(gtk::Viewport::static_type())
@@ -193,7 +183,6 @@ impl BodyView {
         }
     }
 
-    /// The selection as X11 and Wayland's primary selection.
     pub(super) fn offer_primary(&self) {
         if let Some(text) = self.selected_text() {
             self.primary_clipboard().set_text(&text);
@@ -205,14 +194,12 @@ impl BodyView {
         Some(self.document()?.text.slice(range).to_owned())
     }
 
-    /// Copy the selection to the clipboard.
     pub(super) fn copy(&self) {
         if let Some(text) = self.selected_text() {
             self.clipboard().set_text(&text);
         }
     }
 
-    /// Draw the selection over the tiles, and the keyboard focus ring.
     pub(super) fn draw_selection(&self, snapshot: &gtk::Snapshot, left: f64, top: f64) {
         if let (Some(at), Some(document)) = (self.imp().focused_link.get(), self.document())
             && let Some(link) = document.links.get(at)

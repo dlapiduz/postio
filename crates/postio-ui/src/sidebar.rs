@@ -1,27 +1,10 @@
-//! Which folders the sidebar draws where.
-//!
-//! The canvas' order — Inbox, Flagged, Drafts, Sent, Archive — and the rule
-//! that keeps a role from appearing twice. Both frontends draw a sidebar and
-//! neither should decide this for itself: a second ordering is a second
-//! answer to "where is my inbox", and the duplicate rule in particular took a
-//! bug report to find (#501).
-//!
-//! Nothing here touches a toolkit: `Vec<Mailbox>` in, `Vec<Mailbox>` out.
+//! Which folders the sidebar draws where, and the rule that keeps a role from appearing twice
+//! (#501); shared by both frontends.
 
 use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxRole};
 
-/// Where a role sits in the sidebar, or `None` for an ordinary folder.
-///
-/// The canvas' order — Inbox, Flagged, Drafts, Sent, Archive — with the two
-/// folders it does not happen to draw after them. Snoozed joins right after
-/// Flagged: the same client-only, no-`SPECIAL-USE` shape, and the same kind
-/// of "things you will come back to soon" list.
-///
-/// The Outbox sits between Drafts and Sent, which is the order the column
-/// reads in: what you are still writing, what is on its way, what has gone.
-/// Its place is fixed rather than earned, because the row is hidden when the
-/// Outbox is empty and a position that moved would reorder its neighbours
-/// every time a message was sent.
+/// Snoozed follows Flagged. The Outbox sits between Drafts and Sent; its place is fixed because the
+/// row hides when empty and a moving position would reorder its neighbours.
 pub fn role_order(role: MailboxRole) -> Option<u8> {
     match role {
         MailboxRole::Inbox => Some(0),
@@ -37,23 +20,13 @@ pub fn role_order(role: MailboxRole) -> Option<u8> {
     }
 }
 
-/// Whether `mailbox` is the folder its role actually routes to, among its
-/// account's mailboxes.
-///
-/// The same answer `MailboxRepository::by_role` gives — first by path — so
-/// the folder the sidebar crowns with the role name is the folder `a`
-/// archives into and `d` deletes into. Two rules diverging here is how a
-/// sidebar says `Archive` over one folder while the key files into another.
-///
-/// A role-less mailbox is trivially primary: there is nothing to be the
-/// twin of.
+/// The same answer as `MailboxRepository::by_role` (first by path), so the folder shown with the
+/// role name is the one `a` and `d` file into.
 pub fn primary_within(mailbox: &Mailbox, among: &[Mailbox]) -> bool {
     if role_order(mailbox.role).is_none() {
         return true;
     }
-    // Identity by path, not id: paths are unique within an account and are
-    // what `by_role` orders by, while ids are storage rowids a fixture never
-    // sets.
+    // By path, not id: ids are storage rowids that a fixture never sets.
     !among.iter().any(|other| {
         other.account_id == mailbox.account_id
             && other.role == mailbox.role
@@ -61,53 +34,22 @@ pub fn primary_within(mailbox: &Mailbox, among: &[Mailbox]) -> bool {
     })
 }
 
-/// How many messages each of the sidebar's views holds.
-///
-/// Gathered by the caller because the three come from different places:
-/// `flagged` and `snoozed` are sums over the account's folders, which the
-/// store's cached counts already have, and `outbox` is a question about draft
-/// state that only a query can answer.
+/// Gathered by the caller: `flagged` and `snoozed` sum the cached counts, `outbox` needs a
+/// draft-state query.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ViewCounts {
-    /// Everything flagged in the account, wherever it is filed.
     pub flagged: u32,
-    /// Everything currently snoozed.
     pub snoozed: u32,
-    /// Drafts whose send is under way.
     pub outbox: u32,
     /// What the Drafts row should show: everything not in flight. Not
     /// `mailboxes.total_count`, which counts every message row filed there.
     pub drafts: u32,
-    /// How many of those have stopped and need a person (FR-022).
     pub attention: u32,
 }
 
-/// The view rows this account's sidebar draws, in no particular order —
-/// [`sections`] places them.
-///
-/// # Why this is here and not in a widget
-///
-/// Every frontend needs the same answer, and the one that had to invent it
-/// locally did not: `Flagged` and `Snoozed` were built inside
-/// the classic app's feed, so the macOS sidebar has never had either row. Building
-/// them in the toolkit-free layer both frontends already consume is what makes
-/// "the same account draws the same rows" true rather than aspirational.
-///
-/// # What is invented, and what is not
-///
-/// `Snoozed` and `Outbox` are always Postio's own: no `SPECIAL-USE` attribute
-/// names either, so no server can advertise one and `MailboxRole::kind`
-/// answers `View` for both.
-///
-/// `Flagged` is the awkward one and the reason this takes the account's
-/// folders. RFC 6154 *does* define `\Flagged`, so a server can have a real
-/// one — Gmail's "Starred" — and inventing a second row beside it would draw
-/// the word twice. Worse, a view's empty path sorts before any real path, so
-/// the invented row would win [`primary_within`] and the user's actual folder
-/// would be demoted to an ordinary row underneath it.
-///
-/// The `Outbox` row is absent when it holds nothing, which is its ordinary
-/// state (spec 003 FR-012).
+/// A server may have a real `\Flagged` folder (RFC 6154, Gmail's "Starred"); a synthetic row beside
+/// it would draw the word twice and win `primary_within`, since a view's empty path sorts first.
+/// `Snoozed` and `Outbox` are always Postio's own. The `Outbox` row is absent when empty.
 pub fn view_rows(account: AccountId, folders: &[Mailbox], counts: ViewCounts) -> Vec<Mailbox> {
     let mut rows = Vec::new();
 
@@ -124,11 +66,7 @@ pub fn view_rows(account: AccountId, folders: &[Mailbox], counts: ViewCounts) ->
     rows
 }
 
-/// One view row: a query wearing a folder's clothes.
-///
-/// `path` is empty because there is nothing to `SELECT`, the id is left
-/// unassigned because there is no row, and `last_synced_at` stays `None`
-/// because a question is never out of date.
+/// `path` is empty, the id unassigned and `last_synced_at` `None`: a view is a query, not a folder.
 fn view(account: AccountId, role: MailboxRole, count: u32) -> Mailbox {
     let mut row = Mailbox::new(account, "", None);
     row.role = role;
@@ -146,32 +84,17 @@ fn view(account: AccountId, role: MailboxRole, count: u32) -> Mailbox {
         } else {
             0
         },
-        // A view holds no drafts of its own: the Outbox lists what is on its
-        // way, which is the opposite of stopped and waiting for somebody.
         attention: 0,
     };
     row
 }
 
-/// Split the mailboxes into the two sections the canvas draws, each in order.
-///
-/// Unselectable folders — `\Noselect` containers that exist only to hold a
-/// hierarchy — are dropped: a row you cannot open is a row that wastes a
-/// keystroke.
 pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     let mut special: Vec<Mailbox> = Vec::new();
     let mut ordinary: Vec<Mailbox> = Vec::new();
 
-    // An unselectable folder keeps its row **when it holds one**. A
-    // `\Noselect` container opens onto nothing, so dropping it looks right —
-    // and it takes its children with it, because they are neither roots nor
-    // children of anything still listed, and so match no predicate a frontend
-    // builds its tree from. GTK has kept them since it had a tree, in these
-    // words: the row stays "so the hierarchy it organizes can be opened even
-    // though it cannot be opened as a mailbox".
-    //
-    // `selectable` crosses to the frontend, which is what keeps the row
-    // itself from being picked.
+    // An unselectable folder keeps its row when it holds one: dropping a `\Noselect` container
+    // drops its children, which then match no tree predicate.
     let holds_a_folder = |container: &Mailbox| {
         mailboxes
             .iter()
@@ -181,11 +104,8 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
         .iter()
         .filter(|m| m.selectable || holds_a_folder(m))
     {
-        // One row per role (#501): an account that has passed through more
-        // than one client holds two folders per role, and a special section
-        // that renamed both to the role drew `Sent, Sent, Archive, Archive`.
-        // Only the primary — the mailbox actions route to — gets the role
-        // treatment; its twin is an ordinary folder under its server name.
+        // One row per role (#501): only the primary gets the role treatment; its twin is an
+        // ordinary folder under its server name.
         match role_order(mailbox.role) {
             Some(_) if primary_within(mailbox, mailboxes) => special.push(mailbox.clone()),
             _ => ordinary.push(mailbox.clone()),
@@ -197,28 +117,12 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     (special, ordinary)
 }
 
-// ── What a row is called ────────────────────────────────────────────────────
-//
-// A product decision rather than a widget detail, so both frontends take it
-// from here instead of re-deriving it: a view row has no server name, and a
-// raw `mailbox.name` would draw it with no label.
-
-/// What a folder is called in the sidebar.
-///
-/// The special-use folders get the name Postio uses for the role, not the one
-/// the server happens to have picked: an iCloud account calls its archive
-/// "Archive" but its junk folder "Junk E-mail", and the sidebar is not the
-/// place to learn that.
-///
-/// Public because the list pane's header names the same folder, and two
-/// places calling one mailbox by two names is exactly the vocabulary drift
-/// this function exists to prevent.
+/// Special-use folders get Postio's role name, not the server's ("Junk E-mail"). Public because the
+/// list header names the same folder.
 pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
     if !primary_within(mailbox, among) {
-        // The role's *twin* (#501): a second folder the server reports with
-        // the same role. It renders as an ordinary folder, and an ordinary
-        // folder is called what the server calls it — the role name belongs
-        // to exactly one row, or the sidebar reads `Sent, Sent`.
+        // The role's twin (#501) is an ordinary folder under the server's name: the role name
+        // belongs to one row.
         return mailbox.name.clone();
     }
     match role_name(mailbox.role) {
@@ -227,10 +131,6 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
     }
 }
 
-/// What a folder is called where its place in the hierarchy matters, as in
-/// Settings' list of folders to back up: a folder with a role goes by the
-/// role's name ("Inbox", not the server's `INBOX`), any other by its full
-/// path, so `Archive/2024` is not mistaken for a folder of its own at the top.
 pub fn path_label(mailbox: &Mailbox, among: &[Mailbox]) -> String {
     let shown = display_name(mailbox, among);
     if shown == mailbox.name {
@@ -240,19 +140,8 @@ pub fn path_label(mailbox: &Mailbox, among: &[Mailbox]) -> String {
     }
 }
 
-/// What Postio calls a role, with no folder in hand.
-///
-/// `None` for `Regular`, which has no name of its own — an ordinary folder is
-/// called what the server calls it.
-///
-/// Split out of [`display_name`] because a role needs a name in one place
-/// where there is no folder to ask: saying *"this account has no Drafts
-/// folder"* is a sentence about a role precisely when no such folder exists.
-/// A frontend writing its own list of role names is a second answer to "what
-/// is this row called", and the macOS one had exactly that — including for
-/// the twin case (#501), which it got wrong: a second folder the server
-/// reports as `Sent` is an ordinary folder called whatever the server calls
-/// it, and Swift's copy called both of them "Sent".
+/// `None` for `Regular`. Split out of `display_name` because a role needs a name where there is no
+/// folder, e.g. "this account has no Drafts folder".
 pub fn role_name(role: MailboxRole) -> Option<&'static str> {
     match role {
         MailboxRole::Inbox => Some("Inbox"),
@@ -270,8 +159,6 @@ pub fn role_name(role: MailboxRole) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-
-    // ── The view rows (spec 003, US4) ────────────────────────────────────
 
     #[test]
     fn a_folder_list_names_roles_and_paths() {
@@ -351,12 +238,8 @@ mod tests {
 
     #[test]
     fn no_flagged_view_is_invented_when_the_server_really_has_that_folder() {
-        // RFC 6154 defines `\Flagged`, so a server can have a real one --
-        // Gmail's "Starred". Synthesising a second row beside it would draw
-        // "Flagged, Flagged", and because a view's empty path sorts first the
-        // *synthetic* one would win `primary_within` and the real folder would
-        // be demoted to an ordinary row. The account's own mail would then be
-        // one click further away than on an account whose server has nothing.
+        // A server's real `\Flagged` (Gmail's "Starred") must not get a synthetic twin that would
+        // win `primary_within`.
         let account = AccountId::new(1);
         let folders = vec![
             folder(1, "INBOX", MailboxRole::Inbox),
@@ -388,8 +271,6 @@ mod tests {
     #[test]
     fn snoozed_is_always_invented_because_no_server_can_have_one() {
         let account = AccountId::new(1);
-        // Even handed a folder a careless server called "Snoozed": a role is
-        // resolved from `SPECIAL-USE`, and there is no attribute for this.
         let folders = vec![folder(3, "Snoozed", MailboxRole::Regular)];
 
         let roles: Vec<MailboxRole> = view_rows(
@@ -412,8 +293,6 @@ mod tests {
 
     #[test]
     fn the_view_rows_take_their_place_in_the_shared_order() {
-        // Built here *and* ordered here: a frontend appending them to the end
-        // of the list is how the two frontends came to disagree.
         let account = AccountId::new(1);
         let mut all = vec![
             folder(1, "INBOX", MailboxRole::Inbox),
@@ -448,10 +327,6 @@ mod tests {
 
     #[test]
     fn the_outbox_sits_between_drafts_and_sent() {
-        // Where a message on its way belongs in the reading of the column:
-        // after what you are still writing, before what has gone. Its
-        // position is fixed so that appearing and disappearing -- it is
-        // hidden when empty -- never reorders the rows around it.
         assert_eq!(
             role_order(MailboxRole::Outbox),
             Some(4),
@@ -494,9 +369,6 @@ mod tests {
         mailbox
     }
 
-    /// An account that has passed through more than one client: two folders
-    /// per role, which is the shape #501 was reported from and the shape the
-    /// macOS sidebar drew as `Archive, Archive … Sent, Sent`.
     fn two_clients() -> Vec<Mailbox> {
         vec![
             folder(1, "Archive", MailboxRole::Archive),
@@ -514,9 +386,6 @@ mod tests {
 
     #[test]
     fn the_inbox_comes_first() {
-        // The folder a mail client opens on. Sorted by name it is sixth,
-        // below a user folder called Garagiste, which is what the macOS
-        // sidebar did before #1155.
         let (special, _) = sections(&two_clients());
         assert_eq!(
             special.first().map(|m| m.role),
@@ -545,9 +414,6 @@ mod tests {
 
     #[test]
     fn a_role_gets_one_row_however_many_folders_carry_it() {
-        // #501. Two clients leave two folders per role, and a section that
-        // gave both the role's treatment drew each role twice with no way to
-        // tell them apart.
         let (special, ordinary) = sections(&two_clients());
         for role in [MailboxRole::Archive, MailboxRole::Sent, MailboxRole::Trash] {
             assert_eq!(
@@ -556,8 +422,6 @@ mod tests {
                 "{role:?} appears more than once in the special section"
             );
         }
-        // ...and the twin is not dropped: it is still reachable, under the
-        // name the server gave it.
         let paths: Vec<&str> = ordinary.iter().map(|m| m.path.as_str()).collect();
         assert!(paths.contains(&"Archives"), "the twin vanished: {paths:?}");
         assert!(
@@ -569,7 +433,6 @@ mod tests {
 
     #[test]
     fn an_unselectable_container_holding_nothing_gets_no_row() {
-        // A `\Noselect` folder that organizes nothing opens onto nothing.
         let mut mailboxes = two_clients();
         let mut container = folder(11, "Archives/2024", MailboxRole::Regular);
         container.selectable = false;
@@ -587,16 +450,8 @@ mod tests {
 
     #[test]
     fn an_unselectable_container_holding_folders_keeps_its_row() {
-        // And this is why. Dropping it dropped its children too: they are
-        // neither roots (they have a parent) nor children of anything listed
-        // (their parent is not in the list), so `Archives/2024/Q1` matched no
-        // predicate and was drawn nowhere at all — unopenable by any means,
-        // since there is no folder finder either.
-        //
-        // GTK has kept these since it had a tree, in those words: the row
-        // stays "so the hierarchy it organizes can be opened even though it
-        // cannot be opened as a mailbox". `selectable` still crosses, so a
-        // frontend knows not to let the row itself be picked.
+        // Dropping a container also dropped its children: they matched no tree predicate and were
+        // drawn nowhere.
         let mut mailboxes = two_clients();
         let mut container = folder(11, "Archives/2024", MailboxRole::Regular);
         container.selectable = false;

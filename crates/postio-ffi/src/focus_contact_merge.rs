@@ -1,7 +1,6 @@
-//! The merge sheet across the boundary (specs/011-focus-contacts S10). The
-//! sheet's words and its keys are Rust's: the frontend draws
-//! [`MergeSheetViewFfi`], reports a click on a card, and presses Return, `n`
-//! and Escape as commands.
+//! The merge sheet: its words and keys are Rust's. The frontend draws `MergeSheetViewFfi`, reports
+//! a click on a card,
+//! and presses Return, `n` and Escape as commands.
 
 use postio_ui::contact_merge::MergeSheetView;
 
@@ -9,16 +8,12 @@ use crate::Session;
 use crate::focus_contact_edit::EditButtonFfi;
 use crate::focus_contacts::AvatarFfi;
 
-/// One record's card.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MergeCardFfi {
-    /// The avatar.
     pub avatar: AvatarFfi,
-    /// The name.
     pub name: String,
     /// "saved" or "not saved".
     pub source: String,
-    /// The address.
     pub address: String,
     /// "412 messages, last today".
     pub stats: String,
@@ -28,14 +23,10 @@ pub struct MergeCardFfi {
     pub kept: bool,
 }
 
-/// What the merge would make.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MergeResultFfi {
-    /// The avatar.
     pub avatar: AvatarFfi,
-    /// The name.
     pub name: String,
-    /// The role.
     pub role: String,
     /// The addresses, the primary starred.
     pub addresses: String,
@@ -43,30 +34,22 @@ pub struct MergeResultFfi {
     pub line: String,
 }
 
-/// The sheet.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MergeSheetViewFfi {
     /// "These 3 look like the same person".
     pub title: String,
-    /// What merging does.
     pub subtitle: String,
     /// "1 of 3", none for records chosen by hand.
     pub position: Option<String>,
-    /// The cards.
     pub cards: Vec<MergeCardFfi>,
     /// "Why we think so".
     pub why_title: String,
-    /// The evidence.
     pub evidence: Vec<String>,
-    /// The result.
     pub result: MergeResultFfi,
     /// "Undo with Cmd-Z. ..."
     pub foot: String,
-    /// Not the same.
     pub not_same: EditButtonFfi,
-    /// Later.
     pub later: EditButtonFfi,
-    /// Merge.
     pub merge: EditButtonFfi,
 }
 
@@ -112,8 +95,7 @@ impl From<MergeSheetView> for MergeSheetViewFfi {
 
 #[uniffi::export]
 impl Session {
-    /// A click on the merge sheet's card at `index`: its name and photo are
-    /// kept.
+    /// A click on the merge sheet's card at `index`: its name and photo are kept.
     pub fn focus_contact_merge_keep(&self, index: u32) {
         self.focus_driver()
             .input(postio_focus::Input::ContactMergeKeep(index));

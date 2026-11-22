@@ -1,17 +1,3 @@
-//! The navigation model the settings window is built on (#1179).
-//!
-//! The old panel appended every pane into one column and showed them all at
-//! once, and its sidebar scrolled a `TextView` to a TOML header rather than
-//! switching anything. The maintainer's report was that the result read as
-//! floating cards with no window frame, and that nothing said whether they
-//! were tabs, panes or a dialog.
-//!
-//! So this asserts the model itself, not the styling: **exactly one pane is
-//! on screen**, the sidebar's selection is what chooses it, the frame around
-//! it does not move, and the footer says which table the pane you are
-//! looking at writes to. Skips without a display. Nothing here touches the
-//! network.
-
 use crate::support_compose::{fonts, style};
 use gtk::gdk;
 use gtk::prelude::*;
@@ -57,8 +43,6 @@ pub fn the_sidebar_selection_is_what_chooses_the_pane() {
     assert_eq!(panel.current_section(), Section::Sync);
     assert_eq!(pane_title(&panel), "Sync & storage");
 
-    // And the other way: moving the pane moves the selection, so the two can
-    // never disagree about where you are.
     panel.show_section(Section::Privacy);
     pump();
     assert!(
@@ -75,9 +59,7 @@ pub fn the_frame_is_identical_on_every_pane() {
         return;
     };
 
-    // The header bar, the sidebar and the footer are the *same widgets* on
-    // every pane — not rebuilt per pane, which is what let the old
-    // panel's chrome drift from section to section.
+    // The header bar, sidebar and footer are the same widgets on every pane, not rebuilt per pane.
     let header = panel.header_bar();
     let mut footers = Vec::new();
     for section in Section::ALL
@@ -125,8 +107,7 @@ pub fn the_footer_names_the_table_the_pane_writes() {
     pump();
     assert_eq!(panel.footer_target_text(), "[keys] in config.toml");
 
-    // Privacy owns no table at all — its state lives outside config.toml —
-    // so the strip names the file rather than inventing a `[privacy]`.
+    // Privacy owns no table, so the strip names the file rather than inventing a `[privacy]`.
     panel.show_section(Section::Privacy);
     pump();
     assert!(
@@ -198,7 +179,6 @@ pub fn finding_a_setting_narrows_the_sidebar_to_the_panes_that_have_it() {
     panel_window.destroy();
 }
 
-/// A realized panel, or `None` with no display.
 fn panel() -> Option<(gtk::Window, SettingsPanel)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -223,7 +203,6 @@ fn pump() {
     while context.iteration(false) {}
 }
 
-/// Every pane in the stack, by the name it was added under.
 fn panes(panel: &SettingsPanel) -> Vec<(String, gtk::Widget)> {
     let stack = collect(panel.upcast_ref::<gtk::Widget>(), "")
         .into_iter()
@@ -273,10 +252,6 @@ fn search_entry(panel: &SettingsPanel) -> gtk::SearchEntry {
         .expect("the find-a-setting field")
 }
 
-/// Every widget in the tree carrying `class` (or, when `class` is empty,
-/// every widget), depth first. Copied from `gtk_settings_filters.rs` rather
-/// than shared, matching that file's own reason: no dependency between the
-/// two.
 fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if class.is_empty() || widget.has_css_class(class) {

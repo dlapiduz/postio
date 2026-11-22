@@ -1,37 +1,7 @@
-//! A whole conversation as one document (ADR 0032, #1316).
-//!
-//! The reading pane builds a `WebView` per expanded message today, and
-//! WebKitGTK runs a web process per *view* — so a thirty-message thread ends
-//! up with thirty processes, and moving between them composites black while
-//! a new one starts. Measured in `gtk_reader`: one reader is one process, two
-//! readers are two, and rendering a second message into the same reader
-//! reuses it.
-//!
-//! This composes the thread instead: one document, one view, one process,
-//! whatever the thread's length.
-//!
-//! # Why several senders can share a document here
-//!
-//! Because they cannot contaminate each other. `postio_body::sanitize`
-//! removes `<style>` tag-and-contents and strips every inline `style`
-//! attribute, and parses to a tree rather than passing text through, so every
-//! body already renders under Postio's stylesheet and nothing else. That
-//! precondition was met for reasons that had nothing to do with this.
-//!
-//! # Expansion without script
-//!
-//! The reader runs with JavaScript off by construction (ADR 0003), so
-//! expansion is `<details>`/`<summary>` — a disclosure widget in HTML itself,
-//! keyboard-operable and announced by screen readers without a line of it.
-//!
-//! # Inline images name their message
-//!
-//! `postio-cid:` names a `Content-ID` and nothing else, which is exact while
-//! one document is one message. Here it is not, so every body is sanitised
-//! through [`postio_body::sanitize::sanitize_body_in`] with the message's own
-//! scope, and the handler routes on it. Composing a body that was sanitised
-//! unscoped would silently resolve one message's images against another's
-//! parts, so [`Entry::body`] documents that it must be the scoped output.
+//! A whole conversation as one document, so a thread is one WebView process (ADR 0032, #1316).
+//! Bodies are sanitised under the message's own scope, so `postio-cid:` images resolve against the
+//! right message.
+//! Expansion is `<details>`, since the reader runs without script (ADR 0003).
 
 use postio_body::sanitize::RemoteImages;
 
@@ -39,71 +9,34 @@ use super::document::{
     Sheet, contain_body_in, number_quote_folds, scroll_markers, senders_stylesheet, wrap_document,
 };
 
-/// The conversation chrome, appended only to a conversation document.
 const THREAD_CSS: &str = include_str!("../../data/thread.css");
 
-/// The scheme a `Show` link uses, intercepted by the frontend rather than
-/// followed.
-///
-/// Its own scheme rather than a fragment or a query: the reader hands every
-/// navigation that leaves the pane to the system browser, so a consent verb
-/// has to be distinguishable from a link the sender wrote *before* that
-/// happens. The sanitizer never emits this scheme from a sender's markup, so
-/// a message cannot forge one.
+/// Its own scheme so the frontend can tell a consent verb from a sender's link before it goes to
+/// the browser; the sanitizer never emits it.
 pub const ALLOW_SCHEME: &str = "postio-allow";
 
-/// The scheme a per-message `Reply` uses.
-///
-/// A verb of its own rather than a parameter on one scheme, so the frontend
-/// can tell them apart before deciding what to do — and so an unrecognised
-/// verb is refused rather than mapped to the nearest thing.
+/// A verb per scheme, so an unrecognised verb is refused rather than mapped.
 pub const REPLY_SCHEME: &str = "postio-reply";
 
-/// The scheme a per-message `Forward` uses. See [`REPLY_SCHEME`].
 pub const FORWARD_SCHEME: &str = "postio-forward";
 
-/// The scheme a draft's `Continue editing` uses. See [`REPLY_SCHEME`].
-///
-/// A draft has one verb that is true of it and it is not a reply (#1212), so
-/// it does not share the other two: routing it separately is what lets the
-/// frontend raise `CommandId::OpenMessage` -- the same command activating the
-/// row raises -- rather than inventing a second way to resume a composer.
+/// A draft resumes via `CommandId::OpenMessage`, not as a reply (#1212).
 pub const CONTINUE_SCHEME: &str = "postio-continue";
 
-/// The class the user's own messages wear, for the mark in
-/// `Design/screens/18-conversation-row-states.png` (#1241).
-///
-/// A class rather than a drawn mark, because the document is HTML and the
-/// stylesheet is where a mark belongs -- the stacked pane drew it into a
-/// widget's `snapshot()` and that is precisely why it did not survive the
-/// pane (#1444).
+/// A class, not a drawn mark: the stylesheet is where it belongs (#1444).
 pub const MINE_CLASS: &str = "postio-mine";
 
-/// A verb a message offers for itself, inside a conversation document.
-///
-/// With JavaScript off, a verb in the page is a navigation, and the pane
-/// intercepts it by scheme before anything can reach the browser.
+/// With script off a verb is a navigation, intercepted by scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageVerb {
-    /// Reply to this message rather than to the latest one (FR-009).
     Reply,
-    /// Forward this message.
     Forward,
-    /// Resume the composer on this draft (#1212).
     Continue,
-    /// Show this sender's remote images -- the consent the blocked notice
-    /// asks for.
     Allow,
 }
 
-/// Which verb a navigation inside the document asks for, and for which
-/// message's scope -- or `None` when it is not a verb at all.
-///
-/// Matched on the scheme alone, and the whole prefix: a sender controls a
-/// link's text and class and neither of the schemes the sanitizer will emit,
-/// so the scheme is the only thing worth trusting. An unknown verb is refused
-/// rather than mapped to the nearest one, and a verb naming no message is not
-/// a verb.
+/// Matched on the scheme alone: a sender controls link text and class, not these schemes.
+/// An unknown verb, or one naming no message, is not a verb.
 pub fn verb_of(uri: &str) -> Option<(MessageVerb, String)> {
     [
         (REPLY_SCHEME, MessageVerb::Reply),
@@ -120,108 +53,46 @@ pub fn verb_of(uri: &str) -> Option<(MessageVerb, String)> {
     })
 }
 
-/// The attribute every fold in a conversation carries: its stable id, by
-/// which the renderer opens or closes it across re-renders (spec 006 R15).
-/// A message's fold is its anchor; a quote's is `<anchor>-q<n>`, numbered
-/// in document order within its message.
+/// A stable id so a fold stays open or closed across re-renders. A message's fold is its anchor, a
+/// quote's is `<anchor>-q<n>`.
 pub const FOLD_ATTRIBUTE: &str = "data-postio-fold";
 
-/// The element id a message carries, so a pane can scroll to it.
-///
-/// One function rather than two format strings, because the id and the
-/// fragment that navigates to it have to agree and nothing would say so if
-/// they stopped: a `#m-3` aimed at a document with no `m-3` scrolls nowhere,
-/// silently, and looks exactly like a message that happens to be on screen
-/// already (#1386).
-///
-/// Takes the scope raw and escapes it here, for the same reason: an escape
-/// applied on one side and not the other is the same silent mismatch wearing
-/// a different hat.
+/// One function so the id and the `#m-3` fragment agree; a mismatch scrolls nowhere, silently
+/// (#1386).
+/// Takes the scope raw and escapes it here.
 pub fn message_anchor(scope: &str) -> String {
     format!("m-{}", escape(scope))
 }
 
-/// One message's place in a conversation document.
-///
-/// A single message is a thread of one, expanded — the pane renders both
-/// through this, so there is one set of chrome rather than two that can drift.
+/// A single message is a thread of one, so one set of chrome serves both.
 pub struct Entry<'a> {
-    /// What `postio-cid:` references in [`body`](Self::body) are stamped with,
-    /// and what the scheme handler routes on. Must be the same scope the body
-    /// was sanitised under.
-    ///
-    /// Unreserved characters only — it is written into a URI without escaping,
-    /// and a message id in decimal is what the frontend passes.
+    /// Must be the scope the body was sanitised under. Unreserved characters only: it goes into a
+    /// URI unescaped.
     pub scope: &'a str,
-    /// Who it is from, as a person reads it.
     pub sender: &'a str,
-    /// Their address, shown beside the name on an open message (canvas 17).
     pub address: &'a str,
-    /// When, already formatted for the reader's locale.
     pub when: &'a str,
-    /// The one line a collapsed message shows.
     pub preview: &'a str,
-    /// Whether it starts open.
     pub expanded: bool,
-    /// Whether this is a draft: a message the user wrote and never sent.
-    ///
-    /// It changes which verbs the message offers -- `Continue editing`, and
-    /// neither reply nor forward (#1212).
+    /// A draft offers `Continue editing`, neither reply nor forward (#1212).
     pub draft: bool,
-    /// Whether the message came from one of the account's own addresses.
-    ///
-    /// Draws the user's own side of the conversation with the outlined mark
-    /// of `Design/screens/18-conversation-row-states.png` (#1241). The
-    /// comparison is folded once by the frontend, which is the only layer
-    /// that knows the account's identities.
     pub mine: bool,
-    /// Whether this is the newest message in the thread — canvas 17's
-    /// `latest` badge. Always false for a thread of one, where there is
-    /// nothing for it to distinguish.
+    /// Always false for a thread of one.
     pub latest: bool,
-    /// How many remote references this message had stripped, so the document
-    /// can say so where the decision was made rather than once for the page.
     pub blocked: u32,
-    /// The message's body: already rendered *and already sanitised under
-    /// [`scope`](Self::scope)*.
+    /// Already sanitised under `scope`.
     pub body: &'a str,
-    /// Who it went to, already drawn by
-    /// [`crate::reader::header::recipient_line`] -- "Ada, Bob and 197
-    /// others".
-    ///
-    /// Per message, not per thread: a conversation's messages go to different
-    /// people, and the one that added two hundred recipients is the one worth
-    /// noticing before reply-all. The stacked pane drew this on every
-    /// expanded entry, and one document has to keep it or the default pane
-    /// says less than the pane it replaced (#1427).
-    ///
-    /// Empty when there are none, and then nothing is drawn.
+    /// Per message: the one that added two hundred recipients is worth noticing before reply-all
+    /// (#1427).
+    /// Empty draws nothing.
     pub recipients: &'a str,
-    /// Who else was copied, drawn by the same rule. Empty when nobody was.
     pub cc: &'a str,
-    /// Which paper this message's body is drawn on -- [`sheet_for`]'s
-    /// answer for it.
-    ///
-    /// Per message, because a conversation can hold a newsletter and a
-    /// reply to it, and only the first was designed for white paper.
-    ///
-    /// [`sheet_for`]: crate::reader::document::sheet_for
     pub sheet: Sheet,
-    /// This message's own stylesheets, scoped to it
-    /// (`postio_body::sanitize::Sanitized::styles`). Empty for most mail.
-    ///
-    /// Must be the scoped output, for the same reason [`Entry::body`] must:
-    /// a rule that arrived unscoped restyles every other sender on this page.
+    /// Must be the scoped output: an unscoped rule restyles every other sender on the page.
     pub styles: &'a str,
 }
 
-/// A host script that scrolls the page to `anchor` -- `J`, `K`, the rail.
-///
-/// Postio's own script, evaluated by the frontend: the page's own script is
-/// off (ADR 0003). `getElementById` takes a string and never parses a
-/// selector, so the only thing to escape against is the literal it is quoted
-/// in -- and the ids are Postio's own, so that escape is belt and braces
-/// rather than the control. The rule GTK's reader uses for its fragments.
+/// Postio's own script, evaluated by the frontend; the page's script is off (ADR 0003).
 pub fn scroll_script(anchor: &str) -> String {
     format!(
         "(() => {{ const target = document.getElementById(\"{}\"); \
@@ -230,11 +101,7 @@ pub fn scroll_script(anchor: &str) -> String {
     )
 }
 
-/// A host script that folds or unfolds the message at `anchor` -- `z`.
-///
-/// Expansion is the document's state, not a model's: with the page's script
-/// off, the application cannot see a person click a summary, so the toggle
-/// acts on what is on screen rather than on what the host believes is.
+/// Acts on the document's state: with script off the host cannot see a click on a summary.
 pub fn toggle_script(anchor: &str) -> String {
     format!(
         "(() => {{ const message = document.getElementById(\"{}\"); \
@@ -243,27 +110,15 @@ pub fn toggle_script(anchor: &str) -> String {
     )
 }
 
-/// A host script that opens every message -- *Expand all*.
 pub fn expand_all_script() -> String {
     "(() => { for (const message of document.querySelectorAll('details.postio-message')) \
      { message.open = true; } })()"
         .to_owned()
 }
 
-/// A host script that reports which message fills the pane, to
-/// `window.webkit.messageHandlers.<handler>` -- the rail's observer.
-///
-/// **Greatest visible area**, the rail's rule: what a person is reading is
-/// what fills the screen, not the shortest message that happens to be whole.
-/// Debounced rather than continuous -- "jitter during a flick-scroll is worse
-/// than lag" -- and reported once at once, so a freshly loaded page says
-/// where it is. What is posted is the message's scope, the anchor with its
-/// prefix off; a frontend checks it against the thread it drew, because the
-/// report arrives from a page holding several senders' markup.
-///
-/// `handler` is Postio's own name for the channel, reduced to the characters
-/// a JavaScript identifier may hold, so nothing passed here can become
-/// script. The script GTK's reader has run since it had a rail.
+/// Greatest visible area (the rail's rule), debounced, and reported once at load. Posts the scope,
+/// which a frontend checks against its thread, since the page holds several senders' markup.
+/// `handler` is reduced to identifier characters so nothing passed in can become script.
 pub fn observer_script(handler: &str) -> String {
     let handler: String = handler
         .chars()
@@ -293,8 +148,6 @@ pub fn observer_script(handler: &str) -> String {
     )
 }
 
-/// `text` inside a double-quoted script literal: its escapes and its quote
-/// escaped, line breaks dropped -- a literal cannot hold one.
 fn quoted(text: &str) -> String {
     text.chars()
         .map(|character| match character {
@@ -306,65 +159,31 @@ fn quoted(text: &str) -> String {
         .collect()
 }
 
-/// One message of a conversation document, before its body is drawn.
-///
-/// The frontend's view of a message -- who, when, whether it is open, and its
-/// body still unsanitised -- which [`compose`] turns into an [`Entry`]. It
-/// lived in the classic app's reader, and moved here with [`compose`] so the
-/// macOS pane composes the same document from the same decisions rather than
-/// a second copy of them (#1595).
-///
-/// `Clone` because a reader keeps the thread it drew: the `Show` verb inside
-/// the document has to re-render after granting consent, and it re-renders
-/// the same messages rather than asking for them again.
+/// A message before its body is drawn; `compose` turns it into an `Entry` (#1595).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ThreadMessage {
-    /// What this message's `cid:` references are stamped with, and what the
-    /// scheme handler routes on. The message id in decimal: unreserved
-    /// characters only, since it goes into a URI unescaped.
+    /// The message id in decimal: unreserved characters only, since it goes into a URI unescaped.
     pub scope: String,
-    /// Who it is from, as a person reads it.
     pub sender: String,
-    /// Their address, shown beside the name on an open message (canvas 17),
-    /// and what the per-sender image decision is made on.
+    /// Also what the per-sender image decision is made on.
     pub address: String,
-    /// When, already formatted.
     pub when: String,
-    /// Who it went to, already drawn by
-    /// [`crate::reader::header::recipient_line`] (#1427).
     pub recipients: String,
-    /// Who else was copied, by the same rule. Empty when nobody was.
     pub cc: String,
-    /// The one line a collapsed message shows.
     pub preview: String,
-    /// Whether it starts open.
     pub expanded: bool,
-    /// Whether the body has not been backfilled yet.
-    ///
-    /// A message with no body used to contribute an empty section and say
-    /// nothing. Only the message that is *open* shows the plate: everything
-    /// unfetched stays the one line it already was, or a thread of thirty
-    /// would carry thirty explanations of one fact.
+    /// Only the open message shows the "no body yet" plate; a thread of thirty must not carry
+    /// thirty.
     pub absent: bool,
-    /// Whether this is the newest message in the thread -- canvas 17's badge.
     pub latest: bool,
-    /// Whether this is a draft: written here and never sent (#1212).
     pub draft: bool,
-    /// Whether it came from one of the account's own addresses (#1241).
     pub mine: bool,
-    /// The message body, unsanitised -- [`compose`] sanitises it under
-    /// [`scope`](Self::scope), which is the only way the reference stamping
-    /// can be guaranteed.
+    /// Unsanitised; `compose` sanitises it under `scope`.
     pub body: postio_model::MessageBody,
 }
 
-/// The whole thread as one document, deciding each message on its own terms.
-///
-/// `allowed` answers whether a sender's remote images are allowed, and
-/// `originals` holds the scopes the reader asked to see as sent (`⌃O`,
-/// #1398). `renders` is the caller's cache of each message's drawn body, so
-/// a redraw -- a body arriving, a grant -- sanitises only what changed. Both
-/// frontends call this, so a conversation reads the same on either (#1595).
+/// `originals` holds the scopes the reader asked to see as sent (`⌃O`, #1398).
+/// `renders` caches each drawn body, so a redraw sanitises only what changed.
 pub fn compose(
     messages: &[ThreadMessage],
     allowed: impl Fn(&str) -> bool,
@@ -373,32 +192,23 @@ pub fn compose(
 ) -> String {
     use super::document::{Absent, Rendered, absent_html};
 
-    // Rendered first, and held, because `Entry` borrows the markup. Every
-    // message opens as its sender built it (spec 006 FR-031), exactly as
-    // `render` decides it for one.
+    // Rendered first and held, because `Entry` borrows the markup.
     let mut sheets = Vec::with_capacity(messages.len());
     let rendered: Vec<Rendered> = messages
         .iter()
         .map(|message| {
-            // The reader's own choice first -- `⌃O` or reader view on one
-            // message, for that message and no other (#1398) -- and how every
-            // message opens otherwise.
             let rendering = originals
                 .get(&message.scope)
                 .copied()
                 .unwrap_or_else(super::document::opening_rendering);
-            // Per **message**, from its own sender (`PRODUCT.md` §21), so one
-            // allowed correspondent does not carry the rest of the thread with
-            // them (#1353).
+            // Per message, from its own sender, so one allowed correspondent does not carry the
+            // thread (#1353).
             let remote = if allowed(&message.address) {
                 RemoteImages::Allowed
             } else {
                 RemoteImages::Blocked
             };
-            // The paper, by the single-message page's rule (canvas 20): the
-            // sender's own when this is their design shown as sent, the
-            // theme's otherwise. The verdict is cached with the render, so
-            // this costs a lookup, not a parse.
+            // The verdict is cached with the render, so this costs a lookup, not a parse.
             sheets.push(if message.absent {
                 Sheet::Theme
             } else {
@@ -408,9 +218,8 @@ pub fn compose(
                 )
             });
             if message.absent && message.expanded {
-                // The single-message pane's own words, and its `role="status"`
-                // live region with them, so a screen reader is told once.
-                // `Partial`: the thread knows only that no body is here yet.
+                // `Partial`: the thread knows only that no body is here yet; `role="status"`
+                // announces it once.
                 return Rendered {
                     html: absent_html(Absent::Partial),
                     ..Rendered::default()
@@ -443,13 +252,8 @@ pub fn compose(
         })
         .collect();
 
-    // The document's `Content-Security-Policy` is one policy for the whole
-    // page, with no per-message form -- the limitation ADR 0032 names. So it
-    // opens only when some message is from a sender the user allowed, and the
-    // *sanitizer* keeps the others out: a blocked sender's `src` is dropped
-    // before the markup is composed. For such a page the policy is no longer a
-    // second, independent refusal; it is still the only refusal for every
-    // thread where nobody is allowed, which is the ordinary case.
+    // The CSP is one policy per page (ADR 0032), so it opens only when some sender is allowed;
+    // the sanitizer keeps blocked senders' images out.
     let anyone_allowed = messages.iter().any(|message| allowed(&message.address));
     conversation_document(
         &entries,
@@ -462,30 +266,14 @@ pub fn compose(
     )
 }
 
-/// The whole conversation, as one hardened document.
-///
-/// Each message is a `<details>` whose `<summary>` is its header, and whose
-/// body is wrapped in `.postio-body` — #323's visible edge between what Postio
-/// wrote and what arrived, which matters more here than in a single-message
-/// document, not less: several senders share this page.
+/// Each message is a `<details>`; bodies sit in `.postio-body` so several senders on one page keep
+/// a visible edge (#323).
 pub fn conversation_document(entries: &[Entry<'_>], remote: RemoteImages, sheet: Sheet) -> String {
     let mut content = String::new();
-    // Postio's first, then the senders'. Ours is the ground the page sits on;
-    // theirs describes their own message and wins where the two genuinely
-    // collide (FR-019).
-    //
-    // A sender's rules used to be simply absent here -- `sanitize` stripped
-    // `<style>` tag-and-contents -- and that was what made it safe for several
-    // senders to share one page. #1326 admits them, so what makes it safe now
-    // is that every rule has been rewritten under its own message's container
-    // (`postio_body::styles`). That is a stronger claim resting on a parser
-    // rather than on a deletion, which is why it is tested against the engine
-    // and not only against the markup.
+    // Postio's styles first, then the senders': theirs win where they collide.
+    // Safe because every sender rule is rewritten under its message's container (#1326).
     content.push_str("<style>");
     content.push_str(THREAD_CSS);
-    // The rule that turns a message's box into its sender's paper, keyed on
-    // a class on that message's `<details>` rather than on the page root, so
-    // one message can have it and the rest of the conversation not.
     if entries.iter().any(|entry| entry.sheet == Sheet::Senders) {
         content.push_str(&super::document::senders_sheet_css());
     }
@@ -516,15 +304,8 @@ fn entry_html(entry: &Entry<'_>) -> String {
     } else {
         String::new()
     };
-    // Per message, because the decision it reports is per sender — and since
-    // #1353 the document honours that: a sender the user has allowed keeps
-    // their images while the rest of the thread does not.
-    //
-    // The link is the consent. A notice that only *reports* a decision the
-    // user cannot make is not a privacy feature, it is a dead end: blocking
-    // without a way to unblock is the feature missing its other half. With
-    // JavaScript off, a verb inside the document is a navigation, which
-    // the classic app's reader view intercepted by scheme.
+    // The link is the consent: a notice without a way to unblock is a dead end. Per message since
+    // #1353.
     let blocked = match entry.blocked {
         0 => String::new(),
         count => {
@@ -539,21 +320,11 @@ fn entry_html(entry: &Entry<'_>) -> String {
             )
         }
     };
-    // Spec FR-009: the header's bar is fixed to the latest message, so
-    // without these there is no way to reply to an older one at all — the
-    // mistake the fixed bar exists to prevent, arriving from the other side.
-    //
-    // Out of flow, which is how the brief's two requirements — "reserve no
-    // space when idle" and "nothing shifts when they appear" — are both true
-    // at once rather than contradictory. `thread.css` positions them against
-    // the header row.
-    //
-    // Named for the message rather than the verb: an icon-only control that a
-    // screen reader announces as "button" is a control that is not reachable,
-    // and in a stack of six the verb alone does not say which one it means.
-    // A draft's one verb. The other two are the correspondent's, and a draft
-    // has no correspondent yet (#1212) -- so this is not an addition to the
-    // pair below but a replacement for it.
+    // The header bar is fixed to the latest message, so these are the only way to reply to an older
+    // one.
+    // Out of flow, so they reserve no space and shift nothing; named for the message so six of them
+    // differ to a screen reader.
+    // A draft gets one verb instead of the pair (#1212).
     let actions = if entry.draft {
         format!(
             "<span class=\"postio-message-actions\">\
@@ -572,27 +343,17 @@ fn entry_html(entry: &Entry<'_>) -> String {
          aria-label=\"Forward {sender}&#39;s message\" \
          title=\"Forward {sender}&#39;s message\">Forward</a>\
          </span>",
-            // Escaped. It was not, and a scope carrying a quote closed the
-            // `href` and put whatever followed it into the tag as an attribute
-            // -- found by `an_anchor_cannot_break_out_of_the_attribute_it_sits_in`
-            // while proving the *anchor* was safe. Not reachable today, because a
-            // scope is a message's own database id and `enable_javascript_markup`
-            // is off besides; a link that builds an attribute out of an
-            // unescaped value is still a link waiting for the day one of those
-            // stops being true.
+            // Escaped: a scope with a quote would close the `href` and inject an attribute.
             scope = escape(entry.scope),
             sender = sender,
         )
     };
-    // Named, not just contained: the name is what this message's own rules
-    // were scoped to, and without it they match nothing.
+    // Named, so this message's own rules (scoped to the name) match.
     let body = contain_body_in(entry.body, Some(entry.scope));
     let anchor = message_anchor(entry.scope);
     let body = number_quote_folds(&body, &format!("{anchor}-"));
     let recipients = recipients_html(entry.recipients, entry.cc);
-    // A normal string, not a raw one: a raw string cannot be line-continued,
-    // and the backslash would be a character in the markup — which is what
-    // `the_markup_is_well_formed` caught.
+    // A normal string, not raw: a raw string cannot be line-continued.
     let mine = if entry.mine {
         format!(" {MINE_CLASS}")
     } else {
@@ -617,22 +378,14 @@ fn entry_html(entry: &Entry<'_>) -> String {
     )
 }
 
-/// The `to` line of one message, or nothing when it has no recipients.
-///
-/// Outside the `<summary>` on purpose: the summary is what a *collapsed*
-/// message shows, and it already carries sender, preview, date and the verbs.
-/// Who it went to belongs with the message you have opened, which is where
-/// the stacked pane drew it too.
+/// Outside the `<summary>`, which a collapsed message shows: recipients belong with the opened
+/// message.
 fn recipients_html(recipients: &str, cc: &str) -> String {
     let mut rows = String::new();
     for (label, value) in [("To", recipients), ("Cc", cc)] {
         if value.trim().is_empty() {
             continue;
         }
-        // Label and value as two cells, so `To` and `Cc` line up with each
-        // other and their addresses start at the same column. Drawn bare,
-        // the recipients read as a stray line of text under the sender --
-        // which is exactly how it looked when this had no label at all.
         rows.push_str(&format!(
             "<div class=\"postio-message-recipients\">\
              <span class=\"postio-recipients-label\">{label}</span>\
@@ -643,12 +396,8 @@ fn recipients_html(recipients: &str, cc: &str) -> String {
     rows
 }
 
-/// Postio's own chrome text, escaped.
-///
-/// A sender's name and their preview are sender-controlled strings going into
-/// markup — the one place in this module where that is true, since the body
-/// arrives already sanitised. `<` and `&` are what turn a display name into an
-/// element; the quotes matter because these also land in attributes elsewhere.
+/// Sender-controlled strings (name, preview) go into markup here; the body arrives already
+/// sanitised.
 fn escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for character in value.chars() {
@@ -668,15 +417,8 @@ fn escape(value: &str) -> String {
 mod tests {
     #[test]
     fn a_draft_offers_continue_editing_and_neither_reply_nor_forward() {
-        // #1212: a draft is a message you wrote and never sent, so reply,
-        // reply-all and forward are the correspondent's verbs and it has no
-        // correspondent yet -- a `Reply` here quotes your own unsent text back
-        // at you. The verb that is right was already reachable and
-        // unannounced: activating it resumes the composer on the draft.
-        //
-        // The stacked pane knew this and drew `DRAFT_ACTIONS` on the entry's
-        // own bar. The one document had no equivalent and offered `Reply`
-        // (#1444).
+        // #1212: a draft has no correspondent, so reply and forward are wrong; it offers Continue
+        // editing.
         let mut draft = entry("7", "Ada", "<p>unsent</p>", true);
         draft.draft = true;
         let document = conversation_document(
@@ -701,8 +443,6 @@ mod tests {
 
     #[test]
     fn only_the_draft_of_a_thread_loses_its_reply() {
-        // The draft is not necessarily the row the list holds, and the verbs
-        // are per message: the message it answers keeps its own reply.
         let sent = entry("1", "Ada", "<p>sent</p>", true);
         let mut draft = entry("2", "Bo", "<p>unsent</p>", true);
         draft.draft = true;
@@ -724,10 +464,6 @@ mod tests {
 
     #[test]
     fn a_message_from_the_user_is_marked_as_theirs() {
-        // #1241: `Design/screens/18-conversation-row-states.png` gives the
-        // user's own side of a conversation an outlined mark rather than a
-        // filled one. The stacked pane drew it per entry; the document draws
-        // it as a class the stylesheet hangs the mark on (#1444).
         let mut mine = entry("1", "Ada", "<p>hi</p>", true);
         mine.mine = true;
         let theirs = entry("2", "Bo", "<p>hi</p>", true);
@@ -756,9 +492,6 @@ mod tests {
 
     #[test]
     fn a_blocked_message_offers_a_way_to_show_its_images() {
-        // A notice that only reports a decision the user cannot make is not a
-        // privacy feature. Blocking without a way to unblock is the feature
-        // missing its other half (#1353).
         let mut entry = entry("1", "Ada", "<p>hi</p>", true);
         entry.blocked = 6;
         let document = conversation_document(
@@ -775,9 +508,6 @@ mod tests {
 
     #[test]
     fn the_show_link_names_the_message_it_belongs_to() {
-        // Per sender, not per thread: allowing one correspondent must not
-        // carry the rest with them, so the verb has to say which message it
-        // is speaking for.
         let mut first = entry("11", "Ada", "<p>one</p>", true);
         first.blocked = 1;
         let mut second = entry("22", "Grace", "<p>two</p>", true);
@@ -830,12 +560,7 @@ mod tests {
 
     #[test]
     fn a_thread_document_is_counted_like_a_single_one() {
-        // The document-size guard (`cost::note_document`: documents built,
-        // bytes, largest) is what catches #749's bulk regression, and the
-        // one-document conversation is the document the app actually ships
-        // for a thread. It was invisible to the guard: `note_document` ran
-        // only in `document_for`, and this path went to `wrap_document`
-        // directly. The 2026-09-08 note recorded the gap.
+        // The document-size guard must see conversation documents, not only `document_for` (#749).
         let built_before = crate::test_support::documents_built();
         let bytes_before = crate::test_support::document_bytes();
         let document = conversation_document(
@@ -864,8 +589,6 @@ mod tests {
         ];
         let document = conversation_document(&entries, RemoteImages::Blocked, Sheet::Theme);
 
-        // One document. The whole point: one document is one view is one web
-        // process, whatever the thread's length.
         assert_eq!(document.matches("<!DOCTYPE html>").count(), 1);
         assert_eq!(document.matches("<html").count(), 1);
 
@@ -883,9 +606,7 @@ mod tests {
 
     #[test]
     fn the_markup_is_well_formed_and_carries_no_stray_escapes() {
-        // The entry's own markup, not the whole document: the generated
-        // stylesheet legitimately contains backslashes, and this is about
-        // whether a raw string swallowed a line continuation.
+        // Entry markup only: the generated stylesheet legitimately contains backslashes.
         let markup = entry_html(&entry("1", "Ada", "<p>hi</p>", true));
         assert!(
             !markup.contains('\\'),
@@ -916,9 +637,6 @@ mod tests {
         assert!(document.contains(r#"id="m-1" data-postio-fold="m-1">"#));
     }
 
-    /// #323's edge, which matters more here than in a single-message document:
-    /// several senders share this page, so each one's content needs its own
-    /// visible boundary.
     #[test]
     fn every_body_keeps_its_own_bounded_surface() {
         let entries = [
@@ -932,9 +650,6 @@ mod tests {
                 .count(),
             2
         );
-        // And each one named, because the name is what #1326 scoped that
-        // message's own stylesheet to. A container that lost it is a message
-        // that renders unstyled.
         for scope in ["1", "2"] {
             assert!(
                 document.contains(&format!(r#"{}="{scope}""#, sanitize::MESSAGE_ATTRIBUTE)),
@@ -943,8 +658,6 @@ mod tests {
         }
     }
 
-    /// A display name is sender-controlled text going into markup. The body
-    /// arrives sanitised; this does not.
     #[test]
     fn a_sender_cannot_write_markup_through_their_name() {
         let entries = [entry("1", "<script>alert(1)</script>", "<p>a</p>", true)];
@@ -956,9 +669,6 @@ mod tests {
         assert!(document.contains("&lt;script&gt;"));
     }
 
-    /// A single message is a thread of one, so the pane has one set of
-    /// chrome rather than two that can drift (the maintainer asked for this
-    /// directly, 2026-09-07).
     #[test]
     fn one_message_is_a_thread_of_one() {
         let mut only = entry("7", "Marketside", "<p>out for delivery</p>", true);
@@ -973,14 +683,11 @@ mod tests {
         assert!(document.contains("orders@marketside.example"));
         assert!(document.contains("<p>out for delivery</p>"));
         assert!(
-            // The markup, not the class name: the stylesheet names it too.
             !document.contains(r#"<span class="postio-latest">"#),
             "a thread of one has nothing for `latest` to distinguish"
         );
     }
 
-    /// Canvas 17 states what was held back inside the message it was held
-    /// back for, because the decision is per sender.
     #[test]
     fn each_message_says_what_was_held_back_for_it() {
         let mut first = entry("1", "Ada", "<p>a</p>", true);
@@ -1000,7 +707,6 @@ mod tests {
         );
     }
 
-    /// The newest message wears the badge; nothing else does.
     #[test]
     fn only_the_newest_message_is_marked_latest() {
         let first = entry("1", "Ada", "<p>a</p>", false);
@@ -1013,8 +719,6 @@ mod tests {
         );
     }
 
-    /// The chrome is dressed from the token layer, never from literals: #296
-    /// says a colour has one source.
     #[test]
     fn the_thread_chrome_reads_its_colours_off_the_tokens() {
         let document = conversation_document(
@@ -1034,8 +738,6 @@ mod tests {
         }
     }
 
-    /// The document is still the hardened one: same CSP, same no-script
-    /// posture as a single message's.
     #[test]
     fn the_thread_document_is_as_hardened_as_a_single_messages() {
         let entries = [entry("1", "Ada", "<p>a</p>", true)];
@@ -1047,20 +749,9 @@ mod tests {
 
     #[test]
     fn an_anchor_cannot_break_out_of_the_attribute_it_sits_in() {
-        // The document writes this into `id="…"` and a pane navigates to it.
-        // A scope carrying a quote would close the attribute and everything
-        // after it would be markup the sender wrote.
-        //
-        // Asserting the *pair* -- that the document contains what the helper
-        // produces -- would prove nothing: both sides call this function, so
-        // they agree by construction and the assertion cannot fail. This is
-        // the part construction does not give for free.
-        //
-        // Against `entry_html` rather than a whole document, deliberately.
-        // `conversation_document` counts itself in `reader::cost`, whose own
-        // test asserts an exact delta over a *global* counter -- so a test
-        // assembling a document here races it under libtest's thread pool
-        // and fails it (#1390). One message is all this needs.
+        // Against `entry_html`, not a whole document: `conversation_document` bumps a global
+        // counter in
+        // `reader::cost`, and assembling one here races that test (#1390).
         let hostile = r#"1" onmouseover="steal()"#;
         let anchor = message_anchor(hostile);
         assert!(
@@ -1081,12 +772,6 @@ mod tests {
 
     #[test]
     fn a_quote_folds_inside_the_message_it_belongs_to() {
-        // Each message is already a `<details>` whose `<summary>` is its
-        // header, so a folded quote is a second `<details>` nested inside one.
-        // "It folded" and "it folded inside the right message" are different
-        // claims in a document holding several senders, and only the second is
-        // worth anything -- a quote that escaped its message would be attached
-        // to somebody else's mail.
         let quoted = "<p>my reply</p><details class=\"postio-quote\"><summary>quoted \
                       text</summary><blockquote>theirs</blockquote></details>";
         let document = conversation_document(
@@ -1126,8 +811,6 @@ mod tests {
         );
     }
 
-    /// The label a conversation's quote fold carries is the single
-    /// message's: how many lines it hides (spec 007 FR-034).
     #[test]
     fn a_conversations_quote_fold_says_how_many_lines_it_hides() {
         let body = postio_model::MessageBody {
@@ -1151,10 +834,6 @@ mod tests {
 
     #[test]
     fn every_fold_carries_a_stable_id_unique_in_the_document() {
-        // The renderer toggles a fold by this id (spec 006 R15), and a toggle
-        // has to survive a re-render and land on the fold the user touched:
-        // so every `<details>` has one, no two share it, and it is the same
-        // each time the conversation is composed.
         let quoted = "<p>a</p><details class=\"postio-quote\"><summary>q</summary>\
                       <blockquote>one</blockquote></details><details class=\"postio-quote\">\
                       <summary>q</summary><blockquote>two</blockquote></details>";
@@ -1187,8 +866,6 @@ mod tests {
     }
 }
 
-/// Who a message went to is drawn under its head, labelled, and escaped:
-/// a display name is the sender's to write (#1437).
 #[cfg(test)]
 mod recipients_tests {
     use super::*;
@@ -1234,7 +911,6 @@ mod compose_tests {
     use postio_model::MessageBody;
     use std::collections::HashMap;
 
-    /// One message from `address`, open, with a remote image in its body.
     fn from(scope: &str, address: &str) -> ThreadMessage {
         ThreadMessage {
             scope: scope.to_owned(),
@@ -1253,7 +929,6 @@ mod compose_tests {
         }
     }
 
-    /// A campaign: tables inside tables, which correspondence never has.
     fn newsletter(scope: &str) -> ThreadMessage {
         ThreadMessage {
             body: MessageBody {
@@ -1268,7 +943,6 @@ mod compose_tests {
         }
     }
 
-    /// The `<details>` opening tag drawn for `scope`.
     fn opening_of(document: &str, scope: &str) -> String {
         let marker = format!(r#"id="{}""#, message_anchor(scope));
         let at = document
@@ -1281,13 +955,8 @@ mod compose_tests {
 
     #[test]
     fn a_bulk_message_shown_as_sent_is_on_its_senders_paper_in_a_conversation() {
-        // Canvas 20: the original "renders on its own paper-white sheet inset
-        // from the dark chrome -- sender CSS never fights the app theme". The
-        // single-message page did this; the conversation page passed `Theme`
-        // for everything, and since every message opens as sent (FR-031) a
-        // newsletter's dark-grey text was drawn on the dark ground, barely
-        // readable. Per message: the correspondence beside it keeps the
-        // theme, because a reply on white in a dark window is worse.
+        // Canvas 20: per message, a newsletter gets the sender's paper while correspondence beside
+        // it keeps the theme.
         let messages = [newsletter("1"), from("2", "ada@example.com")];
         let document = compose(
             &messages,
@@ -1316,7 +985,6 @@ mod compose_tests {
 
     #[test]
     fn reader_view_of_a_newsletter_is_drawn_in_the_theme() {
-        // Reduced, it is Postio's text, not the sender's design.
         let messages = [newsletter("1")];
         let mut chosen = HashMap::new();
         chosen.insert("1".to_owned(), crate::reader::document::Rendering::Reader);
@@ -1326,8 +994,6 @@ mod compose_tests {
 
     #[test]
     fn a_sender_the_user_allowed_keeps_their_images_and_nobody_else_does() {
-        // Per sender, never per page (#1353, `PRODUCT.md` §21): one allowed
-        // correspondent must not carry the rest of the thread with them.
         let messages = [from("1", "ada@example.com"), from("2", "bo@example.org")];
         let document = compose(
             &messages,
@@ -1347,9 +1013,6 @@ mod compose_tests {
 
     #[test]
     fn the_page_opens_to_remote_images_only_when_someone_in_it_is_allowed() {
-        // The policy is one per page, so it is the sanitizer that keeps a
-        // blocked sender out -- and the policy is still the only refusal for
-        // the ordinary thread, where nobody is allowed.
         let messages = [from("1", "ada@example.com")];
         let nobody = compose(
             &messages,
@@ -1372,7 +1035,6 @@ mod compose_tests {
 
     #[test]
     fn a_body_still_coming_says_so_only_where_it_is_open() {
-        // One explanation, not thirty: a collapsed message is its one line.
         let mut open = from("1", "ada@example.com");
         open.absent = true;
         let mut shut = from("2", "bo@example.org");
@@ -1431,9 +1093,6 @@ mod verb_tests {
 
     #[test]
     fn anything_else_is_not_a_verb() {
-        // A sender controls a link's text and class, never these schemes --
-        // the sanitizer will not emit them -- so the scheme is all that is
-        // matched, and a sender's own link is a link.
         assert_eq!(verb_of("https://example.com/postio-reply:42"), None);
         assert_eq!(verb_of("postio-reply:"), None, "a verb naming no message");
         assert_eq!(
@@ -1445,8 +1104,6 @@ mod verb_tests {
 
     #[test]
     fn the_markup_and_the_parse_agree() {
-        // The page writes these links and the pane reads them back; if the
-        // two drifted, every per-message verb would go to the browser.
         let entry = Entry {
             scope: "12",
             sender: "Ada",
@@ -1493,9 +1150,6 @@ mod script_tests {
 
     #[test]
     fn an_anchor_cannot_close_the_literal_it_is_quoted_in() {
-        // The ids are Postio's own, so this is belt and braces -- but a quote
-        // or a backslash in one would otherwise end the string and run the
-        // rest as script.
         let script = scroll_script("m-\"); alert(1); (\"");
         assert!(
             script.contains(r#"getElementById("m-\"); alert(1); (\"")"#),
@@ -1538,7 +1192,6 @@ mod observer_tests {
 
     #[test]
     fn it_settles_rather_than_tracking_every_frame() {
-        // "Jitter during a flick-scroll is worse than lag."
         let script = observer_script("postioRail");
         assert!(
             script.contains("setTimeout") && script.contains("clearTimeout"),
@@ -1548,9 +1201,6 @@ mod observer_tests {
 
     #[test]
     fn it_reports_the_message_by_the_scope_the_page_named_it_with() {
-        // The anchor is `message_anchor(scope)`, so taking the prefix off is
-        // the scope back -- and a frontend checks it against the thread it
-        // drew rather than trusting a page holding several senders' markup.
         let script = observer_script("postioRail");
         assert!(script.contains(".postio-message"), "{script}");
         assert!(script.contains("replace(/^m-/, '')"), "{script}");

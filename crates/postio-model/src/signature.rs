@@ -1,44 +1,11 @@
-//! Signatures: the block at the end of a message that is not the message.
-//!
-//! One signature per identity, appended to the body and replaced — never
-//! stacked — when the identity changes. Multiple named signatures, HTML
-//! variants and placement control are `postio-z3b.3`, deliberately post-v1.
-//!
-//! # Why the separator matters
-//!
-//! RFC 3676 §4.3 defines the signature separator as a line holding exactly
-//! `-- `, and every other client reads it: it is what lets a reply fold the
-//! signature away instead of quoting it back. That has one consequence worth
-//! stating, because it decides the only placement question v1 answers — the
-//! separator means *everything after this is signature*, so the signature has
-//! to be last. A signature inserted above quoted text would make the quote
-//! part of the signature as far as every other mail client is concerned.
-//!
-//! # Not duplicating it
-//!
-//! [`apply`] replaces rather than appends, so it is idempotent: applying the
-//! same signature twice leaves one, and switching identity mid-compose swaps
-//! one for the other. That is the whole mechanism behind "inserts correctly
-//! and is not duplicated" — there is no bookkeeping to get out of step,
-//! because the body itself says where the signature starts.
+//! The RFC 3676 §4.3 `-- ` separator means everything after it is signature, so it must be last.
+//! `apply` replaces
+//! rather than appends: idempotent, and an identity switch swaps one signature for the other.
 
-/// The RFC 3676 signature separator, trailing space included.
 pub const SEPARATOR: &str = "-- ";
 
-/// Splits a body into what was written and the signature block at its end.
-///
-/// The *last* separator wins, so a signature quoted from an earlier message
-/// does not shadow this draft's own. A separator with quoted lines after it is
-/// not a separator at all — that is somebody else's signature inside the text,
-/// and rewriting it would edit the quote.
-///
-/// ```
-/// use postio_model::signature;
-///
-/// let (written, sig) = signature::split("Looking now.\n\n-- \nAda\n");
-/// assert_eq!(written, "Looking now.\n\n");
-/// assert_eq!(sig, Some("Ada"));
-/// ```
+/// The last separator wins, so a quoted earlier signature does not shadow this draft's own. A
+/// separator with quoted lines after it is somebody else's signature inside the text.
 pub fn split(body: &str) -> (&str, Option<&str>) {
     let mut separator: Option<(usize, usize)> = None;
     let mut offset = 0;
@@ -48,8 +15,6 @@ pub fn split(body: &str) -> (&str, Option<&str>) {
         if content.trim_end() == "--" && !content.starts_with(' ') {
             separator = Some((offset, offset + line.len()));
         } else if separator.is_some() && content.starts_with('>') {
-            // Quoted text below it: what looked like a separator belongs to
-            // the message being quoted, not to this draft.
             separator = None;
         }
         offset += line.len();
@@ -61,20 +26,8 @@ pub fn split(body: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// Puts `signature` at the end of `body`, replacing any signature already there.
-///
-/// Idempotent by construction: the body is split first, so applying twice
-/// leaves one signature and switching identities swaps one for the other.
-/// `None` — or an identity with an empty signature — takes the block away.
-///
-/// ```
-/// use postio_model::signature;
-///
-/// let once = signature::apply("Looking now.", Some("Ada"));
-/// assert_eq!(once, "Looking now.\n\n-- \nAda\n");
-/// assert_eq!(signature::apply(&once, Some("Ada")), once);
-/// assert_eq!(signature::apply(&once, Some("Grace")), "Looking now.\n\n-- \nGrace\n");
-/// ```
+/// Idempotent: the body is split first, so applying twice leaves one signature and switching
+/// identities swaps one for the other. `None` or an empty signature removes the block.
 pub fn apply(body: &str, signature: Option<&str>) -> String {
     let (written, _) = split(body);
     let written = written.trim_end_matches(['\n', '\r']);
@@ -91,11 +44,8 @@ pub fn apply(body: &str, signature: Option<&str>) -> String {
     }
 }
 
-/// Whether `body` holds anything besides a signature.
-///
-/// What "did the user write something?" means once a signature is inserted
-/// before they have typed a word: the composer puts one there on its own, and
-/// counting it as content would make every abandoned composer permanent.
+/// The composer inserts a signature before anything is typed; counting it as content would make
+/// every abandoned composer permanent.
 pub fn is_only_signature(body: &str) -> bool {
     split(body).0.trim().is_empty()
 }
@@ -120,7 +70,6 @@ mod tests {
 
     #[test]
     fn a_separator_with_quoted_text_under_it_belongs_to_the_quote() {
-        // Somebody else's signature, inside the message being replied to.
         let body = "Looking now.\n\n> -- \n> Diogo\n";
         assert_eq!(split(body).1, None);
 

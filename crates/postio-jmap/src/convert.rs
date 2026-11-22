@@ -1,5 +1,3 @@
-//! JMAP objects into the seam's types, and back.
-
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -8,16 +6,9 @@ use io_jmap::rfc8621::mailbox::{JmapMailbox, JmapMailboxRole};
 use postio_account::backend::{Envelope, FetchedMessage, MailboxSummary};
 use postio_model::{EmailAddress, Flag, FlagSet, RemoteId, RfcMessageId, Uid, UidValidity};
 
-/// The synthetic generation every JMAP message reports.
-///
-/// JMAP ids never renumber, so there is exactly one generation, for ever —
-/// which is also what the adapter's `MailboxStatus` reports, so the engine's
-/// equality check can never see a change.
+/// JMAP ids never renumber, so there is exactly one generation; `MailboxStatus` reports the same.
 pub(crate) const GENERATION: u32 = 0;
 
-/// A JMAP mailbox as the discovery pass expects it: a path assembled from
-/// the parent chain, and the role spelled as the special-use attribute the
-/// edge resolver already understands.
 pub(crate) fn summary(
     mailbox: &JmapMailbox,
     by_id: &BTreeMap<String, JmapMailbox>,
@@ -48,13 +39,8 @@ pub(crate) fn summary(
     MailboxSummary::new(path, Some('/'), attributes)
 }
 
-/// A fetched email bound to its synthetic enumeration position.
-///
-/// The identity is the JMAP id verbatim; `uid` is only where this email sat
-/// in the `receivedAt`-ascending enumeration when it was fetched, so the
-/// engine's ranged pull has something to count. Rows are matched by
-/// identity (#544), so a position shifting between passes re-fetches at
-/// worst — it can never mislabel.
+/// `uid` is only the position in the `receivedAt`-ascending enumeration; rows
+/// match by identity (#544), so a shifting position re-fetches at worst.
 pub(crate) fn fetched(email: &JmapEmail, position: u32) -> Option<FetchedMessage> {
     let id = email.id.clone().filter(|id| !id.is_empty())?;
     Some(FetchedMessage {
@@ -67,8 +53,6 @@ pub(crate) fn fetched(email: &JmapEmail, position: u32) -> Option<FetchedMessage
         internal_date: rfc3339(email.received_at.as_deref()).unwrap_or_else(Utc::now),
         size: email.size.unwrap_or_default(),
         envelope: Some(envelope(email)),
-        // No BODYSTRUCTURE mapping in this slice: the backfill takes its
-        // documented no-sections path and fetches the whole message.
         structure: None,
         promoted: None,
     })
@@ -114,7 +98,6 @@ fn rfc3339(value: Option<&str>) -> Option<DateTime<Utc>> {
         .map(|date| date.with_timezone(&Utc))
 }
 
-/// RFC 8621 keywords into the seam's flags.
 pub(crate) fn flags(keywords: Option<&BTreeMap<String, bool>>) -> FlagSet {
     let mut flags = FlagSet::new();
     for (keyword, set) in keywords.into_iter().flatten() {
@@ -139,12 +122,8 @@ fn flag(keyword: &str) -> Flag {
     }
 }
 
-/// The inverse: a seam flag as the keyword RFC 8621 spells it.
-///
-/// `\Deleted` maps to `$deleted` — JMAP has no expunge model, and the
-/// keyword is only ever a marker between the seam's mark-then-expunge
-/// steps. `\Recent` is a per-session IMAP signal with no JMAP meaning and
-/// is dropped.
+/// `\Deleted` maps to `$deleted`, only a marker between mark and expunge.
+/// `\Recent` has no JMAP meaning and is dropped.
 pub(crate) fn keyword(flag: &Flag) -> Option<String> {
     Some(match flag {
         Flag::Seen => "$seen".to_owned(),

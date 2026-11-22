@@ -1,16 +1,3 @@
-//! An oversize message is refused before anything is queued (spec 002,
-//! FR-055 and FR-056).
-//!
-//! `postio_model::size` decides the arithmetic and is unit-tested there. What
-//! needs a display is the part that was missing entirely: that the composer
-//! *asks*, that the refusal reaches the person, and — the assertion that
-//! matters — that the send handler is never called. A size check that
-//! computes the right number and lets the draft through anyway is the shape
-//! of bug this repository has most of: two layers that each pass and are not
-//! joined up.
-//!
-//! One test function: GTK is single-threaded and initialised once.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -22,7 +9,6 @@ use postio_model::{AccountId, Attachment, Draft, EmailAddress};
 
 use crate::support_compose::settle;
 
-/// A draft addressed to somebody, carrying one part of `size` bytes.
 fn draft_carrying(size: u64, name: &str) -> Draft {
     let mut draft = Draft::new(AccountId::new(1));
     draft.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
@@ -54,7 +40,6 @@ pub fn an_oversize_draft_is_refused_before_it_reaches_the_send_handler() {
         move |draft| sent.borrow_mut().push(draft.clone())
     });
 
-    // ── Over the limit: refused, and the handler never runs ──────────────
     composer.set_size_limit(Some(25_000_000));
     composer.open(draft_carrying(30_000_000, "footage.mp4"));
     settle();
@@ -83,10 +68,7 @@ pub fn an_oversize_draft_is_refused_before_it_reaches_the_send_handler() {
         "the refusal does not name the limit: {status}"
     );
 
-    // ── Under the limit: sends ───────────────────────────────────────────
-    //
-    // Closed first: the refusal deliberately left the composer open, and
-    // `open` will not clobber a draft that is still being edited.
+    // Closed first: `open` will not clobber a draft still being edited.
     composer.close();
     settle();
     composer.open(draft_carrying(1_000_000, "clip.mp4"));
@@ -100,11 +82,7 @@ pub fn an_oversize_draft_is_refused_before_it_reaches_the_send_handler() {
         composer.status()
     );
 
-    // ── No configured limit: checks nothing ──────────────────────────────
-    //
-    // The decision recorded for T039. A guessed ceiling refuses mail the
-    // provider would have taken, and the person has no way to tell Postio's
-    // opinion from their provider's rule.
+    // No configured limit checks nothing: a guessed ceiling would refuse mail the provider takes.
     composer.set_size_limit(None);
     composer.close();
     settle();

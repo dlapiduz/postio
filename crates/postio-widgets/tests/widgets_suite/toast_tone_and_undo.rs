@@ -1,11 +1,3 @@
-//! What a toast says about itself, for a storyboard's observation.
-//!
-//! A storyboard checks `notice.tone` and `notice.undo` (specs/008-storyboards
-//! data-model § Observation). Reading either off the toast's button label
-//! would be a guess about the toast's own intent, so the toast records both
-//! when it is shown, and this asserts what it records for each way a toast
-//! appears.
-
 use postio_ui::observe::Tone;
 use postio_widgets::widgets::toast::Toast;
 

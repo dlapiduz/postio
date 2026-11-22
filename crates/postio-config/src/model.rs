@@ -1,19 +1,9 @@
-//! Where the person's own model runs: an endpoint on this computer, and
-//! nothing else (spec 007 FR-168, contracts/config.md `[focus.model]`).
-//!
-//! The model is one the person brings and runs beside Postio -- Ollama, a
-//! llama.cpp server, anything that serves the OpenAI-compatible chat
-//! completions (research R16). Postio reaches it only on this machine: a
-//! loopback address, or a local socket. [`ModelEndpoint`] is the one reading
-//! of the address the person wrote, and it can only be built by
-//! [`ModelEndpoint::parse`], which refuses everything else with a sentence
-//! saying why. So a client handed one cannot be pointed at another host,
-//! whatever the file says.
-//!
-//! **Nothing is looked up.** `localhost` is read as the loopback addresses
-//! themselves, never asked of a resolver: a lookup is a question put to the
-//! network, and a misconfigured resolver could answer it with another
-//! machine.
+//! A model endpoint on this computer and nothing else: `ModelEndpoint::parse` is the one reading of
+//! the
+//! address and refuses anything else with a sentence, so a client cannot be pointed at another
+//! host.
+//! Nothing is looked up: `localhost` is read as the loopback addresses, since a resolver could
+//! answer with another machine.
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -23,62 +13,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::Extras;
 
-/// `[focus.model]`: the person's own model, as they named it (spec 007
-/// FR-165 to FR-169, contracts/config.md).
-///
-/// ```toml
-/// [focus.model]
-/// endpoint = "http://127.0.0.1:11434/v1"   # this computer only
-/// model    = "a-small-model"               # whatever the runtime serves
-/// needs_action   = true                    # questions and to-dos (FR-107)
-/// digest_summary = true                    # digest summaries (FR-172)
-/// like_this      = true                    # "Digest mail like this" (FR-171)
-/// ```
-///
-/// **Absent means off** (FR-166): with no section there is nothing to
-/// connect to, and Postio looks for no runtime. A section that cannot be
-/// used -- no endpoint, no model, or an endpoint on another computer -- is
-/// reported by validation and used by no feature, and the file still loads.
-/// Which runtime and model are the person's to say; none is named in code
-/// (FR-169).
+/// Absent means off: with no section there is nothing to connect to and Postio looks for no
+/// runtime. A
+/// section that cannot be used (no endpoint, no model, or an endpoint on another computer) is
+/// reported
+/// by validation and used by no feature, and the file still loads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FocusModel {
-    /// Where the runtime listens: a loopback address or a local socket
-    /// ([`ModelEndpoint::parse`]).
     #[serde(default)]
     pub endpoint: String,
-    /// The model's name, as the runtime serves it.
     #[serde(default)]
     pub model: String,
-    /// Ask the model the needs-action question, in place of the built-in
-    /// detector (FR-107).
     #[serde(default = "crate::yes")]
     pub needs_action: bool,
-    /// Have the model write digest summaries (FR-172).
     #[serde(default = "crate::yes")]
     pub digest_summary: bool,
-    /// Offer "Digest mail like this" (FR-171).
     #[serde(default = "crate::yes")]
     pub like_this: bool,
-    /// Keys in `[focus.model]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
 }
 
-/// One of the things the model can be used for, each with its own switch
-/// (FR-166).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelFeature {
-    /// Questions and to-dos (`needs_action`).
     NeedsAction,
-    /// Digest summaries (`digest_summary`).
     DigestSummary,
-    /// "Digest mail like this" (`like_this`).
     LikeThis,
 }
 
 impl ModelFeature {
-    /// Every feature.
     pub const ALL: [ModelFeature; 3] = [
         ModelFeature::NeedsAction,
         ModelFeature::DigestSummary,
@@ -86,19 +49,14 @@ impl ModelFeature {
     ];
 }
 
-/// Why a `[focus.model]` section cannot be used, for validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelProblem {
-    /// It names no endpoint.
     NoEndpoint,
-    /// It names no model.
     NoModel,
-    /// Its endpoint is not on this computer, or not an address.
     Refused(EndpointRefused),
 }
 
 impl FocusModel {
-    /// Whether `feature`'s switch is on.
     pub fn switched_on(&self, feature: ModelFeature) -> bool {
         match feature {
             ModelFeature::NeedsAction => self.needs_action,
@@ -107,8 +65,6 @@ impl FocusModel {
         }
     }
 
-    /// The endpoint and model the section names, or what stops it being
-    /// used.
     pub fn usable(&self) -> Result<(ModelEndpoint, &str), ModelProblem> {
         if self.endpoint.trim().is_empty() {
             return Err(ModelProblem::NoEndpoint);
@@ -122,42 +78,28 @@ impl FocusModel {
     }
 }
 
-/// The base address of the person's model runtime, known to be on this
-/// computer (FR-168).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelEndpoint {
     target: Target,
-    /// The path the runtime serves its API under, such as `/v1`, with no
-    /// trailing slash.
+    /// The API path such as `/v1`, with no trailing slash.
     base: String,
 }
 
-/// Where a connection to the runtime goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Target {
-    /// A loopback port: the addresses to try, in order, and the authority
-    /// the request names in its `Host` header.
     Loopback {
         addresses: Vec<SocketAddr>,
         authority: String,
     },
-    /// A local socket, by its absolute path.
     Socket(PathBuf),
 }
 
-/// How a connection to a [`ModelEndpoint`] is made: the only two ways
-/// there are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reach<'a> {
-    /// A TCP connection to one of these loopback addresses.
     Loopback(&'a [SocketAddr]),
-    /// A connection to the local socket at this path.
     Socket(&'a Path),
 }
 
-/// Why an endpoint was refused: always because it is not on this computer,
-/// or not an address at all. The message says which, for the validity line
-/// and the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndpointRefused {
     why: String,
@@ -177,19 +119,14 @@ impl fmt::Display for EndpointRefused {
 
 impl std::error::Error for EndpointRefused {}
 
-/// What a refusal adds when the address could not be read at all.
 const WRITE_IT_AS: &str = "write it as http://127.0.0.1:<port>/v1, http://[::1]:<port>/v1, \
                            http://localhost:<port>/v1 or unix:<absolute socket path>";
 
 impl ModelEndpoint {
-    /// The endpoint `text` names, if it is on this computer:
-    ///
-    /// - `http://` to a loopback address (`127.0.0.0/8`, `::1`) or to
-    ///   `localhost`, with a port and a base path such as `/v1`;
-    /// - `unix:` and the absolute path of a local socket.
-    ///
-    /// Anything else is refused, and the refusal says why: another host, a
-    /// scheme that implies one (`https`), or text that is not an address.
+    /// `http://` to a loopback address (`127.0.0.0/8`, `::1`) or `localhost`, with a port and a
+    /// base path
+    /// such as `/v1`; or `unix:` and an absolute socket path. Anything else is refused, with the
+    /// reason.
     pub fn parse(text: &str) -> Result<Self, EndpointRefused> {
         let text = text.trim();
         if let Some(path) = text.strip_prefix("unix:") {
@@ -262,7 +199,6 @@ impl ModelEndpoint {
         })
     }
 
-    /// How to connect: to loopback addresses, or to a local socket.
     pub fn reach(&self) -> Reach<'_> {
         match &self.target {
             Target::Loopback { addresses, .. } => Reach::Loopback(addresses),
@@ -270,14 +206,11 @@ impl ModelEndpoint {
         }
     }
 
-    /// The request path for `route` under the endpoint's base: `/v1` and
-    /// `/models` make `/v1/models`.
+    /// `/v1` and `/models` make `/v1/models`.
     pub fn path(&self, route: &str) -> String {
         format!("{}/{}", self.base, route.trim_start_matches('/'))
     }
 
-    /// What a request names in its `Host` header: the authority as written,
-    /// or `localhost` over a socket.
     pub fn authority(&self) -> &str {
         match &self.target {
             Target::Loopback { authority, .. } => authority,
@@ -285,8 +218,7 @@ impl ModelEndpoint {
         }
     }
 
-    /// Where a connection went, as the egress log records it: the address
-    /// and port, or the socket's path and no port.
+    /// The socket's path and no port, over a socket.
     pub fn log_target(&self) -> (String, u16) {
         match &self.target {
             Target::Loopback { addresses, .. } => addresses
@@ -320,7 +252,6 @@ mod tests {
         assert_eq!(loopback(&v6), vec!["[::1]:8080".parse().unwrap()]);
         assert_eq!(v6.path("/models"), "/v1/models");
 
-        // The whole of 127.0.0.0/8 is loopback.
         assert!(ModelEndpoint::parse("http://127.1.2.3:9000/v1").is_ok());
     }
 

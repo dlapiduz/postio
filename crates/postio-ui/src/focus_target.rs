@@ -1,9 +1,5 @@
-//! Where a Focus verb goes and what the verbs say, with no toolkit in it.
-//!
-//! The selection, the cursor's row and the message open over the list are a
-//! frontend's own; which messages a verb reaches from them, how a command id
-//! becomes a host command, and the sentences the verbs answer with are one
-//! policy for the desktop and the terminal alike.
+//! Where a Focus verb goes and what the verbs say, with no toolkit; shared by the desktop and the
+//! terminal.
 
 use std::collections::HashMap;
 
@@ -15,81 +11,58 @@ use postio_model::ids::{DraftId, MessageId, ThreadId};
 use crate::focus_list::FocusRow;
 use crate::scope::{self, Scope, ScopeFocus};
 
-/// How long a toast stays before it goes, in seconds: long enough to read the
-/// sentence and reach for Undo, far short of the undo stack's own expiry, so
-/// Undo keeps working once the toast has gone.
+/// Long enough to read and reach for Undo; far short of the undo stack's own expiry.
 pub const TOAST_SECONDS: u32 = 8;
 
-/// Said when a send verb names a message that is no draft on its way.
 pub const NOT_BEING_SENT: &str = "That message is not one being sent";
 
-/// Said when a reply names a message still on its way out, or a draft: it
-/// has no other party yet, and answering it would be replying to oneself.
 pub const NO_REPLY_TO_OUTGOING: &str = "An outgoing message cannot be replied to";
 
-/// What `c` says while there is no account to write from (spec 007 T172):
-/// what is missing, beside the button that adds one ([`ADD_ACCOUNT`]).
 pub const NO_ACCOUNT_TO_WRITE_FROM: &str = "There's no account to write from yet.";
 
-/// The button beside [`NO_ACCOUNT_TO_WRITE_FROM`]: the add-account form.
 pub const ADD_ACCOUNT: &str = "Add account";
 
-/// Whether a reply to a message in `state` is refused: a draft being written
-/// or on its way, or stopped. A message that was sent is mail like any other
-/// -- replying to your own sent message answers its recipients.
+/// Replying to your own sent message answers its recipients.
 pub fn refuses_reply(state: Option<postio_model::DraftState>) -> bool {
     state.is_some_and(|state| state != postio_model::DraftState::Sent)
 }
 
-/// Said when `d` on a digest finds its rule gone from the configuration.
 pub const RULE_MISSING: &str = "That digest's rule is no longer in config.toml";
 
-/// Said when a message with no links or attachments is asked to open one.
 pub const NOTHING_TO_OPEN: &str = "This message has no links or attachments to open";
 
-/// Said when a search is saved with no configuration file to save it to.
 pub const NO_CONFIG_TO_SAVE: &str = "There is no config.toml to save the search to";
 
-/// Said when writing a saved search to the configuration failed.
 pub const SEARCH_NOT_WRITTEN: &str = "Focus could not write the search to config.toml";
 
-/// The stop-digesting question's button.
 pub const STOP_DIGESTING: &str = "Stop digesting";
 
-/// What stopping a sender's digesting does, under its title.
 pub const STOP_DIGESTING_BODY: &str = "Their mail comes to the inbox again, and what the digest holds from them now comes back with it.";
 
-/// The prompt for `D` in a digest.
 pub fn stop_digesting_title(sender: &str) -> String {
     format!("Stop digesting {sender}?")
 }
 
-/// What `1`-`4` says when no saved search sits at `index` (zero-based).
 pub fn no_saved_search(index: usize) -> String {
     format!("No saved search {} is pinned", index + 1)
 }
 
-/// What `U` says once the host answers: the list left, or why not.
 pub fn unsubscribed(list: &str) -> String {
     format!("Unsubscribed from {list}")
 }
 
-/// What saving a digest rule says.
 pub fn rule_saved(name: &str) -> String {
     format!("Digest rule \u{201c}{name}\u{201d} saved")
 }
 
-/// What a saved search says.
 pub fn search_saved(query: &str) -> String {
     format!("Saved \u{201c}{query}\u{201d}")
 }
 
-/// The prompt for removing a digest rule.
 pub fn remove_rule_title(name: &str) -> String {
     format!("Remove \u{201c}{name}\u{201d}?")
 }
 
-/// What removing a digest rule says once it has released its mail.
 pub fn rule_removed(name: &str, released: u32) -> String {
     let messages = if released == 1 { "message" } else { "messages" };
     format!("Removed \u{201c}{name}\u{201d} \u{b7} {released} {messages} back in the inbox")
@@ -105,27 +78,19 @@ pub fn reading_placement(pane_wanted: bool, beside: bool) -> &'static str {
     }
 }
 
-/// Where a verb on mail goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Aim {
-    /// Every message the view shows but these: a predicate the host
-    /// resolves over the inboxes, never a list of what is on screen. The
+    /// A predicate the host resolves over the inboxes, never a list of what is on screen; the
     /// frontend tells the host the selection first.
     Everything {
-        /// Rows taken back out of the selection.
         except: Vec<MessageId>,
     },
-    /// These targets, in the order to send them; none when the verb has
-    /// nothing to aim at.
     Targets(Vec<MessageTarget>),
 }
 
-/// Where a verb goes: the selection when there is one, the cursor's row
-/// otherwise. A row folded from several accounts is every copy
-/// ([`MessageTarget::Threads`]); a message in no conversation is itself.
-/// `reach` is what each picked row reaches, remembered when it was picked.
-/// `action` is the verb: on the cursor's row it decides, by spec 013's D2,
-/// whether the verb reaches the thread or the row's latest message.
+/// The selection when there is one, else the cursor's row. A row folded from several
+/// accounts is every copy; on the cursor's row `action` decides whether a verb reaches the
+/// thread or the latest message.
 pub fn aim(
     selection: &Selection,
     reach: &HashMap<MessageId, Vec<ThreadId>>,
@@ -141,25 +106,16 @@ pub fn aim(
     aim_by(selection, reach, cursor.as_ref(), action)
 }
 
-/// The cursor's row as [`aim_by`] needs it: what a frontend that keeps its
-/// rows as something other than [`FocusRow`] can say about one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AimRow {
-    /// The row's message: its latest, which a message verb reaches (D2).
     pub id: MessageId,
-    /// The conversations it stands for, every copy.
     pub threads: Vec<ThreadId>,
-    /// Whether it is a digest's row.
     pub digest: bool,
-    /// Whether it is a child of an expanded thread: its `id` is then the
-    /// child's own message, which a message verb reaches (D2).
     pub child: bool,
 }
 
-/// [`aim`], with the cursor's row given as an [`AimRow`].
-///
-/// A selection is whole conversations whatever the verb; only the cursor's
-/// own row is asked of [`crate::scope::target`].
+/// A selection is whole conversations whatever the verb; only the cursor's own row is asked of
+/// `crate::scope::target`.
 pub fn aim_by(
     selection: &Selection,
     reach: &HashMap<MessageId, Vec<ThreadId>>,
@@ -189,11 +145,8 @@ pub fn aim_by(
             Aim::Targets(aims)
         }
         Selection::These(_) => Aim::Targets(match cursor {
-            // A digest stands for its delivery, which its own verbs name; a
-            // message verb has nothing to aim at there.
             Some(row) if row.digest => Vec::new(),
             None => Vec::new(),
-            // A message in no conversation is only itself, whatever the verb.
             Some(row) if row.threads.is_empty() => vec![MessageTarget::Messages(vec![row.id])],
             Some(row) => match scope::target(
                 if row.child {
@@ -205,13 +158,11 @@ pub fn aim_by(
                     ScopeFocus::Row {
                         thread: row.threads[0],
                         latest: row.id,
-                        // Aiming a verb does not care.
                         expanded: false,
                     }
                 },
                 action,
             ) {
-                // Every copy of a row folded from several accounts.
                 Scope::Thread(_) => vec![MessageTarget::Threads(row.threads.clone())],
                 Scope::Message(message) => vec![MessageTarget::Messages(vec![message])],
                 Scope::Unavailable => Vec::new(),
@@ -220,9 +171,6 @@ pub fn aim_by(
     }
 }
 
-/// The one message a reply or an answer is about: the message open over the
-/// list when one is (`open` is `Some` then, holding what it shows), the
-/// cursor's row otherwise.
 pub fn aimed_message(
     open: Option<Option<MessageId>>,
     cursor: Option<&FocusRow>,
@@ -233,9 +181,6 @@ pub fn aimed_message(
     }
 }
 
-/// The one message "Digest mail like this" would check other mail against:
-/// the cursor's, when nothing beyond it is selected and the person has a
-/// model for it (`enabled`).
 pub fn like_this_message(
     selection: &Selection,
     enabled: bool,
@@ -251,8 +196,6 @@ pub fn like_this_message(
     Some(cursor?.as_conversation()?.summary.representative.id)
 }
 
-/// The rows a verb about senders is about: those of `resident` the
-/// selection names, or the cursor's when it names none.
 pub fn aimed_rows(
     selection: &Selection,
     cursor: Option<FocusRow>,
@@ -271,7 +214,6 @@ pub fn aimed_rows(
         .collect()
 }
 
-/// The senders of `rows`, once each.
 pub fn senders(rows: &[FocusRow]) -> Vec<EmailAddress> {
     let mut senders: Vec<EmailAddress> = Vec::new();
     for row in rows {
@@ -288,8 +230,6 @@ pub fn senders(rows: &[FocusRow]) -> Vec<EmailAddress> {
     senders
 }
 
-/// What a picker names as its target: the cursor's conversation, or how many
-/// are selected. Empty when there is nothing to name.
 pub fn picker_target(selection: &Selection, cursor: Option<&FocusRow>) -> String {
     let selected = match selection {
         Selection::These(picked) => picked.len(),
@@ -313,18 +253,14 @@ pub fn picker_target(selection: &Selection, cursor: Option<&FocusRow>) -> String
     crate::pickers::target(selected.max(1), &sender, &subject)
 }
 
-/// How a command id reaches the host from the list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dispatch {
-    /// A verb on mail: sent once per aim, then the selection lets go.
     OnMail(Command),
-    /// A verb that aims at nothing: sent as it is.
     Plain(Command),
 }
 
-/// The host command a list verb means, or `None` when the verb is the
-/// frontend's own (opening, picking, going somewhere). `archive` acts on the
-/// whole conversation: a Focus row is one.
+/// `None` when the verb is the frontend's own (opening, picking, going somewhere). `archive` acts
+/// on the whole conversation.
 pub fn dispatch(id: CommandId) -> Option<Dispatch> {
     match id {
         CommandId::Archive => Some(Dispatch::OnMail(Command::default_for(CommandId::Archive))),
@@ -337,8 +273,6 @@ pub fn dispatch(id: CommandId) -> Option<Dispatch> {
     }
 }
 
-/// The command that settles the send of `draft`, for the send verb `id`:
-/// cancel it, retry it, or mark it sent.
 pub fn settle_command(id: CommandId, draft: Option<DraftId>) -> Command {
     match id {
         CommandId::CancelSend => Command::CancelSend { draft },
@@ -439,9 +373,8 @@ mod tests {
 
     #[test]
     fn a_message_verb_on_a_collapsed_row_aims_its_latest_message() {
-        // Spec 013 D2: flag follows reply, so on a row it is the latest
-        // message's; it was the whole thread's before threads had children.
-        // Read/unread and archive stay the thread's.
+        // Flag follows reply: on a row it is the latest message's. Read/unread and archive stay the
+        // thread's.
         let folded = row(1, Some(3), &[9]);
         let aimed = |id| aim(&Selection::default(), &HashMap::new(), Some(&folded), id);
         for id in [CommandId::Flag, CommandId::Reply, CommandId::Forward] {

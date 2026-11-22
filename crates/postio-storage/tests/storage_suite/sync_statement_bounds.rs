@@ -1,11 +1,3 @@
-//! What a sync's statements cost does not follow the size of the store (#1708).
-//!
-//! #1707 was a `SCAN messages` inside `upsert_batch`, paid on every batch of
-//! a first sync. The instrument that finds the next one is not a row count --
-//! a filter returns few rows however many it read -- but the planner: record
-//! the SQL a piece of work issues, then ask for each statement's plan and
-//! refuse any that reads all of a growing table, or all of one folder of it.
-
 use chrono::{TimeZone, Utc};
 use postio_model::{MailboxId, Message, RemoteId, RfcMessageId, Uid, UidValidity};
 use postio_storage::repository::MessageRepository;
@@ -26,7 +18,6 @@ fn from_server(mailbox: MailboxId, account: postio_model::AccountId, n: u32) -> 
     message
 }
 
-/// Every statement in `issued` that reads all of a growing table or scope.
 async fn offenders(
     connection: &postio_storage::Connection,
     issued: &std::collections::BTreeMap<String, usize>,
@@ -57,8 +48,6 @@ async fn an_upsert_batch_reads_no_whole_table() {
         .expect("seed the store");
 
     counting::record();
-    // Fresh messages and a changed one, so the insert and the update paths
-    // both run.
     let mut batch: Vec<Message> = (1..=10)
         .map(|n| from_server(inbox, account.id, n))
         .collect();
@@ -73,11 +62,9 @@ async fn an_upsert_batch_reads_no_whole_table() {
     );
 }
 
-/// The backfill's top-up asks, after every few hundred bodies, for the newest
-/// messages still missing one. Newest first means the ones already fetched
-/// are at the front, so a query that walks the folder and filters walks more
-/// of them each time: a hundred-thousand-message folder at 200 per top-up is
-/// five hundred walks of an ever-longer prefix.
+/// The top-up runs after every few hundred bodies; newest first puts fetched rows at the front, so
+/// a
+/// query that walks and filters walks more each time.
 #[tokio::test]
 async fn the_backfill_top_up_does_not_walk_the_bodies_it_already_has() {
     let database = test_support::memory().await;
@@ -112,10 +99,6 @@ async fn the_backfill_top_up_does_not_walk_the_bodies_it_already_has() {
     }
 }
 
-/// What the top-up answers is the same whichever way it finds it: the newest
-/// first across both states that owe a body, the window and the offset
-/// applied to the merged order, and a message in no state that owes one left
-/// out.
 #[tokio::test]
 async fn the_top_up_answers_newest_first_across_both_states_owing_a_body() {
     use postio_model::BodyState;
@@ -152,7 +135,6 @@ async fn the_top_up_answers_newest_first_across_both_states_owing_a_body() {
                 .collect::<Vec<_>>()
         }
     };
-    // Newest is index 6; the Full (2) and Partial (5) are never offered.
     let all = [ids[6], ids[4], ids[3], ids[1], ids[0]];
     assert_eq!(ask(10, 0).await, all);
     assert_eq!(ask(2, 0).await, all[..2]);

@@ -1,35 +1,3 @@
-//! The `<100 ms` search budget, measured while the body index is being
-//! written — the condition every other bench in this workspace avoids.
-//!
-//! # Why this exists (#500)
-//!
-//! A search that replayed at 15 ms took 3.8 s in the application. The
-//! difference was everything the idle benches never see: the body catch-up
-//! pass writing continuously against the same store, on a real filesystem,
-//! competing for the same page cache. `search_budget.rs` builds its corpus
-//! with `test_support::memory().await`, which lives on `/dev/shm` — WAL exists but
-//! disk I/O does not, so no amount of write pressure there can slow a read.
-//!
-//! This bench is the missing condition: a **file-backed** corpus under
-//! `CARGO_TARGET_TMPDIR` (real disk, not tmpfs), a writer thread running the
-//! body catch-up's own write pattern — batched transactions behind the write
-//! gate, a breather between batches — and searches timed on the main thread
-//! while it runs. The budget holds because WAL keeps readers off the write
-//! lock and the batching keeps the churn bounded; if either regresses — a
-//! write pattern that starves readers, a transaction held across blob-scale
-//! I/O — this is the bench that goes red.
-//!
-//! # Running
-//!
-//! ```sh
-//! cargo bench -p postio-index --bench search_under_load
-//! ```
-//!
-//! The budget is asserted on the **median** of a run of searches rather than
-//! a single draw: this bench shares a disk with whatever else the machine is
-//! doing, and one descheduled read must not fail a build the way a shifted
-//! median should.
-
 #![allow(missing_docs)]
 
 use std::sync::OnceLock;
@@ -46,12 +14,7 @@ use postio_search::parse;
 use postio_storage::repository::MessageRepository;
 use postio_storage::{Store, WritePriority, test_support};
 
-/// The runtime every async call in this bench is driven on.
-///
-/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
-/// where there is no ambient runtime -- so `block_on` here is the plain thing
-/// rather than the trap it is everywhere else in this workspace. Multi-threaded
-/// because a store read may reach `block_in_place`.
+/// Multi-threaded because a store read may reach `block_in_place`.
 fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
     use std::sync::OnceLock;
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -66,27 +29,18 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-/// docs/PRODUCT.md §18 / CLAUDE.md: local search must resolve in under this —
-/// and "while the index is catching up" is not an exemption.
 const SEARCH_BUDGET: Duration = Duration::from_millis(100);
 
-/// Smaller than `search_budget.rs`'s corpus because every row here costs real
-/// disk; still large enough that a starved read shows up as tens of
-/// milliseconds rather than noise.
 const MESSAGE_COUNT: u64 = 40_000;
 
-/// One message in a hundred carries this word.
 const UNCOMMON_WORD: &str = "quarterly";
-/// Every message's body carries this word.
 const COMMON_WORD: &str = "regarding";
 
-/// The write pattern `postio_session::index_local_bodies` settled on after
-/// #500: one transaction per batch of this many bodies, taken behind a
-/// background write-gate permit, with a pause between batches.
+/// The write pattern `index_local_bodies` uses: one transaction per batch behind a background
+/// write-gate permit, with a pause between batches.
 const WRITER_BATCH: usize = 200;
 const WRITER_BREATHER: Duration = Duration::from_millis(25);
 
-/// How many timed searches make one measurement.
 const DRAWS: usize = 15;
 
 struct Corpus {
@@ -116,18 +70,14 @@ impl Xorshift64 {
     }
 }
 
-/// A file-backed corpus on real disk: under `CARGO_TARGET_TMPDIR` — inside
-/// `target/`, which is on a real filesystem — never `/tmp`, which on the
-/// reference platform is tmpfs and would quietly turn this back into the
-/// bench that cannot see I/O. The directory is disposable with the rest of
-/// `target/`, so nothing cleans it up.
+/// File-backed under `CARGO_TARGET_TMPDIR`, never `/tmp`: tmpfs would hide the I/O this bench
+/// exists to see.
 async fn build_corpus() -> Corpus {
     let directory = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("search-under-load-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a bench scratch directory");
-    // The fixed test key, so the bench measures the encrypted store the
-    // application actually runs (ADR 0014): every page read here costs a
-    // decrypt, which is precisely what the budget has to survive.
+    // The fixed test key: every page read costs a decrypt, as in the application's encrypted store
+    // (ADR 0014).
     let database = Store::open(directory.join("postio.db"), &test_support::key())
         .await
         .expect("a bench store");
@@ -172,8 +122,6 @@ async fn build_corpus() -> Corpus {
     }
 }
 
-/// A few hundred words of body, the common word in all of them and the
-/// uncommon one in every hundredth.
 fn body_text(i: u64) -> String {
     let mut body = format!("{COMMON_WORD} the status as of message {i} ");
     let mut rng = Xorshift64(i.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
@@ -187,8 +135,6 @@ fn body_text(i: u64) -> String {
     body
 }
 
-/// Runs the catch-up's write pattern against `database` until told to stop:
-/// re-index a batch of bodies in one gated transaction, breathe, repeat.
 async fn churn(database: Store, stop: &AtomicBool) {
     let mut rng = Xorshift64(0xc0ff_ee00_dead_beef);
     while !stop.load(Ordering::Relaxed) {
@@ -219,7 +165,6 @@ fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2020, 6, 1, 0, 0, 0).unwrap()
 }
 
-/// One timed search, on a fresh page-cache-warm connection from the pool.
 async fn one_search(query: &str) -> Duration {
     let corpus = corpus();
     let connection = corpus.database.connect().await.expect("checkout");
@@ -238,7 +183,6 @@ async fn one_search(query: &str) -> Duration {
     elapsed
 }
 
-/// The median of [`DRAWS`] searches run while the writer churns.
 fn median_under_load(query: &str) -> Duration {
     let corpus = corpus();
     let stop = AtomicBool::new(false);

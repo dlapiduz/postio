@@ -1,16 +1,3 @@
-//! `ctrl+shift+Return` opens the same "Schedule send…" picker the pointer
-//! reaches through the button beside Send — on a real display, since the
-//! wiring runs through [`postio_core::CommandId::ScheduleSend`] dispatch and
-//! a real key press.
-//!
-//! `schedule_presets` itself (which times the picker actually offers) is
-//! unit-tested in `src/composer.rs` with no display; what needs one here is
-//! that the key reaches [`postio_widgets::composer::Composer::dispatch`] at all,
-//! and opens the same button clicking would.
-//!
-//! Its own file: GTK is single-threaded and initialised once, so one
-//! `#[test]` per integration binary. See `gtk_composer.rs`.
-
 use crate::support_compose::Window;
 use crate::support_compose::settle;
 use crate::support_compose::{app, fonts, style};
@@ -47,9 +34,7 @@ pub fn ctrl_shift_return_opens_the_schedule_send_picker() {
     composer.open(Draft::new(AccountId::UNASSIGNED));
     settle();
 
-    // Before the composer is addressed, `ctrl+shift+Return` must still open
-    // the picker: choosing *when* to send is independent of whether the
-    // draft is sendable yet, unlike `Send` itself.
+    // Choosing when to send is independent of whether the draft is sendable yet, unlike `Send`.
     press(
         &window,
         "Return",

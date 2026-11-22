@@ -1,8 +1,3 @@
-//! Syncing with Contacts across the boundary, as a dry run only
-//! (specs/011-focus-contacts S12). The Mac hands over a snapshot of its side;
-//! Rust says what a sync would do. Nothing here is an address book: the
-//! snapshot is a fake, and nothing is written to either side.
-
 use postio_ffi::{ExternalRecordFfi, Session, SessionOptions, SyncScopeFfi};
 use postio_model::{ContactForm, FormAddress};
 use postio_storage::repository::ContactRepository;
@@ -161,8 +156,6 @@ async fn bringing_in_saves_the_people_only_contacts_has_and_only_for_the_plan_sh
         .expect("two people could come in");
     assert_eq!(button.label, "Bring 2 into Postio");
 
-    // A snapshot that changed since the preview is not the plan that was
-    // shown: nothing is written and the person is told to preview again.
     let s = session.clone();
     let stale = {
         let mut changed = records.clone();

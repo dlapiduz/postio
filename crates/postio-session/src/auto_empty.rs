@@ -1,35 +1,21 @@
-//! Auto-emptying Junk and Trash (#1932): the pass that purges what is old
-//! enough, a page at a time.
-//!
-//! The rule is [`postio_core::retention::AutoEmpty`]; finding the mail is
-//! `ExpiryRepository`; the delete is `actions::purge`, which hides the row at
-//! once and queues the server's half like every other mutation. This only
-//! joins them, off the interactive path and under the background write gate,
-//! so a keystroke's write always goes first.
+//! Auto-emptying Junk and Trash (#1932): purges what is old enough, a page at a time, off the
+//! interactive path under the background write gate.
 
 use chrono::{DateTime, Utc};
 use postio_core::retention::AutoEmpty;
 use postio_storage::repository::{AccountRepository, ExpiryRepository};
 use postio_storage::{Store, WritePriority};
 
-/// Messages purged per read-and-write round.
 pub const PAGE: u32 = 200;
 
-/// Pages one pass takes at most per account and folder kind: a mailbox of a
-/// hundred thousand is emptied over a few runs, never in one long write.
 pub const PAGES_PER_PASS: u32 = 10;
 
-/// What one pass did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Report {
-    /// Messages purged.
     pub purged: usize,
-    /// More were due than the pass would take.
     pub more: bool,
 }
 
-/// Purge everything `policy` says is due at `now`, in every enabled account.
-/// Off (the default) is one comparison and no database work.
 pub async fn run(
     database: &Store,
     policy: AutoEmpty,

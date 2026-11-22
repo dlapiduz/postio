@@ -1,9 +1,5 @@
-//! The one place a [`Request`] becomes a client call.
-//!
-//! Async, and tied to no executor: the GTK app awaits it on glib's main loop
-//! and the FFI on tokio. Both get the same mapping, which is the point — the
-//! aim of a command, the order of a scope's reads, and the shape of each
-//! reply are decided here once (research R1).
+//! The one place a `Request` becomes a client call. Async and tied to no executor: GTK awaits it
+//! on glib's main loop and the FFI on tokio, so both get the same mapping.
 
 use postio_client::Client;
 use postio_model::listing::{ListPage, MailStore};
@@ -15,16 +11,10 @@ use postio_core::{Command, MessageTarget};
 
 use crate::{Opened, PageAnswer, PlacesRead, Reply, Request};
 
-/// Answer `request` now, when it needs no await: a post, said before
-/// anything that follows it is asked. `Err` hands the request back for
-/// [`perform()`].
-///
-/// Order is the point. Mail that left a folder is said to the store before
-/// the list re-reads (`Request::NoteRemoved`), so the store's own caches
-/// have let go of it first; spawned on an executor, the saying could run
-/// after the re-read it was meant to precede.
-// The request comes back whole, unboxed, because every caller hands it
-// straight to `perform`: boxing it would only be unboxed again.
+/// Answer `request` now when it needs no await. `Err` hands the request back for [`perform()`].
+/// Mail that left a folder is said to the store before the list re-reads, so the store's caches
+/// let go first; spawned on an executor, the saying could run after the re-read.
+// Returned unboxed: every caller hands it straight to `perform`.
 #[allow(clippy::result_large_err)]
 pub fn perform_now(client: &Client, request: Request) -> Result<Reply, Request> {
     match request {
@@ -32,9 +22,7 @@ pub fn perform_now(client: &Client, request: Request) -> Result<Reply, Request> 
             client.note_removed(mailbox, messages);
             Ok(Reply::Noted)
         }
-        // A copy handed to the system's Quick Look or save panel is done
-        // with (FR-053). Only ever one of `file_copies`' own: a path from
-        // anywhere else is left alone.
+        // Only ever one of `file_copies`' own: a path from anywhere else is left alone.
         Request::RemoveCopy(path) => {
             crate::results::remove_copy(&path);
             Ok(Reply::Noted)
@@ -43,9 +31,7 @@ pub fn perform_now(client: &Client, request: Request) -> Result<Reply, Request> 
     }
 }
 
-/// Ask the engine; return what the controller is to be told.
 pub async fn perform(client: &Client, request: Request) -> Reply {
-    // How a passage treats the first line is the request's to say (D7).
     let first_line = request.first_line().unwrap_or_default();
     match request {
         Request::FocusCounts => Reply::FocusCounts(
@@ -55,8 +41,9 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .map_err(|error| error.to_string()),
         ),
         Request::OpenScope { scope, splices } => {
-            // Which folders are inboxes: what lets Focus's inbox ignore mail
-            // moving anywhere else rather than re-read on every arrival.
+            // Which folders are inboxes: lets Focus's inbox ignore mail moving elsewhere rather
+            // than
+            // re-read on every arrival.
             let mut folders = Vec::new();
             let mut enabled = Vec::new();
             if let Ok(accounts) = client.accounts().await {
@@ -96,8 +83,6 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
         } => {
             let answer = match client.list_page(wanted).await {
                 Ok(ListPage::Threads(answer)) => {
-                    // The page's label pills, for every row at once: one round
-                    // trip, one statement at the store (spec 007 T043).
                     let threads = postio_ui::focus_list::label_threads(&answer.rows);
                     let labels = client.thread_labels(threads).await.unwrap_or_else(|error| {
                         tracing::warn!(page, %error, "Focus could not read a page's labels");
@@ -252,7 +237,6 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
-        // The facets alone: no hit is read.
         Request::Facets { query, stamp } => Reply::Facets {
             stamp,
             answer: client
@@ -280,7 +264,6 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .map(Box::new)
                 .map_err(|error| error.to_string()),
         },
-        // Two, newest first: the "Latest from" preview under the people.
         Request::LatestFrom { address, stamp } => {
             let query = postio_search::parse(
                 &postio_search::query::spell(&postio_search::query::Clause {
@@ -358,7 +341,6 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                     .map_err(|error| error.to_string()),
             )
         }
-        // Answered with what is left, so the panel needs no second read.
         Request::ForgetSearch { query } => {
             if let Err(error) = client.forget_search(query).await {
                 tracing::warn!(%error, "Focus could not forget a recent search");
@@ -448,8 +430,8 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .delivery_messages(delivery)
                 .await
                 .map_err(|error| error.to_string());
-            // C6: a summary is read only when the person brought a model;
-            // one that cannot be read is no summary, and the list opens.
+            // A summary is read only when the person brought a model; one that cannot be read is no
+            // summary.
             let summary = match summary {
                 true => client.digest_summary(delivery).await.ok().flatten(),
                 false => None,
@@ -640,9 +622,6 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
     }
 }
 
-/// Who every enabled account is, as a banner names it, and the newest of
-/// their folders' last completed syncs: when mail last arrived before this
-/// run. GTK's window read the same when its accounts landed.
 async fn accounts(client: &Client) -> Result<crate::AccountsRead, String> {
     let accounts = client.accounts().await.map_err(|error| error.to_string())?;
     let mut read = crate::AccountsRead::default();
@@ -669,11 +648,7 @@ async fn accounts(client: &Client) -> Result<crate::AccountsRead, String> {
     Ok(read)
 }
 
-/// Every place there is to go, in one round: each enabled account's
-/// mailboxes and folders with their conversations counted, its Outbox while
-/// anything waits in it, its labels with how many carry each, and its
-/// correspondents; then Snoozed and Flagged, which span every account.
-/// GTK's popover and bar each read these themselves, one call at a time.
+/// Every place there is to go, in one round, counted. Snoozed and Flagged span every account.
 async fn places(client: &Client) -> Result<PlacesRead, String> {
     use postio_ui::places as rules;
     let accounts = client.accounts().await.map_err(|error| error.to_string())?;
@@ -687,8 +662,6 @@ async fn places(client: &Client) -> Result<PlacesRead, String> {
             read.folders.push((mailbox.id, rules::place_name(&mailbox)));
             read.places.push(rules::mailbox_place(&mailbox));
             let mut entry = rules::mailbox_entry(&mailbox);
-            // Conversations, as the strip counts them: the inbox's is
-            // Focus's, which is what the strip reads.
             let scope = if mailbox.role == MailboxRole::Inbox {
                 ListScope::Focus(FocusScope::Inbox)
             } else {
@@ -699,7 +672,6 @@ async fn places(client: &Client) -> Result<PlacesRead, String> {
             }
             read.entries.push(entry);
         }
-        // The Outbox, a view over Drafts, has no mailbox row of its own.
         let waiting = client
             .list_count(ListScope::Outbox(account.id))
             .await
@@ -709,7 +681,6 @@ async fn places(client: &Client) -> Result<PlacesRead, String> {
         }
         let counted = client.label_counts(account.id).await.unwrap_or_default();
         for label in client.labels(account.id).await.unwrap_or_default() {
-            // A label nothing carries is left out of the counts: it holds none.
             let held = counted
                 .iter()
                 .find(|(id, _)| *id == label.id)
@@ -726,21 +697,17 @@ async fn places(client: &Client) -> Result<PlacesRead, String> {
     ] {
         let held = client.list_count(ListScope::Focus(scope)).await.ok();
         let view = rules::view_entry(role, held);
-        // A mailbox the server calls Flagged is this view's row.
         read.entries.retain(|entry| entry.go != view.go);
         read.entries.push(view);
     }
-    // Which account a hit is from is said only where there are several.
     if enabled.len() > 1 {
         read.owners = owners;
     }
     Ok(read)
 }
 
-/// The messages of `mailbox` a search looks through: its maintained total
-/// (ADR 0040), for every folder but drafts, junk and trash, which the
-/// search's All mail leaves out (#1523) as the results' "Searched 18,204
-/// messages" does.
+/// A maintained total (ADR 0040), for every folder but drafts, junk and trash, which the search's
+/// All mail leaves out (#1523).
 fn searched(mailbox: &postio_model::Mailbox) -> u64 {
     match mailbox.role {
         MailboxRole::Drafts | MailboxRole::Junk | MailboxRole::Trash => 0,
@@ -748,10 +715,7 @@ fn searched(mailbox: &postio_model::Mailbox) -> u64 {
     }
 }
 
-/// What the label picker lists, in one round: the labels of `message`'s
-/// account -- a message can carry only its own account's (T170) -- or of
-/// `account`, or of the first enabled one; how many conversations carry
-/// each; and which of them `threads` carry.
+/// A message can carry only its own account's labels.
 async fn labels(
     client: &Client,
     message: Option<postio_model::MessageId>,
@@ -791,8 +755,6 @@ async fn labels(
     })
 }
 
-/// What the move picker lists, in one round: every enabled account's
-/// folders, and the last destinations.
 async fn folders(client: &Client) -> Result<crate::FoldersRead, String> {
     let accounts = client.accounts().await.map_err(|error| error.to_string())?;
     let mut folders = Vec::new();
@@ -803,9 +765,7 @@ async fn folders(client: &Client) -> Result<crate::FoldersRead, String> {
     Ok(crate::FoldersRead { folders, recent })
 }
 
-/// The folder of `role` in the account Focus writes from: the first enabled
-/// account with one. A role, not a name: what a provider calls its sent
-/// mail does not matter.
+/// A role, not a name: what a provider calls its sent mail does not matter.
 async fn role_folder(client: &Client, role: MailboxRole) -> Option<(MailboxId, String)> {
     let accounts = client.accounts().await.ok()?;
     for account in accounts.iter().filter(|account| account.enabled) {
@@ -819,9 +779,7 @@ async fn role_folder(client: &Client, role: MailboxRole) -> Option<(MailboxId, S
     None
 }
 
-/// A verb, to each aim in turn; or, for a whole-view selection, once at the
-/// selection the host is told about with it -- the one place a frontend's
-/// "select all" becomes the host's (GTK and the FFI each had a copy).
+/// For a whole-view selection, once at the selection the host is told about with it.
 async fn send(
     client: &Client,
     command: Command,
@@ -899,7 +857,6 @@ mod tests {
 
     use super::*;
 
-    /// Answers from a script and records what it was asked.
     struct Scripted {
         asked: Mutex<Vec<Req>>,
         answers: Mutex<Vec<Resp>>,
@@ -930,7 +887,6 @@ mod tests {
         (Client::new(transport.clone()), transport)
     }
 
-    /// The scripted transport answers at once, so one poll finishes it.
     fn now<F: Future>(future: F) -> F::Output {
         match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
             Poll::Ready(output) => output,

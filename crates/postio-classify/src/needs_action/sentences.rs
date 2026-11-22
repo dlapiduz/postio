@@ -1,37 +1,24 @@
-//! The own text as the detector reads it: clauses, each with its character
-//! offsets, so a marker's quote is a span of the text and nothing else
-//! (FR-104, FR-132).
+//! The own text as the detector reads it: clauses with character offsets, so a marker's quote is a
+//! span of the text and nothing else.
 
 use std::ops::Range;
 
-/// One clause of the own text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Clause {
-    /// Where it is: character offsets into the own text, without the
-    /// whitespace around it.
     pub(super) span: Range<usize>,
-    /// Its words, each run of whitespace (a line break included) read as one
-    /// space.
     pub(super) text: String,
-    /// The words a dash cut off in front of it, when they were few enough to
-    /// say who it is put to: the "Mateo" of "Mateo — please share the link".
+    /// The words a dash cut off in front, when few enough to say who it is put to: the "Mateo" of
+    /// "Mateo — please share the link".
     pub(super) before_dash: Option<String>,
 }
 
-/// The most words a dash can cut off and still be naming who the clause
-/// after it is put to: "Mateo —", "Hi Tove —".
 const VOCATIVE_WORDS: usize = 3;
 
-/// The own text's clauses, in order (research R10):
-///
-/// - paragraphs are split at blank lines, and one indented as code is not
-///   prose;
-/// - a line that opens with `>` is quoted, whoever cut the text, and is
-///   never read;
-/// - a sentence ends at `.`, `?`, `!` or `…` before whitespace, so neither
-///   a URL's query nor a decimal ends one, and nor does a common
-///   abbreviation;
-/// - a sentence's clauses are split at `;` and `—`.
+/// Paragraphs split at blank lines (one indented as code is not prose); a `>` line is quoted and
+/// never
+/// read; a sentence ends at `.`, `?`, `!` or `…` before whitespace, not at a URL query, a decimal
+/// or a
+/// common abbreviation; clauses split at `;` and `—`.
 pub(super) fn clauses(own: &str) -> Vec<Clause> {
     let chars: Vec<char> = own.chars().collect();
     let mut out = Vec::new();
@@ -43,8 +30,6 @@ pub(super) fn clauses(own: &str) -> Vec<Clause> {
     out
 }
 
-/// Runs of prose lines: split at blank and quoted lines, with paragraphs
-/// indented as code left out.
 fn blocks(chars: &[char]) -> Vec<Range<usize>> {
     let mut lines = Vec::new();
     let mut start = 0;
@@ -92,12 +77,10 @@ fn blocks(chars: &[char]) -> Vec<Range<usize>> {
     blocks
 }
 
-/// A line indented as code: four spaces or a tab.
 fn indented(line: &[char]) -> bool {
     line.first() == Some(&'\t') || line.iter().take(4).filter(|c| **c == ' ').count() == 4
 }
 
-/// A block's sentences.
 fn sentences(chars: &[char], block: Range<usize>) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut start = block.start;
@@ -117,7 +100,6 @@ fn sentences(chars: &[char], block: Range<usize>) -> Vec<Range<usize>> {
     out
 }
 
-/// Whether the full stop at `dot` closes an abbreviation: "e.g.", "Mr.".
 fn abbreviation(chars: &[char], start: usize, dot: usize) -> bool {
     let word_start = chars[start..dot]
         .iter()
@@ -127,7 +109,6 @@ fn abbreviation(chars: &[char], start: usize, dot: usize) -> bool {
     super::lexicon::ABBREVIATIONS.contains(&word.to_lowercase().as_str())
 }
 
-/// A sentence's clauses, at `;` and `—`.
 fn split(chars: &[char], sentence: Range<usize>, out: &mut Vec<Clause>) {
     let mut start = sentence.start;
     let mut before_dash = None;
@@ -145,8 +126,6 @@ fn split(chars: &[char], sentence: Range<usize>, out: &mut Vec<Clause>) {
     push(chars, start..sentence.end, before_dash, out);
 }
 
-/// Adds the clause `range` holds, trimmed, if it holds any words, and hands
-/// back its text.
 fn push(
     chars: &[char],
     range: Range<usize>,
@@ -183,7 +162,6 @@ mod tests {
         clauses(own).into_iter().map(|clause| clause.text).collect()
     }
 
-    /// Every clause's span holds exactly its words: the quote is the text's.
     fn assert_spans_are_the_text(own: &str) {
         for clause in clauses(own) {
             let quoted: String = own

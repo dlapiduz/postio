@@ -1,23 +1,12 @@
-//! Focus at the boundary (specs/009-focus-macos, contracts/ffi-focus.md).
-//!
-//! The Mac app is Focus, and what Focus shows comes from the host's Focus
-//! requests -- the same ones the GTK app and the terminal make through
-//! `postio-client`. Each crosses here as a plain record.
+//! Focus at the boundary: the host's Focus requests, each crossing as a plain record.
 
 use crate::session::{Session, SessionError, blocking};
 
-/// What the header strip counts: the inbox's conversations, how many are
-/// unread, how many need an action (the Has action toggle's number), and how
-/// many messages were filed away today ("186 filtered today").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct FocusCountsFfi {
-    /// The conversations in Focus's inbox.
     pub conversations: u32,
-    /// Of those, the ones with unread mail.
     pub unread: u32,
-    /// Of those, the ones that draw a marker.
     pub has_action: u32,
-    /// Messages filed away since local midnight.
     pub filtered_today: u32,
 }
 
@@ -32,17 +21,13 @@ impl From<postio_client::protocol::FocusCounts> for FocusCountsFfi {
     }
 }
 
-/// The header strip's words, composed by the functions GTK's strip uses
-/// (`postio_ui::focus_row`, `postio_ui::filtered`), under the same rules: the
-/// filtered count only while filtering is on and something was filed today,
-/// the digest rules only while there are some (spec 007 C10).
+/// The header strip's words, composed by the functions GTK's strip uses (`postio_ui::focus_row`,
+/// `postio_ui::filtered`).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusStripFfi {
     /// "312 · 41 unread".
     pub counts: String,
-    /// The unread figure `counts` says, as a number: the Dock's badge.
-    /// Carried on the strip's own read, which is re-read on every change to
-    /// the inbox, so the badge costs no read of its own.
+    /// The unread figure as a number, for the Dock badge; it rides the strip's own read.
     pub unread: u32,
     /// "Has action · 7".
     pub has_action: String,
@@ -52,12 +37,8 @@ pub struct FocusStripFfi {
     pub digest_rules: Option<String>,
 }
 
-/// What `[sync]` says about telling somebody mail is waiting: whether new
-/// mail notifies, and whether the app's icon carries the unread count.
-/// Kept current while the session runs; [`UiEvent::NoticesChanged`] says
-/// when it moved.
-///
-/// [`UiEvent::NoticesChanged`]: crate::UiEvent::NoticesChanged
+/// What `[sync]` says about telling somebody mail is waiting; `UiEvent::NoticesChanged` says when
+/// it moved.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct NoticesFfi {
     /// `[sync] notify`: post a notification for new mail.
@@ -80,47 +61,39 @@ impl From<&postio_config::SyncConfig> for NoticesFfi {
 
 #[uniffi::export]
 impl Session {
-    /// Show one of Focus's lists: counted first, then `FocusListChanged`.
     pub fn open_focus(&self, scope: crate::FocusScopeFfi) {
         self.focus_driver().open(scope.into());
     }
 
-    /// How many rows Focus's list draws.
     pub fn focus_row_count(&self) -> u32 {
         self.focus_driver().row_count()
     }
 
-    /// The row at `position`, or `None` while its page is on its way
-    /// (`FocusPageReady` says when). Synchronous and does no I/O: what the
-    /// table calls for every visible row.
+    /// The row at `position`, or `None` while its page is on its way (`FocusPageReady`).
+    /// Synchronous, no I/O.
     pub fn focus_row_at(&self, position: u32) -> Option<crate::FocusRowFfi> {
         self.focus_driver().row_at(position)
     }
 
-    /// The row at `position` if its page is already resident, else `None`.
-    /// Reads nothing and asks for nothing: the table re-measures the rows
-    /// it knew when the list changes length, without paging.
+    /// The row if its page is already resident, else `None`; reads nothing, so the table can
+    /// re-measure without paging.
     pub fn focus_resident_row_at(&self, position: u32) -> Option<crate::FocusRowFfi> {
         self.focus_driver().row_resident(position)
     }
 
-    /// The pointer put the cursor on `position`: a plain click on a row.
-    /// The controller says where the cursor went, as `FocusCursor`.
+    /// A plain click on a row; the controller says where the cursor went, as `FocusCursor`.
     pub fn focus_point(&self, position: u32) {
         self.focus_driver()
             .input(postio_focus::Input::Point(position));
     }
 
-    /// A click on the chevron of the thread row at `position`: the cursor
-    /// goes there and the thread opens in place, or folds when it is the one
-    /// open (`FocusSplice` / `FocusUnsplice` say which).
+    /// A click on a thread row's chevron: the cursor goes there and the thread opens in place, or
+    /// folds when open.
     pub fn focus_chevron_clicked(&self, position: u32) {
         self.focus_driver().chevron_clicked(position);
     }
 
-    /// A double-click on `position`: the cursor goes to the row and its
-    /// message opens, as Return does there. GTK's `activate` on its list is
-    /// the same two steps.
+    /// A double-click: the cursor goes to the row and its message opens, as Return does.
     pub fn focus_activate(&self, position: u32) {
         let driver = self.focus_driver();
         driver.input(postio_focus::Input::Point(position));
@@ -134,21 +107,20 @@ impl Session {
             .input(postio_focus::Input::Pick { position, range });
     }
 
-    /// Whether the list stands scrolled to its very top: where it goes back
-    /// to when an undo brings rows in above (`FocusListToTop`).
+    /// Whether the list is scrolled to its very top, where it returns when an undo brings rows in
+    /// above.
     pub fn focus_at_top(&self, at_top: bool) {
         self.focus_driver()
             .input(postio_focus::Input::AtTop(at_top));
     }
 
-    /// A surface opened over Focus's list: the keys are its now, and on the
-    /// Mac it replaces the secondary window that was open (M4).
+    /// A surface opened over the list: the keys are its now, and on the Mac it replaces the
+    /// secondary window open.
     pub fn focus_surface_opened(&self, kind: crate::SurfaceKindFfi) {
         self.focus_driver()
             .input(postio_focus::Input::SurfaceOpened(kind.into()));
     }
 
-    /// A surface over Focus's list closed, however it was closed.
     pub fn focus_surface_closed(&self, kind: crate::SurfaceKindFfi) {
         self.focus_driver()
             .input(postio_focus::Input::SurfaceClosed(kind.into()));
@@ -182,16 +154,14 @@ impl Session {
             .input(postio_focus::Input::ThreadBarMoreClicked { from });
     }
 
-    /// The message window opened from a search has no more of its own find
-    /// matches in this direction: the controller goes on to the next matched
-    /// message, or says it is the last. Swift then selects that message's
-    /// first match going forward, or its last going back.
+    /// The message window opened from a search has no more find matches in this direction: the
+    /// controller goes
+    /// on to the next matched message, or says it is the last.
     pub fn focus_match_edge(&self, forward: bool) {
         self.focus_driver()
             .input(postio_focus::Input::MatchEdge { forward });
     }
 
-    /// A Thread ▾ menu entry was clicked: `command` is its id.
     pub fn focus_thread_menu_pick(&self, command: String) {
         if let Ok(id) = command.parse::<postio_core::CommandId>() {
             self.focus_driver()
@@ -199,21 +169,18 @@ impl Session {
         }
     }
 
-    /// The outline's filter field holds `text` now.
     pub fn focus_outline_typed(&self, text: String) {
         self.focus_driver().input(postio_focus::Input::Outline(
             postio_focus::OutlineInput::Typed(text),
         ));
     }
 
-    /// A person chip of the outline was chosen, or cleared with `None`.
     pub fn focus_outline_person(&self, name: Option<String>) {
         self.focus_driver().input(postio_focus::Input::Outline(
             postio_focus::OutlineInput::Person(name),
         ));
     }
 
-    /// Up or down in the outline: by this many rows.
     pub fn focus_outline_move(&self, by: i32) {
         self.focus_driver().input(postio_focus::Input::Outline(
             postio_focus::OutlineInput::Move(by),
@@ -227,22 +194,19 @@ impl Session {
         ));
     }
 
-    /// `/` in the outline: the keyboard goes to its field.
     pub fn focus_outline_focus_filter(&self) {
         self.focus_driver().input(postio_focus::Input::Outline(
             postio_focus::OutlineInput::FocusFilter,
         ));
     }
 
-    /// What Undo would take back now, in the toast's words, or `None` when
-    /// nothing can be: what the Edit menu names its Undo item with. Read,
-    /// not taken; the engine's stack stays the only one (FR-041).
+    /// What Undo would take back now, in the toast's words, or `None`. Read, not taken: the
+    /// engine's stack stays the only one.
     pub fn undo_description(&self) -> Option<String> {
         let client = self.client()?;
         blocking(client.undo_top()).ok().flatten()
     }
 
-    /// The header strip's words, read now.
     pub fn focus_strip(&self) -> Result<FocusStripFfi, SessionError> {
         let counts = self.focus_counts()?;
         let config = self.focus_config();
@@ -263,7 +227,6 @@ impl Session {
         self.notices_now()
     }
 
-    /// The header strip's counts, read now.
     pub fn focus_counts(&self) -> Result<FocusCountsFfi, SessionError> {
         let client = self
             .client()

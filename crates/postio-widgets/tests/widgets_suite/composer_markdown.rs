@@ -1,12 +1,3 @@
-//! A draft the desktop saves forgets the Markdown it was written in
-//! (docs/archive/specs/005-tui-frontend, data-model `drafts.body_markdown`).
-//!
-//! The terminal reopens a draft from its Markdown when there is some. Once the
-//! desktop has edited the body, that Markdown describes a message that no
-//! longer exists, and reopening from it would silently undo the edit. So what
-//! the desktop composer hands to be saved carries none, and the terminal falls
-//! back to the HTML.
-
 use crate::support_compose::Window;
 use crate::support_compose::{app, fonts, style};
 use gtk::gdk;

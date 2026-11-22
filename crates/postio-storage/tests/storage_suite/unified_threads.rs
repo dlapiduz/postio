@@ -1,15 +1,8 @@
-//! The unified inbox groups threads across accounts at read time (#184),
-//! and it is the inboxes: every enabled account's own, nothing filed away
-//! (#1692).
-//!
-//! ADR 0005 Q2: a thread never spans accounts — `threads.account_id` stays
-//! `NOT NULL`, threads remain per-account sync state. What the unified list
-//! shows is a [`ThreadGroup`]: threads from different accounts folded into
-//! one row when their JWZ roots share an `RfcMessageId`, or — roots missing
-//! — when their normalised subjects match within the coalescing window. The
-//! grouping is computed by the same paged query that builds the list, and
-//! the copies both stay: dedupe is display-only, and an action on a group
-//! has every member thread to hit.
+//! A thread never spans accounts (ADR 0005 Q2); the unified list folds threads from different
+//! accounts into
+//! one row when their roots share an `RfcMessageId` or, roots missing, their subjects match within
+//! the
+//! coalescing window. Dedupe is display-only, and the view is the inboxes (#1692).
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
@@ -48,7 +41,6 @@ async fn file(
     (id, threaded.thread_id)
 }
 
-/// Two accounts, each with an inbox.
 async fn two_accounts(connection: &Connection) -> ((AccountId, MailboxId), (AccountId, MailboxId)) {
     let (first, inbox) = test_support::account_with_inbox(connection).await;
     let mut second = postio_model::Account::new(
@@ -76,8 +68,6 @@ async fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
     let connection = database.connect().await.expect("checkout");
     let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
-    // The same announcement received at both addresses, replied to in the
-    // first account: three rows, two distinct messages, one conversation.
     let (_, a_thread) = file(
         &connection,
         a,
@@ -136,12 +126,9 @@ async fn rootless_threads_group_by_subject_within_the_window_and_not_beyond() {
     let connection = database.connect().await.expect("checkout");
     let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
-    // No rfc ids anywhere: the subject fallback is all there is.
     file(&connection, a, a_inbox, 1, None, &[], "Sirius review").await;
     file(&connection, b, b_inbox, 5, None, &[], "Re: Sirius review").await;
 
-    // Same subject in both accounts, but further apart than the coalescing
-    // window: two unrelated conversations that happen to share four words.
     let far = 24 * postio_model::subject::COALESCING_WINDOW_DAYS + 48;
     file(&connection, a, a_inbox, 100, None, &[], "Weekly digest").await;
     file(
@@ -170,7 +157,6 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
     let connection = database.connect().await.expect("checkout");
     let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
-    // The grouped conversation is the newest thing in both accounts…
     file(
         &connection,
         a,
@@ -191,7 +177,6 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         "Paired",
     )
     .await;
-    // …and one older standalone per account fills the second page.
     file(
         &connection,
         a,
@@ -237,29 +222,20 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         .collect();
     assert_eq!(
         subjects,
-        // The representative message's own subject, as a folder row
-        // carries it: each row is its inbox's row (#1692).
         vec![Some("Alone in A"), Some("Alone in B")],
         "the absorbed partner never resurfaces as a row of its own"
     );
 }
 
-/// The list needs a total before it has drawn a row, and that total has to be
-/// the number of rows the walk will actually produce.
-///
-/// `unified_page` decides what a row is by absorbing older partners into the
-/// newest member, so the count cannot be "how many threads are there" — a
-/// grouped pair is two threads and one row. Asserted against the walk rather
-/// than against a literal: a hand-counted expectation would let the two drift
-/// apart in exactly the case that matters, which is the fixture holding every
-/// grouping rule at once.
+/// The total must equal the rows the walk produces, so it cannot be a thread count: a grouped pair
+/// is two
+/// threads and one row. Asserted against the walk, not a literal.
 #[tokio::test]
 async fn the_group_count_is_what_walking_every_page_produces() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
-    // Grouped by root identity, across accounts.
     file(
         &connection,
         a,
@@ -281,11 +257,9 @@ async fn the_group_count_is_what_walking_every_page_produces() {
     )
     .await;
 
-    // Grouped by subject, inside the coalescing window.
     file(&connection, a, a_inbox, 16, None, &[], "Subject pair").await;
     file(&connection, b, b_inbox, 15, None, &[], "Re: Subject pair").await;
 
-    // Same subject, beyond the window: two rows, not one.
     let far = 24 * postio_model::subject::COALESCING_WINDOW_DAYS + 48;
     file(&connection, a, a_inbox, 200, None, &[], "Weekly digest").await;
     file(
@@ -299,12 +273,9 @@ async fn the_group_count_is_what_walking_every_page_produces() {
     )
     .await;
 
-    // Same subject inside the window but the *same* account: never a group,
-    // because a conversation folds across accounts and not within one.
     file(&connection, a, a_inbox, 30, None, &[], "Same account twice").await;
     file(&connection, a, a_inbox, 31, None, &[], "Same account twice").await;
 
-    // Plain solos, one per account.
     file(
         &connection,
         a,
@@ -328,7 +299,6 @@ async fn the_group_count_is_what_walking_every_page_produces() {
 
     let repository = ThreadRepository::new(&connection);
 
-    // Walk in small pages, so absorption across a page boundary counts too.
     let mut walked = 0usize;
     let mut after = None;
     loop {
@@ -341,9 +311,6 @@ async fn the_group_count_is_what_walking_every_page_produces() {
         walked += groups.len();
     }
 
-    // Ten threads, eight rows: the root pair and the subject pair each fold,
-    // and nothing else does. Stated absolutely as well as against the walk,
-    // so the two agreeing on a wrong number still fails.
     assert_eq!(
         walked, 8,
         "the walk folds exactly the two cross-account pairs"
@@ -357,19 +324,14 @@ async fn the_group_count_is_what_walking_every_page_produces() {
     );
 }
 
-/// The list model scrolls by index, so the store has to be able to answer at
-/// one — the same bargain [`ThreadRepository::page_at`] makes for a folder.
-///
-/// The offset is counted from the cursor every time, which is why
-/// `postio_runtime::store` keeps seek marks and hands this a small number.
+/// The offset is counted from the cursor every time, which is why `postio_runtime::store` keeps
+/// seek marks.
 #[tokio::test]
 async fn an_offset_window_is_the_walk_from_that_row_on() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
-    // Six rows, one of them a cross-account pair, so the offset has to be an
-    // offset into *groups* rather than into threads.
     for hour in [1, 3, 5, 7] {
         file(
             &connection,
@@ -438,25 +400,15 @@ async fn an_offset_window_is_the_walk_from_that_row_on() {
     }
 }
 
-/// An account the user disabled is not in the unified view at all.
-///
-/// ADR 0005 Q10 draws the line: a *disabled* account is not a *failing* one.
-/// It drops out silently and correctly, because the user asked for that —
-/// which is the one case where saying nothing is right, and the reason
-/// `ListScope::Unified` is documented as every enabled account's mail.
-///
-/// It has to hold for the partner search too, not just the page: a thread in
-/// a disabled account that absorbed its partner in an enabled one would take
-/// a row the user can see and fold it into a row they cannot.
+/// A disabled account drops out silently (ADR 0005 Q10), in the partner search too: a disabled
+/// thread that
+/// absorbed an enabled partner would fold a visible row into one the user cannot see.
 #[tokio::test]
 async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
-    // One conversation each, and one they share -- with the shared one newer
-    // in the account that is about to be switched off, so it would be the
-    // group's head and would take the enabled copy down with it.
     file(
         &connection,
         a,
@@ -533,12 +485,9 @@ async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
     );
 }
 
-/// Unified is every enabled account's *inbox*, not every account's mail
-/// (#1692; the maintainer's call, 2026-09-26: "it should only be inboxes").
-///
-/// So a conversation filed away -- archived, moved, sent -- is not a row
-/// here, which is what makes `a a a` in Unified walk down the list as it does
-/// in a folder: the row the verb filed leaves the view.
+/// Unified is every enabled account's inbox, not all its mail, so a filed-away conversation leaves
+/// the
+/// view as in a folder (#1692).
 #[tokio::test]
 async fn unified_lists_the_inboxes_of_every_account_and_nothing_filed_away() {
     let database = test_support::memory().await;
@@ -576,8 +525,6 @@ async fn unified_lists_the_inboxes_of_every_account_and_nothing_filed_away() {
         "In B's inbox",
     )
     .await;
-    // Filed away from the start, and newer than both, so a view that still
-    // listed every folder would draw it at the top.
     file(
         &connection,
         a,
@@ -588,7 +535,6 @@ async fn unified_lists_the_inboxes_of_every_account_and_nothing_filed_away() {
         "Long filed",
     )
     .await;
-    // In the inbox, then archived -- the gesture this issue is about.
     let (archived, _) = file(
         &connection,
         b,
@@ -641,13 +587,8 @@ async fn unified_lists_the_inboxes_of_every_account_and_nothing_filed_away() {
     );
 }
 
-/// The unified page reads no mail it does not draw.
-///
-/// Finding the inboxes is a walk over the accounts, a handful of rows, and
-/// each inbox's window is its folder list's own seek -- so a unified page
-/// costs what a page of each inbox costs, whatever the archive holds. A scan
-/// of `messages` or `threads` anywhere in it is how "only the inboxes" would
-/// quietly come to read every message to find them.
+/// A scan of `messages` or `threads` here is how "only the inboxes" would quietly come to read
+/// every message.
 #[tokio::test]
 async fn the_unified_page_seeks_each_inbox_and_scans_no_mail() {
     let database = test_support::memory().await;

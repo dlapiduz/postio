@@ -1,8 +1,3 @@
-//! Saving the Edit form is one write that makes or changes a person whole
-//! (specs/011-focus-contacts S8): names, kind, style, work, addresses, which
-//! is primary, their labels and the groups, with the form as it was handed
-//! back to put it right.
-
 use postio_model::{
     AddressLabel, ContactForm, ContactKind, ContactState, EmailAddress, FormAddress, ShowAs,
 };
@@ -60,7 +55,6 @@ async fn a_new_person_is_made_whole_from_the_form() {
         .unwrap();
     assert_eq!(work.label, Some(AddressLabel::Work));
 
-    // The inbox calls them what the style says.
     let person = contacts.get(saved.person).await.unwrap().unwrap();
     assert_eq!(person.display_name(), "Moreno, Ada");
     assert!(person.is_saved());
@@ -94,7 +88,6 @@ async fn editing_changes_what_changed_and_hands_back_the_form_it_found() {
         !addresses.contains(&"ada@example.org"),
         "let go: {addresses:?}"
     );
-    // The released address belongs to nobody now, and is not deleted.
     let freed = contacts
         .by_address("ada@example.org")
         .await
@@ -102,7 +95,6 @@ async fn editing_changes_what_changed_and_hands_back_the_form_it_found() {
         .map(|owner| owner.state);
     assert_ne!(freed, Some(ContactState::Live));
 
-    // Saving what was found puts it back.
     contacts
         .save_form(Some(made), &saved.prior.unwrap())
         .await

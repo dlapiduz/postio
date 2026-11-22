@@ -1,6 +1,3 @@
-//! The long-newsletter seed refiles one demo conversation as a newsletter:
-//! its row must describe the newsletter, not the message it was made from.
-
 use gtk::prelude::*;
 
 use crate::support;

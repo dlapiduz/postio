@@ -1,6 +1,3 @@
-//! The host over a real store, driven through clients the way a frontend
-//! drives it. Asserted on what a frontend would see: its events and its list.
-
 use std::time::Duration;
 
 use chrono::Utc;
@@ -17,8 +14,6 @@ use postio_storage::test_support;
 
 use super::Host;
 
-/// A store with an inbox, an archive and a trash, one message in the inbox,
-/// and a host over it.
 pub(crate) struct World {
     pub(crate) rt: tokio::runtime::Runtime,
     host: Option<Host>,
@@ -35,7 +30,6 @@ impl World {
         World::configured(|wiring| wiring)
     }
 
-    /// The same world, its host wired further by `configure`.
     pub(crate) fn configured(
         configure: impl FnOnce(postio_session::Wiring) -> postio_session::Wiring + Send + 'static,
     ) -> World {
@@ -80,13 +74,10 @@ impl World {
         }
     }
 
-    /// The store under the host, for a test to read what a verb wrote.
     pub(crate) fn database(&self) -> &postio_storage::Store {
         &self.database
     }
 
-    /// Quit, as a frontend's last window closing stops its host, and launch
-    /// again over the same store and blobs: the next session.
     pub(crate) fn relaunch(&mut self) {
         if let Some(host) = self.host.take() {
             host.close();
@@ -102,12 +93,10 @@ impl World {
         );
     }
 
-    /// The host.
     pub(crate) fn host(&self) -> &Host {
         self.host.as_ref().expect("running")
     }
 
-    /// A frontend's state: looking at the inbox, the cursor on the message.
     pub(crate) fn looking_at_the_message(&self) -> SharedState {
         let state = SharedState::default();
         let (quiet, _) = event_channel();
@@ -119,17 +108,14 @@ impl World {
         state
     }
 
-    /// The inbox.
     pub(crate) fn inbox(&self) -> MailboxId {
         self.inbox
     }
 
-    /// The message in it.
     pub(crate) fn message(&self) -> MessageId {
         self.message
     }
 
-    /// A frontend looking at the inbox with the cursor on the message.
     pub(crate) fn frontend(
         &self,
         kind: ClientKind,
@@ -160,7 +146,6 @@ impl World {
         }
     }
 
-    /// Wait for an event matching `wanted`, failing after a while.
     pub(crate) fn hear(
         &self,
         events: &async_channel::Receiver<EventEnvelope>,
@@ -183,7 +168,6 @@ impl World {
         })
     }
 
-    /// Everything that arrives within a short quiet period.
     pub(crate) fn drain(&self, events: &async_channel::Receiver<EventEnvelope>) -> Vec<Event> {
         self.rt.block_on(async {
             let mut heard = Vec::new();
@@ -203,8 +187,7 @@ impl World {
 
 impl Drop for World {
     fn drop(&mut self) {
-        // The host's runtime cannot be dropped from inside another runtime's
-        // `block_on`, and this is outside every one of them.
+        // The host's runtime cannot be dropped from inside another runtime's `block_on`.
         self.host.take();
     }
 }
@@ -229,8 +212,6 @@ fn a_frontend_archives_through_the_host_and_its_list_empties() {
     assert_eq!(world.inbox_rows(&client), 0);
 }
 
-/// Files `rfc` into `inbox`, threaded as a sync pass would, and answers
-/// its conversation.
 fn file_threaded(
     world: &World,
     account: postio_model::AccountId,
@@ -256,11 +237,9 @@ fn file_threaded(
 
 #[test]
 fn archiving_a_focus_row_received_at_two_addresses_archives_both_copies() {
-    // Spec 007, Edge Cases: one inbox across all accounts. The announcement
-    // reached both of the person's addresses, so Focus shows it once -- and
-    // archiving that one row has to archive both copies, as a unified row's
-    // group does, or the other copy is still in its inbox and the row comes
-    // straight back.
+    // One inbox across accounts: archiving a row has to archive both copies, as a unified row's
+    // group does,
+    // or the other copy is still in its inbox and the row comes straight back.
     let world = World::new();
     let (second, second_inbox, second_archive) = world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -358,8 +337,6 @@ fn archiving_a_focus_row_received_at_two_addresses_archives_both_copies() {
     );
 }
 
-/// Files a message about `subject` into `inbox` as the start of its own
-/// conversation, threaded as a sync pass would.
 fn file_about(
     world: &World,
     account: postio_model::AccountId,
@@ -384,7 +361,6 @@ fn file_about(
     })
 }
 
-/// A second account beside the world's, with an inbox and an archive.
 fn second_account(world: &World) -> (postio_model::AccountId, MailboxId, MailboxId) {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -404,10 +380,6 @@ fn second_account(world: &World) -> (postio_model::AccountId, MailboxId, Mailbox
 
 #[test]
 fn a_focus_select_all_archives_what_focus_lists_and_never_held_mail() {
-    // T167: `X` then `a` in Focus. The selection is a predicate over what
-    // Focus's inbox lists -- not the unified inbox, which also holds mail
-    // kept for a digest -- and a row taken back out of it keeps every copy
-    // it stands for, in every account.
     let world = World::new();
     let (second, second_inbox, second_archive) = second_account(&world);
     file_threaded(&world, world.account, world.inbox(), "<launch@example.net>");
@@ -466,8 +438,6 @@ fn a_focus_select_all_archives_what_focus_lists_and_never_held_mail() {
         .expect("the launch is listed");
     assert_eq!(launch.copies.len(), 1, "folded from both inboxes");
 
-    // As Focus aims `X`, and then `x` on the launch's row: its
-    // representative, the one id the row carries.
     let state = SharedState::default();
     let (sink, _) = event_channel();
     state.update(&sink, |app| {
@@ -593,14 +563,12 @@ fn undo_takes_back_only_what_this_frontend_did() {
         matches!(event, Event::ActionCompleted { .. })
     });
 
-    // The desktop did nothing, so it has nothing to undo.
     world.send(&desktop, Command::Undo);
     world.hear(&desktop_events, |event| {
         matches!(event, Event::CommandRejected { .. })
     });
     assert_eq!(world.inbox_rows(&desktop), 0, "the archive stands");
 
-    // The terminal does.
     world.send(&terminal, Command::Undo);
     world.hear(&terminal_events, |event| {
         matches!(event, Event::UndoPerformed { .. })
@@ -610,8 +578,6 @@ fn undo_takes_back_only_what_this_frontend_did() {
 
 #[test]
 fn each_frontend_reads_the_undo_it_would_take_back() {
-    // What Edit > Undo names on the Mac (specs/009-focus-macos T044): this
-    // frontend's own top, read without taking it back.
     let world = World::new();
     let (terminal, terminal_events) = world.frontend(ClientKind::Tui);
     let (desktop, _desktop_events) = world.frontend(ClientKind::Focus);
@@ -634,10 +600,8 @@ fn each_frontend_reads_the_undo_it_would_take_back() {
 
 #[test]
 fn two_commands_sent_back_to_back_run_in_the_order_they_were_sent() {
-    // Archive, then undo, without waiting between them. In order, the
-    // message ends where it started; reversed, the undo finds nothing to
-    // take back and the archive stands. Answering each request on a spawned
-    // task made that a race; commands are answered in order now.
+    // Archive then undo without waiting: answering each request on a spawned task made the undo
+    // race the archive; commands answer in order.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Tui);
 
@@ -668,8 +632,6 @@ fn a_frontend_can_list_the_accounts_for_its_sidebar() {
 fn a_frontend_reads_a_body_or_hears_why_there_is_none() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
-    // The fixture's message has headers and no body yet: the ordinary state
-    // of a mailbox mid-backfill, not a fault.
     let body = world
         .rt
         .block_on(client.body(world.message))
@@ -681,7 +643,6 @@ fn a_frontend_reads_a_body_or_hears_why_there_is_none() {
 fn a_frontend_reads_a_conversations_messages_oldest_first() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
-    // A second, later message joined to the first one's thread.
     let (thread, later) = world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         let first = MessageRepository::new(&connection)
@@ -721,8 +682,6 @@ fn a_frontend_reads_a_conversations_messages_oldest_first() {
 fn unsubscribing_records_the_activation_against_the_messages_list() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
-    // The fixture message has no List-Id and no sender, so it names no list:
-    // a refusal, said as a sentence, and nothing recorded.
     assert!(
         world
             .rt
@@ -762,8 +721,6 @@ fn unsubscribing_records_the_activation_against_the_messages_list() {
 
 #[test]
 fn leaving_a_sender_with_no_list_is_said_with_the_exact_address() {
-    // #1952: the confirmation names what the sweep acts on, the sender's
-    // exact address, while the activation log keeps filing the domain.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
     let (account, message) = world.rt.block_on(async {
@@ -805,9 +762,6 @@ fn leaving_a_sender_with_no_list_is_said_with_the_exact_address() {
 
 #[test]
 fn what_a_list_sent_is_deleted_as_one_undoable_command() {
-    // #1931: after leaving a list, one Delete takes everything it sent, one
-    // undo brings it all back, and a Flagged message and another list's mail
-    // are untouched.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Tui);
     let filed = |list: Option<&str>, flagged: bool| {
@@ -1108,8 +1062,6 @@ fn saving_a_new_attachment_fetches_from_its_own_account() {
 
 #[test]
 fn fetch_carried_brings_a_forwards_parts_without_a_send_and_says_they_are_coming() {
-    // #1690: opening a forward asks for the parts it carries, so they are
-    // local before the person presses send. Nothing is sent here.
     use postio_account::backend::{BodyStructure, MockBackend, MockMailbox, MockMessage, PartNode};
 
     let payload = "%PDF carried";
@@ -1167,7 +1119,6 @@ fn fetch_carried_brings_a_forwards_parts_without_a_send_and_says_they_are_coming
 
     eventually(&world, blob_of);
     assert_eq!(client.counts().of("FetchCarried"), 1);
-    // Asked again once it is here, the answer says so: nothing to draw.
     assert_eq!(
         world
             .rt
@@ -1177,7 +1128,6 @@ fn fetch_carried_brings_a_forwards_parts_without_a_send_and_says_they_are_coming
     );
 }
 
-/// A draft to `account`, saying `words`.
 fn a_draft(account: postio_model::AccountId, words: &str) -> postio_model::Draft {
     let mut draft = postio_model::Draft::new(account);
     draft.to = vec![postio_model::EmailAddress::new(
@@ -1199,9 +1149,7 @@ fn drafts_in(world: &World, account: postio_model::AccountId) -> Vec<postio_mode
 
 #[test]
 fn two_saves_made_back_to_back_write_one_draft() {
-    // An autosave tick and the next keystroke's tick, the second made before
-    // the first landed: the second carries no id yet, and must still update
-    // the row the first made rather than start another.
+    // The second tick carries no id yet and must still update the row the first made.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
@@ -1237,8 +1185,8 @@ fn a_draft_sent_from_a_frontend_is_queued_and_a_discard_after_it_keeps_it() {
             .queue_send(7, a_draft(account, "Ready."), None)
             .await
             .expect("queued");
-        // Closing the composer after a send is a discard of that composition;
-        // it must not take the queued draft with it.
+        // Closing the composer after a send discards that composition; it must not take the queued
+        // draft.
         client.discard_draft(7, None).await.expect("answered");
     });
 
@@ -1250,10 +1198,6 @@ fn a_draft_sent_from_a_frontend_is_queued_and_a_discard_after_it_keeps_it() {
 
 #[test]
 fn a_group_in_the_to_field_is_sent_to_its_members_preferred_addresses() {
-    // Specs/011-focus-contacts S8: `Quarry crew` in To (or `to:Quarry crew`)
-    // is a name for people. It expands when the draft is queued, on every
-    // frontend, to each live member's primary address, and what is already
-    // addressed to is not addressed twice.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
@@ -1328,8 +1272,7 @@ fn a_queued_send_names_the_draft_so_it_can_be_taken_back() {
 
 #[test]
 fn a_queued_send_is_dated_by_the_clock_seam() {
-    // A reply sent during a storyboard was listed in the Outbox under the
-    // real day, months after the frozen one, and moved between two runs.
+    // The Outbox dates a reply by the clock seam, so a storyboard's frozen day holds.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
@@ -1373,11 +1316,9 @@ fn a_crashed_session_hands_back_the_draft_being_written_and_a_clean_one_does_not
     let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
 
-    // A store this binary never opened is not a crash.
     let first = world.rt.block_on(client.recover_draft(account));
     assert_eq!(first, Ok(None));
 
-    // Something written, and a composition holding only whitespace.
     world.rt.block_on(async {
         client
             .save_draft(1, a_draft(account, "Half a sentence"))
@@ -1388,8 +1329,6 @@ fn a_crashed_session_hands_back_the_draft_being_written_and_a_clean_one_does_not
         client.save_draft(2, untouched).await.expect("saved");
     });
 
-    // The session never ended: the next start is a crash, and gets back the
-    // draft with words in it, not the empty one.
     let recovered = world
         .rt
         .block_on(client.recover_draft(account))
@@ -1397,7 +1336,6 @@ fn a_crashed_session_hands_back_the_draft_being_written_and_a_clean_one_does_not
         .expect("the draft being written");
     assert_eq!(recovered.body.text.as_deref(), Some("Half a sentence"));
 
-    // A clean end, and the next start leaves the draft parked.
     world
         .rt
         .block_on(postio_session::end_session(&world.database));
@@ -1407,16 +1345,13 @@ fn a_crashed_session_hands_back_the_draft_being_written_and_a_clean_one_does_not
 
 #[test]
 fn a_draft_nobody_touched_is_not_recovered_after_a_crash() {
-    // #491 reopens what was mid-edit when the last session died, and an
-    // untouched buffer is not work worth restoring: the composer autosaves an
-    // empty row for the buffer it holds, so recovering it perpetuates itself,
-    // and the client opens on a stale composer at every launch.
+    // An untouched buffer is not recovered: the composer autosaves an empty row for it, so
+    // recovering it would perpetuate itself on every launch (#491).
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     assert_eq!(world.rt.block_on(client.recover_draft(account)), Ok(None));
 
-    // A draft exactly as it opened: no recipient, no subject, no body.
     world.rt.block_on(async {
         client
             .save_draft(1, postio_model::Draft::new(account))
@@ -1424,8 +1359,6 @@ fn a_draft_nobody_touched_is_not_recovered_after_a_crash() {
             .expect("saved");
     });
 
-    // The session never ended, so the next start is a crash -- and finds
-    // nothing worth handing back.
     assert_eq!(
         world.rt.block_on(client.recover_draft(account)),
         Ok(None),
@@ -1456,7 +1389,6 @@ fn a_file_is_attached_as_the_type_the_frontend_sniffed_and_its_bytes_read_back()
         .expect("an answer");
     assert_eq!(bytes.as_deref(), Some(&b"the minutes, unlabelled"[..]));
 
-    // With no type, the host guesses, as it does for the terminal.
     let guessed = world
         .rt
         .block_on(client.attach(path))
@@ -1506,8 +1438,6 @@ fn a_frontend_searches_and_hears_which_messages_matched() {
     assert_eq!(found.hits, 1);
     assert!(!found.capped);
 
-    // The scope a facet picks: the message is in the inbox, so none of it
-    // is list mail.
     let listed = world
         .rt
         .block_on(client.search(postio_client::protocol::Search {
@@ -1521,8 +1451,6 @@ fn a_frontend_searches_and_hears_which_messages_matched() {
     assert_eq!(listed.hits, 0, "{listed:?}");
 }
 
-/// A network that answers nothing: discovery falls back to the provider
-/// table, and nothing dials.
 struct Offline;
 
 #[async_trait::async_trait]
@@ -1558,8 +1486,6 @@ impl postio_account::discovery::DiscoveryTransport for Offline {
     }
 }
 
-/// A network whose one answer is `example.test`'s autoconfig document, as a
-/// provider publishes it; nothing else answers and nothing dials.
 struct Publishing;
 
 const AUTOCONFIG: &str = r#"<clientConfig version="1.1">
@@ -1616,8 +1542,6 @@ impl postio_account::discovery::DiscoveryTransport for Publishing {
     }
 }
 
-/// A host whose onboarding reaches no network: discovery reads
-/// [`Publishing`]'s document, and the proof signs in to `mock`.
 fn onboarding_world(mock: postio_account::backend::MockBackend) -> World {
     World::configured(move |wiring| {
         wiring
@@ -1633,7 +1557,6 @@ fn onboarding_world(mock: postio_account::backend::MockBackend) -> World {
 
 #[test]
 fn a_frontend_finds_a_domains_servers_through_the_host() {
-    // US7: discovery, from the terminal, is the desktop's.
     let world = onboarding_world(postio_account::backend::MockBackend::new());
     let (client, _) = world.frontend(ClientKind::Tui);
     let status = world
@@ -1689,7 +1612,6 @@ fn a_frontend_adds_an_account_through_the_host() {
 
 #[test]
 fn a_refused_password_is_said_as_the_desktop_says_it() {
-    // T085: the same sentence, from the same `explain`.
     let mock = postio_account::backend::MockBackend::new();
     mock.fail_all(postio_account::backend::Fault::AuthFailed);
     let world = onboarding_world(mock);
@@ -1713,7 +1635,6 @@ fn a_refused_password_is_said_as_the_desktop_says_it() {
     );
 }
 
-/// Whether the host has an engine syncing the account at `address`.
 fn syncing(world: &World, client: &Client, address: &str) -> bool {
     let account = world
         .rt
@@ -1734,10 +1655,6 @@ fn syncing(world: &World, client: &Client, address: &str) -> bool {
 
 #[test]
 fn a_desktop_add_saves_the_account_and_leaves_its_sync_to_the_app() {
-    // T165: the desktop apps start a new account's sync themselves -- the
-    // first run once the person has chosen how far back, the add-account
-    // dialog through the running window -- so an engine the host started
-    // here would be a second one, or one under the wrong window.
     let world = onboarding_world(postio_account::backend::MockBackend::new());
     let (client, _) = world.frontend(ClientKind::Focus);
     world
@@ -1752,7 +1669,6 @@ fn a_desktop_add_saves_the_account_and_leaves_its_sync_to_the_app() {
         "the host started a sync the desktop app starts itself"
     );
 
-    // The terminal's add, beside it, syncs at once.
     let mut terminal = submission("correct horse");
     terminal.address = "lena@example.test".into();
     world
@@ -1762,9 +1678,6 @@ fn a_desktop_add_saves_the_account_and_leaves_its_sync_to_the_app() {
     assert!(syncing(&world, &client, "lena@example.test"));
 }
 
-/// Holds every discovery step open until the probe is stopped, keeping the
-/// token it was handed so a test can ask afterwards whether the stop
-/// reached it.
 #[derive(Default)]
 struct Hanging(std::sync::Mutex<Option<postio_account::discovery::CancelToken>>);
 
@@ -1779,7 +1692,6 @@ impl Hanging {
     }
 }
 
-/// [`Hanging`], shared with the test that reads its token.
 struct Held(std::sync::Arc<Hanging>);
 
 #[async_trait::async_trait]
@@ -1817,9 +1729,6 @@ impl postio_account::discovery::DiscoveryTransport for Held {
 
 #[test]
 fn a_stopped_discovery_has_stopped_its_connections_when_the_stop_returns() {
-    // #57, through the host (T165): a probe the person walked away from
-    // holds no socket open. The form checks its token the moment it pulls
-    // the stop, so the stop reaches the transport before it returns.
     let hanging = std::sync::Arc::new(Hanging::default());
     let transport = Held(hanging.clone());
     let world =
@@ -1872,7 +1781,6 @@ fn a_submission_never_shows_its_password() {
 
 #[test]
 fn a_frontend_disables_removes_and_restores_an_account_through_the_host() {
-    // T087: the settings' account commands, from the terminal.
     use postio_client::protocol::AccountOp;
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
@@ -1908,8 +1816,6 @@ fn a_frontend_disables_removes_and_restores_an_account_through_the_host() {
         .expect("made the default");
 }
 
-/// One message from `address` arrived in `account` at `at`: a sighting, as
-/// sync records it.
 async fn saw(
     connection: &postio_storage::Connection,
     account: postio_model::AccountId,
@@ -1927,7 +1833,6 @@ async fn saw(
 
 #[test]
 fn the_finder_is_told_the_accounts_correspondents_and_labels() {
-    // T066: `@` and `+` offer what the store knows, read through the host.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
@@ -1963,8 +1868,6 @@ fn the_finder_is_told_the_accounts_correspondents_and_labels() {
 
 #[test]
 fn the_host_says_which_verbs_a_frontend_can_send_it() {
-    // A frontend filters its gestures by what the bus answers, so the ones
-    // another consumer owns do not come back "not wired up in this build".
     let world = World::new();
     let wired = world.host.as_ref().expect("a host").wired();
     for verb in [
@@ -1979,8 +1882,6 @@ fn the_host_says_which_verbs_a_frontend_can_send_it() {
 
 #[test]
 fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
-    // T018: the desktop's surfaces and its integration suites build a
-    // `Wiring` of their own; a host adopts it rather than opening another.
     let world = World::new();
     let hub = postio_core::bridge::EventHub::new();
     let (commands, _queued) = postio_core::bridge::command_channel();
@@ -2018,9 +1919,6 @@ fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
 
 #[test]
 fn a_host_over_a_wiring_with_one_event_reader_still_serves_its_store() {
-    // Most of the desktop's integration suites wire their events to one
-    // stream they read themselves; a client over such a wiring can still
-    // read.
     let world = World::new();
     let (sink, _events) = event_channel();
     let (commands, _queued) = postio_core::bridge::command_channel();
@@ -2038,7 +1936,6 @@ fn a_host_over_a_wiring_with_one_event_reader_still_serves_its_store() {
     assert_eq!(accounts.len(), 1);
 }
 
-/// A second message in the fixture's account and inbox, shaped by `shape`.
 fn another_message(world: &World, shape: impl FnOnce(&mut Message)) -> MessageId {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -2058,8 +1955,6 @@ fn another_message(world: &World, shape: impl FnOnce(&mut Message)) -> MessageId
 
 #[test]
 fn a_reading_pane_reads_everything_it_draws_of_several_messages_in_one_call() {
-    // The desktop's pane draws a header, a parts row and a body from one
-    // read; a conversation is every member's in one read (#1609).
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Focus);
     let listed = another_message(&world, |message| {
@@ -2086,8 +1981,6 @@ fn a_reading_pane_reads_everything_it_draws_of_several_messages_in_one_call() {
     assert_eq!(row.list_id.as_deref(), Some("minutes.example.org"));
     assert_eq!(readings[1].send_state, None, "ordinary mail is not sending");
 
-    // Offline is the frontend's to say: the host has no reachability of its
-    // own, and "downloading" about a body nothing is fetching is untrue.
     let offline = world
         .rt
         .block_on(client.readings(vec![world.message], true))
@@ -2163,7 +2056,6 @@ fn an_inline_image_resolves_only_inside_the_message_that_declares_it() {
     assert_eq!(found.0, b"\x89PNG a logo");
     assert_eq!(found.1, "image/png");
 
-    // Another sender's message cannot address this one's parts.
     let elsewhere = world
         .rt
         .block_on(client.inline_part(world.message, "logo@example.com".into()))
@@ -2193,8 +2085,6 @@ fn saving_every_part_writes_each_and_counts_what_could_not_be() {
         .block_on(client.save_parts(
             message,
             vec![
-                // A part this message does not have: refused, and the rest
-                // still saved.
                 (
                     postio_model::ids::AttachmentId::new(987_654),
                     out.path().join("nothing"),
@@ -2212,9 +2102,6 @@ fn saving_every_part_writes_each_and_counts_what_could_not_be() {
     assert_eq!(client.counts().of("SaveParts"), 1, "one call for the batch");
 }
 
-/// Spec 010 FR-053, FR-050 (T128): a file card's copy, for the system's
-/// Quick Look or a save, is written into the folder asked and nowhere
-/// else, and only from bytes already on this machine.
 #[test]
 fn an_attachment_copy_lands_in_the_folder_asked_and_nowhere_else() {
     let world = World::new();
@@ -2228,7 +2115,6 @@ fn an_attachment_copy_lands_in_the_folder_asked_and_nowhere_else() {
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             15,
         );
-        // A hostile name: only its last component is ever used.
         sheet.filename = Some("../../Atlas-Q3-budget.xlsx".into());
         sheet.part_id = Some("2".into());
         sheet.blob_id = Some(blob);
@@ -2255,14 +2141,12 @@ fn an_attachment_copy_lands_in_the_folder_asked_and_nowhere_else() {
         Some("Atlas-Q3-budget.xlsx")
     );
     assert_eq!(std::fs::read(&copy).unwrap(), b"PK the workbook");
-    // Nothing beside the folder asked: the hostile name climbed nowhere.
     let written: Vec<_> = std::fs::read_dir(outside.path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(written, [std::ffi::OsString::from("previews")]);
 
-    // Bytes never downloaded are not fetched for a preview.
     assert_eq!(
         world
             .rt
@@ -2273,8 +2157,6 @@ fn an_attachment_copy_lands_in_the_folder_asked_and_nowhere_else() {
     assert_eq!(client.counts().of("AttachmentCopy"), 2);
 }
 
-/// A message in the fixture's inbox whose body says `body`, indexed the way
-/// the backfill indexes it.
 fn an_indexed_message(world: &World, subject: &str, body: &str) -> MessageId {
     let message = another_message(world, |message| {
         message.subject = Some(subject.into());
@@ -2308,9 +2190,6 @@ fn an_indexed_message(world: &World, subject: &str, body: &str) -> MessageId {
 
 #[test]
 fn the_desktop_search_answers_its_hits_with_an_excerpt_then_its_columns() {
-    // The desktop's bar draws more than the terminal's list: the focused
-    // hit's excerpt, the sender and folder from the index, and a second
-    // read for the scope counts beside the results.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
@@ -2376,7 +2255,6 @@ fn a_search_preview_reads_the_stored_words_or_nothing() {
         .expect("an answer");
     assert_eq!(body.text.as_deref(), Some("Half past twelve?"));
 
-    // Headers only: the preview keeps the excerpt it already drew.
     let bare = world
         .rt
         .block_on(client.stored_body(world.message))
@@ -2417,8 +2295,6 @@ fn messages_dragged_out_are_written_as_the_bytes_the_server_sent_in_one_call() {
 
 #[test]
 fn the_settings_panel_reads_every_account_with_its_folders_in_one_call() {
-    // One call for the whole panel, where the desktop read each account's
-    // folders, roles and weight in turn.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Focus);
     let shown = world
@@ -2734,8 +2610,6 @@ fn an_empty_password_is_no_password() {
 
 #[test]
 fn a_locked_keyring_sends_a_window_back_to_onboarding_too() {
-    // Not the same fault as a missing password, and the same dead end: a
-    // credential that cannot be read is one the account does not have.
     use postio_account::secret::{AccountKey, SecretStore};
     let world = World::new();
     let locked = MemorySecretStore::locked();
@@ -2756,9 +2630,6 @@ fn a_locked_keyring_sends_a_window_back_to_onboarding_too() {
 
 #[test]
 fn an_account_marked_for_removal_is_reaped_before_startup_decides_anything() {
-    // #464: "Remove" in the settings panel only marks the row, so something
-    // has to delete it once, at the next launch, before an engine could
-    // otherwise start against it.
     use postio_storage::repository::AccountRepository;
     let world = World::new();
     world.rt.block_on(async {
@@ -2805,8 +2676,6 @@ fn a_fresh_installation_has_nothing_to_prefill_with() {
     ));
 }
 
-/// Ask `read` until it answers `Some`, failing after a while: for work the
-/// host does on its own time.
 #[track_caller]
 pub(crate) fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) -> T {
     let deadline = std::time::Instant::now() + postio_test_support::scaled(Duration::from_secs(20));
@@ -2825,14 +2694,12 @@ pub(crate) fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) 
 fn the_host_makes_bodies_already_on_disk_searchable_once_it_catches_up() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Focus);
-    // A body on disk the index never heard of: stored, not indexed.
     let message = another_message(&world, |message| {
         message.subject = Some("Minutes".into());
         message.sync.body_state = postio_model::BodyState::Full;
     });
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
-        // The index exists, as it does in every store opened for real.
         postio_index::index::ensure_schema(&connection)
             .await
             .expect("the index");
@@ -2872,8 +2739,6 @@ fn the_host_makes_bodies_already_on_disk_searchable_once_it_catches_up() {
     assert_eq!(found.ids, vec![message]);
 }
 
-/// A mail server holding one message in `INBOX`, as a synced account's
-/// would.
 pub(crate) fn server_with_one_message() -> postio_account::backend::MockBackend {
     use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
     let raw = "Message-ID: <tide@example.com>\r\nFrom: Ada <ada@example.com>\r\nTo: Test User \
@@ -2887,8 +2752,6 @@ pub(crate) fn server_with_one_message() -> postio_account::backend::MockBackend 
         .build()
 }
 
-/// A host whose account can sync from `mock`, with no background body
-/// fetching: a body arrives only because somebody asked for it.
 pub(crate) fn syncing_world(mock: postio_account::backend::MockBackend) -> World {
     use postio_account::secret::{AccountKey, Password, SecretStore};
     let secrets = std::sync::Arc::new(MemorySecretStore::new());
@@ -2916,7 +2779,6 @@ pub(crate) fn syncing_world(mock: postio_account::backend::MockBackend) -> World
     })
 }
 
-/// The inbox row with `subject`, once there is one.
 pub(crate) fn row_titled(world: &World, client: &Client, subject: &str) -> Option<MessageId> {
     let page = world
         .rt
@@ -2942,8 +2804,6 @@ pub(crate) fn row_titled(world: &World, client: &Client, subject: &str) -> Optio
 
 #[test]
 fn a_posted_fetch_body_brings_the_opened_messages_body_and_says_so() {
-    // `Req::FetchBody`: a person opened a message whose body was never
-    // fetched. With the background lane off, nothing else fetches it.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, events) = world.frontend(ClientKind::Tui);
@@ -2978,9 +2838,6 @@ fn a_posted_fetch_body_brings_the_opened_messages_body_and_says_so() {
 
 #[test]
 fn a_body_the_server_refuses_is_announced_and_then_read_as_failed() {
-    // #1918: the plate said "Downloading this message" until something
-    // happened to read the message again, and nothing did. The refusal is an
-    // event, so the open message is read again the moment it is known.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, events) = world.frontend(ClientKind::Tui);
@@ -3003,14 +2860,10 @@ fn a_body_the_server_refuses_is_announced_and_then_read_as_failed() {
     );
 }
 
-/// POSTIO-MEASUREMENT: it waits out the host's body-fetch timeout in real time, about
-/// 5 s, so it runs on the nightly timer; a case that waits on the clock is
-/// not on the merge path (CLAUDE.md, Tests).
+/// POSTIO-MEASUREMENT: waits out the host's body-fetch timeout in real time (about 5 s), so it runs
+/// on the nightly timer.
 #[test]
 fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
-    // #1985: a timeout is not about the message, so nothing marked it and
-    // the pane went on saying "Downloading" for the sixty seconds the host
-    // remembered having asked. Opening it again is asking again.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, events) = world.frontend(ClientKind::Tui);
@@ -3026,14 +2879,12 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
             .body
     };
 
-    // The body is what times out. A fault on every call landed on whichever
-    // call the engine made first -- a pass of its first sync still running
-    // -- and took the link down before the pane read (#1943).
+    // Only body fetches time out: a fault on every call hit whichever call the engine made first
+    // and took the link down before the pane read (#1943).
     mock.fail_body_fetches(postio_account::backend::Fault::Timeout);
     assert_eq!(read(), postio_client::protocol::Body::Partial);
-    // The timeout also takes the engine's own link down, and a pane over a
-    // down link reads "offline" and asks for nothing. Either way the fetch
-    // could not happen: the failure was announced, or the plate says so.
+    // The timeout also takes the engine's link down, and a pane over a down link reads "offline"
+    // and asks for nothing: either way the fetch could not happen.
     eventually(&world, || {
         let failed = std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
             matches!(envelope.event, Event::BodyFailed { message: failed, .. } if failed == message)
@@ -3048,9 +2899,6 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
         _ => None,
     });
     assert!(text.contains("The tide gate opens at nine."), "{text}");
-    // The pane read "offline" while the link backed off, and the loop slept
-    // through the whole poll interval on a backoff of a second: the text
-    // landed five seconds after the link was back.
     assert!(
         cleared.elapsed() < Duration::from_secs(3),
         "the text took {:?} after the link came back",
@@ -3058,14 +2906,10 @@ fn a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read() {
     );
 }
 
-/// POSTIO-MEASUREMENT: it waits in real time for the link to drop and come back, 15 to
-/// 20 s on a CI runner, so it runs on the nightly timer; a case that waits
-/// on the clock is not on the merge path (CLAUDE.md, Tests).
+/// POSTIO-MEASUREMENT: waits in real time for the link to drop and come back (15 to 20 s on a CI
+/// runner), so it runs on the nightly timer.
 #[test]
 fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() {
-    // #1986: GTK and the TUI passed `offline = false` and promised
-    // "Downloading" for a fetch the engine could not start; and nothing
-    // asked once the link came back. The account's own state is the input.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, events) = world.frontend(ClientKind::Tui);
@@ -3080,10 +2924,8 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
             .expect("a reading")
             .body
     };
-    // The link goes down the way it does for a person: the server stops
-    // answering, the live engine reports its own backoff, and the host
-    // follows. Faking the report raced the engine's own, which overwrote it
-    // with Online and let a read in that window fetch the body for good.
+    // The link goes down as it does for a person: faking the engine's report raced its own, which
+    // overwrote it with Online and let a read fetch the body for good.
     mock.fail_all(postio_account::backend::Fault::Timeout);
     eventually(&world, || {
         (read() == postio_client::protocol::Body::Offline).then_some(())
@@ -3093,7 +2935,6 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
         "a down link asks for nothing"
     );
 
-    // Nothing heard so far is about the return.
     while events.try_recv().is_ok() {}
     mock.clear_faults();
     let mut heard = Vec::new();
@@ -3105,9 +2946,8 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
         }
     });
     assert!(text.contains("The tide gate opens at nine."), "{text}");
-    // Told, too, whether or not the text came first: a pass of the first
-    // sync still running when the server came back can fetch it beside its
-    // lanes before the link's own retry says it is back (#2016).
+    // A pass of the first sync still running when the server came back can fetch the text before
+    // the link's retry says it is back (#2016).
     let told = |event: &Event| matches!(event, Event::BodyReachable { message: again, .. } if *again == message);
     if !heard.iter().any(told) {
         world.hear(&events, told);
@@ -3116,9 +2956,6 @@ fn a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns() 
 
 #[test]
 fn a_body_asked_of_an_engine_that_is_replaced_is_asked_of_the_new_one_at_once() {
-    // #1986: a queued request lives in the engine's memory. When the account
-    // gets a new engine (a re-authorisation) it is gone, and the host went on
-    // remembering having asked for sixty seconds.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, events) = world.frontend(ClientKind::Tui);
@@ -3144,8 +2981,6 @@ fn a_body_asked_of_an_engine_that_is_replaced_is_asked_of_the_new_one_at_once() 
         let (account, engine) = running.iter().next().expect("the account's engine");
         (*account, engine.clone())
     };
-    // The request goes to an engine that cannot run it, as one queued in an
-    // engine that is then replaced is lost.
     old.stop();
     assert_eq!(read(), postio_client::protocol::Body::Partial);
     assert!(mock.body_fetches().is_empty());
@@ -3183,10 +3018,6 @@ fn a_body_asked_of_an_engine_that_is_replaced_is_asked_of_the_new_one_at_once() 
 
 #[test]
 fn stopping_one_host_leaves_another_hosts_engines_running() {
-    // #1976: `Host::stop` stopped every engine the process had retained, so
-    // a test whose host stopped took its neighbour's sync down with it --
-    // the end-to-end case that waited out its 120 s deadline when its suite
-    // ran in one process. A host stops what it started.
     let first = syncing_world(server_with_one_message());
     let second = syncing_world(server_with_one_message());
     for world in [&first, &second] {
@@ -3220,8 +3051,6 @@ fn stopping_one_host_leaves_another_hosts_engines_running() {
 
 #[test]
 fn an_engine_that_is_replaced_stops_so_an_account_never_syncs_twice() {
-    // #1986: a re-authorisation started a second engine and left the first
-    // running, retained for the session.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, _events) = world.frontend(ClientKind::Tui);
@@ -3258,8 +3087,6 @@ fn an_engine_that_is_replaced_stops_so_an_account_never_syncs_twice() {
 
 #[test]
 fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
-    // #1788: the reader said "Downloading this message" and nothing asked
-    // for it. Opening it is the person asking; a repaint is not asking again.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, events) = world.frontend(ClientKind::Tui);
@@ -3274,7 +3101,6 @@ fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
             .expect("a reading")
             .body
     };
-    // Offline, the pane says so and nothing is asked of the server.
     assert_eq!(read(true), postio_client::protocol::Body::Offline);
     assert!(mock.body_fetches().is_empty(), "offline asks for nothing");
 
@@ -3293,8 +3119,8 @@ fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
         }
         other => panic!("the body never arrived: {other:?}"),
     }
-    // Settled against the engine's own queue rather than a wall clock: once
-    // it is idle, any second fetch the repaints queued has already run.
+    // Settled against the engine's own queue, not a wall clock: once idle, any second fetch the
+    // repaints queued has run.
     let engine = world
         .host()
         .inner
@@ -3325,8 +3151,6 @@ fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
     );
 }
 
-/// `count` messages in the inbox, oldest first, each with a raw-source blob
-/// of `size` bytes of its own, as `reclaim.rs` shapes a store to evict from.
 fn messages_with_blobs(world: &World, count: u8, size: usize) -> Vec<postio_model::ids::BlobId> {
     let blobs = world.host().wiring().blobs.clone();
     (0..count)
@@ -3347,13 +3171,11 @@ fn messages_with_blobs(world: &World, count: u8, size: usize) -> Vec<postio_mode
 
 #[test]
 fn a_storage_ceiling_evicts_the_oldest_blobs_over_it_and_keeps_what_fits() {
-    // `Req::StorageCeiling`: `[storage] max_bytes` changed in a frontend.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Focus);
     let written = messages_with_blobs(&world, 3, 40_000);
     let blobs = world.host().wiring().blobs.clone();
 
-    // No ceiling is no eviction.
     client.storage_ceiling(None);
     world
         .rt
@@ -3377,8 +3199,6 @@ fn a_storage_ceiling_evicts_the_oldest_blobs_over_it_and_keeps_what_fits() {
 
 #[test]
 fn start_syncing_asked_twice_gives_the_account_one_engine() {
-    // A frontend asks once its first frame is up, and an account added
-    // later asks again: the account still gets one engine.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, _) = world.frontend(ClientKind::Focus);
@@ -3400,7 +3220,6 @@ fn start_syncing_asked_twice_gives_the_account_one_engine() {
     assert!(running().is_empty(), "nothing syncs until it is asked to");
     assert!(mock.header_fetches().is_empty());
 
-    // Twice at once, then again once it is running.
     world.host().start_syncing();
     world.host().start_syncing();
     eventually(&world, || row_titled(&world, &client, "Tide gate"));
@@ -3418,10 +3237,6 @@ fn start_syncing_asked_twice_gives_the_account_one_engine() {
     assert_eq!(inbox_syncs, 1, "the inbox was synced once, by one engine");
 }
 
-// ── Focus mode (spec 007, T034) ─────────────────────────────────────────────
-
-/// A filing pass that files nothing and remembers what it was handed: the
-/// subjects of each call's messages.
 #[derive(Debug, Default)]
 struct FilingProbe {
     calls: std::sync::Mutex<Vec<Vec<Option<String>>>>,
@@ -3450,8 +3265,6 @@ impl postio_sync::FilingPass for FilingProbe {
     }
 }
 
-/// Mail arriving at the mock's inbox after the first sync, and the next
-/// pass over it, asked for the way `R` asks.
 fn deliver_and_refresh(
     world: &World,
     mock: &postio_account::backend::MockBackend,
@@ -3470,7 +3283,6 @@ fn deliver_and_refresh(
     eventually(world, || row_titled(world, client, "Weir level"))
 }
 
-/// Whether any engine the host runs hands its arrivals to a filing pass.
 fn engines_file(world: &World) -> Vec<bool> {
     world
         .host()
@@ -3489,7 +3301,6 @@ fn focus_mode_files_what_an_incremental_pass_brings_and_nothing_a_first_sync_doe
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let probe = std::sync::Arc::new(FilingProbe::default());
-    // Before sync starts, as Focus does at startup.
     let focus = world
         .host()
         .enable_focus(crate::FocusSetup::default().filing(probe.clone()));
@@ -3520,9 +3331,6 @@ fn focus_mode_files_what_an_incremental_pass_brings_and_nothing_a_first_sync_doe
 
 #[test]
 fn refresh_in_the_focus_inbox_brings_in_new_mail() {
-    // The maintainer's report: R in the Focus inbox said "No folder is
-    // open". Focus is a view over the accounts, not one folder, and the key
-    // has to sync each account's inbox all the same.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let state = SharedState::default();
@@ -3541,9 +3349,6 @@ fn refresh_in_the_focus_inbox_brings_in_new_mail() {
 
 #[test]
 fn a_host_that_never_enables_focus_mode_files_nothing() {
-    // The classic app: the same store, the same sync and the same arrival,
-    // and no call to `enable_focus`. (The terminal is Focus too, and makes
-    // the call: postio-tui's `focus_engine` suite.)
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let probe = std::sync::Arc::new(FilingProbe::default());
@@ -3562,10 +3367,6 @@ fn a_host_that_never_enables_focus_mode_files_nothing() {
     assert!(probe.calls().is_empty(), "{:?}", probe.calls());
 }
 
-// ── Focus's own filing pass (spec 007, T122) ────────────────────────────────
-
-/// Mail arriving at the mock's inbox after the first sync, then the pass
-/// that brings it in, asked for the way `R` asks.
 fn deliver_all(
     world: &World,
     mock: &postio_account::backend::MockBackend,
@@ -3582,7 +3383,6 @@ fn deliver_all(
     world.send(client, Command::Refresh);
 }
 
-/// A notification from a build server the account never wrote to.
 fn notification() -> String {
     "Message-ID: <build@example.com>\r\nFrom: Forge <notifications@forge.example>\r\nTo: Test \
      User <test@example.com>\r\nSubject: Build 2231 passed\r\nAuto-Submitted: \
@@ -3590,7 +3390,6 @@ fn notification() -> String {
         .to_owned()
 }
 
-/// A letter from a person, which nothing files away.
 fn letter() -> String {
     "Message-ID: <weir@example.com>\r\nFrom: Quinn <quinn@example.com>\r\nTo: Test User \
      <test@example.com>\r\nSubject: Weir level\r\nDate: Wed, 23 Sep 2026 09:01:00 \
@@ -3598,8 +3397,6 @@ fn letter() -> String {
         .to_owned()
 }
 
-/// The folder the message with `subject` is in, by role, and why Focus
-/// filed it there if it did.
 pub(crate) fn filed_where(
     world: &World,
     subject: &str,
@@ -3635,8 +3432,6 @@ pub(crate) fn filed_where(
     })
 }
 
-/// The reason whose keyword the message with this subject carries: what
-/// tells the account's other machines it was filtered (#2076).
 pub(crate) fn marked_for(
     world: &World,
     subject: &str,
@@ -3661,10 +3456,6 @@ pub(crate) fn marked_for(
 
 #[test]
 fn focus_mode_files_a_notification_away_as_it_arrives() {
-    // US9 scenario 1, end to end: Focus mode runs Focus's own filing pass,
-    // so a notification from a sender the user never wrote to is archived
-    // with its reason as it is filed, and never reaches the inbox; a
-    // person's letter, in the same pass, stays.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     world.host().enable_focus(crate::FocusSetup::default());
@@ -3688,8 +3479,6 @@ fn focus_mode_files_a_notification_away_as_it_arrives() {
 
 #[test]
 fn focus_mode_files_nothing_away_when_filtering_is_off() {
-    // FR-119 through the host: `[focus] filtering = false` reaches the pass
-    // Focus mode runs, and the notification stays in the inbox.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let config =
@@ -3711,10 +3500,6 @@ fn focus_mode_files_nothing_away_when_filtering_is_off() {
     assert!(row_titled(&world, &client, "Build 2231 passed").is_some());
 }
 
-// ── Focus's body stage (spec 007, T103) ─────────────────────────────────────
-
-/// A message in the world's folder `mailbox`, received `ago` before now,
-/// with `text` as its body when there is one.
 pub(crate) fn received(
     world: &World,
     mailbox: MailboxId,
@@ -3747,7 +3532,6 @@ pub(crate) fn received(
     })
 }
 
-/// The world's folder with `role`.
 pub(crate) fn folder(world: &World, role: postio_model::MailboxRole) -> MailboxId {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -3760,7 +3544,6 @@ pub(crate) fn folder(world: &World, role: postio_model::MailboxRole) -> MailboxI
     })
 }
 
-/// The classifier version `message`'s body stage is recorded at.
 pub(crate) fn body_classified_at(world: &World, message: MessageId) -> Option<i64> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -3777,11 +3560,6 @@ pub(crate) fn body_classified_at(world: &World, message: MessageId) -> Option<i6
 
 #[test]
 fn the_body_stage_catches_up_on_recent_inbox_mail_it_has_not_classified() {
-    // FR-141: at Focus's start, recent inbox mail whose body is here and
-    // that has no record at this classifier's version is classified, in the
-    // background. A record an older classifier left is not this one's: a
-    // version bump runs it again. Mail older than 30 days, out of the inbox,
-    // or with no body here is not read.
     let world = World::new();
     let inbox = folder(&world, postio_model::MailboxRole::Inbox);
     let archive = folder(&world, postio_model::MailboxRole::Archive);
@@ -3824,14 +3602,11 @@ fn the_body_stage_catches_up_on_recent_inbox_mail_it_has_not_classified() {
 
 #[test]
 fn a_body_that_lands_while_focus_runs_is_classified() {
-    // The body stage hears `BodyLoaded` for every body that lands, and
-    // classifies it once the burst is over.
     let world = World::new();
     let inbox = folder(&world, postio_model::MailboxRole::Inbox);
     let focus = world.host().enable_focus(crate::FocusSetup::default());
     eventually(&world, || focus.caught_up().then_some(()));
 
-    // After the catch-up: only hearing of it can classify it now.
     let landed = received(&world, inbox, chrono::TimeDelta::minutes(5), Some("Hello."));
     world.host().inner.hub.emit(Event::BodyLoaded {
         account: world.account,
@@ -3843,10 +3618,6 @@ fn a_body_that_lands_while_focus_runs_is_classified() {
     assert_eq!(version, i64::from(postio_classify::VERSION));
 }
 
-// ── Questions and to-dos, marked (spec 007, T117) ───────────────────────────
-
-/// A message to the world's inbox from Tove, received an hour ago and dated
-/// `date`, shaped by `shape`, with `text` as its body.
 pub(crate) fn letter_from_tove(
     world: &World,
     date: chrono::DateTime<Utc>,
@@ -3893,7 +3664,6 @@ pub(crate) fn letter_from_tove(
     })
 }
 
-/// The marker on `message`, once the body stage has had it.
 pub(crate) fn marker_on(
     world: &World,
     message: MessageId,
@@ -3907,14 +3677,12 @@ pub(crate) fn marker_on(
     })
 }
 
-/// Focus mode on, and the catch-up done.
 pub(crate) fn focus_caught_up(world: &World) -> crate::FocusHandle {
     let focus = world.host().enable_focus(crate::FocusSetup::default());
     eventually(world, || focus.caught_up().then_some(()));
     focus
 }
 
-/// Every connection Postio has opened, by subsystem.
 pub(crate) fn egress(world: &World) -> Vec<String> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -3940,9 +3708,6 @@ pub(crate) fn saturday_noon() -> chrono::DateTime<Utc> {
 
 #[test]
 fn a_question_sent_to_the_user_is_marked_with_its_sentence_and_nothing_connects() {
-    // US12 scenarios 1 and 7: no model configured, and the built-in
-    // detector marks the question, quoting it exactly as written -- and
-    // Postio opens no connection to anything to do it.
     let world = World::new();
     let question = letter_from_tove(
         &world,
@@ -3968,7 +3733,6 @@ fn a_question_sent_to_the_user_is_marked_with_its_sentence_and_nothing_connects(
     assert!(egress(&world).is_empty(), "{:?}", egress(&world));
 }
 
-/// `messages.own_line` of `message`: `None` while NULL.
 fn own_line_of(world: &World, message: MessageId) -> Option<String> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -3986,10 +3750,6 @@ fn own_line_of(world: &World, message: MessageId) -> Option<String> {
 
 #[test]
 fn a_body_that_lands_leaves_the_senders_own_line_for_a_thread_row() {
-    // Spec 013 R5: the body stage writes `messages.own_line` from the own
-    // words, so a child row draws without parsing anything. A reply that is
-    // all quote says so with the empty string, and a message whose body has
-    // not landed stays NULL.
     let world = World::new();
     let reply = letter_from_tove(
         &world,
@@ -4016,8 +3776,6 @@ fn a_body_that_lands_leaves_the_senders_own_line_for_a_thread_row() {
 
 #[test]
 fn a_to_do_with_a_deadline_is_marked_due_that_day() {
-    // US12 scenario 2: sent on Saturday 26 September, "by Wednesday" is
-    // Wednesday 30 September, and the quote is the ask, not its reason.
     let world = World::new();
     let todo = letter_from_tove(
         &world,
@@ -4047,8 +3805,6 @@ fn a_to_do_with_a_deadline_is_marked_due_that_day() {
 
 #[test]
 fn the_question_quoted_signed_listed_or_copied_is_not_marked() {
-    // US12 scenario 3: in quoted history, in a signature, in a newsletter,
-    // or in mail the user is only copied on, no marker appears.
     let world = World::new();
     let quoted = letter_from_tove(
         &world,
@@ -4092,9 +3848,6 @@ fn the_question_quoted_signed_listed_or_copied_is_not_marked() {
 
 #[test]
 fn a_question_brings_its_message_out_of_a_digest_hold() {
-    // FR-122: mail with a question or a to-do is never held. Filing holds
-    // by the headers before any body is here; once the body shows an ask,
-    // the hold is let go and the message rejoins the inbox.
     let world = World::new();
     let question = letter_from_tove(&world, saturday_noon(), APPROVE, |_| {});
     world.rt.block_on(async {
@@ -4122,15 +3875,10 @@ fn a_question_brings_its_message_out_of_a_digest_hold() {
     assert_eq!(held, None, "the hold was let go");
 }
 
-// ── Invitations, marked (spec 007, T110) ────────────────────────────────────
-
-/// An instant as iCalendar writes one in UTC, to the minute.
 pub(crate) fn ics_utc(at: chrono::DateTime<Utc>) -> String {
     at.format("%Y%m%dT%H%M00Z").to_string()
 }
 
-/// A calendar part: `method` for event `uid` at `sequence`, stamped
-/// `stamp`, with `event` lines for its times.
 pub(crate) fn calendar(
     method: &str,
     uid: &str,
@@ -4159,7 +3907,6 @@ pub(crate) fn calendar(
     lines.join("\r\n") + "\r\n"
 }
 
-/// `DTSTART` and `DTEND` for an event from `start`, `minutes` long.
 pub(crate) fn when(start: chrono::DateTime<Utc>, minutes: i64) -> Vec<String> {
     vec![
         format!("DTSTART:{}", ics_utc(start)),
@@ -4170,8 +3917,6 @@ pub(crate) fn when(start: chrono::DateTime<Utc>, minutes: i64) -> Vec<String> {
     ]
 }
 
-/// A message to the user, received `ago` before now, carrying `ics` as a
-/// calendar part that is here, as the body backfill leaves one.
 pub(crate) fn invitation_mail(world: &World, ago: chrono::TimeDelta, ics: &str) -> MessageId {
     let inbox = folder(world, postio_model::MailboxRole::Inbox);
     let blob = world
@@ -4220,7 +3965,6 @@ pub(crate) fn invitation_mail(world: &World, ago: chrono::TimeDelta, ics: &str) 
     })
 }
 
-/// Tomorrow at ten, UTC, to the minute: an event that is ahead.
 pub(crate) fn ahead() -> chrono::DateTime<Utc> {
     use chrono::Timelike as _;
     (Utc::now() + chrono::TimeDelta::days(1))
@@ -4233,9 +3977,6 @@ pub(crate) fn ahead() -> chrono::DateTime<Utc> {
 
 #[test]
 fn a_delivery_failure_in_the_inbox_marks_the_address_it_names() {
-    // Specs/011-focus-contacts S10: a permanent failure in a delivery report
-    // that has landed marks the address it names, so the review can say
-    // which addresses bounced recently. A delay marks nothing.
     let world = World::new();
     let status = "Reporting-MTA: dns; mx4.example.net\r\n\r\nFinal-Recipient: rfc822; a.moreno@example.net\r\nAction: failed\r\nStatus: 5.1.1\r\n";
     let inbox = folder(&world, postio_model::MailboxRole::Inbox);
@@ -4247,7 +3988,6 @@ fn a_delivery_failure_in_the_inbox_marks_the_address_it_names() {
         .expect("the part stored");
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
-        // The mail the failure is about, so the address is known.
         let mut sent = Message::new(
             world.account,
             inbox,
@@ -4322,9 +4062,6 @@ fn a_delivery_failure_in_the_inbox_marks_the_address_it_names() {
 
 #[test]
 fn an_invitation_is_marked_with_its_event_and_can_be_answered() {
-    // US8 scenario 1: a calendar request's row shows Invite with the
-    // event's times, computed when the part arrived, not when the row is
-    // drawn -- and it is open to an answer.
     let world = World::new();
     let start = ahead();
     let request = invitation_mail(
@@ -4395,8 +4132,6 @@ fn a_floating_time_is_placed_on_the_user_s_clock() {
 
 #[test]
 fn a_later_cancellation_cancels_the_invitation_and_its_answers() {
-    // US8 scenario 4: the event is called off, so the invitation's row says
-    // so and offers no answer -- whichever of the two the stage read first.
     let world = World::new();
     let start = ahead();
     let stamp = Utc::now() - chrono::TimeDelta::hours(3);
@@ -4442,8 +4177,6 @@ fn a_later_cancellation_cancels_the_invitation_and_its_answers() {
 
 #[test]
 fn a_cancellation_read_before_its_invitation_still_cancels_it() {
-    // The catch-up reads newest first, so the cancellation comes before
-    // the request it cancels: the request is marked as the newer word says.
     let world = World::new();
     let start = ahead();
     let stamp = Utc::now() - chrono::TimeDelta::hours(3);
@@ -4474,7 +4207,6 @@ fn a_cancellation_read_before_its_invitation_still_cancels_it() {
 
 #[test]
 fn an_update_moves_the_invitation_to_its_new_time() {
-    // FR-103: an updated invitation replaces the marker's time.
     let world = World::new();
     let start = ahead();
     let moved = start + chrono::TimeDelta::hours(2);
@@ -4505,8 +4237,6 @@ fn an_update_moves_the_invitation_to_its_new_time() {
 
 #[test]
 fn an_invitation_to_an_event_that_is_over_offers_no_answer() {
-    // US8 scenario 5: an event that has ended is past, and a series is
-    // past only once its last occurrence is; one with no end never is.
     let world = World::new();
     let ended = Utc::now() - chrono::TimeDelta::days(3);
     let over = invitation_mail(
@@ -4550,9 +4280,6 @@ fn an_invitation_to_an_event_that_is_over_offers_no_answer() {
     assert_eq!(state(ongoing), Some(InviteState::Open));
 }
 
-// ── Digest deliveries (spec 007, T135) ──────────────────────────────────────
-
-/// `[focus]` with one digest rule, "Newsletters", on `cadence`.
 pub(crate) fn digesting(cadence: &str) -> postio_config::FocusConfig {
     postio_config::Config::from_toml_str(&format!(
         "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.example\"]\n{cadence}\n"
@@ -4561,7 +4288,6 @@ pub(crate) fn digesting(cadence: &str) -> postio_config::FocusConfig {
     .focus
 }
 
-/// A message in the world's inbox held for "Newsletters" at `at`.
 fn held_at(world: &World, at: chrono::DateTime<Utc>) -> MessageId {
     let inbox = folder(world, postio_model::MailboxRole::Inbox);
     let message = received(world, inbox, Utc::now() - at, None);
@@ -4575,7 +4301,6 @@ fn held_at(world: &World, at: chrono::DateTime<Utc>) -> MessageId {
     message
 }
 
-/// Every delivery: its rule, when it came due, and what it holds.
 pub(crate) fn deliveries(world: &World) -> Vec<(String, chrono::DateTime<Utc>, Vec<MessageId>)> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -4606,7 +4331,6 @@ pub(crate) fn deliveries(world: &World) -> Vec<(String, chrono::DateTime<Utc>, V
     })
 }
 
-/// Two hours east of UTC, as a zone with no daylight saving to cloud it.
 fn east() -> chrono::FixedOffset {
     chrono::FixedOffset::east_opt(2 * 3600).expect("an offset")
 }
@@ -4632,9 +4356,6 @@ fn deliver_due_at(
 
 #[test]
 fn held_mail_is_delivered_as_one_digest_when_its_rule_comes_due() {
-    // US10 scenario 1: held on Wednesday, a weekly rule due Sunday at nine
-    // delivers nothing on Saturday night, and one digest at nine on Sunday
-    // holding it.
     let world = World::new();
     let config = digesting("cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"");
     let wednesday = held_at(&world, on(23, 10).with_timezone(&Utc));
@@ -4655,9 +4376,6 @@ fn held_mail_is_delivered_as_one_digest_when_its_rule_comes_due() {
 
 #[test]
 fn a_digest_missed_while_focus_was_closed_is_delivered_once() {
-    // US10 scenario 3: Focus was closed through three Sundays. It delivers
-    // one digest, as of the latest of them, holding everything; asked again,
-    // it delivers nothing more.
     let world = World::new();
     let config = digesting("cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"");
     let first = held_at(&world, on(2, 10).with_timezone(&Utc));
@@ -4681,7 +4399,6 @@ fn a_digest_missed_while_focus_was_closed_is_delivered_once() {
 
 #[test]
 fn a_due_time_with_nothing_held_makes_no_digest() {
-    // US10 scenario 6.
     let world = World::new();
     let config = digesting("cadence = \"daily\"\nat = \"07:00\"");
 
@@ -4691,8 +4408,6 @@ fn a_due_time_with_nothing_held_makes_no_digest() {
 
 #[test]
 fn focus_mode_delivers_what_came_due_when_it_starts() {
-    // The due timer runs from `[focus]` as Focus mode starts, so a digest
-    // that came due while Focus was closed is there when it opens.
     let world = World::new();
     let config = digesting("cadence = \"daily\"\nat = \"00:00\"");
     let held = held_at(&world, Utc::now() - chrono::TimeDelta::days(2));
@@ -4709,14 +4424,8 @@ fn focus_mode_delivers_what_came_due_when_it_starts() {
     assert_eq!(delivered[0].2, vec![held]);
 }
 
-// ── Arrivals Focus filed away are not announced (spec 007, T129) ────────────
-
 #[test]
 fn focus_mode_announces_no_arrival_it_filtered_or_held() {
-    // FR-153: Focus never notifies for mail it filtered or held. The new
-    // mail the host passes on names only what reached Focus's inbox, so a
-    // frontend that notifies for it -- and splices it into its list --
-    // stays silent about the rest.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let config = postio_config::Config::from_toml_str(
@@ -4765,10 +4474,6 @@ fn focus_mode_announces_no_arrival_it_filtered_or_held() {
     );
 }
 
-// ── Catching up on what another app filed (spec 007, T127) ──────────────────
-
-/// A message filed in the world's inbox from `from`, an hour ago, threaded
-/// as a sync threads it: what another app's sync leaves behind.
 pub(crate) fn filed_elsewhere(world: &World, from: &str, subject: &str) -> MessageId {
     let inbox = folder(world, postio_model::MailboxRole::Inbox);
     world.rt.block_on(async {
@@ -4796,8 +4501,6 @@ pub(crate) fn filed_elsewhere(world: &World, from: &str, subject: &str) -> Messa
     })
 }
 
-/// Focus last ran with the store as it is now: its mark set, as a session
-/// that had just filed everything here would leave it.
 pub(crate) fn focus_ran_before(world: &World) {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -4815,9 +4518,6 @@ pub(crate) fn focus_ran_before(world: &World) {
 
 #[test]
 fn mail_another_app_filed_while_focus_was_closed_is_sorted_when_it_opens() {
-    // US9 scenario 8: a notification that arrived while the classic app was
-    // open moves from the inbox to Filtered, with its reason, when Focus
-    // next opens -- as if Focus had filed it. A letter stays.
     let world = World::new();
     focus_ran_before(&world);
     let notification = filed_elsewhere(&world, "notifications@forge.example", "Build passed");
@@ -4843,9 +4543,6 @@ fn mail_another_app_filed_while_focus_was_closed_is_sorted_when_it_opens() {
 
 #[test]
 fn focus_s_first_open_sorts_nothing_already_in_the_inbox() {
-    // FR-118: filtering applies to mail filed after it is turned on, and
-    // Focus's first open is what turns it on. What is already in the inbox
-    // is the deliberate sweep's to move (T128), never the catch-up's.
     let world = World::new();
     filed_elsewhere(&world, "notifications@forge.example", "Build passed");
 
@@ -4870,7 +4567,6 @@ fn focus_s_first_open_sorts_nothing_already_in_the_inbox() {
 
 #[test]
 fn the_catch_up_leaves_the_row_under_the_cursor_where_it_is() {
-    // Spec Edge Cases: the catch-up never moves the row under the cursor.
     let world = World::new();
     focus_ran_before(&world);
     let watched = filed_elsewhere(&world, "notifications@forge.example", "Build passed");
@@ -4909,10 +4605,6 @@ fn the_catch_up_leaves_the_row_under_the_cursor_where_it_is() {
     );
 }
 
-/// Spec 007 US3 scenario 6, in the terminal's completion (T076): the host
-/// ranks by the one rule both apps share, so an address written to 42
-/// times comes before one seen on a hundred messages and never written to;
-/// and the directory the desktop composer holds carries the count.
 #[test]
 fn an_address_written_to_is_offered_before_one_only_seen() {
     let world = World::new();
@@ -4968,11 +4660,6 @@ fn an_address_written_to_is_offered_before_one_only_seen() {
     assert_eq!(wrote.sent_count, 42, "the directory carries the letters");
 }
 
-// ---------------------------------------------------------------------------
-// Focus's search (spec 010): conversations, passages, relaxations
-// ---------------------------------------------------------------------------
-
-/// A host over the search seed, and a frontend on it.
 struct SearchSeed {
     rt: tokio::runtime::Runtime,
     host: Option<Host>,
@@ -5035,17 +4722,12 @@ impl Drop for SearchSeed {
     }
 }
 
-/// Screen 05's example finds what it says: the cheat sheet's "invoices
-/// from ada last month", lowered against the demo's today as the bar
-/// lowers it, finds Ada's three invoices of last month and nothing else.
 #[test]
 fn the_plain_english_example_finds_adas_invoices_of_last_month() {
     let seed = SearchSeed::new();
     let today = postio_demo::today()
         .with_timezone(&chrono::Local)
         .date_naive();
-    // The address book knows Ada, as the bar's `Names` does: "from ada"
-    // is `from:ada`.
     let ada = |name: &str| name.eq_ignore_ascii_case("ada").then(|| "ada".to_owned());
     let query = postio_search::natural::lower("invoices from ada last month", today, &ada);
     let results = seed
@@ -5080,9 +4762,6 @@ fn the_plain_english_example_finds_adas_invoices_of_last_month() {
     );
 }
 
-/// Spec 007 US10 scenario 7 (#1825): a conversation search says which of
-/// its hits a digest holds, and for which rule, so the dropdown's and the
-/// results' rows say where they wait.
 #[test]
 fn a_conversation_search_says_which_of_its_hits_a_digest_holds() {
     let seed = SearchSeed::new();
@@ -5133,7 +4812,6 @@ fn focus_asks_the_host_for_conversations_then_their_passages() {
         .block_on(seed.client.passages(
             postio_search::parse("atlas budget", postio_demo::today().date_naive()),
             asked.clone(),
-            // As the results view asks: its rows show no preview.
             postio_search::passage::FirstLine::Avoided,
         ))
         .expect("an answer");
@@ -5165,8 +4843,6 @@ fn focus_asks_the_host_for_conversations_then_their_passages() {
     }
 }
 
-/// Quick Look's cards (spec 010 US4): every match in the first result's
-/// conversation, its own words with who wrote them, the subject once last.
 #[test]
 fn focus_asks_the_host_for_a_conversations_matches() {
     let seed = SearchSeed::new();
@@ -5210,9 +4886,6 @@ fn focus_asks_the_host_for_a_conversations_matches() {
 #[test]
 fn focus_asks_the_host_for_the_ways_out_of_no_results() {
     let seed = SearchSeed::new();
-    // Two ways out find something, the rest nothing, and the one that
-    // finds more is the later token: the order is the counts', not the
-    // query's.
     let text = "budget invoice from:priya@example.com label:Atlas";
     let today = postio_demo::today().date_naive();
     let query = postio_search::parse(text, today);
@@ -5224,7 +4897,6 @@ fn focus_asks_the_host_for_the_ways_out_of_no_results() {
         .block_on(seed.client.relaxations(seed.scope(), query, today))
         .expect("an answer");
 
-    // What each way out would find, asked of the same host as a search.
     let mut expected: Vec<(postio_search::relax::Relaxation, Counted)> = offered
         .iter()
         .map(|relaxation| {
@@ -5259,9 +4931,6 @@ fn focus_asks_the_host_for_the_ways_out_of_no_results() {
 
 #[test]
 fn focus_asks_the_host_what_a_prefix_could_become() {
-    // Spec 010 US7: the dropdown's short-prefix and `from:` states. The
-    // host answers on a reader turn, and stops when the keystroke after
-    // supersedes it (D9).
     let seed = SearchSeed::new();
     let found = seed
         .rt
@@ -5314,9 +4983,6 @@ fn focus_asks_the_host_what_a_prefix_could_become() {
 
 #[test]
 fn focus_asks_the_host_who_the_results_are_from_and_to() {
-    // Spec 010 US9: the People tab. The host answers on a reader turn, the
-    // person's own addresses left out, and stops when a newer search
-    // supersedes it (D9).
     let seed = SearchSeed::new();
     let query = postio_search::parse("atlas", postio_demo::today().date_naive());
     let people = seed
@@ -5357,18 +5023,11 @@ fn focus_asks_the_host_who_the_results_are_from_and_to() {
 
 #[test]
 fn a_search_whose_caller_has_gone_stops_on_the_host() {
-    // D9: the driver aborts a superseded search by dropping the client's
-    // future, and the host has to notice, or the abandoned search keeps
-    // its reader and its CPU while the one that replaced it waits.
-    //
-    // Every reader turn is held here, so the host's search waits for one:
-    // a search in flight. Its own probe ends when the future returns or is
-    // dropped, without counting unrelated background tasks. Dropped, it
-    // must let go without ever reading a row.
+    // The host must notice a dropped future, or the abandoned search keeps its reader and CPU while
+    // its replacement waits (D9).
     let seed = SearchSeed::new();
     let host = seed.host.as_ref().expect("running");
     let query = postio_search::parse("atlas budget", postio_demo::today().date_naive());
-    // Warm: whatever the host starts lazily on a first search is started.
     seed.conversations("atlas budget");
     assert_eq!(
         host.inner
@@ -5430,7 +5089,6 @@ fn focus_remembers_the_searches_it_ran_and_forgets_them_on_request() {
     let seed = SearchSeed::new();
     let ask = |request: Result<(), postio_model::listing::StoreError>| request.expect("an answer");
 
-    // The seed has screen 01's recents, all run on earlier days.
     let seeded = seed
         .rt
         .block_on(seed.client.recent_searches())
@@ -5517,9 +5175,6 @@ fn focus_counts_each_saved_search_and_nothing_is_new_before_it_is_seen() {
 
 #[test]
 fn an_archive_aimed_at_a_query_archives_what_it_matches_and_one_undo_restores_it() {
-    // US5's first scenario: ⇧X in the results, then `a`. The frontend says
-    // the query and the rows taken back out -- a predicate -- and the host
-    // walks the match the results were drawn from.
     let seed = SearchSeed::new();
     let events = seed.client.events();
     let today = postio_demo::today().date_naive();
@@ -5559,7 +5214,6 @@ fn an_archive_aimed_at_a_query_archives_what_it_matches_and_one_undo_restores_it
         .find(|hit| hit.mailbox_id != archive_folder)
         .expect("one not archived yet")
         .best;
-    // Something that does not match, in a folder of its own.
     let elsewhere = all("dinner saturday");
     let elsewhere_was = placed(&elsewhere);
     assert!(
@@ -5629,8 +5283,6 @@ fn an_archive_aimed_at_a_query_archives_what_it_matches_and_one_undo_restores_it
 
 #[test]
 fn a_saved_search_counts_what_arrived_since_it_was_seen_and_viewing_clears_it() {
-    // D15: the badge is the matches received after the saved search's
-    // seen-up-to instant; viewing it moves that instant to now.
     let seed = SearchSeed::new();
     let today = postio_demo::today().date_naive();
     let searches = vec![
@@ -5645,9 +5297,7 @@ fn a_saved_search_counts_what_arrived_since_it_was_seen_and_viewing_clears_it() 
             )
             .expect("an answer")
     };
-    // On the clock seam, past everything the seed holds (its newest mail is
-    // dated this afternoon): seen now, then mail a minute later, then seen
-    // again a minute after that.
+    // On the clock seam, past everything the seed holds (its newest mail is dated this afternoon).
     let seen = (postio_demo::today() + chrono::TimeDelta::hours(1)).with_timezone(&chrono::Local);
     postio_model::clock::freeze(seen);
     seed.rt
@@ -5659,7 +5309,6 @@ fn a_saved_search_counts_what_arrived_since_it_was_seen_and_viewing_clears_it() 
         "everything that matches was there when seen"
     );
 
-    // Mail that matches arrives after it was seen.
     let inbox = seed
         .rt
         .block_on(postio_model::listing::MailStore::mailboxes(
@@ -5718,13 +5367,8 @@ fn a_saved_search_counts_what_arrived_since_it_was_seen_and_viewing_clears_it() 
 
 #[test]
 fn a_badge_that_stopped_at_its_cap_says_it_is_a_floor() {
-    // D30: the badge reads at most NEW_CAP conversations, and when every
-    // one it read is new there may be more behind them -- "99+ new".
-    //
-    // Over an empty inbox, not the search seed: the cap is about the hundred
-    // arrivals this test writes, and the two-year seed the other search
-    // cases need cost this one ~9 s on a runner, over the merge path's
-    // 10 s budget under load (PR #2019).
+    // Over an empty inbox, not the search seed: the two-year seed cost ~9 s on a runner, over the
+    // merge path's 10 s budget (#2019).
     let world = World::new();
     let (client, _events) = world.frontend(ClientKind::Focus);
     let today = postio_demo::today().date_naive();
@@ -5738,8 +5382,8 @@ fn a_badge_that_stopped_at_its_cap_says_it_is_a_floor() {
     let arrivals = i64::from(crate::search::NEW_CAP) + 1;
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
-        // The count is a conversation search, and a search needs the index
-        // the seed would have built; a search that cannot run counts zero.
+        // The count is a conversation search, which needs the index; a search that cannot run
+        // counts zero.
         postio_index::index::ensure_schema(&connection)
             .await
             .expect("the search index");
@@ -5776,10 +5420,6 @@ fn a_badge_that_stopped_at_its_cap_says_it_is_a_floor() {
 
 #[test]
 fn an_agent_s_change_lands_on_the_window_s_undo_and_the_window_is_told() {
-    // ADR 0041, amended 2026-10-14: an agent served by a running app acts
-    // as that app's window would. What it did is on the window's undo
-    // stack, so `u` there takes it back, and the window hears the undo
-    // offer the change makes, as it would for its own keystroke.
     let world = World::new();
     let (desktop, desktop_events) = world.frontend(ClientKind::Focus);
     let (agent, beside) = world.host().connector().connect_agent();
@@ -5833,12 +5473,7 @@ fn an_agent_with_no_window_to_stand_beside_keeps_its_own_undo() {
     assert_eq!(world.inbox_rows(&agent), 0);
 }
 
-/// What the body stage noted about a sender once their mail landed, with
-/// the given Suggestions switches turned off first.
 fn noted_with_switches_off(off: &[postio_model::Suggestion]) -> Vec<String> {
-    // Specs/011-focus-contacts S10: the body stage notes the signature, a
-    // phone and a Resent-From against the sender, so the review can find a
-    // second record of the same person without reading mail.
     let world = World::new();
     let inbox = folder(&world, postio_model::MailboxRole::Inbox);
     world.rt.block_on(async {
@@ -5871,7 +5506,6 @@ fn noted_with_switches_off(off: &[postio_model::Suggestion]) -> Vec<String> {
             )
             .await
             .expect("a body");
-        // The sender's person exists, as the catch-up makes them.
         postio_storage::repository::ContactRepository::new(&connection)
             .catch_up_batch(None, 100)
             .await
@@ -5895,9 +5529,6 @@ fn noted_with_switches_off(off: &[postio_model::Suggestion]) -> Vec<String> {
 
 #[test]
 fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
-    // Specs/011-focus-contacts S10: the body stage notes the signature, a
-    // phone and a Resent-From against the sender, so the review can find a
-    // second record of the same person without reading mail.
     assert_eq!(
         noted_with_switches_off(&[]),
         ["phone", "resent", "signature"]
@@ -5906,9 +5537,6 @@ fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
 
 #[test]
 fn with_read_signatures_off_the_body_stage_never_parses_a_signature() {
-    // D7: the switch stops the work, not the result's display. What a
-    // signature would have said (a title, a company, a phone) is not noted;
-    // a forwarding header is not a signature and still is.
     assert_eq!(
         noted_with_switches_off(&[postio_model::Suggestion::ReadSignatures]),
         ["resent"]
@@ -5925,8 +5553,6 @@ fn with_suggest_merging_off_the_body_stage_notes_nothing_for_the_review() {
 
 #[test]
 fn a_frontend_mutes_and_splits_a_thread_and_one_undo_takes_each_back() {
-    // Spec 013 US5: Req::{Mute, Unmute, Split, MutedOf}, the view's `muted`,
-    // and the session's undo behind each.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Tui);
     let (thread, third) = world.rt.block_on(async {
@@ -6006,10 +5632,6 @@ fn a_frontend_mutes_and_splits_a_thread_and_one_undo_takes_each_back() {
     assert_eq!(view.members.len(), 3, "one undo rejoins the messages");
 }
 
-// ── Reply to an older message, forward a thread (spec 013 US7) ──────────────
-
-/// Who wrote message `n` of the fixture thread, as `(name, address)`. Message
-/// 3 is the account's own; the rest are received.
 fn writer(n: usize) -> (&'static str, &'static str) {
     match n {
         1 => ("Ada", "ada@example.com"),
@@ -6021,9 +5643,6 @@ fn writer(n: usize) -> (&'static str, &'static str) {
     }
 }
 
-/// Message `n` of a thread, stored the way a finished sync leaves it: header
-/// row, body and raw source local when `local`, headers only when not.
-/// `after` names the messages it answers, oldest first.
 fn thread_member(
     world: &World,
     blobs: &postio_storage::BlobStore,
@@ -6096,8 +5715,6 @@ fn pdf(blobs: &postio_storage::BlobStore, name: &str, bytes: &[u8]) -> postio_mo
     attachment
 }
 
-/// Six local messages in one thread. Messages 2 and 5 carry the same file
-/// under two names; message 4 carries another.
 fn six_local(
     world: &World,
 ) -> (
@@ -6131,8 +5748,6 @@ fn six_local(
     (thread, ids, blobs)
 }
 
-/// A reply to `message` as a composer opens it, with `typed` written above
-/// the quote.
 fn reply_with(world: &World, message: MessageId, typed: &str) -> postio_model::Draft {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -6196,7 +5811,6 @@ fn a_reply_to_message_four_moves_to_message_six_and_keeps_what_was_typed() {
         "what the person addressed is left alone"
     );
 
-    // The threading headers follow `in_reply_to`: built against message 6.
     let (parent, account) = world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         (
@@ -6223,7 +5837,6 @@ fn a_reply_to_message_four_moves_to_message_six_and_keeps_what_was_typed() {
         .expect("References");
     assert!(references.contains("<m6@example.com>"), "{references}");
 
-    // Already on the latest: nothing to change.
     let again = world
         .rt
         .block_on(client.reply_to_latest(moved.clone()))
@@ -6249,8 +5862,6 @@ fn the_forward_form_changes_and_the_typed_words_stay() {
     assert_eq!(draft.forwarded_from, Some(ids[5]), "of the latest message");
     assert_eq!(draft.subject, "Fwd: Re: Tide gate");
 
-    // The person types above the forwarded content and attaches a file of
-    // their own.
     let text = draft.body.text.take().expect("a forward body");
     draft.body.text = Some(format!("Look at this.{text}"));
     draft
@@ -6383,7 +5994,6 @@ fn a_form_that_needs_a_message_not_here_is_refused_and_nothing_is_fetched() {
     let (client, _) = world.frontend(ClientKind::Focus);
     world.host().start_syncing();
     let synced = eventually(&world, || row_titled(&world, &client, "Tide gate"));
-    // Two replies that are fully here, to the message that is not.
     let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
         .expect("a blob store");
     let first = vec!["<tide@example.com>".to_owned()];
@@ -6418,9 +6028,6 @@ fn a_form_that_needs_a_message_not_here_is_refused_and_nothing_is_fetched() {
         "the synced message has no body yet"
     );
 
-    // What a forward would fetch: a body or headers. Not every call the
-    // server hears -- the sync loop started above polls on its own, and a
-    // pass landing mid-case counted as the forward's (PR #2124's Tests).
     let before = (mock.body_fetches(), mock.header_fetches());
     for form in [ForwardForm::Thread, ForwardForm::Attachments] {
         let answer = world
@@ -6429,7 +6036,6 @@ fn a_form_that_needs_a_message_not_here_is_refused_and_nothing_is_fetched() {
             .expect("an answer");
         assert_eq!(answer, Forwarded::NotLocal(vec![synced]), "{form:?}");
     }
-    // The same through a draft already open on the local replies.
     let Forwarded::Draft(draft) = world
         .rt
         .block_on(client.forward_thread(thread, ForwardForm::This))

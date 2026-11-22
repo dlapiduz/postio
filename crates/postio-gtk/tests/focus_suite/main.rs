@@ -1,25 +1,7 @@
-//! One binary for Postio Focus's GTK cases -- a custom harness, as
-//! postio-widgets' `widgets_suite` is, for two reasons:
-//!
-//!   * GTK may be initialized from exactly one thread per process (#41), and
-//!     libtest runs `#[test]` functions on a thread pool;
-//!   * every extra test *binary* links the whole GTK stack, and linking was
-//!     once the dominant cost of a GTK crate's tests (#329).
-//!
-//! So: `harness = false`, one `adw::init`, every case a plain `pub fn` in
-//! `focus_suite/`, run in sequence under `catch_unwind` so one failure does
-//! not hide the rest. The cases run on the headless compositor the cargo
-//! runner puts test binaries on, and assert on the widget tree -- what a
-//! person would see -- never on what a layer was handed.
-//!
-//! **A new case is a module here and a row in `CASES`.** `--list` and name
-//! filtering behave enough like libtest for `cargo test`, nextest and the
-//! tooling's test counting to work, and that output is a contract:
-//! `list_contract.rs` is what notices when it breaks, because a runner that
-//! misreads it runs nothing and reports success.
-//!
-//! A panicking case can leave toolkit state behind that fails a later case:
-//! when several cases fail at once, trust the first.
+//! One custom-harness binary: GTK may be initialized from one thread per process (#41) and each
+//! extra test binary links the whole GTK stack (#329).
+//! A new case is a module here and a row in `CASES`; `list_contract.rs` notices when the `--list`
+//! output breaks.
 
 mod a11y;
 mod a11y_sweep;
@@ -131,16 +113,9 @@ mod window_controls;
 mod window_state;
 mod window_teardown;
 
-/// Cases held out of a default run, by name -- the table-driven spelling of
-/// `#[ignore]`, which means one thing here: this machine may not have what
-/// the case needs. A name here still runs when asked for explicitly, and still
-/// appears in `--list`, exactly as an ignored libtest case does. Say in a
-/// comment beside the name which issue or task takes it back.
-const IGNORED: &[&str] = &[
-    // Needs a working document portal on the session bus, which a CI machine
-    // does not have; run by name where there is one.
-    "drag_out::a_dragged_message_survives_the_portal",
-];
+/// Cases held out of a default run: this machine may lack what the case needs. A name still runs
+/// when asked for and appears in `--list`.
+const IGNORED: &[&str] = &["drag_out::a_dragged_message_survives_the_portal"];
 
 const CASES: &[(&str, fn())] = &[
     (
@@ -2125,18 +2100,11 @@ const CASES: &[(&str, fn())] = &[
 
 use gtk::glib;
 
-/// Turn the GTK main loop until there is nothing left to do.
-///
-/// The loop is turned inside one poll of the case's future (`gtk_case` is a
-/// `block_on`), so every future it dispatches that awaits a tokio resource
-/// spends that poll's budget of 128 operations. A case that never yields to
-/// its runtime between opens spent it after a few dozen, and from then on
-/// each such future returned `Pending` and woke itself at once, for as long
-/// as the loop was turned: `settle` never went idle, at 100% CPU. A real
-/// window has no such budget -- GTK's loop is not inside a tokio poll -- so
-/// the turn runs where tokio does not count, as a blocking section does.
+/// The loop is turned inside one poll of the case's future, so tokio-awaiting futures spend that
+/// poll's 128-operation budget;
+/// once spent each wakes itself at once and `settle` never goes idle. The turn runs in
+/// `block_in_place`, where tokio does not count.
 pub fn settle() {
-    // A loop that has not gone idle in this long is not settling.
     let patience = postio_test_support::scaled(std::time::Duration::from_secs(10));
     tokio::task::block_in_place(|| {
         let started = std::time::Instant::now();
@@ -2150,16 +2118,13 @@ pub fn settle() {
     });
 }
 
-/// Let the main loop run for at least `least`: a dwell a case must outlast,
-/// not a deadline it waits against.
 pub async fn settle_for(least: std::time::Duration) {
     let started = std::time::Instant::now();
     settle_until(async || started.elapsed() >= least).await;
 }
 
-/// Turn the loop until `done`, or give up after ten seconds (scaled by
-/// `POSTIO_TEST_PATIENCE`). Returns whether it happened, because every call
-/// site is already inside an `assert!` that says what was expected.
+/// Gives up after ten seconds (scaled by `POSTIO_TEST_PATIENCE`); returns whether it happened,
+/// since call sites assert.
 pub async fn settle_until<F, Fut>(done: F) -> bool
 where
     F: Fn() -> Fut,
@@ -2168,14 +2133,10 @@ where
     settle_until_within(std::time::Duration::from_secs(10), done).await
 }
 
-/// How long a store's first open may take: creating the encrypted file,
-/// running every migration and building the search index. About six
-/// seconds on an idle workstation, which leaves [`settle_until`]'s ten no
-/// room for a loaded one; a store that never opens still fails, just later.
+/// Creating the encrypted file, migrating and building the search index takes about six seconds on
+/// an idle workstation.
 pub const STORE_OPEN: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// [`settle_until`], for a wait whose work takes longer than ordinary:
-/// gives up after `base`, scaled by `POSTIO_TEST_PATIENCE`.
 pub async fn settle_until_within<F, Fut>(base: std::time::Duration, done: F) -> bool
 where
     F: Fn() -> Fut,
@@ -2192,8 +2153,6 @@ where
     done().await
 }
 
-/// Turn the loop while `held` stays true, for half a second (scaled): the
-/// inverse of `settle_until`, for proving something does *not* happen.
 pub async fn settle_while<F, Fut>(held: F) -> bool
 where
     F: Fn() -> Fut,
@@ -2211,12 +2170,8 @@ where
     held().await
 }
 
-/// Run a case's body, which is async because the store is.
-///
-/// On **this** thread, because everything in it touches GTK; on a
-/// multi-threaded runtime, because a synchronous store read reached from
-/// inside it (`block_in_place`) panics on a current-thread one. One runtime
-/// per thread, not per case.
+/// On this thread because everything touches GTK, on a multi-threaded runtime because a synchronous
+/// store read (`block_in_place`) panics on a current-thread one.
 pub fn gtk_case<F: std::future::Future<Output = ()>>(body: F) {
     thread_local! {
         static RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
@@ -2228,9 +2183,7 @@ pub fn gtk_case<F: std::future::Future<Output = ()>>(body: F) {
     RUNTIME.with(|runtime| runtime.block_on(body));
 }
 
-/// Destroy every window a case left open, let the teardown run, then drop
-/// what the case kept (`support::keep`): outside every runtime, which is the
-/// one place a host's own runtime may be dropped.
+/// Dropped outside every runtime, the one place a host's own runtime may be dropped.
 fn tidy_up(name: &str) {
     use gtk::prelude::*;
     running(&format!("{name}, destroying its windows"));
@@ -2250,9 +2203,8 @@ fn tidy_up(name: &str) {
     running(&format!("after {name}"));
 }
 
-/// The case running now, and its phase: what a GLib critical is stamped
-/// with, so a process that fails after its case printed "ok" says where
-/// (#2192).
+/// What a GLib critical is stamped with, so a process failing after its case printed "ok" says
+/// where (#2192).
 static RUNNING: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 fn running(now: &str) {
@@ -2263,13 +2215,8 @@ fn running(now: &str) {
     );
 }
 
-/// Print each GTK, GDK and GObject critical with the case and phase it
-/// came in and a backtrace, then as GLib would. #2192 failed on CI after
-/// its body passed, with three criticals and no other word: a widget's
-/// display asked for after the widget was gone, and then the process died.
-/// The criticals did not say whether the case's body, its windows' teardown
-/// or the drop of what it kept was running, nor which code asked. The
-/// default handler prints nothing more, so these are the facts it lacks.
+/// Prints each GTK, GDK and GObject critical with its case, phase and a backtrace: #2192 failed
+/// after the body passed, with criticals that did not say what was running.
 fn stamp_criticals() {
     for domain in ["Gtk", "Gdk", "GLib-GObject", "GLib", "Adwaita"] {
         glib::log_set_handler(
@@ -2294,20 +2241,11 @@ fn stamp_criticals() {
     }
 }
 
-/// Set once the suite is running in a configuration of its own.
 const HERMETIC: &str = "POSTIO_FOCUS_SUITE_HERMETIC";
 
-/// Run this binary again with a configuration directory of its own, and exit
-/// as it does -- unless this is that run.
-///
-/// GTK loads the person's own `gtk-4.0/gtk.css` from `XDG_CONFIG_HOME`, and a
-/// desktop can put its whole palette there: COSMIC writes its dark colours as
-/// `@define-color`s, at a priority above any application's, whatever the
-/// colour scheme. A case asserting what Focus's colours resolve to would then
-/// be asserting the developer's theme. An empty directory is the machine CI
-/// is. It also keeps every case away from the person's `config.toml`.
-/// Setting the variable in this process would need `unsafe`, which the
-/// workspace forbids; a child is given it instead.
+/// Runs this binary again with its own config directory: GTK loads the person's `gtk-4.0/gtk.css`,
+/// where a desktop can put its palette above any application's.
+/// Setting the variable in this process needs `unsafe`, so a child is given it.
 fn hermetic(arguments: &[String]) {
     if std::env::var_os(HERMETIC).is_some() {
         return;
@@ -2317,24 +2255,19 @@ fn hermetic(arguments: &[String]) {
         .args(arguments)
         .env(HERMETIC, "1")
         .env("XDG_CONFIG_HOME", config.path())
-        // State too: the remote-image allow list lives there, and a case
-        // about blocked images must not read the developer's own.
+        // State too: the remote-image allow list lives there.
         .env("XDG_STATE_HOME", config.path().join("state"))
-        // Cache too: a message dragged out is written there (T245), and a
-        // case about it must not fill the developer's own.
+        // Cache too: a dragged message is written there.
         .env("XDG_CACHE_HOME", config.path().join("cache"))
-        // Accessible properties are recorded only with a backend: the test
-        // one, so a case can ask what a screen reader would be told (T142).
+        // Accessible properties are recorded only with the test backend, so a case can ask what a
+        // screen reader would be told.
         .env("GTK_A11Y", "test")
-        // GTK's own input method, not the compositor's: GTK 4.22's Wayland
-        // one can be left pointing at a freed context, and the compositor's
-        // next event then kills the run (`input_method`, #2155, #2192).
+        // GTK's own input method: the Wayland one can be left pointing at a freed context
+        // (`input_method`, #2155, #2192).
         .env("GTK_IM_MODULE", "gtk-im-context-simple")
         .status()
         .expect("the suite runs again in its own configuration");
     drop(config);
-    // A case that dies by a signal prints nothing of its own: say which,
-    // or the run shows a FAIL with no reason at all (#2155).
     if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
         eprintln!(
             "the suite's run died by signal {signal}{}",
@@ -2354,27 +2287,20 @@ fn main() {
         hermetic(&arguments);
     }
     if arguments.iter().any(|a| a == "--list") {
-        // Two questions, and a libtest-compatible runner asks both: every
-        // test, then `--ignored` for the ignored subset. Answering the second
-        // with the full list tells a process-per-test runner that everything
-        // is ignored -- it then runs nothing and reports success.
+        // A runner asks for every test, then `--ignored`; answering the second with the full list
+        // makes it run nothing and report success.
         let only_ignored = arguments.iter().any(|a| a == "--ignored");
         for (name, _) in CASES {
             if !only_ignored || IGNORED.contains(name) {
                 println!("{name}: test");
             }
         }
-        // `--format terse` is a machine-readable contract: real libtest emits
-        // the names and nothing else. The count is for the non-terse form.
         if !arguments.iter().any(|a| a == "terse") {
             println!();
             println!("{} tests, 0 benchmarks", CASES.len());
         }
         return;
     }
-    // `--exact` means the argument is a whole test name, not a substring: a
-    // process-per-test runner passes it for every case, and without it a name
-    // that is a prefix of another would run both.
     let exact = arguments.iter().any(|a| a == "--exact");
     let run_ignored_only = arguments.iter().any(|a| a == "--ignored");
     let filters: Vec<&str> = arguments
@@ -2383,8 +2309,6 @@ fn main() {
         .map(|s| s.as_str())
         .collect();
 
-    // One initialisation for the process, before any case. No display is not
-    // an error here; a case that needs one says so itself.
     let _ = adw::init();
     stamp_criticals();
 
@@ -2397,8 +2321,6 @@ fn main() {
         if !filters.is_empty() && !matched {
             continue;
         }
-        // An ignored case runs only when it is asked for by name, or when
-        // `--ignored` asks for exactly those -- same rule libtest uses.
         if IGNORED.contains(name) && filters.is_empty() && !run_ignored_only {
             continue;
         }

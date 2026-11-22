@@ -5,9 +5,6 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// What search says to a screen reader (specs/010-focus-search T135;
-/// design §5): the field is a combobox over a listbox, the results are a
-/// table, and every word comes from `postio-ui` rather than a literal here.
 @MainActor
 @Suite struct SearchAccessibilityTests {
     static let words = focusSearchWords()

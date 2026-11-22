@@ -1,17 +1,7 @@
-//! The loopback redirect: `http://127.0.0.1:<ephemeral>/`.
-//!
-//! ADR 0006 Q3: bound for the duration of one attempt and closed the moment
-//! the code arrives or the caller cancels — not a custom URI scheme, which
-//! would need a desktop-file registration and hand the callback to whatever
-//! else claimed the scheme.
-//!
-//! A connection whose `state` does not match, or that is not a recognizable
-//! redirect at all, is answered and dropped **without ending the attempt**:
-//! the listener keeps waiting. Only a matching code, an explicit
-//! `error=…` from the provider, or the caller's cancellation ends it. That
-//! is deliberate — a stray probe against the ephemeral port (anything else
-//! on the machine scanning loopback ports, say) must not be able to abort a
-//! sign-in a real browser tab is still about to complete.
+//! ADR 0006 Q3: bound for one attempt, not a custom URI scheme, which needs desktop-file
+//! registration and hands the callback to whatever else claimed it.
+//! A mismatched-`state` or unrecognizable connection is answered and dropped without ending the
+//! attempt, so a stray local probe cannot abort a real sign-in.
 
 use std::io;
 use std::time::Duration;
@@ -24,37 +14,26 @@ use super::error::OAuthError;
 use super::pkce::State;
 use crate::cancel::CancelToken;
 
-/// How long an accepted connection may go without completing its request.
-/// Loopback and local-only, so a healthy exchange finishes in microseconds;
-/// this bounds a connection that opened and then never sent anything.
 pub const REDIRECT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The largest request line plus headers this listener will read before
-/// giving up on a connection. A real browser redirect is a few hundred
-/// bytes; this is generous headroom, not a real budget.
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
 
-/// The authorization code a completed redirect carried.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthorizationCode(String);
 
 impl AuthorizationCode {
-    /// The code, to hand to the token endpoint.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// A bound loopback listener, waiting for exactly one OAuth redirect.
 pub struct LoopbackRedirect {
     listener: TcpListener,
     port: u16,
 }
 
 impl LoopbackRedirect {
-    /// Binds an ephemeral loopback port. Loopback only — never `0.0.0.0` —
-    /// so the redirect is reachable from this machine's browser and nowhere
-    /// else on the network.
+    /// Loopback only, never `0.0.0.0`.
     pub async fn bind() -> Result<Self, OAuthError> {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -63,24 +42,17 @@ impl LoopbackRedirect {
         Ok(Self { listener, port })
     }
 
-    /// The `redirect_uri` to send in the authorization request — the exact
-    /// URL the provider will send the browser back to.
     pub fn redirect_uri(&self) -> Url {
         format!("http://127.0.0.1:{}/", self.port)
             .parse()
             .expect("a loopback URL with a bound port always parses")
     }
 
-    /// The bound port, for tests that play the browser's part directly.
     pub fn port(&self) -> u16 {
         self.port
     }
 
-    /// Waits for a redirect whose `state` matches `expected`, racing every
-    /// accept against `cancel`.
-    ///
-    /// Consumes `self`: whichever way this returns, the listener's socket
-    /// closes with it, and the caller has no way to accidentally wait on it
+    /// Consumes `self`: the listener's socket closes on any return, so it cannot be waited on
     /// twice.
     pub async fn wait_for_code(
         self,
@@ -106,18 +78,12 @@ impl LoopbackRedirect {
     }
 }
 
-/// What one accepted connection turned out to be.
 enum Outcome {
-    /// The code the caller is waiting for.
     Code(AuthorizationCode),
-    /// The provider itself declined, e.g. `error=access_denied`.
     Denied(String),
-    /// Not a match — wrong or missing `state`, or not a recognizable
-    /// redirect at all. The listener keeps waiting for the real one.
     Ignored,
 }
 
-/// Reads one HTTP request off `stream`, answers it, and classifies it.
 async fn handle_connection(mut stream: TcpStream, expected: &State) -> Outcome {
     let request =
         match tokio::time::timeout(REDIRECT_IO_TIMEOUT, read_request_line(&mut stream)).await {
@@ -157,9 +123,8 @@ async fn handle_connection(mut stream: TcpStream, expected: &State) -> Outcome {
     };
 
     if expected.as_str() != state.as_str() {
-        // Answered, but not with anything that confirms the mismatch to
-        // whoever sent it — this is either a stray local probe or a
-        // second, stale tab, and neither should learn it interfered.
+        // Answered without confirming the mismatch: a stray local probe or a stale tab should not
+        // learn it interfered.
         respond(
             &mut stream,
             400,
@@ -178,9 +143,6 @@ async fn handle_connection(mut stream: TcpStream, expected: &State) -> Outcome {
     Outcome::Code(AuthorizationCode(code.clone()))
 }
 
-/// Reads bytes off `stream` until a full HTTP request line is available,
-/// bounded by [`MAX_REQUEST_BYTES`] so a connection that never sends a
-/// newline cannot grow this buffer without limit.
 async fn read_request_line(stream: &mut TcpStream) -> io::Result<String> {
     let mut buf = Vec::new();
     let mut byte = [0u8; 1];
@@ -208,11 +170,7 @@ async fn read_request_line(stream: &mut TcpStream) -> io::Result<String> {
         .to_string())
 }
 
-/// Writes a minimal, fixed HTTP/1.1 response and closes the connection.
-///
-/// Best-effort: the browser tab showing this to the user is a courtesy, not
-/// part of the protocol, so a write failure here changes nothing about
-/// whether the code was already classified.
+/// Best-effort: the browser tab is a courtesy, not part of the protocol.
 async fn respond(stream: &mut TcpStream, status: u16, message: &str) {
     let reason = if status == 200 { "OK" } else { "Bad Request" };
     let body = format!("<!doctype html><html><body><p>{message}</p></body></html>");
@@ -321,9 +279,6 @@ mod tests {
         let waiting =
             tokio::spawn(async move { listener.wait_for_code(&state, &waiting_cancel).await });
 
-        // Give the accept loop a moment to actually be waiting before we
-        // cancel it, so this test cannot pass by accident on a task that
-        // never started.
         tokio::task::yield_now().await;
         cancel.cancel();
 
@@ -333,8 +288,6 @@ mod tests {
             .expect_err("cancellation is an error");
         assert!(matches!(err, OAuthError::Cancelled));
 
-        // The socket is gone with the listener: nothing should be
-        // listening on this port any more.
         assert!(TcpStream::connect(("127.0.0.1", port)).await.is_err());
     }
 }

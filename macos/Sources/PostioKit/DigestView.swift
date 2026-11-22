@@ -1,28 +1,13 @@
 import PostioFFI
 import SwiftUI
 
-// The digest's window (specs/009-focus-macos T114, screens 22 and 23): the
-// message window's size and column (M1). Its title area -- the
-// stacked icon, the title and its line, "Archive all" on the summary and
-// the list, "‹ Summary" and the stepper on an email -- is drawn into the
-// window's unified toolbar (`DigestWindowChrome` in PostioAppKit), from the
-// views at the end of this file. Under it, `DigestWindowView`: the
-// Summary/list tabs and the rule line, then the page.
-//
-// Every word is the controller's (`FocusDigest`). The keys reach it through
-// the key monitor; the pointer through `DigestModel`.
-
-/// What the window holds under its title area.
 public struct DigestWindowView<BodyView: View>: View {
     let model: DigestModel
-    /// The summary's column (M1, `focus_digest_geometry`).
     let column: CGFloat
     let binding: (String) -> String?
     let run: (String) -> Void
     let bodyView: (FocusReaderDocumentFfi, String?) -> BodyView
 
-    /// `body` draws an email's treated body, with the cited passage to
-    /// highlight.
     public init(
         model: DigestModel, column: CGFloat,
         binding: @escaping (String) -> String?,
@@ -61,15 +46,11 @@ public struct DigestWindowView<BodyView: View>: View {
                     .background(MessageSurface.content)
             }
         }
-        // The keyboard is the key monitor's, through the controller: a
-        // focus ring on the first button would claim a focus nobody moved
-        // there.
+        // The keyboard is the key monitor's: a focus ring on the first button would claim a focus
+        // nobody moved there.
         .focusEffectDisabled()
     }
 
-    /// An email opened from a reference, in place (screen 23): the banner
-    /// saying where it was cited, then the message as the message window
-    /// draws it, the passage highlighted.
     @ViewBuilder
     private func email(_ view: DigestViewFfi) -> some View {
         VStack(spacing: 0) {
@@ -100,8 +81,6 @@ public struct DigestWindowView<BodyView: View>: View {
     }
 }
 
-/// "Summary | 14 messages  Tab", and on the right the rule line, its last
-/// part the button that edits it (`d`).
 struct DigestTabsBar: View {
     let model: DigestModel
     let view: DigestViewFfi
@@ -149,25 +128,19 @@ struct DigestTabsBar: View {
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 
-    /// "Weekly, Sunday 09:00 · Edit rule and cadence": what is said, and
-    /// the button's words after the last separator.
     static func split(_ line: String) -> (String?, String) {
         guard let range = line.range(of: " \u{b7} ", options: .backwards) else { return (nil, line) }
         return (String(line[..<range.lowerBound]), String(line[range.upperBound...]))
     }
 }
 
-/// The summary by topic (screen 22): each topic's heading, then its
-/// statements as one paragraph, each ending in its numbered reference.
-/// The focused reference is marked in the accent, and its card stands
-/// under its topic.
 struct DigestSummaryPage: View {
     let model: DigestModel
     let view: DigestViewFfi
     let column: CGFloat
 
-    /// The scheme a statement's click is carried on, inside this view only:
-    /// never a link anywhere else.
+    /// The scheme a statement's click is carried on, inside this view only; never a link anywhere
+    /// else.
     static let scheme = "postio-digest-reference"
 
     var body: some View {
@@ -214,8 +187,6 @@ struct DigestSummaryPage: View {
         }
     }
 
-    /// "Rates · 3 statements from 2 messages": the topic in bold, the rest
-    /// in the secondary colour.
     private func heading(_ text: String) -> some View {
         let parts = text.split(separator: " \u{b7} ", maxSplits: 1).map(String.init)
         return HStack(spacing: 6) {
@@ -227,8 +198,6 @@ struct DigestSummaryPage: View {
         .accessibilityAddTraits(.isHeader)
     }
 
-    /// The statements as one run of text: each a link to its reference,
-    /// its number a chip after it, the focused one marked.
     private func paragraph(_ statements: [DigestStatementFfi]) -> Text {
         var text = AttributedString()
         for (position, statement) in statements.enumerated() {
@@ -251,8 +220,6 @@ struct DigestSummaryPage: View {
     }
 }
 
-/// The focused reference's card: its number, sender and subject, and the
-/// key that opens the full email.
 struct DigestCard: View {
     let card: DigestCardFfi
     let cap: String?
@@ -278,7 +245,6 @@ struct DigestCard: View {
     }
 }
 
-/// The plain list of the digest's messages.
 struct DigestListPage: View {
     let model: DigestModel
     let view: DigestViewFfi
@@ -324,8 +290,6 @@ struct DigestListPage: View {
     }
 }
 
-/// "6  Cited as 6 in the summary · passage highlighted · Esc returns to the
-/// summary": the accent at 8%, as the action card is (C26).
 struct DigestCitationBanner: View {
     let number: UInt32?
     let text: String
@@ -347,10 +311,6 @@ struct DigestCitationBanner: View {
     }
 }
 
-// MARK: - the title area's views
-
-/// The title area's centre: the stacked icon and the title, the line under
-/// it in the secondary colour.
 public struct DigestTitle: View {
     let model: DigestModel
 
@@ -362,7 +322,6 @@ public struct DigestTitle: View {
         VStack(spacing: 1) {
             HStack(spacing: 5) {
                 if model.view?.page != .email {
-                    // The digest's mark, as its row in the list draws it (screen 22).
                     Image(systemName: "square.stack.3d.up").font(.system(size: 11, weight: .semibold))
                 }
                 Text(model.view?.title ?? "")
@@ -381,7 +340,6 @@ public struct DigestTitle: View {
     }
 }
 
-/// The title area's left, on the email page: "‹ Summary" and its key.
 public struct DigestBack: View {
     let model: DigestModel
 
@@ -393,8 +351,6 @@ public struct DigestBack: View {
         if let view = model.view, view.page == .email {
             Button(action: model.back) {
                 HStack(spacing: 5) {
-                    // The controller's words are "Summary", "3 messages";
-                    // the chevron is the drawing's, as Filtered's "‹ Inbox".
                     Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
                     Text(view.back).font(.system(size: 13.5, weight: .semibold))
                     if let cap = model.backCap { KeyCap(cap) }
@@ -409,8 +365,6 @@ public struct DigestBack: View {
     }
 }
 
-/// The title area's right: "Archive all" on the summary and the list, the
-/// `k j` cap and the previous/next pair on an email.
 public struct DigestTrailing: View {
     let model: DigestModel
 

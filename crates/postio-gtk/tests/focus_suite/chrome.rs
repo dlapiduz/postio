@@ -1,8 +1,3 @@
-//! The window's chrome (contracts/focus-surface.md, "The window"): the top
-//! bar and the header strip carry each control, and each control shows the
-//! key the keymap gives its command -- read from the registry, never typed
-//! in (constitution II).
-
 use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{CommandId, Keymap};
@@ -21,14 +16,11 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
 
-        // The keys KEYS.md sets out, as the registry spells them.
         assert_eq!(key(CommandId::Search), "/");
         assert_eq!(key(CommandId::CommandPalette), "ctrl+k");
         assert_eq!(key(CommandId::GoToFolders), "g l");
         assert_eq!(key(CommandId::ToggleHasAction), "!");
 
-        // The top bar: compose, the command-bar field with its two keys, the
-        // sync label, the main menu and close.
         let compose = only(&window, "focus-compose");
         let told = compose.tooltip_text().unwrap_or_default();
         assert!(
@@ -76,8 +68,6 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
         let close = only(&window, "focus-close");
         assert_eq!(close.tooltip_text().as_deref(), Some("Close"));
 
-        // The header strip: where the person is and its key, the counts, and
-        // the has-action toggle with its key.
         let place = texts(&only(&window, "focus-place"));
         assert!(
             place.contains(&"Inbox".to_owned()) && place.contains(&key(CommandId::GoToFolders)),
@@ -100,8 +90,6 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
             "the has-action toggle names its key: {toggle:?}"
         );
 
-        // What says nothing when there is nothing to say (C10): no mail
-        // was filtered today, and there is no digest rule.
         for class in ["focus-filtered-today", "focus-digest-rules"] {
             assert!(
                 !only(&window, class).is_mapped(),

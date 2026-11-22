@@ -1,18 +1,9 @@
-//! The composer's recipient chips (specs/007-postio-focus T079, US3
-//! scenario 6): an opt-in presentation of `To`, `Cc` and `Bcc`, which Focus
-//! turns on. Choosing a suggestion adds a chip with the name and the
-//! address; the × on a chip takes that recipient off the message.
-//!
-//! Asserted on the widget tree -- the chip's words, the field's text -- and
-//! on the draft the composer would hand to a send.
-
 use gtk::prelude::*;
 use postio_model::EmailAddress;
 use postio_widgets::composer::{Composer, RecipientCandidate};
 
 use crate::support;
 
-/// Every widget under `root` wearing `class`, in tree order.
 fn with_class(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     let mut stack = vec![root.clone()];
@@ -31,7 +22,6 @@ fn with_class(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     found
 }
 
-/// The words a label-bearing widget shows, in tree order.
 fn words(root: &gtk::Widget) -> Vec<String> {
     let mut said = Vec::new();
     let mut stack = vec![root.clone()];
@@ -56,7 +46,6 @@ fn grace() -> EmailAddress {
     EmailAddress::new(Some("Grace Oyelaran"), "grace@example.org")
 }
 
-/// A composer with chips on, suggesting Grace and Graham, in a window.
 fn composing() -> (gtk::Window, Composer) {
     let composer = Composer::new();
     composer.set_recipient_chips(true);
@@ -90,7 +79,6 @@ pub fn choosing_a_suggestion_adds_a_chip_with_the_name_and_the_address() {
         return;
     }
     let (_window, composer) = composing();
-    // Four characters: the one completion rule opens at four (spec C23).
     composer.test_set_to("Grac");
     assert!(
         support::until(|| composer.test_recipient_popover_visible()),

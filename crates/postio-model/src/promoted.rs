@@ -1,48 +1,30 @@
-//! The three headers Focus reads before a message's body arrives (spec 007,
-//! research R8): `List-Unsubscribe`, `Precedence` and `Auto-Submitted`.
-//!
-//! ADR 0025 keeps `header:` a late, body-time fact and names one way out for
-//! a header that must be known sooner: promotion, to a column with its own
-//! operator and its own fetch. These three are promoted so the filing pass
-//! can tell bulk and automated mail at arrival, and search asks the same
-//! question with `is:bulk` and `is:automated` (constitution III). Everything
-//! here is the one reading of them, so the fetch, the body and the operators
-//! cannot disagree about what a message said.
+//! The three headers Focus reads before a body arrives: `List-Unsubscribe`, `Precedence`,
+//! `Auto-Submitted`. Promoted (ADR 0025)
+//! so the filing pass can tell bulk and automated mail at arrival; one reading here keeps the
+//! fetch, the body and `is:bulk`/`is:automated` in agreement.
 
 use serde::{Deserialize, Serialize};
 
 use crate::headers::Headers;
 
-/// `Precedence: bulk`.
 pub const PRECEDENCE_BULK: u8 = 1;
-/// `Precedence: list`.
 pub const PRECEDENCE_LIST: u8 = 2;
-/// `Precedence: junk`.
 pub const PRECEDENCE_JUNK: u8 = 4;
 /// `Auto-Submitted: auto-generated`, or any value but `no` and
 /// `auto-replied`: RFC 3834 §5 asks a reader to treat an unknown `auto-`
 /// keyword as automatic.
 pub const AUTO_GENERATED: u8 = 8;
-/// `Auto-Submitted: auto-replied`: an out-of-office, a bounce.
 pub const AUTO_REPLIED: u8 = 16;
 
-/// The `Precedence` bits: what `is:bulk` reads besides `List-Unsubscribe`
-/// (`postio_index`'s executor spells both operators from these).
+/// What `is:bulk` reads besides `List-Unsubscribe`.
 pub const PRECEDENCE: u8 = PRECEDENCE_BULK | PRECEDENCE_LIST | PRECEDENCE_JUNK;
-/// The `Auto-Submitted` bits: what `is:automated` reads.
 pub const AUTO_SUBMITTED: u8 = AUTO_GENERATED | AUTO_REPLIED;
 
-/// The field names, as a header fetch asks for them.
 pub const FIELDS: [&str; 3] = ["List-Unsubscribe", "Precedence", "Auto-Submitted"];
 
-/// What a message's promoted headers say (`messages.unsubscribe_offered`
-/// and `messages.automation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PromotedHeaders {
-    /// Whether it carries a `List-Unsubscribe` with something in it.
     pub unsubscribe_offered: bool,
-    /// The [`PRECEDENCE_BULK`] ... [`AUTO_REPLIED`] bits its `Precedence`
-    /// and `Auto-Submitted` fields set.
     pub automation: u8,
 }
 
@@ -80,9 +62,6 @@ impl PromotedHeaders {
     }
 }
 
-/// A field's keyword: its first word, lowercased, with any comment or
-/// parameter after it dropped (`list (mailing list)`,
-/// `auto-replied; owner-email=...`).
 fn keyword(value: &str) -> String {
     value
         .trim()
@@ -104,8 +83,6 @@ mod tests {
         PromotedHeaders::from_headers(&headers)
     }
 
-    /// Header fields, and what they should read as: whether an unsubscribe
-    /// is offered, and the automation bits.
     type Case<'a> = (&'a [(&'a str, &'a str)], bool, u8);
 
     #[test]
@@ -133,8 +110,6 @@ mod tests {
                 AUTO_GENERATED,
             ),
             (&[("Auto-Submitted", "no")], false, 0),
-            // Spelled as senders spell them: any case, padded, with a
-            // comment or a parameter after the keyword.
             (&[("PRECEDENCE", "  Bulk ")], false, PRECEDENCE_BULK),
             (
                 &[("precedence", "list (mailing list)")],
@@ -149,8 +124,6 @@ mod tests {
                 false,
                 AUTO_REPLIED,
             ),
-            // A precedence no list uses is no signal, and an empty
-            // `List-Unsubscribe` offers nothing to act on.
             (&[("Precedence", "first-class")], false, 0),
             (&[("List-Unsubscribe", "   ")], false, 0),
             (
@@ -222,8 +195,6 @@ mod tests {
 
     #[test]
     fn the_precedence_and_auto_submitted_bits_do_not_overlap() {
-        // `is:bulk` reads one set and `is:automated` the other, so a bit in
-        // both would make one operator answer for the other's header.
         assert_eq!(PRECEDENCE & AUTO_SUBMITTED, 0);
         assert_eq!(PRECEDENCE | AUTO_SUBMITTED, 31, "five bits, each one field");
     }

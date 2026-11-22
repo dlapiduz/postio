@@ -1,52 +1,23 @@
-//! When to try a failed operation again, and when to stop.
-//!
-//! # Why exponential
-//!
-//! A server that is down is usually down for a while, and a client that keeps
-//! asking every second is the client that gets rate-limited — or, on a laptop,
-//! the one that keeps the radio awake and flattens the battery. Doubling the
-//! wait costs a user nothing when the server comes back quickly and costs the
-//! server nothing when it does not.
-//!
-//! # Why no jitter
-//!
-//! Jitter exists to break up a herd of clients retrying in lockstep. The
-//! operation queue drains serially within one account, so there is no herd
-//! here: one connection, one operation at a time. The place a herd can form is
-//! reconnection across accounts, and that backoff belongs to the connection
-//! loop rather than to individual queue rows.
-//!
-//! # Giving up is a decision, not a silence
-//!
-//! After [`RetryPolicy::max_attempts`] the operation is *failed*, which means
-//! the user is told — see `Drainer` and docs/PRODUCT.md §16. It is never dropped:
-//! silently discarding a mutation the user watched happen locally is how a
-//! mail client loses mail.
+//! Exponential backoff for failed queued operations. No jitter: the queue drains serially per
+//! account, so there is no herd.
+//! After `RetryPolicy::max_attempts` the operation is failed and the user told, never silently
+//! dropped (docs/PRODUCT.md §16).
 
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 
-/// How long to wait between attempts at a queued operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetryPolicy {
-    /// The wait after the first failure.
     pub base: Duration,
-    /// What each subsequent wait is multiplied by.
     pub factor: u32,
-    /// The longest this will ever wait, however many attempts have failed.
     pub ceiling: Duration,
-    /// How many attempts to make before giving up and reporting.
     pub max_attempts: u32,
 }
 
 impl Default for RetryPolicy {
-    /// Two seconds, doubling, capped at five minutes, eight attempts.
-    ///
-    /// Eight attempts spans roughly twenty minutes — long enough to ride out a
-    /// dropped Wi-Fi connection or a server restart, short enough that a
-    /// genuinely broken operation reaches the user in the same session rather
-    /// than the next one.
+    /// Two seconds, doubling, capped at five minutes, eight attempts: about twenty minutes, so a
+    /// broken operation reaches the user in the same session.
     fn default() -> Self {
         Self {
             base: Duration::from_secs(2),
@@ -58,17 +29,12 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
-    /// How long to wait after `attempts` failures.
-    ///
-    /// `attempts` is how many have already been made, so the first call after
-    /// a failure passes `1` and gets [`RetryPolicy::base`]. Zero is treated as
-    /// one: an operation that has not been tried does not need a backoff, but
-    /// asking for one must not underflow.
+    /// `attempts` is how many were already made: the first call after a failure passes `1`. Zero is
+    /// treated as one.
     pub fn backoff(&self, attempts: u32) -> Duration {
         let steps = attempts.saturating_sub(1);
-        // Saturate rather than wrap: with a large `factor` the multiplier
-        // overflows long before the ceiling matters, and the ceiling is the
-        // answer in every one of those cases anyway.
+        // Saturate: a large `factor` overflows long before the ceiling matters, and the ceiling is
+        // the answer then.
         let multiplier = self
             .factor
             .checked_pow(steps)
@@ -80,16 +46,11 @@ impl RetryPolicy {
             .min(self.ceiling)
     }
 
-    /// Whether this operation has had all the attempts it is going to get.
     pub fn is_exhausted(&self, attempts: u32) -> bool {
         attempts >= self.max_attempts
     }
 
-    /// When to try again, honouring a server that asked for longer.
-    ///
-    /// A `Retry-After` shorter than our own backoff is ignored: the server
-    /// asking us to come back in one second does not make one second a good
-    /// idea after six failures.
+    /// A `Retry-After` shorter than our own backoff is ignored.
     pub fn next_attempt_at(
         &self,
         now: DateTime<Utc>,

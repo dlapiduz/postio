@@ -1,42 +1,3 @@
-//! Read-only: why a message is sitting in the Outbox and not leaving.
-//!
-//! The Outbox lists drafts whose `send_state` is `queued` or `sending`
-//! (spec 003). A message that stays there has one of a small number of
-//! causes, and they are told apart by facts this prints:
-//!
-//! * **scheduled** — `messages.send_at` is in the future. Working as asked.
-//! * **waiting on backoff** — the `operation_queue` row exists and its
-//!   `next_attempt_at` is in the future after a failed attempt.
-//! * **nothing is draining** — the operation is `pending` and due, so the
-//!   drainer is not running or the account is offline.
-//! * **orphaned** — `send_state` says queued and there is **no operation
-//!   row at all**. Nothing will ever pick it up, and re-sending is the only
-//!   way out. This is the one that is genuinely stuck.
-//! * **interrupted** — `sending` with no in-flight operation means the
-//!   process doing the submission is gone. `postio_sync::send` promotes that
-//!   to `unconfirmed` when it next runs the operation, so this resolves on
-//!   its own *if* the operation is still there.
-//!
-//! # Point it at a copy of a store you care about
-//!
-//! The same rules as [`inspect_mailboxes`], for the same reasons: the engine
-//! has no read-only open, so the safety is this instruction rather than a
-//! file mode — nothing below writes, and a copy protects the live store from
-//! the engine's own recovery on open. The keyring entry is **retrieved,
-//! never minted**, because minting would replace the key a populated store
-//! is encrypted under; and it selects ids, states, timestamps and counts
-//! only.
-//!
-//! **No subject, no address, no body, and no `last_error` text** — an SMTP
-//! rejection routinely quotes the recipient back, so the error is reported as
-//! its length and first word rather than printed. Principle VI: nothing that
-//! is mail leaves the machine, and this output is the sort of thing that gets
-//! pasted into an issue.
-//!
-//! ```sh
-//! cargo run -p postio-runtime --example inspect_outbox
-//! ```
-
 use postio_account::secret::{AccountKey, KeyringSecretStore, SecretStore};
 use postio_storage::key::{Purpose, STORE_KEY_ENTRY, StoreKey};
 
@@ -61,10 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let now = chrono::Utc::now().timestamp();
     println!("now:   {now}\n");
 
-    // ── what the Outbox and Drafts are showing ───────────────────────────
-    //
-    // The same predicates the list uses, so a disagreement between this and
-    // the screen is itself the finding.
+    // The same predicates the list uses, so a disagreement with the screen is the finding.
     async fn counted(
         connection: &postio_storage::Checkout,
         sql: &str,
@@ -128,7 +86,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?,
     );
 
-    // ── every draft that is not merely being written ─────────────────────
     let rows = postio_storage::sql::all(
         &connection,
         "SELECT d.id, d.account_id, d.state, d.message_id, d.updated_at,
@@ -220,17 +177,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             None => println!("  operation       NONE  <-- nothing will ever pick this up"),
         }
-        // Milliseconds, not seconds: `DraftRepository` writes these through
-        // `to_millis`. Comparing them to a seconds clock printed "-1787389526040s
-        // ago", which is the sort of number that gets read as corruption.
+        // Milliseconds (`to_millis`); a seconds clock printed absurd ages.
         let updated_secs = updated / 1000;
         println!(
             "  updated_at      {updated} ({} ago)",
             humanise(now - updated_secs)
         );
 
-        // The verdict, said plainly, because the columns above are the
-        // evidence for it rather than the answer.
         let verdict = match (state.as_str(), live, send_at) {
             (_, false, _) if op.is_some() => {
                 "STUCK: the operation behind this finished and the draft was left \
@@ -266,7 +219,6 @@ fn dirs_store_path() -> std::path::PathBuf {
         })
 }
 
-/// A duration in seconds, said the way a person reads one.
 fn humanise(seconds: i64) -> String {
     match seconds {
         s if s < 0 => format!("{}s in the future", -s),

@@ -1,12 +1,3 @@
-//! Either of several values, `from:{ada tomas}`, through every way the
-//! store answers a query (spec 010, D26, FR-006).
-//!
-//! A set holds when any of its values does, and negated when none does.
-//! GTK's `executor::search` answers it as a condition (`filter_condition`),
-//! the conversation search as one set of message ids (`Plan::build_sets`),
-//! and a way out of no results counts it with the same sets; all three must
-//! give the answer each value's own clause gives, ORed.
-
 use std::collections::BTreeSet;
 
 use chrono::Duration;
@@ -25,13 +16,9 @@ use crate::conversations::{Mail, conversations, file, now, store, today};
 struct World {
     _database: postio_storage::Store,
     connection: postio_storage::Checkout,
-    /// From Ada, in the inbox, labelled Atlas.
     ada: MessageId,
-    /// From Tomás, archived, labelled Harbor.
     tomas: MessageId,
-    /// From Bo, in the inbox, no label.
     bo: MessageId,
-    /// From Ada, in the trash: out of All mail unless a folder is named.
     binned: MessageId,
 }
 
@@ -87,7 +74,6 @@ async fn world() -> World {
     }
 }
 
-/// GTK's path: `executor::search`.
 async fn searched(connection: &Connection, query: &str) -> BTreeSet<MessageId> {
     let parsed = parse(query, today());
     search(
@@ -109,7 +95,6 @@ async fn searched(connection: &Connection, query: &str) -> BTreeSet<MessageId> {
     .collect()
 }
 
-/// The conversation search's, every message its own conversation here.
 async fn as_conversations(connection: &Connection, query: &str) -> BTreeSet<MessageId> {
     let results = conversations(connection, query, ConversationOrder::Newest, 0, 50).await;
     assert_eq!(
@@ -127,7 +112,6 @@ async fn as_conversations(connection: &Connection, query: &str) -> BTreeSet<Mess
         .collect()
 }
 
-/// What a way out of no results would say it finds.
 async fn counted(connection: &Connection, query: &str) -> u64 {
     postio_index::executor::relaxation_counts(
         connection,
@@ -143,7 +127,6 @@ async fn counted(connection: &Connection, query: &str) -> u64 {
         .conversations
 }
 
-/// `query` answers `expected` every way it can be asked.
 async fn answers(world: &World, query: &str, expected: &[MessageId]) {
     let expected: BTreeSet<MessageId> = expected.iter().copied().collect();
     let connection = &world.connection;
@@ -213,8 +196,6 @@ async fn a_set_of_labels_or_folders_is_either_too() {
 
 #[tokio::test]
 async fn a_set_that_names_a_folder_lifts_all_mails_exclusions() {
-    // An `in:` names a folder, so the trash it names is searched; a set
-    // of them does the same (`names_a_folder`).
     let world = world().await;
     answers(&world, "in:{archive trash}", &[world.tomas, world.binned]).await;
     answers(&world, "-in:{archive inbox}", &[]).await;

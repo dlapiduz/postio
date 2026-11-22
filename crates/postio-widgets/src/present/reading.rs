@@ -1,10 +1,6 @@
-//! The reader's remote images, fetched for it (spec 006 FR-025, T137).
-//!
-//! The reader names the URLs a document shows as images, and only for a
-//! sender the user allowed or a message they chose to show once. It fetches
-//! nothing itself: this crate reaches no network. [`remote_fetch`] joins the
-//! reader to whatever fetcher the app's composition root owns, on that root's
-//! runtime, and hands what arrived back on the main loop.
+//! The reader's remote images, fetched for it. This crate reaches no network: [`remote_fetch`]
+//! joins the reader to the
+//! fetcher the composition root owns, on that root's runtime.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -14,17 +10,12 @@ use gtk::glib;
 
 use crate::reader::view::RemoteArrived;
 
-/// What a batch fetch answered for each URL: its bytes, or `None` for a URL
-/// that failed or was refused.
+/// `None` for a URL that failed or was refused.
 pub type Fetched = Vec<(url::Url, Option<Vec<u8>>)>;
 
-/// The reader's remote-image fetch (`Reader::set_remote_fetch`), over
-/// `fetch_all` run on `runtime`.
-///
-/// The document's own spelling of each URL is what the reader looks its
-/// images up by, and a fetch reports the parsed URL back, so the answer is
-/// mapped back to the spelling it was asked by. A URL that does not parse is
-/// never asked for; one that failed is simply absent from what arrives.
+/// The reader looks images up by the document's own spelling of each URL, so the answer is mapped
+/// back to it. A URL that
+/// does not parse is never asked for.
 pub fn remote_fetch<F, Fut>(
     runtime: tokio::runtime::Handle,
     fetch_all: F,

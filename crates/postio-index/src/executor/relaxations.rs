@@ -1,11 +1,5 @@
-//! How many conversations each way out of an empty search would find
-//! (spec 010, US6, research R7).
-//!
-//! [`postio_search::relax::relax`] proposes the looser searches; this counts
-//! them, one statement each, in the unit and over the match the results
-//! would show: conversations, every folder but drafts, junk and trash, and
-//! the sets a conversation search reads apart ([`super::IdSet`]) read apart
-//! here too, in the same statement as the walk they narrow.
+//! How many conversations each way out of an empty search would find, in the unit and over the
+//! match the results would show, one statement each.
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,15 +14,9 @@ use postio_storage::sql::{self, RowExt as _};
 use super::{COPY_KEY, Form, HITS_JOIN, Plan, SearchRequest};
 use crate::error::Result;
 
-/// Each relaxation's conversation total, in the order given: what
-/// `search_conversations` would say its `total` is. Past the cap a count is
-/// a floor, as every count is, and says so (`capped`).
-///
-/// Counted to [`TOTAL_HITS_CAP`], not the conversation walk's own, smaller
-/// cap (D30): this walk reads a conversation id a row, not the facets'
-/// columns, and five of them cost under 4 ms at the larger cap. A count
-/// between the two is then more exact than the search it opens, whose
-/// total says "5,000+"; the two agree, as a floor and a count do.
+/// Counted to [`TOTAL_HITS_CAP`], not the walk's smaller cap (D30): this walk reads a conversation
+/// id a row, and five cost under 4 ms at the larger cap.
+/// Past the cap a count is a floor and says so (`capped`).
 pub async fn relaxation_counts(
     connection: &Connection,
     account: AccountScope,
@@ -43,14 +31,8 @@ pub async fn relaxation_counts(
     Ok(counts)
 }
 
-/// One query's conversations, counted in one statement: the walk of its
-/// match under its conditions, each row with its conversation, then the
-/// ids of every set it has, intersected here.
-///
-/// The walk is driven by the free text when there is any, as every search
-/// is, and otherwise by the first set that must hold -- `from:ada` walks
-/// Ada's messages, not the mailbox -- so a variant costs what the query it
-/// stands for costs.
+/// Driven by the free text when there is any, otherwise by the first set that must hold, so a
+/// variant costs what the query it stands for costs.
 async fn count(
     connection: &Connection,
     account: AccountScope,
@@ -68,15 +50,10 @@ async fn count(
     .unwrap_or_default())
 }
 
-/// Each query's conversations, as [`count`] counts one, in **one**
-/// statement whatever their number: every query's arms in one union, each
-/// row tagged with the query it is for. What a completion's suggestions
-/// are counted with (spec 010 US7), where a statement each would spend the
-/// keystroke's budget on round trips.
-///
-/// The walk of each stops at `cap` matches, and a count that stopped says
-/// so: the relaxations pass [`TOTAL_HITS_CAP`], the total a conversation
-/// search would show; a completion passes its own, smaller cap (D29).
+/// One statement whatever their number, each row tagged with its query: a statement each would
+/// spend the keystroke budget on round trips.
+/// The walk stops at `cap`; relaxations pass [`TOTAL_HITS_CAP`], a completion its own smaller cap
+/// (D29).
 pub(super) async fn counts(
     connection: &Connection,
     account: AccountScope,
@@ -121,7 +98,6 @@ pub(super) async fn counts(
                 format!("FROM messages m WHERE {conditions}")
             }
         };
-        // Rows, not messages: the union's two halves, so twice the cap.
         params.push(turso::Value::Integer(limit.saturating_mul(2)));
         arms.push(format!(
             "SELECT * FROM (SELECT {index} AS q, -1 AS k, m.id AS id,
@@ -181,15 +157,11 @@ pub(super) async fn counts(
                         Some(key) == *driver || ids.contains(&id) != set.negated
                     })
             };
-            // One match per content, as `search_conversations` folds it: a
-            // message filed in two folders (#1780) is counted once, in the
-            // conversation of its earliest occurrence that holds. So is an
-            // exact copy with content of its own (#1526): its content is
-            // counted under the first content met with the same copy key.
+            // One match per content, as `search_conversations` folds it: a message filed in two
+            // folders (#1780), or an exact copy with content of its own (#1526), is counted once.
             let mut kept: HashMap<Held, (i64, i64)> = HashMap::new();
             let mut copies: HashMap<String, Held> = HashMap::new();
             let mut aliases: HashMap<Held, Held> = HashMap::new();
-            // A walk that filled its LIMIT may have more behind it.
             let mut capped = walked.len() as u64 >= cap.saturating_mul(2);
             for (id, conversation, content, copy) in walked {
                 if !holds(id) {
@@ -230,12 +202,8 @@ pub(super) async fn counts(
         .collect())
 }
 
-/// One row of a query's walk: the message, its conversation, its content and
-/// its copy key ([`COPY_KEY`]).
 type Walked = (i64, i64, Option<i64>, Option<String>);
 
-/// What one counted match is: its content, or the message itself when it has
-/// none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Held {
     Content(i64),

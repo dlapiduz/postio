@@ -1,40 +1,8 @@
-//! Watching `config.toml` and reloading it live.
-//!
-//! The design promises *applied live · nothing to save*, and that has to hold
-//! for edits made outside the app: `Ctrl+E` opens `$EDITOR`, and whatever the
-//! user does in there must land without a restart. Two things make a naive
-//! watcher fail at exactly that:
-//!
-//! 1. **Editors replace the file, they do not write it.** vim, emacs, GNOME
-//!    Text Editor and every careful writer save to a temporary file and
-//!    `rename(2)` it over the target. A watch registered on the config file
-//!    follows the *old* inode into the trash and goes deaf. So this watcher
-//!    watches the containing **directory** and filters events down to the one
-//!    file, which sees creations, replacements and deletions alike.
-//! 2. **One save is a burst of events.** A single `:w` is a truncate, a write,
-//!    a chmod and a close. A debounce coalesces them so the app reparses
-//!    once.
-//!
-//! Reparsing and validating happen on the watcher's own thread — the UI never
-//! does that work — and arrive as a [`Checked`], which the UI thread hands to
-//! [`LiveConfig::apply`](crate::live::LiveConfig::apply). That call is the seam
-//! for the `ConfigChanged` event: it reports whether anything actually changed,
-//! and it keeps the last good configuration when the file is broken.
-//!
-//! ```no_run
-//! use postio_config::live::LiveConfig;
-//! use postio_config::watch::ConfigWatcher;
-//!
-//! let path = postio_config::paths::config_path()?;
-//! let mut live = LiveConfig::load(&path);
-//! let watcher = ConfigWatcher::new(&path, move |checked| {
-//!     // On the watcher thread: hand `checked` to the UI thread, which calls
-//!     // `live.apply(checked)` and repaints only when that returns `Applied`.
-//!     let _ = checked;
-//! })?;
-//! # let _ = (watcher, live.config());
-//! # Ok::<(), postio_config::ConfigError>(())
-//! ```
+//! Watches the containing directory, not the file: editors save to a temporary file and rename it
+//! over
+//! the target, which would leave a watch on the old inode deaf. A debounce coalesces one save's
+//! burst of
+//! events into one reload. Parsing happens on the watcher's thread, never the UI's.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -46,16 +14,10 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use crate::error::{ConfigError, Result};
 use crate::validate::{self, Checked};
 
-/// How long the watcher waits for a save to settle before reparsing.
 pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(120);
 
-/// Tunables for [`ConfigWatcher`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchOptions {
-    /// Quiet period after the last file event before reparsing.
-    ///
-    /// Long enough that one save is one reload, short enough that the edit
-    /// still feels live.
     pub debounce: Duration,
 }
 
@@ -67,10 +29,8 @@ impl Default for WatchOptions {
     }
 }
 
-/// A running watch on `config.toml`.
-///
-/// Dropping it stops the watch and joins the worker thread, so no callback can
-/// arrive after the watcher is gone.
+/// Dropping it stops the watch and joins the worker, so no callback can arrive after the watcher is
+/// gone.
 #[derive(Debug)]
 pub struct ConfigWatcher {
     path: PathBuf,
@@ -79,10 +39,8 @@ pub struct ConfigWatcher {
 }
 
 impl ConfigWatcher {
-    /// Watch `path` with the default debounce.
-    ///
-    /// `on_change` runs on the watcher's thread, once per settled save, with
-    /// the file already reparsed and validated.
+    /// `on_change` runs on the watcher's thread, once per settled save, with the file already
+    /// reparsed and validated.
     pub fn new<F>(path: &Path, on_change: F) -> Result<Self>
     where
         F: FnMut(Checked) + Send + 'static,
@@ -90,11 +48,8 @@ impl ConfigWatcher {
         Self::with_options(path, WatchOptions::default(), on_change)
     }
 
-    /// Watch `path`, choosing the debounce.
-    ///
-    /// The parent directory is created if it does not exist: it is Postio's own
-    /// config directory, and watching it is how a first-run `config.toml` is
-    /// noticed the moment it appears.
+    /// Creates the parent directory: watching it is how a first-run `config.toml` is noticed when
+    /// it appears.
     pub fn with_options<F>(path: &Path, options: WatchOptions, mut on_change: F) -> Result<Self>
     where
         F: FnMut(Checked) + Send + 'static,
@@ -133,7 +88,6 @@ impl ConfigWatcher {
         })
     }
 
-    /// The file being watched, as it was given.
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -141,7 +95,6 @@ impl ConfigWatcher {
 
 impl Drop for ConfigWatcher {
     fn drop(&mut self) {
-        // Dropping the watcher drops the sender, which ends the worker's loop.
         self.watcher = None;
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -156,7 +109,6 @@ fn watch_error(path: &Path, message: &str) -> ConfigError {
     }
 }
 
-/// Nothing to wake up for: a disconnect interrupts this immediately.
 const IDLE: Duration = Duration::from_secs(3600);
 
 fn run<F>(
@@ -183,17 +135,13 @@ fn run<F>(
             Err(RecvTimeoutError::Disconnected) => return,
         }
         if debounce.take_due(Instant::now()) {
-            // Parsing and validation happen here, off the UI thread.
             on_change(validate::check_path(path));
         }
     }
 }
 
-/// Whether an event is about our file and means it may have changed.
-///
-/// Reads are ignored deliberately: the inotify backend reports `open`, and
-/// reloading *opens the file*, so treating access as a change would make the
-/// watcher feed itself forever.
+/// Reads are ignored: the inotify backend reports `open`, and reloading opens the file, so counting
+/// access would make the watcher feed itself.
 fn touches(event: &Event, path: &Path) -> bool {
     if matches!(event.kind, EventKind::Access(_)) {
         return false;
@@ -201,11 +149,7 @@ fn touches(event: &Event, path: &Path) -> bool {
     event.paths.iter().any(|candidate| candidate == path)
 }
 
-/// Coalesces a burst of file events into one reload.
-///
-/// Deliberately a plain state machine over an injected `Instant` rather than a
-/// timer thread: the reload rule is the part worth testing, and this way it is
-/// tested without sleeping.
+/// A plain state machine over an injected `Instant`, tested without sleeping.
 #[derive(Debug)]
 struct Debounce {
     window: Duration,
@@ -217,17 +161,14 @@ impl Debounce {
         Self { window, due: None }
     }
 
-    /// Note a file event: the quiet period starts again from `now`.
     fn touch(&mut self, now: Instant) {
         self.due = Some(now + self.window);
     }
 
-    /// How long to wait before the pending reload is due, if one is pending.
     fn wait(&self, now: Instant) -> Option<Duration> {
         self.due.map(|due| due.saturating_duration_since(now))
     }
 
-    /// Whether a reload is due now, consuming it if so.
     fn take_due(&mut self, now: Instant) -> bool {
         match self.due {
             Some(due) if due <= now => {
@@ -336,8 +277,6 @@ mod tests {
 
     #[test]
     fn a_rename_that_mentions_our_file_counts_whichever_side_it_is_on() {
-        // An atomic save arrives as `tmp -> config.toml`; either path matching
-        // means the file we care about moved.
         let path = Path::new(CONFIG);
         let both = event(
             EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
@@ -348,7 +287,6 @@ mod tests {
 
     #[test]
     fn reading_the_file_is_not_a_change() {
-        // Otherwise our own reload would retrigger the watcher forever.
         let path = Path::new(CONFIG);
         for kind in [
             EventKind::Access(AccessKind::Open(AccessMode::Read)),

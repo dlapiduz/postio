@@ -1,33 +1,6 @@
-//! The suite's `--list` output is a contract with whatever runs it, and
-//! breaking it fails **green**.
-//!
-//! `cargo test` only ever asks this harness to run tests. A process-per-test
-//! runner asks it two questions first — every test, then the ignored subset —
-//! and believes the answers. Get the second one wrong and the runner concludes
-//! that everything is ignored: it runs nothing, reports success, and finishes
-//! in about a second. That is the failure this repository has now paid for in
-//! four costumes (#114, #355, #551, #596), and it is the reason this is a test
-//! rather than a comment asking people to be careful.
-//!
-//! It was also a real bug, not a hypothetical: `--list --format terse
-//! --ignored` printed *every* case, because the harness matched on `--list`
-//! and ignored the rest of the line.
-//!
-//! # What is checked
-//!
-//! * every line of `--list --format terse` ends in `: test`, which is what a
-//!   runner parses and rejects anything else for;
-//! * `--format terse` carries no trailing count — real libtest emits the names
-//!   and nothing else, and the count is only for the non-terse form the
-//!   tooling's test counting reads;
-//! * the ignored list is a subset of the full list;
-//! * every name in `IGNORED` is a real row in `CASES`.
-//!
-//! That last one is the quiet one. A mute names a case by string, so renaming
-//! or deleting the case leaves an entry that matches nothing — the mute is
-//! dead, nothing says so, and the case either runs when it was meant not to or
-//! was never held out at all. Same shape as the stale `rerun-if-changed` in
-//! `docs/archive/engineering-notes.md`: no error, just a wrong answer forever.
+//! The suite's `--list` output is a contract with the runner, and breaking it fails green: a runner
+//! that misreads `--list --ignored`
+//! concludes everything is ignored, runs nothing and reports success (#114, #355, #551, #596).
 
 use std::process::Command;
 

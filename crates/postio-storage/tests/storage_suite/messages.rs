@@ -1,11 +1,3 @@
-//! The message repository, and the windowed paging query the list depends on.
-//!
-//! Written before the repository existed. The bead's acceptance criteria are
-//! "paging over a 100k-message fixture stays flat in time and memory", "the
-//! sort key is stable across inserts (no row skipping while paging)" and a
-//! recorded benchmark; the first two have tests here, and
-//! `the_message_list_plan_never_sorts` is the structural half of the first.
-
 use postio_storage::sql::bind;
 use std::time::Duration;
 
@@ -27,7 +19,6 @@ fn at(seconds: i64) -> DateTime<Utc> {
         .unwrap()
 }
 
-/// A message with enough on it to be worth round-tripping.
 fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
     let mut message = Message::new(account, mailbox, at(seconds));
     message.rfc_message_id = Some(RfcMessageId::new(format!("<m{seconds}@example.com>")));
@@ -59,10 +50,6 @@ fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64)
     message.sync.body_state = BodyState::HeadersOnly;
     message
 }
-
-// ---------------------------------------------------------------------------
-// Create, read, update, delete
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_message_round_trips_with_its_recipients_and_attachments() {
@@ -125,9 +112,6 @@ async fn a_message_s_own_content_type_round_trips() {
 
 #[tokio::test]
 async fn a_message_with_no_content_type_recorded_reads_back_as_none() {
-    // A row synced before this field existed, or a draft nothing has parsed
-    // `BODYSTRUCTURE` for yet -- distinct from an empty string, which would
-    // be a wrong answer rather than an honest "not known".
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -143,10 +127,7 @@ async fn a_message_with_no_content_type_recorded_reads_back_as_none() {
 
 #[tokio::test]
 async fn a_message_s_text_is_flowed_flag_round_trips() {
-    // #456: a reply built from a message loaded back out of storage needs
-    // this to survive the round trip, or every message a user actually
-    // replies to (loaded from the database, never straight off the parser)
-    // would silently lose it.
+    // #456: a reply built from a loaded message needs this to survive the round trip.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -195,8 +176,6 @@ async fn a_message_s_list_id_round_trips() {
 
 #[tokio::test]
 async fn a_message_with_no_list_id_reads_back_as_none() {
-    // Most mail is not list mail; a `None` here must stay `None`, not an
-    // empty string that would misread as a list with no name.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -325,12 +304,9 @@ async fn deleting_messages_takes_their_recipients_and_attachments() {
     );
 }
 
-/// The body is stored on the row (ADR 0020) but is *not* carried on the
-/// [`Message`] a `get` hands back.
-///
-/// That is the whole reason `body` is a separate call: the list pages over
-/// rows of a few hundred bytes, and a body on every `Message` would put the
-/// mailbox in memory. `tests/body.rs` holds down the round trip itself.
+/// The body is stored on the row (ADR 0020) but not carried on the `Message` a `get` returns, or
+/// the
+/// list would put the mailbox in memory.
 #[tokio::test]
 async fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
     let database = test_support::memory().await;
@@ -339,7 +315,6 @@ async fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() 
     let messages = MessageRepository::new(&connection);
 
     let mut message = a_message(inbox, account.id, 5);
-    // The raw `.eml` is still a blob: large, streamed, deduplicated.
     message.raw_blob_id = Some(postio_model::BlobId::new("a".repeat(64)));
     let id = messages.create(&mut message).await.expect("create");
 
@@ -372,10 +347,6 @@ async fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() 
         "a listed message does not drag its body along; `body` is the way to it"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Backfill candidates
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn needing_backfill_returns_newest_first_and_skips_full_bodies() {
@@ -498,10 +469,6 @@ async fn backfill_candidate_looks_up_a_single_message_by_id_alone() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Batch upsert, the shape sync writes in
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
     let database = test_support::memory().await;
@@ -522,7 +489,6 @@ async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
     let ids: Vec<MessageId> = batch.iter().map(|message| message.id).collect();
     assert!(ids.iter().copied().all(MessageId::is_assigned));
 
-    // The same UIDs come back with a flag change, plus one genuinely new one.
     let mut again = vec![
         a_message(inbox, account.id, 10),
         a_message(inbox, account.id, 11),
@@ -580,10 +546,6 @@ async fn a_locally_composed_message_with_no_uid_is_never_matched_by_upsert() {
     );
     assert_ne!(batch[0].id, batch[1].id);
 }
-
-// ---------------------------------------------------------------------------
-// Lookups
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_message_can_be_found_by_its_server_uid() {
@@ -667,10 +629,6 @@ async fn messages_can_be_found_by_rfc_message_id_and_duplicates_all_come_back() 
         "Message-IDs compare case-insensitively, the way threading needs"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Flags, moves, local delete
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_local_flag_change_marks_the_row_dirty_and_a_server_one_does_not() {
@@ -917,8 +875,6 @@ async fn waking_due_snoozes_never_touches_another_accounts_rows() {
     let id_b = messages.create(&mut message_b).await.expect("create b");
 
     let now = Utc::now();
-    // Truncated to millisecond precision: that is what the column stores,
-    // and the round trip below has to match it exactly.
     let due =
         DateTime::from_timestamp_millis((now - Duration::from_secs(1)).timestamp_millis()).unwrap();
     messages.snooze(&[id_a], due).await.expect("snooze a");
@@ -971,14 +927,6 @@ async fn unsnoozing_clears_it_immediately_without_waiting_for_wake_due() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The windowed list query
-// ---------------------------------------------------------------------------
-
-/// Inserts `count` messages straight into the table, newest last.
-///
-/// Raw SQL and one statement: this is the fixture for the paging tests, and
-/// building it through the repository would make them a test of insert speed.
 pub(crate) async fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
     connection
         .execute(
@@ -1093,7 +1041,6 @@ async fn a_message_arriving_mid_scroll_does_not_make_the_list_skip_a_row() {
         .expect("first page");
     let cursor = first.last().expect("a row").cursor();
 
-    // IDLE delivers a new message at the top while the user is still scrolling.
     let mut arrival = a_message(inbox, account.id, 1_000_000);
     messages.create(&mut arrival).await.expect("create");
 
@@ -1236,10 +1183,6 @@ async fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_fold
         .await
         .expect("two threads");
 
-    // A conversation half of which has been archived, which is what an
-    // ordinary thread looks like after anyone has tidied up — plus a second
-    // thread in the same folder, so a scope that ignored the thread entirely
-    // would be caught rather than passing by luck.
     let mut ours = Vec::new();
     for (mailbox, minute) in [(inbox, 10), (archive.id, 20), (inbox, 30), (archive.id, 40)] {
         let mut message = a_message(mailbox, account.id, minute);
@@ -1274,11 +1217,6 @@ async fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_fold
     );
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: flat in time and memory over a large mailbox
-// ---------------------------------------------------------------------------
-
-/// Whether a plan resolves through an index rather than a scan or a sort.
 async fn plan_of(connection: &Connection, sql: &str) -> String {
     test_support::plan(connection, sql).await
 }
@@ -1330,22 +1268,9 @@ async fn the_message_list_plan_never_sorts() {
     }
 }
 
-/// A cursor page seeks past the cursor rather than filtering down to it.
-///
-/// The clock version of this is
-/// `paging_scale::paging_stays_flat_over_a_hundred_thousand_messages`, which
-/// seeds 100,000 rows and takes two minutes, on the nightly timer. This asks the same question
-/// of the planner in a tenth of a second, and it is the one that will say
-/// *why*: an index term naming the sort column means a seek, and its absence
-/// means the engine found the scope, then walked every row above the cursor
-/// testing each one. Measured before the fix, that was 1.4 ms for the first
-/// page against 107 ms for a page 95,000 rows in.
-///
-/// The spelling that produces the term is in `where_clause`, and it is not the
-/// obvious one -- a row value comparison, which SQLite turns into exactly this
-/// range constraint, this engine plans as a filter. So the assertion is about
-/// the plan and not about the SQL: what matters is that the cursor *reaches*
-/// the index, however it is written.
+/// The nightly `paging_scale` test asks the clock; this asks the planner: an index term naming the
+/// sort column is a seek. The cursor is written as a range, since this engine plans a row-value
+/// comparison as a filter.
 #[tokio::test]
 async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
     let database = test_support::memory().await;
@@ -1353,8 +1278,6 @@ async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
     let messages = MessageRepository::new(&connection);
 
     for (label, query, sort_column) in [
-        // A folder seeks its list's own key (spec 007, research R7), and a
-        // query view `received_at`.
         ("mailbox", ListQuery::mailbox(MailboxId::new(1)), "sort_at"),
         (
             "account",
@@ -1377,10 +1300,6 @@ async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Reading an explicit, ranked set of ids
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn rows_for_answers_in_the_order_it_was_asked() {
     let database = test_support::memory().await;
@@ -1388,9 +1307,6 @@ async fn rows_for_answers_in_the_order_it_was_asked() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    // Created oldest first, so id order and received_at order agree. That is
-    // what makes "came back in the order asked" a claim about the argument
-    // rather than a coincidence of how SQLite walked the table.
     let mut ids = Vec::new();
     for step in 0..5 {
         let mut message = a_message(inbox, account.id, step * 10);
@@ -1398,8 +1314,6 @@ async fn rows_for_answers_in_the_order_it_was_asked() {
         ids.push(message.id);
     }
 
-    // A ranking is neither of those orders. This one is deliberately not
-    // sorted, not reverse-sorted, and not contiguous.
     let ranked = vec![ids[3], ids[0], ids[4], ids[1]];
     let rows = messages.rows_for(&ranked).await.expect("rows");
 
@@ -1408,7 +1322,6 @@ async fn rows_for_answers_in_the_order_it_was_asked() {
         ranked,
         "the rows came back in the store's order rather than the ranking"
     );
-    // Real rows, not stubs: the list draws these.
     assert_eq!(rows[0].subject.as_deref(), Some("Re: Subject 30"));
     assert_eq!(
         rows[0].from.as_ref().map(|from| from.address.as_str()),
@@ -1431,9 +1344,8 @@ async fn rows_for_drops_what_the_store_no_longer_holds() {
         ids.push(message.id);
     }
 
-    // The index and the store are allowed to disagree for a moment: a search
-    // can hand back a message deleted between the query and this read. That
-    // is a shorter answer, not an error, and certainly not a fabricated row.
+    // A search can hand back a message deleted between the query and this read: a shorter answer,
+    // not an error.
     messages.delete(&[ids[1]]).await.expect("delete");
 
     let rows = messages.rows_for(&ids).await.expect("rows");
@@ -1443,11 +1355,9 @@ async fn rows_for_drops_what_the_store_no_longer_holds() {
         "a deleted hit was faked or the survivors were reordered"
     );
 
-    // Nothing asked for, nothing read -- and no SQL with an empty `IN ()`,
-    // which SQLite rejects outright.
+    // An empty `IN ()` is rejected by SQLite.
     assert!(messages.rows_for(&[]).await.expect("rows").is_empty());
 
-    // An id that was never real is the same case.
     assert!(
         messages
             .rows_for(&[MessageId::new(999_999)])
@@ -1457,19 +1367,10 @@ async fn rows_for_drops_what_the_store_no_longer_holds() {
     );
 }
 
-// ── A resync must not resurrect what an undrained operation has moved ─────
-//
-// Archiving is local-first: the row moves to Archive in SQLite, a Move is
-// queued, the list repaints. The server is told later, when the queue drains.
-// In that window the server still lists the message in INBOX, so an INBOX
-// resync fetches it and `upsert_batch` — which keys on (mailbox, validity,
-// uid) — finds no row there and inserts a fresh one. The message the user
-// just archived is back in the inbox, and stays there until the queue drains,
-// which on a link that is down is indefinite (#368).
+// Archiving moves the row locally and queues a Move; an INBOX resync before the queue drains finds
+// no row at the old (mailbox, validity, uid) and inserts a fresh one, resurrecting the message
+// (#368).
 
-/// Enqueues `operation` against `message`, exactly as the local write does:
-/// the enqueue snapshots the server coordinates before the local half nulls
-/// them (#289).
 async fn enqueue_and_move_locally(
     connection: &Connection,
     account: postio_model::AccountId,
@@ -1487,8 +1388,6 @@ async fn enqueue_and_move_locally(
         )
         .await
         .expect("enqueue");
-    // The local half: the row moves, and its server coordinates go with the
-    // queue row rather than staying on a message that is no longer there.
     connection
         .execute(
             "UPDATE messages SET mailbox_id = ?2, uid = NULL, uid_validity = NULL, remote_id = NULL
@@ -1518,7 +1417,6 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
     let archive = test_support::mailbox(&connection, &account, "Archive").await;
     let messages = MessageRepository::new(&connection);
 
-    // A message the server has in INBOX, synced normally.
     let mut batch = vec![a_message(inbox, account.id, 40)];
     messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
@@ -1527,7 +1425,6 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
         batch[0].server.uid_validity.expect("validity"),
     );
 
-    // The user archives it. Nothing has reached the server yet.
     enqueue_and_move_locally(
         &connection,
         account.id,
@@ -1546,8 +1443,6 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
     );
     assert_eq!(rows_in(&connection, archive.id).await, 1);
 
-    // Now an INBOX resync runs before the queue drains. The server still
-    // lists the message in INBOX, so this is exactly what it hands back.
     let mut resynced = vec![a_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
@@ -1653,7 +1548,6 @@ async fn the_shadow_lifts_once_the_operation_settles() {
         )
         .await;
 
-        // The queue row settles, one way or the other.
         let queue = OperationQueueRepository::new(&connection);
         let pending = queue.pending(account.id, at(0)).await.expect("pending");
         let id = pending.first().expect("one queued row").id;
@@ -1665,11 +1559,8 @@ async fn the_shadow_lifts_once_the_operation_settles() {
                 .expect("failed"),
         }
 
-        // A server that still lists the message in INBOX is now telling us
-        // something we have to believe: either the move never happened, or
-        // it happened and this is a genuinely different message at that UID.
-        // Either way the shadow must be gone, or a failed move hides a
-        // message for ever.
+        // A server that still lists the message in INBOX means the move never happened or this is a
+        // different message; either way the shadow must go.
         let mut resynced = vec![a_message(inbox, account.id, 42)];
         resynced[0].server.uid = Some(uid);
         resynced[0].server.uid_validity = Some(validity);
@@ -1689,10 +1580,6 @@ async fn the_shadow_lifts_once_the_operation_settles() {
 
 #[tokio::test]
 async fn the_sections_holding_a_message_s_text_round_trip() {
-    // What the text axis fetches instead of `BODY.PEEK[]` (ADR 0017). The
-    // header sync already parses these out of `BODYSTRUCTURE` and then throws
-    // them away; without them the backfill cannot name the parts it wants and
-    // has to pull the whole message, attachments included.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1710,11 +1597,8 @@ async fn the_sections_holding_a_message_s_text_round_trip() {
 
 #[tokio::test]
 async fn a_message_synced_before_the_text_sections_existed_reads_back_as_none() {
-    // The migration cannot invent these for rows already on disk, and
-    // guessing `1` would be a wrong answer for every multipart message. NULL
-    // is the honest "not known", and the backfill falls back to fetching the
-    // whole message for such a row -- the same convention `content_type`
-    // (migration 0004) set for this table.
+    // NULL is the honest "not known" for rows already on disk; the backfill falls back to fetching
+    // the whole message.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1732,15 +1616,9 @@ async fn a_message_synced_before_the_text_sections_existed_reads_back_as_none() 
 
 #[tokio::test]
 async fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
-    // The bug the e2e gate caught. `partial` means text local, payloads not
-    // (ADR 0017), and it is a *settled* state -- there is nothing more the
-    // background lane should do for such a message.
-    //
-    // While this query asked for `body_state <> 'full'`, every text-backfilled
-    // message carrying an attachment came straight back as a candidate: fetch
-    // its text, store it, settle at `partial`, and be handed back by the very
-    // next seed. The backfill spun on one message forever and starved
-    // everything behind it, including newly arriving mail.
+    // `partial` is a settled state for the background lane: asking for `body_state <> 'full'` made
+    // the
+    // backfill spin on one message for ever and starve new mail.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1768,10 +1646,8 @@ async fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
 
 #[tokio::test]
 async fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
-    // The other side of it. `partial` is settled for the *background* lane,
-    // not for the user: opening an attachment on such a message has to be
-    // able to ask for the parts the background lane deliberately declined,
-    // so the interactive lookup still answers for it.
+    // `partial` is settled for the background lane, not the user: opening an attachment still needs
+    // the lookup.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1791,11 +1667,6 @@ async fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The payload axis (ADR 0017, #377)
-// ---------------------------------------------------------------------------
-
-/// A message carrying one named payload part, text already local.
 fn with_a_payload(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
     let mut message = a_message(mailbox, account, seconds);
     message.sync.body_state = BodyState::Partial;
@@ -1834,10 +1705,9 @@ async fn a_fetched_payload_is_recorded_against_the_part_that_asked_for_it() {
 
 #[tokio::test]
 async fn a_payload_key_for_a_part_the_message_does_not_have_writes_nothing() {
-    // The `part_id` the reading pane carries survives a refetch; an id from a
-    // structure the server has since changed does not. Answering `false`
-    // rather than erroring is what lets the caller treat it as "that part is
-    // gone" -- the same answer `Outcome::Gone` gives for a whole message.
+    // A `part_id` from a structure the server has since changed answers `false`, not an error, so
+    // the
+    // caller treats the part as gone.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1860,10 +1730,9 @@ async fn a_payload_key_for_a_part_the_message_does_not_have_writes_nothing() {
 
 #[tokio::test]
 async fn what_explains_a_payloads_bytes_is_kept_beside_it() {
-    // Same reason `text_part_headers` exists (#376): `BODY[2]` hands back a
-    // part's *encoded* bytes and none of its headers, so nothing in the
-    // response says whether they are base64. `BODYSTRUCTURE` said so at
-    // header-sync time and this is where the answer is kept.
+    // `BODY[2]` returns a part's encoded bytes with no headers, so whether they are base64 is kept
+    // from
+    // `BODYSTRUCTURE` at header-sync time.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1883,8 +1752,6 @@ async fn what_explains_a_payloads_bytes_is_kept_beside_it() {
 
 #[tokio::test]
 async fn the_payload_backlog_is_the_partial_messages_still_missing_bytes() {
-    // What `eager` drains. The background *text* lane treats `partial` as
-    // settled (#376); the payload lane is the one that has work left there.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1946,10 +1813,6 @@ async fn a_message_whose_payloads_have_all_landed_becomes_full() {
 
 #[tokio::test]
 async fn two_messages_from_the_same_sender_share_one_address_row() {
-    // `recipients` and its indexes are 56 MB of a 163 MB database -- 34%, and
-    // larger than `messages` itself -- because 378,819 rows each store an
-    // address and its lowercased near-duplicate. An account corresponds with
-    // tens of thousands of distinct addresses, not 378,819 (ADR 0017).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1957,9 +1820,6 @@ async fn two_messages_from_the_same_sender_share_one_address_row() {
 
     for uid in [400, 401, 402] {
         let mut message = a_message(inbox, account.id, uid);
-        // Exactly two correspondents, the same two every time -- the shape a
-        // real mailbox has at scale, where a few thousand people account for
-        // hundreds of thousands of header rows.
         message.from = vec![postio_model::EmailAddress::new(
             None::<String>,
             "ada@example.com",
@@ -1991,10 +1851,8 @@ async fn two_messages_from_the_same_sender_share_one_address_row() {
 
 #[tokio::test]
 async fn an_address_is_shared_case_insensitively() {
-    // The point of `address_normalized` in the first place: `Ada@Example.com`
-    // and `ada@example.com` are one correspondent, and `from:` has always
-    // matched them as one. Sharing a row is what makes that structural rather
-    // than a rule every query has to remember.
+    // `Ada@Example.com` and `ada@example.com` are one correspondent; sharing a row makes that
+    // structural.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2018,8 +1876,6 @@ async fn an_address_is_shared_case_insensitively() {
     .expect("count");
     assert_eq!(addresses, 1, "one correspondent, however it was spelled");
 
-    // And the row that exists keeps the first spelling seen, rather than
-    // flip-flopping as later mail arrives.
     let stored: String = postio_storage::sql::one(
         &connection,
         "SELECT address FROM addresses WHERE address_normalized = 'ada@example.com'",
@@ -2033,9 +1889,6 @@ async fn an_address_is_shared_case_insensitively() {
 
 #[tokio::test]
 async fn a_message_still_reads_back_the_addresses_it_was_given() {
-    // The normalization must be invisible above the repository: the verbatim
-    // spelling and the display name are per-header facts and stay on the
-    // recipient row, while only the addr-spec is shared.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2057,19 +1910,10 @@ async fn a_message_still_reads_back_the_addresses_it_was_given() {
     assert_eq!(stored.to, message.to, "and header order preserved");
 }
 
-// ---------------------------------------------------------------------------
-// A queued flag survives the resync that has not seen it yet (#317)
-// ---------------------------------------------------------------------------
-//
-// The move case above drops the whole message from the batch, because the
-// message is not in that mailbox any more as far as the user is concerned. A
-// flag cannot be handled that way: the row *is* still there, and everything
-// else the server says about it — subject, size, what parts it has — is news
-// worth taking. Only the flags the queue is still holding intent about have to
-// survive.
+// A flag cannot be handled like an undrained move (dropping the message from the batch): the row is
+// still there and the rest of what the server says is news. Only flags the queue still holds intent
+// about must survive (#317).
 
-/// The shared fixture, but unread — which is the state a message the cursor
-/// has not rested on is in, and the one these tests are about.
 fn an_unread_message(
     mailbox: MailboxId,
     account: postio_model::AccountId,
@@ -2080,8 +1924,6 @@ fn an_unread_message(
     message
 }
 
-/// Marks `message` read locally and queues the flag, in the order the dwell
-/// does it: the local write first, then the operation that will carry it.
 async fn read_locally_and_enqueue(
     connection: &Connection,
     account: postio_model::AccountId,
@@ -2122,7 +1964,6 @@ async fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    // A message the server has, unread, synced normally.
     let mut batch = vec![an_unread_message(inbox, account.id, 40)];
     messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
@@ -2132,12 +1973,9 @@ async fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
     );
     assert!(!is_seen(&connection, message).await, "it starts unread");
 
-    // The cursor rests on it: read locally, and queued for the server.
     read_locally_and_enqueue(&connection, account.id, message).await;
     assert!(is_seen(&connection, message).await, "the dwell wrote it");
 
-    // A CHANGEDSINCE pass runs before the drainer gets there. The server has
-    // not been told yet, so it hands back exactly what it still believes.
     let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
@@ -2158,10 +1996,8 @@ async fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
 
 #[tokio::test]
 async fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
-    // The other half, and the reason this cannot be solved by skipping the
-    // message the way an undrained move is. A flag the user never touched is
-    // the server's to report -- somebody flagged it on their phone -- and it
-    // has to arrive even while a *different* flag is mid-flight.
+    // A flag the user never touched is the server's to report, even while a different flag is
+    // mid-flight.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2177,8 +2013,6 @@ async fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
 
     read_locally_and_enqueue(&connection, account.id, message).await;
 
-    // The server reports it flagged -- and still unseen, because it has not
-    // heard about the read yet.
     let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
@@ -2207,10 +2041,8 @@ async fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
 
 #[tokio::test]
 async fn a_drained_flag_stops_being_protected() {
-    // The bound on the rule: local intent wins only until the operation that
-    // carries it has settled. After that the server is authoritative again,
-    // and a message someone marked unread on their phone must be able to come
-    // back unread here.
+    // Local intent wins only until its operation has settled; after that the server is
+    // authoritative.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2226,7 +2058,6 @@ async fn a_drained_flag_stops_being_protected() {
 
     read_locally_and_enqueue(&connection, account.id, message).await;
 
-    // The drainer pushes it and marks the row done.
     {
         use postio_storage::repository::OperationQueueRepository;
         let queue = OperationQueueRepository::new(&connection);
@@ -2236,8 +2067,6 @@ async fn a_drained_flag_stops_being_protected() {
         }
     }
 
-    // Now the server says unseen -- which now means somebody read it and
-    // marked it unread again elsewhere, not that our write is in flight.
     let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
@@ -2256,10 +2085,8 @@ async fn a_drained_flag_stops_being_protected() {
 
 #[tokio::test]
 async fn upsert_matches_a_row_by_identity_before_the_wire_pair() {
-    // #544: a non-IMAP backend's uid is a synthetic enumeration hint and can
-    // shift between passes; the identity is what names the message. A fetch
-    // carrying a known remote_id under a different uid must update the row
-    // it names, never insert a second copy of the same message.
+    // #544: a non-IMAP backend's uid is a synthetic hint that can shift; a known remote_id under a
+    // different uid updates the row it names.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2283,10 +2110,8 @@ async fn upsert_matches_a_row_by_identity_before_the_wire_pair() {
 
 #[tokio::test]
 async fn a_truncated_header_block_says_so_when_it_is_read_back() {
-    // The flag is the difference between "this message has no such header" and
-    // "the part of it that was kept has none". An evaluator that could not
-    // tell those apart would report absence with the same confidence either
-    // way, which is the one thing a search must not do.
+    // The flag separates "no such header" from "the kept part has none"; a search must not report
+    // absence with the same confidence for both.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2319,8 +2144,6 @@ async fn a_truncated_header_block_says_so_when_it_is_read_back() {
 
 #[tokio::test]
 async fn a_whole_header_block_is_not_marked_truncated() {
-    // The ordinary case, and the one that must not drift to `true` by
-    // accident: every message in a real store takes this path.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2355,11 +2178,8 @@ async fn a_whole_header_block_is_not_marked_truncated() {
 
 #[tokio::test]
 async fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dropped() {
-    // `ParsedMessage::into_message` has always filled `Message.headers`, and
-    // the repository has never read or written them -- so a `Message` loaded
-    // from the store came back with an empty block however much mail was in
-    // it. That asymmetry is what #479's differential test exists to catch: the
-    // in-memory matcher and the index have to be looking at the same headers.
+    // `into_message` fills `Message.headers` but the repository never read or wrote them, so the
+    // in-memory matcher and the index saw different headers (#479).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2376,12 +2196,9 @@ async fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dro
                 headers: Some(
                     concat!(
                         "Received: from a.example.com\r\n",
-                        // No leading whitespace on these: a continuation line
-                        // is exactly how RFC 5322 folds one value across two
-                        // lines, so an indented "X-Mailer:" here would be part
-                        // of the Received above rather than a field of its own.
-                        // rustfmt joining a line-continuation literal is what
-                        // made that mistake the first time.
+                        // No leading whitespace: a continuation line folds one value across two
+                        // lines, so an
+                        // indented "X-Mailer:" would be part of the Received.
                         "X-Mailer: mutt 1.5.24\r\n",
                         "Received: from b.example.com",
                     )
@@ -2415,8 +2232,6 @@ async fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dro
 
 #[tokio::test]
 async fn a_message_with_no_stored_block_has_no_headers_rather_than_an_error() {
-    // Every message in every store today, until the repair pass reaches it.
-    // "Nothing downloaded yet" is not a fault.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2435,10 +2250,9 @@ async fn a_message_with_no_stored_block_has_no_headers_rather_than_an_error() {
 
 #[tokio::test]
 async fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
-    // Every message in every store that exists today: `body_headers` has been
-    // NULL since migration 0001 because nothing ever wrote it. The pass has to
-    // find them, and has to stop finding them once they are done or it spins
-    // (#500).
+    // `body_headers` was NULL since migration 0001; the pass must find those rows and stop finding
+    // them
+    // once done, or it spins (#500).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2462,9 +2276,6 @@ async fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
         .await
         .expect("set");
 
-    // Never downloaded: not a repair candidate. Its block will arrive with its
-    // body like any other, and offering it here would put a message on the
-    // queue that the pass can do nothing about.
     let mut untouched = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
     messages.create(&mut untouched).await.expect("create");
 
@@ -2480,8 +2291,6 @@ async fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
         "the blob is what makes this repairable without a network call"
     );
 
-    // And once repaired it stops coming back, which is the contract #500's
-    // no-progress guard is watching for.
     messages
         .set_headers(
             fetched_id,
@@ -2503,20 +2312,8 @@ async fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
 
 #[tokio::test]
 async fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
-    // The hazard this was written for is gone, and the claim it protects is
-    // not. `body_text`, `body_html` and `body_headers` shared one
-    // `body_dictionary_id`, so a repair that compressed the block against a
-    // newer dictionary made the text and html beside it unreadable -- ADR
-    // 0020's frames can only be read with the dictionary they were written
-    // against. Losing a message's words to a pass that was only supposed to
-    // add its headers is the shape of it.
-    //
-    // The columns are plain TEXT now (`docs/archive/specs/004-turso-store`), so there is
-    // no dictionary to get wrong. What survives is the simpler half:
-    // `set_headers` writes one column and must not touch the other two. That
-    // is still a real way to lose mail -- routing the repair through
-    // `set_body`, which replaces every part, would clear both -- and it is
-    // what this now holds down.
+    // `set_headers` writes one column and must not touch the other two; routing the repair through
+    // `set_body` would clear both.
     let store = test_support::memory().await;
     let connection = store.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2565,19 +2362,10 @@ async fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
 
 #[tokio::test]
 async fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() {
-    // #942. A sent message is written into Sent locally the moment it is on
-    // its way, so the user can see it — before the IMAP `APPEND` has given it
-    // a server identity. The identity arrives afterwards.
-    //
-    // Until then the row has no `remote_id` and no uid, so neither of the two
-    // things `upsert_batch` matches on can find it: a resync of Sent that
-    // fetched the server's own copy inserted a *second* row, and the user's
-    // Sent folder showed the message twice.
-    //
-    // The reserved `Message-ID` is what ties them together. It is the same key
-    // ADR 0021 already uses to answer "did this send arrive?" against the Sent
-    // folder, and it is only consulted for a local row that has no server
-    // identity at all — a row nothing but this client could have written.
+    // #942: a sent message is written into Sent before its APPEND gives it a server identity, so a
+    // resync of Sent inserted a second row. The reserved `Message-ID` (ADR 0021) ties them,
+    // consulted
+    // only for a local row with no server identity.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, sent) = test_support::account_with_inbox(&connection).await;
@@ -2590,8 +2378,6 @@ async fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_
     messages.create(&mut ours).await.expect("the local copy");
     assert!(ours.server.remote_id.is_none(), "written before the append");
 
-    // The server's copy of the same message, arriving through an ordinary
-    // sync of the Sent folder.
     let mut fetched = a_message(sent, account.id, 21);
     fetched.rfc_message_id = Some(reserved.clone());
     let report = messages
@@ -2636,11 +2422,9 @@ async fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_
 
 #[tokio::test]
 async fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identity() {
-    // The narrow half of the rule above. Adoption is only ever right for a
-    // row this client wrote and the server has not yet named; a row that
-    // already carries a `remote_id` is a different message that happens to
-    // share a `Message-ID` — a mailing list copy of one's own post is the
-    // ordinary case — and collapsing the two would lose one of them.
+    // Adoption is only right for a row the server has not named; a row with a `remote_id` is a
+    // different
+    // message sharing a `Message-ID`, such as a list copy of one's own post.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2671,12 +2455,9 @@ async fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identi
 
 #[tokio::test]
 async fn a_body_an_older_parser_got_wrong_is_fetched_again_once() {
-    // A body is fetched once and its raw bytes are not kept, so a parser fix
-    // reaches a stored body only by fetching it again -- and only the rows
-    // the older parser got wrong: the ones that carried the decode caveat, or
-    // came out with no body at all (three of them on a real account,
-    // 2026-09-14). `messages.body_parsed_with` is what says which parser
-    // wrote a row; `postio_model::mime::PARSER_VERSION` is the current one.
+    // Raw bytes are not kept, so a parser fix reaches a stored body only by refetching, and only
+    // rows
+    // the older parser got wrong; `messages.body_parsed_with` says which parser wrote a row.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2712,8 +2493,6 @@ async fn a_body_an_older_parser_got_wrong_is_fetched_again_once() {
         .await
         .expect("set");
 
-    // Bodies a parser before this column wrote are stamped zero, whatever
-    // they carry.
     connection
         .execute("UPDATE messages SET body_parsed_with = 0", ())
         .await
@@ -2733,9 +2512,7 @@ async fn a_body_an_older_parser_got_wrong_is_fetched_again_once() {
          fetched again for a stamp alone"
     );
 
-    // Fetched again by the current parser -- still flagged, say -- they are
-    // done with: that is what keeps the backfill from spinning on a body no
-    // parser can improve.
+    // Fetched again by the current parser they are done, which keeps the backfill from spinning.
     messages
         .set_body(flagged.id, &body(Some("é"), true), BodyState::Full)
         .await
@@ -2756,12 +2533,9 @@ async fn a_body_an_older_parser_got_wrong_is_fetched_again_once() {
 
 #[tokio::test]
 async fn a_stored_body_is_smaller_than_its_text_and_reads_back_whole() {
-    // Bodies are text in a column (ADR 0020) and were zstd frames until the
-    // engine changed, when the full-text index moved onto the column and an
-    // index cannot tokenise compressed bytes. The index reads its own folded
-    // table now (`message_search_bodies`), so the column is free to be small
-    // again: the spec accepted a 2.19x store on the text axis, and it does
-    // not have to.
+    // Bodies are plain text in a column (ADR 0020); the full-text index reads its own folded table,
+    // so
+    // the column need not be a compressed frame.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2769,7 +2543,6 @@ async fn a_stored_body_is_smaller_than_its_text_and_reads_back_whole() {
 
     let mut message = a_message(inbox, account.id, 400);
     let id = messages.create(&mut message).await.expect("create");
-    // A newsletter's worth of markup: what most of a store's bytes are.
     let html = "<tr><td class=\"cell\" style=\"padding:0 12px\">A line of the same shape as every other.</td></tr>\n".repeat(400);
     let text = "A line of plain text that reads much like the one before it.\n".repeat(200);
     let body = StoredBody {
@@ -2812,15 +2585,10 @@ async fn a_stored_body_is_smaller_than_its_text_and_reads_back_whole() {
 
 #[tokio::test]
 async fn set_body_leaves_the_search_index_to_the_indexer() {
-    // The body's full-text row used to be written here, in the body's own
-    // transaction, so a search hit and the body it named could not come
-    // apart. What that bought was paid on the sync lane: every body commit
-    // updated the tantivy index, and whichever commit came next could
-    // inherit a segment merge measured in seconds (`fts_merge_stall`). The
-    // index is the indexer's now -- `postio_session::spawn_body_indexer`
-    // batches hundreds of bodies into one write, off the sync lane -- and a
-    // body is searchable a moment after it lands rather than in the same
-    // instant, which is the trade every mail client makes.
+    // The body's full-text row is the indexer's, not written in the body's transaction: a segment
+    // merge
+    // would stall the sync lane (`fts_merge_stall`), so a body is searchable a moment after it
+    // lands.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;

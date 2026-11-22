@@ -1,17 +1,6 @@
-//! The document type's two round trips, and the invariants underneath them.
-//!
-//! ADR 0004 pins four properties as tests rather than comments, because each
-//! one is load-bearing for "Postio cannot send a tracking pixel" and a
-//! comment cannot fail.
-
 use postio_body::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
 use postio_body::parse;
 
-/// Every shape the document can take, in one value.
-///
-/// Deliberately exhaustive: the round-trip properties are only as good as the
-/// documents they are checked over, and a corpus that omits a variant is a
-/// corpus that cannot catch that variant's serialiser being wrong.
 fn every_shape() -> Document {
     Document {
         blocks: vec![
@@ -72,7 +61,6 @@ fn every_shape() -> Document {
 
 #[test]
 fn structure_survives_the_round_trip() {
-    // Issue #30's third acceptance criterion.
     let document = every_shape();
     let round_tripped = parse(&document.to_html());
     assert_eq!(
@@ -83,10 +71,6 @@ fn structure_survives_the_round_trip() {
 
 #[test]
 fn the_serialiser_is_the_normal_form() {
-    // `to_html(parse(h)) == h` for anything already in the subset. This is
-    // what makes re-saving a draft a no-op rather than a slow rewrite of the
-    // user's own markup — and what stops two frontends drifting into two
-    // different spellings of the same document.
     let html = every_shape().to_html();
     assert_eq!(parse(&html).to_html(), html, "to_html is not idempotent");
 }
@@ -102,15 +86,12 @@ fn a_script_has_no_representation() {
     assert!(!html.contains("script"), "{html}");
     assert!(!html.contains("alert"), "{html}");
     assert!(!html.contains("onclick"), "{html}");
-    // The surrounding text is still the author's, and is kept.
     assert!(html.contains("before") && html.contains("after") && html.contains("handler"));
 }
 
 #[test]
 fn a_remote_image_has_no_representation() {
-    // The single most load-bearing line in the type: `Inline::Image` holds a
-    // `ContentId`, so there is no variant that can carry a tracking pixel.
-    // It is not stripped — it cannot be built.
+    // `Inline::Image` holds a `ContentId`, so a tracking pixel is not stripped, it cannot be built.
     let document = parse(
         "<p><img src=\"https://tracker.example.com/pixel.gif\" width=\"1\">\
          <img src=\"http://tracker.example.net/p.png\">\
@@ -153,9 +134,7 @@ fn only_three_schemes_construct_an_href() {
         "#anchor",
         "",
         "https:",
-        // The classic bypass: an entity-decoded control character inside the
-        // scheme. Refusing controls outright means the check cannot be walked
-        // around by choosing where the decode happens.
+        // An entity-decoded control character inside the scheme.
         "java\tscript:alert(1)",
         "java\nscript:alert(1)",
     ] {
@@ -214,9 +193,6 @@ fn styling_does_not_survive() {
 
 #[test]
 fn a_plain_text_document_is_just_paragraphs() {
-    // ADR 0004 Q6: v1 ships a plain-text editor over the neutral model. A
-    // document of Paragraph/Text *is* a plain-text document, so the model
-    // needs no restricting — the editor does.
     let document = Document::from_text("first line\nsame paragraph\n\nsecond paragraph");
 
     assert_eq!(
@@ -244,10 +220,6 @@ fn a_plain_text_document_is_just_paragraphs() {
 
 #[test]
 fn plain_text_survives_the_composer_exactly() {
-    // `to_text(from_text(t)) == t`. The composer reads the buffer into a
-    // document and writes it back out, so anything this pair tidies is
-    // whitespace taken out from under the user's cursor. A reply opens with
-    // blank lines above the signature to type into, and those are the case.
     for text in [
         "",
         "one line",
@@ -268,8 +240,6 @@ fn plain_text_survives_the_composer_exactly() {
 
 #[test]
 fn to_text_is_readable_rather_than_a_tag_soup() {
-    // The reason the set is closed: `to_text` over arbitrary HTML is what
-    // makes most mail's text/plain part unreadable.
     let text = every_shape().to_text();
 
     assert!(text.contains("plain, with bold and italic"));
@@ -288,13 +258,8 @@ fn to_text_is_readable_rather_than_a_tag_soup() {
 
 #[test]
 fn to_search_text_keeps_the_words_and_drops_the_addresses() {
-    // #327. The index is the one reader that must not be told where a link
-    // goes: a message linking to `tracker.example` does not *say*
-    // "tracker.example" anywhere a person can see, so indexing it makes that
-    // message answer a query it has no business answering -- and one
-    // shortener would then answer for every campaign that used it. The
-    // `[image]` placeholder is the same mistake in miniature: it would make
-    // every message carrying a picture a hit for the word "image".
+    // #327: indexing link targets would make a message answer a query for a host it never shows,
+    // and `[image]` would make every picture a hit for "image".
     let text = every_shape().to_search_text();
 
     assert!(text.contains("plain, with bold and italic"));
@@ -311,8 +276,6 @@ fn to_search_text_keeps_the_words_and_drops_the_addresses() {
         !text.contains("[image"),
         "the placeholder is not something the message says: {text}"
     );
-    // The quoting form is unchanged, which is the other half of the claim:
-    // this is a second rendering, not a change to the one replies use.
     assert!(
         every_shape()
             .to_text()
@@ -335,9 +298,6 @@ fn text_escaping_survives_a_round_trip() {
 
 #[test]
 fn parsing_never_panics_on_anything() {
-    // Total, because the quoting path's input is a message somebody else
-    // wrote. A parse that could fail would be a hostile message you cannot
-    // reply to.
     for hostile in [
         "",
         "<",
@@ -358,8 +318,6 @@ fn parsing_never_panics_on_anything() {
 
 #[test]
 fn a_plain_document_is_recognised_and_a_structured_one_is_not() {
-    // What the composer asks before deciding whether the message needs an
-    // HTML alternative at all.
     assert!(Document::from_text("just words\nand a line break").is_plain_text());
     assert!(Document::new().is_plain_text());
 
@@ -386,8 +344,6 @@ fn a_plain_document_is_recognised_and_a_structured_one_is_not() {
         );
     }
 }
-
-// ── issue #116: link_hosts, for the composer's quoted-tracking-link banner ─
 
 #[test]
 fn link_hosts_finds_a_link_nested_in_a_list_and_a_quote() {
@@ -460,10 +416,8 @@ fn a_document_with_no_links_has_no_hosts() {
 
 #[test]
 fn an_empty_paragraph_records_nothing_and_is_narrowed_away() {
-    // WebKit's list command nests the new `<ul>` inside the paragraph it
-    // formats; spec recovery splits that into an empty `<p>` on each side.
-    // An empty paragraph holds nothing a document needs to record — kept,
-    // it ships as a blank `<p></p>` in outgoing mail.
+    // WebKit nests a new `<ul>` inside the paragraph it formats and spec recovery leaves an empty
+    // `<p>` each side; kept, it ships as a blank `<p></p>`.
     let document = parse("<p><ul><li>item one</li></ul></p>");
     assert_eq!(
         document.blocks,
@@ -474,18 +428,14 @@ fn an_empty_paragraph_records_nothing_and_is_narrowed_away() {
             )])]],
         }]
     );
-    // A deliberate blank line is `<p><br></p>` — a Break, not empty — and
-    // must survive the narrowing that removes the truly empty one.
     let spaced = parse("<p>a</p><p><br></p><p>b</p>");
     assert_eq!(spaced.blocks.len(), 3, "the blank line is content");
 }
 
 #[test]
 fn the_editor_form_round_trips_an_inline_image_through_the_editing_scheme() {
-    // The editing shell's CSP allows img-src postio-cid: and nothing else,
-    // so the editor form emits that scheme; the wire form stays cid:. The
-    // round trip back through parse is what keeps a pasted image in the
-    // document across every edit that follows.
+    // The editing shell's CSP allows `img-src postio-cid:` only, so the editor form emits it and
+    // the wire form stays `cid:`.
     let mut document = Document::new();
     document.blocks.push(Block::Paragraph(vec![
         Inline::Text("see ".to_owned()),
@@ -506,7 +456,6 @@ fn the_editor_form_round_trips_an_inline_image_through_the_editing_scheme() {
     );
     assert_eq!(parse(&editor_html), document);
 
-    // The wire form is unchanged by the editor form existing.
     assert!(
         document.to_html().contains("src=\"cid:"),
         "{}",
@@ -516,8 +465,7 @@ fn the_editor_form_round_trips_an_inline_image_through_the_editing_scheme() {
 
 #[test]
 fn a_postio_cid_source_that_smuggles_a_url_is_still_refused() {
-    // ContentId's own rules hold on the editing scheme too: percent-decoding
-    // must never turn a crafted src into something a URL parser would chase.
+    // Percent-decoding must never turn a crafted src into something a URL parser would chase.
     let document = parse("<p><img src=\"postio-cid:%2F%2Fevil.example%2Fx\" alt=\"\"></p>");
     assert!(
         !document
@@ -528,10 +476,6 @@ fn a_postio_cid_source_that_smuggles_a_url_is_still_refused() {
         "{document:?}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: to_flowed_text is RFC 3676 format=flowed (#333)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_paragraph_short_enough_to_fit_wraps_to_nothing() {
@@ -573,9 +517,6 @@ fn a_paragraph_longer_than_the_width_gets_soft_broken() {
 
 #[test]
 fn a_hard_break_stays_a_fixed_line_even_when_it_is_the_only_one() {
-    // Two words either side of an `Inline::Break`, both well under the
-    // width -- nothing here needs a *soft* break, so the only way a fixed
-    // line can appear at all is the hard break itself.
     let document = Document {
         blocks: vec![Block::Paragraph(vec![
             Inline::Text("first line".to_owned()),
@@ -628,9 +569,6 @@ fn a_nested_quote_uses_adjacent_markers_with_one_space_before_content() {
 
 #[test]
 fn wrapping_and_unwrapping_a_paragraph_reconstructs_the_original_text() {
-    // The acceptance criterion, stated directly: `flowed::wrap` and
-    // `flowed::unwrap` are exact inverses for ordinary prose, independent
-    // of `Document` entirely.
     for text in [
         "a short line",
         "a considerably longer paragraph that should wrap across several \
@@ -641,10 +579,6 @@ fn wrapping_and_unwrapping_a_paragraph_reconstructs_the_original_text() {
         assert_eq!(postio_body::flowed::unwrap(&wrapped, ""), text);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: from_flowed_text undoes to_flowed_text's soft wraps (#456)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_soft_wrapped_paragraph_unwraps_back_to_one_line_of_text() {
@@ -678,11 +612,8 @@ fn a_hard_break_survives_the_round_trip_as_two_inlines_not_one() {
 
 #[test]
 fn a_leading_hard_break_with_nothing_typed_before_it_still_counts() {
-    // The one case where a span unwraps to no text at all -- a paragraph
-    // that opens with a break the user pressed before typing anything.
-    // Tracking "have we seen a span yet" by whether any text was pushed
-    // would confuse this empty span with never having started one, and
-    // drop the break silently.
+    // A span that unwraps to no text (a leading break) must not be confused with never having
+    // started one.
     let document = Document {
         blocks: vec![Block::Paragraph(vec![
             Inline::Break,
@@ -711,9 +642,6 @@ fn two_paragraphs_stay_two_paragraphs_after_the_round_trip() {
 
 #[test]
 fn a_flowed_reply_body_unwraps_to_the_sentence_the_sender_actually_wrote() {
-    // The exact shape of the corpus's plain-text-flowed-reply.eml: two
-    // soft-wrapped physical lines that are one sentence, and a trailing
-    // space on each wrapped line marking the soft break.
     let flowed = "That order works for me, though I would rather take the sign-off \nquestion first while everyone is still in the room and awake, because \nthe layout argument tends to eat the whole hour once it starts.";
 
     let document = Document::from_flowed_text(flowed);
@@ -735,15 +663,9 @@ fn a_flowed_reply_body_unwraps_to_the_sentence_the_sender_actually_wrote() {
 
 #[test]
 fn a_tables_cells_come_apart_in_the_plain_text_rendering() {
-    // #1482. A table has no `Block` — that is the authoring subset working as
-    // designed and is not an argument for adding one. What was wrong is that
-    // its cells were concatenated with *nothing* between them, so
-    // `<td>Gate</td><td>Interlock</td>` narrowed to `GateInterlock` and a row
-    // ran straight into the row below it.
-    //
-    // Where it shows is the `text/plain` half of any reply to a table-based
-    // HTML message, which is most commercial mail: a recipient whose client
-    // prefers plain text sees the quote as one run-on word.
+    // #1482: table cells were concatenated with nothing between them
+    // (`<td>Gate</td><td>Interlock</td>` became `GateInterlock`), which reached the `text/plain`
+    // half of replies.
     let document = parse(
         "<table>\
            <tr><td>Gate</td><td>Interlock</td></tr>\
@@ -767,9 +689,6 @@ fn a_tables_cells_come_apart_in_the_plain_text_rendering() {
 
 #[test]
 fn a_table_cell_does_not_gain_a_space_that_was_not_there() {
-    // The other direction: the separator is for the boundary between cells,
-    // not a licence to pad. A single cell is its own text and nothing else,
-    // and a cell whose content already ends in a space does not get a second.
     let one = parse("<table><tr><td>Gate</td></tr></table>").to_text();
     assert_eq!(one.trim(), "Gate", "{one:?}");
 
@@ -782,30 +701,20 @@ fn a_table_cell_does_not_gain_a_space_that_was_not_there() {
 
 #[test]
 fn a_space_between_two_loose_inlines_is_content_not_formatting() {
-    // #1486. `walk_blocks` dropped every whitespace-only text node, which is
-    // right between blocks and wrong between inlines: in `<b>x</b> <i>y</i>`
-    // that node is the space somebody typed, and losing it joins two words.
-    //
-    // Inside a `<p>` the same markup already survived, because paragraphs go
-    // through a different walker — so this was invisible to anything that
-    // tests well-formed mail and showed up in the composer, whose DOM has
-    // loose inlines in `<body>` after a formatting command.
+    // #1486: whitespace-only text between inlines (`<b>x</b> <i>y</i>`) is the space somebody
+    // typed; composer DOMs have loose inlines in `<body>` after a formatting command.
     assert_eq!(parse("<b>x</b> <i>y</i>").to_text(), "x y");
     assert_eq!(parse("<b>x</b>\u{a0}<i>y</i>").to_text(), "x y");
 
-    // Still dropped where it is formatting rather than content: leading
-    // whitespace, and the newline-and-indent between two block elements.
     assert_eq!(parse("   <b>x</b>").to_text(), "x");
     assert_eq!(parse("<p>one</p>\n  <p>two</p>").to_text(), "one\n\ntwo");
-    // And never doubled.
     assert_eq!(parse("<b>x</b>  <i>y</i>").to_text(), "x y");
 }
 
 #[test]
 fn the_folds_own_chrome_is_not_part_of_the_message() {
-    // What the editor's DOM holds for a reply: the quote inside the
-    // `<details>` that `fold_quotes` wraps it in. The bridge posts that back
-    // verbatim, so whatever `parse` makes of it is what gets sent.
+    // The editor's DOM holds the quote inside the `<details>` `fold_quotes` wraps it in, and the
+    // bridge posts it back verbatim.
     let folded = "<p>Acknowledged.</p>\
 <details class=\"postio-quote\">\
 <summary contenteditable=\"false\">Quoted message</summary>\
@@ -826,9 +735,6 @@ fn the_folds_own_chrome_is_not_part_of_the_message() {
 
 #[test]
 fn a_plain_reply_turned_rich_quotes_what_it_quoted() {
-    // The Rich switch builds its document from the plain field, and a
-    // reply's plain field ends in `>` lines. As paragraphs they arrived in
-    // the editor as literal angle brackets, a quote nobody could see as one.
     let document =
         Document::from_text_quoting("Yes, six.\n\nOn Monday, Bo wrote:\n> Six?\n> >> Or seven?\n");
     let (_, html) = postio_body::render(&document);

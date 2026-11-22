@@ -1,10 +1,5 @@
-//! Thread ▾'s menu and the outline, over the message window (spec 013 US5,
-//! FR-019), and the thread verbs they and the keys share: mute, split, and
-//! the two "this message only" verbs.
-//!
-//! The controller decides what each entry does and draws nothing: the menu
-//! and the outline are `postio_ui::thread_outline`'s views, handed to the
-//! frontend whole each time they change.
+//! Thread ▾'s menu and the outline, over the message window, and the thread verbs they and the
+//! keys share: mute, split, and the two "this message only" verbs.
 
 use chrono::Local;
 use postio_core::{Command, CommandId, MessageTarget};
@@ -15,44 +10,31 @@ use crate::cursor::Rows;
 use crate::feed::Step;
 use crate::{FocusController, Intent, Request, SurfaceKind, ToastKind};
 
-/// What a frontend says of the outline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OutlineInput {
-    /// The filter field holds this text now.
     Typed(String),
-    /// A person chip was chosen, or cleared with `None`.
     Person(Option<String>),
-    /// Up or down: by this many rows.
     Move(i32),
-    /// Return, or a click on a row: show it. `None` is the cursor's.
     Show(Option<usize>),
-    /// `/`: the keyboard goes to the field.
     FocusFilter,
 }
 
-/// The outline while it is up.
 #[derive(Debug)]
 struct Outline {
-    /// The thread, as read when it opened.
     view: ThreadView,
-    /// Every message of it.
     all: Vec<OutlineRow>,
     filter: String,
     person: Option<String>,
-    /// Among the rows the filter leaves.
     cursor: usize,
-    /// The list row it was opened from, when not from the window.
     from_row: Option<u32>,
 }
 
-/// What the controller keeps of the menu and outline.
 #[derive(Debug, Default)]
 pub(crate) struct ThreadUi {
     outline: Option<Outline>,
 }
 
-/// The commands the menu's entries run.
 fn is_entry(id: CommandId) -> bool {
     matches!(
         id,
@@ -75,7 +57,6 @@ impl FocusController {
         }
     }
 
-    /// Whether `id` is the menu's or the outline's own while it is on top.
     pub(crate) fn thread_surface_answers(id: CommandId) -> bool {
         is_entry(id)
             || matches!(
@@ -91,8 +72,6 @@ impl FocusController {
             )
     }
 
-    /// A command while the menu or the outline is on top. Each holds the
-    /// keyboard: what is not its own does nothing, but Undo and the key map.
     pub(crate) fn thread_surface_command(
         &mut self,
         id: CommandId,
@@ -136,7 +115,6 @@ impl FocusController {
         steps
     }
 
-    /// Where the message on screen is among its thread's members.
     fn shown_at(&self) -> Option<usize> {
         let walk = self.walk.as_ref()?;
         walk.view
@@ -145,8 +123,6 @@ impl FocusController {
             .position(|member| member.id == walk.shown)
     }
 
-    /// A thread command with the message window on top, or `None` when it
-    /// is not one of these or the window holds no walk to act on.
     pub(crate) fn thread_window_command(
         &mut self,
         id: CommandId,
@@ -190,7 +166,6 @@ impl FocusController {
                     rejoin: None,
                 }))])
             }
-            // This message alone, whatever the thread is (spec 013 D2).
             CommandId::MoveThisMessage => {
                 let shown = self.surfaces.reading()?;
                 Some(self.picker_on_shown(shown))
@@ -214,7 +189,6 @@ impl FocusController {
         }
     }
 
-    /// `m` or `alt+t` on the list's cursor row.
     pub(crate) fn thread_list_command(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Step> {
         let Some(position) = self.cursor.position() else {
             return Vec::new();
@@ -239,8 +213,6 @@ impl FocusController {
                 mute_steps(thread, !muted_now)
             }
             CommandId::ThreadOutline => {
-                // The outline of a thread already read: the one expanded
-                // under the cursor.
                 let Some(expansion) = self.expansion.as_ref() else {
                     return Vec::new();
                 };
@@ -254,8 +226,6 @@ impl FocusController {
         }
     }
 
-    /// A click on the bar's "... N more" chip: the outline, with the ring
-    /// on the first member the chip stands for.
     pub(crate) fn more_chip_clicked(&mut self, from: u32) -> Vec<Step> {
         let (Some(at), Some(walk)) = (self.shown_at(), self.walk.as_ref()) else {
             return Vec::new();
@@ -266,7 +236,6 @@ impl FocusController {
         if let Some(outline) = self.thread_ui.outline.as_mut() {
             outline.cursor = (from as usize).min(last);
         }
-        // Drawn once more with the ring where the chip pointed.
         steps.retain(|step| !matches!(step, Step::Show(Intent::Outline(_))));
         steps.extend(self.draw_outline());
         steps
@@ -321,13 +290,11 @@ impl FocusController {
         self.draw_outline()
     }
 
-    /// A pick from the menu, by key or click: it closes, then runs.
     pub(crate) fn thread_menu_pick(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Step> {
         if self.surfaces.top() != Some(SurfaceKind::ThreadMenu) || !is_entry(id) {
             return Vec::new();
         }
         let mut steps = self.close_thread_surface(SurfaceKind::ThreadMenu);
-        // "Forward the whole thread" is a forward that opens on that card.
         let whole = id == CommandId::ForwardWhat2;
         let id = if whole { CommandId::Forward } else { id };
         self.compose
@@ -341,7 +308,6 @@ impl FocusController {
         steps
     }
 
-    /// The outline's field, chips, arrows and Return.
     pub(crate) fn outline_input(&mut self, input: OutlineInput, rows: &dyn Rows) -> Vec<Step> {
         if self.surfaces.top() != Some(SurfaceKind::Outline) {
             return Vec::new();
@@ -370,8 +336,6 @@ impl FocusController {
         self.draw_outline()
     }
 
-    /// Show the message of the outline's row `at` (the cursor's when
-    /// `None`), and put the outline away.
     fn outline_show(&mut self, at: Option<usize>, rows: &dyn Rows) -> Vec<Step> {
         let Some(outline) = self.thread_ui.outline.as_ref() else {
             return Vec::new();
@@ -384,9 +348,7 @@ impl FocusController {
         let (view, from_row) = (outline.view.clone(), outline.from_row);
         let mut steps = self.close_thread_surface(SurfaceKind::Outline);
         match from_row {
-            // From the window: its walk shows that member.
             None => steps.extend(self.walk_show(index)),
-            // From the list: open the message as a child's Return does.
             Some(position) => {
                 self.walk_seed = Some(view);
                 steps.extend(self.open_target(position, message, rows));
@@ -396,7 +358,6 @@ impl FocusController {
     }
 }
 
-/// Mute or unmute `thread`: the engine's own command, one undo.
 fn mute_steps(thread: ThreadId, muted: bool) -> Vec<Step> {
     vec![Step::Ask(Request::Post(Command::MuteThread {
         thread: Some(thread),

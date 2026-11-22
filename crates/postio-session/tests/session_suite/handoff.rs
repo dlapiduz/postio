@@ -1,5 +1,3 @@
-//! Handing a draft to another editor (#1270).
-
 use std::path::Path;
 
 use postio_session::handoff::{begin, finish, read_back};
@@ -31,8 +29,6 @@ fn the_draft_goes_to_a_file_the_other_editor_can_open() {
 #[cfg(unix)]
 #[test]
 fn unsent_mail_is_not_left_where_everyone_can_read_it() {
-    // A draft is often the most private mail there is: it is the part still
-    // being thought about. `/tmp` is world-readable on every Unix.
     use std::os::unix::fs::PermissionsExt;
     let scratch = a_directory();
     let out = begin(scratch.path(), 7, "something private").expect("it writes");
@@ -63,9 +59,6 @@ fn what_the_editor_wrote_is_what_comes_back() {
 
 #[test]
 fn an_empty_file_is_refused_rather_than_believed() {
-    // An editor that saves by truncating and writing is briefly empty on
-    // disk. A frontend polling on window focus can land in that window, and
-    // believing it would throw away everything the user had written.
     let scratch = a_directory();
     let out = begin(scratch.path(), 7, "everything they wrote").expect("it writes");
     std::fs::write(&out.path, "   \n").expect("a truncating save, caught mid-write");
@@ -80,7 +73,6 @@ fn an_empty_file_is_refused_rather_than_believed() {
 
 #[test]
 fn finishing_takes_the_file_away() {
-    // A file left behind is a draft's text sitting on disk.
     let scratch = a_directory();
     let out = begin(scratch.path(), 7, "the gate").expect("it writes");
 

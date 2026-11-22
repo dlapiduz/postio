@@ -1,14 +1,8 @@
-//! US7: every button that runs a command carries its keycap -- the toast's
-//! Undo, the banner's Retry now, the page that says why there is no mail,
-//! Settings' Add account -- so the app teaches the keyboard on the control
-//! a person is looking at. The key is the keymap's, never a literal.
-
 use gtk::prelude::*;
 use postio_core::{CommandId, ConnectionState, Event};
 
 use crate::support::{self, Fixture};
 
-/// The mapped keycaps (`postio-keyhint`) under `button`, as they read.
 fn caps(button: &gtk::Widget) -> Vec<String> {
     support::with_class(button, "postio-keyhint")
         .into_iter()
@@ -18,7 +12,6 @@ fn caps(button: &gtk::Widget) -> Vec<String> {
         .collect()
 }
 
-/// The key the window's keymap gives `command`.
 fn bound(window: &postio_gtk::window::FocusWindow, command: CommandId) -> String {
     window
         .keymap()

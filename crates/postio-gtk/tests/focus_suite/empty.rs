@@ -1,7 +1,3 @@
-//! The empty inbox (US6 scenario 4, screen 16): "Inbox is empty", and under
-//! it only what exists -- when the next digest comes if there are digests,
-//! and the filtered count if filtering is on.
-
 use gtk::prelude::*;
 use postio_storage::repository::{
     FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason,
@@ -9,7 +5,6 @@ use postio_storage::repository::{
 
 use crate::support::{self, Fixture};
 
-/// Open `fixture`'s store under `config`, and wait for the empty page.
 async fn open_empty(
     fixture: &Fixture,
     config: &postio_config::Config,
@@ -24,7 +19,6 @@ async fn open_empty(
     window
 }
 
-/// What the empty page says, as a person reads it.
 fn empty_says(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     support::with_class(window, "focus-empty")
         .first()
@@ -38,7 +32,6 @@ pub fn with_filtering_the_empty_inbox_counts_what_was_filtered_today() {
             return;
         }
         let fixture = Fixture::empty().await;
-        // Two messages filed away this morning, out of the inbox.
         let connection = fixture.database.connect().await.expect("a connection");
         let archive =
             postio_storage::test_support::mailbox(&connection, &fixture.account, "Filtered mail")

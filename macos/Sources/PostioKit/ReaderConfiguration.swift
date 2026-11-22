@@ -1,38 +1,19 @@
 import WebKit
 
-/// The hardened configuration a message body is rendered under.
-///
-/// Every setting here had a counterpart in the classic app's `hardened_settings()`,
-/// and the reason each exists is the same: **JavaScript being off does not
-/// automatically close the surfaces JavaScript would have used.** WebGL and
-/// WebRTC run without a `<script>` tag executing, and the storage APIs persist
-/// to disk regardless of whether anything is currently running to read them.
-///
-/// Built as its own type rather than inline in the view so it can be asserted.
-/// A content security policy that is present and permissive looks exactly like
-/// one that works, and a `WKWebView` setting that silently stopped applying
-/// looks like nothing at all.
+/// Each setting closes a surface that JavaScript being off does not: WebGL and WebRTC run without a
+/// script, and storage APIs persist. A type of its own so it can be asserted.
 public enum ReaderConfiguration {
-    /// Where the reader's own document is served from.
-    ///
-    /// Matches `postio_ui::reader::document::DOCUMENT_BASE_URI`, and a handler
-    /// is registered for it that **always fails** — so a relative reference in
-    /// a sender's markup fails closed by mechanism rather than by luck.
+    /// Matches `postio_ui::reader::document::DOCUMENT_BASE_URI`; its handler always fails, so a
+    /// relative reference in a sender's markup fails closed.
     public static let baseScheme = "postio-reader"
 
-    /// The scheme inline parts are addressed by.
     public static let cidScheme = "postio-cid"
 
-    /// The scheme the document names Postio's faces by
-    /// (`postio_ui::reader::document::FONT_SCHEME`, ADR 0023).
+    /// `postio_ui::reader::document::FONT_SCHEME` (ADR 0023).
     public static let fontScheme = "postio-font"
 
-    /// A configuration with everything scripting-adjacent turned off.
-    ///
-    /// `@MainActor` because `WKWebViewConfiguration` is: a web view and its
-    /// handlers live on the main thread, which is also where a URL scheme
-    /// handler is called back — the same constraint the GTK scheme callback
-    /// works under, and the reason `resolveCid` is synchronous.
+    /// `@MainActor` because `WKWebViewConfiguration` is, and scheme handlers are called back there,
+    /// which is why `resolveCid` is synchronous.
     @MainActor
     public static func hardened(
         cidHandler: WKURLSchemeHandler,
@@ -40,28 +21,21 @@ public enum ReaderConfiguration {
     ) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
 
-        // Nothing this web view does reaches disk. Subsumes the HTML5
-        // database, local storage and page cache that the GTK side turns off
-        // one at a time.
+        // Nothing this web view does reaches disk.
         configuration.websiteDataStore = .nonPersistent()
 
-        // The headline, and set in two places on purpose: the default applies
-        // to navigations that do not go through the policy delegate, and the
-        // delegate sets it again per navigation for the ones that do.
+        // Set in two places on purpose: this default covers navigations that skip the policy
+        // delegate, which sets it again per navigation.
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-        // Media never plays on its own. A message that autoplayed audio would
-        // be an advertisement that announced itself to the room.
+        // Media never plays on its own.
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         configuration.allowsAirPlayForMediaPlayback = false
 
-        // WebRTC, WebGL and WebAudio have **no public toggles**. JavaScript is
-        // off so none of them is reachable, and the document's own
-        // `default-src 'none'` closes what is left. That is weaker in
-        // *mechanism* than the GTK side, which can turn each off by name, and
-        // identical in effect — said here rather than left for a reader to
-        // assume parity.
+        // WebRTC, WebGL and WebAudio have no public toggles: JavaScript off makes them unreachable
+        // and the document's `default-src 'none'` closes the rest. Weaker in mechanism than GTK,
+        // identical in effect.
         configuration.preferences.isElementFullscreenEnabled = false
 
         #if DEBUG
@@ -73,10 +47,8 @@ public enum ReaderConfiguration {
         return configuration
     }
 
-    /// The message window's configuration (specs/009-focus-macos T069):
-    /// `hardened`, Postio's faces served over `postio-font:`, and
-    /// `blockingRules` installed -- a second wall behind the document's own
-    /// CSP, so a policy that is present and wrong still fetches nothing.
+    /// `hardened`, Postio's faces over `postio-font:`, and `blockingRules`: a second wall behind
+    /// the document's CSP.
     @MainActor
     public static func focus(
         cidHandler: WKURLSchemeHandler,
@@ -89,15 +61,12 @@ public enum ReaderConfiguration {
         return configuration
     }
 
-    /// The schemes a message's document may load from: Postio's three, the
-    /// `data:` images and faces a sanitised body keeps, and `about:`, which
-    /// is what a document loaded from a string with no base is.
+    /// Postio's three, the `data:` images and faces a sanitised body keeps, and `about:`, which a
+    /// document loaded from a string with no base has.
     public static let allowedSchemes = [cidScheme, fontScheme, baseScheme, "data", "about"]
 
-    /// Block every load, then let Postio's own schemes through.
-    ///
-    /// One rule per scheme: WebKit's rule regexes have no alternation, so
-    /// `^(a|b):` would not compile.
+    /// One rule per scheme: WebKit's rule regexes have no alternation, so `^(a|b):` would not
+    /// compile.
     public static var blockingRuleSource: String {
         let allow = allowedSchemes.map {
             #"{"trigger":{"url-filter":"^\#($0):"},"action":{"type":"ignore-previous-rules"}}"#
@@ -106,13 +75,10 @@ public enum ReaderConfiguration {
         return "[" + ([block] + allow).joined(separator: ",") + "]"
     }
 
-    /// The identifier the compiled list is stored under.
     static let blockingRulesIdentifier = "postio.message.block-remote"
 
-    /// `blockingRuleSource`, compiled once per process. Compiled into a
-    /// store of its own in the temporary directory rather than WebKit's
-    /// default one: a filter is not data, and nothing about it needs to
-    /// outlive the process.
+    /// Compiled into a store of its own in the temporary directory, not WebKit's default: nothing
+    /// about a filter needs to outlive the process.
     @MainActor
     public static func blockingRules() async throws -> WKContentRuleList {
         if let compiled = compiledRules { return compiled }

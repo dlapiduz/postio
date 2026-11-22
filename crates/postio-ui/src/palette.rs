@@ -1,101 +1,28 @@
-//! Finding a command: fuzzy matching over the command registry.
-//!
-//! # Why it exists
-//!
-//! docs/PRODUCT.md §8 asks that every command be reachable without memorizing
-//! a binding. The palette is that promise kept: it is generated from
-//! [`postio_core::registry`], so a command that exists is a command that can
-//! be found, and one that gains a binding shows it here without anybody
-//! editing a second list.
-//!
-//! # Why it is here rather than in a frontend
-//!
-//! It was the classic app's until #658. Nothing in the matching, the ranking or
-//! the context filter is about a toolkit — they are product decisions, and
-//! ADR 0019 Q5 named this among what a second frontend must share rather than
-//! re-derive. **Swift must not write its own fuzzy match**: the ranking is
-//! this, and two rankings mean the same query offers different things on each
-//! platform.
-//!
-//! What each frontend keeps is the *drawing*. [`Entry::positions`] are byte
-//! indices into the title, deliberately, rather than pre-escaped markup —
-//! The classic app turned them into Pango bold and Swift builds an
-//! `AttributedString` from the same numbers.
-//!
-//! # Two halves
-//!
-//! Everything that decides *what to show* is [`entries`] and [`score`], pure
-//! functions over a [`postio_core::Keymap`]. They are unit-tested with no
-//! display and no main loop, which is also what makes the 16 ms budget
-//! measurable rather than a hope.
-//!
-//! # What the rows say
-//!
-//! Title, then the binding in force on the right — the same arrangement the
-//! canvas uses for the key hints on a focused row, so a key learned in the
-//! palette looks the same when it appears in the list.
+//! Finding a command: fuzzy matching over the command registry, so a command that exists can be
+//! found (docs/PRODUCT.md §8).
+//! Shared by every frontend: a second ranking would offer different things for one query.
+//! `Entry::positions` are byte indices into the title.
 
 use postio_core::{ActionId, Availability, Context, Keymap, registry};
 
-/// How many rows the palette will show at once.
-///
-/// The list scrolls past this; the cap is on what is *built*, so a query that
-/// matches everything costs the same as one that matches three things.
-///
-/// Was 32, which turned out to be exactly `Context::List`'s reachable count
-/// at the time -- so tight it was already a coincidence, not a bound. #438
-/// added two commands there and an empty query silently stopped listing
-/// everything reachable, which is the one thing this cap is not supposed to
-/// cost (see `an_empty_query_lists_everything_reachable_in_registry_order`).
-/// Raised for headroom, not tuned to a new exact count -- the next command
-/// added to a full context should not trip this again.
-///
-/// It did anyway, at 48: the terminal frontend's registry additions (quit,
-/// the two image commands, unsubscribe) took `Context::List` to 51, and
-/// `refresh` and the reader's scrolling fell off the end of an empty query.
-/// 64, for the same reason as before.
-///
-/// And at 64: the one keymap (specs/007-postio-focus) gave every app the
-/// archive, the snoozed mail and four saved searches, which took the
-/// classic app's `Context::List` to 66, and Focus's own commands take its
-/// list further. 96, still for headroom.
+/// The cap is on what is built. Set well above `Context::List`'s reachable count, which has
+/// outgrown 32, 48 and 64: an empty query must list everything reachable.
 pub const MAX_ROWS: usize = 96;
 
-// ---------------------------------------------------------------------------
-// Matching
-// ---------------------------------------------------------------------------
-
-/// Where a query matched, and how well.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
-    /// Higher is better. Only comparable between candidates for one query.
     pub score: i32,
-    /// Byte indices in the candidate that the query matched, ascending.
     pub positions: Vec<usize>,
 }
 
-/// A match at the start of a word is worth far more than one mid-word: typing
-/// `cp` should find "Command palette" ahead of "Copy".
+/// A match at the start of a word is worth far more than one mid-word.
 const WORD_START: i32 = 24;
-/// Each character that continues an unbroken run.
 const CONSECUTIVE: i32 = 12;
-/// Every character skipped over, up to a floor — a match spread across a long
-/// title is still a match, just a worse one.
 const GAP: i32 = -2;
-/// The most any single gap can cost.
 const GAP_FLOOR: i32 = -12;
 
-/// Scores `query` as a subsequence of `candidate`, case-insensitively.
-///
-/// Returns `None` when the query is not a subsequence at all. An empty query
-/// matches everything with a score of zero, which is what makes an
-/// unfiltered palette fall back to registry order.
-///
-/// Greedy left-to-right: the first place each character can go is where it
-/// goes. That is not optimal scoring — a backtracking matcher would find that
-/// `cp` scores better against "Command **p**alette" than "**C**ommand
-/// **p**alette" — but it is linear, and for a few dozen short titles the
-/// difference is invisible while the cost of getting it wrong at scale is not.
+/// `None` when the query is not a subsequence; an empty query matches everything at zero, so an
+/// unfiltered palette is in registry order. Greedy left-to-right: not optimal, but linear.
 pub fn score(query: &str, candidate: &str) -> Option<Match> {
     if query.is_empty() {
         return Some(Match {
@@ -133,8 +60,6 @@ pub fn score(query: &str, candidate: &str) -> Option<Match> {
                 let skipped = (index - previous - 1) as i32;
                 total += (GAP * skipped).max(GAP_FLOOR);
             } else {
-                // Leading noise before the first match is worth less than a gap
-                // inside it: "message" matching "Next message" is fine.
                 total += (GAP * index as i32).max(GAP_FLOOR);
             }
         }
@@ -143,8 +68,6 @@ pub fn score(query: &str, candidate: &str) -> Option<Match> {
         last = Some(index);
     }
 
-    // Between two candidates that match equally well, the shorter one is the
-    // one the user meant.
     total -= candidate.len() as i32 / 8;
 
     Some(Match {
@@ -153,7 +76,6 @@ pub fn score(query: &str, candidate: &str) -> Option<Match> {
     })
 }
 
-/// Whether the byte at `index` begins a word.
 fn starts_a_word(candidate: &str, index: usize) -> bool {
     if index == 0 {
         return true;
@@ -164,52 +86,25 @@ fn starts_a_word(candidate: &str, index: usize) -> bool {
         .is_some_and(|previous| !previous.is_alphanumeric())
 }
 
-// ---------------------------------------------------------------------------
-// Entries
-// ---------------------------------------------------------------------------
-
-/// One row of the palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    /// The command this row runs.
-    ///
-    /// An [`ActionId`], because `Ctrl+K` is where a registered command has to
-    /// be equal to a built-in: it has a query box, so it can absorb a
-    /// vocabulary that grows, which is exactly what the right-click menu
-    /// cannot do.
+    /// An `ActionId`: a registered command must be equal to a built-in here, since the query box
+    /// can absorb a vocabulary that grows.
     pub id: ActionId,
-    /// Its title, as the registry gives it.
     pub title: &'static str,
-    /// Its binding in force, or `None` when it is palette-only.
-    ///
-    /// Read from the live [`Keymap`], so a `[keys]` override shows here without
-    /// anything else being told.
     pub binding: Option<String>,
-    /// Byte indices in `title` the query matched, for highlighting.
     pub positions: Vec<usize>,
-    /// How well it matched. Rows come out highest first.
     pub score: i32,
 }
 
-/// Penalty for matching the stable id rather than the title.
-///
-/// `reply_to_latest` is findable by typing `reply_to_l`, but a title match for
-/// the same query should always rank above it.
+/// A title match for the same query always ranks above an id match.
 const ID_PENALTY: i32 = 40;
 
-/// The rows to show for `query`, best first.
-///
-/// Filtered to commands reachable in `context` — offering to send a draft from
-/// the message list is a row the user can only be disappointed by — and to
-/// those `state` satisfies, so a unified view does not offer a `Move` with no
-/// account to move within (#182), and a window whose store has not opened yet
-/// does not offer anything that reads mail (#1114). An empty query returns
-/// everything applicable, in registry order.
+/// Filtered to commands reachable in `context` and satisfying `state` (#182, #1114). An empty query
+/// returns everything applicable, in registry order.
 pub fn entries(keymap: &Keymap, context: Context, state: Availability, query: &str) -> Vec<Entry> {
     let query = query.trim();
     let mut found: Vec<Entry> = registry::reachable_in(context, state)
-        // Not what this platform has no surface for: see
-        // `postio_core::registry::offered_on`.
         .filter(|spec| keymap.offers(spec.id))
         .filter_map(|spec| {
             let by_title = score(query, spec.title);
@@ -232,8 +127,6 @@ pub fn entries(keymap: &Keymap, context: Context, state: Availability, query: &s
         })
         .collect();
 
-    // Stable, so an empty query — every score zero — comes out in registry
-    // order rather than in whatever order the sort happened to leave it.
     found.sort_by_key(|entry| std::cmp::Reverse(entry.score));
     found.truncate(MAX_ROWS);
     found
@@ -246,8 +139,6 @@ mod tests {
     use postio_core::Scope;
     use postio_model::AccountId;
 
-    /// These tests are about context filtering, so they run in the scope
-    /// where every command is available: one account's own mailboxes.
     fn an_account() -> Availability {
         Availability::open(Scope::Account(AccountId::new(1)))
     }
@@ -258,8 +149,6 @@ mod tests {
 
     #[test]
     fn a_command_the_platform_does_not_offer_is_not_in_its_palette() {
-        // Offering Detach composer on a Mac, where compose is already a window,
-        // is a row the user picks and nothing happens (#1571).
         use postio_config::paths::Platform;
         for platform in [Platform::Freedesktop, Platform::Apple] {
             let keymap = Keymap::resolve_on(&postio_config::KeyBindings::default(), platform);
@@ -277,8 +166,6 @@ mod tests {
         }
     }
 
-    // -- matching ---------------------------------------------------------
-
     #[test]
     fn a_query_that_is_not_a_subsequence_does_not_match() {
         assert!(score("zzz", "Archive").is_none());
@@ -293,8 +180,6 @@ mod tests {
 
     #[test]
     fn matching_is_case_insensitive() {
-        // Not merely a match each way: the same match, so a query's case
-        // never reorders the palette.
         let lower = score("arch", "Archive");
         assert!(lower.is_some());
         assert_eq!(score("ARCH", "Archive"), lower);
@@ -320,9 +205,6 @@ mod tests {
 
     #[test]
     fn a_prefix_beats_the_same_letters_further_in() {
-        // Synthetic rather than two registry titles: what is being pinned is the
-        // scoring rule, and a real pair would also differ in length and word
-        // boundaries.
         let prefix = score("com", "compose").expect("a match").score;
         let later = score("com", "recompose").expect("a match").score;
 
@@ -339,14 +221,10 @@ mod tests {
         assert!(short > long, "{short} vs {long}");
     }
 
-    // -- entries ----------------------------------------------------------
-
     #[test]
     fn an_empty_query_lists_everything_reachable_in_registry_order() {
         let keymap = defaults();
         let listed = entries(&keymap, Context::List, an_account(), "");
-        // Reachable for this app: Focus's own commands are rows of the
-        // registry another app does not offer.
         let expected: Vec<ActionId> = registry::reachable_in(Context::List, an_account())
             .map(|spec| spec.id)
             .filter(|id| keymap.offers(*id))
@@ -360,10 +238,6 @@ mod tests {
 
     #[test]
     fn every_registry_command_is_reachable_from_some_context() {
-        // In some context of some app: the terminal composer's own commands
-        // are in the terminal's palette only, and Focus's in Focus's. Only
-        // what the platform offers: a command scoped away from it is in no
-        // palette there.
         let keymap = defaults();
         let terminal = Availability {
             frontend: postio_core::Frontend::Terminal,
@@ -452,9 +326,6 @@ mod tests {
         );
     }
 
-    /// The palette is the surface #182's acceptance names: a unified view
-    /// must not offer a destination it has no way to pick. The registry
-    /// decides; this proves the answer actually reaches the rows.
     #[test]
     fn a_unified_view_offers_no_move_and_an_account_view_does() {
         let in_account: Vec<&str> = entries(&defaults(), Context::List, an_account(), "move")
@@ -484,10 +355,6 @@ mod tests {
 
     #[test]
     fn a_window_with_no_store_offers_only_what_can_run() {
-        // #1114. The palette is where somebody looks to find out what is
-        // available, so it is the one surface that must not offer something
-        // that cannot be: pressing Return on a row that does nothing reads
-        // as a broken application rather than as an unavailable command.
         let waiting = Availability {
             store_open: false,
             ..Availability::open(Scope::Account(AccountId::new(1)))

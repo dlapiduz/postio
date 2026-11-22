@@ -1,7 +1,5 @@
-//! What Focus's command bar does with what is typed, with no toolkit in it
-//! (screens 07-09): where typing routes, which rows the blend offers and
-//! what each says, how search hits become conversations, and what running a
-//! row asks for.
+//! Focus's command bar without a toolkit: routing, blend rows, search hits, what running a row asks
+//! for.
 
 use postio_core::{ActionId, CommandId, Context, Keymap};
 use postio_model::MailboxId;
@@ -10,16 +8,12 @@ use postio_search::{ResultOrder, SearchHit};
 
 use crate::finder::{self, Blend, Destination, Place, PlaceKind};
 
-/// How many conversations a folder lists in the bar.
 pub const FOLDER_ROWS: u32 = 30;
 
-/// How many search hits the bar lists.
 pub const HITS: usize = 30;
 
-/// How many commands and places the blend lists of each.
 pub const BLEND_ROWS: usize = 5;
 
-/// The commands the saved searches run, in order.
 pub const SAVED: [CommandId; 4] = [
     CommandId::SavedSearch1,
     CommandId::SavedSearch2,
@@ -27,9 +21,7 @@ pub const SAVED: [CommandId; 4] = [
     CommandId::SavedSearch4,
 ];
 
-/// The verbs on an account, which Settings' Accounts section binds keys to.
-/// They are reached from the list's bar too, where they act on the account
-/// row Settings has focused, or open Settings to pick one.
+/// Account verbs; also reached from the list's bar, acting on the account row Settings has focused.
 pub const ACCOUNT_VERBS: [CommandId; 5] = [
     CommandId::ToggleAccountEnabled,
     CommandId::RemoveAccount,
@@ -38,29 +30,20 @@ pub const ACCOUNT_VERBS: [CommandId; 5] = [
     CommandId::MapMailboxRole,
 ];
 
-/// The line under a search's chips-less answer: what "Search mail" covers.
 pub const SEARCH_DETAIL: &str = "subject, body, attachments";
 
-/// The character that asks for a correspondent: the finder's own prefix.
 pub const CORRESPONDENTS: char = '@';
 
-/// How many correspondents `@` lists.
 pub const CORRESPONDENT_ROWS: usize = 8;
 
-/// What typing in the bar means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route<'a> {
-    /// `in:` and a name with no space: complete a folder.
     Folder(&'a str),
-    /// Nothing, or `>`: commands only, no chips.
     Plain,
-    /// `@` and a name: the correspondents it matches.
     Correspondent(&'a str),
-    /// Anything else: the blend, and chips when the words are a search.
     Blend,
 }
 
-/// Where `typed` (already trimmed) routes.
 pub fn route(typed: &str) -> Route<'_> {
     if let Some(name) = typed.strip_prefix("in:").filter(|name| !name.contains(' ')) {
         return Route::Folder(name);
@@ -75,9 +58,7 @@ pub fn route(typed: &str) -> Route<'_> {
     }
 }
 
-/// The chips `parsed` is shown as, when its words name what they want -- an
-/// operator, or a partial one on its way. A plain word is answered with the
-/// commands and places it names and one search row, and makes no chip.
+/// A plain word makes no chip; it gets commands, places and one search row.
 pub fn chips(parsed: &postio_search::ParsedQuery) -> Option<Vec<String>> {
     if parsed.filters().next().is_some() || parsed.partials().next().is_some() {
         Some(
@@ -92,13 +73,11 @@ pub fn chips(parsed: &postio_search::ParsedQuery) -> Option<Vec<String>> {
     }
 }
 
-/// What the bar echoes under the box.
 pub fn echo(typed: &str) -> String {
     format!("You typed \u{201c}{typed}\u{201d}")
 }
 
-/// Add the account verbs `query` matches to `found`, ranked among it. The
-/// palette lists a context's own commands, and these are `Accounts`'.
+/// The palette lists a context's own commands; these are `Accounts`'.
 pub fn add_account_verbs(
     found: &mut Vec<crate::palette::Entry>,
     keymap: &Keymap,
@@ -117,74 +96,47 @@ pub fn add_account_verbs(
     found.truncate(crate::palette::MAX_ROWS);
 }
 
-/// What running a row asks the window to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarAction {
-    /// Open a message over the list.
     Open {
-        /// Which.
         message: MessageId,
-        /// Its subject, for the dialog's header.
         subject: String,
     },
-    /// Run a command, on what the bar opened over.
     Command(CommandId),
-    /// Go to a place: the list shows it.
     Go {
-        /// Where.
         destination: Destination,
-        /// Its name, for the header strip.
         name: String,
     },
 }
 
-/// One row of the results, and what running it does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
-    /// A section heading; runs nothing.
     Heading,
-    /// A message: a search hit, or a folder's conversation.
     Message {
-        /// Which.
         message: MessageId,
-        /// Its subject.
         subject: String,
     },
-    /// A command.
     Command(ActionId),
-    /// A place.
     Place(Destination, String),
-    /// "Search mail for …": the results are already the search's.
     Search,
-    /// "Search instead for “word”": the word typed, which found nothing and
-    /// was answered with another (ADR 0037); runs it quoted, exactly.
+    /// The word typed found nothing and was answered with another (ADR 0037); runs it quoted,
+    /// exactly.
     Instead(String),
-    /// The order the results are in, and what running it switches to.
     Order,
-    /// A correspondent `@` offered: running it searches their mail, as the
-    /// `from:` query it stands for.
     Correspondent(String),
-    /// A line of the empty bar saying what typing does; runs nothing.
     Hint,
 }
 
-/// What running a row comes to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Run {
-    /// Close the bar and ask the window.
     Action(BarAction),
-    /// Search for what is typed now, keeping the bar open.
     Search,
-    /// Put this text in the box, then search for it.
     SearchFor(String),
-    /// Switch the result order, keeping the bar open.
     ToggleOrder,
-    /// Nothing: a heading, or a command no one here can run.
     Nothing,
 }
 
 impl Row {
-    /// What running this row does.
     pub fn run(self) -> Run {
         match self {
             Row::Heading | Row::Hint => Run::Nothing,
@@ -199,32 +151,22 @@ impl Row {
         }
     }
 
-    /// Whether the arrows may rest on this row.
     pub fn is_selectable(&self) -> bool {
         !matches!(self, Row::Heading | Row::Hint)
     }
 }
 
-/// A line the bar draws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
-    /// A section heading.
     Heading(String),
-    /// A row, with what it says and the key beside it.
     Row {
-        /// What running it does.
         row: Row,
-        /// Its title.
         title: String,
-        /// Its dimmer detail.
         detail: Option<String>,
-        /// The key that does the same.
         key: Option<String>,
     },
 }
 
-/// The blend's lines, in the order screen 09 draws them: the commands, the
-/// places, and the one search row.
 pub fn blend_lines(blend: &Blend<'_>) -> Vec<Line> {
     let mut lines = Vec::new();
     if blend.search_first() {
@@ -258,7 +200,6 @@ pub fn blend_lines(blend: &Blend<'_>) -> Vec<Line> {
     lines
 }
 
-/// The one "Search mail for …" row, when there is something to search for.
 fn search_line(blend: &Blend<'_>) -> Option<Line> {
     blend.search.as_ref().map(|query| Line::Row {
         row: Row::Search,
@@ -268,8 +209,6 @@ fn search_line(blend: &Blend<'_>) -> Option<Line> {
     })
 }
 
-/// What the empty bar says instead of a blank band: what typing does, one
-/// line each, in the rows' own style. Nothing here runs.
 pub fn empty_lines() -> Vec<Line> {
     let mode = |marker: &str| {
         finder::MODES
@@ -299,8 +238,6 @@ pub fn empty_lines() -> Vec<Line> {
     ]
 }
 
-/// The lines `@` draws: the correspondents it matched, each under one
-/// heading, running as the `with:` search for them.
 pub fn correspondent_lines(hits: &[finder::ContactHit]) -> Vec<Line> {
     if hits.is_empty() {
         return Vec::new();
@@ -317,8 +254,6 @@ pub fn correspondent_lines(hits: &[finder::ContactHit]) -> Vec<Line> {
     lines
 }
 
-/// The first folder whose name starts with `name`, case aside: what `in:`
-/// completes to, with the mailbox it lists.
 pub fn folder_for(places: &[Place], name: &str) -> Option<(String, MailboxId)> {
     let wanted = name.to_lowercase();
     places
@@ -331,12 +266,10 @@ pub fn folder_for(places: &[Place], name: &str) -> Option<(String, MailboxId)> {
         })
 }
 
-/// A folder's heading over its threads.
 pub fn folder_heading(name: &str, count: u32) -> String {
     format!("{name} \u{b7} folder \u{b7} {count} threads \u{b7} newest first")
 }
 
-/// The hits to list: one per conversation, the best first, at most [`HITS`].
 pub fn conversations(hits: Vec<SearchHit>) -> Vec<SearchHit> {
     let mut seen = Vec::new();
     let mut rows = Vec::new();
@@ -357,13 +290,8 @@ pub fn conversations(hits: Vec<SearchHit>) -> Vec<SearchHit> {
     rows
 }
 
-/// The search row's title: what Return searches for. When the results are
-/// for a correction of the typed word (ADR 0037), `instead` is that
-/// correction and the row names it, so no two rows name one query and the
-/// highlighted row matches the results under it.
-///
-/// Words that carry their own quotes -- a phrase -- are shown as typed
-/// rather than quoted again.
+/// With `instead` set, the results are for a correction (ADR 0037) and the row names it, so no two
+/// rows name one query.
 pub fn search_title(query: &str, instead: Option<&str>) -> String {
     let words = instead.unwrap_or(query);
     if words.contains('"') {
@@ -373,7 +301,6 @@ pub fn search_title(query: &str, instead: Option<&str>) -> String {
     }
 }
 
-/// The results' heading: "Threads · 3 matches".
 pub fn results_heading(count: usize) -> String {
     format!(
         "Threads \u{b7} {count} match{}",
@@ -381,12 +308,10 @@ pub fn results_heading(count: usize) -> String {
     )
 }
 
-/// The heading over results for another word than the one typed.
 pub fn showing_results_for(term: &str) -> String {
     format!("Showing results for {term}")
 }
 
-/// The row that searches for the typed word exactly.
 pub fn search_instead(typed: &str) -> (String, &'static str) {
     (
         format!("Search instead for \u{201c}{typed}\u{201d}"),
@@ -394,7 +319,6 @@ pub fn search_instead(typed: &str) -> (String, &'static str) {
     )
 }
 
-/// The order row's title and what running it switches to.
 pub fn order_words(order: ResultOrder) -> (String, String) {
     let (now, other) = match order {
         ResultOrder::Relevance => ("relevance", "date"),
@@ -403,9 +327,7 @@ pub fn order_words(order: ResultOrder) -> (String, String) {
     (format!("Sorted by {now}"), format!("switch to {other}"))
 }
 
-/// Where a result sits, as its row says it: where held mail waits
-/// (`held` is each held message's rule and whether it has been delivered)
-/// in place of its folder, otherwise `in:` and the folder's name.
+/// Held mail shows where it waits (`held`: rule and delivered flag) in place of its folder.
 pub fn result_place(
     hit: &SearchHit,
     held: &[(MessageId, String, bool)],
@@ -423,7 +345,6 @@ pub fn result_place(
     }
 }
 
-/// A sender as a result row names them: their name, or their address.
 pub fn said_of(from: &postio_model::EmailAddress) -> String {
     from.name.clone().unwrap_or_else(|| from.address.clone())
 }
@@ -469,8 +390,6 @@ mod tests {
             .expect("a row")
     }
 
-    /// What Return runs first is the search for a word no command is named
-    /// by, and the command for one it is.
     #[test]
     fn the_first_row_is_the_search_unless_a_command_is_named() {
         let keymap = Keymap::resolve(&postio_config::KeyBindings::default());
@@ -602,14 +521,10 @@ mod tests {
 
     #[test]
     fn the_search_row_names_the_query_the_results_are_for() {
-        // Typed words are what Return searches...
         assert_eq!(
             search_title("harbour", None),
             "Search mail for \u{201c}harbour\u{201d}"
         );
-        // ...unless the results are for a correction (ADR 0037): then the
-        // row names the correction, and "Search instead" is the only row
-        // that names the typed word.
         let shown = search_title("harbourO", Some("harbour"));
         assert_eq!(shown, "Search mail for \u{201c}harbour\u{201d}");
         assert!(!shown.contains("harbourO"));

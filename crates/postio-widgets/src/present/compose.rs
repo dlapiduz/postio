@@ -1,32 +1,9 @@
-//! The composer's seams, answered through the store's owner
-//! (specs/007-postio-focus T022, T078; ADR 0041).
-//!
-//! Each window used to answer these seams for itself: a save is `Req::SaveDraft`, a send
-//! `Req::QueueSend`, and the message that leaves is built by the host from
-//! the draft the composer hands over -- the same draft, from the same
-//! composer, whichever window holds it (FR-050, T081). Nothing here reaches
-//! `postio-session` or `postio-host` directly; every seam is answered
-//! through [`postio_client::Client`], which is what makes this crate able to
-//! hold it at all (ADR 0043).
-//!
-//! Focus's own wiring (`postio_gtk::compose::seams`) was already shaped
-//! this way before this module existed -- reaching only through the client,
-//! answering the WebKit-facing seams from a cache it fills ahead of time
-//! rather than a blocking read -- and is what this module is built from.
-//! The composer once used a different shape for the same
-//! seams: `postio_session::blocking::now` for the seams that had to answer
-//! on the spot. Unifying on this shape is what let two of that debt's
-//! three sites disappear rather than move (`check-blocking-now-sites.py`);
-//! see [`install_inline_images`] and [`install_resume`].
-//!
-//! What is *not* here: a seam only one app's chrome needs. Focus's Labels
-//! row and its "remind if no reply" footer read the same [`Composer`] this
-//! module wires, through their own additional handlers on
-//! [`Composer::connect_reply_source`] and [`Composer::connect_opened`] --
-//! which this module does not register, precisely so Focus's dialog frame
-//! can. A composer's seam is a single slot, not a signal several listeners
-//! share, so a seam this module owns cannot also be owned by the app's own
-//! chrome: Focus keeps its own reply source.
+//! The composer's seams answered through [`postio_client::Client`], never `postio-session` or
+//! `postio-host` directly (ADR 0043).
+//! Focus's Labels row and reminder footer use their own handlers on `connect_reply_source` and
+//! `connect_opened`, which this
+//! module does not register: a seam is a single slot, so the app's chrome keeps its own reply
+//! source.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -42,52 +19,27 @@ use postio_model::{Account, DraftId, DraftState};
 
 use crate::composer::{Closing, Composer};
 
-/// How many recipient suggestions to offer at once -- a popover, not a list
-/// the user scrolls.
 pub const SUGGESTION_LIMIT: usize = 8;
 
-/// How the composer tells the rest of the window something happened, for a
-/// window whose news does not otherwise reach it. `None` for a window that
-/// already hears the host's events (#1608); that stays a caller's choice
-/// rather than something this module decides.
+/// `None` for a window that already hears the host's events (#1608).
 pub type Announce = Rc<dyn Fn(&postio_core::Event)>;
 
-/// What a send became once the store had queued it: the draft waiting to
-/// go, and when -- `None` for now. The window that sent it says so and
-/// offers to take it back.
 pub type OnQueued =
     Rc<dyn Fn(postio_client::protocol::Queued, Option<chrono::DateTime<chrono::Utc>>)>;
 
-/// Which message `e`, `E` and `f` answer: the row the cursor is on, or the
-/// reading pane is showing.
 pub type Current = Rc<dyn Fn() -> Option<MessageId>>;
 
-/// Open the draft behind a Drafts row for editing.
 pub type Resume = Rc<dyn Fn(MessageId)>;
 
-/// What [`install_resume`] found when it took a queued or failed draft back
-/// for editing, for a caller that wants to say so.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeNote {
-    /// The draft was queued; opening it here cancelled that send (#433).
     Cancelled,
-    /// The draft's last send failed, for this reason.
     Failed(String),
 }
 
-/// A caller's reaction to a [`ResumeNote`] -- a toast, a status line, a
-/// footer's note. Left `None` to say nothing.
 pub type OnResumeNote = Rc<dyn Fn(ResumeNote)>;
 
-/// The account's identities and named signatures, read once and put in front
-/// of the user (#12); the answer is the account row, for a caller that has
-/// its own use for it (a window can mark its own messages in a
-/// conversation from the same identities, #1241).
-///
-/// Nothing called this before #12 was fixed, so the picker had been built,
-/// tested and shown with an empty model since it was written: every draft
-/// signed with whatever `apply_identity` found on an account of none, which
-/// is nothing.
+/// The answer is the account row, for a caller with its own use for it (#1241).
 pub async fn install_identities(
     composer: &Composer,
     client: &Client,
@@ -112,13 +64,9 @@ pub async fn install_identities(
     Some(found)
 }
 
-/// Puts a resolved default in front of a brand-new draft, before the
-/// identity's own (#12's last item, #394): a mailbox's own signature
-/// overrides the account's default, which overrides the identity's.
-///
-/// `selected` answers which mailbox is in view, read fresh on every compose
-/// rather than once at install: Focus has no folder selected and
-/// answers `None`, which leaves the account's default signature to decide.
+/// A mailbox's signature overrides the account's default, which overrides the identity's.
+/// `selected` is read fresh on every
+/// compose; Focus has no folder selected and answers `None`.
 pub fn install_signature_default(
     composer: &Composer,
     client: &Client,
@@ -136,10 +84,10 @@ pub fn install_signature_default(
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // resolves the rest.
             let resolved = resolving.await.ok().flatten();
-            // A default the composer has not been told about: one made in
-            // Settings since it read the account's signatures, or the first
-            // compose, whose read has not landed yet. Read them again first,
-            // or the draft signs with the identity's own instead (T234).
+            // A default the composer has not been told about (made in Settings since it read the
+            // account's signatures, or the
+            // first compose before its read landed): read them again first, or the draft signs with
+            // the identity's own.
             if let (Some(id), Some(composer)) = (resolved, weak.upgrade())
                 && !composer.has_signature(id)
             {
@@ -151,26 +99,18 @@ pub fn install_signature_default(
     });
 }
 
-/// A caller's reaction to an id a save just landed -- Focus's footer
-/// stamps "Saved at HH:MM" from it; a caller with no such row passes `None`.
 pub type OnSaved = Rc<dyn Fn(DraftId)>;
 
-/// Autosave through the host's `DraftWriter`, and clearing the row once
-/// there is nothing left to keep -- sent, discarded, or closed empty.
-///
-/// Crash recovery is not here: whether a brand-new composer should reopen
-/// whatever `account` was writing when the last session died is a
-/// composition-root decision (Focus's dialog is built lazily, well after startup, and opening a
-/// dialog nobody asked for would be a surprise). See [`recover_draft`].
+/// Crash recovery is not here: reopening a draft is a composition-root decision, since Focus's
+/// dialog is built lazily and
+/// opening one nobody asked for would surprise. See [`recover_draft`].
 pub fn install_autosave(
     composer: &Composer,
     client: &Client,
     on_saved: Option<OnSaved>,
 ) -> Rc<Cell<Option<DraftId>>> {
-    // The id of whatever `connect_save`'s handler last persisted. Not read
-    // from the composer's own draft afterward because `connect_closed` does
-    // not carry the draft -- only what became of it -- so this is the one
-    // piece of bookkeeping this module has to keep for itself.
+    // Not read from the composer's draft afterward: `connect_closed` carries what became of the
+    // draft, not which one.
     let last_id: Rc<Cell<Option<DraftId>>> = Rc::default();
     let weak = composer.downgrade();
     composer.connect_save({
@@ -183,7 +123,6 @@ pub fn install_autosave(
                 return;
             };
             let generation = composer.generation();
-            // Handed over here, in the order the composer saved.
             let saved = client.save_draft(generation, draft.clone());
             let last_id = Rc::clone(&last_id);
             let weak = weak.clone();
@@ -211,24 +150,18 @@ pub fn install_autosave(
         let client = client.clone();
         let last_id = Rc::clone(&last_id);
         move |outcome| {
-            // Kept: Esc with something still in it. The row stays exactly as
-            // autosaved, ready to recover it right back.
             if outcome != Closing::Drop {
                 return;
             }
             let Some(composer) = weak.upgrade() else {
                 return;
             };
-            // Handed over now, in order; nothing waits for it to land.
             drop(client.discard_draft(composer.previous_generation(), last_id.take()));
         }
     });
     last_id
 }
 
-/// Only after a crash (#491): ask `begin_session`, which knows how the last
-/// session ended, and open the draft worth reopening by Esc's own rule -- or
-/// nothing.
 pub async fn recover_draft(
     composer: &Composer,
     client: &Client,
@@ -247,21 +180,10 @@ pub async fn recover_draft(
     }
 }
 
-/// Sending, now or later: the draft becomes a queue row, and stops being the
-/// composer's. Nothing here waits for SMTP, and nothing here opens a
-/// connection: the write is one local transaction, and `postio-sync::send`
-/// drains the row it leaves whenever there is a network (ADR 0021).
-///
-/// `last_id` is taken on send too, and deliberately: `Composer::send` closes
-/// with `Closing::Drop`, and [`install_autosave`]'s close handler discards
-/// whatever `last_id` is holding -- which is precisely the draft just
-/// queued, if this did not clear it first.
-///
-/// `announce` is asked after an immediate send lands, with `account`, so a
-/// window whose own news does not otherwise reach it (`None`, see
-/// [`Announce`]) can say the list moved a row. `on_queued` is told once the
-/// store has queued a send, now or later, so the window can say so and offer
-/// Undo.
+/// Nothing here waits for SMTP or opens a connection: the write is one local transaction (ADR
+/// 0021). `last_id` is taken on
+/// send too, or [`install_autosave`]'s close handler (`Composer::send` closes with `Closing::Drop`)
+/// would discard the draft just queued.
 pub fn install_send(
     composer: &Composer,
     client: &Client,
@@ -282,9 +204,9 @@ pub fn install_send(
                 return;
             };
             last_id.set(None);
-            // Through the host's writer, after every save this composition
-            // handed it: a send racing a first save in flight would insert a
-            // second row.
+            // Through the host's writer, after every save this composition handed it: a send racing
+            // a first save in flight would
+            // insert a second row.
             let queued = client.queue_send(composer.generation(), draft.clone(), None);
             if announce.is_none() && on_queued.is_none() {
                 drop(queued);
@@ -319,7 +241,6 @@ pub fn install_send(
                 return;
             };
             last_id.set(None);
-            // Handed over now, in order; the answer arrives when it has landed.
             let queued = client.queue_send(composer.generation(), draft.clone(), Some(send_at));
             let on_queued = on_queued.clone();
             glib::spawn_future_local(async move {
@@ -332,10 +253,8 @@ pub fn install_send(
     });
 }
 
-/// A draft left in Drafts -- by either app -- opens in the composer for
-/// editing (US3 scenario 3, US11 scenario 3): a draft whose send is still
-/// queued is taken back first, so an edit cannot race the drainer (#433),
-/// and a failed send says why, through `on_note`.
+/// A queued send is taken back first, so an edit cannot race the drainer (#433); a failed send says
+/// why through `on_note`.
 pub fn install_resume(
     composer: &Composer,
     client: &Client,
@@ -365,12 +284,8 @@ pub fn install_resume(
     })
 }
 
-/// What opens a draft by its own id: a thread's unsent reply, which has no
-/// message of its own to name (spec 013, T085 (a)). The same opening as
-/// [`install_resume`]'s.
 pub type ResumeDraft = Rc<dyn Fn(DraftId)>;
 
-/// [`install_resume`] for a draft named by its id.
 pub fn install_resume_draft(
     composer: &Composer,
     client: &Client,
@@ -400,8 +315,6 @@ pub fn install_resume_draft(
     })
 }
 
-/// Open `draft` in the composer: a queued send is taken back first, and a
-/// failed one says why.
 async fn resume_found(
     draft: postio_model::Draft,
     weak: glib::WeakRef<Composer>,
@@ -416,8 +329,7 @@ async fn resume_found(
         };
         (reopened, Some(ResumeNote::Cancelled))
     } else if draft.state == DraftState::Failed {
-        // FR-066's third clause, and #1487: a failed send has to
-        // name what went wrong.
+        // #1487: a failed send has to name what went wrong.
         // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
         let why = client.send_failure(draft.id).await.ok().flatten();
         (draft, why.map(ResumeNote::Failed))
@@ -427,8 +339,8 @@ async fn resume_found(
     let Some(composer) = weak.upgrade() else {
         return;
     };
-    // So that closing it empty clears the right row: `connect_closed`
-    // carries what became of the draft and not which one it was.
+    // So closing it empty clears the right row: `connect_closed` carries what became of the draft,
+    // not which one.
     last_id.set(Some(draft.id));
     composer.resume(draft);
     if let (Some(note), Some(on_note)) = (note, on_note) {
@@ -436,17 +348,10 @@ async fn resume_found(
     }
 }
 
-/// Recipient completion, answered from memory.
-///
-/// The composer asks for candidates on every keystroke in `To`, `Cc` and
-/// `Bcc`, synchronously, on the GTK thread, so the directory -- the
-/// account's groups and contacts, each with the letters the user wrote to it
-/// -- is read from the store's owner when this is installed and again each
-/// time the composer opens, so a contact first seen in mail that arrived
-/// meanwhile is offered in the next composition. Every keystroke is then
-/// `postio_ui::recipients::suggest` over what was read -- the one rule every
-/// app ranks by (spec 007 T076) -- with no call, no query, and nothing on
-/// the thread that draws.
+/// The composer asks for candidates on every keystroke, synchronously on the GTK thread, so the
+/// directory is read when this
+/// is installed and each time the composer opens, then ranked by `postio_ui::recipients::suggest`
+/// with no call or query.
 pub fn install_recipients(composer: &Composer, client: &Client, account: AccountId) {
     let directory: Rc<RefCell<Rc<RecipientDirectory>>> = Rc::default();
     let reload = {
@@ -478,8 +383,6 @@ pub fn install_recipients(composer: &Composer, client: &Client, account: Account
     });
 }
 
-/// Stores a chosen or dropped file as an attachment: the type sniffed off
-/// the main loop, the bytes stored by the host.
 pub fn install_attach(composer: &Composer, client: &Client) {
     let client = client.clone();
     composer.connect_attach(move |path, then| {
@@ -506,7 +409,6 @@ pub fn install_attach(composer: &Composer, client: &Client) {
     });
 }
 
-/// `path`'s type, as a file manager would sniff it.
 fn mime_type_of(path: &std::path::Path) -> String {
     gio::File::for_path(path)
         .query_info(
@@ -520,20 +422,13 @@ fn mime_type_of(path: &std::path::Path) -> String {
         .unwrap_or_else(|| "application/octet-stream".to_owned())
 }
 
-/// Inline images' bytes, by blob, held for the editing surface: its `cid:`
-/// resolver is a synchronous callback, and this answers it from memory
-/// rather than wait on the store on the thread that draws
-/// (`check-blocking-now-sites.py`) -- unlike the reader's own `cid:` images
-/// (`present::reading::cid_source`), which resolve against a message that is
-/// already on this machine and so can afford the one blocking read WebKit's
-/// callback allows; a composition's inline images may have just been
-/// pasted, and a resumed draft's have to be read before they can be shown at
-/// all, so a cache filled ahead of render is the only shape that works for
-/// both.
+/// The editing surface's `cid:` resolver is a synchronous callback, so this answers from memory
+/// rather than wait on the
+/// store on the drawing thread (`check-blocking-now-sites.py`). A composition's inline images may
+/// have just been pasted or
+/// need reading first, so a cache filled ahead of render is the only shape that works.
 type InlineBytes = Rc<RefCell<HashMap<BlobId, Vec<u8>>>>;
 
-/// A pasted image, stored as an inline part, its bytes kept for the surface
-/// that shows it; a draft that opens with inline images has theirs read.
 pub fn install_inline_images(composer: &Composer, client: &Client) {
     let held: InlineBytes = Rc::default();
     composer.connect_inline_image({

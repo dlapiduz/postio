@@ -1,12 +1,3 @@
-//! Validation tests for `postio-config`.
-//!
-//! Written before the implementation, per the TDD rule in `CLAUDE.md`.
-//!
-//! Canvas 3f has no OK/Cancel dialog: `config.toml` *is* the settings UI, and a
-//! single always-visible validity line reports either `valid` or the first
-//! problem. That line is one line long, so every error here has to carry a
-//! position and prose a human can act on.
-
 use std::path::Path;
 
 use postio_config::validate::{self, Checked};
@@ -42,8 +33,6 @@ fn first_message(text: &str) -> String {
         .clone()
 }
 
-// ------------------------------------------------------------ the good path --
-
 #[test]
 fn a_good_config_is_valid() {
     let checked = check(GOOD);
@@ -68,20 +57,9 @@ fn the_status_line_carries_the_parse_timing() {
     assert!(line.starts_with("valid"), "{line}");
     assert!(line.contains("parsed in"), "{line}");
     assert!(line.contains("ms"), "{line}");
-    // No bound on `elapsed()` here. What this test is about is that the line
-    // *carries* a timing, and a 50 ms ceiling on a shared machine is the same
-    // wall-clock gate the rest of #917 removed -- with the added problem that
-    // it would fail this test, whose subject is the wording.
 }
 
-// The 2 ms budget is asserted in `validation_cost.rs`, as allocations rather
-// than as a stopwatch reading. It lived here and measured the machine: this
-// repository routinely has three sessions compiling at once, and
-// `.cargo/config.toml` pins `jobs = 2` because the box is oversubscribed, so
-// the assertion failed for reasons that had nothing to do with validation.
-// #917, and the rule #100 set.
-
-// ------------------------------------------------------------- keybindings --
+// The 2 ms budget is asserted in `validation_cost.rs` as allocations, not a stopwatch (#917).
 
 #[test]
 fn a_dangling_modifier_reports_the_exact_line_and_why() {
@@ -154,16 +132,9 @@ zoom = "ctrl+shift+plus"
 
 #[test]
 fn two_commands_on_one_key_is_a_conflict() {
-    // Two `[keys]` entries on one key: a mistake with no principled winner,
-    // and the only collision visible without the command registry.
-    //
-    // It used to be `reply = "a"` alone, against archive's *default*, which
-    // this crate could see only because it kept a 23-command copy of the
-    // defaults — and so was silent for the other 56 (#1227). An override
-    // landing on a default's key is not an error at all now: the override
-    // wins, deliberately, and the displaced command is reported by
-    // `Keymap::resolve_on`. See
-    // `core_suite::config::an_override_that_takes_a_default_key_is_reported`.
+    // Two `[keys]` entries on one key: a mistake with no principled winner. An override landing on
+    // a
+    // default's key is not an error: `Keymap::resolve_on` reports the displaced command.
     let text = "[keys]\nreply = \"a\"\narchive_thread = \"a\"\n";
     let checked = check(text);
     let err = checked.validation.first_error().expect("a conflict");
@@ -182,8 +153,6 @@ fn rebinding_both_sides_of_a_collision_is_fine() {
         checked.validation.errors()
     );
 }
-
-// ----------------------------------------------------------- enum values --
 
 #[test]
 fn an_unknown_enum_value_points_at_the_value() {
@@ -224,10 +193,6 @@ fn every_enum_field_is_checked() {
     }
 }
 
-// ------------------------------------------------------ account completeness --
-
-// ------------------------------------------------------------ sync, filters --
-
 #[test]
 fn zero_valued_sync_settings_are_reported() {
     for (path, snippet) in [
@@ -259,8 +224,6 @@ fn an_empty_filter_query_is_reported() {
     assert!(err.message.contains("needs-reply"), "{}", err.message);
 }
 
-// -------------------------------------------------------------- TOML syntax --
-
 #[test]
 fn a_syntax_error_reports_its_line_and_yields_no_config() {
     let text = "[ui]\ndensity = \"compact\"\n\n[keys\narchive = \"x\"\n";
@@ -277,8 +240,6 @@ fn a_wrong_type_is_reported_rather_than_panicking() {
     assert!(!checked.validation.is_valid());
     assert!(checked.validation.first_error().is_some());
 }
-
-// ------------------------------------------------------------------ ordering --
 
 #[test]
 fn the_first_error_is_the_topmost_one_in_the_file() {
@@ -299,8 +260,6 @@ query = ""
     sorted.sort_unstable();
     assert_eq!(lines, sorted, "errors must read down the file");
 }
-
-// ------------------------------------------------------------------ secrets --
 
 const PASSWORD: &str = "hunter2-do-not-persist";
 
@@ -353,8 +312,6 @@ fn a_syntax_error_on_a_secret_line_is_redacted() {
     assert!(!rendered.contains(PASSWORD), "{rendered}");
 }
 
-// ----------------------------------------------------------------- on disk --
-
 #[test]
 fn a_missing_file_is_valid_defaults() {
     let checked = validate::check_path(Path::new("/nonexistent/postio/config.toml"));
@@ -385,9 +342,6 @@ fn a_mailbox_role_that_is_not_a_role_is_reported() {
 
 #[test]
 fn mapping_inbox_is_refused_because_the_server_decides_it() {
-    // INBOX is the one folder IMAP names itself, in RFC 3501. Letting someone
-    // point `inbox` at another folder would make Postio disagree with every
-    // other client on the same account about where mail arrives.
     let checked = check(
         r#"
         [mailboxes]
@@ -444,15 +398,6 @@ fn a_real_mailbox_mapping_validates_clean() {
 
 #[test]
 fn a_retired_accounts_table_is_reported_without_blocking_the_file() {
-    // #470 / ADR 0005 Q6b. `[accounts.<id>]` parsed, validated and
-    // round-tripped, and nothing read it: an account's host, port, security
-    // and name come from the store, written once by onboarding. Editing the
-    // section saved, re-parsed with no error, and changed nothing about the
-    // running account.
-    //
-    // Semantic, not Schema: the file still loads and everything else in it
-    // still applies. What is wrong is that this one section means nothing,
-    // which is exactly the non-blocking kind.
     let checked = check(
         r#"[ui]
 density = "compact"
@@ -483,15 +428,6 @@ email = "ada@example.com"
     );
 }
 
-// ------------------------------------------------------- [[focus.digests]] --
-//
-// Spec 007 T132, contracts/config.md: validation reports an unparsable
-// query by the rule's name and the query's index, an unknown cadence, a day
-// that does not fit the cadence, and a duplicate name. A rule that fails is
-// not applied; the others still are (ADR 0008 Q6), so none of these stop
-// the file from loading.
-
-/// data-model.md's example rule, and a daily one beside it.
 const DIGESTS: &str = r#"[[focus.digests]]
 name    = "Newsletters"
 match   = ["from:news@localfirst.example", "from:editor@ledger.example"]
@@ -507,7 +443,6 @@ day     = 28
 at      = "08:30"
 "#;
 
-/// Every error for `text`, as `(path, message)`.
 fn errors(text: &str) -> Vec<(String, String)> {
     check(text)
         .validation
@@ -517,7 +452,6 @@ fn errors(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A digest rule named `name`, with the rest given as TOML lines.
 fn rule(name: &str, rest: &str) -> String {
     format!("[[focus.digests]]\nname = \"{name}\"\n{rest}\n")
 }
@@ -664,12 +598,6 @@ fn a_rule_that_fails_is_not_applied_and_the_others_still_are() {
     assert_eq!(names, ["Newsletters", "School"]);
 }
 
-// --------------------------------------------------- [focus.filter] never --
-//
-// Spec 007 T123, contracts/config.md: an entry is an address or a whole
-// domain (`@example.org`). One that is neither is reported by its place,
-// never by what it says, and it pins nobody.
-
 #[test]
 fn never_entries_that_are_addresses_or_domains_are_valid() {
     let checked = check(
@@ -697,8 +625,6 @@ fn a_never_entry_that_is_neither_an_address_nor_a_domain_is_reported_by_its_plac
         assert_eq!(found.len(), 1, "{why}: {found:?}");
         let (path, message) = &found[0];
         assert_eq!(path, "focus.filter.never[1]", "{why}");
-        // A lone `@` is in the message's own example; anything longer the
-        // message has no business repeating.
         assert!(
             entry.trim().len() < 2 || !message.contains(entry.trim()),
             "{why}: the message repeats the entry: {message}"
@@ -706,12 +632,6 @@ fn a_never_entry_that_is_neither_an_address_nor_a_domain_is_reported_by_its_plac
         assert!(message.contains('2'), "{why}: the second entry: {message}");
     }
 }
-
-// ------------------------------------------- [focus.filter] stop_markers --
-//
-// Spec 007 T118, contracts/config.md: each entry names a sender and a kind,
-// `question` or `todo`. One that does not is reported by its place, never
-// by what it says, and stops nothing.
 
 #[test]
 fn stop_markers_that_name_a_sender_and_a_kind_are_valid() {
@@ -754,13 +674,6 @@ fn a_stop_marker_with_no_sender_or_an_unknown_kind_is_reported_by_its_place() {
     }
 }
 
-// --------------------------------------------------------- [focus.model] --
-//
-// Spec 007 T152, contracts/config.md: the person's own model, off unless the
-// section is there. Its endpoint must be on this computer, and anything else
-// is reported with the reason; a section that cannot be used names no model
-// for any feature, and the file still loads.
-
 const MODEL: &str = r#"[focus.model]
 endpoint = "http://127.0.0.1:11434/v1"
 model    = "a-small-model"
@@ -768,8 +681,6 @@ model    = "a-small-model"
 
 #[test]
 fn no_model_section_names_no_model_for_any_feature() {
-    // SC-016's first half at the config: absent means off, and nothing in
-    // the file points anywhere.
     let checked = check("[focus]\nfiltering = true\n");
     assert!(checked.validation.is_valid());
     let config = checked.config.expect("a config");
@@ -853,12 +764,6 @@ fn a_model_section_keeps_what_this_version_does_not_know() {
     let model = config.focus.model.expect("the section");
     assert!(model.extras.contains_key("temperature"));
 }
-
-// --------------------------------------------------------- [focus.vault] --
-//
-// Spec 007 T157, contracts/config.md: the Obsidian vault Focus captures
-// into, a folder on this computer, with its tasks note and projects folder
-// relative to it.
 
 #[test]
 fn a_vault_section_names_its_folder_and_notes() {

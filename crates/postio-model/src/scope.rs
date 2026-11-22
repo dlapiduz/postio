@@ -1,95 +1,49 @@
-//! Which messages a list is showing.
-//!
-//! Every reader of the message list — the store that pages through it, the
-//! runtime that hands rows to a frontend, a frontend's own feed, and the FFI
-//! boundary a second frontend crosses — answers the same question about the
-//! same value, so it gets one type rather than a spelling per reader (#670).
-//! `docs/archive/engineering-notes.md`'s "Six types are called *Scope*" entry has the
-//! full map of what does and does not belong here — in particular
-//! [`crate::AccountScope`] answers a different question ("which accounts?")
-//! and `postio_core::state::ViewScope` is deliberately *not* this type: it is
-//! the narrower result of a rule applied to one.
+//! One type for every reader of the message list (#670). `AccountScope` answers a different
+//! question (which accounts),
+//! and `postio_core::state::ViewScope` is deliberately not this type.
 
 use crate::ids::{AccountId, MailboxId, ThreadId};
 
-/// Which messages a list shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ListScope {
-    /// One folder, as the server has it.
     Mailbox(MailboxId),
-    /// Every folder in an account: that account's whole mail.
     Account(AccountId),
-    /// Every enabled account's inbox at once (ADR 0005 Q4, #1692).
-    ///
-    /// The inboxes, not all mail: a message archived, moved, snoozed or
-    /// deleted from here leaves the view as it leaves a folder, which is what
-    /// lets triage walk down it.
-    ///
-    /// A view, never a destination: mail cannot be moved *into* it, and the
-    /// commands that need somewhere to put a message are unavailable here.
-    /// Rows are conversations grouped across accounts, so one row can stand
-    /// for two threads the user received at two addresses.
+    /// The inboxes, not all mail: a message archived, moved, snoozed or deleted leaves the view as
+    /// it leaves a folder, so triage can walk
+    /// down it (ADR 0005 Q4, #1692). A view, never a destination. One row can stand for two threads
+    /// received at two addresses.
     Unified,
-    /// Everything flagged in an account, wherever it is filed.
     Flagged(AccountId),
-    /// Everything currently snoozed in an account, wherever it is filed.
     Snoozed(AccountId),
-    /// This account's drafts whose send is under way — queued, or being sent.
-    ///
-    /// A view, never a destination, like [`Self::Unified`]: a message cannot
-    /// be moved *into* the Outbox, because being there is a consequence of
-    /// having been sent. [`Self::mailbox`] answers `None` for it, which is
-    /// what makes that checkable rather than remembered.
-    ///
-    /// Per account, matching [`Self::Flagged`] and [`Self::Snoozed`]: the
-    /// sidebar already knows how to place and count one row per account, and
-    /// a unified Outbox would have to answer "which account is this sending
-    /// from" for every row.
+    /// A view, never a destination: being in the Outbox is a consequence of having been sent, and
+    /// `mailbox()` answers `None` for it.
+    /// Per account like `Flagged` and `Snoozed`, since a unified Outbox would have to say which
+    /// account each row sends from.
     Outbox(AccountId),
-    /// One conversation, wherever its messages are filed.
-    ///
-    /// Not a narrowing of a mailbox: a thread routinely spans folders, and a
-    /// drill-in that filtered the list's own resident rows used to show only
-    /// the part of it that happened to be paged in.
+    /// Not a narrowing of a mailbox: a thread spans folders, and filtering resident rows showed
+    /// only the part paged in.
     Thread(ThreadId),
-    /// One of Postio Focus's own lists (spec 007).
-    ///
-    /// A view, never a destination, like [`Self::Unified`]. Only Focus reads
-    /// these, and the classic app and the terminal never see one.
+    /// A view, never a destination. Only Focus reads these.
     Focus(FocusScope),
 }
 
-/// Which of Focus's lists a [`ListScope::Focus`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum FocusScope {
-    /// Focus's inbox: every enabled account's inbox, one row per
-    /// conversation, newest first.
-    ///
-    /// Its membership is the unified inbox's. It is a scope of its own
-    /// because it will not stay that: mail held for a digest and a
-    /// conversation whose reminder has surfaced leave it, and every read of
-    /// it asks the store's one Focus membership test so that its rows, its
-    /// count and its seek marks agree about them.
+    /// Its membership is the unified inbox's, but it is its own scope because it will not stay
+    /// that: mail held for a digest and
+    /// conversations whose reminder has surfaced leave it. Every read asks the store's one Focus
+    /// membership test so rows, count and seek marks agree.
     Inbox,
-    /// The inbox's rows that draw a marker -- an invitation, a question, a
-    /// to-do, a reminder -- and nothing else: what `!` narrows it to
-    /// (spec 007 FR-017). Read from the markers rather than by walking the
-    /// inbox, since they are few and it is not.
+    /// Rows that draw a marker, which `!` narrows to; read from the markers, which are few, rather
+    /// than by walking the inbox.
     HasAction,
-    /// Everything snoozed, in every enabled account, wherever it is filed:
-    /// `g z`. Messages, newest first, as the per-account
-    /// [`ListScope::Snoozed`] lists them, over every account at once.
     Snoozed,
-    /// Everything flagged, in every enabled account, wherever it is filed:
-    /// `g *`. As [`FocusScope::Snoozed`] is to [`ListScope::Snoozed`].
     Flagged,
 }
 
 impl ListScope {
-    /// The folder this scope names, when it names one.
-    ///
-    /// `None` for a smart folder or a thread — load-bearing wherever the
-    /// caller goes on to use the answer as somewhere a message could be put.
+    /// `None` for a smart folder or a thread; load-bearing wherever the answer is used as somewhere
+    /// a message could be put.
     pub fn mailbox(self) -> Option<MailboxId> {
         match self {
             ListScope::Mailbox(id) => Some(id),
@@ -97,43 +51,21 @@ impl ListScope {
             | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
-            // Never a destination: being in the Outbox is a consequence of
-            // having been sent, not somewhere a message can be put.
+            // Never a destination: being in the Outbox is a consequence of having been sent.
             | ListScope::Outbox(_)
             | ListScope::Thread(_)
             | ListScope::Focus(_) => None,
         }
     }
 
-    /// What a list showing this scope does when `account`'s `arrival`
-    /// names `mailbox` — `None` for [`Arrival::MessagesChanged`], which is
-    /// account-wide rather than about one mailbox.
-    ///
-    /// The rule, in one sentence (the classic app's feed module docs carried
-    /// the full table this answers): a list reacts to an event only when
-    /// the event can change its own membership or order, and it inserts at
-    /// the top only when its own order guarantees the new rows belong
-    /// there. Everything else reloads.
-    ///
-    /// [`ListScope::Mailbox`] and [`ListScope::Account`] are gated on the
-    /// identity they name — a folder or every folder in an account — and
-    /// insert new mail at the top, because their order already guarantees
-    /// it belongs there. [`ListScope::Flagged`] and [`ListScope::Snoozed`]
-    /// are gated on the account, because they span every folder in it, and
-    /// they never insert: neither scope's membership is decided by
-    /// arrival, only by the flag or the snooze, so [`Arrival::NewMail`] is
-    /// always [`Reaction::Ignore`] and [`Arrival::MessagesChanged`] — a
-    /// flag or a snooze changing — is [`Reaction::Reload`] rather than
-    /// [`Reaction::Refetch`]: the membership moved, and a page refetch
-    /// cannot express a row leaving. [`ListScope::Thread`] never reaches a
-    /// a feed at all, so every
-    /// arrival is [`Reaction::Ignore`].
-    ///
-    /// `inbox` is whether `mailbox` is an inbox, when the caller knows --
-    /// `None` when it cannot place the folder, which is always safe. Only
-    /// [`ListScope::Unified`] asks: it is the inboxes (#1692), so an arrival
-    /// in a folder known not to be one cannot move a row, and every other
-    /// scope already names the folder or account it is gated on.
+    /// A list reacts only when the event can change its own membership or order, and inserts at the
+    /// top only when its own order guarantees the
+    /// new rows belong there; everything else reloads. `Flagged`, `Snoozed` and `Outbox` span every
+    /// folder, so they never insert, and
+    /// `MessagesChanged` is `Reload` since a refetch cannot express a row leaving. `Thread` never
+    /// reaches a feed. `inbox` is whether
+    /// `mailbox` is an inbox, `None` when the caller cannot place it, which is always safe; only
+    /// `Unified` asks (#1692).
     pub fn reaction(
         self,
         arrival: Arrival,
@@ -157,22 +89,12 @@ impl ListScope {
                 MessagesChanged => Refetch,
                 _ => Ignore,
             },
-            // Every account's inbox (#1692), so no account's arrival is
-            // somebody else's, and a folder known not to be an inbox holds
-            // nothing drawn here -- but a delivery still never inserts. A unified row is a conversation
-            // grouped across accounts, and mail arriving at the second
-            // address for a conversation already on screen *folds into that
-            // row* rather than adding one. An insert cannot express that: it
-            // would draw the same conversation twice, which is the one thing
-            // the grouping exists to prevent. Reloading re-runs the walk,
-            // which is the only thing that knows which it was.
-            //
-            // Focus's inbox is the same inboxes, and it never inserts either:
-            // Focus may hold an arrival for a digest or file it away before it
-            // is ever a row, and only the store knows which.
-            // Focus's two views over every account are membership questions
-            // like the per-account ones, and so are never inserted into; no
-            // account's change is somebody else's.
+            // Every account's inbox (#1692). A delivery never inserts: a unified row is a
+            // conversation grouped across accounts, so mail
+            // at a second address folds into a row on screen and an insert would draw it twice; a
+            // reload re-runs the walk. Focus's inbox
+            // never inserts either: Focus may hold an arrival for a digest or file it away before
+            // it is a row.
             ListScope::Focus(FocusScope::Snoozed | FocusScope::Flagged) => match arrival {
                 MessagesRemoved | MessageListChanged | MessagesChanged => Reload,
                 NewMail => Ignore,
@@ -182,10 +104,6 @@ impl ListScope {
                 NewMail | MessagesRemoved | MessageListChanged => Reload,
                 MessagesChanged => Refetch,
             },
-            // The Outbox joins these two: all three are a question about one
-            // account's mail wherever it is filed, so none of them can insert
-            // at the top -- a row's membership depends on an answer that may
-            // have changed, not on where the mail arrived.
             ListScope::Flagged(scoped) | ListScope::Snoozed(scoped) | ListScope::Outbox(scoped) => {
                 match arrival {
                     MessagesRemoved | MessageListChanged | MessagesChanged if account == scoped => {
@@ -199,54 +117,33 @@ impl ListScope {
     }
 }
 
-/// One of the four events whose effect on a list depends on what it shows.
-///
-/// Named apart from `postio_core::Event`, which this crate may not depend
-/// on — `postio-core` depends on `postio-model`, never the reverse — so a
-/// frontend maps its own event to one of these before asking
-/// [`ListScope::reaction`].
+/// Named apart from `postio_core::Event`, which this crate cannot depend on; a frontend maps its
+/// own event to one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Arrival {
-    /// Mail delivered.
     NewMail,
-    /// Messages left a mailbox: archived, deleted, moved away.
     MessagesRemoved,
-    /// A mailbox's list changed enough that the window must reload: a
-    /// resync, a re-sort, a filter change.
     MessageListChanged,
-    /// Messages changed in place: flags, labels, read state.
     MessagesChanged,
 }
 
-/// What a scope does with one [`Arrival`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Reaction {
-    /// Nothing about this list changes.
     Ignore,
-    /// New rows belong at the top, in the arrival's own order.
     InsertAtTop,
-    /// The membership or the order moved; drop everything cached and
-    /// re-ask.
     Reload,
-    /// The rows are the same rows in the same order; refetch only the
-    /// pages holding them.
     Refetch,
 }
 
 #[cfg(test)]
 mod reaction_tests {
-    // ── A view is never a destination (spec 003 FR-010, ADR 0036) ────────
 
     #[test]
     fn only_a_mailbox_scope_names_somewhere_a_message_could_be_put() {
-        // The rule ADR 0036 records, asserted rather than remembered. Every
-        // caller that goes on to use this answer as a destination -- a move,
-        // an append, a per-folder setting -- is relying on it, and the way it
-        // fails is silent: `MessageSet::InMailbox` with a mailbox nobody has
-        // matches no rows and reports success.
-        //
-        // Written out per variant rather than in a loop, so that adding a
-        // scope is a compile error here instead of a case nobody classified.
+        // Written out per variant, not in a loop, so adding a scope is a compile error here. A
+        // wrong destination fails silently:
+        // `MessageSet::InMailbox` with a mailbox nobody has matches no rows and reports success
+        // (ADR 0036).
         assert_eq!(
             ListScope::Mailbox(MailboxId::new(7)).mailbox(),
             Some(MailboxId::new(7))
@@ -271,8 +168,6 @@ mod reaction_tests {
 
     #[test]
     fn the_has_action_filter_reacts_as_focus_s_inbox_does() {
-        // A marker arrives with a message, and a row leaves the filter when
-        // its mail leaves the inbox: the same events, the same reloads.
         for arrival in [
             Arrival::NewMail,
             Arrival::MessagesRemoved,
@@ -295,10 +190,6 @@ mod reaction_tests {
 
     #[test]
     fn focus_s_inbox_reacts_to_every_arrival_as_the_unified_inbox_does() {
-        // The same inboxes, read as conversations, so the same events move
-        // it -- and like Unified it never inserts a delivery at the top: Focus
-        // may hold an arrival back or file it away before it is ever a row
-        // (spec 007), and only a reload asks the store which it was.
         let focus = ListScope::Focus(FocusScope::Inbox);
         for arrival in [
             Arrival::NewMail,
@@ -325,10 +216,6 @@ mod reaction_tests {
 
     #[test]
     fn the_outbox_reloads_for_its_own_account_and_ignores_another() {
-        // It joins Flagged and Snoozed: a question about one account's mail
-        // wherever it is filed, so no arrival can insert at the top -- a
-        // row's membership depends on an answer that may have changed, not on
-        // where the mail landed.
         let mine = AccountId::new(1);
         let theirs = AccountId::new(2);
         let outbox = ListScope::Outbox(mine);
@@ -396,8 +283,6 @@ mod reaction_tests {
     #[test]
     fn a_mailbox_scope_refetches_on_messages_changed_regardless_of_account() {
         let scope = ListScope::Mailbox(INBOX);
-        // No mailbox to compare against -- MessagesChanged is account-wide
-        // by shape, and `pages_holding` is what actually filters it.
         assert_eq!(
             scope.reaction(Arrival::MessagesChanged, HOME, None, None),
             Reaction::Refetch
@@ -464,9 +349,7 @@ mod reaction_tests {
 
     #[test]
     fn unified_ignores_a_folder_it_knows_is_not_an_inbox() {
-        // #1692: Unified is the inboxes, so mail landing in, leaving, or
-        // changing wholesale in any other folder cannot move a row -- a sync
-        // of the Archive used to re-read the whole view.
+        // #1692: Unified is the inboxes, so other folders cannot move a row.
         let scope = ListScope::Unified;
         for arrival in [
             Arrival::NewMail,
@@ -554,9 +437,6 @@ mod reaction_tests {
 
     #[test]
     fn flagged_and_snoozed_are_indifferent_to_which_mailbox_an_event_names() {
-        // These scopes span every folder in the account, so the mailbox in
-        // the event carries no information for them -- only the account
-        // does.
         let scope = ListScope::Flagged(HOME);
         assert_eq!(
             scope.reaction(Arrival::MessagesRemoved, HOME, Some(INBOX), None),

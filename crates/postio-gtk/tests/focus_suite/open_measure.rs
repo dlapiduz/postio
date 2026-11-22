@@ -1,8 +1,3 @@
-//! T203: the open message's reading leftovers, measured on what the
-//! renderer laid out and what the dialog put on screen: the paragraph gap
-//! of a plain-text body, the measure, find keeping the reading position,
-//! and the column's ground.
-
 use std::collections::BTreeMap;
 
 use adw::prelude::*;
@@ -12,8 +7,6 @@ use crate::open_reading::{opened, scroller_of};
 use crate::support::{self, Fixture};
 use postio_ui::focus_dialog;
 
-/// Prose that wraps: a paragraph of ordinary words, several hundred
-/// characters long.
 const PROSE: &str = "Uploaded the third draft of the harbour schedule with the \
     changes we talked about on Monday. The main differences are in the \
     second section, where the crossings are listed by the hour rather than \
@@ -24,8 +17,6 @@ const PROSE: &str = "Uploaded the third draft of the harbour schedule with the \
     text are attached, and the old one is in the shared folder if you want \
     to compare the two side by side.";
 
-/// Each laid-out line of the body: its top, and the characters it holds
-/// (from its first glyph to its last, the spaces between included).
 fn lines(document: &postio_render::RenderedDocument) -> Vec<(f64, f64, usize)> {
     let mut by_line: BTreeMap<u32, (f64, f64, usize, usize)> = BTreeMap::new();
     for cluster in &document.text.clusters {
@@ -43,9 +34,6 @@ fn lines(document: &postio_render::RenderedDocument) -> Vec<(f64, f64, usize)> {
         .collect()
 }
 
-/// A plain-text paragraph break is a gap of about two thirds of a line --
-/// the reference's 12px at the 15px reading size -- not a whole blank line
-/// in the body's line-height.
 pub fn a_plain_paragraph_break_is_a_short_gap_not_a_blank_line() {
     crate::gtk_case(async {
         if !support::display() {
@@ -76,10 +64,6 @@ pub fn a_plain_paragraph_break_is_a_short_gap_not_a_blank_line() {
     });
 }
 
-/// The measure is the column's, and the column is the dialog's whole width
-/// less its gutters (the maintainer, 2026-11-16, replacing T207's 480px):
-/// the text keeps the column's left edge -- the subject's, the sender
-/// block's -- and its lines run to the column's right edge.
 pub fn the_measure_is_the_dialogs_width_less_its_gutters() {
     crate::gtk_case(async {
         if !support::display() {
@@ -96,7 +80,6 @@ pub fn the_measure_is_the_dialogs_width_less_its_gutters() {
         let document = view.document().expect("drawn");
         let lines = lines(&document);
         assert!(lines.len() >= 4, "the prose did not wrap: {lines:?}");
-        // The last line of a paragraph is as short as it happens to be.
         let longest = lines[..lines.len() - 1]
             .iter()
             .map(|(_, _, chars)| *chars)
@@ -135,11 +118,6 @@ pub fn the_measure_is_the_dialogs_width_less_its_gutters() {
     });
 }
 
-/// Opening find (`mod+f`) keeps the reading position: the bar is above
-/// the column, not at its top, so neither showing it nor its entry taking
-/// the keyboard scrolls the message; a query's first match is the first
-/// one from where the person is reading; and Escape closes find, not the
-/// message.
 pub fn opening_find_keeps_the_reading_position() {
     crate::gtk_case(async {
         if !support::display() {
@@ -158,9 +136,8 @@ pub fn opening_find_keeps_the_reading_position() {
         let reading = window.reading().expect("open");
         let view = reading.reader().view().clone();
         let column = scroller_of(&view).vadjustment();
-        // The body is laid out after the message opens, not by the time it
-        // has. Scrolling before then clamps to a column too short to move,
-        // which a faster renderer made the common case (#2027).
+        // The body is laid out after the message opens; scrolling before then clamps to a column
+        // too short to move (#2027).
         assert!(
             crate::settle_until(async || column.upper() - column.page_size() > 2000.0).await,
             "the 300-line body never grew taller than the window: upper {}, page {}",
@@ -209,7 +186,6 @@ pub fn opening_find_keeps_the_reading_position() {
     });
 }
 
-/// One pixel of `texture`, as RGB bytes.
 fn pixel(texture: &gdk::Texture, x: i32, y: i32) -> [u8; 3] {
     let (width, height) = (texture.width(), texture.height());
     assert!(
@@ -223,9 +199,6 @@ fn pixel(texture: &gdk::Texture, x: i32, y: i32) -> [u8; 3] {
     [bytes[at], bytes[at + 1], bytes[at + 2]]
 }
 
-/// The column's ground is the dialog's own surface token, not a colour
-/// written into the reader: in light and in dark, the body's ground is the
-/// colour the dialog paints around it, to the pixel.
 pub fn the_columns_ground_is_the_dialogs_own_in_light_and_dark() {
     crate::gtk_case(async {
         if !support::display() {
@@ -255,8 +228,6 @@ pub fn the_columns_ground_is_the_dialogs_own_in_light_and_dark() {
             let body = view
                 .compute_bounds(&dialog)
                 .expect("the body is in the dialog");
-            // Beside the body, in the column's gutter; and inside the
-            // body, right of its one short line.
             let y = (body.y() + 6.0) as i32;
             let around = pixel(&picture.texture, (body.x() - 6.0) as i32, y);
             let inside = pixel(&picture.texture, (body.x() + body.width() - 6.0) as i32, y);
@@ -272,7 +243,6 @@ pub fn the_columns_ground_is_the_dialogs_own_in_light_and_dark() {
     });
 }
 
-/// Where `word`'s glyphs are drawn: the first place it stands.
 fn glyphs(document: &postio_render::RenderedDocument, word: &str) -> postio_render::Rect {
     let found = document.text.find(word);
     let range = found
@@ -286,16 +256,11 @@ fn glyphs(document: &postio_render::RenderedDocument, word: &str) -> postio_rend
         .fold(rects[0], |all, rect| all.union(*rect))
 }
 
-/// The line box a run of glyphs sits in, `line_height` tall: the glyphs
-/// are centred in it, half the leading above and half below.
 fn line_box(glyphs: postio_render::Rect, line_height: f64) -> (f64, f64) {
     let leading = (line_height - glyphs.height()) / 2.0;
     (glyphs.y0 - leading, glyphs.y1 + leading)
 }
 
-/// T208: a plain-text list is drawn as a list -- its items under a 20px
-/// indent, 4px apart on the 24px line -- not as lines that start with a
-/// dash; the paragraphs around it keep the column's edge.
 pub fn a_plain_list_draws_as_a_list_with_the_handoffs_rhythm() {
     crate::gtk_case(async {
         if !support::display() {
@@ -338,8 +303,6 @@ pub fn a_plain_list_draws_as_a_list_with_the_handoffs_rhythm() {
     });
 }
 
-/// T208: the line that introduces a quote sits 20px under the sign-off,
-/// smaller and muted, and the quote's 28px toggle 4px under it.
 pub fn the_attribution_sits_between_the_sign_off_and_the_toggle() {
     crate::gtk_case(async {
         if !support::display() {
@@ -385,8 +348,6 @@ pub fn the_attribution_sits_between_the_sign_off_and_the_toggle() {
             attribution.height(),
             sign_off.height()
         );
-        // Muted: its strongest ink stands less far from the ground than
-        // the sign-off's, in whichever scheme the suite runs.
         let picture = postio_widgets::capture::texture(&view).expect("drawn");
         let mut downloader = gdk::TextureDownloader::new(&picture.texture);
         downloader.set_format(gdk::MemoryFormat::R8g8b8a8);
@@ -396,7 +357,6 @@ pub fn the_attribution_sits_between_the_sign_off_and_the_toggle() {
             let at = y * stride + x * 4;
             [bytes[at], bytes[at + 1], bytes[at + 2]].map(i32::from)
         };
-        // The ground: the column's right edge, beside the first line.
         let ground = at(
             picture.texture.width() as usize - 2,
             (sign_off.y0 * scale) as usize,
@@ -420,8 +380,6 @@ pub fn the_attribution_sits_between_the_sign_off_and_the_toggle() {
     });
 }
 
-/// T208: the body's last block keeps no gap under it, so the body ends at
-/// its last line and what follows measures its own distance from there.
 pub fn the_body_ends_at_its_last_line() {
     crate::gtk_case(async {
         if !support::display() {

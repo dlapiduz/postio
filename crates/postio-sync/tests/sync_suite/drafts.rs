@@ -1,9 +1,3 @@
-//! Keeping the Drafts mailbox in step, end to end against `MockBackend`.
-//!
-//! The composer's half — writing the row and enqueueing — is
-//! `postio-storage`'s `tests/drafts.rs`. This is the drain half: what the
-//! server ends up holding after the queue goes out.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_model::{Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget};
@@ -19,7 +13,6 @@ fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()
 }
 
-/// A blob store in a scratch directory that removes itself on drop.
 struct TempBlobs {
     store: BlobStore,
     directory: std::path::PathBuf,
@@ -47,7 +40,6 @@ impl Drop for TempBlobs {
     }
 }
 
-/// An account with one identity and the Drafts mailbox a draft is filed into.
 async fn account_with_drafts(connection: &Connection) -> (Account, MailboxId) {
     let mut account = Account::new(
         "Test",
@@ -179,9 +171,6 @@ async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
 
 #[tokio::test]
 async fn a_run_of_autosaves_costs_one_round_trip() {
-    // The reason saves fold at all: a minute of typing leaves a queue full of
-    // rows that all say the same thing, and the text is not read until the
-    // step drains.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection).await;
@@ -249,8 +238,6 @@ async fn a_draft_discarded_before_it_was_ever_uploaded_asks_the_server_for_nothi
 
     let mut draft = a_draft(&account, "Tide gate interlock");
     drafts.save_and_sync(&mut draft, at(9)).await.expect("save");
-    // Discarded while the save is still in the queue: the row goes, so the
-    // save has nothing left to upload.
     drafts.discard(draft.id, at(10)).await.expect("discard");
 
     let report = drain(&connection, &backend, &blobs.store, &account).await;
@@ -262,16 +249,10 @@ async fn a_draft_discarded_before_it_was_ever_uploaded_asks_the_server_for_nothi
 
 #[tokio::test]
 async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
-    // The hazard the operation carries its identity for: under a new
-    // generation, the old number is somebody else's message. Since #543 the
-    // check lives behind the seam — the adapter refuses the stale id — and
-    // the drainer reads that refusal as obsolete, never as a retry.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
-    // The server has renumbered: its Drafts generation is 2, and the queued
-    // discard below still names an id from generation 1.
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Drafts").uid_validity(postio_model::UidValidity::new(2)))
         .build();
@@ -303,10 +284,6 @@ async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
 
 #[tokio::test]
 async fn a_draft_whose_attachment_is_still_being_written_waits_rather_than_fails() {
-    // The composer writes a dropped file into the blob store off the main
-    // thread, so an autosave can reach the queue first. Uploading the draft
-    // now would put a copy on the server that is quietly missing part of
-    // itself.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection).await;
@@ -333,10 +310,8 @@ async fn a_draft_whose_attachment_is_still_being_written_waits_rather_than_fails
 
 #[tokio::test]
 async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
-    // The Drafts folder is the user's own and reaches nobody. Losing Bcc
-    // there loses recipients they typed; carrying it in the *sent* bytes
-    // would hand every other recipient the list. Both matter, and they are
-    // different bytes.
+    // Bcc stays in the Drafts copy (the user's own folder) and out of the sent bytes; different
+    // bytes.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection).await;
@@ -377,12 +352,6 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// And back down again
-// ---------------------------------------------------------------------------
-
-/// The Drafts mailbox as the sidebar and the message list see it: the rows
-/// `messages` holds for that folder, subject first.
 async fn listed(connection: &Connection, mailbox: MailboxId) -> Vec<String> {
     let query = postio_storage::repository::ListQuery {
         scope: postio_storage::repository::ListScope::Mailbox(mailbox),
@@ -400,18 +369,8 @@ async fn listed(connection: &Connection, mailbox: MailboxId) -> Vec<String> {
 
 #[tokio::test]
 async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
-    // #51 end to end, updated for #166. The composer appends the draft, and
-    // #166 gave the draft its own `messages` row the moment it is saved — so
-    // the folder is expected to list it already, without waiting on a sync
-    // (docs/PRODUCT.md §18's local-first rule, and the whole point of #166:
-    // before it, a draft was invisible in the folder until it had round
-    // tripped). What #51's skip still has to prove is narrower: the next sync
-    // pass over Drafts fetches this draft's own append straight back, and
-    // that must not add a *second* row for it next to the one #166 already
-    // wrote.
-    //
-    // The other message is another client's draft. It has no local draft row,
-    // and it is the reason the folder is worth syncing at all.
+    // #166 gave the draft its own row at save, so the folder lists it before any sync; the next
+    // pass must not add a second row for its own append (#51).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;

@@ -1,69 +1,6 @@
-//! What a page cache smaller than the working set costs, under SQLCipher.
-//!
-//! #1216 chased a burn that no test could reproduce: a real mailbox spent
-//! 62% of its sampled CPU in SQLCipher page work, 45.9% of it in
-//! `sha512_block_data_order_avx2`, with `__libc_pread64` at 9.1% proving the
-//! reads reached disk. Every synthetic store stayed flat -- `idle_store_cpu.rs`
-//! measures 100, 5,000 and 50,000 messages and finds no difference -- because
-//! all of them fit the cache.
-//!
-//! `db.rs` names the lever in the pragma's own doc comment:
-//!
-//! > `cache_size = -16000` ... **This is the first lever if a bench trips,
-//! > because under SQLCipher every page miss costs a decrypt rather than a
-//! > `memcpy`.**
-//!
-//! This is that bench.
-//!
 //! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
 //! the nightly timer rather than the merge path. `.config/nextest.toml`'s
 //! `profile.default` filter is what holds it back; `--profile nightly` runs it.
-//!
-//! It seeds 400,000 messages and takes **about six and a half minutes**
-//! (393s measured on an idle workstation, 2026-09-12), which is a bench's
-//! cost and not a gate's.
-//!
-//! That number used to read "about three and a half minutes", which is where
-//! `.config/nextest.toml` got the idea that the default 240s backstop would
-//! hold it. It did not: the test was terminated at 240s on the nightly run
-//! and terminates at 240s here too. Nobody had measured it, because until
-//! acbd0943 it was `#[ignore]`d and had never run anywhere at all.
-//!
-//! ```text
-//! cargo nextest run --profile nightly -p postio-storage -E 'binary(cache_pressure)'
-//! ```
-//!
-//! # What it showed
-//!
-//! At 60,000 messages the working set already fits 16 MiB, and more cache buys
-//! nothing -- which is exactly why the default has never looked wrong:
-//!
-//! ```text
-//! cache     512 KiB -> 1.64s      cache   16000 KiB -> 420ms
-//! cache    2000 KiB -> 1.34s      cache  262144 KiB -> 450ms
-//! ```
-//!
-//! At 400,000 it does not:
-//!
-//! ```text
-//! cache   16000 KiB -> 4.29s
-//! cache   65536 KiB -> 3.27s   (-24%)
-//! cache  262144 KiB -> 3.16s   (-26%)
-//! cache   16000 KiB -> 4.16s   <- the control
-//! ```
-//!
-//! The last row is the point. Repeating the smallest cache *after* the largest
-//! returns the cost, so this is the cache and not the file warming up, the
-//! page order, or the run getting faster as it goes.
-//!
-//! # What it does not show
-//!
-//! That 64 MiB is the right number. The working set is a property of the
-//! mailbox and the query, and these rows are synthetic; a real store of the
-//! same message count carries larger rows. What generalises is the shape --
-//! below the working set the cost rises sharply, above it more cache is free
-//! to no one -- and that a fixed 16 MiB cannot be right for both a test store
-//! and a gigabyte mailbox.
 
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
@@ -79,7 +16,6 @@ const MESSAGES: usize = 400_000;
 /// Cache sizes in KiB, ending where it began: the repeat is the control.
 const SIZES: [i64; 4] = [16_000, 65_536, 262_144, 16_000];
 
-/// This process's CPU time, user plus system.
 fn cpu() -> Duration {
     let stat = std::fs::read_to_string("/proc/self/stat").expect("/proc/self/stat");
     let tail = &stat[stat.rfind(')').expect("the comm field ends") + 1..];
@@ -89,7 +25,6 @@ fn cpu() -> Duration {
     Duration::from_secs_f64((utime + stime) as f64 / 100.0)
 }
 
-/// Page deep into `mailbox` and back, with the cache set to `kib`.
 async fn sweep(
     database: &postio_storage::Store,
     mailbox: postio_model::MailboxId,
@@ -122,7 +57,6 @@ async fn sweep(
 async fn a_cache_below_the_working_set_costs_cpu() {
     let database = test_support::memory().await;
     let report = seed_large(&database, 11, MESSAGES).await;
-    // The inbox: `seed_large` weights most of its messages there.
     let mailbox = report
         .mailboxes
         .iter()

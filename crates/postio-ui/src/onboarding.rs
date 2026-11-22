@@ -1,21 +1,8 @@
-//! The first-run screen's model: what the servers are, what was submitted,
-//! and which state the screen is in.
-//!
-//! Canvas 3e's shapes, with nothing a toolkit names. They lived in
-//! the classic app's onboarding until the terminal needed the same screen: the
-//! same states in the same order, the same sentences, the same sync-window
-//! choices. The desktop re-exports them from here.
+//! The first-run screen's model: servers, what was submitted, and which state the screen is in,
+//! shared by the desktop and the terminal.
 
 use postio_model::TransportSecurity;
 
-/// Which of the three steps a status is in — `1 / 3`, the way the drawing
-/// writes it.
-///
-/// Three rather than the two this screen used to count, and the split is
-/// real rather than cosmetic: naming the account, proving you own it, and
-/// saying how much of it to fetch are three different questions, and the
-/// second one can fail and be retried without touching the other two.
-/// Pure, so the mapping is tested without a display.
 pub fn step_of(status: &Status) -> &'static str {
     match status {
         Status::Idle | Status::Probing | Status::Found(_) | Status::Manual { .. } => "1 / 3",
@@ -27,37 +14,19 @@ pub fn step_of(status: &Status) -> &'static str {
     }
 }
 
-/// What a browser sign-in is asking for, so the screen can say so.
-///
-/// **Postio never draws a provider's login form.** Consent happens in the
-/// real browser, against the real domain, where the address bar is the thing
-/// a person checks — an in-app web view is how credential phishing is
-/// normally taught, and there is no way for a user to tell one from the
-/// genuine article. So what this screen can offer instead is an honest
-/// account of what is happening while the browser is open, which is what
-/// this carries (ADR 0006 Q3, `Design/screens/23`).
+/// Postio never draws a provider's login form: consent happens in the real browser, where the
+/// address bar is checkable.
+/// This is what the screen says while the browser is open (ADR 0006 Q3).
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BrowserSignIn {
-    /// Whose consent screen the browser was sent to — `Microsoft`, `Google`.
     pub provider: String,
-    /// The scopes the request asks for, in the provider's own spelling.
-    /// Rendered through [`plain_scope`], never raw, because a URL is not an
-    /// answer to "what is this about to be allowed to do".
     pub scopes: Vec<String>,
-    /// Where the browser will be sent back to — `http://127.0.0.1:41337/`.
     pub redirect_uri: String,
-    /// The consent URL itself, for `Copy URL` and for opening it again when
-    /// the browser swallowed the first one.
     pub authorize_url: String,
 }
 
-/// What a scope lets Postio do, in words rather than in a URL.
-///
-/// A person deciding whether to consent is owed a sentence, not
-/// `https://outlook.office.com/IMAP.AccessAsUser.All`. Anything unrecognised
-/// falls through verbatim rather than being dropped: an unfamiliar scope is
-/// exactly the one worth showing, and silently hiding it would make this
-/// list a worse lie than no list at all.
+/// What a scope lets Postio do, in words. An unrecognised scope falls through verbatim: the
+/// unfamiliar one is the one worth showing.
 pub fn plain_scope(scope: &str) -> String {
     let folded = scope.to_ascii_lowercase();
     if folded.contains("imap") || folded == "https://mail.google.com/" {
@@ -73,21 +42,16 @@ pub fn plain_scope(scope: &str) -> String {
     }
 }
 
-/// One server, as the screen shows it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Server {
-    /// Hostname.
     pub host: String,
-    /// Port.
     pub port: u16,
-    /// Connection security. Carried losslessly from discovery (#534):
-    /// flattening this to a bool once turned a provider's own
+    /// Carried losslessly from discovery (#534): flattening to a bool once turned a provider's
     /// plaintext-on-loopback answer into a TLS dial.
     pub security: TransportSecurity,
 }
 
 impl Server {
-    /// `imap.fastmail.com:993 · TLS`, the way the canvas writes it.
     pub fn line(&self) -> String {
         let security = match self.security {
             TransportSecurity::Tls => "TLS",
@@ -98,109 +62,66 @@ impl Server {
     }
 }
 
-/// What Postio found, or what the user typed in instead.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
-    /// Where mail is read from.
     pub imap: Server,
-    /// Where mail is sent through.
     pub smtp: Server,
-    /// The login name, which is not always the address — an iCloud custom
-    /// domain logs in as the Apple ID.
+    /// The login name, not always the address (an iCloud custom domain logs in as the Apple ID).
     pub login: String,
-    /// Whether this provider refuses ordinary account passwords.
     pub requires_app_password: bool,
-    /// A sentence to show the user, from the provider table.
     pub note: Option<String>,
-    /// Where to go and make an app-specific password.
     pub help_url: Option<String>,
-    /// Where the settings came from, for the card's heading.
     pub source: String,
-    /// Whether the provider prefers a browser sign-in (#534): the wizard
-    /// shows the OAuth client fields and `Sign in with your browser`
-    /// instead of the password entry. The app side holds the endpoints;
-    /// this widget only needs to know which door to draw.
+    /// Whether the provider prefers a browser sign-in (#534): the wizard shows the OAuth client
+    /// fields instead of the password entry.
     pub oauth_sign_in: bool,
 }
 
-/// Everything the composition root needs to create the account.
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Submission {
-    /// The address mail arrives at.
     pub address: String,
-    /// What to show instead of the bare address — in the `From` header and
-    /// the sidebar. Empty means unset, and the composition root falls back
-    /// to the address exactly as it did before this field existed.
+    /// Empty means unset; the composition root falls back to the address.
     pub name: String,
-    /// The password, on its way to the keyring and nowhere else. Empty on
-    /// an OAuth submission.
+    /// On its way to the keyring and nowhere else. Empty on an OAuth submission.
     pub password: String,
-    /// The servers to use.
     pub settings: Settings,
-    /// The OAuth client the user supplied, when the provider's door is the
-    /// browser sign-in (#534). `Some` routes the submission through the
-    /// authorization flow instead of a password test.
+    /// `Some` routes the submission through the authorization flow instead of a password test
+    /// (#534).
     pub oauth_client: Option<OAuthClientSubmission>,
 }
 
-/// The user's own OAuth client (ADR 0006 Q1, `own-client`): what the
-/// sign-in flow presents to the provider. Postio ships no client of its
-/// own until #195 clears review, so these come from the user's provider
-/// console.
+/// The user's own OAuth client (ADR 0006 Q1): Postio ships none until #195 clears review.
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OAuthClientSubmission {
-    /// The client id, public by definition on a native app.
     pub client_id: String,
-    /// The client secret, when the provider issued one — on its way to the
-    /// keyring and nowhere else.
+    /// On its way to the keyring and nowhere else.
     pub client_secret: Option<String>,
 }
 
-/// Where the screen is in the one step it has.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Status {
-    /// Nothing typed yet.
     #[default]
     Idle,
-    /// The probe is out.
     Probing,
-    /// The probe answered with something authoritative.
     Found(Settings),
-    /// The probe found nothing. The server fields open, because an empty form
-    /// the user can fill in is the way forward and a shrug is not.
+    /// The probe found nothing; the server fields open, since an empty form to fill in is the way
+    /// forward.
     Manual {
-        /// An unverified guess to prefill with, if there was one.
         suggestion: Option<Settings>,
     },
-    /// Testing the credentials against the real server.
     Connecting,
-    /// The consent screen is open in the user's browser; Postio is waiting
-    /// for the redirect. Cancellable — the screen shows its own Cancel and
-    /// `Esc` means the same thing.
+    /// The consent screen is open in the user's browser; cancellable, and `Esc` means Cancel.
     WaitingForBrowser,
-    /// It did not work, and this says why in words the user can act on.
     Failed(String),
-    /// The account is configured; its password is not.
-    ///
-    /// Not a first run. The composition root reaches this when the store
-    /// holds an account the keyring will not give up a password for — a
-    /// credential write that failed, a keyring that was reset, an item
-    /// somebody deleted. The address and the servers are already known, so
-    /// the screen arrives filled in and asks for the one thing missing.
-    ///
-    /// It carries the servers rather than reading them back off the form
-    /// because the form is empty until something fills it, and the thing
-    /// that knows them is the account row.
+    /// The keyring will not give up the account's password. The screen arrives filled in; it
+    /// carries
+    /// the servers because the form is empty until something fills it.
     Reauthenticate(Settings),
-    /// The account is saved; the last question before Postio starts talking
-    /// to the server on its own is how far back the first sync reaches.
     SyncWindow,
-    /// The account exists and the password is in the keyring.
     Saved,
 }
 
 impl Status {
-    /// Whether the screen is waiting on something and should not be touched.
     pub fn is_busy(&self) -> bool {
         matches!(
             self,
@@ -208,10 +129,6 @@ impl Status {
         )
     }
 
-    /// The sentence under the form, when this state owes the user one.
-    ///
-    /// Pure, and public, so what the screen *says* can be checked without a
-    /// display — the rendering needs one, the wording does not.
     pub fn message(&self) -> Option<&str> {
         match self {
             Status::Failed(reason) => Some(reason),
@@ -228,37 +145,23 @@ impl Status {
     }
 }
 
-/// How far back the first sync reaches, chosen once per account on the
-/// [`Status::SyncWindow`] step (#876).
-///
-/// Coarser than [`postio_config::sync::SyncConfig::initial_sync_messages`]
-/// itself — a person thinks in a window of time, not a message count — so
-/// each variant maps to a fixed count rather than to anything measured: no
-/// per-account mailbox statistics exist at this point in onboarding
-/// (discovery does not report message counts). `LastYear`'s count matches
-/// that field's own default, so picking it changes nothing a fresh install
-/// would not already do.
+/// Each variant maps to a fixed message count: no per-account statistics exist at this point in
+/// onboarding. `LastYear`'s count matches `initial_sync_messages`'s default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum SyncWindow {
-    /// Roughly a month of ordinary mail.
     LastMonth,
-    /// A year — [`SyncConfig`](postio_config::sync::SyncConfig)'s own
-    /// default depth.
     #[default]
     LastYear,
-    /// No cap: `"all"` in the file.
     Everything,
 }
 
 impl SyncWindow {
-    /// Every choice, in the order the picker offers them.
     pub const ALL: [SyncWindow; 3] = [
         SyncWindow::LastMonth,
         SyncWindow::LastYear,
         SyncWindow::Everything,
     ];
 
-    /// What this writes to `SyncConfig::initial_sync_messages`.
     pub fn message_count(self) -> u32 {
         match self {
             SyncWindow::LastMonth => 500,
@@ -267,7 +170,6 @@ impl SyncWindow {
         }
     }
 
-    /// The picker's own label for this choice.
     pub fn label(self) -> &'static str {
         match self {
             SyncWindow::LastMonth => "Last 30 days",
@@ -276,13 +178,8 @@ impl SyncWindow {
         }
     }
 
-    /// A rough size/time readout under the picker.
-    ///
-    /// Built from a flat per-message estimate (75 KiB — ADR 0017 puts most
-    /// of a message's bytes on the lazy attachment axis, so a synced-but-
-    /// unopened message is mostly headers and text) and a flat fetch rate,
-    /// for the same reason [`message_count`](Self::message_count) is a flat
-    /// map rather than a measurement: nothing has synced yet to measure.
+    /// A flat per-message estimate (75 KiB; ADR 0017 puts most bytes on the lazy attachment axis)
+    /// and a flat fetch rate, since nothing has synced yet to measure.
     pub fn estimate(self) -> String {
         const AVERAGE_MESSAGE_BYTES: u64 = 75 * 1024;
         const MESSAGES_PER_MINUTE: u64 = 120;
@@ -301,7 +198,6 @@ impl SyncWindow {
     }
 }
 
-/// The domain of an address, for the card's heading.
 pub fn domain_of(address: &str) -> String {
     address
         .rsplit_once('@')
@@ -309,11 +205,7 @@ pub fn domain_of(address: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Whether there is enough of an address to be worth probing.
-///
-/// Deliberately loose: this decides whether to *ask*, and the probe itself
-/// decides whether the address is real. Refusing to look up something a
-/// server would have accepted is the worse mistake.
+/// Deliberately loose: this decides whether to ask; the probe decides whether the address is real.
 pub fn looks_like_an_address(address: &str) -> bool {
     let address = address.trim();
     match address.split_once('@') {
@@ -327,11 +219,8 @@ pub fn looks_like_an_address(address: &str) -> bool {
     }
 }
 
-/// Why the button that adds the account does nothing yet, in the words that
-/// say what to do about it: `None` when it would act. A disabled button
-/// that is silent is a dead end, and the browser sign-in's missing piece --
-/// the person's own OAuth client ID -- is not on the form until the provider
-/// is known to need it.
+/// A silent disabled button is a dead end; the OAuth client ID is not on the form until the
+/// provider is known to need it.
 pub fn submit_blocker(
     address: &str,
     oauth: bool,
@@ -351,16 +240,8 @@ pub fn submit_blocker(
     }
 }
 
-/// Writes the chosen sync window (#876) to `[sync].initial_sync_messages`,
-/// touching only that key — the same [`postio_config::patch_sync`] every
-/// other structured write to `[sync]` goes through (#874), so a hand-written
-/// comment elsewhere in the file survives.
-///
-/// A write that fails is logged and otherwise swallowed: the account and its
-/// credential are already saved by the time this runs, and the field's own
-/// default (5,000, [`SyncWindow::LastYear`]'s
-/// own count) is exactly what a fresh install already has, so a failed
-/// write here costs the size the user picked, not the account.
+/// Touches only that key, via `postio_config::patch_sync` (#874). A failed write is logged and
+/// swallowed: the account is already saved and the default equals `LastYear`'s count.
 pub fn write_sync_window(window: SyncWindow) -> postio_config::Result<()> {
     let path = postio_config::paths::config_path()?;
     let original = std::fs::read_to_string(&path).unwrap_or_default();
@@ -370,13 +251,9 @@ pub fn write_sync_window(window: SyncWindow) -> postio_config::Result<()> {
     postio_config::Config::write_text_to_path(&patched, &path)
 }
 
-/// What the screen shows for an account the store already has.
-///
-/// The inverse of `configure`: a repair is asking for a password, not for
-/// server settings, so the ones the account was signed in with last time are
-/// what it offers. `source` names where they came from because the card
-/// shows it, and "entered by hand" — what an empty form falls back to —
-/// would be a lie the second time round.
+/// The inverse of `configure`: a repair asks for a password, so it offers the settings the
+/// account signed in with; `source` names where they came from, since "entered by hand" would be a
+/// lie.
 pub fn configured(account: &postio_model::Account) -> Settings {
     let server = |config: &postio_model::account::ServerConfig| Server {
         host: config.host.clone(),
@@ -390,9 +267,7 @@ pub fn configured(account: &postio_model::Account) -> Settings {
         requires_app_password: false,
         note: None,
         help_url: None,
-        // A repair signs in the way the account did: an OAuth account's
-        // repair is a fresh browser sign-in, not a password prompt for a
-        // password that never existed (#534).
+        // An OAuth account's repair is a fresh browser sign-in, not a password prompt (#534).
         oauth_sign_in: account.oauth.is_some()
             || matches!(
                 account.auth,
@@ -403,8 +278,7 @@ pub fn configured(account: &postio_model::Account) -> Settings {
     }
 }
 
-/// Without the password: a submission is handed to the host and logged
-/// on the way, and anything that prints one must not print that.
+/// Without the password: a submission is logged on the way.
 impl std::fmt::Debug for Submission {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -418,7 +292,6 @@ impl std::fmt::Debug for Submission {
     }
 }
 
-/// Without the client secret, for the same reason.
 impl std::fmt::Debug for OAuthClientSubmission {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -442,11 +315,8 @@ mod blocker_tests {
         assert!(browser.is_some_and(|said| said.contains("OAuth client ID")));
         let password = submit_blocker("ada@example.com", false, false, true);
         assert!(password.is_some_and(|said| said.contains("password")));
-        // Nothing to say while the address is unfinished or unprobed: the
-        // person is still typing, and the card is not there yet.
         assert_eq!(submit_blocker("ada@", true, false, true), None);
         assert_eq!(submit_blocker("ada@example.com", true, false, false), None);
-        // And nothing when the button acts.
         assert_eq!(submit_blocker("ada@example.com", true, true, true), None);
     }
 }

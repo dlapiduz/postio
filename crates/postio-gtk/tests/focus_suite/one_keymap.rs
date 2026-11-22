@@ -1,9 +1,3 @@
-//! One keymap for every app (US7 scenario 2, T061): a command registered at
-//! run time reaches Focus's key map, keyed, with no code of Focus's.
-//!
-//! Scenarios 3 and 5 need no display; they are in
-//! `crates/postio-ui/tests/ui_suite/one_keymap.rs` (ADR 0049).
-
 use postio_core::{ActionId, Context, ContextSet, registry};
 
 use crate::support;
@@ -13,7 +7,6 @@ pub fn a_registered_command_reaches_the_key_map_with_its_key() {
         if !support::display() {
             return;
         }
-        // Before anything resolves the keymap, as an extension loads.
         let ext = registry::register(registry::ExtCommand {
             id: "test:sort-by-sender".to_owned(),
             title: "Sort by sender".to_owned(),

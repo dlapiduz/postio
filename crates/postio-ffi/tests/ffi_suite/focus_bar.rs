@@ -1,12 +1,3 @@
-//! The command bar, go-to and the folders popover at the boundary
-//! (specs/009-focus-macos T082, for the Mac's T084-T086).
-//!
-//! The controller decides (`postio-focus`'s `tests/bar.rs`); these assert the
-//! Mac gets it through the session: `/` and `mod+k` open the bar as
-//! `FocusOpenBar`, typed words come back as `FocusBarLines`, a line runs by
-//! its token, and the folders popover lists the places one read found and
-//! opens the one chosen, which the list then shows.
-
 use postio_ffi::{
     BarLineKindFfi, BarModeFfi, DropdownRowKindFfi, DropdownStateFfi, Session, SessionOptions,
     UiEvent,
@@ -14,7 +5,6 @@ use postio_ffi::{
 
 use crate::focus::{cursor_on_the_first_row, heard, inbox_of};
 
-/// Wait for the bar's next lines that `wanted` accepts, and hand them back.
 async fn lines(
     session: &Session,
     mut wanted: impl FnMut(&postio_ffi::BarViewFfi) -> bool,
@@ -60,9 +50,6 @@ async fn slash_opens_the_bar_and_in_lists_the_folders_counted() {
         .await,
         "the places are read as it opens"
     );
-    // Spec 010 step 8: on the Mac `in:` is the dropdown's operator state,
-    // its folders each with the conversations `in:` it would find (spec
-    // 009's folder listing stays GTK's, `postio-focus` tests/bar.rs).
     session.focus_bar_typed("in:In".to_owned());
     let mut folder = None;
     let mut operator = None;
@@ -170,10 +157,7 @@ async fn the_folders_popover_lists_the_places_and_opens_one() {
         .await,
         "`g o` opens the popover"
     );
-    // Read again on every `FocusPlacesChanged`, as the popover does.
-    // Filtering is on by default, so Filtered is a place too -- once
-    // today's count, a read of its own, has landed, which may be after the
-    // places did.
+    // Filtered is a place only once today's count, a read of its own, has landed.
     let mut places = Vec::new();
     let wanted = ["Inbox", "Snoozed", "Filtered", "Flagged"];
     assert!(
@@ -242,9 +226,6 @@ async fn a_saved_search_runs_on_its_key_and_mod_s_saves_the_query() {
         .await,
         "alt+1 opens the bar on the first saved search"
     );
-    // The Mac's bar draws the search dropdown (specs/010-focus-search step
-    // 2), not spec 009's lines: the saved search's words are its words
-    // state. Tab there narrows, which `focus_search.rs` asserts.
     assert!(
         heard(&session, 10, |event| matches!(
             event,

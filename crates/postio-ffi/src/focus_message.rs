@@ -1,11 +1,6 @@
-//! What surrounds the body in the Mac's message window (specs/009-focus-macos
-//! T067, T068): the subject, the position line, the labels,
-//! the sender block, the marker's card, the action row and the attachments.
-//!
-//! Every word is composed here by the functions GTK's open message draws
-//! with (`postio_ui::focus_dialog`, `focus_row`, `reader::header`,
-//! `format`), so the two windows cannot say a message differently. Swift
-//! lays these out and spells the keys; it words nothing.
+//! What surrounds the body in the Mac's message window, composed by the functions GTK's open
+//! message uses so the two
+//! windows word a message alike. Swift lays it out and words nothing.
 
 use postio_core::CommandId;
 use postio_model::listing::MailStore as _;
@@ -15,22 +10,15 @@ use postio_ui::focus_dialog;
 use crate::Session;
 use crate::focus_list::{FocusRowActionFfi, LabelPillFfi, MarkerLineFfi};
 
-/// One person in the sender block: their name when they gave one, and the
-/// address, which is drawn in mono.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusPersonFfi {
-    /// The display name, when there is one.
     pub name: Option<String>,
-    /// The bare address.
     pub address: String,
 }
 
-/// One row of the sender block: From, To or Cc.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusFieldFfi {
-    /// The field's name, for the 44pt label column: "From".
     pub field: String,
-    /// The first few people in it.
     pub people: Vec<FocusPersonFfi>,
     /// How many more there are, said: "and 4 others".
     pub more: Option<String>,
@@ -38,18 +26,14 @@ pub struct FocusFieldFfi {
     pub all: String,
 }
 
-/// One button of the action row.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusVerbFfi {
-    /// The registry command it runs.
     pub command: String,
-    /// The words on it.
     pub label: String,
     /// Whether it moves into More in a window narrower than the fold.
     pub folds: bool,
 }
 
-/// An attachment chip under the body.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusAttachmentFfi {
     /// The part, as `save_part` and `open_part` name it.
@@ -63,44 +47,31 @@ pub struct FocusAttachmentFfi {
     pub save_name: String,
 }
 
-/// Everything the message window draws around the body.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusMessageViewFfi {
-    /// The message shown.
     pub message: i64,
     /// Its subject, or "(no subject)".
     pub subject: String,
     /// "Message 5 of 60", with the account when several are enabled. Where
     /// the message stands in its thread is the controller's kicker.
     pub position: String,
-    /// The conversation's labels.
     pub labels: Vec<LabelPillFfi>,
-    /// "+ Label", and the command it runs.
     pub add_label: FocusRowActionFfi,
-    /// The sender block's rows: From, then To and Cc when anyone is in them.
     pub fields: Vec<FocusFieldFfi>,
     /// When it was sent: "Today, 15:22".
     pub date: String,
-    /// The marker's card, for the message the marker is on.
     pub marker: Option<MarkerLineFfi>,
-    /// The card's Dismiss, and the command it runs.
     pub dismiss: FocusRowActionFfi,
-    /// The action row, in order: screen 04's verbs, or for a draft on its
-    /// way or stopped, the verbs that settle it.
     pub actions: Vec<FocusVerbFfi>,
-    /// More, when the row has verbs that fold into it.
     pub more: Option<FocusRowActionFfi>,
-    /// The attachment chips.
     pub attachments: Vec<FocusAttachmentFfi>,
 }
 
 #[uniffi::export]
 impl Session {
-    /// What the message window draws around `message`'s body, shown from
-    /// row `index` of `total` in Focus's list. `message` is the row's own
-    /// message, or one of its conversation's that `[` or `]` stepped to.
-    ///
-    /// A store read, so never on the main actor.
+    /// Shown from row `index` of `total`; `message` is the row's own or one `[` or `]` stepped to.
+    /// A store read, so never
+    /// on the main actor.
     pub fn focus_message_view(&self, message: i64, index: u32, total: u32) -> FocusMessageViewFfi {
         let row = self.focus_row_of(message);
         crate::session::blocking(async {
@@ -112,12 +83,10 @@ impl Session {
 }
 
 impl Session {
-    /// The Focus list's row for `message`, when it is the row's own message.
     pub(crate) fn focus_row_of(&self, message: i64) -> Option<crate::FocusRowFfi> {
-        // The marker is the list row's, read with its page: the card is
-        // the marked message's, so a message `[` stepped to has none. Found
-        // by the message, not by `index`, which counts messages where the
-        // list also draws digest rows.
+        // The marker is the list row's: found by the message, not by `index`, which counts messages
+        // where the list also
+        // draws digest rows.
         self.focus_driver()
             .row_of(message)
             .filter(|row| row.id == message)
@@ -137,8 +106,6 @@ impl Session {
             .and_then(|mut readings| readings.pop())
     }
 
-    /// The chrome around `message`, from `reading` -- read once for the
-    /// chrome and the body together when the window opens.
     pub(crate) async fn focus_message_answers(
         &self,
         message: i64,
@@ -269,8 +236,6 @@ impl Session {
     }
 }
 
-/// The chips under a message's body, which are also what `o` offers: its
-/// leaf parts, less the body's own text.
 pub(crate) fn chips(
     content_type: Option<&str>,
     body: &postio_model::MessageBody,
@@ -289,7 +254,6 @@ pub(crate) fn chips(
         .collect()
 }
 
-/// The parts [`chips`] draws, as the tree's nodes: what Save all saves.
 pub(crate) fn chip_nodes(
     content_type: Option<&str>,
     body: &postio_model::MessageBody,
@@ -299,41 +263,27 @@ pub(crate) fn chip_nodes(
     postio_ui::reader::parts::tree(&root, attachments)
         .into_iter()
         .filter(postio_ui::reader::parts::Node::is_leaf)
-        // As the reader's chips (`postio_widgets::reader::chips`):
-        // the body's own text parts are already on screen.
         .filter(|node| !(node.mime.starts_with("text/") && node.filename.is_none()))
         .filter(|node| node.attachment.is_some())
         .collect()
 }
 
-/// What `A` offers for the message on screen, as GTK's chooser offers it:
-/// the links in the body, then the parts, each part with its own Save and
-/// all of them with Save all.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenChoicesFfi {
-    /// The links in the document on screen, in reading order.
     pub links: Vec<OpenLinkFfi>,
-    /// The parts to choose from, as the chips list them.
     pub parts: Vec<FocusAttachmentFfi>,
-    /// What to say instead when there is nothing to choose from.
     pub nothing: Option<String>,
-    /// A part's Save.
     pub save: String,
-    /// Save every part to a folder.
     pub save_all: String,
 }
 
-/// A link `A` offers: the words it was written behind, and where it goes,
-/// both shown before it opens.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenLinkFfi {
-    /// What it reads as.
     pub words: String,
     /// Where it goes, in full: `http`, `https` or `mailto`.
     pub target: String,
 }
 
-/// A command and the words on its button.
 fn action(command: CommandId, label: &str) -> FocusRowActionFfi {
     FocusRowActionFfi {
         command: command.to_string(),
@@ -341,9 +291,7 @@ fn action(command: CommandId, label: &str) -> FocusRowActionFfi {
     }
 }
 
-/// A row of the sender block, or `None` when nobody is in it: a message with
-/// no Cc has no Cc line. The first few people, then how many more, as GTK's
-/// card draws them (`open_header.rs`).
+/// `None` when nobody is in it: a message with no Cc has no Cc line.
 fn field(name: &str, addresses: &[EmailAddress]) -> Option<FocusFieldFfi> {
     use postio_ui::reader::header::{RECIPIENTS_SHOWN, address_list, others};
     if addresses.is_empty() {

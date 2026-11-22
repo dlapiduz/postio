@@ -1,18 +1,3 @@
-//! Startup with the window already on screen (#1114, #1604).
-//!
-//! Two cases, which are the two ways the store's open and the window's
-//! arrival can be ordered: the store lands behind a window that is already
-//! up and the window fills, and the store starts opening before there is a
-//! window at all and the window takes that open over rather than making a
-//! second. Both run Focus's own `startup::open`, over `Opener::at` a scratch
-//! store with an in-memory keyring -- everything `app.rs`'s `activate`
-//! handler does except the one line that calls it.
-//!
-//! The store is a fresh one, so its open is the slowest thing a case here
-//! waits on: the app answers over a channel and depends on no clock, and
-//! the cases wait for the answer under [`crate::STORE_OPEN`] rather than
-//! the ordinary ten seconds.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -26,7 +11,6 @@ use postio_widgets::startup::{Phase, Timeline};
 
 use crate::support;
 
-/// A secret store that counts how often it is asked for anything.
 #[derive(Debug, Default)]
 struct Counting {
     inner: MemorySecretStore,
@@ -50,9 +34,6 @@ impl SecretStore for Counting {
     }
 }
 
-/// The store opens behind a window that is already up, and the window fills
-/// when it lands: the thread, the channel, the stages it reports, the
-/// assembly on the main context and the feed at the end.
 pub fn the_store_opens_behind_a_window_that_is_already_up() {
     crate::gtk_case(async {
         if !support::display() {
@@ -61,7 +42,6 @@ pub fn the_store_opens_behind_a_window_that_is_already_up() {
         let directory = tempfile::tempdir().expect("a store directory");
         let store = directory.path().join("postio.db");
 
-        // A window on screen with nothing behind it.
         let timeline = Timeline::start();
         let window = FocusWindow::new(None);
         postio_gtk::startup::time(&window, timeline.clone());
@@ -118,12 +98,8 @@ pub fn the_store_opens_behind_a_window_that_is_already_up() {
     });
 }
 
-/// #1604: the store open -- the keyring, then the engine's open of an
-/// encrypted file -- must not wait for the window to be built and presented.
-/// The two chains need nothing from each other, so the open starts first and
-/// the window takes it over when it exists. What must not happen is a second
-/// open: the window taking the early one is the whole point, and a second
-/// would read the keyring and open the file again.
+/// #1604: the store open must not wait for the window to be built; the window takes the early open
+/// over, since a second open would read the keyring and open the file again.
 pub fn the_store_starts_opening_before_there_is_a_window() {
     crate::gtk_case(async {
         if !support::display() {
@@ -136,7 +112,6 @@ pub fn the_store_starts_opening_before_there_is_a_window() {
             directory.path().join("postio.db"),
             Arc::clone(&secrets) as Arc<dyn SecretStore>,
         );
-        // No window yet: only the open.
         let progress = opener.open_on_a_thread();
         assert!(
             crate::settle_until(async || secrets.asked.load(Ordering::SeqCst) > 0).await,

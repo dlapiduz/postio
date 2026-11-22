@@ -1,25 +1,6 @@
-//! The guards' facts for one arrival, as the store answers them (spec 007
-//! FR-111, `contracts/engine.md`, "The classifier").
-//!
-//! [`postio_classify::Facts`] asks and expects an answer on the spot, and
-//! the store answers asynchronously, inside the transaction that filed the
-//! mail. So the classifier is never handed the store. It is handed
-//! [`Known`] -- what has been read so far -- and asked again once the
-//! question it could not answer has been read. The pass pays for exactly
-//! the questions the classifier asks, in the order it asks them, and no
-//! question is read twice.
-//!
-//! Two things make that cheap:
-//!
-//! - **Most mail asks nothing.** Every question is a reason *not* to act
-//!   (`Facts`' own contract), so if a classifier acts on nothing while every
-//!   unread answer is "no", it acts on nothing whatever they say. The pass
-//!   asks that first, and a message no rule would touch costs no read.
-//! - **An unread answer is "yes" once it matters.** Asked again, a
-//!   classifier gets `true` for what is not read yet, which is what `Facts`
-//!   says a store that cannot answer must say: when in doubt, mail goes to
-//!   the inbox (FR-112). The question it asked is noted, read, and the
-//!   classifier asked once more.
+//! The classifier's guard facts for one arrival, read lazily: `Known` holds what has been read, and
+//! an unread answer is "yes" (mail goes to the inbox, FR-112).
+//! The pass first asks with every unread fact "no", so mail no rule would touch costs no read.
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -28,49 +9,33 @@ use std::sync::Arc;
 use postio_classify::Facts;
 use postio_model::{EmailAddress, ThreadId};
 
-/// Which unread questions a classifier asked, in one pass over it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Wanted {
-    /// Whether a sender is at one of the person's own domains.
     pub(crate) own_domain: bool,
-    /// Whether the person wrote to a sender.
     pub(crate) wrote_to: bool,
-    /// Whether the person took part in the conversation.
     pub(crate) took_part: bool,
 }
 
 impl Wanted {
-    /// Nothing is left to read.
     pub(crate) fn is_empty(self) -> bool {
         self == Wanted::default()
     }
 }
 
-/// What is known of one arrival's guards so far.
-///
-/// Questions about the arrival itself -- its senders, its conversation --
-/// can be read, and are noted when asked unread. Questions about anything
-/// else cannot be, and are answered as an unread one is, without being
-/// noted: nothing here could read them.
+/// Questions about the arrival itself can be read and are noted when asked unread; questions about
+/// anything else are answered as unread, un-noted.
 pub(crate) struct Known<'a> {
     senders: &'a [EmailAddress],
     thread: Option<ThreadId>,
-    /// `[focus.filter] never`, which is config and always known.
     never: &'a (dyn Fn(&EmailAddress) -> bool + Sync),
-    /// The domains the person sends from, lowercased, once read: once per
-    /// call, and shared by every arrival in it.
     pub(crate) own_domains: Option<Arc<BTreeSet<String>>>,
-    /// Which senders the person wrote to, normalised, once read.
     pub(crate) written: Option<BTreeSet<String>>,
-    /// Whether the person took part in the conversation, once read.
     pub(crate) took_part: Option<bool>,
-    /// What an unread question is answered.
     unknown: bool,
     wanted: Cell<Wanted>,
 }
 
 impl<'a> Known<'a> {
-    /// Nothing read yet about an arrival from `senders`, in `thread`.
     pub(crate) fn new(
         senders: &'a [EmailAddress],
         thread: Option<ThreadId>,
@@ -88,15 +53,12 @@ impl<'a> Known<'a> {
         }
     }
 
-    /// Answer every unread question `answer` from now on, and forget which
-    /// ones were asked.
     pub(crate) fn assuming(&mut self, answer: bool) -> &Self {
         self.unknown = answer;
         self.wanted.set(Wanted::default());
         self
     }
 
-    /// The unread questions asked since [`Self::assuming`].
     pub(crate) fn wanted(&self) -> Wanted {
         self.wanted.get()
     }
@@ -203,9 +165,6 @@ mod tests {
 
     #[test]
     fn what_is_not_about_the_arrival_is_never_read_and_never_filed_on() {
-        // A classifier asking about somebody else, or another conversation,
-        // is asking what this pass cannot read: it gets the doubtful answer,
-        // and nothing is noted to read.
         let senders = [address("deals@shop.example")];
         let never = |_: &EmailAddress| false;
         let mut known = Known::new(&senders, Some(THREAD), &never);

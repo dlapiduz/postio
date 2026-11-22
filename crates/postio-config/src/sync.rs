@@ -1,80 +1,37 @@
-//! `[sync]` — how aggressively Postio talks to the server.
-//!
-//! ```toml
-//! [sync]
-//! check_for_mail = "idle"  # idle | poll | manual
-//! poll_interval_secs = 300 # other folders, and idle's own fallback
-//! max_connections = 5      # per account
-//! sync_on_startup = true
-//! body_fetch = "lazy"      # lazy | eager
-//! attachment_fetch = "on_open" # on_open | eager | never
-//! max_inline_bytes = 262144   # inline parts under this ride with the text
-//! initial_sync_messages = 5000 # or "all"
-//! notify = true            # desktop notifications for new mail
-//! notify_roles = ["inbox"] # which mailboxes' arrivals notify
-//! badge = true             # unread count on the app's icon
-//! empty_junk_after_days = 0  # permanently delete Junk older than this; 0 = never
-//! empty_trash_after_days = 0 # the same for Trash
-//! ```
-
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::Extras;
 
-/// How Postio learns about new mail (#867).
-///
-/// Replaces the old `idle: bool` -- `Manual` is a third state that bool had
-/// no room for, and there is no such thing as `poll_interval_secs` meaning
-/// something different under `Idle` than under `Poll`, so a tri-state enum
-/// says what a bool plus a comment used to have to.
+/// `Manual` is a third state the old `idle: bool` had no room for (#867).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckForMail {
-    /// Hold an `IDLE` connection on INBOX for push delivery; every other
-    /// mailbox, and INBOX itself as a backstop, still reconciles on
-    /// `poll_interval_secs`.
+    /// INBOX still reconciles on `poll_interval_secs` as a backstop.
     #[default]
     Idle,
-    /// No `IDLE` connection at all -- every mailbox, INBOX included, is
-    /// reconciled on `poll_interval_secs` alone. One connection cheaper,
-    /// and a fit for a server or a network that does not hold `IDLE` well.
+    /// One connection cheaper; fits a server or network that does not hold `IDLE` well.
     Poll,
-    /// Never checks on its own. `sync_on_startup` and a manual sync command
-    /// are the only things that reach the server.
     Manual,
 }
 
-/// When message bodies are downloaded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BodyFetch {
-    /// Headers first; bodies backfilled behind the UI. The local-first default.
     #[default]
     Lazy,
-    /// Download bodies as soon as headers arrive.
     Eager,
 }
 
-/// When an attachment's bytes are downloaded — ADR 0017's payload axis.
-///
-/// A different question from [`BodyFetch`], and it has to be: on a real
-/// mailbox, attachment payloads are ~90% of the bytes and none of the words.
-/// Every message's *text* is fetched to completion because that is what makes
-/// search complete and offline reading real; a PDF contributes its filename to
-/// search and nothing else. So this is the choice between a 1.4 GB store and a
-/// 12.4 GB one, and it is worth being asked.
+/// A different question from `BodyFetch`: attachment payloads are ~90% of the bytes and none of the
+/// words, so this is the choice between a 1.4 GB store and a 12.4 GB one (ADR 0017).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttachmentFetch {
-    /// Fetch a payload when it is opened or saved, and never before. The
-    /// local-first default: metadata is synced for every part, so
-    /// `has:attachment` and `filename:` answer with nothing downloaded.
+    /// Metadata is synced for every part, so `has:attachment` and `filename:` answer with nothing
+    /// downloaded.
     #[default]
     OnOpen,
-    /// Download payloads behind the text too, for a complete offline archive.
     Eager,
-    /// Never download a payload, not even on open. Filename search and
-    /// nothing more.
     Never,
 }
 
@@ -90,13 +47,11 @@ fn initial_sync_messages() -> u32 {
     5_000
 }
 
-/// [`SyncConfig::initial_sync_messages`] with no cap: the first sync reaches
-/// back for everything the server has. Written to the file as `"all"`.
+/// Written to the file as `"all"`.
 pub const ALL_MESSAGES: u32 = u32::MAX;
 
-/// `initial_sync_messages` in the file: a count, or `"all"` for
-/// [`ALL_MESSAGES`]. The file is something a person reads, and
-/// `4294967295` is how a `u32` says "no cap", not how a person does.
+/// The file is something a person reads, and `4294967295` is how a `u32` says no cap, not how a
+/// person does.
 mod depth {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -130,89 +85,53 @@ mod depth {
     }
 }
 
-/// 256 KiB — ADR 0017's number for [`SyncConfig::max_inline_bytes`].
 fn max_inline_bytes() -> u64 {
     256 * 1024
 }
 
-/// Notify for the one mailbox a person actually watches, by default. A
-/// desktop notification for every folder an archive rule quietly files mail
-/// into is noise, not news.
+/// A notification for every folder an archive rule quietly files into is noise.
 fn notify_roles() -> Vec<String> {
     vec!["inbox".to_owned()]
 }
 
-/// The `[sync]` section.
-///
-/// [`Deserialize`] is written by hand rather than derived: an existing
-/// `config.toml` may still say `idle = true`/`idle = false` (#867), and that
-/// has to keep meaning what it always meant -- `Idle`/`Poll` -- rather than
-/// silently becoming the new field's default the moment nobody upgrades
-/// their file. [`Serialize`] stays derived: whatever a person's file said,
-/// this only ever writes `check_for_mail` back, which is what retires the
-/// old key from a file this panel has touched.
+/// `Deserialize` is by hand: an existing file may still say `idle = true`/`false` (#867), which
+/// must keep
+/// meaning `Idle`/`Poll`. `Serialize` writes only `check_for_mail`, which retires the old key.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SyncConfig {
-    /// How Postio learns about new mail.
     pub check_for_mail: CheckForMail,
-    /// Polling interval for folders without `IDLE`, in seconds.
     pub poll_interval_secs: u64,
-    /// Maximum simultaneous IMAP connections per account.
     pub max_connections: u8,
-    /// Start a sync as soon as the app opens.
     pub sync_on_startup: bool,
-    /// When to download bodies.
     pub body_fetch: BodyFetch,
-    /// When to download attachment payloads.
     pub attachment_fetch: AttachmentFetch,
-    /// The largest inline part that is fetched with the message's text
-    /// rather than left on the payload axis, in bytes.
-    ///
-    /// ADR 0017's "inline parts ride with the text". A `cid:` image is not
-    /// something the reader offers to download, it is part of the sentence
-    /// the message is making — and since remote images are blocked by
-    /// default, these are the images that are supposed to appear. Under this
-    /// figure a part is text; over it, a payload, so HTML mail reads
-    /// correctly offline without pulling the forty-megabyte video somebody
-    /// embedded. `0` turns the rule off.
+    /// ADR 0017: inline parts ride with the text. A `cid:` image is part of the sentence the
+    /// message is
+    /// making and remote images are blocked, so under this figure a part is text; over it, a
+    /// payload.
+    /// `0` turns the rule off.
     pub max_inline_bytes: u64,
-    /// How many messages the first sync reaches back for, newest first;
-    /// [`ALL_MESSAGES`] (`"all"` in the file) for no cap.
     #[serde(serialize_with = "depth::serialize")]
     pub initial_sync_messages: u32,
-    /// Master switch for desktop notifications on new mail.
     pub notify: bool,
-    /// Which mailbox roles produce a notification when mail arrives in them —
-    /// the stable identifiers `postio_model::MailboxRole::as_str` emits, e.g.
-    /// `"inbox"`, `"flagged"`. A role this build does not recognise is
-    /// ignored rather than rejected, the same tolerance `extra` gives unknown
-    /// keys elsewhere in this file.
+    /// A role this build does not recognise is ignored rather than rejected.
     pub notify_roles: Vec<String>,
-    /// Show the inbox's unread count on the application's icon -- the Dock,
-    /// on the Mac. Separate from [`notify`](Self::notify): a count that
-    /// waits quietly is what somebody who turned the interruptions off may
-    /// still want.
     pub badge: bool,
     /// Permanently delete Junk older than this many days, on this machine and
     /// on the server (#1932); `0`, the default, never. Flagged mail is kept.
     pub empty_junk_after_days: u32,
-    /// The same for Trash.
     pub empty_trash_after_days: u32,
-    /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
 }
 
-/// [`SyncConfig`]'s deserialize shadow: field for field the same, except
-/// `check_for_mail` is optional and the retired `idle` key is still
-/// accepted -- see [`SyncConfig`]'s own doc for why this has to be by hand.
+/// Field for field the same, except `check_for_mail` is optional and the retired `idle` key is
+/// still accepted.
 #[derive(Deserialize)]
 struct RawSyncConfig {
     #[serde(default)]
     check_for_mail: Option<CheckForMail>,
-    /// The pre-#867 key. `Some` only when the file still has it; reconciled
-    /// against `check_for_mail` in [`SyncConfig::deserialize`] and never
-    /// itself written back out.
+    /// The pre-#867 key; never written back out.
     #[serde(default)]
     idle: Option<bool>,
     #[serde(default = "poll_interval_secs")]
@@ -252,10 +171,8 @@ impl<'de> Deserialize<'de> for SyncConfig {
         D: Deserializer<'de>,
     {
         let raw = RawSyncConfig::deserialize(deserializer)?;
-        // An explicit `check_for_mail` wins outright -- it is what a file
-        // written by this version of Postio, or by hand following this
-        // version's own docs, actually said. Only fall back to translating
-        // the old key when there is nothing newer to trust.
+        // An explicit `check_for_mail` wins outright; the old key is translated only when there is
+        // nothing newer.
         let check_for_mail = raw.check_for_mail.unwrap_or(match raw.idle {
             Some(true) | None => CheckForMail::Idle,
             Some(false) => CheckForMail::Poll,
@@ -300,22 +217,13 @@ impl Default for SyncConfig {
     }
 }
 
-/// Rewrites `text`'s `[sync]` table to match `sync`, leaving every *other*
-/// section — and any comment attached to one — untouched. The structured
-/// Sync & Storage pane's write path (#874), the same `patch_filters` (#869)
-/// and `patch_ui` (#873) already established for exactly this reason.
-///
-/// `[sync]` itself is regenerated whole on every call, so a comment attached
-/// directly to `[sync]` — its own header, or one of its own keys — does not
-/// survive; see `patch_ui`'s own doc for why that half of the promise is
-/// deliberate rather than an oversight.
+/// The structured pane's write path (#874). `[sync]` is regenerated whole, so a comment on its
+/// header or
+/// keys does not survive.
 pub fn patch_sync(text: &str, sync: &SyncConfig) -> crate::Result<String> {
     crate::splice::replace_section(text, "sync", &SyncOnly { sync })
 }
 
-/// Serializes as just a `[sync]` table, with no other section — [`patch_sync`]'s
-/// bridge from `toml`'s serde-derived output to a fragment `toml_edit` can
-/// splice in.
 #[derive(Serialize)]
 struct SyncOnly<'a> {
     sync: &'a SyncConfig,
@@ -325,9 +233,6 @@ struct SyncOnly<'a> {
 mod tests {
     use super::*;
 
-    /// "Everything" is a choice a person makes (onboarding's sync window),
-    /// and the file is something a person reads: it says `"all"`, not the
-    /// largest number a `u32` holds.
     #[test]
     fn no_cap_on_the_first_sync_is_written_as_all_and_read_back() {
         let sync = SyncConfig {
@@ -401,8 +306,6 @@ mod tests {
 
     #[test]
     fn the_inline_cap_defaults_to_adr_0017s_figure() {
-        // A file that has never heard of the key still reads inline images
-        // with the text, which is what #751 was about.
         let sync: SyncConfig = toml::from_str("").expect("parse");
         assert_eq!(sync.max_inline_bytes, 256 * 1024);
     }
@@ -415,13 +318,10 @@ mod tests {
 
     #[test]
     fn an_empty_sync_table_still_notifies_the_inbox() {
-        // The common case: nobody has ever typed [sync] at all.
         let sync: SyncConfig = toml::from_str("").expect("parse");
         assert!(sync.notify);
         assert_eq!(sync.notify_roles, vec!["inbox".to_owned()]);
     }
-
-    // -- Acceptance: check_for_mail and the idle migration (#867) -----------
 
     #[test]
     fn an_empty_sync_table_checks_for_mail_by_idle() {
@@ -449,19 +349,12 @@ mod tests {
 
     #[test]
     fn a_legacy_idle_false_migrates_to_poll() {
-        // Someone who explicitly turned IDLE off to save a connection asked
-        // for polling, not for a manual-only mailbox nobody had a word for
-        // yet -- the migration must land the same place their intent did.
         let sync: SyncConfig = toml::from_str("idle = false\n").expect("parse");
         assert_eq!(sync.check_for_mail, CheckForMail::Poll);
     }
 
     #[test]
     fn an_explicit_check_for_mail_wins_over_a_stale_legacy_idle_key() {
-        // A file holding both is not a case this migration invented -- it is
-        // what a hand-merged config or an old backup restored over a newer
-        // one could produce. The key this version of Postio actually reads
-        // and writes has to be the one that wins.
         let sync: SyncConfig =
             toml::from_str("check_for_mail = \"manual\"\nidle = true\n").expect("parse");
         assert_eq!(sync.check_for_mail, CheckForMail::Manual);
@@ -477,8 +370,6 @@ mod tests {
         );
         assert!(written.contains("check_for_mail = \"poll\""), "{written}");
     }
-
-    // -- Acceptance: the Sync & Storage pane patches [sync] only (#874) -----
 
     #[test]
     fn patch_sync_rewrites_only_the_sync_table_leaving_everything_else_verbatim() {

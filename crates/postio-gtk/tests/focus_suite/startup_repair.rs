@@ -1,14 +1,3 @@
-//! Startup over an account whose password the keyring does not have.
-//!
-//! An account row and no credential for it: the state a keyring write that
-//! failed after the row was saved leaves behind. Such an account opens, and
-//! cannot authenticate. This drives Focus's own startup over it
-//! (`startup::open`, then `Session::start_syncing`, which is what `app.rs`
-//! does after the first frame) and asserts what the window then offers: a
-//! sign-in banner with "Update password...", which opens the credential form
-//! for that account, filled in from its row, rather than a window that
-//! looks like a working account and is a dead end.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,7 +10,6 @@ use postio_storage::key::{Purpose, StoreKey};
 
 use crate::support;
 
-/// A keyring that has the store's key and nothing for any account.
 fn keyring(key: &StoreKey) -> Arc<dyn SecretStore> {
     let secrets = MemorySecretStore::default();
     postio_session::blocking::now(secrets.store(
@@ -68,7 +56,6 @@ pub fn an_account_with_no_credential_offers_the_repair() {
             crate::settle_until(async || opened.borrow().is_some()).await,
             "the store never opened"
         );
-        // What `app.rs` does once the stored mail is drawn.
         opened
             .borrow()
             .as_ref()

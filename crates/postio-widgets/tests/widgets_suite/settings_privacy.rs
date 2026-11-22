@@ -1,13 +1,3 @@
-//! The settings panel's privacy pane (#871): the remote-image allow-list,
-//! managed rather than only enforced.
-//!
-//! `RemoteImageAllowList` already exists and already persists
-//! (`RemoteImageAllowList`, in the reader) — this is the other half,
-//! the same shape `gtk_settings_accounts.rs` proves for `set_accounts`:
-//! given a list, does the pane draw one row per sender, and does revoking
-//! one actually mutate and save it. Skips without a display. Nothing here
-//! touches the network.
-
 use crate::support_compose::{fonts, style};
 use chrono::{TimeZone, Utc};
 use gtk::gdk;
@@ -127,8 +117,8 @@ pub fn every_activation_gets_its_own_row_newest_first() {
         "new-newsletter.example.com",
         Utc.with_ymd_and_hms(2026, 8, 30, 0, 0, 0).unwrap(),
     );
-    // Handed in newest-first, the same order `UnsubscribeRepository::for_account`
-    // already returns — the pane draws what it is given, it does not reorder.
+    // Newest-first, as `UnsubscribeRepository::for_account` returns: the pane draws what it is
+    // given.
     panel.set_unsubscribe_activations(vec![newer, older]);
     pump();
 
@@ -322,9 +312,6 @@ fn empty_state_visible(panel: &SettingsPanel) -> bool {
     .any(|w| w.is_visible())
 }
 
-/// Every widget in the tree carrying `class` (or, when `class` is empty,
-/// every widget). Copied from `gtk_settings_filters.rs` rather than shared,
-/// matching that file's own reason: no dependency between the two.
 fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if class.is_empty() || widget.has_css_class(class) {

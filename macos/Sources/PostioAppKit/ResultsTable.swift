@@ -3,24 +3,15 @@ import PostioFFI
 import PostioKit
 import SwiftUI
 
-/// The results list on the Mac (specs/010-focus-search T072; design §3.4,
-/// screens 06 and 07): a view-based `NSTableView` over `ResultsModel`,
-/// for the reasons the inbox's is one (009 R10) -- real cell reuse, and
-/// nothing measured: every row's height is its group's.
-///
-/// Group headers are group rows. The table's own selection is off, as the
-/// inbox's is: the focus ring is the controller's (`FocusResultsCursor`),
-/// drawn by the row view as an accent ring around that row only, and a
-/// checked result has the neutral selection tint and a filled box in the
-/// gutter. A click is told to the controller (`ResultsModel.point`) and
-/// moves nothing here.
+/// A view-based `NSTableView` for the inbox's reasons (009 R10). Its own selection is off: the
+/// focus ring is
+/// the controller's and a click is told to it, moving nothing here.
 @MainActor
 public final class ResultsTable: NSObject {
     public let model: ResultsModel
     public let tableView: NSTableView
     public let scrollView: NSScrollView
 
-    /// How many cells were made rather than reused.
     public private(set) var cellsCreated = 0
 
     static let rowIdentifier = NSUserInterfaceItemIdentifier("postio.results.row")
@@ -67,11 +58,8 @@ public final class ResultsTable: NSObject {
         tableView.doubleAction = #selector(doubleClicked)
     }
 
-    /// A click landed on a sender's name: the table row and the address.
     public var onContactName: ((Int, String) -> Void)?
 
-    /// Where the sender's name is in table row `row`, in the table's
-    /// coordinates: what the known-sender popover hangs from.
     public func nameAnchor(row: Int) -> NSRect? {
         guard row >= 0, row < tableView.numberOfRows else { return nil }
         let frame = tableView.rect(ofRow: row)
@@ -79,7 +67,6 @@ public final class ResultsTable: NSObject {
         return NSRect(x: frame.minX + x, y: frame.minY + 8, width: 120, height: 20)
     }
 
-    /// The table row under the focus ring, when there is one.
     public var cursorTableRow: Int? { model.cursorRow }
 
     @objc private func clicked() {
@@ -90,9 +77,6 @@ public final class ResultsTable: NSObject {
         model.open(tableRow: tableView.clickedRow)
     }
 
-    // MARK: what the engine says
-
-    /// Draw what one of the model's changes said.
     public func apply(_ change: ResultsModel.Change) {
         switch change {
         case .open, .redraw:
@@ -113,14 +97,10 @@ public final class ResultsTable: NSObject {
                     .isCursor = row == model.cursorRow
             }
             if let row = model.cursorRow, row < tableView.numberOfRows {
-                // The group's header with its first row, so Top hits is
-                // never scrolled away from under the ring.
                 if case .header = model.item(at: row - 1) { tableView.scrollRowToVisible(row - 1) }
                 tableView.scrollRowToVisible(row)
             }
         case let .spliced(removed, inserted):
-            // The opened result's lines come and go under it; no animation
-            // under Reduce Motion, else a fade within the 100 ms budget.
             let animation: NSTableView.AnimationOptions =
                 Motion.duration(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion) == 0
                 ? [] : .effectFade
@@ -133,7 +113,6 @@ public final class ResultsTable: NSObject {
         }
     }
 
-    /// Bring the keyboard to the table: `FocusKeyboardHome` in the results.
     public func takeKeyboard() {
         guard let window = tableView.window else { return }
         window.makeFirstResponder(tableView)
@@ -245,17 +224,10 @@ extension ResultsTable: NSTableViewDelegate {
     }
 }
 
-// MARK: - the row view: the ground, the hairline, the ring
-
-/// What sits behind a result's words: the list's surface, a checked
-/// result's neutral tint, the hairline under every row, and the focus
-/// ring's accent around the focused row.
 final class ResultRowBackground: NSTableRowView {
     var isHeader = false { didSet { if isHeader != oldValue { needsDisplay = true } } }
     var isCursor = false { didSet { if isCursor != oldValue { needsDisplay = true } } }
     var isChecked = false { didSet { if isChecked != oldValue { needsDisplay = true } } }
-    /// A line under an opened result: a faint ground and a rule down the
-    /// left, so the lines read as inside the result above (screen 06).
     var isChild = false { didSet { if isChild != oldValue { needsDisplay = true } } }
 
     override var isFlipped: Bool { true }
@@ -271,7 +243,6 @@ final class ResultRowBackground: NSTableRowView {
                 .fill()
         }
         if isChecked {
-            // Neutral, never the accent, which is the ring's.
             NSColor.labelColor.withAlphaComponent(0.06).setFill()
             bounds.fill()
         }
@@ -307,7 +278,6 @@ final class ResultRowBackground: NSTableRowView {
     }
 }
 
-/// The results table in a SwiftUI tree: the main window's results mode.
 public struct ResultsTableRepresentable: NSViewRepresentable {
     private let table: ResultsTable
 

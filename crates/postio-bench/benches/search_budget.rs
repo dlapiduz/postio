@@ -1,50 +1,7 @@
-//! The search half of docs/PRODUCT.md §18's `<100 ms` budget (CLAUDE.md), gated on a
-//! corpus large enough to be honest about it: 120,000 messages, one account.
-//!
-//! Five query shapes, chosen to stress different parts of `search`:
-//!
-//! - **simple term** — a free-text word that matches about 1% of the corpus.
-//!   The ordinary case: join `messages_fts`, rank the matches, snippet them.
-//! - **operator-only** — `from:` with no free text at all. No `messages_fts`
-//!   join; the structured-filter path and the SQL planner's use of
-//!   `idx_messages_account_list`-adjacent indexes are what is under test.
-//! - **composed** — an operator plus free text together, the shape the
-//!   canvas 2b search bar produces on almost every real query.
-//! - **common-word worst case** — a free-text word every message's body
-//!   contains. `messages_fts MATCH` and the `count(*)` it feeds have to walk
-//!   effectively the whole corpus; this is the shape most likely to blow the
-//!   budget if an index is missing.
-//! - **word plus a date** — the simple term with `after:`. Driven by the
-//!   word's hits, each looked up by its content; a date range in the same
-//!   `WHERE` once tempted the planner into walking the range per hit
-//!   instead, over a second on 20k messages (#1809).
-//!
-//! # Running
-//!
-//! ```sh
-//! cargo bench -p postio-bench --bench search_budget
-//! ```
-//!
-//! Corpus generation is deterministic (a fixed-seed xorshift generator, no
-//! wall-clock or OS randomness), so a run is reproducible byte-for-byte
-//! across machines modulo timing. CI compiles this bench
-//! (`cargo bench --workspace --no-run`) but does not time it — see
-//! `perf_budgets.rs` for why a shared runner is not
-//! trusted for millisecond budgets there either. Each `bench_*` function
-//! below still asserts its own budget against a real `Instant` measurement,
-//! so a genuine regression fails loudly here even outside CI.
-//!
-//! # Recording a new baseline
-//!
-//! ```sh
-//! cargo bench -p postio-bench --bench search_budget -- --save-baseline main
-//! ```
+//! The `<100 ms` search budget on 120,000 messages. A date range in the same WHERE once tempted the
+//! planner into walking the range per hit (#1809), so a word plus a date is one of the shapes.
 
 #![allow(missing_docs)]
-// `criterion_group!` expands to a `pub fn`, and the workspace lint floor now
-// reaches bench targets -- the old per-crate `#![warn(missing_docs)]` in
-// `lib.rs` never did. A bench is not public API, so documenting a
-// macro-generated item would be ceremony rather than information.
 
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -59,12 +16,8 @@ use postio_search::parse;
 use postio_storage::repository::MessageRepository;
 use postio_storage::{Store, test_support};
 
-/// The runtime every async call in this bench is driven on.
-///
-/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
-/// where there is no ambient runtime -- so `block_on` here is the plain thing
-/// rather than the trap it is everywhere else in this workspace. Multi-threaded
-/// because a store read may reach `block_in_place`.
+/// Multi-threaded because a store read may reach `block_in_place`. Criterion's `iter` runs on a
+/// thread with no ambient runtime, so `block_on` is safe here.
 fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
     use std::sync::OnceLock;
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -79,33 +32,22 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-/// Runs `work` on a thread of its own and waits for it.
-///
-/// The corpora are built on first use, and first use is inside
-/// `on_runtime(run(..))`: blocking on the runtime again from there is the
-/// nested `block_on` tokio refuses ("Cannot start a runtime from within a
-/// runtime"). A scoped thread is outside it, and the caller only waits.
+/// The corpora are built on first use inside `on_runtime`, where a nested `block_on` is refused; a
+/// scoped thread is outside it.
 fn outside_the_runtime<T: Send>(work: impl FnOnce() -> T + Send) -> T {
     std::thread::scope(|scope| scope.spawn(work).join().expect("the corpus builds"))
 }
 
-/// docs/PRODUCT.md §18 / CLAUDE.md: local search must resolve in under this.
 const SEARCH_BUDGET: Duration = Duration::from_millis(100);
 
-/// Large enough that an index gap shows up as milliseconds, not microseconds.
 const MESSAGE_COUNT: u64 = 120_000;
 
-/// One in a hundred messages carries this word — the "simple term" shape.
 const UNCOMMON_WORD: &str = "quarterly";
-/// Every message's body carries this word — the "common word" worst case.
 const COMMON_WORD: &str = "regarding";
-/// How many distinct senders the corpus spreads its messages across.
 const SENDER_COUNT: u64 = 500;
 
-/// How many contacts the address book carries — the corpus' senders plus the
-/// long tail. Sized like a real mailbox's (#746 shipped against 18k), because
-/// sender affinity's cost multiplies by it and a near-empty table hid a
-/// per-candidate scan of the whole thing.
+/// Sized like a real mailbox's (#746): sender affinity's cost multiplies by it, and a near-empty
+/// table hid a per-candidate scan.
 const CONTACT_COUNT: u64 = 20_000;
 
 struct Corpus {
@@ -118,8 +60,6 @@ fn corpus() -> &'static Corpus {
     CORPUS.get_or_init(|| outside_the_runtime(|| on_runtime(build_corpus())))
 }
 
-/// A tiny, fixed-seed xorshift64 generator: reproducible across machines and
-/// runs, and not worth pulling in a `rand` dependency for a bench fixture.
 struct Xorshift64(u64);
 
 impl Xorshift64 {
@@ -153,25 +93,17 @@ async fn build_corpus() -> Corpus {
     let mut rng = Xorshift64::new(0x5eed_1234_5678_9abc);
     let repository = MessageRepository::new(&connection);
 
-    // One transaction for the whole load: `MessageRepository::create` opens
-    // its own SAVEPOINT per call (see `postio_storage::repository::Scope`),
-    // which nests fine inside this outer transaction and turns 120,000
-    // separate commits into one.
+    // One transaction for the whole load: each `create` nests a SAVEPOINT in it, so 120,000 commits
+    // become one.
     connection
         .execute_batch("BEGIN")
         .await
         .expect("start bulk load transaction");
     for i in 0..MESSAGE_COUNT {
-        // Uncorrelated with `i % 100` below (which places `UNCOMMON_WORD`)
-        // on purpose: `i % SENDER_COUNT` would put every sender on a fixed
-        // residue mod 100 since `SENDER_COUNT` divides evenly into 100's
-        // multiples, so a sender chosen that way could never coincide with
-        // the uncommon word and the "composed" query below would silently
-        // match nothing.
-        // Message 0 is forced onto sender 42 rather than left to the RNG, so
-        // the "composed" query below (`from:sender42 quarterly`, and message
-        // 0 gets `UNCOMMON_WORD` from `i % 100 == 0`) is guaranteed at least
-        // one hit by construction rather than by a probabilistic coincidence.
+        // Uncorrelated with `i % 100` (which places `UNCOMMON_WORD`): `i % SENDER_COUNT` would pin
+        // each
+        // sender to one residue mod 100 and the composed query would match nothing.
+        // Message 0 is forced onto sender 42 so `from:sender42 quarterly` has at least one hit.
         let sender = if i == 0 { 42 } else { rng.below(SENDER_COUNT) };
         let received_at = base + chrono::Duration::minutes(i as i64);
         let mut message = Message::new(account.id, mailbox, received_at);
@@ -194,12 +126,8 @@ async fn build_corpus() -> Corpus {
             .await
             .expect("index body");
     }
-    // #746: a contacts table at real-mailbox scale. Sender affinity's cost
-    // scales with `candidates × contacts`, and an empty table multiplies the
-    // pathological shape by zero — the store this bug shipped to had 18k
-    // contacts and every search took seconds while this bench stayed green.
-    // The corpus' own senders get affinity to exercise the probe's hit path;
-    // the rest is the long tail every real address book carries.
+    // #746: a contacts table at real-mailbox scale; an empty table multiplies sender affinity's
+    // cost by zero and hid a bug that took seconds on 18k contacts.
     {
         for i in 0..CONTACT_COUNT {
             let address = if i < SENDER_COUNT {
@@ -208,8 +136,6 @@ async fn build_corpus() -> Corpus {
                 format!("correspondent{i}@example.com")
             };
             let seen = rng.below(100) as i64;
-            // A person who owns the address, and the account's sighting of
-            // it: the two places affinity reads (specs/005-contacts R2).
             connection
                 .execute(
                     "INSERT OR IGNORE INTO addresses (address, address_normalized)
@@ -279,8 +205,6 @@ async fn run(query: &str, limit: u32) -> Duration {
     elapsed
 }
 
-/// [`run`], but for the canvas' left column: the three scope counts and the
-/// refine aggregates, measured together the way the panel asks for them.
 async fn run_facets(query: &str) -> Duration {
     let corpus = corpus();
     let connection = corpus.database.connect().await.expect("checkout");
@@ -333,9 +257,8 @@ fn bench_composed(c: &mut Criterion) {
     assert_budget("composed", on_runtime(run(query, 50)));
 }
 
-/// The simple term inside a date range: `after:` keeps about two thirds of
-/// the corpus (it spans 2020-01-01 to late March, a message a minute), so a
-/// plan that walks the range once per hit reads tens of millions of rows.
+/// `after:` keeps about two thirds of the corpus, so a plan that walks the range once per hit reads
+/// tens of millions of rows.
 fn bench_word_after_date(c: &mut Criterion) {
     let query = "quarterly after:2020-02-01";
     c.bench_function("search_word_after_date", |b| {
@@ -351,22 +274,9 @@ fn bench_common_word_worst_case(c: &mut Criterion) {
     assert_budget("common-word worst case", on_runtime(run(COMMON_WORD, 50)));
 }
 
-// ---------------------------------------------------------------------------
-// Unified search, which needs a corpus that has more than one account in it
-// ---------------------------------------------------------------------------
-//
-// The shapes above are all one account, and with one account a unified search
-// and an account-scoped one are the *same query over the same rows* — so they
-// could not distinguish the two however slow either got. That mattered the
-// moment `SearchRequest.account_id` became `AccountScope` (#186): the standing
-// budget gate would have stayed green through a twenty-second unified search
-// (#452, ADR 0005 Q5a).
-//
-// The corpus is separate rather than replacing the one above, and smaller per
-// account, so the single-account budgets keep measuring exactly what they
-// always measured and stay comparable to their recorded baselines.
+// Unified search needs more than one account: with one, unified and scoped are the same query over
+// the same rows (#452). A separate corpus keeps the single-account baselines comparable.
 
-/// Accounts in the multi-account corpus, and messages in each.
 const ACCOUNTS: u64 = 4;
 const PER_ACCOUNT: u64 = 30_000;
 
@@ -400,10 +310,9 @@ async fn build_multi_account_corpus() -> MultiAccount {
         let (account, mailbox) = test_support::account_with_inbox(&connection).await;
         first.get_or_insert(account.id);
         for i in 0..PER_ACCOUNT {
-            // Interleaved in time across accounts, never concatenated: a
-            // unified recency ordering that can be satisfied from one
-            // account's index in one run is not the ordering this exists to
-            // measure.
+            // Interleaved in time across accounts, so a unified recency order cannot be served from
+            // one
+            // account's index.
             let received_at = base + chrono::Duration::minutes((i * ACCOUNTS + a) as i64);
             let mut message = Message::new(account.id, mailbox, received_at);
             message.from = vec![EmailAddress::new(
@@ -457,13 +366,8 @@ async fn run_multi_account(query: &str, account: AccountScope) -> Duration {
     elapsed
 }
 
-/// The shape that actually needs `idx_messages_recency`.
-///
-/// A term in every message is past `RANK_BY_RELEVANCE_LIMIT`, so the executor
-/// orders by recency rather than by `bm25` and drives from `messages` — the
-/// one plan whose ordering comes from an index rather than from a sort. With
-/// no account named, `idx_messages_account_list` cannot supply it. Measured
-/// without migration 0012 this is ~20 s against a 100 ms budget.
+/// A term in every message is past `RANK_BY_RELEVANCE_LIMIT`, so the executor orders by recency;
+/// with no account named only `idx_messages_recency` can supply that order.
 fn bench_unified_common_word(c: &mut Criterion) {
     c.bench_function("search_unified_common_word", |b| {
         b.iter(|| on_runtime(run_multi_account(COMMON_WORD, AccountScope::Unified)))
@@ -474,10 +378,7 @@ fn bench_unified_common_word(c: &mut Criterion) {
     );
 }
 
-/// The same corpus and the same string, scoped to one account: the control.
-///
-/// Its job is to fail *with* the unified case if the corpus itself is what
-/// got slower, so a regression can be told from a fixture that grew.
+/// The control: fails with the unified case if the corpus itself got slower.
 fn bench_account_scoped_common_word(c: &mut Criterion) {
     let scoped = AccountScope::Account(multi_account_corpus().first);
     c.bench_function("search_account_scoped_common_word", |b| {
@@ -489,12 +390,8 @@ fn bench_account_scoped_common_word(c: &mut Criterion) {
     );
 }
 
-/// The facet column on the worst case the corpus has.
-///
-/// Four aggregate queries over a match set that is effectively the whole
-/// corpus. They are bounded by `TOTAL_HITS_CAP` exactly as the hit count is,
-/// which is what this asserts: a panel that could cost a full-corpus walk
-/// per keystroke would be the one place the `<100 ms` budget quietly leaks.
+/// Bounded by `TOTAL_HITS_CAP` like the hit count; a facet panel that walked the corpus per
+/// keystroke would leak the 100 ms budget.
 fn bench_facets_worst_case(c: &mut Criterion) {
     c.bench_function("search_facets_common_word", |b| {
         b.iter(|| on_runtime(run_facets(COMMON_WORD)))

@@ -1,27 +1,7 @@
-//! The documents a reply and a forward start from: ADR 0003 Q3, as ADR 0033
-//! amended it.
-//!
-//! `postio_model::reply` computes recipients, subjects and threading; it
-//! cannot compute a quote, because quoting means parsing untrusted markup
-//! and the parser lives here, *above* the model. So the quote is built here
-//! and handed down.
-//!
-//! # What ADR 0033 changed, and what it did not
-//!
-//! It used to be built from the already-parsed [`Document`], the closed
-//! authoring type, and the argument was that a script or a tracking pixel
-//! then has *no representation* rather than being stripped on the way out.
-//! The cost was fidelity: a table, a colour, a class had no representation
-//! either, so a reply to a rich message quoted something that did not look
-//! like the message being answered. ADR 0033 decided fidelity wins.
-//!
-//! The argument survives; only the representation moved. [`Quoted`] is still
-//! a gate — it cannot be constructed except through [`quote_of`], which runs
-//! the reader's own sanitiser with remote images blocked. What changed is
-//! *what survives* sanitising: a table now does, a script still does not, and
-//! the permitted set is [`crate::sanitize`]'s, not a second one written here.
-//! A hole in that gate is a hole in the reader too, which is the point: one
-//! policy, one place, tested once.
+//! The documents a reply and a forward start from (ADR 0003 Q3, amended by ADR 0033). The quote is
+//! built here because quoting parses untrusted markup and the parser sits above the model.
+//! `Quoted` is a gate: only `quote_of` builds one, through the reader's own sanitiser with remote
+//! images blocked, so reader and reply share one policy.
 
 use postio_model::MessageBody;
 use postio_model::account::Signature;
@@ -29,20 +9,11 @@ use postio_model::account::Signature;
 use crate::document::{Block, Document, Inline};
 use crate::sanitize::{RemoteImages, Sanitized, sanitize_body_in};
 
-/// What a plain separator line says. Mirrors
-/// `postio_model::signature::SEPARATOR`, spelled here because the model sits
-/// below this crate and a signature is a convention of the wire, not of any
-/// one crate.
+/// Mirrors `postio_model::signature::SEPARATOR`; the model sits below this crate.
 const SEPARATOR: &str = "--";
 
-/// A quote: the original as the reader would render it.
-///
-/// Opaque on purpose. The fields are private and the only constructor is
-/// [`quote_of`], so a `Quoted` in hand is markup that has been through
-/// [`crate::sanitize`] with remote images blocked — there is no path that
-/// puts a sender's raw bytes in one. That is ADR 0003 Q3's guarantee kept
-/// under ADR 0033's representation: the type is the gate, and what it admits
-/// is the reader's policy rather than a second policy written for replies.
+/// Opaque on purpose: the only constructor is `quote_of`, so a `Quoted` is always markup that went
+/// through `sanitize` with remote images blocked (ADR 0003 Q3, ADR 0033).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Quoted {
     html: String,
@@ -51,52 +22,34 @@ pub struct Quoted {
     presentation: Presentation,
 }
 
-/// How carried content is shown: as somebody else's words, or as the message
-/// itself.
-///
-/// The distinction this crate already made in prose and now makes in a type.
-/// A reply answers a fragment and marks what it is answering; a forward
-/// presents the whole message and does not, which is why
-/// `a_forward_carries_the_header_block_and_the_source_unquoted` has always
-/// asserted that a forward is not a quote. #1483 changed what is carried —
-/// the sender's markup rather than a flattening — and deliberately did not
-/// change that.
+/// A reply marks what it answers as a quote; a forward presents the whole message and does not
+/// (#1483).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Presentation {
-    /// A `<blockquote>`: somebody else's words, inside yours.
     #[default]
     Quote,
-    /// Plain: the message being forwarded, under its header block.
     Carried,
 }
 
 impl Quoted {
-    /// The sanitised markup, ready to sit inside the reply's `<blockquote>`.
     pub fn html(&self) -> &str {
         &self.html
     }
 
-    /// The sender's stylesheet, scoped so it cannot match outside this quote.
-    ///
-    /// Separate from [`Self::html`] for the reason [`crate::sanitize::Sanitized::styles`]
-    /// gives: what is emitted is CSS Postio parsed and rewrote, never the
-    /// sender's own `<style>` element passed through.
+    /// Scoped so it cannot match outside this quote; CSS Postio parsed and rewrote, never the
+    /// sender's `<style>` passed through.
     pub fn styles(&self) -> &str {
         &self.styles
     }
 
-    /// The plain-text rendering, for the `text/plain` half of the reply.
     pub fn text(&self) -> &str {
         &self.text
     }
 
-    /// How this should be shown.
     pub fn presentation(&self) -> Presentation {
         self.presentation
     }
 
-    /// What the marker attribute says, so `parse` can rebuild the same
-    /// presentation it emitted.
     pub fn presentation_id(&self) -> &'static str {
         match self.presentation {
             Presentation::Quote => "1",
@@ -104,40 +57,23 @@ impl Quoted {
         }
     }
 
-    /// The same content, presented as the message rather than as a quote.
-    ///
-    /// What a forward carries. The bytes are identical — it went through the
-    /// same gate — and only the wrapper differs.
     pub fn carried(mut self) -> Self {
         self.presentation = Presentation::Carried;
         self
     }
 
-    /// Whether there is anything to quote at all.
     pub fn is_empty(&self) -> bool {
         self.html.trim().is_empty() && self.text.trim().is_empty()
     }
 }
 
-/// Builds the quote of a message whose HTML is `html` and whose plain-text
-/// alternative is `text`, scoped under `scope`.
-///
-/// `html` is `None` for a `text/plain`-only original — and the fallback is
-/// used for a *second* case that a naive `is_some` check gets wrong: an HTML
-/// part every byte of which sanitises away. Either way the result is the text
-/// alternative rather than an empty quote (FR-045), because a reply that
-/// opens with an attribution and an empty box is a silent failure.
-///
-/// Remote images are always [`RemoteImages::Blocked`] here, whatever the
-/// reader was allowed to show (ADR 0033 Q2). Allowing a sender's remote
-/// images is a decision made on this machine about this mailbox; re-emitting
-/// them would carry it to every recipient of the reply, and hand the sender a
-/// beacon that fires in other people's clients.
+/// `html` is `None` for a plain-text original; the text alternative is also used when the HTML
+/// sanitises away entirely, so a reply never opens with an empty quote.
+/// Remote images are always blocked whatever the reader allowed (ADR 0033 Q2): re-emitting them
+/// would give the sender a beacon in other people's clients.
 pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
-    // Nothing to quote at all: a reply to a message whose body never arrived,
-    // most often. Returned before the fallback runs, because
-    // `Document::from_text("")` still renders an empty paragraph and a quote
-    // holding one says something was quoted when nothing was.
+    // Returned before the fallback: `Document::from_text("")` still renders an empty paragraph,
+    // which would say something was quoted.
     if html.is_none_or(|html| html.trim().is_empty()) && text.trim().is_empty() {
         return Quoted::default();
     }
@@ -148,12 +84,8 @@ pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
             ..sanitized
         };
         if !sanitized.html.trim().is_empty() {
-            // An HTML-only message has no text alternative to carry, and a
-            // reply to one must still have a `text/plain` half -- otherwise
-            // the quote is an attribution followed by a bare `> `. Narrowing
-            // the sanitised markup is exactly the right source for it: the
-            // text part is a reduction by definition, and this is the same
-            // reduction the reader would show with markup turned off.
+            // An HTML-only message still needs a `text/plain` half; narrowing the sanitised markup
+            // is the reduction the reader shows with markup off.
             let text = if text.trim().is_empty() {
                 crate::parse::parse(&sanitized.html).to_text()
             } else {
@@ -167,12 +99,8 @@ pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
             };
         }
     }
-    // The fallback, through `Document::from_text` rather than one `<p>` around
-    // the lot: a sender's own line break is content (#456), and wrapping the
-    // whole text in a single paragraph turns every one of them into the space
-    // HTML collapses it to. `from_text` gives breaks and blank-line paragraph
-    // splits their markup, and the result still goes through the sanitiser --
-    // one gate, and this is someone else's text.
+    // Through `from_text`, not one `<p>`: a sender's line break is content (#456) and HTML would
+    // collapse it to a space.
     let escaped = sanitize_body_in(
         &Document::from_text(text).to_html(),
         RemoteImages::Blocked,
@@ -186,30 +114,12 @@ pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
     }
 }
 
-/// Replaces every image in a quote with what the sender called it (#1484).
-///
-/// A reply carries none of the original's parts — that is a forward's job
-/// (FR-043) — so every image in a quote is broken by construction, inline
-/// ones included. In the reader a src-less `<img>` is correct: it sits beside
-/// a banner saying images were blocked and offering to load them. A sent
-/// reply has neither, so the recipient gets a broken-image icon with no
-/// explanation and no way to resolve it, and a reply to an image-heavy
-/// newsletter quotes a column of them.
-///
-/// What the sender *called* it is not broken, and it is the one thing worth
-/// keeping: `alt` is their own description, and a reader with images off has
-/// always been shown exactly this. An image with nothing to say leaves
-/// nothing behind — a caption of `[]` would be worse than the icon it
-/// replaced, and that is the tracking pixel's case.
-///
-/// Rejected: carrying the parts, so the images resolve. It is the most
-/// faithful answer and by far the largest — it changes what a reply is on the
-/// wire, inflates every one with the original's pictures, and forwards a
-/// sender's content to third parties, which is a different act from
-/// displaying it locally.
+/// A reply carries none of the original's parts, so every quote image is broken and the recipient
+/// has no banner to explain it. Each becomes its `alt` text; one with none leaves nothing.
+/// Rejected: carrying the parts, which inflates every reply and forwards the sender's content to
+/// third parties.
 fn caption_images(html: &str) -> String {
-    // Text, not markup: `alt` is the sender's, and the one thing that must not
-    // happen is a description being parsed as tags on the way through.
+    // Text, not markup: a description must not be parsed as tags.
     let mut out = String::with_capacity(html.len());
     let mut rest = html;
     while let Some(at) = rest.find("<img") {
@@ -229,11 +139,8 @@ fn caption_images(html: &str) -> String {
     out
 }
 
-/// One double-quoted attribute's value out of a start tag.
-///
-/// Narrow on purpose: this reads tags `ammonia` has just written, and it
-/// writes every attribute double-quoted with the value already escaped. It is
-/// not a parser and must never be pointed at anybody else's markup.
+/// Reads only tags `ammonia` just wrote (double-quoted, escaped); not a parser, never for anyone
+/// else's markup.
 fn attribute_value(tag: &str, name: &str) -> Option<String> {
     let needle = format!(" {name}=\"");
     let start = tag.find(&needle)? + needle.len();
@@ -241,13 +148,8 @@ fn attribute_value(tag: &str, name: &str) -> Option<String> {
     Some(tag[start..end].to_owned())
 }
 
-/// The document a reply starts from: a blank line for the caret, the
-/// attribution, and `source` as a quote.
-///
-/// The caret line is a [`Inline::Break`] paragraph, not an empty one —
-/// `parse` narrows a truly empty paragraph away on the first round trip
-/// through the editor, and the caret needs its place above the quote to
-/// survive that.
+/// The caret line is a `Break` paragraph, since `parse` narrows an empty one away on the first
+/// editor round trip.
 pub fn quoted_reply(source: &Quoted, attribution: &str) -> Document {
     let mut blocks = vec![
         Block::Paragraph(vec![Inline::Break]),
@@ -259,20 +161,9 @@ pub fn quoted_reply(source: &Quoted, attribution: &str) -> Document {
     Document { blocks }
 }
 
-/// The document a forward starts from: a blank line for the caret, the
-/// conventional header block as one paragraph of `header_lines`, then the
-/// original as the reader rendered it.
-///
-/// The same [`Quoted`] a reply carries, and for the same reason (#1483). A
-/// forward flattened its content while a reply no longer did, so forwarding a
-/// table-based newsletter reduced it to a column of text while replying to
-/// the same message kept it — an asymmetry with no reason behind it beyond
-/// which of the two ADR 0033 happened to be about.
-///
-/// It is carried content, not frozen content. `parse` rebuilds a `Quoted`
-/// from whatever is in the editor's DOM, so trimming a forward — which is
-/// most of what people do to one — survives the round trip. That was the
-/// objection to doing this, and it does not hold.
+/// The same `Quoted` a reply carries (#1483), so forwarding and replying to a table-based
+/// newsletter keep it alike. Carried, not frozen: `parse` rebuilds a `Quoted` from the editor's
+/// DOM, so trimming a forward survives.
 pub fn forwarded(source: &Quoted, header_lines: &[String]) -> Document {
     let mut header = Vec::new();
     for (index, line) in header_lines.iter().enumerate() {
@@ -291,20 +182,10 @@ pub fn forwarded(source: &Quoted, header_lines: &[String]) -> Document {
     Document { blocks }
 }
 
-/// `old`, the body of a reply in progress, with the message it quotes
-/// swapped for `source`: what "Reply to latest" does to the text (spec 013
-/// FR-022).
-///
-/// The person's words are the stretches the reader would not fold -- what
-/// sits above the quote, less the line that introduced it -- and they are
-/// kept byte for byte, in both halves. Whatever follows the quote (a
-/// signature placed below it) is kept too. What goes is the old attribution
-/// and the old quote; the new ones take their place, in the shape the reply
-/// started with: the attribution, then the quote, as `> ` lines in the plain
-/// half and a `<blockquote>` in the rich one.
-///
-/// A body with no quote in it (the person deleted it) gets the new one at the
-/// end, after their words.
+/// Swaps the quote in a reply in progress for `source` ("Reply to latest"). The person's words
+/// (above the quote minus its attribution, and anything below it such as a signature) are kept byte
+/// for byte in both halves.
+/// A body with no quote gets the new one at the end.
 pub fn requote(old: &MessageBody, attribution: &str, source: &Quoted) -> MessageBody {
     MessageBody {
         text: old
@@ -345,8 +226,6 @@ fn requote_text(text: &str, attribution: &str, source: &Quoted) -> String {
         }
         _ => (text.to_owned(), String::new()),
     };
-    // Their words, then one blank line, then the attribution. A caret line
-    // the person never used stays as the blank line it was.
     if !typed.is_empty() && !typed.ends_with("\n\n") {
         typed.push_str(if typed.ends_with('\n') { "\n" } else { "\n\n" });
     }
@@ -409,38 +288,20 @@ fn requote_html(html: &str, attribution: &str, source: &Quoted) -> String {
     format!("{typed}{}{after}", Document { blocks }.to_html())
 }
 
-/// Where a signature sits relative to the quoted message (#12).
-///
-/// Not a style opinion the code holds — both conventions are in wide use, and
-/// which one is right is the user's answer per draft kind. It is here because
-/// *moving* a signature has to remove the old one, which only the function
-/// that knows how to find one can do.
+/// Both conventions are in wide use, so the choice is the user's per draft kind (#12); moving a
+/// signature has to remove the old one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Placement {
-    /// Under everything, quote included — the Usenet convention, and what a
-    /// bottom-posting reply wants.
     #[default]
     BelowQuote,
-    /// Under what was written and above the quote — where a top-posting
-    /// client puts it, and what most mail now looks like.
     AboveQuote,
 }
 
-/// Puts `signature` into `document` at `placement`, replacing any signature
-/// already there — `postio_model::signature::apply`, at the block level, so
-/// applying one to a rich body never flattens it.
-///
-/// The separator is a top-level paragraph saying `--` alone; the *last* one
-/// wins, and one with a [`Block::Quote`] after it is not a separator at all,
-/// both mirroring the text form's rules for the same reasons: a quoted
-/// message's own signature is somebody else's, and rewriting it would edit
-/// the quote. Above-quote placement is the one case where a separator *does*
-/// have a quote after it and is still this draft's own, so it is found by
-/// position rather than by that rule — see [`existing_signature`].
-///
-/// The rich variant is used when the signature has one: the composer's body
-/// is a document, and a signature with markup that arrived as flattened text
-/// would be the one part of a message the user could not format.
+/// `postio_model::signature::apply` at the block level, so a rich body is never flattened. The
+/// separator is a top-level `--` paragraph; the last one wins, and one followed by a `Block::Quote`
+/// is not a separator, since a quoted message's signature is somebody else's.
+/// Above-quote placement finds its own separator by position (`existing_signature`). The rich
+/// signature is used when there is one.
 pub fn apply_signature(
     document: &Document,
     signature: Option<&Signature>,
@@ -457,21 +318,16 @@ pub fn apply_signature(
 
     let inserted = separated(signature_blocks(signature));
 
-    // Somewhere to type. Without it the caret opens *inside* the separator
-    // paragraph on a draft that has nothing else in it, and the first word
-    // typed lands in front of the `-- `.
+    // Somewhere to type: otherwise the caret opens inside the separator paragraph of an empty
+    // draft.
     if blocks.is_empty() {
-        // Empty rather than a hard break: this is the spelling the plain-text
-        // pipeline has always produced — one blank line, then the separator —
-        // and a draft that has not been typed into yet should not change what
-        // goes on the wire.
+        // Empty, not a hard break: the plain-text pipeline's spelling (one blank line, then the
+        // separator).
         blocks.push(Block::Paragraph(Vec::new()));
     }
 
     let at = match placement {
         Placement::BelowQuote => blocks.len(),
-        // Immediately before the first quote, so it lands under what was
-        // written; with nothing quoted the two placements agree.
         Placement::AboveQuote => blocks
             .iter()
             .position(|block| matches!(block, Block::Quote(_) | Block::Quoted(_)))
@@ -481,12 +337,8 @@ pub fn apply_signature(
     Document { blocks }
 }
 
-/// `blocks` with the RFC 3676 separator on the line directly above them.
-///
-/// Directly above, in the same paragraph, is the whole point: the convention
-/// every client folds on is a line of exactly `-- ` *immediately* before the
-/// signature, and a separator in a paragraph of its own renders with a blank
-/// line under it — which stops other clients recognising it at all.
+/// Directly above, in the same paragraph: a separate paragraph renders a blank line under the
+/// separator, which stops other clients recognising it.
 fn separated(blocks: Vec<Block>) -> Vec<Block> {
     let separator = Inline::Text(format!("{SEPARATOR} "));
     let mut blocks = blocks.into_iter();
@@ -498,8 +350,6 @@ fn separated(blocks: Vec<Block>) -> Vec<Block> {
                 .chain(blocks)
                 .collect()
         }
-        // A signature that opens with something other than a paragraph — a
-        // list, a rule — keeps the separator as its own line above it.
         Some(other) => std::iter::once(Block::Paragraph(vec![separator]))
             .chain(std::iter::once(other))
             .chain(blocks)
@@ -508,24 +358,16 @@ fn separated(blocks: Vec<Block>) -> Vec<Block> {
     }
 }
 
-/// The signature's blocks: the rich variant when there is one, else the text.
 fn signature_blocks(signature: &Signature) -> Vec<Block> {
     match signature.html.as_deref().filter(|html| !html.is_empty()) {
-        // Through `parse`, like anything else that arrives as markup — the
-        // subset is what can be represented, so a signature cannot smuggle in
-        // what a message body could not.
+        // Through `parse`, so a signature cannot smuggle in what a body could not.
         Some(html) => crate::parse(html).blocks,
         None => Document::from_text(signature.text.trim_end()).blocks,
     }
 }
 
-/// The span this draft's own signature occupies, separator included.
-///
-/// Runs from the separator to the end of the document, or to the quote that
-/// follows it when the signature was placed above one. A separator with quoted
-/// material after it *and* no later separator is somebody else's signature
-/// inside the quote, which is why the search skips a separator that is itself
-/// inside a [`Block::Quote`] — those never appear at the top level.
+/// Runs from the separator to the end, or to the quote after it when placed above one. Separators
+/// inside a `Block::Quote` are never top level, so a quoted message's signature is skipped.
 fn existing_signature(blocks: &[Block]) -> Option<std::ops::Range<usize>> {
     let separator = blocks.iter().rposition(is_separator)?;
     let end = blocks[separator..]
@@ -536,12 +378,8 @@ fn existing_signature(blocks: &[Block]) -> Option<std::ops::Range<usize>> {
     Some(separator..end)
 }
 
-/// Whether `block` opens the signature: a top-level paragraph whose first
-/// line is exactly `--`, give or take the traditional trailing space.
-///
-/// "Opens" rather than "is", because [`separated`] puts the separator and the
-/// signature in one paragraph so they render on adjacent lines — so what
-/// marks the boundary is the paragraph's first line, not the whole of it.
+/// "Opens": `separated` puts separator and signature in one paragraph, so the paragraph's first
+/// line marks the boundary.
 fn is_separator(block: &Block) -> bool {
     let Block::Paragraph(inlines) = block else {
         return false;
@@ -552,28 +390,16 @@ fn is_separator(block: &Block) -> bool {
     if text.trim_end() != SEPARATOR || text.starts_with(' ') {
         return false;
     }
-    // Either the paragraph is the separator alone, or the separator is its
-    // first line — anything else is a paragraph that merely begins with two
-    // hyphens.
     matches!(inlines.get(1), None | Some(Inline::Break))
 }
-/// Which draft a reply command starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplyKind {
-    /// To the sender.
     Reply,
-    /// To the sender and everyone else on it.
     ReplyAll,
-    /// The whole message, to someone new.
     Forward,
 }
 
-/// The draft `kind` starts from `source`, sent from `account`: its
-/// recipients and subject from [`postio_model::reply`], its body the quote
-/// or the forwarded message.
-///
-/// Here rather than in a frontend so the desktop and the terminal start a
-/// reply from the same draft.
+/// Here, not in a frontend, so desktop and terminal start a reply from the same draft.
 pub fn reply_draft(
     kind: ReplyKind,
     source: &postio_model::Message,
@@ -590,41 +416,18 @@ pub fn reply_draft(
     }
 }
 
-/// The body a reply or forward starts from, done in the crate that has both
-/// halves.
-///
-/// Rich in both renderings: the HTML half is what the editor opens
-/// (`document_of` prefers it), and the text half keeps the `> ` convention
-/// every mail client expects.
-///
-/// A **reply** quotes what the reader showed (ADR 0033): the original's
-/// sanitised markup, through [`quote_of`], so a table and a
-/// colour reach the quote instead of being narrowed away. The security
-/// property is unchanged and lives in that constructor — remote images
-/// blocked whatever the reader was allowed, and the reader's own permitted
-/// set rather than a second one.
-///
-/// A **forward** still goes through the parsed [`Document`].
-/// It presents the whole message as the body of a new one rather than as a
-/// quotation inside a reply, so it is the *user's* content once sent, and
-/// `Block::Quoted` is specifically the thing that is not that. Bringing the
-/// two together is #1483.
+/// Rich in both halves: the editor opens the HTML, and the text keeps the `> ` convention.
+/// A reply and a forward both carry the sender's markup through `quote_of` (ADR 0033); a forward is
+/// presented as the message, not a quote (#1483).
 pub fn quoted_body(source: &postio_model::Message, forward: bool) -> postio_model::MessageBody {
-    // A source whose body has not arrived has nothing to quote, and an
-    // attribution or a forward header above nothing introduces nothing: sent
-    // as it stands it says "X wrote:" and then does not. The body is left
-    // empty for the person to write, and the composer says the original is
-    // still downloading (`postio_ui::compose::unquoted_note`).
+    // A source whose body has not arrived has nothing to quote; an attribution above nothing would
+    // say "X wrote:" and stop. The composer notes the original is still downloading.
     if source.body.text.is_none() && source.body.html.is_none() {
         return postio_model::MessageBody::default();
     }
     let rich = if forward {
-        // The same carried content a reply gets (#1483). The asymmetry was
-        // never decided -- a forward flattened its content only because ADR
-        // 0033 happened to be about replies -- so forwarding a table-based
-        // newsletter reduced it to a column of text while replying to the
-        // same message kept it. What stays different is the presentation: a
-        // forward is not a quote and is not wrapped as one.
+        // Carried content like a reply's (#1483); only the presentation differs, since a forward is
+        // not a quote.
         let carried = quote_of(
             source.body.html.as_deref(),
             &forward_text(source),
@@ -632,12 +435,8 @@ pub fn quoted_body(source: &postio_model::Message, forward: bool) -> postio_mode
         );
         forwarded(&carried, &postio_model::reply::forward_header(source))
     } else {
-        // The text half still goes through `source_document` when there is
-        // no markup, because that is where `format=flowed` is unwrapped
-        // (#456): handing `quote_of` the raw `text/plain` would quote a
-        // sender's soft wrap back at them as line breaks they never typed.
-        // With markup present the text part is the sender's own alternative
-        // and is taken as written.
+        // Without markup the text goes through `source_document`, where `format=flowed` is
+        // unwrapped (#456); with markup the sender's alternative is taken as written.
         let text = match source.body.html {
             Some(_) => source.body.text.clone().unwrap_or_default(),
             None => source_document(source).to_text(),
@@ -652,16 +451,10 @@ pub fn quoted_body(source: &postio_model::Message, forward: bool) -> postio_mode
     }
 }
 
-/// The scope a reply's quoted styles are rewritten under: the parser's own
-/// word, so a round trip through the editor does not renumber anything.
 pub use crate::parse::QUOTE_SCOPE;
 
-/// The plain half a forward carries.
-///
-/// The same rule a reply's uses: the sender's own text alternative when there
-/// is one, and otherwise the flowed-aware narrowing of what they sent, so a
-/// `format=flowed` message is not quoted back with breaks nobody typed
-/// (#456).
+/// The sender's own text alternative, else the flowed-aware narrowing, so `format=flowed` is not
+/// quoted back with breaks nobody typed (#456).
 pub fn forward_text(source: &postio_model::Message) -> String {
     match source.body.html {
         Some(_) => source.body.text.clone().unwrap_or_default(),
@@ -669,18 +462,9 @@ pub fn forward_text(source: &postio_model::Message) -> String {
     }
 }
 
-/// The document `source`'s body means — the markup the reader showed when
-/// there is markup, the plain text otherwise.
-///
-/// The plain-text fallback goes through [`Document::from_flowed_text`]
-/// rather than [`Document::from_text`] exactly when `source` itself
-/// declared `format=flowed` (#456): unwrapping unconditionally would take
-/// an ordinary sender's own short lines as soft breaks and join them, and
-/// never unwrapping would show a `format=flowed` sender's wrapped sentence
-/// — including this app's own past sends — as line breaks nobody typed.
-///
-/// [`Document::from_flowed_text`]: crate::Document::from_flowed_text
-/// [`Document::from_text`]: crate::Document::from_text
+/// The markup the reader showed, else the plain text. The fallback unwraps only when `source`
+/// declared `format=flowed` (#456): always unwrapping joins short lines, never unwrapping shows
+/// wrapped sentences as breaks.
 pub fn source_document(source: &postio_model::Message) -> Document {
     match (&source.body.html, &source.body.text) {
         (Some(html), _) => crate::parse(html),

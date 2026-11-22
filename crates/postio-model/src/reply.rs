@@ -1,25 +1,7 @@
-//! Building a reply, reply-all or forward [`Draft`] from an existing
-//! [`Message`].
-//!
-//! # Why this matters more than it looks like it should
-//!
-//! Nobody inside Postio notices a wrong `In-Reply-To` or a dropped `Re:` —
-//! only the person on the other end, whose client silently starts a new
-//! conversation instead of threading the reply. `outgoing::build` writes the
-//! RFC 5322 headers once it has a parent [`Message`] to read them from; this
-//! module is what decides *which* message that is and what the reply looks
-//! like before it gets there: `draft.in_reply_to` names it by local id, and
-//! `draft.thread_id` is copied across so the composer can show the reply
-//! inline in the conversation it belongs to.
-//!
-//! # What is not here
-//!
-//! Nothing here sends anything or resolves an identity's signature bytes —
-//! [`Draft::start_as`] already does the signature, and does it correctly
-//! against text this module has already quoted (see its doc for why quoting
-//! first and signing after never doubles up). Attaching this to the reading
-//! pane, and deciding which `Message` a reply's `in_reply_to` local id points
-//! at when it is time to send, are the composer's and `postio-sync`'s jobs.
+//! Builds a reply, reply-all or forward `Draft`. A wrong `In-Reply-To` is noticed only by the
+//! person on the other end, whose
+//! client starts a new conversation. Signing is `Draft::start_as`'s, against the text already
+//! quoted here, so quoting first never doubles up.
 
 use crate::account::Account;
 use crate::address::{self, EmailAddress};
@@ -29,30 +11,19 @@ use crate::ids::AttachmentId;
 use crate::message::{Message, MessageBody};
 use crate::subject;
 
-/// Builds a reply to `source`'s sender only, starting from `quote`.
-///
-/// The quote arrives rather than being computed — ADR 0003 Q3's inversion.
-/// Quoting rich content means parsing untrusted markup, the parser lives in
-/// `postio-body`, and that crate depends on this one; a caller with both
-/// builds the quote (`postio_body::quoted_reply`) and hands it down. A
-/// caller with nothing better uses [`plain_quote`].
+/// The quote arrives rather than being computed (ADR 0003 Q3): rich quoting parses untrusted markup
+/// in `postio-body`,
+/// which depends on this crate. A caller with nothing better uses `plain_quote`.
 pub fn reply(source: &Message, account: &Account, quote: MessageBody) -> Draft {
     build_reply(source, account, false, quote)
 }
 
-/// Builds a reply to `source`'s sender and every other original recipient.
-///
-/// Never includes any of `account`'s own identities, and never lists the same
-/// address twice across `To` and `Cc`. See [`reply`] for where `quote` comes
-/// from.
+/// Never includes any of `account`'s own identities, nor the same address twice across `To` and
+/// `Cc`.
 pub fn reply_all(source: &Message, account: &Account, quote: MessageBody) -> Draft {
     build_reply(source, account, true, quote)
 }
 
-/// Builds a forward of `source`: a blank set of recipients for the user to
-/// fill in, `body` — the original content below a forwarding header block,
-/// built by the caller as [`reply`] describes or by [`plain_forward`] — and
-/// its attachments carried over.
 pub fn forward(source: &Message, account: &Account, body: MessageBody) -> Draft {
     let mut draft = Draft::new(account.id);
     draft.kind = DraftKind::Forward;
@@ -93,20 +64,13 @@ fn build_reply(source: &Message, account: &Account, all: bool, quote: MessageBod
     draft
 }
 
-/// The recipients `source` was addressed to, for
-/// [`Account::identity_for`] — which of our addresses this reply or forward
-/// should come from.
 fn recipients_of(source: &Message) -> Vec<EmailAddress> {
     source.all_recipients().cloned().collect()
 }
 
-/// `To` and `Cc` for a reply, excluding `account`'s own identities and
-/// without listing the same address twice.
-///
-/// `To` answers whoever should see the reply at all: `source.reply_to` when
-/// the sender set one, since that is the whole point of the header, else
-/// `source.from` -- or, on a message `account` sent itself, `source.to`. `Cc` — only for reply-all — is every other original
-/// recipient, so the rest of the conversation stays on it.
+/// `To` is `source.reply_to` when set (the point of the header), else `source.from`, or `source.to`
+/// on a message `account` sent itself.
+/// `Cc` (reply-all only) is every other original recipient.
 fn reply_recipients(
     source: &Message,
     account: &Account,
@@ -117,8 +81,6 @@ fn reply_recipients(
     } else {
         &source.from
     };
-    // Your own message has nobody of yours to answer: the reply goes to who
-    // it was written to, as every mail client does.
     let primary: &[EmailAddress] = if answered.iter().all(|address| account.owns_address(address)) {
         &source.to
     } else {
@@ -138,10 +100,8 @@ fn reply_recipients(
     (to, cc)
 }
 
-/// `candidates`, minus `account`'s own addresses and anything already in
-/// `claimed` — which is extended with everything kept, so a second call
-/// (reply-all's `Cc` after its `To`) dedupes against the first as well as
-/// itself.
+/// `claimed` is extended with everything kept, so a second call (reply-all's `Cc` after its `To`)
+/// dedupes against the first too.
 fn exclude_self_and_seen(
     candidates: &[EmailAddress],
     account: &Account,
@@ -164,20 +124,10 @@ fn exclude_self_and_seen(
     kept
 }
 
-/// The quoted body a reply starts from: an attribution line, then `source`'s
-/// text with every line prefixed `> `.
-///
-/// Leads with a blank line so the composer's caret lands above the quote, and
-/// leaves the signature separator alone: quoting prefixes every line of
-/// `source`'s body with `> `, so an original signature's own `-- ` becomes
-/// `> -- ` and [`crate::signature::split`] never mistakes it for this draft's.
-///
-/// Quoting is plain text, and this crate can only do plain text: turning
-/// markup into text needs a parser, `postio-body` is where that lives, and
-/// `postio-body` depends on *this* crate — so reaching for it here would be a
-/// cycle. A caller that has both converts first and hands the text down;
-/// The composer's quoting is the one that does. Before it existed,
-/// an HTML-only message quoted as an attribution line with nothing under it.
+/// Leads with a blank line so the caret lands above the quote. Every line is prefixed `> `, so an
+/// original signature's `-- ` becomes
+/// `> -- ` and `signature::split` never mistakes it for this draft's. Plain text only: markup needs
+/// `postio-body`, which depends on this crate.
 fn quote_body(source: &Message) -> String {
     let attribution = attribution(source);
     match source.body.text.as_deref() {
@@ -186,10 +136,7 @@ fn quote_body(source: &Message) -> String {
     }
 }
 
-/// The line that introduces a quote: `On 2026-08-26, Ada Lovelace wrote:`.
-///
-/// Public because the rich quote is built above this crate (see [`reply`])
-/// and both forms must say the same thing.
+/// Public because the rich quote is built above this crate and both forms must say the same thing.
 pub fn attribution(source: &Message) -> String {
     format!(
         "On {}, {} wrote:",
@@ -201,9 +148,6 @@ pub fn attribution(source: &Message) -> String {
     )
 }
 
-/// The conventional header block a forward opens with, one line per entry.
-///
-/// Public for the same reason as [`attribution`].
 pub fn forward_header(source: &Message) -> Vec<String> {
     let from = source
         .primary_from()
@@ -218,8 +162,6 @@ pub fn forward_header(source: &Message) -> Vec<String> {
     ]
 }
 
-/// Today's plain-text quote as a [`MessageBody`] — the fallback for a caller
-/// that cannot build a rich one.
 pub fn plain_quote(source: &Message) -> MessageBody {
     MessageBody {
         text: Some(quote_body(source)),
@@ -227,7 +169,6 @@ pub fn plain_quote(source: &Message) -> MessageBody {
     }
 }
 
-/// The plain-text forward body, as [`plain_quote`] is to [`reply`].
 pub fn plain_forward(source: &Message) -> MessageBody {
     MessageBody {
         text: Some(forward_body(source)),
@@ -235,8 +176,6 @@ pub fn plain_forward(source: &Message) -> MessageBody {
     }
 }
 
-/// Prefixes every line of `text` with `> `, `>` alone for a blank line so no
-/// trailing whitespace is invented.
 fn quote_lines(text: &str) -> String {
     text.lines()
         .map(|line| {
@@ -250,26 +189,17 @@ fn quote_lines(text: &str) -> String {
         .join("\n")
 }
 
-/// The body a forward starts from: a conventional header block naming who it
-/// was from, when, and to, followed by the original text verbatim — not
-/// quote-prefixed, since a forward presents the whole message rather than
-/// answering a fragment of it.
+/// The original text verbatim, not quote-prefixed: a forward presents the whole message.
 fn forward_body(source: &Message) -> String {
     let header = forward_header(source).join("\n");
     let body = source.body.text.as_deref().unwrap_or_default();
     format!("\n\n{header}\n\n{body}")
 }
 
-/// `source`'s attachments, ready to belong to a draft rather than a sent
-/// message: [`Attachment::id`] and [`Attachment::message_id`] reset to
-/// unassigned, since a copy of somebody else's attachment row is not that
-/// row — [`postio_storage`](../../postio_storage/index.html)'s
-/// `write_attachments` decides insert-or-update by whether `id` is already
-/// assigned, and forwarding one message's attachment id into another
-/// message's row would corrupt the one it was borrowed from. `blob_id` is
-/// kept when there is one: the bytes are already in the blob store and sending
-/// does not need to re-upload them. When there is not, `part_id` and the
-/// draft's [`Draft::forwarded_from`] say where to fetch them from (#1686).
+/// `id` and `message_id` are reset to unassigned: `write_attachments` decides insert-or-update by
+/// whether `id` is assigned, so a
+/// copied id would corrupt the row it was borrowed from. `blob_id` is kept when present; otherwise
+/// `part_id` and `Draft::forwarded_from` say where to fetch from (#1686).
 pub fn carried_attachments(source: &Message) -> Vec<Attachment> {
     source
         .attachments
@@ -317,10 +247,6 @@ mod tests {
         };
         message
     }
-
-    // -----------------------------------------------------------------------
-    // Reply
-    // -----------------------------------------------------------------------
 
     #[test]
     fn a_reply_goes_to_the_sender_with_a_re_subject_and_a_quote() {
@@ -441,10 +367,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // Reply-all
-    // -----------------------------------------------------------------------
-
     #[test]
     fn reply_all_ccs_the_other_recipients_but_never_our_own_identities() {
         let mut source = a_message();
@@ -477,12 +399,6 @@ mod tests {
 
     #[test]
     fn reply_all_drops_an_alias_of_ours_as_readily_as_the_primary_address() {
-        // FR-040. `owns_address` already walks `identities`, so this passes
-        // today -- and nothing proved it, because every other test here gives
-        // the account exactly one address that is also its primary. That is
-        // the shape of assertion this whole conformance pass exists for: the
-        // `identities` arm could be deleted and the suite would stay green
-        // while every alias holder started Cc-ing themselves on every reply.
         let mut account = account("grace@example.com");
         let mut alias = Identity::new(
             account.id,
@@ -494,8 +410,6 @@ mod tests {
         let mut source = a_message();
         source.to = vec![
             EmailAddress::new(None::<String>, "turing@example.org"),
-            // Addressed to the alias, which is how mail to an alias actually
-            // arrives -- the primary address is nowhere in this header block.
             EmailAddress::new(None::<String>, "G.Hopper@Example.NET"),
         ];
 
@@ -517,8 +431,6 @@ mod tests {
     #[test]
     fn reply_all_never_lists_the_same_address_in_to_and_cc() {
         let mut source = a_message();
-        // The sender's own address turns up again in Cc, as a "reply to all"
-        // header block from a real client sometimes has.
         source.cc = vec![EmailAddress::new(Some("Ada"), "ADA@EXAMPLE.COM")];
 
         let draft = reply_all(&source, &account("grace@example.com"), plain_quote(&source));
@@ -529,10 +441,6 @@ mod tests {
             "the same mailbox, case-insensitively, is not a second recipient"
         );
     }
-
-    // -----------------------------------------------------------------------
-    // Forward
-    // -----------------------------------------------------------------------
 
     #[test]
     fn a_forward_has_no_recipients_yet_and_a_fwd_subject() {
@@ -606,9 +514,6 @@ mod tests {
 
     #[test]
     fn a_forward_remembers_the_message_its_attachments_come_from() {
-        // #1686: a carried attachment whose bytes were never downloaded has
-        // to be fetched from the original before the forward can be built,
-        // and the carry resets every id that would have said which one.
         let mut source = a_message();
         let mut attachment = Attachment::new(MessageId::new(42), "application/pdf", 1024);
         attachment.part_id = Some("2".to_owned());
@@ -636,12 +541,8 @@ mod tests {
 
     #[test]
     fn a_forward_carries_an_inline_image_as_an_inline_part() {
-        // FR-043's other half, and the one a forward is most likely to drop.
-        // An inline image is not an attachment in the ordinary sense -- it is
-        // referenced from the body by `Content-ID` -- so a carry that filtered
-        // on `Disposition::Attachment`, or that reassigned content ids the way
-        // it reassigns row ids, would forward a message whose pictures are all
-        // broken while every test about attachments still passed.
+        // An inline image is referenced by `Content-ID`: a carry that filtered on
+        // `Disposition::Attachment` or reassigned content ids would break every picture.
         let mut source = a_message();
         let mut logo = Attachment::new(MessageId::new(42), "image/png", 2048);
         logo.id = AttachmentId::new(9);

@@ -1,5 +1,3 @@
-//! Closing a composer must release its WebView and WebKit process.
-
 use std::rc::Rc;
 
 use glib::object::ObjectExt;

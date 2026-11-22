@@ -1,9 +1,5 @@
-//! One connection: read a command, change the world, answer.
-//!
-//! Everything a client can observe is decided here — including the things a
-//! well-behaved server would never do. The quirks and faults are not bolted
-//! on at the edges; they are branches inside the command they distort,
-//! because that is where a real server's misbehaviour lives.
+//! Quirks and faults are branches inside the command they distort, because that is where a real
+//! server's misbehaviour lives.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -19,20 +15,15 @@ use super::state::{
 use super::wire::{Command, Conn, base64_decode, base64_encode, tokens, unquote, unwrap_parens};
 use super::{Fault, Quirk, Shared};
 
-/// The permanent flags every mailbox on this server accepts.
 const FLAGS: &str = "\\Answered \\Flagged \\Deleted \\Seen \\Draft";
 
-/// What one connection has selected.
 #[derive(Clone, Debug)]
 struct Selected {
     path: String,
     read_only: bool,
-    /// The UIDs this connection last told the client about, in order. What is
-    /// missing from the mailbox now is what it still owes an `EXPUNGE` for.
     known: Vec<u32>,
 }
 
-/// One connection's state machine.
 pub(super) struct Session {
     conn: Conn,
     shared: Arc<Shared>,
@@ -50,7 +41,6 @@ impl Session {
         }
     }
 
-    /// Greets, then serves until the client leaves or the socket dies.
     pub(super) async fn run(mut self) -> io::Result<()> {
         let greeting = {
             let state = self.shared.lock();
@@ -114,7 +104,6 @@ impl Session {
         Ok(())
     }
 
-    /// Dispatches one command. `Ok(true)` ends the connection.
     async fn dispatch(&mut self, command: &Command) -> io::Result<bool> {
         let tag = command.tag.clone();
 
@@ -175,10 +164,6 @@ impl Session {
 
         Ok(false)
     }
-
-    // -----------------------------------------------------------------
-    // Session
-    // -----------------------------------------------------------------
 
     async fn login(&mut self, command: &Command) -> io::Result<()> {
         let tokens = command.tokens();
@@ -251,24 +236,17 @@ impl Session {
             }
         };
 
-        // OAUTHBEARER does not fail with a bare tagged NO. RFC 7628 §3.2.3
-        // has the server send a JSON error *as a challenge*, the client
-        // acknowledge it with a single 0x01, and only then the NO. Skipping
-        // that leaves io-sasl's coroutine waiting for a challenge that never
-        // comes — a hang rather than a failure, which is the worse way for a
-        // test to be wrong.
+        // OAUTHBEARER failure is a JSON challenge, a client `0x01`, then `NO` (RFC 7628 §3.2.3);
+        // skipping it hangs io-sasl's coroutine instead of failing.
         if !accepted && mechanism == "OAUTHBEARER" {
             let challenge = base64_encode(br#"{"status":"invalid_token"}"#);
             self.conn.write_line(&format!("+ {challenge}")).await?;
-            // The client's `\x01`. Nothing to inspect; it only has to be
-            // consumed before the NO is written.
             let _ = self.conn.read_line().await?;
         }
 
         self.finish_auth(&command.tag, accepted).await
     }
 
-    /// RFC 4978: answer `OK`, then speak raw deflate in both directions.
     async fn compress(&mut self, command: &Command) -> io::Result<()> {
         let advertised = self
             .shared
@@ -308,9 +286,8 @@ impl Session {
         self.authenticated = true;
         let code = {
             let state = self.shared.lock();
-            // Without this the client has to ask again — which is the whole
-            // reason `ensure_capabilities` exists, and the path ADR 0001 Q3
-            // says every session must take.
+            // Without this the client asks again, the path `ensure_capabilities` exists for (ADR
+            // 0001 Q3).
             if state.has(Quirk::CapabilityInLoginResponse) {
                 format!("[CAPABILITY {}] ", state.capabilities.join(" "))
             } else {
@@ -343,9 +320,8 @@ impl Session {
                 .collect()
         };
 
-        // RFC 5161 §3.1 requires the untagged echo. At least one mainstream
-        // provider has shipped without it, which is why gating an extension
-        // on the echo rather than on CAPABILITY is a bug.
+        // RFC 5161 §3.1 requires the echo; a provider shipped without it, so gating on the echo
+        // rather than CAPABILITY is a bug.
         if !self.shared.lock().has(Quirk::OmitEnabledEcho) && !enabled.is_empty() {
             self.conn
                 .write_line(&format!("* ENABLED {}", enabled.join(" ")))
@@ -353,10 +329,6 @@ impl Session {
         }
         self.ok(&command.tag, "ENABLE completed").await
     }
-
-    // -----------------------------------------------------------------
-    // Mailboxes
-    // -----------------------------------------------------------------
 
     async fn list(&mut self, command: &Command) -> io::Result<()> {
         let tokens = command.tokens();
@@ -452,9 +424,6 @@ impl Session {
                 line(&mut out, &format!("* {} EXISTS", mailbox.messages.len()));
                 line(&mut out, "* 0 RECENT");
                 if state.has(Quirk::UidValidityLostToAnUndecodableLine) {
-                    // Sent, and unreadable: the client gets no UIDVALIDITY
-                    // and a skip it can count, which is what tells this apart
-                    // from a server that never sends one.
                     line(&mut out, "* -1 FETCH (FLAGS ())");
                 } else if !omit {
                     line(
@@ -510,10 +479,6 @@ impl Session {
             .await
     }
 
-    // -----------------------------------------------------------------
-    // Messages
-    // -----------------------------------------------------------------
-
     async fn fetch(&mut self, command: &Command) -> io::Result<()> {
         let Some(selected) = self.selected.clone() else {
             return self.bad(&command.tag, "no mailbox is selected").await;
@@ -558,10 +523,8 @@ impl Session {
                 .filter(|(_, message)| changed_since.is_none_or(|floor| message.mod_seq > floor))
                 .collect();
 
-            // A resync pull is exactly where this provider has been seen to
-            // emit a sequence number no decoder can read. `io-imap` skips the
-            // line and completes the command `Ok`, so the pull looks whole
-            // while a message's flags never arrived.
+            // A resync pull is where this provider emits an undecodable sequence number; `io-imap`
+            // skips it and completes `Ok`.
             if malformed && changed_since.is_some() {
                 line(&mut out, "* -1 FETCH (UID 1 FLAGS (\\Seen))");
             }
@@ -893,10 +856,6 @@ impl Session {
         self.ok(&command.tag, "EXPUNGE completed").await
     }
 
-    // -----------------------------------------------------------------
-    // IDLE
-    // -----------------------------------------------------------------
-
     async fn idle(&mut self, command: &Command) -> io::Result<()> {
         if self.selected.is_none() {
             return self.bad(&command.tag, "no mailbox is selected").await;
@@ -940,12 +899,6 @@ impl Session {
         self.ok(&command.tag, "IDLE terminated").await
     }
 
-    // -----------------------------------------------------------------
-    // Faults
-    // -----------------------------------------------------------------
-
-    /// Answers half a response and hangs up, the way a connection reset in
-    /// the middle of a body download looks to a client.
     async fn tear(&mut self, command: &Command) -> io::Result<()> {
         if command.name == "FETCH" {
             self.conn
@@ -958,7 +911,6 @@ impl Session {
         Ok(())
     }
 
-    /// Accepts the command and never answers it.
     async fn stall(&mut self) -> io::Result<()> {
         loop {
             // POSTIO-NOT-A-WAIT: a server that never answers is the subject; the client's timeout ends the test
@@ -966,13 +918,6 @@ impl Session {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Plumbing
-    // -----------------------------------------------------------------
-
-    /// The untagged lines this connection still owes the client: what
-    /// vanished from the selected mailbox, and how many messages there are
-    /// now.
     fn updates(&mut self) -> Vec<u8> {
         let mut out = Vec::new();
         let Some(selected) = self.selected.as_mut() else {
@@ -1022,18 +967,11 @@ impl Session {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Response building
-// ---------------------------------------------------------------------------
-
 fn line(out: &mut Vec<u8>, text: &str) {
     out.extend_from_slice(text.as_bytes());
     out.extend_from_slice(b"\r\n");
 }
 
-/// Renders one `* n FETCH (…)` line.
-///
-/// `seen` collects the UIDs a non-peeking body fetch has just made `\Seen`.
 fn render_fetch(
     message: &Message,
     sequence: u32,
@@ -1104,8 +1042,6 @@ fn render_fetch(
     out
 }
 
-/// Splits `BODY.PEEK[1.2]<0.4096>` into its section, its window and whether
-/// it peeks.
 fn body_item(item: &str) -> (String, Option<(u32, u32)>, bool) {
     let peek = item.to_ascii_uppercase().starts_with("BODY.PEEK");
     let (spec, rest) = match (item.find('['), item.find(']')) {
@@ -1125,7 +1061,6 @@ fn body_item(item: &str) -> (String, Option<(u32, u32)>, bool) {
     (spec, partial, peek)
 }
 
-/// The `CHANGEDSINCE n` of a fetch modifier group, if there is one.
 fn changed_since_of(text: &str) -> Option<u64> {
     let upper = text.to_ascii_uppercase();
     let at = upper.find("CHANGEDSINCE")?;
@@ -1136,7 +1071,6 @@ fn changed_since_of(text: &str) -> Option<u64> {
         .ok()
 }
 
-/// The `(QRESYNC (uidvalidity modseq …))` of a select parameter group.
 fn qresync_parameters(text: &str) -> Option<(u32, u64)> {
     let at = text.find("QRESYNC")?;
     let numbers: Vec<u64> = text[at..]
@@ -1150,8 +1084,6 @@ fn qresync_parameters(text: &str) -> Option<(u32, u64)> {
     }
 }
 
-/// The `VANISHED (EARLIER …)` and implicit FETCHes a QRESYNC select owes a
-/// client that was last here at `mod_seq`.
 fn qresync_report(out: &mut Vec<u8>, mailbox: &Mailbox, uid_validity: u32, mod_seq: u64) {
     if mailbox.uid_validity != uid_validity {
         // The UID space was renumbered: nothing the client holds means
@@ -1190,7 +1122,6 @@ fn qresync_report(out: &mut Vec<u8>, mailbox: &Mailbox, uid_validity: u32, mod_s
     }
 }
 
-/// Splits a parenthesised list into its items.
 fn tokens_of(group: &str) -> Vec<String> {
     tokens(unwrap_parens(group.trim()))
         .into_iter()
@@ -1198,7 +1129,6 @@ fn tokens_of(group: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether an RFC 3501 list pattern matches a mailbox path.
 fn matches(pattern: &str, path: &str) -> bool {
     if pattern.is_empty() || pattern == "*" || pattern == "%" {
         return true;
@@ -1209,11 +1139,7 @@ fn matches(pattern: &str, path: &str) -> bool {
     }
 }
 
-/// Kept honest by the module's own tests rather than by a client.
-/// The value of the first `\x01`-delimited field starting with `prefix`.
-///
-/// Both bearer mechanisms frame their payload the same way: fields separated
-/// by `0x01`, the whole thing terminated by two of them.
+/// Both bearer mechanisms frame fields by `0x01`, terminated by two.
 fn sasl_field(payload: &[u8], prefix: &str) -> Option<String> {
     payload
         .split(|byte| *byte == 0x01)
@@ -1221,17 +1147,14 @@ fn sasl_field(payload: &[u8], prefix: &str) -> Option<String> {
         .find_map(|field| field.strip_prefix(prefix).map(str::to_owned))
 }
 
-/// The token out of an `auth=Bearer <token>` field.
 fn bearer_token(payload: &[u8]) -> Option<String> {
     sasl_field(payload, "auth=")?
         .strip_prefix("Bearer ")
         .map(str::to_owned)
 }
 
-/// The `authcid` out of OAUTHBEARER's GS2 header: `n,a=<authcid>,`.
-///
-/// The header is the part before the first `0x01`, and is not a kv field --
-/// which is why it needs reading separately from [`sasl_field`].
+/// The GS2 header is the part before the first `0x01` and not a kv field, so it is read separately
+/// from `sasl_field`.
 fn gs2_authzid(payload: &[u8]) -> Option<String> {
     let header = payload.split(|byte| *byte == 0x01).next()?;
     std::str::from_utf8(header)

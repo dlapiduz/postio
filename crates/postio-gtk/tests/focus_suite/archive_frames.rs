@@ -1,26 +1,10 @@
-//! #1894 on the GTK app: archiving the cursor's row never draws a frame
-//! that differs from the settled one.
-//!
-//! On the Mac an archive reset the list model, and for one frame the rows
-//! drew unmeasured, their headings empty, before snapping back. GTK's list
-//! splices a removal in place instead, but "a splice keeps the rows" is a
-//! claim about a layer; this case films every frame of the real window from
-//! the key press to the settled list and compares each with the settled
-//! one: the same row height, a heading over every day that is showing, no
-//! row still waiting for its page, the cursor on the archived row or the one
-//! that took its place, and the scroll where it was.
-
 use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// What one frame of the list showed.
 #[derive(Debug, Clone)]
 struct Frame {
-    /// Each row on screen: its subject, its drawn height, whether it had
-    /// its page.
     rows: Vec<(String, i32, bool)>,
-    /// The day headings on screen, as they read.
     headings: Vec<String>,
     scroll: f64,
     cursor: Option<String>,
@@ -62,7 +46,6 @@ fn frame(window: &postio_gtk::window::FocusWindow) -> Frame {
     }
 }
 
-/// Fifty conversations, eight hours apart: a few to a day, a heading each.
 async fn fifty() -> Fixture {
     let fixture = Fixture::empty().await;
     for n in 1..=50 {
@@ -86,9 +69,8 @@ pub fn archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one() {
         let fixture = fifty().await;
         let (window, _client) = fixture.open().await;
         let pane = window.pane().expect("the inbox");
-        // The list has to be laid out before the keys: rows allocated at a
-        // height, and a scroll range longer than the page. A cursor moved
-        // before then scrolls to a row that has no place yet, and stays put.
+        // The list has to be laid out before the keys: a cursor moved before then scrolls to a row
+        // with no place yet, and stays put.
         assert!(
             crate::settle_until(async || {
                 let adjustment = pane.widget().vadjustment();
@@ -106,8 +88,6 @@ pub fn archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one() {
                 .map(gtk::prelude::WidgetExt::height)
                 .collect::<Vec<_>>()
         );
-        // Down the list far enough that it has scrolled: the cursor is in
-        // the middle of a screen of rows, under a heading.
         for _ in 0..20 {
             support::keys(&window, &["j"]);
             crate::settle();
@@ -116,7 +96,6 @@ pub fn archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one() {
             crate::settle_until(async || window.cursor_row().is_some()).await,
             "no cursor"
         );
-        // The scroll follows the cursor on a later turn of the loop.
         crate::settle_until(async || pane.widget().vadjustment().value() > 0.0).await;
         crate::settle_for(std::time::Duration::from_millis(300)).await;
         let before = frame(&window);
@@ -130,7 +109,6 @@ pub fn archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one() {
             "the cursor's row is on screen: {before:?}"
         );
 
-        // Film every frame from here until the list has settled.
         let frames = std::rc::Rc::new(std::cell::RefCell::new(Vec::<Frame>::new()));
         let id = pane.view().add_tick_callback({
             let frames = frames.clone();
@@ -141,7 +119,6 @@ pub fn archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one() {
             }
         });
         support::keys(&window, &["e"]);
-        // Also what the very next turn of the loop shows.
         frames.borrow_mut().push(frame(&window));
         assert!(
             crate::settle_until(async || { !support::subjects(&window).contains(&archived) }).await,
@@ -152,9 +129,8 @@ pub fn archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one() {
             std::time::Duration::from_millis(500),
         ))
         .await;
-        // The frame clock ticks when the compositor lets it; on a loaded
-        // machine that can be late. Film until it has, rather than count
-        // on the dwell above to have been long enough.
+        // The frame clock ticks when the compositor lets it, late on a loaded machine: film until
+        // it has.
         crate::settle_until(async || frames.borrow().len() >= 3).await;
         id.remove();
         let after = frame(&window);

@@ -1,33 +1,18 @@
-//! The folder tree, as the sidebar reads it.
-
 use postio_model::mailbox::{Mailbox, MailboxRole};
 
-/// What a folder is for.
-///
-/// Crosses because a sidebar built from names would be wrong in a way that
-/// looks like a server bug: the role is what lets Postio say "Archive" rather
-/// than `[Gmail]/All Mail`, and what makes `a` archive to the right place.
+/// What a folder is for: a sidebar built from names would show `[Gmail]/All Mail` for Archive, and
+/// `a` would archive to the wrong place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MailboxRoleFfi {
-    /// The account's inbox.
     Inbox,
-    /// Where `a` / `A` archive to.
     Archive,
-    /// Where sent mail is filed.
     Sent,
-    /// Where unsent drafts live.
     Drafts,
-    /// Where deleted mail is moved.
     Trash,
-    /// Junk / spam.
     Junk,
-    /// A flagged / starred view.
     Flagged,
-    /// The snoozed view.
     Snoozed,
-    /// The outbox view: drafts whose send is under way.
     Outbox,
-    /// An ordinary user folder.
     Regular,
 }
 
@@ -49,8 +34,6 @@ impl From<MailboxRole> for MailboxRoleFfi {
 }
 
 impl From<MailboxRoleFfi> for MailboxRole {
-    /// Back the other way, for the questions a frontend asks about a role
-    /// rather than about a folder.
     fn from(role: MailboxRoleFfi) -> Self {
         match role {
             MailboxRoleFfi::Inbox => MailboxRole::Inbox,
@@ -67,63 +50,41 @@ impl From<MailboxRoleFfi> for MailboxRole {
     }
 }
 
-/// One folder, with what the sidebar draws beside it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MailboxFfi {
     /// Local id — what `openScope` takes.
     pub id: i64,
-    /// The account it belongs to.
     pub account: i64,
-    /// The parent folder, when there is one.
-    ///
-    /// Mailboxes are a tree, and flattening one turns a tidy account into a
-    /// list of slash-separated strings with no way to recover the nesting.
+    /// The parent folder, when there is one: mailboxes are a tree, not slash-separated strings.
     pub parent: Option<i64>,
     /// The leaf name, for display. Not the server path.
     pub name: String,
-    /// What the folder is for.
     pub role: MailboxRoleFfi,
-    /// Messages without `\Seen`. **Cached, not counted** — `MailboxCounts`
-    /// exists so the sidebar never counts rows, and recounting here would undo
-    /// that on the surface redrawn most often.
+    /// Messages without `\Seen`. Cached, not counted: recounting would undo `MailboxCounts` on the
+    /// most-redrawn surface.
     pub unread: u32,
-    /// Total messages.
     pub total: u32,
     /// Whether the folder can hold messages. A `\Noselect` folder is a
     /// container in the hierarchy and opening it shows nothing.
     pub selectable: bool,
-    /// When a sync pass over this folder last *completed*, in seconds.
-    ///
-    /// `None` for a folder that has never finished one — which is a state a
-    /// new account is in for the whole of its first pass, and the one the
-    /// footer most has to distinguish from "nothing is happening".
+    /// When a sync pass over this folder last completed, in seconds; `None` for a folder that never
+    /// finished one.
     pub last_synced_at: Option<i64>,
-    /// Whether this row belongs in the sidebar's special-use section.
-    ///
-    /// Decided by `postio_ui::sidebar`, not by the frontend, and it is not
-    /// simply "has a role": an account that has been through more than one
-    /// client holds two folders per role, and only the primary gets the
-    /// role's treatment. Its twin is `false` here and draws as an ordinary
-    /// folder under its server name — which is #501, already fixed on the
-    /// GTK side and reproduced on macOS until #1155.
+    /// Whether this row belongs in the sidebar's special-use section: not simply "has a role",
+    /// since an account that has
+    /// been through more than one client holds two folders per role and only the primary gets the
+    /// treatment (#501).
     pub special: bool,
-    /// How many messages in this mailbox carry `\Flagged`.
-    ///
-    /// Here because the sidebar's badge rules need it: a Flagged row shows
-    /// this rather than `unread`, and without the field on the wire a macOS
-    /// `count_for` could not reproduce what GTK draws even once the row
-    /// itself crossed (spec 003, FR-013).
+    /// How many messages carry `\Flagged`: the Flagged row's badge shows this rather than `unread`.
     pub flagged: u32,
-    /// How many are snoozed, for the Snoozed row's badge. Snoozed messages
-    /// are counted as away rather than present, so this is not a subset of
+    /// How many are snoozed, for the Snoozed row's badge; counted as away, so not a subset of
     /// `total`.
     pub snoozed: u32,
 }
 
 impl From<Mailbox> for MailboxFfi {
-    /// Ordinary by default. `Session::mailboxes` is what knows about the
-    /// other folders in the account, so it is what decides `special` — a
-    /// single mailbox cannot answer "am I the primary for my role".
+    /// `Session::mailboxes` decides `special`: a single mailbox cannot answer "am I the primary for
+    /// my role".
     fn from(mailbox: Mailbox) -> Self {
         MailboxFfi {
             id: mailbox.id.into(),
@@ -142,16 +103,9 @@ impl From<Mailbox> for MailboxFfi {
     }
 }
 
-/// What Postio calls a role, with no folder in hand.
-///
-/// Empty for an ordinary folder, which is called what the server calls it.
-///
-/// Crosses because one sentence needs a role's name where there is no folder
-/// to ask: *"this account has no Drafts folder"* is said exactly when no such
-/// folder exists. The names themselves are `postio_ui::sidebar`'s, which is
-/// also where `MailboxFfi.name` comes from — a frontend with its own list
-/// would be a second answer to what a row is called, and would get the twin
-/// case (#501) wrong.
+/// What Postio calls a role, with no folder in hand; empty for an ordinary folder. For sentences
+/// like "this account has
+/// no Drafts folder", where there is no folder to ask.
 #[uniffi::export]
 pub fn mailbox_role_name(role: MailboxRoleFfi) -> String {
     postio_ui::sidebar::role_name(role.into())

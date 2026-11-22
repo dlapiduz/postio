@@ -2,25 +2,15 @@ import Observation
 import PostioFFI
 import SwiftUI
 
-/// What the key map says (`?`, screen 20; specs/009-focus-macos T106): the
-/// controller's `KeyMapSheetFfi`, laid out.
-///
-/// The groups, their rows and titles, the columns they stand in and both
-/// footers are `postio_ui::keymap_sheet`'s for Focus on Apple -- the key map
-/// GTK draws, less what the Mac does not offer -- and the footer names
-/// `~/Library/Application Support/Postio/config.toml` and `[keys]` (C3).
-/// What is decided here is only spelling: every key as the menus spell it
-/// (`KeyCapSpelling`), a row's bindings in one cap as the pack draws them.
+/// The footer names `~/Library/Application Support/Postio/config.toml` and `[keys]` (C3). Only
+/// spelling is decided here: every key as the menus spell it (`KeyCapSpelling`).
 public struct KeyMapSheetWords: Equatable, Sendable {
-    /// One command: its words and its keys.
     public struct Row: Equatable, Sendable {
         public let command: String
         public let title: String
-        /// Every binding, spelled, in one cap; `nil` with none.
         public let cap: String?
     }
 
-    /// One group, kept whole in its column.
     public struct Group: Equatable, Sendable {
         public let title: String
         public let rows: [Row]
@@ -28,17 +18,12 @@ public struct KeyMapSheetWords: Equatable, Sendable {
 
     public let title: String
     public let subtitle: String
-    /// The keys that close it (`?`, Escape), each a cap.
     public let closeCaps: [String]
     public let closeOr: String
     public let closeWord: String
-    /// The groups, column by column, as `columns` names them.
     public let columns: [[Group]]
-    /// "Rebind anything in … under [keys]".
     public let rebind: String
-    /// "The mouse works everywhere: …".
     public let mouse: String
-    /// "More below", while rows lie past the panel's edge.
     public let more: String
 
     public init(_ sheet: KeyMapSheetFfi) {
@@ -57,8 +42,7 @@ public struct KeyMapSheetWords: Equatable, Sendable {
                         cap: caps.isEmpty ? nil : caps.joined(separator: " "))
                 })
         }
-        // An index past the groups is skipped rather than trusted: a column
-        // that named a group this build does not have draws without it.
+        // An index past the groups is skipped rather than trusted.
         columns = sheet.columns.map { column in
             column.compactMap { index in
                 Int(index) < groups.count ? groups[Int(index)] : nil
@@ -70,27 +54,22 @@ public struct KeyMapSheetWords: Equatable, Sendable {
     }
 }
 
-/// Whether the key map is up, and what it says, as the controller's events
-/// leave it. The controller puts it on its stack and takes it off, so the
-/// Mac reports neither -- only a close of its own, a click outside it.
+/// The controller puts it on its stack and takes it off, so the Mac reports neither, only a close
+/// of its own (a click outside).
 @MainActor
 @Observable
 public final class KeyMapModel {
-    /// What an applied event did.
     public enum Change: Equatable, Sendable {
         case open
         case close
     }
 
-    /// What the open key map draws; `nil` while it is closed.
     public private(set) var words: KeyMapSheetWords?
 
     public var isOpen: Bool { words != nil }
 
     public init() {}
 
-    /// `FocusOpenKeyMap` opens it and `FocusCloseSurface(.keyMap)` closes
-    /// it; every other event is `nil` and changes nothing.
     @discardableResult
     public func apply(_ event: UiEvent) -> Change? {
         switch event {
@@ -105,15 +84,11 @@ public final class KeyMapModel {
         }
     }
 
-    /// Draw `sheet` in place of what is up -- after `[keys]` changed. A
-    /// closed key map stays closed.
     public func refresh(_ sheet: KeyMapSheetFfi) {
         guard isOpen else { return }
         words = KeyMapSheetWords(sheet)
     }
 
-    /// Closed by the toolkit (a click outside): whether it was up, so the
-    /// controller is told once.
     public func closedByToolkit() -> Bool {
         guard isOpen else { return false }
         words = nil
@@ -121,10 +96,6 @@ public final class KeyMapModel {
     }
 }
 
-/// The key map, drawn (screen 20): a panel centred over the dimmed main
-/// window -- the title and the subtitle, the close keys on the right, the
-/// groups in four columns of rows with their caps, and the two footers
-/// under a hairline. A click on the dim closes it.
 public struct KeyMapPanel: View {
     let words: KeyMapSheetWords
     let dismiss: () -> Void
@@ -134,20 +105,14 @@ public struct KeyMapPanel: View {
         self.dismiss = dismiss
     }
 
-    /// The pack's panel at 1440 × 900.
     public static let size = CGSize(width: 1100, height: 760)
 
-    /// Whether rows lie below the visible part of the columns: the content's
-    /// bottom edge, in the scroll view's own coordinates, past the bottom of
-    /// the viewport by more than a point.
     static func moreBelow(contentBottom: CGFloat, viewport: CGFloat) -> Bool {
         contentBottom > viewport + 1
     }
 
-    /// How tall the fade over the last visible rows is.
     static let fadeHeight: CGFloat = 56
 
-    /// Where the columns' bottom edge is, in the scroll view's space.
     @State private var contentBottom: CGFloat = 0
     @State private var viewport: CGFloat = 0
 
@@ -165,10 +130,8 @@ public struct KeyMapPanel: View {
         }
     }
 
-    /// Whether the columns are taller than the room they have.
     private var isScrollable: Bool { contentBottom > viewport + 1 && viewport > 0 }
 
-    /// The fade over the last visible rows, and the line under it.
     private func moreCue(_ scroll: @escaping () -> Void) -> some View {
         VStack(spacing: 0) {
             Rectangle()
@@ -214,14 +177,9 @@ public struct KeyMapPanel: View {
                 .fixedSize()
             }
             .padding(.bottom, 22)
-            // Every command Focus offers here is in it -- far more rows than
-            // the pack's picture -- so the columns scroll inside the panel,
-            // and the heading and the footers stay put.
-            //
-            // A Mac hides an idle scroller, so nothing said the columns went
-            // on: they stopped mid-row at the panel's edge. While rows lie
-            // below, the scroller stays drawn and the last rows fade under a
-            // "more below" line, which a click scrolls by a page.
+            // The columns scroll inside the panel while the heading and footers stay put. A Mac
+            // hides an idle scroller, so while rows
+            // lie below the scroller stays drawn and the last rows fade under a "more below" line.
             ScrollViewReader { reader in
                 ScrollView {
                     HStack(alignment: .top, spacing: 24) {
@@ -279,8 +237,6 @@ public struct KeyMapPanel: View {
     }
 }
 
-/// One group: its heading, then a row per command, title on the left and
-/// its cap on the right, a hairline under each.
 private struct KeyMapGroupView: View {
     let group: KeyMapSheetWords.Group
 
@@ -291,10 +247,8 @@ private struct KeyMapGroupView: View {
                 .padding(.bottom, 6)
             ForEach(group.rows, id: \.command) { row in
                 HStack(alignment: .center, spacing: 8) {
-                    // One line, so every row is 30 and the columns' rows
-                    // line up across the panel: a long title ("Previous
-                    // message in thread" beside `p ⌥↑`) tightens to
-                    // fit rather than wrap, and the cap keeps its size.
+                    // One line, so every row is 30 and the columns line up: a long title tightens
+                    // to fit rather than wrap.
                     Text(row.title)
                         .font(.system(size: 13))
                         .lineLimit(1)
@@ -312,8 +266,6 @@ private struct KeyMapGroupView: View {
     }
 }
 
-/// The bottom edge of the key map's columns, in its scroll view's space:
-/// how the panel knows rows lie below what it shows.
 private struct KeyMapContentBottom: PreferenceKey {
     static let space = "keymap.scroll"
     static let end = "keymap.end"

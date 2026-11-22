@@ -1,43 +1,20 @@
-//! Whether a message is who it says it is (#1928): the rule, with no toolkit
-//! in it.
-//!
-//! Two independent signals, and the reader draws one quiet line for either
-//! and nothing at all for ordinary mail:
-//!
-//! * [`verdict`] reads the `Authentication-Results` header (RFC 8601) the
-//!   *receiving server* added. A sender controls every header it sends, so a
-//!   header is trusted only when its authserv-id belongs to the account's
-//!   provider (`authserv_ids` in `providers.toml`) and only the topmost such
-//!   header counts: the server prepends its own, so anything the sender
-//!   wrote sits below it. No trusted header is [`Verdict::Unknown`], which
-//!   shows nothing, because no header is also what mail from a server that
-//!   does not check looks like.
-//! * [`impersonation`] catches a display name that is itself an address or a
-//!   domain other than the one the message came from.
-//!
-//! The headers come from the body once it is downloaded
-//! (`Message.headers`), not from the envelope fetch: the warning is only
-//! needed with the message open, and asking for it earlier would cost wire
-//! bytes on every message in the mailbox.
+//! Whether a message is who it says it is (#1928). `verdict` trusts only the topmost
+//! `Authentication-Results` whose
+//! authserv-id belongs to the account's provider; none is `Unknown`, which shows nothing.
+//! `impersonation` catches a
+//! display name that is itself an address or another domain. Headers come from the downloaded body,
+//! not the envelope fetch.
 
 use postio_model::{EmailAddress, Headers};
 
-/// What the receiving server said about the message's sender.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
-    /// DMARC passed, or SPF or DKIM passed for the From domain.
     Verified,
-    /// The server checked and nothing passed, but nothing failed either.
     Unverified,
-    /// DMARC failed, or SPF and DKIM both failed for the From domain.
     Failed,
-    /// No header from the account's provider: nothing is known.
     Unknown,
 }
 
-/// The verdict for a message with these `headers` and `from`, trusting only
-/// an `Authentication-Results` whose authserv-id is one of `trusted` (a
-/// hostname, matched whole or as a label-bounded suffix).
 pub fn verdict<T: AsRef<str>>(headers: &Headers, from: &[EmailAddress], trusted: &[T]) -> Verdict {
     let Some(domain) = from.first().and_then(EmailAddress::domain) else {
         return Verdict::Unknown;
@@ -91,11 +68,8 @@ pub fn verdict<T: AsRef<str>>(headers: &Headers, from: &[EmailAddress], trusted:
     }
 }
 
-/// The address or domain a display name claims, when it is not the sender's.
-///
-/// `Some("billing@bank.example")` for `"billing@bank.example"
-/// <x@other.example>`. A name that merely mentions the sender's own domain,
-/// or a subdomain or parent of it, is not a hit.
+/// A name that merely mentions the sender's own domain, or a subdomain or parent of it, is not a
+/// hit.
 pub fn impersonation(from: &[EmailAddress]) -> Option<String> {
     let sender = from.first()?;
     let name = sender.name.as_deref()?;
@@ -120,8 +94,6 @@ pub fn impersonation(from: &[EmailAddress]) -> Option<String> {
     None
 }
 
-/// The one warning line for a message, or `None` when there is nothing to
-/// say. A failed verdict and an impersonation both speak, in one line.
 pub fn warning<T: AsRef<str>>(
     headers: &Headers,
     from: &[EmailAddress],
@@ -146,8 +118,6 @@ pub fn warning<T: AsRef<str>>(
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
-/// One `method=result` from an `Authentication-Results` header, with its
-/// `ptype.property=value` pairs.
 #[derive(Debug)]
 struct Result {
     method: String,
@@ -170,7 +140,6 @@ struct Parsed {
     results: Vec<Result>,
 }
 
-/// RFC 8601 §2.2: `authserv-id [version] ; resinfo ; resinfo ...`.
 fn parse(value: &str) -> Option<Parsed> {
     let value = strip_comments(value);
     let mut sections = value.split(';');
@@ -184,7 +153,6 @@ fn parse(value: &str) -> Option<Parsed> {
         .filter_map(|section| {
             let mut words = section.split_whitespace();
             let (method, result) = words.next()?.split_once('=')?;
-            // `dkim/1` carries a method version.
             let method = method.split('/').next()?.to_ascii_lowercase();
             let properties = words
                 .filter_map(|word| word.split_once('='))
@@ -208,7 +176,6 @@ fn parse(value: &str) -> Option<Parsed> {
     })
 }
 
-/// Drops `( ... )` comments, which nest.
 fn strip_comments(value: &str) -> String {
     let mut depth = 0usize;
     let mut out = String::with_capacity(value.len());
@@ -223,7 +190,6 @@ fn strip_comments(value: &str) -> String {
     out
 }
 
-/// Whether `id` is one of `trusted`, whole or as a label-bounded suffix.
 fn trusts<T: AsRef<str>>(trusted: &[T], id: &str) -> bool {
     trusted.iter().any(|entry| {
         let entry = entry
@@ -235,8 +201,6 @@ fn trusts<T: AsRef<str>>(trusted: &[T], id: &str) -> bool {
     })
 }
 
-/// A property value (`bob@example.org`, `@example.org`, `example.org`) and
-/// `domain` are the same domain or one is a subdomain of the other.
 fn related(value: &str, domain: &str) -> bool {
     let host = value
         .rsplit('@')
@@ -247,14 +211,11 @@ fn related(value: &str, domain: &str) -> bool {
     host == domain || host.ends_with(&format!(".{domain}")) || domain.ends_with(&format!(".{host}"))
 }
 
-/// The name ends in a suffix on the public suffix list, so `bank.com` is a
-/// domain and `Node.js` is not.
 fn has_public_suffix(host: &str) -> bool {
     psl::suffix(host.to_ascii_lowercase().as_bytes()).is_some_and(|suffix| suffix.is_known())
 }
 
-/// A plausible hostname: dotted labels, a letters-only last one of two or
-/// more characters. Deliberately plain: `Dr.`, `J.R.` and `v2.1` are not.
+/// Deliberately plain: `Dr.`, `J.R.` and `v2.1` are not hosts.
 fn is_host(text: &str) -> bool {
     let labels: Vec<&str> = text.split('.').collect();
     labels.len() >= 2
@@ -340,8 +301,6 @@ mod tests {
         let pass = "mx.example.net; dmarc=pass header.from=example.org";
         assert_eq!(judge(&[fail, pass]), Verdict::Failed, "a forged pass below");
         assert_eq!(judge(&[pass, fail]), Verdict::Verified);
-        // A header from another server above the provider's is skipped, not
-        // believed and not allowed to hide the provider's.
         let other = "relay.example.com; dmarc=pass header.from=example.org";
         assert_eq!(judge(&[other, fail]), Verdict::Failed);
     }

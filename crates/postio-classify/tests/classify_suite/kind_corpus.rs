@@ -1,11 +1,6 @@
-//! Kind detection, held to SC-003 (specs/011-focus-contacts).
-//!
-//! `tests/kind_corpus/*.toml` is one invented sender per file, hand-labelled:
-//! the headers a sender's newest messages carried, counted, and the kind a
-//! person would call it. Every address is on a reserved domain. The detector
-//! must agree with the labels at least 95% of the time, and must never read
-//! a person as a robot: a person filtered away as automated is mail the user
-//! does not see, which is the worse error by far.
+//! A person filtered away as automated is mail the user does not see: the worse error, so the
+//! corpus
+//! holds that to zero.
 
 use postio_classify::kind::{self, KindRules};
 use postio_model::{ContactKind, KindSignals};

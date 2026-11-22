@@ -1,23 +1,3 @@
-//! A word plus a date filter is driven by the word's hits (#1809).
-//!
-//! The driven form (`HITS_JOIN` in `executor.rs`) walks the full-text hits
-//! and looks each one's messages up. Before content identity (#1805) that
-//! lookup was `m.id = hits.rid`, a rowid seek the planner could not decline.
-//! Keyed by content it became `m.content_id = hits.rid`, an index seek on
-//! `idx_messages_content` -- and a `WHERE` that also says `m.received_at >= ?`
-//! offered the planner `idx_messages_account_list (account_id, received_at)`
-//! instead: two bound columns against one, so it took that, and walked every
-//! message in the date range *once per hit*. `quarterly after:2025-01-01` went
-//! from under a millisecond to 1.2 s on 20k messages, with the same answer.
-//!
-//! The plan does not depend on the data (this store never runs `ANALYZE`;
-//! see `docs/gotchas.md`), so a handful of messages asks the planner the
-//! same question 20k would. What is asserted is the shape, named: each
-//! statement that joins the hits seeks its messages by `content_id` and
-//! nothing else, and nothing in it is a full scan of a table that grows with
-//! the mailbox -- `docs/notes/2026-09-21-a-scan-wearing-a-seeks-clothes.md`
-//! is why a gate that only greps for `SCAN` is not enough.
-
 use chrono::{TimeZone, Utc};
 use postio_index::executor::facets;
 use postio_index::{SearchRequest, index, search};
@@ -27,9 +7,6 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 use postio_storage::test_support::counting;
 
-/// The steps a driven statement may scan: the hits it is driven by, the
-/// subqueries feeding them, constants, and the facet statement's own CTEs,
-/// which hold at most `TOTAL_HITS_CAP` rows. Anything else is a table walk.
 fn is_a_driven_scan(step: &str) -> bool {
     matches!(
         step,
@@ -122,8 +99,6 @@ async fn a_word_with_a_date_filter_seeks_each_hit_by_its_content() {
                     "{text}, {order:?}: the sibling check must seek the content's \
                      other memberships, not a range: {siblings:?}\n{sql}"
                 );
-                // An exact copy (#1526) is sought by its `Message-ID`, both
-                // columns bound, and nothing about it is a walk.
                 let copies: Vec<&String> = steps
                     .iter()
                     .filter(|step| step.starts_with("SEARCH copy "))
@@ -150,11 +125,6 @@ async fn a_word_with_a_date_filter_seeks_each_hit_by_its_content() {
     }
 }
 
-/// Whether `step` walks a table that grows with the mailbox: a `SCAN` of one
-/// of [`counting::GROWING_TABLES`], or of the attachment half's tables. The
-/// derived tables a conversation-search statement scans -- one index's hits,
-/// a set's ids, the JSON array a keyed walk is handed -- hold what the match
-/// or a set found, capped or keyed; the accounts and folders are a handful.
 fn walks_a_growing_table(step: &str) -> bool {
     let Some(table) = step
         .strip_prefix("SCAN ")
@@ -166,8 +136,6 @@ fn walks_a_growing_table(step: &str) -> bool {
         || ["attachment_passages", "attachment_extraction", "markers"].contains(&table)
 }
 
-/// What may look a message up, in a statement keyed by content or by id:
-/// the content seek, or the rowid.
 fn is_a_keyed_lookup(step: &str) -> bool {
     matches!(
         step,
@@ -178,13 +146,6 @@ fn is_a_keyed_lookup(step: &str) -> bool {
     )
 }
 
-/// The conversation search (spec 010) joins hits to messages through its own
-/// statements: `HITS_JOIN_WITH_FILES` with a third arm for attachment text,
-/// the set path's per-index arms, the Files tab's passages. Each looks a
-/// hit's messages up by content, so each owes the same `INDEXED BY` as
-/// `HITS_JOIN` (#1809). This asks the planner about every statement that
-/// `search_conversations`, `relaxation_counts`, `files` and `completions`
-/// issue for a word with a date, with and without a set beside it.
 #[tokio::test]
 async fn a_conversation_search_with_a_date_filter_seeks_each_hit_by_its_content() {
     use crate::conversations::{
@@ -248,11 +209,6 @@ async fn a_conversation_search_with_a_date_filter_seeks_each_hit_by_its_content(
                     .await
                     .expect("search");
                 let searched = counting::recorded();
-                // Every statement the search itself issues, joined to the
-                // hits or not: the side questions -- how much was searched,
-                // whether every attachment has been read -- run on each
-                // search too, and a walk there costs what one in the match
-                // would.
                 for sql in searched.keys() {
                     let steps = counting::plan_steps(&connection, sql)
                         .await
@@ -282,9 +238,6 @@ async fn a_conversation_search_with_a_date_filter_seeks_each_hit_by_its_content(
                     "{text}: the fixture is meant to answer this"
                 );
 
-                // The statements that look messages up by content: the
-                // hits joins, each index's arm on the set path, a set's
-                // contents joined out, the Files tab's passages.
                 let keyed: Vec<&String> = statements
                     .keys()
                     .filter(|sql| joins_by_content(sql))
@@ -299,10 +252,6 @@ async fn a_conversation_search_with_a_date_filter_seeks_each_hit_by_its_content(
                             step.starts_with("SEARCH m ") || step.starts_with("SEARCH earlier ")
                         })
                         .collect();
-                    // A count with no words walks `messages` under its
-                    // conditions, capped by its `LIMIT`, beside a set joined
-                    // by content: that walk may take a range, once. Every
-                    // other lookup is per hit, and must be keyed.
                     let walks_of_messages = flat(sql).matches("FROM messages m WHERE").count();
                     let ranged = lookups
                         .iter()
@@ -324,9 +273,6 @@ async fn a_conversation_search_with_a_date_filter_seeks_each_hit_by_its_content(
                          scans {walks:?}.\n{sql}\n{steps:#?}"
                     );
                 }
-                // `from:` is a set that must hold, so the match is read by
-                // each index's arm on the set path; otherwise it is walked
-                // through `HITS_JOIN_WITH_FILES`.
                 let (call, marker) = if text.contains("from:") {
                     (
                         "an index's arm on the set path",
@@ -356,24 +302,14 @@ async fn a_conversation_search_with_a_date_filter_seeks_each_hit_by_its_content(
     }
 }
 
-/// Whether `sql` joins `messages` to something by content: the shape whose
-/// lookup a date filter can outbid.
 fn joins_by_content(sql: &str) -> bool {
     flat(sql).contains("ON m.content_id = ")
 }
 
-/// `sql` on one line, each run of whitespace one space.
 fn flat(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The walk reads what it needs of each matched message from that
-/// message's own row (spec 010 D30): its people, labels and attachment
-/// count are columns `messages` keeps, not lookups into `recipients`,
-/// `message_labels` and `attachments` made once per walked row. Those
-/// three were two thirds of the common word's walk; a lookup that comes
-/// back costs ten thousand seeks again, so every shape of the walk -- the
-/// match, a walk of `messages`, a walk keyed by a set -- is planned here.
 #[tokio::test]
 async fn the_walk_reads_its_people_labels_and_files_from_the_row() {
     use crate::conversations::{Mail, file, now, store, today};

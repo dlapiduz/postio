@@ -1,8 +1,3 @@
-//! The capture sheet (US15, T158; screen 25): `T` on a message captures a
-//! task into the person's Obsidian vault, `N` a note, over a vault that is
-//! a folder on this computer. What is appended is asserted byte for byte,
-//! and every other note is asserted unchanged.
-
 use adw::prelude::AdwDialogExt;
 use chrono::TimeZone;
 use gtk::gdk;
@@ -10,8 +5,6 @@ use postio_storage::repository::{Marker, MarkerRepository, MarkerSource};
 
 use crate::support::{self, Fixture};
 
-/// A vault with a Harbor project note (in the projects folder) and a tasks
-/// note, each with something already in it.
 struct TempVault {
     dir: tempfile::TempDir,
 }
@@ -41,8 +34,6 @@ impl TempVault {
     }
 }
 
-/// Lena's "Harbor API draft v3", with a to-do marker quoting "Please leave
-/// comments by Wednesday", due Wednesday 30 September 2026.
 async fn harbor_to_do(fixture: &Fixture) -> postio_model::MessageId {
     let (message, _) = fixture
         .file(
@@ -63,7 +54,6 @@ async fn harbor_to_do(fixture: &Fixture) -> postio_model::MessageId {
             excerpt: Some(sentence.to_owned()),
             starts_at: None,
             ends_at: None,
-            // Noon on the day, so it is the 30th in any zone the suite runs.
             due_at: Some(
                 chrono::Utc
                     .with_ymd_and_hms(2026, 9, 30, 12, 0, 0)
@@ -80,7 +70,6 @@ async fn harbor_to_do(fixture: &Fixture) -> postio_model::MessageId {
     message
 }
 
-/// The actions the first row on screen draws, by their words.
 fn row_actions(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     window
         .pane()
@@ -95,11 +84,6 @@ fn row_actions(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// US15 scenario 1: with a vault configured, the to-do's row offers Task
-/// `T`; `T` opens the sheet with the sentence verbatim, the due day from
-/// the mail, and the Harbor project suggested with its reason; the preview
-/// is the exact line; and `Ctrl+Enter` appends exactly that line to
-/// Harbor's note, with the link before 📅, and changes nothing else.
 pub fn t_appends_one_tasks_line_with_the_link_before_the_date() {
     crate::gtk_case(async {
         if !support::display() {
@@ -180,8 +164,6 @@ pub fn t_appends_one_tasks_line_with_the_link_before_the_date() {
     });
 }
 
-/// `N` opens the sheet as a note, `alt+s` puts the subject in place of the
-/// sentence, and the note entry is appended to the project's note.
 pub fn n_appends_a_note_and_alt_s_uses_the_subject() {
     crate::gtk_case(async {
         if !support::display() {
@@ -233,8 +215,6 @@ pub fn n_appends_a_note_and_alt_s_uses_the_subject() {
     });
 }
 
-/// With no `[focus.vault]`, the to-do offers no Task, and `T` opens no
-/// sheet: it says why instead (spec C9).
 pub fn without_a_vault_there_is_no_task_and_t_says_why() {
     crate::gtk_case(async {
         if !support::display() {
@@ -303,8 +283,6 @@ fn capture_from_reader(key: &str, heading: &str) {
         let sheet = window.capture().expect("the visible capture sheet");
         assert!(sheet.texts().iter().any(|text| text == heading));
         assert_eq!(sheet.text(), "Please leave comments by Wednesday");
-        // The keyboard is in the sheet's field, so the sheet's own keys are
-        // its, and what is typed edits the sentence (#2080).
         assert!(
             crate::settle_until(async || {
                 window.observe().keyboard.typing

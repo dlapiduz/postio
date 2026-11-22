@@ -1,12 +1,5 @@
-//! The Contacts view (specs/011-focus-contacts S13, handoff screens 01 to
-//! 03), the keyboard's way: `g c` puts the people where the inbox was, `j`
-//! and `k` walk them with the card following, `]` changes the kind tab, `/`
-//! filters, and Escape goes home one rung at a time. What the person sees is
-//! the widget tree's: the names in the list, the card's name, the tabs.
-
 use crate::support::{self, Fixture};
 
-/// Three people, as sync's catch-up leaves them.
 async fn fixture() -> Fixture {
     let fixture = Fixture::empty().await;
     for (name, address) in [
@@ -20,8 +13,6 @@ async fn fixture() -> Fixture {
     fixture
 }
 
-/// `g c`, `j`, `k` and Escape: the people, in letter order, the cursor on the
-/// first, the card of whoever has it, and the inbox back as it was.
 pub fn g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home() {
     crate::gtk_case(async {
         if !support::display() {
@@ -74,8 +65,6 @@ pub fn g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home(
     });
 }
 
-/// The tabs are the strip's, in the strip's words: All first and chosen, a
-/// click on one is the key `]` would have been.
 pub fn the_strip_says_its_tabs_and_a_click_on_one_is_the_key() {
     crate::gtk_case(async {
         if !support::display() {
@@ -122,8 +111,6 @@ pub fn the_strip_says_its_tabs_and_a_click_on_one_is_the_key() {
     });
 }
 
-/// `/` puts the keyboard in the filter, what is typed narrows the list, and
-/// Escape clears it before it closes anything.
 pub fn slash_filters_the_list_and_escape_clears_before_it_closes() {
     crate::gtk_case(async {
         if !support::display() {
@@ -155,9 +142,6 @@ pub fn slash_filters_the_list_and_escape_clears_before_it_closes() {
     });
 }
 
-/// `ctrl+e` opens the form over the card, a typed field comes back drawn from
-/// what the controller answers, the first Escape arms and the second
-/// discards, and `ctrl+s` saves what was typed (handoff screen 06).
 pub fn ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves() {
     crate::gtk_case(async {
         if !support::display() {
@@ -195,7 +179,6 @@ pub fn ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves() {
             "the field is drawn from the controller's answer"
         );
 
-        // The first Escape arms, and says so.
         support::keys(&window, &["Escape"]);
         assert!(
             crate::settle_until(async || view
@@ -213,7 +196,6 @@ pub fn ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves() {
             "the second Escape discards"
         );
 
-        // And saving keeps it.
         support::press(&window, "e", gtk::gdk::ModifierType::CONTROL_MASK);
         assert!(crate::settle_until(async || view.has_form()).await);
         view.test_type_form(Slot::Title, "Finance lead");
@@ -235,9 +217,6 @@ pub fn ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves() {
     });
 }
 
-/// Two records of one person: `g w` opens the merge sheet with its reasons,
-/// Return merges and the list says one person where it said two, and
-/// Escape is Later.
 pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
     crate::gtk_case(async {
         if !support::display() {
@@ -281,12 +260,10 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
         assert!(said.iter().any(|line| line == "Later"), "{said:?}");
         assert!(said.iter().any(|line| line == "Merge"), "{said:?}");
 
-        // Later puts it away and leaves the people as they were.
         support::keys(&window, &["Escape"]);
         assert!(crate::settle_until(async || view.merge_texts().is_empty()).await);
         assert_eq!(view.total(), 3);
 
-        // Again, and merge.
         support::keys(&window, &["g", "w"]);
         assert!(crate::settle_until(async || !view.merge_texts().is_empty()).await);
         support::keys(&window, &["Return"]);
@@ -297,7 +274,6 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
     });
 }
 
-/// Marking a row with `x` ticks it and leaves the list where it was.
 pub fn x_marks_a_row_without_moving_the_list() {
     crate::gtk_case(async {
         if !support::display() {
@@ -338,8 +314,6 @@ pub fn x_marks_a_row_without_moving_the_list() {
     });
 }
 
-/// `i` on a row opens the popover at the sender: who they are, the arrows
-/// choose where their mail arrives, and Escape puts it away (handoff 04).
 pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_closes() {
     crate::gtk_case(async {
         if !support::display() {
@@ -389,7 +363,6 @@ pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_close
             crate::settle_until(async || on(&window).as_deref() == Some("Digest")).await,
             "the right arrow chooses the next place mail arrives"
         );
-        // z is the toast's Undo and takes the choice back, in the popover too.
         assert!(
             crate::settle_until(async || window
                 .toast_showing()
@@ -414,8 +387,6 @@ pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_close
     });
 }
 
-/// A sender nobody has saved gets the popover that says how they reached
-/// you, with Add contact as its main action (handoff 05).
 pub fn a_sender_not_yet_saved_is_introduced_and_offered_add_contact() {
     crate::gtk_case(async {
         if !support::display() {
@@ -446,9 +417,6 @@ pub fn a_sender_not_yet_saved_is_introduced_and_offered_add_contact() {
     });
 }
 
-/// `v i` asks for a `.vcf`, reads the one it is given, says what it did,
-/// merges nothing, and puts the cursor on the first person it made; `v x`
-/// writes one file of the people the list holds and says how many.
 pub fn v_i_imports_a_chosen_file_and_v_x_exports_one() {
     crate::gtk_case(async {
         if !support::display() {
@@ -524,10 +492,6 @@ pub fn v_i_imports_a_chosen_file_and_v_x_exports_one() {
     });
 }
 
-/// Settings > Contacts: the four Suggestions switches, in the controller's
-/// words, each turning its work off at the source -- a flip reaches the
-/// store and comes back as the redrawn pane (handoff screen 08, less sync,
-/// which is the Mac's).
 pub fn settings_contacts_flips_the_suggestions_and_says_nothing_of_sync() {
     crate::gtk_case(async {
         if !support::display() {
@@ -569,8 +533,6 @@ pub fn settings_contacts_flips_the_suggestions_and_says_nothing_of_sync() {
             "sync is the Mac's: {said:?}"
         );
 
-        // "Read signatures for details" off: the store says so and the pane
-        // is drawn from the answer.
         panel.test_flip_suggestion(2);
         assert!(
             crate::settle_until(async || !client
@@ -591,8 +553,6 @@ pub fn settings_contacts_flips_the_suggestions_and_says_nothing_of_sync() {
     });
 }
 
-/// Return on a person is "all mail with them": the view goes home and the
-/// box is open on a search for their addresses.
 pub fn return_searches_the_mail_of_the_person_under_the_cursor() {
     crate::gtk_case(async {
         if !support::display() {
