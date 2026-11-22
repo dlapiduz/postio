@@ -54,6 +54,8 @@ postio-ui.workspace = true
 # The crate's own suite, with its hooks on: a render held past its deadline
 # (the plain-text fallback, T218).
 postio-widgets = { path = ".", features = ["test-hooks"] }
+# Spec 014's golden document, for the draft that holds every construct.
+postio-body = { workspace = true, features = ["test-golden"] }
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-test-support = { workspace = true, features = ["logs"] }
 tempfile = { workspace = true }

@@ -441,6 +441,10 @@ const CASES: &[(&str, fn())] = &[
         composer_resume::reopening_restores_the_formatting_and_the_attachments_too as fn(),
     ),
     (
+        "composer_resume::a_draft_holding_every_construct_reopens_as_the_same_document",
+        composer_resume::a_draft_holding_every_construct_reopens_as_the_same_document as fn(),
+    ),
+    (
         "composer_schedule_send::ctrl_shift_return_opens_the_schedule_send_picker",
         composer_schedule_send::ctrl_shift_return_opens_the_schedule_send_picker as fn(),
     ),
