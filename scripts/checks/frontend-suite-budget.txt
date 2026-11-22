@@ -32,7 +32,6 @@ crates/postio-gtk/tests/focus_suite/e2e.rs 1
 crates/postio-gtk/tests/focus_suite/filtered.rs 1
 crates/postio-gtk/tests/focus_suite/hostile_mail.rs 1
 crates/postio-gtk/tests/focus_suite/keymap.rs 1
-crates/postio-gtk/tests/focus_suite/one_keymap.rs 1
 crates/postio-gtk/tests/focus_suite/pickers.rs 1
 crates/postio-gtk/tests/focus_suite/reader_zoom.rs 1
 crates/postio-gtk/tests/focus_suite/selection.rs 1

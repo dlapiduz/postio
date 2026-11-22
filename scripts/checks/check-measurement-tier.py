@@ -67,7 +67,8 @@ def sources_for(binary: str, module: str | None = None, package: str | None = No
         found = list(ROOT.glob(f"crates/*/tests/{binary}.rs"))
         found += [p for p in ROOT.glob(f"crates/*/tests/{binary}/main.rs")]
         return found
-    return list(ROOT.glob(f"crates/{package or '*'}/tests/*/{module}.rs"))
+    base = f"crates/{package or '*'}/tests/*"
+    return list(ROOT.glob(f"{base}/{module}.rs")) + list(ROOT.glob(f"{base}/{module}/*.rs"))
 
 
 def case_sites(package: str, path: str) -> list[tuple[Path, int]]:

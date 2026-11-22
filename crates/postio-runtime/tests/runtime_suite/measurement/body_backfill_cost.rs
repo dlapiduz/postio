@@ -1,3 +1,6 @@
+//! POSTIO-MEASUREMENT: a measurement whose output a person reads; it runs on the nightly timer
+//! (`measurement::` in .config/nextest.toml), not the merge path.
+
 // Round trips and wall clock for backfilling one folder's bodies when every command takes a round
 // trip (#1941).
 

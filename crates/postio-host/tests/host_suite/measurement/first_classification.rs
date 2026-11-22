@@ -1,3 +1,6 @@
+//! POSTIO-MEASUREMENT: a measurement whose output a person reads; it runs on the nightly timer
+//! (`measurement::` in .config/nextest.toml), not the merge path.
+
 use std::time::{Duration, Instant};
 
 use chrono::Utc;

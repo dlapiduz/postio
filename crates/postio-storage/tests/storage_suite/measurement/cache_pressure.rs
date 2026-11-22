@@ -1,3 +1,6 @@
+//! POSTIO-MEASUREMENT: a measurement whose output a person reads; it runs on the nightly timer
+//! (`measurement::` in .config/nextest.toml), not the merge path.
+
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
 use std::time::{Duration, Instant};

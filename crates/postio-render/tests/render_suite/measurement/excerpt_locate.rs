@@ -1,3 +1,6 @@
+//! POSTIO-MEASUREMENT: a measurement whose output a person reads; it runs on the nightly timer
+//! (`measurement::` in .config/nextest.toml), not the merge path.
+
 // Spike: can a sentence be found again in the rendered body from nothing but its excerpt? Measures
 // `TextIndex::locate` over the render corpus and fails if a rate falls below its floor.
 

@@ -5588,6 +5588,7 @@ dependencies = [
  "tokio",
  "toml",
  "toml_datetime",
+ "toml_edit",
  "toml_parser",
  "toml_writer",
  "tracing",
