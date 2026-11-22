@@ -208,18 +208,28 @@ pub async fn search_conversations(
     let page: Vec<usize> = order[offset..end].to_vec();
 
     // Where in which attachment, for the shown rows an attachment's text
-    // matched: one statement, and none when no row did.
+    // matched, and the Files tab's count: one statement, and none when no
+    // message carries a file or matched in one.
     let in_files: Vec<MessageId> = page
         .iter()
         .map(|at| &fold.found[conversations[*at].best])
         .filter(|found| found.in_file)
         .map(|found| MessageId::new(found.id))
         .collect();
-    let files = if in_files.is_empty() {
-        Vec::new()
-    } else {
-        super::file_matches(connection, request.query, &in_files).await?
-    };
+    let in_file: Vec<MessageId> = fold
+        .found
+        .iter()
+        .filter(|found| found.in_file)
+        .map(|found| MessageId::new(found.id))
+        .collect();
+    let (files, cards) = super::files::page_and_cards(
+        connection,
+        request.query,
+        &carried(&fold),
+        &in_file,
+        &in_files,
+    )
+    .await?;
 
     let terms = Terms::of(request.query);
     let hits: Vec<ConversationHit> = page
@@ -249,7 +259,7 @@ pub async fn search_conversations(
         contents_complete: searched.contents,
         facets: facets(&conversations, request.today, fold.capped()),
         // The cards the Files tab lists, counted as it lists them (#2178).
-        files: super::files::cards(connection, request.query, &carried(&fold)).await?,
+        files: cards,
         people: people_in(&conversations, &searched.own),
         // Names are the session's to read, for the counts it keeps.
         names: FacetNames::default(),
