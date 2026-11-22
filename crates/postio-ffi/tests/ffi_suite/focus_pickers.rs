@@ -66,6 +66,18 @@ async fn picker(
     seen.expect("seen")
 }
 
+/// Whether the list's first row stops being `subject`'s within a scaled
+/// deadline: a move reaching the list. The events are drained meanwhile,
+/// as the Mac's loop does: the store's changes reach the list through them.
+async fn the_list_lets_go_of(session: &Session, subject: &str) -> bool {
+    let gone = || {
+        !session
+            .focus_resident_row_at(0)
+            .is_some_and(|row| row.subject == subject)
+    };
+    gone() || heard(session, 10, |_| gone()).await
+}
+
 async fn closes_the_picker(session: &Session) -> bool {
     heard(session, 5, |event| {
         matches!(
@@ -220,30 +232,34 @@ async fn a_new_label_is_made_with_return_and_space_takes_it_off() {
     session.shutdown();
 }
 
-/// A session whose inbox holds one conversation from Ada, beside a
-/// Receipts folder.
+/// A session whose inbox holds two conversations from Ada, "Invoice" on
+/// top, beside a Receipts folder. Two, so a row is left under the cursor
+/// once one has moved.
 async fn an_inbox_and_receipts() -> std::sync::Arc<Session> {
     let database = test_support::memory().await;
     {
         let connection = database.connect().await.expect("a connection");
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         test_support::mailbox(&connection, &account, "Receipts").await;
-        let mut message = Message::new(account.id, inbox, Utc::now());
-        message.subject = Some("Invoice".to_owned());
-        message.date = Some(Utc::now());
-        message.from = vec![postio_model::EmailAddress::new(
-            Some("Ada"),
-            "ada@example.com",
-        )];
-        let id = MessageRepository::new(&connection)
-            .create(&mut message)
-            .await
-            .expect("a message");
         let threads = postio_storage::repository::ThreadRepository::new(&connection);
-        let mut thread = postio_model::Thread::new(account.id);
-        thread.subject = message.subject.clone();
-        threads.create(&mut thread).await.expect("a thread");
-        threads.add_message(thread.id, id).await.expect("threaded");
+        for (age, subject) in ["Invoice", "Lunch"].into_iter().enumerate() {
+            let at = Utc::now() - chrono::TimeDelta::minutes(age as i64);
+            let mut message = Message::new(account.id, inbox, at);
+            message.subject = Some(subject.to_owned());
+            message.date = Some(at);
+            message.from = vec![postio_model::EmailAddress::new(
+                Some("Ada"),
+                "ada@example.com",
+            )];
+            let id = MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+            let mut thread = postio_model::Thread::new(account.id);
+            thread.subject = message.subject.clone();
+            threads.create(&mut thread).await.expect("a thread");
+            threads.add_message(thread.id, id).await.expect("threaded");
+        }
     }
     Session::open(SessionOptions::in_memory_with(database)).expect("a session")
 }
@@ -273,7 +289,13 @@ async fn move_lists_the_destinations_and_choosing_one_moves_the_mail() {
         "the controller says how long, not the Mac"
     );
 
-    // Moved once, it is Recent and `1` the next time.
+    // Moved once, it is Recent and `1` the next time. The move is let reach
+    // the list first: a loaded runner re-reads it before the next key as
+    // often as not, and the `m` then aims at whatever row is left (#2154).
+    assert!(
+        the_list_lets_go_of(&session, "Invoice").await,
+        "the moved mail left the inbox's list"
+    );
     session.invoke("move");
     let view = picker(&session, |view| {
         view.rows.first().is_some_and(|row| row.key.is_some())
