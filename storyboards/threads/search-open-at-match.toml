@@ -19,6 +19,13 @@
 # message, and these messages hold one match each). Escape returns to the
 # results with the ring on message 3's child, not on message 6's.
 #
+# While the window is open its footer is the window's -- "Message 3 of 6",
+# reply to this, and Escape "back to results" -- not the results' with its
+# "back to inbox", and message 6's "rate-limit headers" is marked as a
+# match of "rate limit headers" (#2193): the window finds the search's
+# words as words, as the index did. The marks are published as
+# `app.focus.reading.find_matches`.
+#
 # The controller's cases are postio-focus tests/controller_suite/
 # search_threads.rs; this film is their composition in the window, and it
 # needs GTK (the headless compositor) to play. The thread bar's ringed chip
@@ -52,20 +59,20 @@ expect  = "The ring moves from the result past the line for messages 1–2 to me
 [[step]]
 id      = "open"
 command = "open_message"
-check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 2, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 3 of 6 · ] newer · [ older", app.focus.reading.matched = "3, 5, 6", app.focus.reading.position = "Message 3 of 6", app.focus.reading.match_banner = "‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)" }
-expect  = "The window opens on message 3, not on the thread's latest. The bar marks messages 3, 5 and 6 with a yellow square and rings chip 3; the kicker says \"Message 3 of 6\"; a banner reads \"‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)\" with Next and Back to results, each with its key."
+check   = { view = "reader", keyboard.region = "reader", reading.id = { changed = true }, app.focus.reading.chip = 2, app.focus.reading.chips = 6, app.focus.reading.kicker = "Message 3 of 6 · ] newer · [ older", app.focus.reading.matched = "3, 5, 6", app.focus.reading.position = "Message 3 of 6", app.focus.reading.match_banner = "‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)", app.focus.reading.find_matches = 1, app.focus.footer.title = "Message 3 of 6 · You", app.focus.footer.labels = "reply to this | forward this | archive thread | back to results" }
+expect  = "The window opens on message 3, not on the thread's latest. The bar marks messages 3, 5 and 6 with a yellow square and rings chip 3; the kicker says \"Message 3 of 6\"; a banner reads \"‘rate limit headers’ · match 1 of 3 in this thread (messages 3, 5 and 6)\" with Next and Back to results, each with its key. \"rate limit headers\" is marked in the message. The footer under the window is the window's, not the results': \"Message 3 of 6 · You\", reply to this, forward this, archive thread, and Escape \"back to results\", as the banner says; nothing there says \"back to inbox\"."
 
 [[step]]
 id      = "next"
 command = "find_next"
-check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 4, app.focus.reading.match_banner = "‘rate limit headers’ · match 2 of 3 in this thread (messages 3, 5 and 6)" }
-expect  = "Message 3 holds one match, so find carries the window on to message 5, skipping message 4: chip 5 is ringed and the banner reads \"match 2 of 3\"."
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 4, app.focus.reading.match_banner = "‘rate limit headers’ · match 2 of 3 in this thread (messages 3, 5 and 6)", app.focus.reading.find_matches = 1 }
+expect  = "Message 3 holds one match, so find carries the window on to message 5, skipping message 4: chip 5 is ringed, the banner reads \"match 2 of 3\", and \"rate limit headers\" is marked in it."
 
 [[step]]
 id      = "last"
 command = "find_next"
-check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 5, app.focus.reading.match_banner = "‘rate limit headers’ · match 3 of 3 in this thread (messages 3, 5 and 6)" }
-expect  = "Message 6 is shown, chip 6 ringed, and the banner reads \"match 3 of 3\"."
+check   = { view = "reader", reading.id = { changed = true }, app.focus.reading.chip = 5, app.focus.reading.match_banner = "‘rate limit headers’ · match 3 of 3 in this thread (messages 3, 5 and 6)", app.focus.reading.find_matches = 1, app.focus.footer.labels = "reply to this | forward this | archive thread | back to results" }
+expect  = "Message 6 is shown, chip 6 ringed, and the banner reads \"match 3 of 3\". Its \"rate-limit headers\" is marked as the other two messages' matches were: the search found it, hyphen and all. The footer says \"Message 6 of 6 · Ben Adeyemi\" with the same keys."
 
 [[step]]
 id      = "back"

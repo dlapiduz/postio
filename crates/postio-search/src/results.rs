@@ -304,6 +304,8 @@ pub enum RankReason {
     InSender,
     /// The words are in an attachment's name.
     InFileName,
+    /// The words are in what an attachment says, and not in its name.
+    InFileContent,
     /// How many of its messages matched; always last.
     Matches(u32),
 }

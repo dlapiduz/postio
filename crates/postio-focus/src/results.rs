@@ -1370,6 +1370,27 @@ impl Results {
         })
     }
 
+    /// The subject of the result that is `message` alone -- a conversation
+    /// of one message, or a file's message -- when it has been read: what a
+    /// window on it is about.
+    pub(crate) fn lone_subject(&self, message: MessageId) -> Option<String> {
+        self.top
+            .iter()
+            .flatten()
+            .chain(self.pages.values().flatten())
+            .find(|hit| hit.best == message && hit.messages <= 1)
+            .map(|hit| hit.subject.clone())
+            .or_else(|| {
+                // A file's message, opened from the Files tab on its own.
+                self.files
+                    .iter()
+                    .flatten()
+                    .find(|file| file.message == message)
+                    .map(|file| file.subject.clone())
+            })
+            .map(Option::unwrap_or_default)
+    }
+
     /// The conversations read, in the rows' order, each once: what `j` and
     /// `k` walk in a message a result opened.
     pub(crate) fn walk(&self) -> Vec<(MessageId, Option<ThreadId>)> {

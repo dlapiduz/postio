@@ -2547,6 +2547,13 @@ impl FocusWindow {
                     view.show_scope(footer);
                 }
             }
+            // A window opened over the results: its footer is drawn in the
+            // results' (#2193), since the list's is not on screen.
+            Intent::Footer(footer) if self.results().is_some() => {
+                if let Some(results) = self.results() {
+                    results.show_scope(footer);
+                }
+            }
             Intent::Footer(footer) => {
                 if let Some(bar) = self.imp().scope_footer.borrow().as_ref() {
                     bar.set(footer);
@@ -2729,7 +2736,9 @@ impl FocusWindow {
                     reading.set_match_banner(banner.as_ref());
                     // The window looks for the search's words in each message
                     // it shows: its own matches are stepped before the next
-                    // matched message is.
+                    // matched message is. As words, as the index found them:
+                    // "rate limit headers" matched "rate-limit headers"
+                    // (#2193).
                     let words = self.imp().search_words.borrow().clone();
                     let from_end = self.imp().match_from_end.replace(false);
                     let query = if banner.is_some() {
@@ -2740,7 +2749,7 @@ impl FocusWindow {
                     reading
                         .reader()
                         .view()
-                        .set_find_query_from(&query, from_end);
+                        .set_find_words_from(&query, from_end);
                 }
             }
             Intent::Query(query) => {
@@ -5324,6 +5333,9 @@ impl FocusWindow {
         if reading.in_pane() && !reading.is_open() {
             self.focus_list();
         }
+        if let Some(results) = self.results() {
+            results.set_window_open(reading.is_open());
+        }
     }
 
     /// `Enter`: the conversation under the cursor, over the list (screen 04).
@@ -6954,6 +6966,13 @@ impl FocusWindow {
                 "focus.reading.reply_to".to_owned(),
                 serde_json::json!(reading.reply_to_said()),
             );
+            // How many places the message on screen marks as the search's
+            // or the find bar's: none is a message the window says matched
+            // and shows no match in (#2193).
+            app.insert(
+                "focus.reading.find_matches".to_owned(),
+                serde_json::json!(reading.reader().view().find_state().1),
+            );
         }
         if let Some(results) = self.results() {
             app.insert(
@@ -6972,6 +6991,10 @@ impl FocusWindow {
             app.insert(
                 "focus.results.count_line".to_owned(),
                 serde_json::json!(results.count_line()),
+            );
+            app.insert(
+                "focus.results.reason".to_owned(),
+                serde_json::json!(results.top_reason()),
             );
         }
         // What the composer holds of a thread (spec 013 US7).
@@ -7095,11 +7118,14 @@ impl FocusWindow {
                 );
             }
         }
-        // What the footer says: the scope of the keys under the list, or
-        // under Filtered's rows.
-        let footer = match self.filtered() {
-            Some(view) => Some(view.scope_footer().clone()),
-            None => self.imp().scope_footer.borrow().clone(),
+        // What the footer says: the scope of the keys under the list, under
+        // Filtered's rows, or under a window opened over the results. The
+        // results' own footer is theirs, and the list's is not on screen
+        // behind them (#2193).
+        let footer = match (self.filtered(), self.results()) {
+            (Some(view), _) => Some(view.scope_footer().clone()),
+            (None, Some(results)) => results.window_footer(),
+            (None, None) => self.imp().scope_footer.borrow().clone(),
         };
         if let Some(footer) = footer {
             app.insert(

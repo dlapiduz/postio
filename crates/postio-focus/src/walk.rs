@@ -172,7 +172,7 @@ impl FocusController {
         self.walk = None;
         self.walk_asked = None;
         if host != Host::Own || self.surfaces.origin() != Origin::List {
-            return self.walk_unbarred();
+            return self.unbarred_over_results(message);
         }
         // The row the cursor is on, when it is the message shown (or the
         // row a thread opened it from), says which thread it is of.
@@ -183,11 +183,20 @@ impl FocusController {
             .filter(|facts| facts.id == message || self.opened_for(facts.id, Some(message)))
             .or_else(|| self.hit_facts(message));
         let Some(facts) = facts else {
-            return self.walk_unbarred();
+            return self.unbarred_over_results(message);
         };
         let Some(&thread) = facts.threads.first() else {
-            return self.walk_unbarred();
+            return self.unbarred_over_results(message);
         };
+        // A result of one message has no thread to walk.
+        if self
+            .results
+            .as_ref()
+            .and_then(|results| results.lone_subject(message))
+            .is_some()
+        {
+            return self.unbarred_over_results(message);
+        }
         // A conversation of one message has no thread to walk: nothing is
         // asked for it.
         if self
@@ -199,7 +208,7 @@ impl FocusController {
             .is_some_and(|count| count <= 1)
             && seed.is_none()
         {
-            return self.walk_unbarred();
+            return self.unbarred_over_results(message);
         }
         match seed.filter(|view| view.thread == thread) {
             Some(view) => self.begin_walk(
@@ -247,6 +256,24 @@ impl FocusController {
     /// The bar, kicker and banners of a walk that is over, taken away. Said
     /// once, and only when one is up: a window whose walk never began has
     /// nothing to clear (spec 013 T085).
+    /// [`FocusController::walk_unbarred`] for a window on `message` that
+    /// walks no thread, with its own footer when it is over the results:
+    /// theirs, Escape "back to inbox" among it, is not the window's
+    /// (#2193).
+    fn unbarred_over_results(&mut self, message: MessageId) -> Vec<Step> {
+        let subject = self
+            .results
+            .as_ref()
+            .and_then(|results| results.lone_subject(message));
+        let footer = subject.map(|subject| {
+            let keymap = self.keymap();
+            scope::over_results(scope::lone(&subject, keymap), keymap)
+        });
+        let mut steps = self.walk_unbarred();
+        steps.extend(footer.map(|footer| Step::Show(Intent::Footer(footer))));
+        steps
+    }
+
     pub(crate) fn walk_unbarred(&mut self) -> Vec<Step> {
         if !std::mem::take(&mut self.bar_up) {
             return Vec::new();
@@ -553,8 +580,10 @@ impl FocusController {
             steps.push(Step::Show(Intent::MatchBanner(Some(banner))));
         }
         // The footer behind the window says what r acts on from here: the
-        // message on screen, whatever row the window came from.
-        if many {
+        // message on screen, whatever row the window came from. Over the
+        // results a message alone has one too: the results' is not the
+        // window's (#2193).
+        if many || self.results.is_some() {
             let member = &walk.view.members[at];
             let about = FooterAbout {
                 subject: walk.view.subject.as_deref().unwrap_or("(no subject)"),
@@ -566,9 +595,13 @@ impl FocusController {
                 thread: walk.view.thread,
                 message: member.id,
             };
-            steps.push(Step::Show(Intent::Footer(scope::footer(
-                focus, &about, keymap,
-            ))));
+            let footer = scope::footer(focus, &about, keymap);
+            // Over the results, Escape goes back to them.
+            let footer = match self.results {
+                Some(_) => scope::over_results(footer, keymap),
+                None => footer,
+            };
+            steps.push(Step::Show(Intent::Footer(footer)));
         }
         steps
     }

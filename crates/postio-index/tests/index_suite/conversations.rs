@@ -822,8 +822,9 @@ async fn a_word_only_inside_an_attachment_finds_its_conversation_where_it_is() {
         "where in the file: the sheet and the row"
     );
     assert!(
-        hit.reasons.contains(&RankReason::InFileName),
-        "a file found it: {:?}",
+        hit.reasons.contains(&RankReason::InFileContent)
+            && !hit.reasons.contains(&RankReason::InFileName),
+        "what a file says found it, not its name (#2194): {:?}",
         hit.reasons
     );
     assert!(

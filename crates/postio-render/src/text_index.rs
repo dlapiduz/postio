@@ -527,6 +527,15 @@ impl TextIndex {
         matches(&haystack, &origin, &needle)
     }
 
+    /// Every place a search's words are drawn, in order (spec 013 US6): each
+    /// word as a whole word, ignoring case and diacritics, and words that
+    /// stand together one match however they are joined, so the search
+    /// `rate limit headers` finds both "rate limit headers" and
+    /// "rate-limit headers", as the index did (#2193).
+    pub fn find_words(&self, query: &str) -> Vec<Range<usize>> {
+        word_matches(&self.text, query)
+    }
+
     /// Every place `excerpt`'s words are drawn, in order: [`find`](Self::find)
     /// with whitespace made alike on both sides (spike S5, research R2).
     ///
@@ -626,6 +635,48 @@ fn fold(text: &str, spacing: Spacing) -> (Vec<char>, Vec<usize>) {
     (folded, origin)
 }
 
+/// [`TextIndex::find_words`] over `text`: its words that `query` names, in
+/// char ranges, a run of them with nothing but spaces and punctuation
+/// between merged into one.
+fn word_matches(text: &str, query: &str) -> Vec<Range<usize>> {
+    let (wanted, _) = fold(query, Spacing::AsWritten);
+    let wanted: Vec<&[char]> = wanted
+        .split(|c| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let (haystack, origin) = fold(text, Spacing::AsWritten);
+    let mut out: Vec<Range<usize>> = Vec::new();
+    // Whether the last word read was one of the search's: a match it ends
+    // goes on into the next word wanted.
+    let mut joined = false;
+    let mut at = 0;
+    while at < haystack.len() {
+        if !haystack[at].is_alphanumeric() {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < haystack.len() && haystack[at].is_alphanumeric() {
+            at += 1;
+        }
+        let word = &haystack[start..at];
+        if !wanted.contains(&word) {
+            joined = false;
+            continue;
+        }
+        let range = origin[start]..origin[at - 1] + 1;
+        match out.last_mut() {
+            Some(last) if joined => last.end = range.end,
+            _ => out.push(range),
+        }
+        joined = true;
+    }
+    out
+}
+
 /// Every match of `needle` in `haystack`, in order and not overlapping, as
 /// ranges of the text `origin` maps back to.
 fn matches(haystack: &[char], origin: &[usize], needle: &[char]) -> Vec<Range<usize>> {
@@ -644,4 +695,44 @@ fn matches(haystack: &[char], origin: &[usize], needle: &[char]) -> Vec<Range<us
         from = end;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn said(text: &str, query: &str) -> Vec<String> {
+        word_matches(text, query)
+            .into_iter()
+            .map(|range| text.chars().skip(range.start).take(range.len()).collect())
+            .collect()
+    }
+
+    /// A search's words are found as the index found them, a word at a
+    /// time, and words that stand together are one match however they are
+    /// joined: a hyphen is no less a match than a space (#2193).
+    #[test]
+    fn a_searchs_words_are_found_however_they_are_joined() {
+        assert_eq!(
+            said("moved the rate limit headers to", "rate limit headers"),
+            ["rate limit headers"]
+        );
+        assert_eq!(
+            said("on the rate-limit headers: do we", "rate limit headers"),
+            ["rate-limit headers"]
+        );
+        assert_eq!(
+            said(
+                "Rate is one thing; the headers another",
+                "rate limit headers"
+            ),
+            ["Rate", "headers"]
+        );
+        assert_eq!(
+            said("a ratelimit header", "rate limit headers"),
+            Vec::<String>::new()
+        );
+        assert_eq!(said("the HÉADERS", "headers"), ["HÉADERS"]);
+        assert_eq!(said("anything", ""), Vec::<String>::new());
+    }
 }
