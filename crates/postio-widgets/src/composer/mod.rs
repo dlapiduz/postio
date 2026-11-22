@@ -2225,14 +2225,7 @@ impl Composer {
                     postio_core::registry::get(id).title,
                     &key,
                 );
-                // On the status line, and on the line under the editor,
-                // which every host shows: a framed host hides the status.
-                self.set_status(&words);
-                let imp = self.imp();
-                imp.source_typed.take();
-                imp.source_notice_label.set_label(&words);
-                imp.source_notice_undo.set_visible(false);
-                imp.source_notice.set_visible(true);
+                self.say_under_editor(&words);
             }
             CommandId::Bold if self.is_open() => {
                 self.imp().body.format(editor::Format::Bold);
@@ -2390,12 +2383,12 @@ impl Composer {
             })
         });
         let Some(target) = target else {
-            self.set_status(postio_ui::compose::NO_REMOTE_IMAGE);
+            self.say_under_editor(postio_ui::compose::NO_REMOTE_IMAGE);
             return;
         };
         let handler = imp.remote_image.borrow();
         let Some(handler) = handler.as_ref() else {
-            self.set_status("Downloading images is not available here.");
+            self.say_under_editor("Downloading images is not available here.");
             return;
         };
         imp.remote_state
@@ -2628,6 +2621,18 @@ impl Composer {
         }
         imp.body.widget().grab_focus();
         self.refresh();
+    }
+
+    /// An answer to a press, on the status line and on the line under the
+    /// editor, which every host shows: a framed host hides the status. It
+    /// lasts until the next edit.
+    fn say_under_editor(&self, words: &str) {
+        self.set_status(words);
+        let imp = self.imp();
+        imp.source_typed.take();
+        imp.source_notice_label.set_label(words);
+        imp.source_notice_undo.set_visible(false);
+        imp.source_notice.set_visible(true);
     }
 
     fn hide_source(&self) {

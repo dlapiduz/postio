@@ -167,5 +167,10 @@ pub fn a_press_with_no_image_says_so() {
     composer.dispatch(CommandId::AttachRemoteImage);
     settle();
     assert_eq!(composer.status(), postio_ui::compose::NO_REMOTE_IMAGE);
+    assert_eq!(
+        composer.test_source_notice().as_deref(),
+        Some(postio_ui::compose::NO_REMOTE_IMAGE),
+        "a framed host hides the status line, so the line under the editor says it"
+    );
     assert!(pending.borrow().is_empty());
 }
