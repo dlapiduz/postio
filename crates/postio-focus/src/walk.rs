@@ -566,9 +566,13 @@ impl FocusController {
                 thread: walk.view.thread,
                 message: member.id,
             };
-            steps.push(Step::Show(Intent::Footer(scope::footer(
-                focus, &about, keymap,
-            ))));
+            let footer = scope::footer(focus, &about, keymap);
+            // Over the results, Escape goes back to them.
+            let footer = match self.results {
+                Some(_) => scope::over_results(footer, keymap),
+                None => footer,
+            };
+            steps.push(Step::Show(Intent::Footer(footer)));
         }
         steps
     }

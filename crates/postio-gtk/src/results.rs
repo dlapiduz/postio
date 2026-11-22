@@ -277,6 +277,13 @@ pub struct ResultsPane {
     /// for a selection wherever it is made (#2082).
     bulk: crate::bulk::Bulk,
     footer: gtk::Label,
+    /// The results' own footer: their keys and their count.
+    foot: gtk::Box,
+    /// The footer of a message window opened over the results, in the
+    /// results' own footer's place while it is open (#2193).
+    scope_footer: Rc<crate::scope_footer::ScopeFooter>,
+    /// Whether a message window is open over the results.
+    window_open: Cell<bool>,
     view: RefCell<Option<ResultsView>>,
     cursor: Cell<Option<u64>>,
     /// The expanded result's children, and the one with the ring.
@@ -422,6 +429,8 @@ impl ResultsPane {
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(bulk.widget());
         root.append(&foot);
+        let scope_footer = Rc::new(crate::scope_footer::ScopeFooter::new());
+        root.append(scope_footer.widget());
 
         let popover_feed = feed.clone();
         let popover = crate::search_popover::FilterPopover::new(move |input| {
@@ -462,6 +471,9 @@ impl ResultsPane {
             hints,
             bulk,
             footer,
+            foot,
+            scope_footer,
+            window_open: Cell::new(false),
             view: RefCell::default(),
             cursor: Cell::new(None),
             splice: RefCell::default(),
@@ -1397,6 +1409,34 @@ impl ResultsPane {
     /// The rows' list, for what a test measures of it.
     pub fn list(&self) -> &gtk::ListView {
         &self.list
+    }
+
+    /// What a message window opened over the results says its keys do
+    /// (`Intent::Footer`): drawn in the results' footer's place while the
+    /// window is open.
+    pub fn show_scope(&self, view: &postio_ui::scope::FooterView) {
+        self.scope_footer.set(view);
+        self.set_window_open(self.window_open.get());
+    }
+
+    /// A message window over the results opened (`true`) or closed: its
+    /// footer takes the results' footer's place, or gives it back. The
+    /// results' keys, Escape "back to inbox" among them, are not the
+    /// window's (#2193).
+    pub fn set_window_open(&self, open: bool) {
+        self.window_open.set(open);
+        let said = !self.scope_footer.title().is_empty();
+        self.foot.set_visible(!open);
+        self.scope_footer.widget().set_visible(open && said);
+    }
+
+    /// The footer drawn under the results while a message window is open
+    /// over them, if one is.
+    pub fn window_footer(&self) -> Option<Rc<crate::scope_footer::ScopeFooter>> {
+        self.scope_footer
+            .widget()
+            .is_visible()
+            .then(|| Rc::clone(&self.scope_footer))
     }
 
     /// The count line: "48 threads".

@@ -194,6 +194,16 @@ pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> Fo
     FooterView { title, keys, note }
 }
 
+/// [`footer`] for a window opened over the search results: Escape goes back
+/// to them, as the match banner says, and the footer says so too, where the
+/// results' own footer said "back to inbox" (#2193).
+pub fn over_results(mut view: FooterView, keymap: &Keymap) -> FooterView {
+    if let Some(hint) = hints::hint(keymap, CommandId::Back, "back to results") {
+        view.keys.push((hints::short(&hint.key), hint.label));
+    }
+    view
+}
+
 /// "e, b, l, v act on the thread", with the keys the keymap binds to
 /// archive, snooze, label and move. That reply and forward act on this
 /// message is said by their own labels ("reply to this"); the note is only

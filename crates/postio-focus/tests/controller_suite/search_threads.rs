@@ -455,6 +455,48 @@ fn return_on_a_match_opens_the_window_at_that_message_with_every_match_marked() 
     assert_eq!(banner.back, "Back to results");
 }
 
+/// The footer behind a window opened from the results says what the keys
+/// do from there: reply and forward this message, and Escape goes back to
+/// the results, as the banner says, never back to the inbox (#2193).
+#[test]
+fn a_window_opened_from_the_results_says_escape_goes_back_to_them() {
+    let rows = List::of(3);
+    let (_focus, effects) = opened_at_message_3(&rows);
+    let footer = shown(&effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Footer(footer) => Some(footer),
+            _ => None,
+        })
+        .expect("the window's footer");
+    assert!(
+        footer.title.starts_with("Message 3 of 6"),
+        "{:?}",
+        footer.title
+    );
+    let labels: Vec<&str> = footer
+        .keys
+        .iter()
+        .map(|(_, label)| label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "reply to this",
+            "forward this",
+            "archive thread",
+            "back to results"
+        ]
+    );
+    assert_eq!(
+        footer.keys.last().map(|(cap, _)| cap.as_str()),
+        Some("Escape"),
+        "{:?}",
+        footer.keys
+    );
+}
+
 fn banner_text(effects: &[Effect]) -> Option<String> {
     shown(effects)
         .into_iter()
