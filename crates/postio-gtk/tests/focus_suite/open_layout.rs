@@ -146,17 +146,9 @@ async fn opened_at(
         .await,
         "the body was never drawn"
     );
-    // The dialog opens growing to its size: measure it once it is there.
-    let content = reading.dialog().child().expect("the dialog's content");
-    assert!(
-        crate::settle_until(
-            async || content
-                .compute_bounds(&window)
-                .is_some_and(|bounds| (bounds.width() - content.width() as f32).abs() < 0.5)
-        )
-        .await,
-        "the dialog never finished opening"
-    );
+    // The dialog opens growing past its size and back: measure it once
+    // it is still at it.
+    support::wait_for_dialog_opened(&window, &reading.dialog());
     crate::settle();
     window
 }

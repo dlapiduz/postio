@@ -48,15 +48,7 @@ async fn composing(size: Option<(i32, i32)>) -> (postio_gtk::window::FocusWindow
         "c opened no composer"
     );
     let dialog = window.compose_dialog().expect("the compose dialog");
-    let content = dialog.child().expect("the dialog's content");
-    assert!(
-        crate::settle_until(async || content.width() > 0
-            && content
-                .compute_bounds(&window)
-                .is_some_and(|bounds| (bounds.width() - content.width() as f32).abs() < 0.5))
-        .await,
-        "the dialog never finished opening"
-    );
+    support::wait_for_dialog_opened(&window, &dialog);
     crate::settle();
     (window, dialog)
 }

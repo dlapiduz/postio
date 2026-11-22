@@ -1436,16 +1436,14 @@ fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> 
         .unwrap_or_else(|| window.clone().upcast())
 }
 
-/// Wait for `widget` to stop moving on `native`, the surface a click lands
-/// on: a person clicks what has stopped where they see it. libadwaita opens
-/// a dialog by scaling it from 0.8 to 1 in its allocation (a bottom sheet
-/// slides instead), so until it has opened a button in it is smaller and
-/// somewhere else every frame. A press then and a release a frame later are
-/// at two places, and the release misses: every Settings flake on CI
-/// (#1817). Measured in `native`'s coordinates, frame by frame -- within the
-/// dialog, as [`settle_still`] measures, nothing moves while the whole
-/// dialog grows -- and until `widget` is drawn at its own size, which no
-/// frame of a dialog's opening is.
+/// How near its own size a widget has to be drawn to count as drawn at it.
+/// libadwaita opens a floating dialog on a spring that overshoots, about
+/// 1.7% past its size, and comes back over some ten frames, the last of them
+/// within a fifth of a pixel of it. Half a pixel took that tail for the end,
+/// and a block measured then was 61.015 tall where it is 61 (#2216). At
+/// rest the spring is exactly at its size.
+const DRAWN_AT_SIZE: f32 = 0.01;
+
 /// Whether `widget` is drawn at its own size now: no transform above it
 /// scales it.
 ///
@@ -1457,12 +1455,45 @@ fn drawn_at_own_size(native: &gtk::Widget, widget: &gtk::Widget) -> bool {
     use gtk::prelude::*;
     match (widget.compute_bounds(native), widget.compute_bounds(widget)) {
         (Some(drawn), Some(own)) => {
-            (drawn.width() - own.width()).abs() < 0.5 && (drawn.height() - own.height()).abs() < 0.5
+            (drawn.width() - own.width()).abs() < DRAWN_AT_SIZE
+                && (drawn.height() - own.height()).abs() < DRAWN_AT_SIZE
         }
         _ => true,
     }
 }
 
+/// Wait for `dialog` to have finished opening: its content drawn still, at
+/// its own size. A case that measures the blocks in it before then measures
+/// them scaled by the opening's spring.
+pub fn wait_for_dialog_opened(
+    window: &postio_gtk::window::FocusWindow,
+    dialog: &impl gtk::prelude::IsA<adw::Dialog>,
+) {
+    use adw::prelude::*;
+    let content = dialog.as_ref().child().expect("the dialog's content");
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while !(content.is_mapped() && content.width() > 0) && std::time::Instant::now() < deadline {
+        crate::settle();
+    }
+    let native = native_of(&content, window);
+    wait_to_be_still(&native, &content);
+    assert!(
+        drawn_at_own_size(&native, &content),
+        "the dialog never finished opening"
+    );
+}
+
+/// Wait for `widget` to stop moving on `native`, the surface a click lands
+/// on: a person clicks what has stopped where they see it. libadwaita opens
+/// a dialog by scaling it from 0.8 to its size in its allocation (a bottom
+/// sheet slides instead), so until it has opened a button in it is smaller
+/// and somewhere else every frame. A press then and a release a frame later
+/// are at two places, and the release misses: every Settings flake on CI
+/// (#1817). Measured in `native`'s coordinates, frame by frame -- within the
+/// dialog, as [`settle_still`] measures, nothing moves while the whole
+/// dialog grows -- and until `widget` is drawn at its own size, which no
+/// frame of a dialog's opening is.
 fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
     use gtk::prelude::*;
     // Where it was drawn on each frame, if anywhere.
@@ -1490,8 +1521,8 @@ fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
             return false;
         };
         before == last
-            && (last.width() - own.width()).abs() < 0.5
-            && (last.height() - own.height()).abs() < 0.5
+            && (last.width() - own.width()).abs() < DRAWN_AT_SIZE
+            && (last.height() - own.height()).abs() < DRAWN_AT_SIZE
     };
     let started = std::time::Instant::now();
     let deadline = started + postio_test_support::scaled(std::time::Duration::from_secs(10));
