@@ -68,7 +68,8 @@ tempfile = { workspace = true }
 # One site, `fonts.rs`'s `map_installed`: installed font files are
 # memory-mapped rather than read (research R3), because reading every one
 # cost 198 MiB resident. fontdb's mapping call is `unsafe fn`. No parser
-# here is unsafe; every one is Rust's own (FR-023a).
+# here is unsafe; every one is Rust's own (FR-023a). One test,
+# `tests/render_rss_plateau.rs`, installs a counting `GlobalAlloc`.
 unsafe_code = "deny"
 missing_docs = "warn"
 unused_must_use = "deny"
